@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { getClaudeConfigDir } from '@/lib/platform';
+import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
 
 /** Load MCP servers: built-in + sandbox config */
 function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
@@ -22,8 +22,8 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
   };
 
   // Built-in: Feishu MCP server
-  const feishuPath = process.env.FEISHU_MCP_PATH;
-  if (feishuPath && fs.existsSync(feishuPath)) {
+  const feishuPath = getFeishuMcpPath();
+  if (feishuPath) {
     const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
     merged['feishu'] = {
       command: 'node',

@@ -39,6 +39,9 @@ extraResources:
   - from: build/
     to: .
     filter: ["icon.*"]
+  - from: resources/feishu-mcp-server/
+    to: feishu-mcp-server/
+    filter: ["**/*"]
 afterPack: scripts/after-pack.js
 asarUnpack:
   - "**/*.node"

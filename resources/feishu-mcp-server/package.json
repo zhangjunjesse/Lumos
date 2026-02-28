@@ -1,0 +1,14 @@
+{
+  "name": "feishu-mcp-server",
+  "version": "1.0.0",
+  "description": "飞书 MCP Server - 让 Claude 通过工具调用飞书 API",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -9,7 +9,7 @@ import type {
   SuccessResponse,
 } from '@/types';
 
-import { getClaudeConfigDir } from '@/lib/platform';
+import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
 
 function getSettingsPath(): string {
   return path.join(getClaudeConfigDir(), 'settings.json');
@@ -53,8 +53,8 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
     };
 
     // Inject built-in Feishu MCP server
-    const feishuPath = process.env.FEISHU_MCP_PATH;
-    if (feishuPath && fs.existsSync(feishuPath) && !mcpServers['feishu']) {
+    const feishuPath = getFeishuMcpPath();
+    if (feishuPath && !mcpServers['feishu']) {
       mcpServers['feishu'] = {
         command: 'node',
         args: [feishuPath],

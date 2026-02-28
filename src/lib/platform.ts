@@ -19,6 +19,23 @@ export function getClaudeConfigDir(): string {
 }
 
 /**
+ * Resolve the bundled Feishu MCP server entry path.
+ * Production: process.resourcesPath/feishu-mcp-server/index.js
+ * Dev: FEISHU_MCP_PATH env var
+ */
+export function getFeishuMcpPath(): string | undefined {
+  // Production: bundled in resources
+  if (typeof process.resourcesPath === 'string') {
+    const p = path.join(process.resourcesPath, 'feishu-mcp-server', 'index.js');
+    if (fs.existsSync(p)) return p;
+  }
+  // Dev: relative to project root (cwd)
+  const p = path.resolve('resources', 'feishu-mcp-server', 'index.js');
+  if (fs.existsSync(p)) return p;
+  return undefined;
+}
+
+/**
  * Whether the given binary path requires shell execution.
  * On Windows, .cmd/.bat files cannot be executed directly by execFileSync.
  */
