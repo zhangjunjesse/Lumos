@@ -2,8 +2,8 @@ appId: com.codepilot.app
 productName: CodePilot
 publish:
   provider: github
-  owner: op7418
-  repo: CodePilot
+  owner: zhangjunjesse
+  repo: Lumos
 directories:
   output: release
 files:

@@ -178,7 +178,7 @@ jobs:
 
           # Update the draft release created by electron-builder with full notes
           gh release edit "${GITHUB_REF_NAME}" \
-            --title "CodePilot v${VERSION}" \
+            --title "Lumos v${VERSION}" \
             --notes-file release-notes.md \
             --latest \
             --draft=false
