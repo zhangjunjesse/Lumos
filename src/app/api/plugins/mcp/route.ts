@@ -9,13 +9,15 @@ import type {
   SuccessResponse,
 } from '@/types';
 
+import { getClaudeConfigDir } from '@/lib/platform';
+
 function getSettingsPath(): string {
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return path.join(getClaudeConfigDir(), 'settings.json');
 }
 
-// ~/.claude.json — Claude CLI stores user-scoped MCP servers here
+// Sandbox: read from app config dir instead of ~/.claude.json
 function getUserConfigPath(): string {
-  return path.join(os.homedir(), '.claude.json');
+  return path.join(getClaudeConfigDir(), '.claude.json');
 }
 
 function readJsonFile(filePath: string): Record<string, unknown> {
@@ -45,10 +47,20 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
     const settings = readSettings();
     const userConfig = readJsonFile(getUserConfigPath());
     // Merge: ~/.claude/settings.json takes precedence over ~/.claude.json
-    const mcpServers = {
+    const mcpServers: Record<string, MCPServerConfig> = {
       ...((userConfig.mcpServers || {}) as Record<string, MCPServerConfig>),
       ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
     };
+
+    // Inject built-in Feishu MCP server
+    const feishuPath = process.env.FEISHU_MCP_PATH;
+    if (feishuPath && fs.existsSync(feishuPath) && !mcpServers['feishu']) {
+      mcpServers['feishu'] = {
+        command: 'node',
+        args: [feishuPath],
+      } as MCPServerConfig;
+    }
+
     return NextResponse.json({ mcpServers });
   } catch (error) {
     return NextResponse.json(

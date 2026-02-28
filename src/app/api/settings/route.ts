@@ -3,7 +3,9 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
+import { getClaudeConfigDir } from "@/lib/platform";
+
+const SETTINGS_PATH = path.join(getClaudeConfigDir(), "settings.json");
 
 function readSettingsFile(): Record<string, unknown> {
   try {

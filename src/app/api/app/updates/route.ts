@@ -13,41 +13,11 @@ function compareSemver(a: string, b: string): number {
 }
 
 export async function GET() {
-  try {
-    const currentVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
-
-    const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
-      {
-        headers: { Accept: "application/vnd.github.v3+json" },
-        next: { revalidate: 300 },
-      }
-    );
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: "Failed to fetch release info" },
-        { status: 502 }
-      );
-    }
-
-    const release = await res.json();
-    const latestVersion = (release.tag_name || "").replace(/^v/, "");
-    const updateAvailable = compareSemver(latestVersion, currentVersion) > 0;
-
-    return NextResponse.json({
-      latestVersion,
-      currentVersion,
-      updateAvailable,
-      releaseName: release.name || `v${latestVersion}`,
-      releaseNotes: release.body || "",
-      publishedAt: release.published_at || "",
-      releaseUrl: release.html_url || "",
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to check for updates" },
-      { status: 500 }
-    );
-  }
+  // Update check disabled — this fork has its own release channel
+  const currentVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
+  return NextResponse.json({
+    latestVersion: currentVersion,
+    currentVersion,
+    updateAvailable: false,
+  });
 }

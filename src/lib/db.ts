@@ -487,6 +487,20 @@ function migrateDb(db: Database.Database): void {
       ).run(id, 'Default', 'anthropic', baseUrlRow?.value || '', tokenRow?.value || '', 1, 0, '{}', 'Migrated from settings', now, now);
     }
   }
+
+  // Auto-create a "Built-in" provider from the embedded default API key
+  const currentCount = db.prepare('SELECT COUNT(*) as count FROM api_providers').get() as { count: number };
+  if (currentCount.count === 0) {
+    const defaultKey = process.env.CODEPILOT_DEFAULT_API_KEY;
+    if (defaultKey) {
+      const id = crypto.randomBytes(16).toString('hex');
+      const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+      const defaultBaseUrl = process.env.CODEPILOT_DEFAULT_BASE_URL || '';
+      db.prepare(
+        'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(id, 'Built-in', 'anthropic', defaultBaseUrl, defaultKey, 1, 0, '{}', 'Auto-created from embedded key', now, now);
+    }
+  }
 }
 
 // ==========================================

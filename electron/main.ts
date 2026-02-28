@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain, shell, safeStorage } from 'electron';
 import path from 'path';
 import { execFileSync, spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
@@ -40,6 +40,32 @@ let installState: InstallState = {
 let installProcess: ChildProcess | null = null;
 
 const isDev = !app.isPackaged;
+
+/**
+ * Read or bootstrap the embedded default API key using Electron's safeStorage.
+ * On first run, encrypts the raw key from CODEPILOT_DEFAULT_KEY env var to disk.
+ * On subsequent runs, decrypts from the persisted file.
+ */
+function initDefaultApiKey(): string | undefined {
+  const encPath = path.join(app.getPath('userData'), 'default-key.enc');
+
+  if (fs.existsSync(encPath)) {
+    try {
+      const encrypted = fs.readFileSync(encPath);
+      return safeStorage.decryptString(encrypted);
+    } catch {
+      fs.unlinkSync(encPath);
+    }
+  }
+
+  const rawKey = process.env.CODEPILOT_DEFAULT_KEY;
+  if (!rawKey) return undefined;
+
+  if (safeStorage.isEncryptionAvailable()) {
+    fs.writeFileSync(encPath, safeStorage.encryptString(rawKey));
+  }
+  return rawKey;
+}
 
 /**
  * Gracefully shut down the server process.
@@ -268,6 +294,9 @@ function startServer(port: number): Electron.UtilityProcess {
   const home = os.homedir();
   const constructedPath = getExpandedShellPath();
 
+  const defaultKey = initDefaultApiKey();
+  const claudeConfigDir = path.join(app.getPath('userData'), '.claude');
+
   const env: Record<string, string> = {
     ...userShellEnv,
     ...(process.env as Record<string, string>),
@@ -279,6 +308,12 @@ function startServer(port: number): Electron.UtilityProcess {
     HOME: home,
     USERPROFILE: home,
     PATH: constructedPath,
+    // Sandbox: isolate CLI config into app's own directory
+    CODEPILOT_CLAUDE_CONFIG_DIR: claudeConfigDir,
+    ...(defaultKey ? { CODEPILOT_DEFAULT_API_KEY: defaultKey } : {}),
+    ...(process.env.CODEPILOT_DEFAULT_BASE_URL
+      ? { CODEPILOT_DEFAULT_BASE_URL: process.env.CODEPILOT_DEFAULT_BASE_URL }
+      : {}),
   };
 
   // Use Electron's utilityProcess to run the server in a child process

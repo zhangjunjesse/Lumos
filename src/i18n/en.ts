@@ -173,6 +173,19 @@ const en = {
   'extensions.title': 'Extensions',
   'extensions.skills': 'Skills',
   'extensions.mcpServers': 'MCP Servers',
+  'extensions.feishu': 'Feishu',
+
+  // ── Feishu ────────────────────────────────────────────────
+  'feishu.title': 'Feishu',
+  'feishu.description': 'Connect your Feishu account to use document tools via MCP.',
+  'feishu.authTitle': 'Feishu Account',
+  'feishu.authDesc': 'Connect your Feishu account to access documents and cloud drive.',
+  'feishu.connected': 'Connected',
+  'feishu.notConnected': 'Not Connected',
+  'feishu.authorized': 'Authorized',
+  'feishu.login': 'Login with Feishu',
+  'feishu.logout': 'Logout',
+  'feishu.loginHint': 'Login with your Feishu account to use document tools in chat.',
 
   // ── Skills ──────────────────────────────────────────────────
   'skills.noSelected': 'No skill selected',

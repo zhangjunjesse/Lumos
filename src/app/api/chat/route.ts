@@ -1,10 +1,43 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
-import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
+import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+
+import { getClaudeConfigDir } from '@/lib/platform';
+
+/** Load MCP servers: built-in + sandbox config */
+function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
+  const read = (p: string) => {
+    try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf-8')) : {}; } catch { return {}; }
+  };
+  const userConfig = read(path.join(getClaudeConfigDir(), '.claude.json'));
+  const settings = read(path.join(getClaudeConfigDir(), 'settings.json'));
+  const merged: Record<string, MCPServerConfig> = {
+    ...((userConfig.mcpServers || {}) as Record<string, MCPServerConfig>),
+    ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
+  };
+
+  // Built-in: Feishu MCP server
+  const feishuPath = process.env.FEISHU_MCP_PATH;
+  if (feishuPath && fs.existsSync(feishuPath)) {
+    const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+    merged['feishu'] = {
+      command: 'node',
+      args: [feishuPath],
+      env: {
+        FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
+        FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
+        FEISHU_TOKEN_PATH: path.join(dataDir, 'auth', 'feishu.json'),
+      },
+    } as MCPServerConfig;
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -186,6 +219,7 @@ export async function POST(request: NextRequest) {
       model: effectiveModel,
       systemPrompt: finalSystemPrompt,
       workingDirectory: session.sdk_cwd || session.working_directory || undefined,
+      mcpServers: loadMcpServers(),
       abortController,
       permissionMode,
       files: fileAttachments,

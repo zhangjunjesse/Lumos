@@ -62,9 +62,7 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
           const isActive =
             item.href === "/chat"
               ? pathname === "/chat" || pathname.startsWith("/chat/")
-              : item.href === "/extensions"
-                ? pathname.startsWith("/extensions")
-                : pathname === item.href || pathname.startsWith(item.href + "?");
+              : pathname === item.href || pathname.startsWith(item.href + "/");
 
           return (
             <Tooltip key={item.href}>

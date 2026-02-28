@@ -132,11 +132,13 @@ interface ContentBlock {
 // Session Discovery
 // ==========================================
 
+import { getClaudeConfigDir } from './platform';
+
 /**
  * Get the Claude Code projects directory.
  */
 export function getClaudeProjectsDir(): string {
-  return path.join(os.homedir(), '.claude', 'projects');
+  return path.join(getClaudeConfigDir(), 'projects');
 }
 
 /**

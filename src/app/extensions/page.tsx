@@ -7,9 +7,10 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading02Icon } from "@hugeicons/core-free-icons";
 import { SkillsManager } from "@/components/skills/SkillsManager";
 import { McpManager } from "@/components/plugins/McpManager";
+import { FeishuPanel } from "@/components/feishu/FeishuPanel";
 import { useTranslation } from "@/hooks/useTranslation";
 
-type ExtTab = "skills" | "mcp";
+type ExtTab = "skills" | "mcp" | "feishu";
 
 export default function ExtensionsPage() {
   return (
@@ -39,12 +40,14 @@ function ExtensionsPageInner() {
           <TabsList>
             <TabsTrigger value="skills">{t('extensions.skills')}</TabsTrigger>
             <TabsTrigger value="mcp">{t('extensions.mcpServers')}</TabsTrigger>
+            <TabsTrigger value="feishu">{t('extensions.feishu')}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
       <div className="flex-1 overflow-hidden p-6 flex flex-col min-h-0">
         {tab === "skills" && <SkillsManager />}
         {tab === "mcp" && <McpManager />}
+        {tab === "feishu" && <FeishuPanel />}
       </div>
     </div>
   );

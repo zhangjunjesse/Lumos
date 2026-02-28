@@ -4,8 +4,10 @@ import path from 'path';
 import os from 'os';
 import type { MCPServerConfig, ErrorResponse, SuccessResponse } from '@/types';
 
+import { getClaudeConfigDir } from '@/lib/platform';
+
 function getSettingsPath(): string {
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return path.join(getClaudeConfigDir(), 'settings.json');
 }
 
 function readSettings(): Record<string, unknown> {

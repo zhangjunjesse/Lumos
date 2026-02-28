@@ -170,6 +170,19 @@ const zh: Record<TranslationKey, string> = {
   'extensions.title': '扩展',
   'extensions.skills': '技能',
   'extensions.mcpServers': 'MCP 服务器',
+  'extensions.feishu': '飞书',
+
+  // ── Feishu ────────────────────────────────────────────────
+  'feishu.title': '飞书',
+  'feishu.description': '连接飞书账号，通过 MCP 工具在聊天中操作文档。',
+  'feishu.authTitle': '飞书账号',
+  'feishu.authDesc': '连接飞书账号以访问文档和云盘。',
+  'feishu.connected': '已连接',
+  'feishu.notConnected': '未连接',
+  'feishu.authorized': '已授权',
+  'feishu.login': '飞书登录',
+  'feishu.logout': '退出登录',
+  'feishu.loginHint': '登录飞书账号，即可在聊天中使用文档工具。',
 
   // ── Skills ──────────────────────────────────────────────────
   'skills.noSelected': '未选择技能',

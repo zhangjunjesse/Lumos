@@ -10,6 +10,15 @@ export const isWindows = process.platform === 'win32';
 export const isMac = process.platform === 'darwin';
 
 /**
+ * Return the Claude config directory, respecting sandbox isolation.
+ * In sandboxed mode (CODEPILOT_CLAUDE_CONFIG_DIR set), returns the app's
+ * own .claude/ directory instead of ~/.claude/.
+ */
+export function getClaudeConfigDir(): string {
+  return process.env.CODEPILOT_CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+/**
  * Whether the given binary path requires shell execution.
  * On Windows, .cmd/.bat files cannot be executed directly by execFileSync.
  */

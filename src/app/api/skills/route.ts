@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
+import { getClaudeConfigDir } from "@/lib/platform";
 
 interface SkillFile {
   name: string;
@@ -17,7 +18,7 @@ type InstalledSource = "agents" | "claude";
 type InstalledSkill = SkillFile & { installedSource: InstalledSource; contentHash: string };
 
 function getGlobalCommandsDir(): string {
-  return path.join(os.homedir(), ".claude", "commands");
+  return path.join(getClaudeConfigDir(), "commands");
 }
 
 function getProjectCommandsDir(cwd?: string): string {
@@ -26,7 +27,7 @@ function getProjectCommandsDir(cwd?: string): string {
 
 function getPluginCommandsDirs(): string[] {
   const dirs: string[] = [];
-  const marketplacesDir = path.join(os.homedir(), ".claude", "plugins", "marketplaces");
+  const marketplacesDir = path.join(getClaudeConfigDir(), "plugins", "marketplaces");
   if (!fs.existsSync(marketplacesDir)) return dirs;
 
   try {
@@ -54,7 +55,7 @@ function getInstalledSkillsDir(): string {
 }
 
 function getClaudeSkillsDir(): string {
-  return path.join(os.homedir(), ".claude", "skills");
+  return path.join(getClaudeConfigDir(), "skills");
 }
 
 function computeContentHash(content: string): string {

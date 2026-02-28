@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import type { ErrorResponse } from '@/types';
+import { getClaudeConfigDir } from '@/lib/platform';
 
 export interface SkillInfo {
   name: string;
@@ -18,7 +19,7 @@ export interface SkillsResponse {
 }
 
 function getClaudeDir(): string {
-  return path.join(os.homedir(), '.claude');
+  return getClaudeConfigDir();
 }
 
 function discoverSkills(): SkillInfo[] {

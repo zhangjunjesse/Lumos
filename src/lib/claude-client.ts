@@ -95,6 +95,132 @@ function findClaudePath(): string | undefined {
 }
 
 /**
+ * Find the system `node` binary. Required in packaged Electron apps where
+ * process.execPath points to the Electron binary (which lacks web globals
+ * like ReadableStream that the CLI needs).
+ */
+let _cachedNodePath: string | null | undefined;
+
+/** Check if a node binary is version >= 18 (required for ReadableStream etc.) */
+function isNodeVersionOk(nodePath: string): boolean {
+  try {
+    const { execFileSync } = require('child_process');
+    const ver = execFileSync(nodePath, ['--version'], {
+      timeout: 3000, encoding: 'utf-8', stdio: 'pipe',
+    }).toString().trim();
+    const major = parseInt(ver.replace(/^v/, ''), 10);
+    return major >= 18;
+  } catch {
+    return false;
+  }
+}
+
+function findSystemNode(): string | undefined {
+  if (_cachedNodePath !== undefined) return _cachedNodePath || undefined;
+
+  const candidates: string[] = [];
+  const home = os.homedir();
+
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    candidates.push(path.join(programFiles, 'nodejs', 'node.exe'));
+  } else {
+    const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+    // nvm current symlink
+    candidates.push(path.join(nvmDir, 'current', 'bin', 'node'));
+    // Scan nvm versions directory for installed nodes (newest first)
+    try {
+      const versionsDir = path.join(nvmDir, 'versions', 'node');
+      if (fs.existsSync(versionsDir)) {
+        const versions = fs.readdirSync(versionsDir)
+          .filter(v => v.startsWith('v'))
+          .sort((a, b) => {
+            const pa = a.replace('v', '').split('.').map(Number);
+            const pb = b.replace('v', '').split('.').map(Number);
+            for (let i = 0; i < 3; i++) {
+              if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
+            }
+            return 0;
+          });
+        for (const v of versions) {
+          candidates.push(path.join(versionsDir, v, 'bin', 'node'));
+        }
+      }
+    } catch { /* skip */ }
+    // nvm versioned paths from PATH
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      if (dir.includes('.nvm/versions/node')) {
+        candidates.push(path.join(dir, 'node'));
+      }
+    }
+    // Common system locations (checked AFTER nvm)
+    candidates.push(
+      '/opt/homebrew/bin/node',
+      '/usr/local/bin/node',
+      '/usr/bin/node',
+      path.join(home, '.local', 'bin', 'node'),
+    );
+  }
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p) && isNodeVersionOk(p)) {
+        _cachedNodePath = p;
+        console.log(`[findSystemNode] Found node >= 18: ${p}`);
+        return p;
+      }
+    } catch { /* skip */ }
+  }
+
+  // Last resort: `which node`
+  try {
+    const { execFileSync } = require('child_process');
+    const cmd = process.platform === 'win32' ? 'where' : '/usr/bin/which';
+    const result = execFileSync(cmd, ['node'], {
+      timeout: 3000, encoding: 'utf-8', stdio: 'pipe',
+      env: { ...process.env, PATH: getExpandedPath() },
+    });
+    const found = result.toString().trim().split(/\r?\n/)[0]?.trim();
+    if (found && fs.existsSync(found)) {
+      _cachedNodePath = found;
+      return found;
+    }
+  } catch { /* not found */ }
+
+  _cachedNodePath = null;
+  return undefined;
+}
+
+/**
+ * Find the SDK's bundled cli.js as a fallback when no system Claude CLI is installed.
+ * The SDK package includes a complete Claude Code CLI at its root as cli.js.
+ */
+function findBundledCliPath(): string | undefined {
+  // 1. process.cwd() — most reliable in packaged Electron app where
+  //    cwd is set to standalone/ by the main process.
+  //    Also works in dev mode where cwd is the project root.
+  const cwdCandidate = path.join(
+    process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'
+  );
+  if (fs.existsSync(cwdCandidate)) return cwdCandidate;
+
+  // 2. require.resolve — works in dev mode with normal Node.js resolution.
+  //    NOTE: webpack compiles this to a numeric module ID in production,
+  //    so it will fail in the packaged app (caught by try/catch).
+  try {
+    const sdkPkg = require.resolve('@anthropic-ai/claude-agent-sdk/package.json');
+    if (typeof sdkPkg === 'string' && sdkPkg.includes('claude-agent-sdk')) {
+      const cliPath = path.join(path.dirname(sdkPkg), 'cli.js');
+      if (fs.existsSync(cliPath)) return cliPath;
+    }
+  } catch {
+    // SDK not resolvable via require.resolve (e.g. in standalone build)
+  }
+
+  return undefined;
+}
+
+/**
  * Convert our MCPServerConfig to the SDK's McpServerConfig format.
  * Supports stdio, sse, and http transport types.
  */
@@ -286,6 +412,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       // Hoist activeProvider so it's accessible in the catch block for error messages
       const activeProvider: ApiProvider | undefined = options.provider ?? getActiveProvider();
 
+      // Hoist execPath override vars so they're accessible in the finally block
+      const originalExecPath = process.execPath;
+      let systemNode: string | undefined;
+
       try {
         // Build env for the Claude Code subprocess.
         // Start with process.env (includes user shell env from Electron's loadUserShellEnv).
@@ -297,6 +427,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         if (!sdkEnv.USERPROFILE) sdkEnv.USERPROFILE = os.homedir();
         // Ensure SDK subprocess has expanded PATH (consistent with Electron mode)
         sdkEnv.PATH = getExpandedPath();
+
+        // When running inside Electron, process.execPath is the Electron binary.
+        // The SDK uses process.execPath to fork the CLI subprocess, but Electron's
+        // Node.js runtime lacks web globals like ReadableStream, causing the CLI to
+        // crash with "ReferenceError: ReadableStream is not defined".
+        // Setting ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave as plain
+        // Node.js in child processes, restoring all expected globals.
+        sdkEnv.ELECTRON_RUN_AS_NODE = '1';
 
         // Remove CLAUDECODE env var to prevent "nested session" detection.
         // When CodePilot is launched from within a Claude Code CLI session
@@ -310,6 +448,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (gitBashPath) {
             sdkEnv.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
           }
+        }
+
+        // Sandbox: isolate CLI config directory so it doesn't read/write ~/.claude/
+        const claudeConfigDir = process.env.CODEPILOT_CLAUDE_CONFIG_DIR;
+        if (claudeConfigDir) {
+          sdkEnv.CLAUDE_CONFIG_DIR = claudeConfigDir;
         }
 
         if (activeProvider && activeProvider.api_key) {
@@ -373,36 +517,39 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ? 'bypassPermissions'
             : ((permissionMode as Options['permissionMode']) || 'acceptEdits'),
           env: sanitizeEnv(sdkEnv),
-          // Load settings so the SDK behaves like the CLI (tool permissions,
-          // CLAUDE.md, etc.). When an active provider is configured in
-          // CodePilot, skip 'user' settings because ~/.claude/settings.json
-          // may contain env overrides (ANTHROPIC_BASE_URL, ANTHROPIC_MODEL,
-          // etc.) that would conflict with the provider's configuration.
-          settingSources: activeProvider?.api_key
-            ? ['project', 'local']
-            : ['user', 'project', 'local'],
+          // Sandbox isolation: don't read any file-system settings.
+          // All config (API key, MCP servers) is injected programmatically.
+          settingSources: [],
         };
 
         if (skipPermissions) {
           queryOptions.allowDangerouslySkipPermissions = true;
         }
 
-        // Find claude binary for packaged app where PATH is limited.
-        // On Windows, npm installs Claude CLI as a .cmd wrapper which cannot
-        // be spawned directly without shell:true. Parse the wrapper to
-        // extract the real .js script path and pass that to the SDK instead.
-        const claudePath = findClaudePath();
-        if (claudePath) {
-          const ext = path.extname(claudePath).toLowerCase();
-          if (ext === '.cmd' || ext === '.bat') {
-            const scriptPath = resolveScriptFromCmd(claudePath);
-            if (scriptPath) {
-              queryOptions.pathToClaudeCodeExecutable = scriptPath;
+        // --- Sandbox mode: always use the SDK's bundled CLI ---
+        // In packaged Electron apps, process.execPath is the Electron binary
+        // which lacks web globals (ReadableStream etc.) that the CLI needs.
+        // We override process.execPath to the system `node` so the SDK forks
+        // the CLI with a proper Node.js runtime. The bundled CLI ensures the
+        // app is self-contained and doesn't depend on a system-installed
+        // Claude Code CLI.
+        const bundledCli = findBundledCliPath();
+        if (bundledCli) {
+          queryOptions.pathToClaudeCodeExecutable = bundledCli;
+          console.log('[claude-client] Sandbox: using bundled CLI:', bundledCli);
+        } else {
+          // Fallback: try system CLI (dev mode or bundled CLI missing)
+          const claudePath = findClaudePath();
+          if (claudePath) {
+            const ext = path.extname(claudePath).toLowerCase();
+            if (ext === '.cmd' || ext === '.bat') {
+              const scriptPath = resolveScriptFromCmd(claudePath);
+              if (scriptPath) {
+                queryOptions.pathToClaudeCodeExecutable = scriptPath;
+              }
             } else {
-              console.warn('[claude-client] Could not resolve .js path from .cmd wrapper, falling back to SDK resolution:', claudePath);
+              queryOptions.pathToClaudeCodeExecutable = claudePath;
             }
-          } else {
-            queryOptions.pathToClaudeCodeExecutable = claudePath;
           }
         }
 
@@ -453,6 +600,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
+          // Auto-approve built-in MCP server tools (e.g. feishu)
+          if (toolName.startsWith('mcp__feishu__')) {
+            return { behavior: 'allow' as const, updatedInput: input };
+          }
           const permissionRequestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
           const permEvent: PermissionRequestEvent = {
@@ -629,6 +780,20 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         let finalPrompt = buildFinalPrompt(!shouldResume);
+
+        // Sandbox: override process.execPath AND PATH so the SDK forks the
+        // CLI with a proper Node.js >= 18 instead of the Electron binary.
+        // The SDK uses child_process.spawn('node', ...) which resolves from
+        // PATH, so we must prepend the correct node directory to PATH.
+        // We also override process.execPath for any fork() calls.
+        systemNode = findSystemNode();
+        if (systemNode) {
+          process.execPath = systemNode;
+          const nodeDir = path.dirname(systemNode);
+          sdkEnv.PATH = `${nodeDir}${path.delimiter}${sdkEnv.PATH || ''}`;
+          queryOptions.env = sanitizeEnv(sdkEnv);
+          console.log('[claude-client] Sandbox: execPath →', systemNode, '| PATH prepended:', nodeDir);
+        }
 
         // Try to start the conversation. If resuming a previous session fails
         // (e.g. stale/corrupt session file, CLI version mismatch), automatically
@@ -888,6 +1053,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         controller.close();
       } finally {
+        // Restore original execPath after SDK conversation ends
+        if (systemNode) {
+          process.execPath = originalExecPath;
+        }
         unregisterConversation(sessionId);
       }
     },

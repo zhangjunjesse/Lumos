@@ -3,9 +3,10 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
+import { getClaudeConfigDir } from "@/lib/platform";
 
 function getGlobalCommandsDir(): string {
-  return path.join(os.homedir(), ".claude", "commands");
+  return path.join(getClaudeConfigDir(), "commands");
 }
 
 function getProjectCommandsDir(cwd?: string): string {
@@ -17,7 +18,7 @@ function getInstalledSkillsDir(): string {
 }
 
 function getClaudeSkillsDir(): string {
-  return path.join(os.homedir(), ".claude", "skills");
+  return path.join(getClaudeConfigDir(), "skills");
 }
 
 type InstalledSource = "agents" | "claude";

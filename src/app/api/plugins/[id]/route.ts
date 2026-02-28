@@ -3,9 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import type { PluginInfo, ErrorResponse, SuccessResponse } from '@/types';
+import { getClaudeConfigDir } from '@/lib/platform';
 
 function getClaudeDir(): string {
-  return path.join(os.homedir(), '.claude');
+  return getClaudeConfigDir();
 }
 
 function getSettingsPath(): string {
