@@ -595,6 +595,18 @@ export function ProviderManager() {
     } catch { /* ignore */ }
   }, []);
 
+  const handleResetBuiltin = async (provider: ApiProvider) => {
+    if (!confirm(t('provider.resetConfirm'))) return;
+    try {
+      const res = await fetch(`/api/providers/${provider.id}/reset`, { method: 'POST' });
+      if (res.ok) {
+        const result = await res.json();
+        setProviders(prev => prev.map(p => p.id === provider.id ? result.provider : p));
+        window.dispatchEvent(new Event('provider-changed'));
+      }
+    } catch { /* ignore */ }
+  };
+
   const sorted = [...providers].sort((a, b) => a.sort_order - b.sort_order);
 
   return (
@@ -661,13 +673,32 @@ export function ProviderManager() {
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                         {provider.api_key ? "API Key" : t('provider.configured')}
                       </Badge>
+                      {provider.is_builtin === 1 && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                          {t('provider.builtin')}
+                        </Badge>
+                      )}
+                      {provider.user_modified === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                          {t('provider.modified')}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {provider.is_builtin === 1 && provider.user_modified === 1 && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => handleResetBuiltin(provider)}
+                      >
+                        {t('provider.resetToDefault')}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      title="Edit"
+                      title={t('common.edit')}
                       onClick={() => handleEdit(provider)}
                     >
                       <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3" />
@@ -792,6 +823,16 @@ export function ProviderManager() {
         mode="edit"
         provider={editingProvider}
         onSave={handleEditSave}
+        onReset={editingProvider?.is_builtin === 1 ? async () => {
+          if (editingProvider) {
+            const res = await fetch(`/api/providers/${editingProvider.id}/reset`, { method: 'POST' });
+            if (res.ok) {
+              const result = await res.json();
+              setProviders(prev => prev.map(p => p.id === editingProvider.id ? result.provider : p));
+              window.dispatchEvent(new Event('provider-changed'));
+            }
+          }
+        } : undefined}
         initialPreset={null}
       />
 
@@ -809,18 +850,22 @@ export function ProviderManager() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('provider.disconnectProvider')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('provider.disconnectConfirm', { name: deleteTarget?.name ?? '' })}
+              {deleteTarget?.is_builtin === 1
+                ? t('provider.cannotDeleteBuiltin')
+                : t('provider.disconnectConfirm', { name: deleteTarget?.name ?? '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDisconnect}
-              disabled={deleting}
-              className="bg-destructive text-white hover:bg-destructive/90"
-            >
-              {deleting ? t('provider.disconnecting') : t('provider.disconnect')}
-            </AlertDialogAction>
+            {deleteTarget?.is_builtin !== 1 && (
+              <AlertDialogAction
+                onClick={handleDisconnect}
+                disabled={deleting}
+                className="bg-destructive text-white hover:bg-destructive/90"
+              >
+                {deleting ? t('provider.disconnecting') : t('provider.disconnect')}
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

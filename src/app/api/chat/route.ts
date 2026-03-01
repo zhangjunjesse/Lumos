@@ -24,7 +24,7 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
   // Built-in: Feishu MCP server
   const feishuPath = getFeishuMcpPath();
   if (feishuPath) {
-    const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+    const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
     merged['feishu'] = {
       command: 'node',
       args: [feishuPath],

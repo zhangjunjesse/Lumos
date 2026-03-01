@@ -11,6 +11,8 @@ import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Copy01Icon, Tick01Icon, ArrowDown01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ImageGenConfirmation } from './ImageGenConfirmation';
 import { ImageGenCard } from './ImageGenCard';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
@@ -268,6 +270,7 @@ function parseMessageFiles(content: string): { files: FileAttachment[]; text: st
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -281,18 +284,22 @@ function CopyButton({ text }: { text: string }) {
   }, [text]);
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted transition-colors"
-      title="Copy"
-    >
-      {copied ? (
-        <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3 text-green-500" />
-      ) : (
-        <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
-      )}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="cursor-pointer inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted transition-colors"
+        >
+          {copied ? (
+            <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3 text-green-500" />
+          ) : (
+            <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{t('common.copy')}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -317,6 +324,7 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
 const COLLAPSE_HEIGHT = 300;
 
 export function MessageItem({ message }: MessageItemProps) {
+  const { t } = useTranslation();
   const isUser = message.role === 'user';
 
   // Collapse/expand state for long user messages (hooks must be called unconditionally)
@@ -399,23 +407,28 @@ export function MessageItem({ message }: MessageItemProps) {
                 <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-secondary to-transparent pointer-events-none" />
               )}
               {isOverflowing && (
-                <button
-                  type="button"
-                  onClick={() => setIsExpanded(!isExpanded)}
-                  className="relative z-10 flex items-center gap-1 mt-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {isExpanded ? (
-                    <>
-                      <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
-                      <span>收起</span>
-                    </>
-                  ) : (
-                    <>
-                      <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
-                      <span>展开</span>
-                    </>
-                  )}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setIsExpanded(!isExpanded)}
+                      className="cursor-pointer relative z-10 flex items-center gap-1 mt-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {isExpanded ? (
+                        <>
+                          <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
+                          <span>收起</span>
+                        </>
+                      ) : (
+                        <>
+                          <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
+                          <span>展开</span>
+                        </>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{isExpanded ? t('tooltip.collapseMessage') : t('tooltip.expandMessage')}</TooltipContent>
+                </Tooltip>
               )}
             </div>
           ) : (() => {

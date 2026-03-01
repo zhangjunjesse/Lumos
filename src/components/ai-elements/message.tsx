@@ -2,6 +2,7 @@
 
 import type { UIMessage } from "ai";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
+import { useTranslation } from "@/hooks/useTranslation";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -260,10 +261,11 @@ export const MessageBranchPrevious = ({
   ...props
 }: MessageBranchPreviousProps) => {
   const { goToPrevious, totalBranches } = useMessageBranch();
+  const { t } = useTranslation();
 
   return (
     <Button
-      aria-label="Previous branch"
+      aria-label={t('common.previousBranch')}
       disabled={totalBranches <= 1}
       onClick={goToPrevious}
       size="icon-sm"
@@ -283,10 +285,11 @@ export const MessageBranchNext = ({
   ...props
 }: MessageBranchNextProps) => {
   const { goToNext, totalBranches } = useMessageBranch();
+  const { t } = useTranslation();
 
   return (
     <Button
-      aria-label="Next branch"
+      aria-label={t('common.nextBranch')}
       disabled={totalBranches <= 1}
       onClick={goToNext}
       size="icon-sm"

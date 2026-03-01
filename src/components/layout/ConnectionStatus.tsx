@@ -165,7 +165,7 @@ export function ConnectionStatus() {
               <div className="flex items-center gap-3 rounded-lg bg-emerald-500/10 px-4 py-3">
                 <span className="block h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500" />
                 <div>
-                  <p className="font-medium text-emerald-700 dark:text-emerald-400">Active</p>
+                  <p className="font-medium text-emerald-700 dark:text-emerald-400">{t('common.active')}</p>
                   <p className="text-xs text-muted-foreground">{t('connection.version', { version: status?.version ?? '' })}</p>
                 </div>
               </div>
@@ -174,7 +174,7 @@ export function ConnectionStatus() {
             <div className="space-y-4 text-sm">
               <div className="flex items-center gap-3 rounded-lg bg-red-500/10 px-4 py-3">
                 <span className="block h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
-                <p className="font-medium text-red-700 dark:text-red-400">Not detected</p>
+                <p className="font-medium text-red-700 dark:text-red-400">{t('common.notDetected')}</p>
               </div>
 
               <div>

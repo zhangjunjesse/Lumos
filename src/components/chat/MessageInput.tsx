@@ -963,7 +963,7 @@ export function MessageInput({
                 )}
                 {!item.builtIn && item.installedSource && (
                   <span className="text-xs text-muted-foreground shrink-0 ml-auto">
-                    {item.installedSource === 'claude' ? 'Personal' : 'Agents'}
+                    {item.installedSource === 'claude' ? t('messageInput.personal') : t('messageInput.agents')}
                   </span>
                 )}
               </button>
@@ -979,7 +979,7 @@ export function MessageInput({
                     <input
                       ref={searchInputRef}
                       type="text"
-                      placeholder="Search..."
+                      placeholder={t('messageInput.search')}
                       value={popoverFilter}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -1015,7 +1015,7 @@ export function MessageInput({
                   </div>
                 ) : (
                   <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b">
-                    Files
+                    {t('messageInput.files')}
                   </div>
                 )}
                 <div className="max-h-48 overflow-y-auto py-1">
@@ -1026,7 +1026,7 @@ export function MessageInput({
                       {builtInItems.length > 0 && (
                         <>
                           <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                            Commands
+                            {t('messageInput.commands')}
                           </div>
                           {builtInItems.map((item) => {
                             const idx = globalIdx++;
@@ -1037,7 +1037,7 @@ export function MessageInput({
                       {projectItems.length > 0 && (
                         <>
                           <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                            Project Commands
+                            {t('messageInput.projectCommands')}
                           </div>
                           {projectItems.map((item) => {
                             const idx = globalIdx++;
@@ -1048,7 +1048,7 @@ export function MessageInput({
                       {skillItems.length > 0 && (
                         <>
                           <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                            Skills
+                            {t('messageInput.skills')}
                           </div>
                           {skillItems.map((item) => {
                             const idx = globalIdx++;
@@ -1112,7 +1112,7 @@ export function MessageInput({
             <FileAttachmentsCapsules />
             <PromptInputTextarea
               ref={textareaRef}
-              placeholder={badge ? "Add details (optional), then press Enter..." : "Message Claude..."}
+              placeholder={badge ? t('messageInput.badgePlaceholder') : t('messageInput.placeholder')}
               value={inputValue}
               onChange={(e) => handleInputChange(e.currentTarget.value)}
               onKeyDown={handleKeyDown}

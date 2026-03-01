@@ -17,6 +17,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { CodeBlock } from './CodeBlock';
+import { useTranslation } from '@/hooks/useTranslation';
 
 type ToolStatus = 'running' | 'success' | 'error';
 
@@ -151,6 +152,7 @@ export function ToolCallBlock({
   duration,
 }: ToolCallBlockProps) {
   const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation();
   const category = getToolCategory(name);
   const toolIconData = getToolIcon(category);
   const summary = getToolSummary(name, input, category);
@@ -262,14 +264,14 @@ export function ToolCallBlock({
         return (
           <div className="space-y-2">
             <div>
-              <div className="text-xs font-medium text-muted-foreground mb-1">Input</div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">{t('tool.input')}</div>
               <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2">
                 {JSON.stringify(input, null, 2)}
               </pre>
             </div>
             {result && (
               <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Output</div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">{t('tool.output')}</div>
                 <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 max-h-60 overflow-auto">
                   {result.slice(0, 3000)}
                 </pre>

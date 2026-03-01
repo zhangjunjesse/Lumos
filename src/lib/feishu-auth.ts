@@ -9,7 +9,7 @@ import os from "os";
 
 const FEISHU_BASE_URL = "https://open.feishu.cn/open-apis";
 
-const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
 const TOKEN_FILE = path.join(dataDir, "auth", "feishu.json");
 
 export interface FeishuUserInfo {

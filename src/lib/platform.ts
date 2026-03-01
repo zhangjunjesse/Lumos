@@ -10,12 +10,40 @@ export const isWindows = process.platform === 'win32';
 export const isMac = process.platform === 'darwin';
 
 /**
+ * Get environment variable with backward compatibility.
+ * Supports both new (LUMOS_*) and old (CODEPILOT_*) variable names.
+ * New names take precedence.
+ */
+export function getEnvVar(newName: string, oldName: string, defaultValue?: string): string | undefined {
+  const newValue = process.env[newName];
+  const oldValue = process.env[oldName];
+
+  if (newValue) {
+    return newValue;
+  }
+
+  if (oldValue) {
+    console.warn(`[platform] Environment variable ${oldName} is deprecated. Please use ${newName} instead.`);
+    return oldValue;
+  }
+
+  return defaultValue;
+}
+
+/**
+ * Set environment variable (for internal use).
+ */
+export function setEnvVar(name: string, value: string): void {
+  process.env[name] = value;
+}
+
+/**
  * Return the Claude config directory, respecting sandbox isolation.
- * In sandboxed mode (CODEPILOT_CLAUDE_CONFIG_DIR set), returns the app's
- * own .claude/ directory instead of ~/.claude/.
+ * In sandboxed mode (LUMOS_CLAUDE_CONFIG_DIR or CODEPILOT_CLAUDE_CONFIG_DIR set),
+ * returns the app's own .claude/ directory instead of ~/.claude/.
  */
 export function getClaudeConfigDir(): string {
-  return process.env.CODEPILOT_CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  return getEnvVar('LUMOS_CLAUDE_CONFIG_DIR', 'CODEPILOT_CLAUDE_CONFIG_DIR') || path.join(os.homedir(), '.claude');
 }
 
 /**

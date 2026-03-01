@@ -2,7 +2,9 @@ import type { TranslationKey } from './en';
 
 const zh: Record<TranslationKey, string> = {
   // ── Navigation ──────────────────────────────────────────────
+  'nav.documents': '文档',
   'nav.chats': '对话',
+  'nav.knowledge': '知识库',
   'nav.extensions': '扩展',
   'nav.settings': '设置',
   'nav.autoApproveOn': '自动批准已开启',
@@ -42,19 +44,38 @@ const zh: Record<TranslationKey, string> = {
   'messageInput.modeCode': '代码',
   'messageInput.modePlan': '计划',
   'messageInput.aiSuggested': 'AI 推荐',
+  'messageInput.search': '搜索...',
+
+  // ── Code block ─────────────────────────────────────────────
+  'codeBlock.copyCode': '复制代码',
+  'codeBlock.copyMarkdown': '复制为 Markdown',
+  'codeBlock.copied': '已复制',
+  'codeBlock.copy': '复制',
+  'codeBlock.markdown': 'Markdown',
+  'codeBlock.collapse': '收起',
+
+  'messageInput.placeholder': '向 Claude 发送消息...',
+  'messageInput.badgePlaceholder': '添加详情（可选），然后按回车...',
+  'messageInput.submit': '发送',
+  'messageInput.stop': '停止',
 
   // ── Streaming message ───────────────────────────────────────
   'streaming.thinking': '思考中...',
   'streaming.allowForSession': '本次会话允许',
   'streaming.allowed': '已允许',
   'streaming.denied': '已拒绝',
+  'streaming.typeAnswer': '输入你的回答...',
+  'streaming.runningLong': '运行时间超出预期',
+  'streaming.toolStuck': '工具可能卡住了',
+  'streaming.answerSubmitted': '回答已提交',
+  'streaming.planRejected': '计划已拒绝',
 
   // ── Chat view / session page ────────────────────────────────
   'chat.newConversation': '新对话',
 
   // ── Settings: General ───────────────────────────────────────
   'settings.title': '设置',
-  'settings.description': '管理 CodePilot 和 Claude CLI 设置',
+  'settings.description': '管理 Lumos 和 Claude CLI 设置',
   'settings.general': '通用',
   'settings.providers': '服务商',
   'settings.claudeCli': 'Claude CLI',
@@ -142,7 +163,12 @@ const zh: Record<TranslationKey, string> = {
   'provider.disconnecting': '断开中...',
   'provider.disconnectProvider': '断开提供商',
   'provider.disconnectConfirm': '确定要断开"{name}"吗？此操作无法撤销。',
-  'provider.ccSwitchHint': '通过类似 cc switch 等工具添加的 Claude Code 配置可能无法被 CodePilot 读取，建议在此处重新添加。',
+  'provider.builtin': '内置',
+  'provider.modified': '已修改',
+  'provider.resetToDefault': '重置为默认',
+  'provider.resetConfirm': '将此提供商重置为默认设置？',
+  'provider.cannotDeleteBuiltin': '内置提供商无法删除。您可以将其重置为默认设置。',
+  'provider.ccSwitchHint': '通过类似 cc switch 等工具添加的 Claude Code 配置可能无法被 Lumos 读取，建议在此处重新添加。',
   'provider.addProviderSection': '添加提供商',
   'provider.addProviderDesc': '选择要连接的提供商。大多数预设只需填写 API 密钥。',
 
@@ -291,6 +317,8 @@ const zh: Record<TranslationKey, string> = {
   'tool.running': '运行中',
   'tool.success': '成功',
   'tool.error': '错误',
+  'tool.input': '输入',
+  'tool.output': '输出',
 
   // ── Common ──────────────────────────────────────────────────
   'common.cancel': '取消',
@@ -300,6 +328,15 @@ const zh: Record<TranslationKey, string> = {
   'common.close': '关闭',
   'common.enabled': '已启用',
   'common.disabled': '已禁用',
+  'common.copy': '复制',
+  'common.edit': '编辑',
+  'common.active': '运行中',
+  'common.notDetected': '未检测到',
+  'common.uploadFiles': '上传文件',
+  'common.imagePreview': '图片预览',
+  'common.previousBranch': '上一分支',
+  'common.nextBranch': '下一分支',
+  'common.addToChat': '添加到对话',
 
   // ── Error boundary ────────────────────────────────────────
   'error.title': '出错了',
@@ -320,7 +357,7 @@ const zh: Record<TranslationKey, string> = {
 
   // ── Image Generation ──────────────────────────────────────
   'imageGen.toggle': '图片生成',
-  'imageGen.toggleLabel': 'Image Agent',
+  'imageGen.toggleLabel': '图片助手',
   'imageGen.toggleTooltip': '切换 Image Agent — AI 自动分析意图，支持单张和批量生图',
   'imageGen.generating': '正在生成图片...',
   'imageGen.params': '生成参数',
@@ -439,6 +476,254 @@ const zh: Record<TranslationKey, string> = {
   'cli.field.verbose': '详细日志',
   'cli.field.theme': '主题',
   'cli.formatError': '无法格式化：无效的 JSON',
+
+  // ── Sidebar / Layout ──────────────────────────────────────
+  'sidebar.aiAssistant': 'AI 助手',
+  'sidebar.workspace': '工作区',
+  'sidebar.recent': '最近',
+  'sidebar.starred': '收藏',
+  'sidebar.trash': '回收站',
+  'sidebar.knowledge': '知识库',
+  'sidebar.extensions': '扩展',
+  'sidebar.settings': '设置',
+  'sidebar.workspaces': '工作区',
+  'sidebar.noWorkspaces': '暂无工作区',
+  'sidebar.openFolder': '打开文件夹',
+  'sidebar.collapseSidebar': '收起侧边栏',
+  'sidebar.expandSidebar': '展开侧边栏',
+  'sidebar.lightMode': '浅色模式',
+  'sidebar.darkMode': '深色模式',
+
+  // ── Top bar ───────────────────────────────────────────────
+  'topbar.workspace': '工作区',
+  'topbar.recent': '最近',
+  'topbar.starred': '收藏',
+  'topbar.trash': '回收站',
+  'topbar.knowledge': '知识库',
+  'topbar.settings': '设置',
+  'topbar.document': '文档',
+  'topbar.chat': '对话',
+  'topbar.search': '搜索...',
+  'topbar.lightMode': '浅色模式',
+  'topbar.darkMode': '深色模式',
+
+  // ── Workspace / Homepage ──────────────────────────────────
+  'workspace.whatCreate': '你想创建什么？',
+  'workspace.start': '开始',
+  'workspace.welcomeToLumos': '欢迎使用 Lumos',
+  'workspace.subtitle': 'AI 驱动的智能工作区',
+  'workspace.aiWriting': 'AI 写作',
+  'workspace.describeIdea': '描述你的想法',
+  'workspace.import': '导入',
+  'workspace.existingDocuments': '已有文档',
+  'workspace.blank': '空白文档',
+  'workspace.startFromScratch': '从零开始',
+  'workspace.placeholderProposal': '帮我写一份项目提案...',
+  'workspace.placeholderSummarize': '总结这篇文章的要点...',
+  'workspace.placeholderEmail': '帮我起草一封团队邮件...',
+  'workspace.placeholderMeeting': '创建明天的会议议程...',
+  'workspace.templateBlankDoc': '空白文档',
+  'workspace.templateMeetingNotes': '会议记录',
+  'workspace.templateWeeklyReport': '周报',
+  'workspace.templateReadingNotes': '读书笔记',
+  'workspace.templateTechSpec': '技术方案',
+  'workspace.filterAll': '全部',
+  'workspace.filterDocuments': '文档',
+  'workspace.filterConversations': '对话',
+  'workspace.noItemsMatch': '没有匹配当前筛选的内容。',
+  'workspace.empty': '空',
+  'workspace.indexed': '已索引',
+  'workspace.messageCount': '{n} 条消息',
+  'workspace.listView': '列表',
+  'workspace.gridView': '网格',
+
+  // ── Knowledge page ────────────────────────────────────────
+  'knowledge.title': '知识库',
+  'knowledge.searchPlaceholder': '搜索知识库...',
+  'knowledge.search': '搜索',
+  'knowledge.newCollectionPlaceholder': '新建集合...',
+  'knowledge.addCollection': '+',
+  'knowledge.items': '条目',
+  'knowledge.import': '导入',
+  'knowledge.delete': '删除',
+  'knowledge.selectCollectionHint': '选择一个集合以查看条目',
+  'knowledge.readyStatus': '知识库就绪 · 已索引 {n} 篇文档',
+  'knowledge.indexingStatus': '正在索引 {n} 篇文档...',
+  'knowledge.emptyStatus': '知识库为空',
+  'knowledge.manage': '管理',
+  'knowledge.sourceManual': '手动',
+  'knowledge.sourceFile': '本地文件',
+  'knowledge.sourceFeishu': '飞书',
+  'knowledge.sourceWeb': '网页',
+  'knowledge.noItems': '该集合暂无条目',
+
+  // ── Documents page ────────────────────────────────────────
+  'documents.title': '文档',
+  'documents.newDocument': '新建文档',
+  'documents.noDocuments': '暂无文档',
+  'documents.createFirst': '创建你的第一篇文档',
+  'documents.emptyDocument': '空文档',
+
+  // ── Editor ────────────────────────────────────────────────
+  'editor.back': '返回',
+  'editor.untitledDocument': '无标题文档',
+  'editor.unsaved': '未保存',
+  'editor.saving': '保存中...',
+  'editor.saved': '已保存',
+  'editor.saveFailed': '保存失败',
+  'editor.openAiPanel': '打开 AI 面板 (Cmd+L)',
+  'editor.selectedText': '选中文本',
+  'editor.knowledgeBase': '知识库',
+  'editor.aiAssistant': 'AI 助手',
+  'editor.pinPanel': '固定面板',
+  'editor.closePanel': '关闭 (Cmd+L)',
+  'editor.context': '上下文',
+  'editor.currentDocument': '当前文档',
+  'editor.tabChat': '对话',
+  'editor.tabOutline': '大纲',
+  'editor.tabReferences': '引用',
+  'editor.askAiPlaceholder': '向 AI 提问关于文档的问题...',
+  'editor.askAiHint': '让 AI 帮助你处理文档。',
+  'editor.continue': '续写',
+  'editor.polish': '润色',
+  'editor.translate': '翻译',
+  'editor.summarize': '总结',
+  'editor.qa': '问答',
+  'editor.outlinePlaceholder': '文档大纲将显示在此处。',
+  'editor.referencesPlaceholder': '引用来源将显示在此处。',
+  'editor.expand': '扩写',
+  'editor.explain': '解释',
+  'editor.custom': '自定义',
+  'editor.customInstruction': '自定义指令...',
+  'editor.go': '执行',
+  'editor.placeholder': '开始写作，或输入 / 调用命令...',
+  'editor.failedResponse': '获取回复失败。',
+  'editor.slashContinueDesc': '从上下文续写',
+  'editor.slashOutlineDesc': '生成文档大纲',
+  'editor.slashBrainstormDesc': '围绕主题头脑风暴',
+  'editor.slashTranslateDesc': '翻译上一段落',
+  'editor.slashSummarizeDesc': '总结全文',
+  'editor.slashRestyleDesc': '更改写作风格',
+  'editor.slashCiteDesc': '从知识库搜索并引用',
+  'editor.slashKbWriteDesc': '基于知识库写作',
+  'editor.slashTableDesc': '插入表格',
+  'editor.slashCodeBlockDesc': '插入代码块',
+  'editor.slashDividerDesc': '插入分割线',
+  'editor.categoryAi': 'AI 写作',
+  'editor.categoryKnowledge': '知识库',
+  'editor.categoryContent': '内容',
+
+  // ── Editor toolbar ──────────────────────────────────────────
+  'editor.blockquote': '引用块',
+  'editor.horizontalRule': '分割线',
+  'editor.insertLink': '插入链接',
+  'editor.insertImage': '插入图片',
+  'editor.insertTable': '插入表格',
+  'editor.urlPlaceholder': 'https://...',
+
+  // ── Document import ─────────────────────────────────────────
+  'docImport.title': '导入文档',
+  'docImport.feishuPlaceholder': '粘贴飞书文档链接...',
+
+  // ── Knowledge drawer ────────────────────────────────────────
+  'kbDrawer.title': '知识库',
+  'kbDrawer.searchPlaceholder': '搜索文档...',
+  'kbDrawer.storage': '存储',
+
+  // ── Knowledge import ────────────────────────────────────────
+  'kbImport.titlePlaceholder': '标题',
+  'kbImport.contentPlaceholder': '粘贴内容...',
+  'kbImport.filePathPlaceholder': '文件路径（如 /path/to/doc.pdf）',
+
+  // ── Conversations ───────────────────────────────────────────
+  'conversation.kbAvailable': '知识库可用',
+  'conversation.noDocsReferenced': '未引用文档',
+  'conversation.inputPlaceholder': '输入消息...',
+
+  // ── AI assistant modal ──────────────────────────────────────
+  'aiAssistant.title': 'AI 助手',
+  'aiAssistant.placeholder': '问我任何问题...',
+
+  // ── Reasoning ───────────────────────────────────────────────
+  'reasoning.thoughtForSeconds': '思考了几秒钟',
+
+  // ── Plugins ─────────────────────────────────────────────────
+  'plugins.searchPlaceholder': '按名称搜索技能...',
+  'plugins.source': '来源',
+  'plugins.type': '类型',
+  'plugins.content': '内容',
+
+  // ── Skills editor ───────────────────────────────────────────
+  'skills.unsavedChanges': '未保存的更改',
+
+  // ── Provider form ───────────────────────────────────────────
+  'provider.namePlaceholder': '我的 API 服务商',
+  'provider.baseUrlPlaceholder': 'https://api.anthropic.com',
+  'provider.apiKeyPlaceholder': '留空以保留当前密钥',
+
+  // ── Chat detail page ────────────────────────────────────────
+  'chat.openInFinder': '点击在 Finder 中打开',
+  'chat.startNewChat': '开始新对话',
+  'chat.sessionNotFound': '会话未找到',
+  'chat.failedLoadMessages': '加载消息失败',
+  'chat.selectProjectDir': '**请先选择一个项目目录。** 在侧边栏中选择或添加一个工作区后再发送消息。',
+
+  // ── Chat commands ─────────────────────────────────────────
+  'chat.helpTitle': '可用命令',
+  'chat.helpTips': '提示',
+  'chat.helpTipMention': '输入 `@` 引用文件',
+  'chat.helpTipNewline': '使用 Shift+Enter 换行',
+  'chat.helpTipFolder': '选择项目文件夹以启用文件操作',
+  'chat.helpTipSlash': '输入 `/` 浏览命令和技能',
+  'chat.helpInstantCommands': '即时命令',
+  'chat.helpPromptCommands': '提示命令（显示为标签，添加上下文后发送）',
+  'chat.helpCustomSkills': '自定义技能',
+  'chat.helpCustomSkillsDesc': '来自 `~/.claude/commands/` 和项目 `.claude/commands/` 的技能也可通过 `/` 使用。',
+  'chat.tokenUsageTitle': 'Token 用量',
+  'chat.tokenUsageHint': '发送消息后即可查看 Token 用量统计。查看每条助手回复底部显示的 Token 计数。',
+  'chat.noTokenUsageData': '暂无 Token 用量数据。请先发送一条消息。',
+  'chat.tokenInput': '输入 Token',
+  'chat.tokenOutput': '输出 Token',
+  'chat.tokenCacheRead': '缓存读取',
+  'chat.tokenCacheCreation': '缓存创建',
+  'chat.tokenTotal': '总 Token',
+  'chat.tokenTurns': '轮次',
+  'chat.tokenEstimatedCost': '预估费用',
+  'chat.tokenMetric': '指标',
+  'chat.tokenCount': '数量',
+  'chat.streamIdleTimeout': '流式超时 — {n}秒无响应。连接可能已断开。',
+  'chat.toolTimeout': '工具 {name} 在 {n}秒后超时',
+  'chat.generationStopped': '生成已停止',
+
+  // ── MessageInput popover ──────────────────────────────────
+  'messageInput.files': '文件',
+  'messageInput.commands': '命令',
+  'messageInput.projectCommands': '项目命令',
+  'messageInput.skills': '技能',
+  'messageInput.personal': '个人',
+  'messageInput.agents': '代理',
+
+  // ── Tooltips ──────────────────────────────────────────────
+  'tooltip.expandMessage': '展开消息',
+  'tooltip.collapseMessage': '收起消息',
+  'tooltip.copyCode': '复制代码',
+  'tooltip.copyMarkdown': '复制为 Markdown',
+  'tooltip.expandCode': '展开',
+  'tooltip.collapseCode': '收起',
+  'tooltip.previousImage': '上一张',
+  'tooltip.nextImage': '下一张',
+  'tooltip.addToFavorites': '添加到收藏',
+  'tooltip.removeFromFavorites': '取消收藏',
+  'tooltip.editTitle': '编辑标题',
+  'tooltip.showDetails': '显示详情',
+  'tooltip.hideDetails': '隐藏详情',
+  'tooltip.reindex': '重新索引',
+  'tooltip.removeFromKb': '从知识库移除',
+  'tooltip.activateWorkspace': '激活工作区',
+  'tooltip.addFolder': '添加项目文件夹',
+  'tooltip.deleteCollection': '删除集合',
+  'tooltip.deleteItem': '删除条目',
 };
+
 
 export default zh;

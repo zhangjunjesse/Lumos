@@ -20,6 +20,11 @@ import {
   DialogContent,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { TranslationKey } from '@/i18n';
 import type { GalleryItem } from './GalleryGrid';
@@ -139,20 +144,30 @@ export function GalleryDetail({
 
             {hasMultipleImages && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setCurrentImageIndex((i) => (i > 0 ? i - 1 : item.images.length - 1))}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10"
-                >
-                  <HugeiconsIcon icon={ArrowLeft01Icon} className="h-5 w-5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCurrentImageIndex((i) => (i < item.images.length - 1 ? i + 1 : 0))}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10"
-                >
-                  <HugeiconsIcon icon={ArrowRight01Icon} className="h-5 w-5" />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentImageIndex((i) => (i > 0 ? i - 1 : item.images.length - 1))}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
+                    >
+                      <HugeiconsIcon icon={ArrowLeft01Icon} className="h-5 w-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('tooltip.previousImage' as TranslationKey)}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentImageIndex((i) => (i < item.images.length - 1 ? i + 1 : 0))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
+                    >
+                      <HugeiconsIcon icon={ArrowRight01Icon} className="h-5 w-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('tooltip.nextImage' as TranslationKey)}</TooltipContent>
+                </Tooltip>
                 <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-2 py-0.5 text-xs text-white z-10">
                   {currentImageIndex + 1} / {item.images.length}
                 </div>
@@ -163,25 +178,34 @@ export function GalleryDetail({
           {/* Right: Info panel */}
           <div className="flex-1 min-w-0 border-l border-border/50 overflow-y-auto p-6 space-y-5">
             {/* Favorite button */}
-            <button
-              type="button"
-              onClick={() => onToggleFavorite?.(item.id)}
-              className={cn(
-                'flex items-center gap-1.5 text-sm transition-colors',
-                item.favorited
-                  ? 'text-red-500'
-                  : 'text-muted-foreground hover:text-red-500',
-              )}
-            >
-              <HugeiconsIcon
-                icon={FavouriteIcon}
-                className="h-5 w-5"
-                fill={item.favorited ? 'currentColor' : 'none'}
-              />
-              {item.favorited
-                ? t('gallery.removeFromFavorites' as TranslationKey)
-                : t('gallery.addToFavorites' as TranslationKey)}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onToggleFavorite?.(item.id)}
+                  className={cn(
+                    'flex items-center gap-1.5 text-sm transition-colors cursor-pointer',
+                    item.favorited
+                      ? 'text-red-500'
+                      : 'text-muted-foreground hover:text-red-500',
+                  )}
+                >
+                  <HugeiconsIcon
+                    icon={FavouriteIcon}
+                    className="h-5 w-5"
+                    fill={item.favorited ? 'currentColor' : 'none'}
+                  />
+                  {item.favorited
+                    ? t('gallery.removeFromFavorites' as TranslationKey)
+                    : t('gallery.addToFavorites' as TranslationKey)}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {item.favorited
+                  ? t('tooltip.removeFromFavorites' as TranslationKey)
+                  : t('tooltip.addToFavorites' as TranslationKey)}
+              </TooltipContent>
+            </Tooltip>
 
             {/* Prompt */}
             <div>

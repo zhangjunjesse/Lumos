@@ -11,7 +11,7 @@ import {
 } from '@/components/ai-elements/conversation';
 import { MessageItem } from './MessageItem';
 import { StreamingMessage } from './StreamingMessage';
-import { CodePilotLogo } from './CodePilotLogo';
+import { LumosLogo } from './LumosLogo';
 
 interface ToolUseInfo {
   id: string;
@@ -87,9 +87,9 @@ export function MessageList({
     return (
       <div className="flex flex-1 items-center justify-center">
         <ConversationEmptyState
-          title="Claude Chat"
+          title={t('messageList.claudeChat')}
           description={t('messageList.emptyDescription')}
-          icon={<CodePilotLogo className="h-16 w-16" />}
+          icon={<LumosLogo className="h-16 w-16" />}
         />
       </div>
     );

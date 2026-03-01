@@ -158,6 +158,7 @@ function AskUserQuestionUI({
   const [selections, setSelections] = useState<Record<string, Set<string>>>({});
   const [otherTexts, setOtherTexts] = useState<Record<string, string>>({});
   const [useOther, setUseOther] = useState<Record<string, boolean>>({});
+  const { t } = useTranslation();
 
   const toggleOption = (qIdx: string, label: string, multi: boolean) => {
     setSelections((prev) => {
@@ -248,7 +249,7 @@ function AskUserQuestionUI({
             {useOther[qIdx] && (
               <input
                 type="text"
-                placeholder="Type your answer..."
+                placeholder={t('streaming.typeAnswer')}
                 value={otherTexts[qIdx] || ''}
                 onChange={(e) => setOtherTexts((prev) => ({ ...prev, [qIdx]: e.target.value }))}
                 className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-none"
@@ -321,6 +322,7 @@ function ExitPlanModeUI({
 }
 
 function StreamingStatusBar({ statusText, onForceStop }: { statusText?: string; onForceStop?: () => void }) {
+  const { t } = useTranslation();
   const displayText = statusText || 'Thinking';
 
   // Parse elapsed seconds from statusText like "Running bash... (45s)"
@@ -336,10 +338,10 @@ function StreamingStatusBar({ statusText, onForceStop }: { statusText?: string; 
           <Shimmer duration={1.5}>{displayText}</Shimmer>
         </span>
         {isWarning && !isCritical && (
-          <span className="text-yellow-500 text-[10px]">Running longer than usual</span>
+          <span className="text-yellow-500 text-[10px]">{t('streaming.runningLong')}</span>
         )}
         {isCritical && (
-          <span className="text-red-500 text-[10px]">Tool may be stuck</span>
+          <span className="text-red-500 text-[10px]">{t('streaming.toolStuck')}</span>
         )}
       </div>
       <span className="text-muted-foreground/50">|</span>
@@ -447,7 +449,7 @@ export function StreamingMessage({
           />
         )}
         {pendingPermission?.toolName === 'AskUserQuestion' && permissionResolved && (
-          <p className="py-1 text-xs text-green-600 dark:text-green-400">Answer submitted</p>
+          <p className="py-1 text-xs text-green-600 dark:text-green-400">{t('streaming.answerSubmitted')}</p>
         )}
 
         {/* Permission approval — ExitPlanMode gets a dedicated UI */}
@@ -462,7 +464,7 @@ export function StreamingMessage({
           <p className="py-1 text-xs text-green-600 dark:text-green-400">Plan approved — executing</p>
         )}
         {pendingPermission?.toolName === 'ExitPlanMode' && permissionResolved === 'deny' && (
-          <p className="py-1 text-xs text-red-600 dark:text-red-400">Plan rejected</p>
+          <p className="py-1 text-xs text-red-600 dark:text-red-400">{t('streaming.planRejected')}</p>
         )}
 
         {/* Permission approval — generic confirmation for other tools */}

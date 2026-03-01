@@ -28,10 +28,18 @@ export interface UpdateContextValue {
 
 export const UpdateContext = createContext<UpdateContextValue | null>(null);
 
+const noopUpdate: UpdateContextValue = {
+  updateInfo: null,
+  checking: false,
+  checkForUpdates: async () => {},
+  downloadUpdate: () => {},
+  dismissUpdate: () => {},
+  showDialog: false,
+  setShowDialog: () => {},
+  quitAndInstall: () => {},
+};
+
 export function useUpdate(): UpdateContextValue {
   const ctx = useContext(UpdateContext);
-  if (!ctx) {
-    throw new Error("useUpdate must be used within an UpdateProvider");
-  }
-  return ctx;
+  return ctx ?? noopUpdate;
 }

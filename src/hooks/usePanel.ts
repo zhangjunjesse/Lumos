@@ -29,10 +29,29 @@ export interface PanelContextValue {
 
 export const PanelContext = createContext<PanelContextValue | null>(null);
 
+const noop = () => {};
+const noopPanel: PanelContextValue = {
+  panelOpen: false,
+  setPanelOpen: noop,
+  panelContent: "files",
+  setPanelContent: noop,
+  workingDirectory: "",
+  setWorkingDirectory: noop,
+  sessionId: "",
+  setSessionId: noop,
+  sessionTitle: "",
+  setSessionTitle: noop,
+  streamingSessionId: "",
+  setStreamingSessionId: noop,
+  pendingApprovalSessionId: "",
+  setPendingApprovalSessionId: noop,
+  previewFile: null,
+  setPreviewFile: noop,
+  previewViewMode: "source",
+  setPreviewViewMode: noop,
+};
+
 export function usePanel(): PanelContextValue {
   const ctx = useContext(PanelContext);
-  if (!ctx) {
-    throw new Error("usePanel must be used within a PanelProvider");
-  }
-  return ctx;
+  return ctx ?? noopPanel;
 }

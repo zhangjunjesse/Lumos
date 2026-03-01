@@ -34,7 +34,7 @@ function defaultViewMode(filePath: string): PreviewViewMode {
 
 const LG_BREAKPOINT = 1024;
 const CHECK_INTERVAL = 8 * 60 * 60 * 1000; // 8 hours
-const DISMISSED_VERSION_KEY = "codepilot_dismissed_update_version";
+const DISMISSED_VERSION_KEY = "lumos_dismissed_update_version";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -44,11 +44,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Panel width state with localStorage persistence
   const [chatListWidth, setChatListWidth] = useState(() => {
     if (typeof window === "undefined") return 240;
-    return parseInt(localStorage.getItem("codepilot_chatlist_width") || "240");
+    return parseInt(localStorage.getItem("lumos_chatlist_width") || "240");
   });
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
     if (typeof window === "undefined") return 288;
-    return parseInt(localStorage.getItem("codepilot_rightpanel_width") || "288");
+    return parseInt(localStorage.getItem("lumos_rightpanel_width") || "288");
   });
 
   const handleChatListResize = useCallback((delta: number) => {
@@ -56,7 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
   const handleChatListResizeEnd = useCallback(() => {
     setChatListWidth((w) => {
-      localStorage.setItem("codepilot_chatlist_width", String(w));
+      localStorage.setItem("lumos_chatlist_width", String(w));
       return w;
     });
   }, []);
@@ -66,14 +66,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
   const handleRightPanelResizeEnd = useCallback(() => {
     setRightPanelWidth((w) => {
-      localStorage.setItem("codepilot_rightpanel_width", String(w));
+      localStorage.setItem("lumos_rightpanel_width", String(w));
       return w;
     });
   }, []);
 
   // Panel state
   const isChatRoute = pathname.startsWith("/chat/") || pathname === "/chat";
-  const isChatDetailRoute = pathname.startsWith("/chat/");
+  const isChatDetailRoute = pathname === "/chat" || pathname.startsWith("/chat/");
+
+  console.log('[AppShell] Route check:', { pathname, isChatRoute, isChatDetailRoute });
 
   // Auto-close chat list when leaving chat routes
   const setChatListOpen = useCallback((open: boolean) => {
@@ -85,9 +87,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setChatListOpenRaw(false);
     }
   }, [isChatRoute]);
-  const [panelOpen, setPanelOpenRaw] = useState(false);
+  const [panelOpen, setPanelOpenRaw] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const path = window.location.pathname;
+    return path === "/chat" || path.startsWith("/chat/");
+  });
   const [panelContent, setPanelContent] = useState<PanelContent>("files");
-  const [workingDirectory, setWorkingDirectory] = useState("");
+  const [workingDirectory, setWorkingDirectory] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("lumos:last-working-directory") || "";
+  });
   const [sessionId, setSessionId] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [streamingSessionId, setStreamingSessionId] = useState("");
@@ -98,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("source");
   const [docPreviewWidth, setDocPreviewWidth] = useState(() => {
     if (typeof window === "undefined") return 480;
-    return parseInt(localStorage.getItem("codepilot_docpreview_width") || "480");
+    return parseInt(localStorage.getItem("lumos_docpreview_width") || "480");
   });
 
   const setPreviewFile = useCallback((path: string | null) => {
@@ -113,7 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
   const handleDocPreviewResizeEnd = useCallback(() => {
     setDocPreviewWidth((w) => {
-      localStorage.setItem("codepilot_docpreview_width", String(w));
+      localStorage.setItem("lumos_docpreview_width", String(w));
       return w;
     });
   }, []);
@@ -356,6 +365,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewViewMode]
   );
 
+  console.log('[AppShell] Context state:', { panelOpen, workingDirectory, sessionId, pathname });
+
   const imageGenValue = useImageGenState();
   const batchImageGenValue = useBatchImageGenState();
 
@@ -380,9 +391,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <ResizeHandle side="left" onResize={handleChatListResize} onResizeEnd={handleChatListResizeEnd} />
             )}
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {/* Electron draggable title bar region — matches side panels' mt-5 */}
+              {/* Electron draggable title bar region — matches side panels' mt-10 */}
               <div
-                className="h-5 w-full shrink-0"
+                className="h-10 w-full shrink-0"
                 style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
               />
               <UpdateBanner />
@@ -407,11 +418,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {isChatDetailRoute && panelOpen && (
               <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />
             )}
-            {isChatDetailRoute && (
-              <ErrorBoundary>
-                <RightPanel width={rightPanelWidth} />
-              </ErrorBoundary>
-            )}
+            {(() => {
+              console.log('[AppShell] RightPanel render check:', { isChatDetailRoute, panelOpen, willRender: isChatDetailRoute });
+              return isChatDetailRoute && (
+                <ErrorBoundary>
+                  <RightPanel width={rightPanelWidth} />
+                </ErrorBoundary>
+              );
+            })()}
           </div>
           <UpdateDialog />
         </TooltipProvider>

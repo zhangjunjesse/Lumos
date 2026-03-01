@@ -1,5 +1,5 @@
-appId: com.codepilot.app
-productName: CodePilot
+appId: com.lumos.app
+productName: Lumos
 publish:
   provider: github
   owner: zhangjunjesse
@@ -70,10 +70,10 @@ linux:
   artifactName: "${productName}-${version}-${arch}.${ext}"
   desktop:
     entry:
-      Name: CodePilot
-      Comment: A native desktop GUI for Claude Code
-      Categories: Development;IDE;
-      StartupWMClass: codepilot
+      Name: Lumos
+      Comment: Document intelligence assistant powered by AI
+      Categories: Office;TextEditor;
+      StartupWMClass: lumos
   target:
     - target: AppImage
       arch: [x64, arm64]

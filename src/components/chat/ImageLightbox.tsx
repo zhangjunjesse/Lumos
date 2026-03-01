@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface LightboxImage {
   src: string;
@@ -22,6 +23,7 @@ interface ImageLightboxProps {
 }
 
 export function ImageLightbox({ images, initialIndex, open, onOpenChange }: ImageLightboxProps) {
+  const { t } = useTranslation();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
 
   const goToPrev = useCallback(() => {
@@ -50,7 +52,7 @@ export function ImageLightbox({ images, initialIndex, open, onOpenChange }: Imag
         className="max-w-[95vw] max-h-[95vh] p-0 border-none bg-black/90 shadow-none sm:max-w-[95vw]"
         showCloseButton
       >
-        <DialogTitle className="sr-only">Image preview</DialogTitle>
+        <DialogTitle className="sr-only">{t('common.imagePreview')}</DialogTitle>
         <div className="relative flex items-center justify-center min-h-[50vh]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

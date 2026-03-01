@@ -4,8 +4,10 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowDown01Icon, ArrowUp01Icon, ZapIcon } from "@hugeicons/core-free-icons";
+import { useTranslation } from '@/hooks/useTranslation';
 
 export interface SkillInfo {
   name: string;
@@ -22,6 +24,7 @@ interface PluginCardProps {
 }
 
 export function PluginCard({ plugin, onSelect }: PluginCardProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const isProject = plugin.source === 'project';
   const isPlugin = plugin.source === 'plugin';
@@ -52,21 +55,28 @@ export function PluginCard({ plugin, onSelect }: PluginCardProps) {
             {plugin.description}
           </CardDescription>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(!expanded);
-          }}
-        >
-          {expanded ? (
-            <HugeiconsIcon icon={ArrowUp01Icon} className="h-4 w-4" />
-          ) : (
-            <HugeiconsIcon icon={ArrowDown01Icon} className="h-4 w-4" />
-          )}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded(!expanded);
+              }}
+            >
+              {expanded ? (
+                <HugeiconsIcon icon={ArrowUp01Icon} className="h-4 w-4" />
+              ) : (
+                <HugeiconsIcon icon={ArrowDown01Icon} className="h-4 w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {expanded ? t('tooltip.hideDetails') : t('tooltip.showDetails')}
+          </TooltipContent>
+        </Tooltip>
       </CardHeader>
       {expanded && (
         <CardContent className="pt-0">

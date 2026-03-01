@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { I18nProvider } from "@/components/layout/I18nProvider";
-import { AppShell } from "@/components/layout/AppShell";
+import { AppLayout } from "@/components/layout/app-layout";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CodePilot",
-  description: "A desktop GUI for Claude Code",
+  title: "Lumos",
+  description: "Document intelligence assistant powered by AI",
 };
 
 export default function RootLayout({
@@ -32,7 +32,7 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <I18nProvider>
-            <AppShell>{children}</AppShell>
+            <AppLayout>{children}</AppLayout>
           </I18nProvider>
         </ThemeProvider>
       </body>

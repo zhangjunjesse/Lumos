@@ -22,12 +22,16 @@ export interface ImageGenContextValue {
 
 export const ImageGenContext = createContext<ImageGenContextValue | null>(null);
 
+const noopImageGen: ImageGenContextValue = {
+  state: { enabled: false, generating: false },
+  setEnabled: () => {},
+  generate: async () => null,
+  lastResult: null,
+};
+
 export function useImageGen(): ImageGenContextValue {
   const ctx = useContext(ImageGenContext);
-  if (!ctx) {
-    throw new Error('useImageGen must be used within an ImageGenProvider');
-  }
-  return ctx;
+  return ctx ?? noopImageGen;
 }
 
 export function useImageGenState(): ImageGenContextValue {

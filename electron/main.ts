@@ -43,7 +43,7 @@ const isDev = !app.isPackaged;
 
 /**
  * Read or bootstrap the embedded default API key using Electron's safeStorage.
- * On first run, encrypts the raw key from CODEPILOT_DEFAULT_KEY env var to disk.
+ * On first run, encrypts the raw key from LUMOS_DEFAULT_KEY or CODEPILOT_DEFAULT_KEY env var to disk.
  * On subsequent runs, decrypts from the persisted file.
  */
 function initDefaultApiKey(): string | undefined {
@@ -58,8 +58,12 @@ function initDefaultApiKey(): string | undefined {
     }
   }
 
-  const rawKey = process.env.CODEPILOT_DEFAULT_KEY;
+  const rawKey = process.env.LUMOS_DEFAULT_KEY || process.env.CODEPILOT_DEFAULT_KEY;
   if (!rawKey) return undefined;
+
+  if (process.env.CODEPILOT_DEFAULT_KEY && !process.env.LUMOS_DEFAULT_KEY) {
+    console.warn('[electron] CODEPILOT_DEFAULT_KEY is deprecated. Please use LUMOS_DEFAULT_KEY instead.');
+  }
 
   if (safeStorage.isEncryptionAvailable()) {
     fs.writeFileSync(encPath, safeStorage.encryptString(rawKey));
@@ -304,13 +308,13 @@ function startServer(port: number): Electron.UtilityProcess {
     ...userShellEnv,
     PORT: String(port),
     HOSTNAME: '127.0.0.1',
-    CLAUDE_GUI_DATA_DIR: path.join(home, '.codepilot'),
+    LUMOS_DATA_DIR: path.join(home, '.lumos'),
     HOME: home,
     USERPROFILE: home,
     PATH: constructedPath,
     // Sandbox: isolate CLI config into app's own directory
-    CODEPILOT_CLAUDE_CONFIG_DIR: claudeConfigDir,
-    ...(defaultKey ? { CODEPILOT_DEFAULT_API_KEY: defaultKey } : {}),
+    LUMOS_CLAUDE_CONFIG_DIR: claudeConfigDir,
+    ...(defaultKey ? { LUMOS_DEFAULT_API_KEY: defaultKey } : {}),
     ...(process.env.CODEPILOT_DEFAULT_BASE_URL
       ? { CODEPILOT_DEFAULT_BASE_URL: process.env.CODEPILOT_DEFAULT_BASE_URL }
       : {}),
@@ -366,6 +370,7 @@ function createWindow(port: number) {
     height: 860,
     minWidth: 800,
     minHeight: 600,
+    center: true,
     icon: getIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -389,9 +394,7 @@ function createWindow(port: number) {
 
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
 
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
+  mainWindow.maximize();
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -404,6 +407,20 @@ app.whenReady().then(async () => {
 
   // Verify native module ABI compatibility before starting the server
   checkNativeModuleABI();
+
+  // === ISOLATION: Verify Claude CLI config directory ===
+  const claudeConfigDir = path.join(app.getPath('userData'), '.claude');
+  if (!fs.existsSync(claudeConfigDir)) {
+    console.log('[main] Creating isolated Claude config directory:', claudeConfigDir);
+    fs.mkdirSync(claudeConfigDir, { recursive: true });
+  } else {
+    console.log('[main] Isolated Claude config directory exists:', claudeConfigDir);
+  }
+  // Log warning if user's ~/.claude/ exists (potential pollution source)
+  const userClaudeDir = path.join(os.homedir(), '.claude');
+  if (fs.existsSync(userClaudeDir)) {
+    console.warn('[main] WARNING: User ~/.claude/ directory detected. CodePilot uses isolated config at:', claudeConfigDir);
+  }
 
   // Clear cache on version upgrade
   const currentVersion = app.getVersion();

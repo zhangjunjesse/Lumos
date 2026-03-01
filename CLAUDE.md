@@ -4,6 +4,64 @@
 
 CodePilot — Claude Code 的桌面 GUI 客户端，基于 Electron + Next.js。
 
+## Claude CLI Isolation
+
+**Problem**: CodePilot embeds Claude CLI to provide AI capabilities. Without isolation, the app would inherit the user's local Claude Code environment (~/.claude/), including:
+- User's API keys and base URLs
+- User's global MCP servers
+- User's skills and hooks
+- User's settings and preferences
+
+This causes pollution and unexpected behavior.
+
+**Solution**: Complete isolation via multiple mechanisms:
+
+### 1. Isolated Config Directory
+- App uses `~/.codepilot/.claude/` instead of `~/.claude/`
+- Set via `CODEPILOT_CLAUDE_CONFIG_DIR` environment variable
+- Configured in:
+  - `electron/main.ts` line 312 (production)
+  - `dev.sh` line 12 (development)
+- Verified on app startup with logging
+
+### 2. Environment Variable Isolation
+- All `CLAUDE_*` and `ANTHROPIC_*` variables cleared before spawning SDK
+- Only app-specific config injected:
+  - API key from CodePilot providers
+  - Base URL from CodePilot providers
+  - `CLAUDE_CONFIG_DIR` pointing to isolated directory
+- Implementation: `src/lib/claude-client.ts` lines 440-470
+
+### 3. SDK Setting Sources Isolation
+- `settingSources: []` prevents SDK from reading:
+  - `~/.claude/settings.json` (user global settings)
+  - `~/.claude.json` (user global MCP config)
+  - `.claude/settings.json` (project settings)
+  - `.claude.json` (project MCP config)
+- All config must be injected programmatically
+- Implementation: `src/lib/claude-client.ts` line 523
+
+### 4. MCP Server Isolation
+- Only MCP servers configured in CodePilot UI are loaded
+- User's global MCP servers from `~/.claude.json` are NOT loaded
+- Built-in Feishu MCP server bundled with app
+- Implementation: `src/app/api/plugins/mcp/route.ts`
+
+### 5. Skills and Hooks Isolation
+- With `settingSources: []`, no user skills or hooks are loaded
+- App doesn't provide skills/hooks UI (future feature)
+- User's `~/.claude/skills/` and hooks are completely ignored
+
+### Verification
+On app startup, check logs for:
+```
+[main] Isolated Claude config directory exists: /path/to/.codepilot/.claude
+[claude-client] Isolation: using config dir: /path/to/.codepilot/.claude
+[claude-client] Sandbox: using bundled CLI: /path/to/cli.js
+```
+
+If you see warnings about user's `~/.claude/` directory, isolation is working correctly (warning is informational).
+
 ## 本地参考项目路径（上下文共享/存储）
 
 为便于后续分析与实现对照，本机已拉取以下参考仓库：

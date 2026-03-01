@@ -48,12 +48,35 @@ export interface BatchImageGenContextValue {
 
 export const BatchImageGenContext = createContext<BatchImageGenContextValue | null>(null);
 
+const noopBatchImageGen: BatchImageGenContextValue = {
+  state: {
+    enabled: false,
+    phase: 'idle',
+    currentJob: null,
+    items: [],
+    plannerOutput: null,
+    planningText: '',
+    progress: { total: 0, completed: 0, failed: 0, processing: 0 },
+    error: null,
+  },
+  setEnabled: () => {},
+  startPlanning: async () => {},
+  updatePlanItem: () => {},
+  addPlanItem: () => {},
+  removePlanItem: () => {},
+  executeJob: async () => {},
+  pauseJob: async () => {},
+  resumeJob: async () => {},
+  cancelJob: async () => {},
+  retryFailed: async () => {},
+  syncToLlm: async () => {},
+  resetJob: () => {},
+  injectPlanAndExecute: async () => {},
+};
+
 export function useBatchImageGen(): BatchImageGenContextValue {
   const ctx = useContext(BatchImageGenContext);
-  if (!ctx) {
-    throw new Error('useBatchImageGen must be used within a BatchImageGenProvider');
-  }
-  return ctx;
+  return ctx ?? noopBatchImageGen;
 }
 
 // ==========================================

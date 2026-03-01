@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
 import { usePanel } from '@/hooks/usePanel';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface ToolUseInfo {
   id: string;
@@ -21,6 +22,7 @@ interface ToolResultInfo {
 export default function NewChatPage() {
   const router = useRouter();
   const { setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -35,6 +37,27 @@ export default function NewChatPage() {
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Auto-populate workingDir from active workspace or localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('codepilot:last-working-directory');
+    if (saved) {
+      setWorkingDir(saved);
+      setWorkingDirectory(saved);
+      return;
+    }
+    fetch('/api/workspaces')
+      .then(r => r.json())
+      .then(data => {
+        const active = (data.workspaces || []).find((w: { is_active: number }) => w.is_active);
+        if (active?.path) {
+          setWorkingDir(active.path);
+          setWorkingDirectory(active.path);
+          localStorage.setItem('codepilot:last-working-directory', active.path);
+        }
+      })
+      .catch(() => {});
+  }, [setWorkingDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -85,7 +108,7 @@ export default function NewChatPage() {
           id: 'hint-' + Date.now(),
           session_id: '',
           role: 'assistant',
-          content: '**Please select a project directory first.** Use the folder picker in the toolbar below to choose a working directory before sending a message.',
+          content: t('chat.selectProjectDir'),
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -321,7 +344,7 @@ export default function NewChatPage() {
           id: 'cmd-' + Date.now(),
           session_id: '',
           role: 'assistant',
-          content: `## Available Commands\n\n- **/help** - Show this help message\n- **/clear** - Clear conversation history\n- **/compact** - Compress conversation context\n- **/cost** - Show token usage statistics\n- **/doctor** - Check system health\n- **/init** - Initialize CLAUDE.md\n- **/review** - Start code review\n- **/terminal-setup** - Configure terminal\n\n**Tips:**\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## ${t('chat.helpTitle')}\n\n- **/help** - ${t('messageInput.helpDesc')}\n- **/clear** - ${t('messageInput.clearDesc')}\n- **/compact** - ${t('messageInput.compactDesc')}\n- **/cost** - ${t('messageInput.costDesc')}\n- **/doctor** - ${t('messageInput.doctorDesc')}\n- **/init** - ${t('messageInput.initDesc')}\n- **/review** - ${t('messageInput.reviewDesc')}\n- **/terminal-setup** - ${t('messageInput.terminalSetupDesc')}\n\n**${t('chat.helpTips')}:**\n- ${t('chat.helpTipMention')}\n- ${t('chat.helpTipNewline')}\n- ${t('chat.helpTipFolder')}`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -336,7 +359,7 @@ export default function NewChatPage() {
           id: 'cmd-' + Date.now(),
           session_id: '',
           role: 'assistant',
-          content: `## Token Usage\n\nToken usage tracking is available after sending messages. Check the token count displayed at the bottom of each assistant response.`,
+          content: `## ${t('chat.tokenUsageTitle')}\n\n${t('chat.tokenUsageHint')}`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -350,6 +373,10 @@ export default function NewChatPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div
+        className="h-8 w-full shrink-0"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      />
       <MessageList
         messages={messages}
         streamingContent={streamingContent}

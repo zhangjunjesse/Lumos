@@ -6,7 +6,7 @@ const pkg = require("./package.json");
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  serverExternalPackages: ['better-sqlite3', '@anthropic-ai/claude-agent-sdk'],
+  serverExternalPackages: ['better-sqlite3', '@anthropic-ai/claude-agent-sdk', '@node-rs/jieba', '@huggingface/transformers'],
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
   },

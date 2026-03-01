@@ -12,6 +12,8 @@ import {
   Settings02Icon,
   Moon02Icon,
   Sun02Icon,
+  File02Icon,
+  BookOpen01Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,7 +35,9 @@ interface NavRailProps {
 }
 
 const navItems = [
+  { href: "/documents", label: "Documents", icon: File02Icon },
   { href: "/chat", label: "Chats", icon: Message02Icon },
+  { href: "/knowledge", label: "Knowledge", icon: BookOpen01Icon },
   { href: "/extensions", label: "Extensions", icon: GridIcon },
   { href: "/gallery", label: "Gallery", icon: Image01Icon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
@@ -45,7 +49,9 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
   const navLabelKeys: Record<string, TranslationKey> = {
+    'Documents': 'nav.documents',
     'Chats': 'nav.chats',
+    'Knowledge': 'nav.knowledge',
     'Extensions': 'nav.extensions',
     'Gallery': 'gallery.title',
     'Settings': 'nav.settings',

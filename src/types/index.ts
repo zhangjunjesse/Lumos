@@ -113,6 +113,8 @@ export interface ApiProvider {
   sort_order: number;
   extra_env: string; // JSON string of Record<string, string>
   notes: string;
+  is_builtin: number; // SQLite boolean: 0 or 1, only one provider can be 1
+  user_modified: number; // SQLite boolean: 0 or 1, tracks if builtin provider was modified
   created_at: string;
   updated_at: string;
 }

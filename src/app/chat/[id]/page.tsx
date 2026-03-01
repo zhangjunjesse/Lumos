@@ -83,7 +83,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         const res = await fetch(`/api/chat/sessions/${id}`);
         if (res.ok) {
           const data: { session: ChatSession } = await res.json();
+          console.log('[ChatSessionPage] Session loaded:', data.session);
           if (data.session.working_directory) {
+            console.log('[ChatSessionPage] Setting working directory:', data.session.working_directory);
             setWorkingDirectory(data.session.working_directory);
             setSessionWorkingDir(data.session.working_directory);
             localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
@@ -99,7 +101,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           setSessionMode(data.session.mode || 'code');
           setProjectName(data.session.project_name || '');
         }
-      } catch {
+      } catch (err) {
+        console.error('[ChatSessionPage] Failed to load session:', err);
         // Session info load failed - panel will still work without directory
       }
     }
@@ -122,10 +125,10 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         if (cancelled) return;
         if (!res.ok) {
           if (res.status === 404) {
-            setError('Session not found');
+            setError(t('chat.sessionNotFound'));
             return;
           }
-          throw new Error('Failed to load messages');
+          throw new Error(t('chat.failedLoadMessages'));
         }
         const data: MessagesResponse = await res.json();
         if (cancelled) return;
@@ -158,7 +161,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         <div className="text-center space-y-2">
           <p className="text-destructive font-medium">{error}</p>
           <Link href="/chat" className="text-sm text-muted-foreground hover:underline">
-            Start a new chat
+            {t('chat.startNewChat')}
           </Link>
         </div>
       </div>
@@ -199,7 +202,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="text-xs break-all">{sessionWorkingDir || projectName}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Click to open in Finder</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{t('chat.openInFinder')}</p>
                 </TooltipContent>
               </Tooltip>
               <span className="text-xs text-muted-foreground shrink-0">/</span>

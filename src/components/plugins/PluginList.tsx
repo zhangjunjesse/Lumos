@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PluginCard, type SkillInfo } from './PluginCard';
+import { useTranslation } from "@/hooks/useTranslation";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Search01Icon, GlobeIcon, FolderOpenIcon, Plug01Icon } from "@hugeicons/core-free-icons";
 
@@ -13,6 +14,7 @@ interface PluginListProps {
 }
 
 export function PluginList({ plugins, onSelect }: PluginListProps) {
+  const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'global' | 'project' | 'plugin'>('all');
 
@@ -35,7 +37,7 @@ export function PluginList({ plugins, onSelect }: PluginListProps) {
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search skills by name..."
+          placeholder={t('plugins.searchPlaceholder')}
           className="pl-9"
         />
       </div>

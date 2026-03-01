@@ -323,11 +323,11 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
 
   return (
     <aside
-      className="hidden h-full shrink-0 flex-col overflow-hidden bg-sidebar lg:flex"
+      className="flex h-full shrink-0 flex-col overflow-hidden bg-sidebar"
       style={{ width: width ?? 240 }}
     >
       {/* Header - extra top padding for macOS traffic lights */}
-      <div className="flex h-12 shrink-0 items-center justify-between px-3 mt-5 pl-6">
+      <div className="flex h-12 shrink-0 items-center justify-between px-3 mt-10 pl-6">
         <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
           Threads
         </span>

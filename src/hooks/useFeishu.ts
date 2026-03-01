@@ -24,8 +24,14 @@ export interface FeishuContextValue {
 
 export const FeishuContext = createContext<FeishuContextValue | null>(null);
 
+const noopFeishu: FeishuContextValue = {
+  auth: { authenticated: false, user: null, loading: false },
+  login: async () => {},
+  logout: async () => {},
+  refreshAuth: async () => {},
+};
+
 export function useFeishu(): FeishuContextValue {
   const ctx = useContext(FeishuContext);
-  if (!ctx) throw new Error("useFeishu must be used within a FeishuProvider");
-  return ctx;
+  return ctx ?? noopFeishu;
 }

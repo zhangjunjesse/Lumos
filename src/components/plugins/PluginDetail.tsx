@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, ZapIcon } from "@hugeicons/core-free-icons";
 import type { SkillInfo } from './PluginCard';
+import { useTranslation } from "@/hooks/useTranslation";
 
 interface PluginDetailProps {
   plugin: SkillInfo;
@@ -13,6 +14,7 @@ interface PluginDetailProps {
 }
 
 export function PluginDetail({ plugin, onClose }: PluginDetailProps) {
+  const { t } = useTranslation();
   const isProject = plugin.source === 'project';
   const displayName = isProject
     ? plugin.name.replace('project:', '')
@@ -42,14 +44,14 @@ export function PluginDetail({ plugin, onClose }: PluginDetailProps) {
 
       <div className="space-y-3">
         <div>
-          <p className="text-sm font-medium mb-1">Source</p>
+          <p className="text-sm font-medium mb-1">{t('plugins.source')}</p>
           <p className="text-xs text-muted-foreground font-mono break-all">
             {plugin.filePath}
           </p>
         </div>
 
         <div>
-          <p className="text-sm font-medium mb-1">Type</p>
+          <p className="text-sm font-medium mb-1">{t('plugins.type')}</p>
           <p className="text-xs text-muted-foreground">
             {isProject ? 'Project-level skill' : 'User-level skill'}
           </p>
@@ -58,7 +60,7 @@ export function PluginDetail({ plugin, onClose }: PluginDetailProps) {
         <Separator />
 
         <div>
-          <p className="text-sm font-medium mb-2">Content</p>
+          <p className="text-sm font-medium mb-2">{t('plugins.content')}</p>
           <div className="rounded-md bg-muted p-3 max-h-80 overflow-auto">
             <pre className="text-xs font-mono whitespace-pre-wrap break-words">
               {plugin.content}

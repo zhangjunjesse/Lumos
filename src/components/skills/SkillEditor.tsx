@@ -114,7 +114,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
           {isDirty && (
             <span
               className="h-2 w-2 rounded-full bg-orange-400 shrink-0"
-              title="Unsaved changes"
+              title={t('skills.unsavedChanges')}
             />
           )}
           <Badge

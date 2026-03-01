@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Message, MessagesResponse, PermissionRequestEvent, FileAttachment } from '@/types';
+import { useTranslation } from '@/hooks/useTranslation';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { usePanel } from '@/hooks/usePanel';
@@ -30,6 +31,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, providerId }: ChatViewProps) {
+  const { t } = useTranslation();
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -432,9 +434,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           // Stream idle timeout — no SSE events for too long
           if (isIdleTimeout) {
             const idleSecs = Math.round(STREAM_IDLE_TIMEOUT_MS / 1000);
+            const idleMsg = t('chat.streamIdleTimeout').replace('{n}', String(idleSecs));
             const errContent = accumulated.trim()
-              ? accumulated.trim() + `\n\n**Error:** Stream idle timeout — no response for ${idleSecs}s. The connection may have dropped.`
-              : `**Error:** Stream idle timeout — no response for ${idleSecs}s. The connection may have dropped.`;
+              ? accumulated.trim() + `\n\n**Error:** ${idleMsg}`
+              : `**Error:** ${idleMsg}`;
             const errMessage: Message = {
               id: 'temp-error-' + Date.now(),
               session_id: sessionId,
@@ -453,7 +456,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                   id: 'temp-assistant-' + Date.now(),
                   session_id: sessionId,
                   role: 'assistant',
-                  content: accumulated.trim() + `\n\n*(tool ${timeoutInfo.toolName} timed out after ${timeoutInfo.elapsedSeconds}s)*`,
+                  content: accumulated.trim() + `\n\n*(${t('chat.toolTimeout').replace('{name}', timeoutInfo.toolName).replace('{n}', String(timeoutInfo.elapsedSeconds))})*`,
                   created_at: new Date().toISOString(),
                   token_usage: null,
                 };
@@ -489,7 +492,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                 id: 'temp-assistant-' + Date.now(),
                 session_id: sessionId,
                 role: 'assistant',
-                content: accumulated.trim() + '\n\n*(generation stopped)*',
+                content: accumulated.trim() + `\n\n*(${t('chat.generationStopped')})*`,
                 created_at: new Date().toISOString(),
                 token_usage: null,
               };
@@ -529,7 +532,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, currentProviderId]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, currentProviderId, t]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
@@ -542,7 +545,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           id: 'cmd-' + Date.now(),
           session_id: sessionId,
           role: 'assistant',
-          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## ${t('chat.helpTitle')}\n\n### ${t('chat.helpInstantCommands')}\n- **/help** — ${t('messageInput.helpDesc')}\n- **/clear** — ${t('messageInput.clearDesc')}\n- **/cost** — ${t('messageInput.costDesc')}\n\n### ${t('chat.helpPromptCommands')}\n- **/compact** — ${t('messageInput.compactDesc')}\n- **/doctor** — ${t('messageInput.doctorDesc')}\n- **/init** — ${t('messageInput.initDesc')}\n- **/review** — ${t('messageInput.reviewDesc')}\n- **/terminal-setup** — ${t('messageInput.terminalSetupDesc')}\n- **/memory** — ${t('messageInput.memoryDesc')}\n\n### ${t('chat.helpCustomSkills')}\n${t('chat.helpCustomSkillsDesc')}\n\n**${t('chat.helpTips')}:**\n- ${t('chat.helpTipSlash')}\n- ${t('chat.helpTipMention')}\n- ${t('chat.helpTipNewline')}\n- ${t('chat.helpTipFolder')}`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -587,9 +590,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         let content: string;
 
         if (turnCount === 0) {
-          content = `## Token Usage\n\nNo token usage data yet. Send a message first.`;
+          content = `## ${t('chat.tokenUsageTitle')}\n\n${t('chat.noTokenUsageData')}`;
         } else {
-          content = `## Token Usage\n\n| Metric | Count |\n|--------|-------|\n| Input tokens | ${totalInput.toLocaleString()} |\n| Output tokens | ${totalOutput.toLocaleString()} |\n| Cache read | ${totalCacheRead.toLocaleString()} |\n| Cache creation | ${totalCacheCreation.toLocaleString()} |\n| **Total tokens** | **${totalTokens.toLocaleString()}** |\n| Turns | ${turnCount} |${totalCost > 0 ? `\n| **Estimated cost** | **$${totalCost.toFixed(4)}** |` : ''}`;
+          content = `## ${t('chat.tokenUsageTitle')}\n\n| ${t('chat.tokenMetric')} | ${t('chat.tokenCount')} |\n|--------|-------|\n| ${t('chat.tokenInput')} | ${totalInput.toLocaleString()} |\n| ${t('chat.tokenOutput')} | ${totalOutput.toLocaleString()} |\n| ${t('chat.tokenCacheRead')} | ${totalCacheRead.toLocaleString()} |\n| ${t('chat.tokenCacheCreation')} | ${totalCacheCreation.toLocaleString()} |\n| **${t('chat.tokenTotal')}** | **${totalTokens.toLocaleString()}** |\n| ${t('chat.tokenTurns')} | ${turnCount} |${totalCost > 0 ? `\n| **${t('chat.tokenEstimatedCost')}** | **$${totalCost.toFixed(4)}** |` : ''}`;
         }
 
         const costMessage: Message = {
@@ -607,7 +610,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage]);
+  }, [sessionId, sendMessage, t]);
 
   // Listen for image generation completion — persist notice to DB and queue for next user message.
   // The notice is NOT sent as a separate LLM turn (avoids permission popups).

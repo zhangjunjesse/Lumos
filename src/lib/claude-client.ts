@@ -24,6 +24,7 @@ import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import { searchAll, buildContext } from '@/lib/knowledge/searcher';
 
 /**
  * Sanitize a string for use as an environment variable value.
@@ -411,6 +412,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     async start(controller) {
       // Hoist activeProvider so it's accessible in the catch block for error messages
       const activeProvider: ApiProvider | undefined = options.provider ?? getActiveProvider();
+      console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');
 
       // Hoist execPath override vars so they're accessible in the finally block
       const originalExecPath = process.execPath;
@@ -436,11 +438,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Node.js in child processes, restoring all expected globals.
         sdkEnv.ELECTRON_RUN_AS_NODE = '1';
 
-        // Remove CLAUDECODE env var to prevent "nested session" detection.
-        // When CodePilot is launched from within a Claude Code CLI session
-        // (e.g. during development), the child process inherits this variable
-        // and the SDK refuses to start.
-        delete sdkEnv.CLAUDECODE;
+        // === ISOLATION: Clear all user environment variables ===
+        // Remove all CLAUDE_* and ANTHROPIC_* variables from user's environment
+        // to prevent pollution from user's local Claude Code installation.
+        // We'll re-inject only what CodePilot needs below.
+        for (const key of Object.keys(sdkEnv)) {
+          if (key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_')) {
+            delete sdkEnv[key];
+          }
+        }
 
         // On Windows, auto-detect Git Bash if not already configured
         if (process.platform === 'win32' && !process.env.CLAUDE_CODE_GIT_BASH_PATH) {
@@ -451,19 +457,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         // Sandbox: isolate CLI config directory so it doesn't read/write ~/.claude/
-        const claudeConfigDir = process.env.CODEPILOT_CLAUDE_CONFIG_DIR;
+        const claudeConfigDir = process.env.LUMOS_CLAUDE_CONFIG_DIR || process.env.CODEPILOT_CLAUDE_CONFIG_DIR;
         if (claudeConfigDir) {
           sdkEnv.CLAUDE_CONFIG_DIR = claudeConfigDir;
+          console.log('[claude-client] Isolation: using config dir:', claudeConfigDir);
+          if (process.env.CODEPILOT_CLAUDE_CONFIG_DIR && !process.env.LUMOS_CLAUDE_CONFIG_DIR) {
+            console.warn('[claude-client] CODEPILOT_CLAUDE_CONFIG_DIR is deprecated. Please use LUMOS_CLAUDE_CONFIG_DIR instead.');
+          }
+        } else {
+          console.warn('[claude-client] WARNING: LUMOS_CLAUDE_CONFIG_DIR not set, may use user ~/.claude/');
         }
 
         if (activeProvider && activeProvider.api_key) {
-          // Clear all existing ANTHROPIC_* variables to prevent conflicts
-          for (const key of Object.keys(sdkEnv)) {
-            if (key.startsWith('ANTHROPIC_')) {
-              delete sdkEnv[key];
-            }
-          }
-
           // Inject provider config — set both token variants so extra_env can clear the unwanted one
           sdkEnv.ANTHROPIC_AUTH_TOKEN = activeProvider.api_key;
           sdkEnv.ANTHROPIC_API_KEY = activeProvider.api_key;
@@ -517,8 +522,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ? 'bypassPermissions'
             : ((permissionMode as Options['permissionMode']) || 'acceptEdits'),
           env: sanitizeEnv(sdkEnv),
-          // Sandbox isolation: don't read any file-system settings.
-          // All config (API key, MCP servers) is injected programmatically.
+          // === ISOLATION: Prevent loading user's ~/.claude/ config ===
+          // settingSources: [] means the SDK won't read:
+          // - ~/.claude/settings.json (user's global settings)
+          // - ~/.claude.json (user's global MCP servers)
+          // - .claude/settings.json (project settings)
+          // - .claude.json (project MCP servers)
+          // All config (API key, MCP servers, skills, hooks) must be injected
+          // programmatically via this Options object.
           settingSources: [],
         };
 
@@ -539,17 +550,21 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           console.log('[claude-client] Sandbox: using bundled CLI:', bundledCli);
         } else {
           // Fallback: try system CLI (dev mode or bundled CLI missing)
-          const claudePath = findClaudePath();
+          const claudePath = findClaudeBinary();
           if (claudePath) {
             const ext = path.extname(claudePath).toLowerCase();
             if (ext === '.cmd' || ext === '.bat') {
               const scriptPath = resolveScriptFromCmd(claudePath);
               if (scriptPath) {
                 queryOptions.pathToClaudeCodeExecutable = scriptPath;
+                console.log('[claude-client] Using system CLI (resolved from .cmd):', scriptPath);
               }
             } else {
               queryOptions.pathToClaudeCodeExecutable = claudePath;
+              console.log('[claude-client] Using system CLI:', claudePath);
             }
+          } else {
+            console.warn('[claude-client] WARNING: No Claude CLI found (bundled or system)');
           }
         }
 
@@ -557,19 +572,26 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.model = model;
         }
 
-        if (systemPrompt) {
-          // Use preset append mode to keep Claude Code's default system prompt
-          // (which includes skills, working directory awareness, etc.)
+        // Knowledge base context injection
+        let kbContext = '';
+        try {
+          const kbResults = await searchAll(prompt, 3);
+          kbContext = buildContext(kbResults);
+        } catch { /* skip if KB not ready */ }
+
+        const fullSystemPrompt = [systemPrompt, kbContext].filter(Boolean).join('\n\n');
+        if (fullSystemPrompt) {
           queryOptions.systemPrompt = {
             type: 'preset',
             preset: 'claude_code',
-            append: systemPrompt,
+            append: fullSystemPrompt,
           };
         }
 
-        // MCP servers: only pass explicitly provided config (e.g. from CodePilot UI).
-        // User-level MCP config from ~/.claude.json and ~/.claude/settings.json
-        // is now automatically loaded by the SDK via settingSources: ['user', 'project', 'local'].
+        // === ISOLATION: MCP servers ===
+        // Only pass explicitly provided config (e.g. from CodePilot UI).
+        // With settingSources: [], the SDK won't load user's ~/.claude.json
+        // or ~/.claude/settings.json, so no user MCP servers will be loaded.
         if (mcpServers && Object.keys(mcpServers).length > 0) {
           queryOptions.mcpServers = toSdkMcpConfig(mcpServers);
         }

@@ -1,6 +1,7 @@
 "use client";
 
 import type { HTMLAttributes, ReactNode } from "react";
+import { useTranslation } from "@/hooks/useTranslation";
 
 import {
   Collapsible,
@@ -206,6 +207,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
+  const { t } = useTranslation();
   const { selectedPath, onSelect, onAdd } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
 
@@ -257,7 +259,7 @@ export const FileTreeFile = ({
                 type="button"
                 className="ml-auto flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100"
                 onClick={handleAdd}
-                title="Add to chat"
+                title={t('common.addToChat')}
               >
                 <HugeiconsIcon icon={PlusSignIcon} className="size-3 text-muted-foreground" />
               </button>

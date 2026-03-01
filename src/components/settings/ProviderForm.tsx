@@ -47,6 +47,7 @@ interface ProviderFormProps {
   mode: "create" | "edit";
   provider?: ApiProvider | null;
   onSave: (data: ProviderFormData) => Promise<void>;
+  onReset?: () => Promise<void>;
   initialPreset?: { name: string; provider_type: string; base_url: string; extra_env?: string } | null;
 }
 
@@ -65,6 +66,7 @@ export function ProviderForm({
   mode,
   provider,
   onSave,
+  onReset,
   initialPreset,
 }: ProviderFormProps) {
   const [name, setName] = useState("");
@@ -196,7 +198,7 @@ export function ProviderForm({
             </Label>
             <Input
               id="provider-name"
-              placeholder="My API Provider"
+              placeholder={t('provider.namePlaceholder')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="text-sm"
@@ -227,7 +229,7 @@ export function ProviderForm({
             </Label>
             <Input
               id="provider-base-url"
-              placeholder="https://api.anthropic.com"
+              placeholder={t('provider.baseUrlPlaceholder')}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               className="font-mono text-sm"
@@ -241,7 +243,7 @@ export function ProviderForm({
             <Input
               id="provider-api-key"
               type="password"
-              placeholder={isMaskedKey ? "Leave empty to keep current key" : "sk-ant-..."}
+              placeholder={isMaskedKey ? t('provider.apiKeyPlaceholder') : "sk-ant-..."}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="font-mono text-sm"
@@ -298,6 +300,29 @@ export function ProviderForm({
           )}
 
           <DialogFooter>
+            {mode === "edit" && provider?.is_builtin === 1 && provider?.user_modified === 1 && onReset && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  if (confirm(t('provider.resetConfirm'))) {
+                    setSaving(true);
+                    try {
+                      await onReset();
+                      onOpenChange(false);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : 'Failed to reset');
+                    } finally {
+                      setSaving(false);
+                    }
+                  }
+                }}
+                disabled={saving}
+                className="mr-auto"
+              >
+                {t('provider.resetToDefault')}
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"

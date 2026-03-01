@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChatStatus, FileUIPart, SourceDocumentUIPart } from "ai";
+import { useTranslation } from "@/hooks/useTranslation";
 import type {
   ChangeEvent,
   ChangeEventHandler,
@@ -401,6 +402,7 @@ export const PromptInput = ({
   children,
   ...props
 }: PromptInputProps) => {
+  const { t } = useTranslation();
   // Try to use a provider controller if present
   const controller = useOptionalPromptInputController();
   const usingProvider = !!controller;
@@ -789,12 +791,12 @@ export const PromptInput = ({
     <>
       <input
         accept={accept}
-        aria-label="Upload files"
+        aria-label={t('common.uploadFiles')}
         className="hidden"
         multiple={multiple}
         onChange={handleChange}
         ref={inputRef}
-        title="Upload files"
+        title={t('common.uploadFiles')}
         type="file"
       />
       <form
@@ -1105,6 +1107,7 @@ export const PromptInputSubmit = ({
   children,
   ...props
 }: PromptInputSubmitProps) => {
+  const { t } = useTranslation();
   const isGenerating = status === "submitted" || status === "streaming";
 
   let Icon = <CornerDownLeftIcon className="size-4" />;
@@ -1131,7 +1134,7 @@ export const PromptInputSubmit = ({
 
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
+      aria-label={isGenerating ? t('messageInput.stop') : t('messageInput.submit')}
       className={cn(className)}
       onClick={handleClick}
       size={size}

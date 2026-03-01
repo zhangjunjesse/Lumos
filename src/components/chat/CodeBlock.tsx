@@ -17,6 +17,8 @@ import {
   HashtagIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const COLLAPSE_THRESHOLD = 20;
 const VISIBLE_LINES = 10;
@@ -48,6 +50,7 @@ export function CodeBlock({
   showLineNumbers = true,
   maxCollapsedLines = VISIBLE_LINES,
 }: CodeBlockProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -144,40 +147,48 @@ export function CodeBlock({
           )}>{language.toUpperCase()}</span>
         </div>
         <div className="flex items-center gap-1 ml-2 shrink-0">
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50 transition-colors"
-            title="Copy code"
-          >
-            {copied ? (
-              <>
-                <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
-                <span>Copied</span>
-              </>
-            ) : (
-              <>
-                <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
-                <span>Copy</span>
-              </>
-            )}
-          </button>
-          <button
-            onClick={handleCopyMarkdown}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50 transition-colors"
-            title="Copy as Markdown"
-          >
-            {copiedMarkdown ? (
-              <>
-                <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
-                <span>Copied</span>
-              </>
-            ) : (
-              <>
-                <HugeiconsIcon icon={SourceCodeIcon} className="h-3 w-3" />
-                <span>Markdown</span>
-              </>
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleCopy}
+                className="cursor-pointer flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50 transition-colors"
+              >
+                {copied ? (
+                  <>
+                    <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
+                    <span>{t('codeBlock.copied')}</span>
+                  </>
+                ) : (
+                  <>
+                    <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
+                    <span>{t('codeBlock.copy')}</span>
+                  </>
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('tooltip.copyCode')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleCopyMarkdown}
+                className="cursor-pointer flex items-center gap-1 rounded px-1.5 py-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50 transition-colors"
+              >
+                {copiedMarkdown ? (
+                  <>
+                    <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
+                    <span>{t('codeBlock.copied')}</span>
+                  </>
+                ) : (
+                  <>
+                    <HugeiconsIcon icon={SourceCodeIcon} className="h-3 w-3" />
+                    <span>{t('codeBlock.markdown')}</span>
+                  </>
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('tooltip.copyMarkdown')}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -227,27 +238,32 @@ export function CodeBlock({
 
       {/* Expand/Collapse button */}
       {isCollapsible && (
-        <button
-          onClick={handleToggleExpand}
-          className={cn(
-            "flex w-full items-center justify-center gap-1.5 py-1.5 text-xs transition-colors",
-            isTerminal
-              ? "bg-zinc-950 text-zinc-400 hover:text-zinc-200"
-              : "bg-zinc-800 dark:bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-          )}
-        >
-          {expanded ? (
-            <>
-              <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
-              <span>Collapse</span>
-            </>
-          ) : (
-            <>
-              <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
-              <span>Expand all {totalLines} lines</span>
-            </>
-          )}
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={handleToggleExpand}
+              className={cn(
+                "cursor-pointer flex w-full items-center justify-center gap-1.5 py-1.5 text-xs transition-colors",
+                isTerminal
+                  ? "bg-zinc-950 text-zinc-400 hover:text-zinc-200"
+                  : "bg-zinc-800 dark:bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+              )}
+            >
+              {expanded ? (
+                <>
+                  <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
+                  <span>{t('codeBlock.collapse')}</span>
+                </>
+              ) : (
+                <>
+                  <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
+                  <span>Expand all {totalLines} lines</span>
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{expanded ? t('tooltip.collapseCode') : t('tooltip.expandCode')}</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

@@ -112,11 +112,15 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
   const [searchQuery, setSearchQuery] = useState("");
   const { t } = useTranslation();
 
+  console.log('[FileTree] Render:', { workingDirectory, treeLength: tree.length, loading });
+
   const fetchTree = useCallback(async () => {
     if (!workingDirectory) {
+      console.log('[FileTree] No working directory, clearing tree');
       setTree([]);
       return;
     }
+    console.log('[FileTree] Fetching tree for:', workingDirectory);
     setLoading(true);
     try {
       const res = await fetch(
@@ -124,11 +128,14 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
       );
       if (res.ok) {
         const data = await res.json();
+        console.log('[FileTree] Fetched tree:', data.tree?.length || 0, 'items');
         setTree(data.tree || []);
       } else {
+        console.error('[FileTree] Fetch failed:', res.status, res.statusText);
         setTree([]);
       }
-    } catch {
+    } catch (err) {
+      console.error('[FileTree] Fetch error:', err);
       setTree([]);
     } finally {
       setLoading(false);

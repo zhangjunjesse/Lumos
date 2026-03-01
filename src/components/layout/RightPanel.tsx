@@ -21,6 +21,8 @@ export function RightPanel({ width }: RightPanelProps) {
   const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile } = usePanel();
   const { t } = useTranslation();
 
+  console.log('[RightPanel] Render:', { panelOpen, workingDirectory, width });
+
   const handleFileAdd = useCallback((path: string) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path } }));
   }, []);
@@ -68,23 +70,32 @@ export function RightPanel({ width }: RightPanelProps) {
   }
 
   return (
-    <aside className="hidden h-full shrink-0 flex-col overflow-hidden bg-background lg:flex" style={{ width: width ?? 288 }}>
-      {/* Header */}
-      <div className="flex h-12 mt-5 shrink-0 items-center justify-between px-4">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t('panel.files')}</span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setPanelOpen(false)}
-            >
-              <HugeiconsIcon icon={PanelRightCloseIcon} className="h-4 w-4" />
-              <span className="sr-only">{t('panel.closePanel')}</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="left">{t('panel.closePanel')}</TooltipContent>
-        </Tooltip>
+    <aside className="flex h-full shrink-0 flex-col overflow-hidden bg-background" style={{ width: width ?? 288 }}>
+      {/* Header - draggable title bar */}
+      <div className="flex h-12 shrink-0 items-center justify-between px-4">
+        {/* Draggable area - takes up most of the header */}
+        <div
+          className="flex-1 flex items-center min-w-0"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t('panel.files')}</span>
+        </div>
+        {/* Button area - not draggable */}
+        <div className="shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setPanelOpen(false)}
+              >
+                <HugeiconsIcon icon={PanelRightCloseIcon} className="h-4 w-4" />
+                <span className="sr-only">{t('panel.closePanel')}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">{t('panel.closePanel')}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       {/* Body */}
