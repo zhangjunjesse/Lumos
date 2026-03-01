@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       args: args || [],
       env: env || {},
       scope: scope || "user",
-      enabled: true,
+      is_enabled: true,
     });
 
     return NextResponse.json({ server });

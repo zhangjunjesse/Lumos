@@ -33,21 +33,20 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, command, args, env, enabled } = body;
+    const { command, args, env, enabled } = body;
 
-    if (!name || !command) {
+    if (!command) {
       return NextResponse.json(
-        { error: "Name and command are required" },
+        { error: "Command is required" },
         { status: 400 }
       );
     }
 
     const server = await updateMcpServer(id, {
-      name,
       command,
       args: args || [],
       env: env || {},
-      enabled: enabled !== undefined ? enabled : true,
+      is_enabled: enabled !== undefined ? enabled : true,
     });
 
     return NextResponse.json({ server });

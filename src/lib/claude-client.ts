@@ -599,12 +599,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // === ISOLATION: Skills ===
         // Load enabled skills from database instead of ~/.claude/skills/
         // With settingSources: [], the SDK won't load user's skills directory.
-        // TODO: Implement skills loading after Skills API is updated
+        // TODO: Skills loading via SDK Options is not yet supported
+        // Need to investigate alternative approach (e.g., custom skills directory)
         /*
         try {
+          const { getEnabledSkills } = await import('./db');
           const enabledSkills = getEnabledSkills();
           if (enabledSkills.length > 0) {
-            queryOptions.skills = enabledSkills.map(skill => skill.name);
+            queryOptions.skills = enabledSkills.map(skill => skill.file_path);
             console.log('[claude-client] Loaded skills:', queryOptions.skills);
           }
         } catch (error) {
