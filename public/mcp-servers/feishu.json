@@ -2,6 +2,6 @@
   "name": "feishu",
   "description": "Feishu document operations (read, edit, create)",
   "command": "node",
-  "args": ["[RUNTIME_PATH]/feishu-mcp.js"],
+  "args": ["[RUNTIME_PATH]/feishu-mcp-server/index.js"],
   "env": {}
 }

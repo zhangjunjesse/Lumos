@@ -15,12 +15,24 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
   const mcpServers = getEnabledMcpServersAsConfig();
 
   // Resolve [RUNTIME_PATH] placeholder in args
+  // In production: process.resourcesPath/
+  // In development: project_root/resources/
+  let runtimePath: string;
+  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
+    runtimePath = process.resourcesPath;
+  } else {
+    runtimePath = path.join(process.cwd(), 'resources');
+  }
+
   const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  const runtimePath = path.join(dataDir, 'runtime');
 
   for (const [name, config] of Object.entries(mcpServers)) {
     if (config.args) {
-      config.args = config.args.map(arg => arg.replace('[RUNTIME_PATH]', runtimePath));
+      config.args = config.args.map(arg => {
+        return arg
+          .replace('[RUNTIME_PATH]', runtimePath)
+          .replace('[WORKSPACE_PATH]', process.cwd());
+      });
     }
 
     // Special handling for feishu MCP: inject environment variables
