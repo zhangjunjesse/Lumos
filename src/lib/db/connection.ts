@@ -140,6 +140,26 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     initDb(db);
+
+    // Initialize builtin resources (Skills and MCP servers) after DB is ready
+    // This runs on every startup to check for updates
+    import('../init-builtin-resources').then(({ initBuiltinResources }) => {
+      initBuiltinResources().catch(err => {
+        console.error('[db] Failed to initialize builtin resources:', err);
+      });
+    }).catch(err => {
+      console.error('[db] Failed to load init-builtin-resources module:', err);
+    });
+
+    // Migrate existing user resources from file system to database
+    // This only runs once (checked by migration flag in database)
+    import('../migrate-existing-resources').then(({ migrateExistingResources }) => {
+      migrateExistingResources().catch(err => {
+        console.error('[db] Failed to migrate existing resources:', err);
+      });
+    }).catch(err => {
+      console.error('[db] Failed to load migrate-existing-resources module:', err);
+    });
   }
   return db;
 }
