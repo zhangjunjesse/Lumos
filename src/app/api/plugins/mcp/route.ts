@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import type {
   MCPServerConfig,
   MCPConfigResponse,
@@ -9,56 +6,28 @@ import type {
   SuccessResponse,
 } from '@/types';
 
-import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
-
-function getSettingsPath(): string {
-  return path.join(getClaudeConfigDir(), 'settings.json');
-}
-
-// Sandbox: read from app config dir instead of ~/.claude.json
-function getUserConfigPath(): string {
-  return path.join(getClaudeConfigDir(), '.claude.json');
-}
-
-function readJsonFile(filePath: string): Record<string, unknown> {
-  if (!fs.existsSync(filePath)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-function readSettings(): Record<string, unknown> {
-  return readJsonFile(getSettingsPath());
-}
-
-function writeSettings(settings: Record<string, unknown>): void {
-  const settingsPath = getSettingsPath();
-  const dir = path.dirname(settingsPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-}
+import {
+  getAllMcpServers,
+  createMcpServer,
+  updateMcpServer,
+  getMcpServerByNameAndScope,
+} from '@/lib/db';
 
 export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorResponse>> {
   try {
-    const settings = readSettings();
-    const userConfig = readJsonFile(getUserConfigPath());
-    // Merge: ~/.claude/settings.json takes precedence over ~/.claude.json
-    const mcpServers: Record<string, MCPServerConfig> = {
-      ...((userConfig.mcpServers || {}) as Record<string, MCPServerConfig>),
-      ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
-    };
+    // Load all MCP servers from database (including scope info)
+    const servers = getAllMcpServers();
 
-    // Inject built-in Feishu MCP server
-    const feishuPath = getFeishuMcpPath();
-    if (feishuPath && !mcpServers['feishu']) {
-      mcpServers['feishu'] = {
-        command: 'node',
-        args: [feishuPath],
-      } as MCPServerConfig;
+    // Convert to the format expected by the UI
+    const mcpServers: Record<string, any> = {};
+    for (const server of servers) {
+      mcpServers[server.name] = {
+        command: server.command,
+        args: JSON.parse(server.args || '[]'),
+        env: JSON.parse(server.env || '{}'),
+        scope: server.scope,
+        description: server.description,
+      };
     }
 
     return NextResponse.json({ mcpServers });
@@ -70,60 +39,84 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
   }
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
-  try {
-    const body = await request.json();
-    const { mcpServers } = body as { mcpServers: Record<string, MCPServerConfig> };
-
-    const settings = readSettings();
-    settings.mcpServers = mcpServers;
-    writeSettings(settings);
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to update MCP config' },
-      { status: 500 }
-    );
-  }
-}
-
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
   try {
     const body = await request.json();
-    const { name, server } = body as { name: string; server: MCPServerConfig };
+    const { name, server } = body;
 
-    if (!name || !server || !server.command) {
+    if (!name || !server) {
       return NextResponse.json(
-        { error: 'Name and server command are required' },
+        { error: 'Missing required fields: name, server' },
         { status: 400 }
       );
     }
 
-    const settings = readSettings();
-    if (!settings.mcpServers) {
-      settings.mcpServers = {};
-    }
-
-    const mcpServers = settings.mcpServers as Record<string, MCPServerConfig>;
-    if (mcpServers[name]) {
+    // Check if server already exists
+    const existing = getMcpServerByNameAndScope(name, 'user');
+    if (existing) {
       return NextResponse.json(
         { error: `MCP server "${name}" already exists` },
         { status: 409 }
       );
     }
 
-    mcpServers[name] = server;
-    writeSettings(settings);
+    // Create new server with scope=user
+    createMcpServer({
+      name,
+      scope: 'user',
+      description: server.description || `MCP server: ${name}`,
+      command: server.command || 'node',
+      args: server.args || [],
+      env: server.env || {},
+      is_enabled: true,
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to add MCP server' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(
+  request: NextRequest
+): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
+  try {
+    const body = await request.json();
+    const { name, server } = body;
+
+    if (!name || !server) {
+      return NextResponse.json(
+        { error: 'Missing required fields: name, server' },
+        { status: 400 }
+      );
+    }
+
+    // Only allow updating user-scope servers
+    const existing = getMcpServerByNameAndScope(name, 'user');
+    if (!existing) {
+      return NextResponse.json(
+        { error: `MCP server "${name}" not found or is not editable` },
+        { status: 404 }
+      );
+    }
+
+    // Update server
+    updateMcpServer(existing.id, {
+      description: server.description,
+      command: server.command,
+      args: server.args,
+      env: server.env,
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to update MCP server' },
       { status: 500 }
     );
   }

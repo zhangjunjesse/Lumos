@@ -49,6 +49,8 @@ export {
   deleteProvider,
   activateProvider,
   deactivateAllProviders,
+  getBuiltinProvider,
+  resetBuiltinProvider,
 } from './providers';
 
 // Token stats
@@ -88,3 +90,32 @@ export {
   expirePermissionRequests,
   getPermissionRequest,
 } from './permissions';
+
+// Skills
+export {
+  getAllSkills,
+  getSkillsByScope,
+  getEnabledSkills,
+  getSkill,
+  getSkillByNameAndScope,
+  createSkill,
+  updateSkill,
+  deleteSkill,
+  toggleSkillEnabled,
+} from './skills';
+
+// MCP Servers
+export {
+  getAllMcpServers,
+  getMcpServersByScope,
+  getEnabledMcpServers,
+  getMcpServer,
+  getMcpServerByNameAndScope,
+  createMcpServer,
+  updateMcpServer,
+  deleteMcpServer,
+  toggleMcpServerEnabled,
+  getEnabledMcpServersAsConfig,
+} from './mcp-servers';
+
+

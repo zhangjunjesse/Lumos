@@ -13,7 +13,7 @@ import type { MCPServer } from "@/types";
 
 export function McpManager() {
   const { t } = useTranslation();
-  const [servers, setServers] = useState<Record<string, MCPServer>>({});
+  const [servers, setServers] = useState<Record<string, MCPServer & { scope?: string }>>({});
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingName, setEditingName] = useState<string | undefined>();
@@ -55,17 +55,40 @@ export function McpManager() {
     setEditorOpen(true);
   }
 
+  async function handleCopyToUser(name: string, server: MCPServer) {
+    try {
+      // Create a copy with a new name (append "-copy" if name exists)
+      let newName = `${name}-copy`;
+      let counter = 1;
+      while (servers[newName]) {
+        newName = `${name}-copy-${counter}`;
+        counter++;
+      }
+
+      const res = await fetch("/api/plugins/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName, server }),
+      });
+
+      if (res.ok) {
+        await fetchServers();
+      } else {
+        const data = await res.json();
+        console.error("Failed to copy MCP server:", data.error);
+      }
+    } catch (err) {
+      console.error("Failed to copy MCP server:", err);
+    }
+  }
+
   async function handleDelete(name: string) {
     try {
       const res = await fetch(`/api/plugins/mcp/${encodeURIComponent(name)}`, {
         method: "DELETE",
       });
       if (res.ok) {
-        setServers((prev) => {
-          const updated = { ...prev };
-          delete updated[name];
-          return updated;
-        });
+        await fetchServers();
       } else {
         const data = await res.json();
         console.error("Failed to delete MCP server:", data.error);
@@ -77,32 +100,34 @@ export function McpManager() {
 
   async function handleSave(name: string, server: MCPServer) {
     if (editingName && editingName !== name) {
-      const updated = { ...servers };
-      delete updated[editingName];
-      updated[name] = server;
+      // Rename: delete old and create new
       try {
-        await fetch("/api/plugins/mcp", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mcpServers: updated }),
+        await fetch(`/api/plugins/mcp/${encodeURIComponent(editingName)}`, {
+          method: "DELETE",
         });
-        setServers(updated);
+        await fetch("/api/plugins/mcp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, server }),
+        });
+        await fetchServers();
       } catch (err) {
-        console.error("Failed to save MCP server:", err);
+        console.error("Failed to rename MCP server:", err);
       }
     } else if (editingName) {
-      const updated = { ...servers, [name]: server };
+      // Update existing
       try {
         await fetch("/api/plugins/mcp", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mcpServers: updated }),
+          body: JSON.stringify({ name, server }),
         });
-        setServers(updated);
+        await fetchServers();
       } catch (err) {
-        console.error("Failed to save MCP server:", err);
+        console.error("Failed to update MCP server:", err);
       }
     } else {
+      // Create new
       try {
         const res = await fetch("/api/plugins/mcp", {
           method: "POST",
@@ -110,7 +135,7 @@ export function McpManager() {
           body: JSON.stringify({ name, server }),
         });
         if (res.ok) {
-          setServers((prev) => ({ ...prev, [name]: server }));
+          await fetchServers();
         } else {
           const data = await res.json();
           console.error("Failed to add MCP server:", data.error);
@@ -124,12 +149,8 @@ export function McpManager() {
   async function handleJsonSave(jsonStr: string) {
     try {
       const parsed = JSON.parse(jsonStr);
-      await fetch("/api/plugins/mcp", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mcpServers: parsed }),
-      });
-      setServers(parsed);
+      // JSON save is not supported in the new architecture
+      console.error("JSON save is not supported");
     } catch (err) {
       console.error("Failed to save MCP config:", err);
     }
@@ -188,6 +209,7 @@ export function McpManager() {
               servers={servers}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onCopyToUser={handleCopyToUser}
             />
           )}
         </TabsContent>

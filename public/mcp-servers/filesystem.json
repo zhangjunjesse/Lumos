@@ -1,0 +1,7 @@
+{
+  "name": "filesystem",
+  "description": "Local file operations (read, write, search)",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "[WORKSPACE_PATH]"],
+  "env": {}
+}

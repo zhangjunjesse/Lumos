@@ -5,14 +5,15 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
-import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon } from "@hugeicons/core-free-icons";
+import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon, Copy01Icon } from "@hugeicons/core-free-icons";
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 
 interface McpServerListProps {
-  servers: Record<string, MCPServer>;
+  servers: Record<string, MCPServer & { scope?: string }>;
   onEdit: (name: string, server: MCPServer) => void;
   onDelete: (name: string) => void;
+  onCopyToUser?: (name: string, server: MCPServer) => void;
 }
 
 function getServerTypeInfo(server: MCPServer) {
@@ -27,7 +28,7 @@ function getServerTypeInfo(server: MCPServer) {
   }
 }
 
-export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps) {
+export function McpServerList({ servers, onEdit, onDelete, onCopyToUser }: McpServerListProps) {
   const { t } = useTranslation();
   const entries = Object.entries(servers);
 
@@ -43,31 +44,56 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
     );
   }
 
-  return (
-    <div className="space-y-3">
-      {entries.map(([name, server]) => {
-        const typeInfo = getServerTypeInfo(server);
-        return (
-          <Card key={name}>
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="flex-1 min-w-0 mr-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <HugeiconsIcon icon={typeInfo.icon} className={`h-4 w-4 shrink-0 ${typeInfo.color}`} />
-                  <CardTitle className="text-sm font-medium">{name}</CardTitle>
-                  <Badge variant="outline" className="text-xs shrink-0">
-                    {typeInfo.label}
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs shrink-0">
-                    {t('provider.configured')}
-                  </Badge>
-                </div>
-                <CardDescription className="text-xs mt-1 font-mono">
-                  {server.url
-                    ? server.url
-                    : `${server.command} ${server.args?.join(' ') || ''}`}
-                </CardDescription>
-              </div>
-              <div className="flex gap-1 shrink-0">
+  // Group servers by scope
+  const builtinServers = entries.filter(([_, server]) => server.scope === 'builtin');
+  const userServers = entries.filter(([_, server]) => server.scope === 'user');
+
+  const renderServerCard = (name: string, server: MCPServer & { scope?: string }) => {
+    const typeInfo = getServerTypeInfo(server);
+    const isBuiltin = server.scope === 'builtin';
+
+    return (
+      <Card key={name}>
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+          <div className="flex-1 min-w-0 mr-3">
+            <div className="flex items-center gap-2 mb-1">
+              <HugeiconsIcon icon={typeInfo.icon} className={`h-4 w-4 shrink-0 ${typeInfo.color}`} />
+              <CardTitle className="text-sm font-medium">{name}</CardTitle>
+              <Badge variant="outline" className="text-xs shrink-0">
+                {typeInfo.label}
+              </Badge>
+              {isBuiltin && (
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  Built-in
+                </Badge>
+              )}
+              <Badge variant="secondary" className="text-xs shrink-0">
+                {t('provider.configured')}
+              </Badge>
+            </div>
+            <CardDescription className="text-xs mt-1 font-mono">
+              {server.url
+                ? server.url
+                : `${server.command} ${server.args?.join(' ') || ''}`}
+            </CardDescription>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {isBuiltin ? (
+              <>
+                {onCopyToUser && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => onCopyToUser(name, server)}
+                    title="Copy to User"
+                  >
+                    <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -84,40 +110,62 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
                 >
                   <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
                 </Button>
+              </>
+            )}
+          </div>
+        </CardHeader>
+        {(server.env && Object.keys(server.env).length > 0) ||
+        (server.args && server.args.length > 0) ? (
+          <CardContent className="pt-0">
+            {server.args && server.args.length > 0 && (
+              <div className="mb-2">
+                <p className="text-xs text-muted-foreground mb-1">{t('mcp.arguments')}</p>
+                <div className="flex gap-1 flex-wrap">
+                  {server.args.map((arg, i) => (
+                    <Badge key={i} variant="outline" className="text-xs font-mono">
+                      {arg}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-            </CardHeader>
-            {(server.env && Object.keys(server.env).length > 0) ||
-            (server.args && server.args.length > 0) ? (
-              <CardContent className="pt-0">
-                {server.args && server.args.length > 0 && (
-                  <div className="mb-2">
-                    <p className="text-xs text-muted-foreground mb-1">{t('mcp.arguments')}</p>
-                    <div className="flex gap-1 flex-wrap">
-                      {server.args.map((arg, i) => (
-                        <Badge key={i} variant="outline" className="text-xs font-mono">
-                          {arg}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {server.env && Object.keys(server.env).length > 0 && (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">{t('mcp.environment')}</p>
-                    <div className="flex gap-1 flex-wrap">
-                      {Object.keys(server.env).map((key) => (
-                        <Badge key={key} variant="outline" className="text-xs font-mono">
-                          {key}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            ) : null}
-          </Card>
-        );
-      })}
+            )}
+            {server.env && Object.keys(server.env).length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">{t('mcp.environment')}</p>
+                <div className="flex gap-1 flex-wrap">
+                  {Object.keys(server.env).map((key) => (
+                    <Badge key={key} variant="outline" className="text-xs font-mono">
+                      {key}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        ) : null}
+      </Card>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {builtinServers.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium mb-3 text-muted-foreground">Built-in Servers</h4>
+          <div className="space-y-3">
+            {builtinServers.map(([name, server]) => renderServerCard(name, server))}
+          </div>
+        </div>
+      )}
+
+      {userServers.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium mb-3 text-muted-foreground">User Servers</h4>
+          <div className="space-y-3">
+            {userServers.map(([name, server]) => renderServerCard(name, server))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

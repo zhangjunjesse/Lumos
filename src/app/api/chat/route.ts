@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig } from '@/lib/db';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -9,34 +9,32 @@ import os from 'os';
 
 import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
 
-/** Load MCP servers: built-in + sandbox config */
+/** Load MCP servers from database (builtin + user) */
 function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
-  const read = (p: string) => {
-    try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf-8')) : {}; } catch { return {}; }
-  };
-  const userConfig = read(path.join(getClaudeConfigDir(), '.claude.json'));
-  const settings = read(path.join(getClaudeConfigDir(), 'settings.json'));
-  const merged: Record<string, MCPServerConfig> = {
-    ...((userConfig.mcpServers || {}) as Record<string, MCPServerConfig>),
-    ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
-  };
+  // Load enabled MCP servers from database
+  const mcpServers = getEnabledMcpServersAsConfig();
 
-  // Built-in: Feishu MCP server
-  const feishuPath = getFeishuMcpPath();
-  if (feishuPath) {
-    const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-    merged['feishu'] = {
-      command: 'node',
-      args: [feishuPath],
-      env: {
+  // Resolve [RUNTIME_PATH] placeholder in args
+  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+  const runtimePath = path.join(dataDir, 'runtime');
+
+  for (const [name, config] of Object.entries(mcpServers)) {
+    if (config.args) {
+      config.args = config.args.map(arg => arg.replace('[RUNTIME_PATH]', runtimePath));
+    }
+
+    // Special handling for feishu MCP: inject environment variables
+    if (name === 'feishu') {
+      config.env = {
+        ...config.env,
         FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
         FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
         FEISHU_TOKEN_PATH: path.join(dataDir, 'auth', 'feishu.json'),
-      },
-    } as MCPServerConfig;
+      };
+    }
   }
 
-  return Object.keys(merged).length > 0 ? merged : undefined;
+  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
 }
 
 export const runtime = 'nodejs';

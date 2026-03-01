@@ -1,350 +1,227 @@
-import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import crypto from "crypto";
-import { getClaudeConfigDir } from "@/lib/platform";
+import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import matter from 'gray-matter';
+import {
+  getAllSkills,
+  createSkill,
+  updateSkill,
+  getSkillByNameAndScope,
+} from '@/lib/db';
+import { dataDir } from '@/lib/db/connection';
 
-interface SkillFile {
+// ==========================================
+// Types
+// ==========================================
+
+interface SkillResponse {
+  id: string;
   name: string;
   description: string;
-  content: string;
-  source: "global" | "project" | "plugin" | "installed";
-  installedSource?: "agents" | "claude";
-  filePath: string;
+  scope: 'builtin' | 'user';
+  is_enabled: boolean;
+  content?: string;
 }
 
-type InstalledSource = "agents" | "claude";
-type InstalledSkill = SkillFile & { installedSource: InstalledSource; contentHash: string };
-
-function getGlobalCommandsDir(): string {
-  return path.join(getClaudeConfigDir(), "commands");
+interface ErrorResponse {
+  error: string;
 }
 
-function getProjectCommandsDir(cwd?: string): string {
-  return path.join(cwd || process.cwd(), ".claude", "commands");
+interface SuccessResponse {
+  success: boolean;
+  skill?: SkillResponse;
 }
 
-function getPluginCommandsDirs(): string[] {
-  const dirs: string[] = [];
-  const marketplacesDir = path.join(getClaudeConfigDir(), "plugins", "marketplaces");
-  if (!fs.existsSync(marketplacesDir)) return dirs;
+// ==========================================
+// Helper Functions
+// ==========================================
 
+function calculateFileHash(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function getUserSkillsDir(): string {
+  return path.join(dataDir, 'skills', 'user');
+}
+
+function readSkillContent(filePath: string): string {
+  if (!fs.existsSync(filePath)) {
+    return '';
+  }
+  return fs.readFileSync(filePath, 'utf-8');
+}
+
+// ==========================================
+// GET - List all skills
+// ==========================================
+
+export async function GET(): Promise<NextResponse<{ skills: SkillResponse[] } | ErrorResponse>> {
   try {
-    // Scan marketplaces -> each marketplace -> plugins -> each plugin -> commands
-    const marketplaces = fs.readdirSync(marketplacesDir);
-    for (const marketplace of marketplaces) {
-      const pluginsDir = path.join(marketplacesDir, marketplace, "plugins");
-      if (!fs.existsSync(pluginsDir)) continue;
-      const plugins = fs.readdirSync(pluginsDir);
-      for (const plugin of plugins) {
-        const commandsDir = path.join(pluginsDir, plugin, "commands");
-        if (fs.existsSync(commandsDir)) {
-          dirs.push(commandsDir);
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return dirs;
-}
+    // Load all skills from database
+    const skillRecords = getAllSkills();
 
-function getInstalledSkillsDir(): string {
-  return path.join(os.homedir(), ".agents", "skills");
-}
+    // Convert to response format
+    const skills: SkillResponse[] = skillRecords.map(record => ({
+      id: record.id,
+      name: record.name,
+      description: record.description,
+      scope: record.scope,
+      is_enabled: record.is_enabled === 1,
+    }));
 
-function getClaudeSkillsDir(): string {
-  return path.join(getClaudeConfigDir(), "skills");
-}
-
-function computeContentHash(content: string): string {
-  return crypto.createHash("sha1").update(content, "utf8").digest("hex");
-}
-
-/**
- * Parse YAML front matter from SKILL.md content.
- * Extracts `name` and `description` fields from the --- delimited block.
- */
-function parseSkillFrontMatter(content: string): { name?: string; description?: string } {
-  // Extract front matter between --- delimiters
-  const fmMatch = content.match(/^---\r?\n([\s\S]+?)\r?\n---/);
-  if (!fmMatch) return {};
-
-  const frontMatter = fmMatch[1];
-  const lines = frontMatter.split(/\r?\n/);
-  const result: { name?: string; description?: string } = {};
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Match name: value
-    const nameMatch = line.match(/^name:\s*(.+)/);
-    if (nameMatch) {
-      result.name = nameMatch[1].trim();
-      continue;
-    }
-
-    // Match description: | (multi-line YAML block scalar) — check FIRST
-    if (/^description:\s*\|/.test(line)) {
-      const descLines: string[] = [];
-      for (let j = i + 1; j < lines.length; j++) {
-        if (/^\s+/.test(lines[j])) {
-          descLines.push(lines[j].trim());
-        } else {
-          break;
-        }
-      }
-      if (descLines.length > 0) {
-        result.description = descLines.filter(Boolean).join(" ");
-      }
-      continue;
-    }
-
-    // Match description: value (single-line)
-    const descMatch = line.match(/^description:\s+(.+)/);
-    if (descMatch) {
-      result.description = descMatch[1].trim();
-    }
-  }
-  return result;
-}
-
-/**
- * Scan a directory for installed skills.
- * Each skill is a subdirectory containing a SKILL.md with YAML front matter.
- * Used for both ~/.agents/skills/ and ~/.claude/skills/.
- */
-function scanInstalledSkills(
-  dir: string,
-  installedSource: InstalledSource
-): InstalledSkill[] {
-  const skills: InstalledSkill[] = [];
-  if (!fs.existsSync(dir)) return skills;
-
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      const skillMdPath = path.join(dir, entry.name, "SKILL.md");
-      if (!fs.existsSync(skillMdPath)) continue;
-
-      const content = fs.readFileSync(skillMdPath, "utf-8");
-      const meta = parseSkillFrontMatter(content);
-      const name = meta.name || entry.name;
-      const description = meta.description || `Installed skill: /${name}`;
-      const contentHash = computeContentHash(content);
-
-      skills.push({
-        name,
-        description,
-        content,
-        source: "installed",
-        installedSource,
-        contentHash,
-        filePath: skillMdPath,
-      });
-    }
-  } catch {
-    // ignore read errors
-  }
-  return skills;
-}
-
-function resolveInstalledSkills(
-  agentsSkills: InstalledSkill[],
-  claudeSkills: InstalledSkill[],
-  preferredSource: InstalledSource
-): SkillFile[] {
-  const all = [...agentsSkills, ...claudeSkills];
-  const byName = new Map<string, InstalledSkill[]>();
-  for (const skill of all) {
-    const existing = byName.get(skill.name);
-    if (existing) {
-      existing.push(skill);
-    } else {
-      byName.set(skill.name, [skill]);
-    }
-  }
-
-  const resolved: InstalledSkill[] = [];
-  for (const group of byName.values()) {
-    if (group.length === 1) {
-      resolved.push(group[0]);
-      continue;
-    }
-
-    const uniqueHashes = new Set(group.map((s) => s.contentHash));
-    if (uniqueHashes.size === 1) {
-      const preferred =
-        group.find((s) => s.installedSource === preferredSource) || group[0];
-      resolved.push(preferred);
-      continue;
-    }
-
-    resolved.push(...group);
-  }
-
-  return resolved.map(({ contentHash: _contentHash, ...rest }) => rest);
-}
-
-function scanDirectory(
-  dir: string,
-  source: "global" | "project" | "plugin",
-  prefix = ""
-): SkillFile[] {
-  const skills: SkillFile[] = [];
-  if (!fs.existsSync(dir)) return skills;
-
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name.startsWith(".")) continue;
-
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        // Recurse into subdirectories (e.g. ~/.claude/commands/review/pr.md)
-        const subPrefix = prefix ? `${prefix}:${entry.name}` : entry.name;
-        skills.push(...scanDirectory(fullPath, source, subPrefix));
-        continue;
-      }
-
-      if (!entry.name.endsWith(".md")) continue;
-      const baseName = entry.name.replace(/\.md$/, "");
-      const name = prefix ? `${prefix}:${baseName}` : baseName;
-      const filePath = fullPath;
-      const content = fs.readFileSync(filePath, "utf-8");
-      const firstLine = content.split("\n")[0]?.trim() || "";
-      const description = firstLine.startsWith("#")
-        ? firstLine.replace(/^#+\s*/, "")
-        : firstLine || `Skill: /${name}`;
-      skills.push({ name, description, content, source, filePath });
-    }
-  } catch {
-    // ignore read errors
-  }
-  return skills;
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    // Accept optional cwd query param for project-level skills
-    const cwd = request.nextUrl.searchParams.get("cwd") || undefined;
-    const globalDir = getGlobalCommandsDir();
-    const projectDir = getProjectCommandsDir(cwd);
-
-    console.log(`[skills] Scanning global: ${globalDir} (exists: ${fs.existsSync(globalDir)})`);
-    console.log(`[skills] Scanning project: ${projectDir} (exists: ${fs.existsSync(projectDir)})`);
-    console.log(`[skills] HOME=${process.env.HOME}, homedir=${os.homedir()}`);
-
-    const globalSkills = scanDirectory(globalDir, "global");
-    const projectSkills = scanDirectory(projectDir, "project");
-
-    const agentsSkillsDir = getInstalledSkillsDir();
-    const claudeSkillsDir = getClaudeSkillsDir();
-    console.log(`[skills] Scanning installed: ${agentsSkillsDir} (exists: ${fs.existsSync(agentsSkillsDir)})`);
-    console.log(`[skills] Scanning installed: ${claudeSkillsDir} (exists: ${fs.existsSync(claudeSkillsDir)})`);
-    const agentsSkills = scanInstalledSkills(agentsSkillsDir, "agents");
-    const claudeSkills = scanInstalledSkills(claudeSkillsDir, "claude");
-    const preferredInstalledSource: InstalledSource =
-      agentsSkills.length === claudeSkills.length
-        ? "claude"
-        : agentsSkills.length > claudeSkills.length
-          ? "agents"
-          : "claude";
-    console.log(
-      `[skills] Installed counts: agents=${agentsSkills.length}, claude=${claudeSkills.length}, preferred=${preferredInstalledSource}`
-    );
-    const installedSkills = resolveInstalledSkills(
-      agentsSkills,
-      claudeSkills,
-      preferredInstalledSource
-    );
-
-    // Scan installed plugin skills
-    const pluginSkills: SkillFile[] = [];
-    for (const dir of getPluginCommandsDirs()) {
-      pluginSkills.push(...scanDirectory(dir, "plugin"));
-    }
-
-    const all = [...globalSkills, ...projectSkills, ...installedSkills, ...pluginSkills];
-    console.log(`[skills] Found: global=${globalSkills.length}, project=${projectSkills.length}, installed=${installedSkills.length}, plugin=${pluginSkills.length}`);
-
-    return NextResponse.json({ skills: all });
+    return NextResponse.json({ skills });
   } catch (error) {
-    console.error('[skills] Error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load skills" },
+      { error: error instanceof Error ? error.message : 'Failed to load skills' },
       { status: 500 }
     );
   }
 }
 
-export async function POST(request: Request) {
+// ==========================================
+// POST - Create new user skill
+// ==========================================
+
+export async function POST(
+  request: NextRequest
+): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
   try {
     const body = await request.json();
-    const { name, content, scope, cwd } = body as {
-      name: string;
-      content: string;
-      scope: "global" | "project";
-      cwd?: string;
-    };
+    const { name, content, description } = body;
 
-    if (!name || typeof name !== "string") {
+    if (!name || typeof name !== 'string') {
       return NextResponse.json(
-        { error: "Skill name is required" },
+        { error: 'Missing required field: name' },
         { status: 400 }
       );
     }
 
-    // Sanitize name: only allow alphanumeric, hyphens, underscores
-    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "-");
-    if (!safeName) {
+    // Check if skill already exists
+    const existing = getSkillByNameAndScope(name, 'user');
+    if (existing) {
       return NextResponse.json(
-        { error: "Invalid skill name" },
-        { status: 400 }
-      );
-    }
-
-    const dir =
-      scope === "project" ? getProjectCommandsDir(cwd) : getGlobalCommandsDir();
-
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    const filePath = path.join(dir, `${safeName}.md`);
-    if (fs.existsSync(filePath)) {
-      return NextResponse.json(
-        { error: "A skill with this name already exists" },
+        { error: `Skill "${name}" already exists` },
         { status: 409 }
       );
     }
 
-    fs.writeFileSync(filePath, content || "", "utf-8");
+    // Ensure user skills directory exists
+    const userSkillsDir = getUserSkillsDir();
+    if (!fs.existsSync(userSkillsDir)) {
+      fs.mkdirSync(userSkillsDir, { recursive: true });
+    }
 
-    const firstLine = (content || "").split("\n")[0]?.trim() || "";
-    const description = firstLine.startsWith("#")
-      ? firstLine.replace(/^#+\s*/, "")
-      : firstLine || `Skill: /${safeName}`;
+    // Write skill file
+    const fileName = `${name}.md`;
+    const filePath = path.join(userSkillsDir, fileName);
+    const skillContent = content || '';
+    fs.writeFileSync(filePath, skillContent, 'utf-8');
 
-    return NextResponse.json(
-      {
-        skill: {
-          name: safeName,
-          description,
-          content: content || "",
-          source: scope || "global",
-          filePath,
-        },
+    // Parse description from content if not provided
+    let skillDescription = description;
+    if (!skillDescription && skillContent) {
+      const { data } = matter(skillContent);
+      skillDescription = data.description || `Skill: ${name}`;
+    }
+
+    // Create database record
+    const contentHash = calculateFileHash(skillContent);
+    const record = createSkill({
+      name,
+      scope: 'user',
+      description: skillDescription || `Skill: ${name}`,
+      file_path: filePath,
+      content_hash: contentHash,
+      is_enabled: true,
+    });
+
+    return NextResponse.json({
+      success: true,
+      skill: {
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        scope: record.scope,
+        is_enabled: record.is_enabled === 1,
       },
-      { status: 201 }
-    );
+    }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create skill" },
+      { error: error instanceof Error ? error.message : 'Failed to create skill' },
       { status: 500 }
     );
   }
 }
+
+// ==========================================
+// PUT - Update existing user skill
+// ==========================================
+
+export async function PUT(
+  request: NextRequest
+): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
+  try {
+    const body = await request.json();
+    const { name, content, description } = body;
+
+    if (!name || typeof name !== 'string') {
+      return NextResponse.json(
+        { error: 'Missing required field: name' },
+        { status: 400 }
+      );
+    }
+
+    // Only allow updating user-scope skills
+    const existing = getSkillByNameAndScope(name, 'user');
+    if (!existing) {
+      return NextResponse.json(
+        { error: `Skill "${name}" not found or is not editable` },
+        { status: 404 }
+      );
+    }
+
+    // Update file if content provided
+    if (content !== undefined) {
+      fs.writeFileSync(existing.file_path, content, 'utf-8');
+    }
+
+    // Parse description from content if not provided
+    let skillDescription = description;
+    if (!skillDescription && content) {
+      const { data } = matter(content);
+      skillDescription = data.description;
+    }
+
+    // Update database record
+    const contentHash = content !== undefined ? calculateFileHash(content) : existing.content_hash;
+    const updated = updateSkill(existing.id, {
+      description: skillDescription,
+      content_hash: contentHash,
+    });
+
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'Failed to update skill' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      skill: {
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        scope: updated.scope,
+        is_enabled: updated.is_enabled === 1,
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to update skill' },
+      { status: 500 }
+    );
+  }
+}
+

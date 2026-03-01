@@ -288,6 +288,75 @@ export function migrateLumosTables(db: Database.Database): void {
   // Create unique index on is_builtin (only one provider can have is_builtin=1)
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_providers_builtin ON api_providers(is_builtin) WHERE is_builtin = 1");
 
+  // Skills table (metadata, content stored in files)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK(scope IN ('builtin', 'user')),
+      description TEXT NOT NULL DEFAULT '',
+      file_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL DEFAULT '',
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(name, scope)
+    );
+    CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope);
+    CREATE INDEX IF NOT EXISTS idx_skills_enabled ON skills(is_enabled);
+  `);
+
+  // MCP Servers table (metadata for MCP server configurations)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      command TEXT NOT NULL,
+      args TEXT NOT NULL DEFAULT '[]',
+      env TEXT NOT NULL DEFAULT '{}',
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // MCP Servers table extension: add new columns if missing
+  const mcpCols = db.prepare("PRAGMA table_info(mcp_servers)").all() as { name: string }[];
+  const mcpColNames = mcpCols.map(c => c.name);
+
+  const mcpNewCols: [string, string][] = [
+    ['scope', "TEXT NOT NULL DEFAULT 'user'"],
+    ['source', "TEXT NOT NULL DEFAULT 'manual'"],
+    ['content_hash', "TEXT NOT NULL DEFAULT ''"],
+    ['description', "TEXT NOT NULL DEFAULT ''"],
+  ];
+
+  for (const [col, def] of mcpNewCols) {
+    if (!mcpColNames.includes(col)) {
+      db.exec(`ALTER TABLE mcp_servers ADD COLUMN ${col} ${def}`);
+    }
+  }
+
+  // Add unique constraint on (name, scope) for mcp_servers
+  // SQLite doesn't support adding constraints to existing tables, so we check if it exists
+  const mcpIndexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='mcp_servers'").all() as { name: string }[];
+  const hasUniqueIndex = mcpIndexes.some(idx => idx.name.includes('name') && idx.name.includes('scope'));
+
+  if (!hasUniqueIndex) {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_name_scope ON mcp_servers(name, scope)");
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mcp_servers_scope ON mcp_servers(scope)");
+
+  // Create settings table for storing app-level configuration
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Auto-create or mark "Built-in" provider from the embedded default API key
   const builtinProvider = db.prepare('SELECT id FROM api_providers WHERE is_builtin = 1').get() as { id: string } | undefined;
 

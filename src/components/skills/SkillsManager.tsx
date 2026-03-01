@@ -3,127 +3,85 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { usePanel } from "@/hooks/usePanel";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { PlusSignIcon, Search01Icon, ZapIcon, Loading02Icon } from "@hugeicons/core-free-icons";
-import { SkillListItem } from "./SkillListItem";
-import { SkillEditor } from "./SkillEditor";
-import { CreateSkillDialog } from "./CreateSkillDialog";
+import { PlusSignIcon, Search01Icon, ZapIcon, Loading02Icon, Delete02Icon, PencilIcon, Copy01Icon } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
-import type { SkillItem } from "./SkillListItem";
+
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  scope: 'builtin' | 'user';
+  is_enabled: boolean;
+}
 
 export function SkillsManager() {
-  const { workingDirectory } = usePanel();
   const { t } = useTranslation();
-  const [skills, setSkills] = useState<SkillItem[]>([]);
-  const [selected, setSelected] = useState<SkillItem | null>(null);
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
 
   const fetchSkills = useCallback(async () => {
     try {
-      const cwdParam = workingDirectory ? `?cwd=${encodeURIComponent(workingDirectory)}` : '';
-      const res = await fetch(`/api/skills${cwdParam}`);
+      const res = await fetch('/api/skills');
       if (res.ok) {
         const data = await res.json();
-        setSkills((data.skills || []).filter((s: SkillItem) => s.source !== "project"));
+        setSkills(data.skills || []);
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      console.error('Failed to fetch skills:', error);
     } finally {
       setLoading(false);
     }
-  }, [workingDirectory]);
+  }, []);
 
   useEffect(() => {
     fetchSkills();
   }, [fetchSkills]);
 
-  const handleCreate = useCallback(
-    async (name: string, scope: "global" | "project", content: string) => {
-      const res = await fetch("/api/skills", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, content, scope, cwd: workingDirectory || undefined }),
+  const handleDelete = useCallback(async (name: string) => {
+    try {
+      const res = await fetch(`/api/skills/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to create skill");
-      }
-      const data = await res.json();
-      setSkills((prev) => [...prev, data.skill]);
-      setSelected(data.skill);
-    },
-    [workingDirectory]
-  );
-
-  const buildSkillUrl = useCallback((skill: SkillItem) => {
-    const params = new URLSearchParams();
-    if (skill.source === "installed" && skill.installedSource) {
-      params.set("source", skill.installedSource);
-    }
-    if (workingDirectory) {
-      params.set("cwd", workingDirectory);
-    }
-    const qs = params.toString();
-    return `/api/skills/${encodeURIComponent(skill.name)}${qs ? `?${qs}` : ""}`;
-  }, [workingDirectory]);
-
-  const handleSave = useCallback(
-    async (skill: SkillItem, content: string) => {
-      const res = await fetch(buildSkillUrl(skill), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save skill");
-      }
-      const data = await res.json();
-      // Update in list
-      setSkills((prev) =>
-        prev.map((s) =>
-          s.name === skill.name &&
-          s.source === data.skill.source &&
-          s.installedSource === data.skill.installedSource
-            ? data.skill
-            : s
-        )
-      );
-      // Update selected
-      setSelected(data.skill);
-    },
-    [buildSkillUrl]
-  );
-
-  const handleDelete = useCallback(
-    async (skill: SkillItem) => {
-      const res = await fetch(buildSkillUrl(skill), { method: "DELETE" });
       if (res.ok) {
-        setSkills((prev) =>
-          prev.filter(
-            (s) =>
-              !(
-                s.name === skill.name &&
-                s.source === skill.source &&
-                s.installedSource === skill.installedSource
-              )
-          )
-        );
-        if (
-          selected?.name === skill.name &&
-          selected?.source === skill.source &&
-          selected?.installedSource === skill.installedSource
-        ) {
-          setSelected(null);
-        }
+        setSkills(prev => prev.filter(s => s.name !== name));
       }
-    },
-    [buildSkillUrl, selected]
-  );
+    } catch (error) {
+      console.error('Failed to delete skill:', error);
+    }
+  }, []);
+
+  const handleCopyToUser = useCallback(async (skill: Skill) => {
+    try {
+      // Fetch skill content first
+      const getRes = await fetch(`/api/skills/${encodeURIComponent(skill.name)}?scope=builtin`);
+      if (!getRes.ok) return;
+
+      const { skill: fullSkill } = await getRes.json();
+
+      // Create a copy with user scope
+      const newName = `${skill.name}-copy`;
+      const res = await fetch('/api/skills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newName,
+          content: fullSkill.content,
+          description: skill.description,
+        }),
+      });
+
+      if (res.ok) {
+        fetchSkills();
+      }
+    } catch (error) {
+      console.error('Failed to copy skill:', error);
+    }
+  }, [fetchSkills]);
 
   const filtered = skills.filter(
     (s) =>
@@ -131,9 +89,8 @@ export function SkillsManager() {
       s.description.toLowerCase().includes(search.toLowerCase())
   );
 
-  const globalSkills = filtered.filter((s) => s.source === "global");
-  const installedSkills = filtered.filter((s) => s.source === "installed");
-  const pluginSkills = filtered.filter((s) => s.source === "plugin");
+  const builtinSkills = filtered.filter((s) => s.scope === 'builtin');
+  const userSkills = filtered.filter((s) => s.scope === 'user');
 
   if (loading) {
     return (
@@ -146,154 +103,116 @@ export function SkillsManager() {
     );
   }
 
+  const renderSkillCard = (skill: Skill) => {
+    const isBuiltin = skill.scope === 'builtin';
+
+    return (
+      <Card key={skill.id}>
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+          <div className="flex-1 min-w-0 mr-3">
+            <div className="flex items-center gap-2 mb-1">
+              <HugeiconsIcon icon={ZapIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">/{skill.name}</CardTitle>
+              {isBuiltin && (
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  Built-in
+                </Badge>
+              )}
+            </div>
+            <CardDescription className="text-xs mt-1">
+              {skill.description}
+            </CardDescription>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {isBuiltin ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => handleCopyToUser(skill)}
+                title="Copy to User"
+              >
+                <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => {/* TODO: Edit */}}
+                >
+                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(skill.name)}
+                >
+                  <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <h3 className="text-lg font-semibold flex-1">{t('extensions.skills')}</h3>
-        <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1">
+        <div className="relative flex-1 max-w-sm">
+          <HugeiconsIcon icon={Search01Icon} className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder={t('skills.searchSkills')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-7 h-8 text-sm"
+          />
+        </div>
+        <Button size="sm" onClick={() => {/* TODO: Create */}} className="gap-1">
           <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
           {t('skills.newSkill')}
         </Button>
       </div>
 
-      {/* Main content */}
-      <div className="flex gap-4 flex-1 min-h-0">
-        {/* Left: skill list */}
-        <div className="w-64 shrink-0 flex flex-col border border-border rounded-lg overflow-hidden">
-          <div className="p-2 border-b border-border">
-            <div className="relative">
-              <HugeiconsIcon icon={Search01Icon} className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder={t('skills.searchSkills')}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-7 h-8 text-sm"
-              />
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto space-y-6">
+        {/* Built-in Skills */}
+        {builtinSkills.length > 0 && (
+          <div>
+            <h4 className="text-sm font-medium mb-3 text-muted-foreground">Built-in Skills</h4>
+            <div className="space-y-2">
+              {builtinSkills.map(renderSkillCard)}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <div className="p-1">
-              {globalSkills.length > 0 && (
-                <div className="mb-1">
-                  <span className="px-3 py-1 text-[10px] font-medium uppercase text-muted-foreground">
-                    Global
-                  </span>
-                  {globalSkills.map((skill) => (
-                    <SkillListItem
-                      key={`${skill.source}:${skill.installedSource ?? "default"}:${skill.name}`}
-                      skill={skill}
-                      selected={
-                        selected?.name === skill.name &&
-                        selected?.source === skill.source &&
-                        selected?.installedSource === skill.installedSource
-                      }
-                      onSelect={() => setSelected(skill)}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </div>
-              )}
-              {installedSkills.length > 0 && (
-                <div className="mb-1">
-                  <span className="px-3 py-1 text-[10px] font-medium uppercase text-muted-foreground">
-                    Installed
-                  </span>
-                  {installedSkills.map((skill) => (
-                    <SkillListItem
-                      key={`${skill.source}:${skill.installedSource ?? "default"}:${skill.name}`}
-                      skill={skill}
-                      selected={
-                        selected?.name === skill.name &&
-                        selected?.source === skill.source &&
-                        selected?.installedSource === skill.installedSource
-                      }
-                      onSelect={() => setSelected(skill)}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </div>
-              )}
-              {pluginSkills.length > 0 && (
-                <div className="mb-1">
-                  <span className="px-3 py-1 text-[10px] font-medium uppercase text-muted-foreground">
-                    Plugins
-                  </span>
-                  {pluginSkills.map((skill) => (
-                    <SkillListItem
-                      key={skill.filePath || `${skill.source}:${skill.installedSource ?? "default"}:${skill.name}`}
-                      skill={skill}
-                      selected={
-                        selected?.name === skill.name &&
-                        selected?.source === skill.source &&
-                        selected?.installedSource === skill.installedSource
-                      }
-                      onSelect={() => setSelected(skill)}
-                      onDelete={handleDelete}
-                    />
-                  ))}
-                </div>
-              )}
-              {filtered.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
-                  <HugeiconsIcon icon={ZapIcon} className="h-8 w-8 opacity-40" />
-                  <p className="text-xs">
-                    {search ? t('skills.noSkillsFound') : t('skills.noSkillsFound')}
-                  </p>
-                  {!search && (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => setShowCreate(true)}
-                      className="gap-1"
-                    >
-                      <HugeiconsIcon icon={PlusSignIcon} className="h-3 w-3" />
-                      Create one
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        )}
 
-        {/* Right: editor */}
-        <div className="flex-1 min-w-0 border border-border rounded-lg overflow-hidden">
-          {selected ? (
-            <SkillEditor
-              key={`${selected.source}:${selected.name}`}
-              skill={selected}
-              onSave={handleSave}
-              onDelete={handleDelete}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
-              <HugeiconsIcon icon={ZapIcon} className="h-12 w-12 opacity-30" />
-              <div className="text-center">
-                <p className="text-sm font-medium">{t('skills.noSelected')}</p>
-                <p className="text-xs">
-                  {t('skills.selectOrCreate')}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCreate(true)}
-                className="gap-1"
-              >
-                <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
-                {t('skills.newSkill')}
-              </Button>
+        {/* User Skills */}
+        {userSkills.length > 0 && (
+          <div>
+            <h4 className="text-sm font-medium mb-3 text-muted-foreground">User Skills</h4>
+            <div className="space-y-2">
+              {userSkills.map(renderSkillCard)}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {filtered.length === 0 && (
+          <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+            <HugeiconsIcon icon={ZapIcon} className="h-10 w-10 opacity-40" />
+            <p className="text-sm">
+              {search ? t('skills.noSkillsFound') : t('skills.noSkillsFound')}
+            </p>
+          </div>
+        )}
       </div>
-
-      <CreateSkillDialog
-        open={showCreate}
-        onOpenChange={setShowCreate}
-        onCreate={handleCreate}
-      />
     </div>
   );
 }
+

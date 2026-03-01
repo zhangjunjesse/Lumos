@@ -19,7 +19,7 @@ import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, Permis
 import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
-import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest } from './db';
+import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest, getEnabledSkills } from './db';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
 import fs from 'fs';
@@ -595,6 +595,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         if (mcpServers && Object.keys(mcpServers).length > 0) {
           queryOptions.mcpServers = toSdkMcpConfig(mcpServers);
         }
+
+        // === ISOLATION: Skills ===
+        // Load enabled skills from database instead of ~/.claude/skills/
+        // With settingSources: [], the SDK won't load user's skills directory.
+        // TODO: Implement skills loading after Skills API is updated
+        /*
+        try {
+          const enabledSkills = getEnabledSkills();
+          if (enabledSkills.length > 0) {
+            queryOptions.skills = enabledSkills.map(skill => skill.name);
+            console.log('[claude-client] Loaded skills:', queryOptions.skills);
+          }
+        } catch (error) {
+          console.warn('[claude-client] Failed to load skills:', error);
+        }
+        */
 
         // Resume session if we have an SDK session ID from a previous conversation turn.
         // Pre-check: verify working_directory exists before attempting resume.
