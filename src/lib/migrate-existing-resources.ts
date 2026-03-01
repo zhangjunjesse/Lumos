@@ -143,10 +143,17 @@ async function migrateMcpServers(): Promise<number> {
     try {
       const server = mcpServers[name];
 
-      // 检查是否已存在
-      const existing = getMcpServerByNameAndScope(name, 'user');
-      if (existing) {
-        console.log(`[Migrate] MCP server "${name}" already exists in database, skipping`);
+      // 检查是否已存在（user scope）
+      const existingUser = getMcpServerByNameAndScope(name, 'user');
+      if (existingUser) {
+        console.log(`[Migrate] MCP server "${name}" already exists in database (user scope), skipping`);
+        continue;
+      }
+
+      // 检查是否已存在（builtin scope）
+      const existingBuiltin = getMcpServerByNameAndScope(name, 'builtin');
+      if (existingBuiltin) {
+        console.log(`[Migrate] MCP server "${name}" already exists as builtin, skipping migration`);
         continue;
       }
 
