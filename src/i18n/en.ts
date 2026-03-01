@@ -82,7 +82,7 @@ const en = {
   'settings.general': 'General',
   'settings.providers': 'Providers',
   'settings.claudeCli': 'Claude CLI',
-  'settings.codepilot': 'CodePilot',
+  'settings.codepilot': 'Lumos',
   'settings.version': 'Version {version}',
   'settings.checkForUpdates': 'Check for Updates',
   'settings.checking': 'Checking...',
@@ -354,7 +354,7 @@ const en = {
   'update.downloading': 'Downloading',
   'update.restartToUpdate': 'Restart to Update',
   'update.restartNow': 'Restart Now',
-  'update.readyToInstall': 'CodePilot v{version} is ready — restart to update',
+  'update.readyToInstall': 'Lumos v{version} is ready — restart to update',
   'update.installUpdate': 'Download & Install',
   'update.later': 'Later',
 

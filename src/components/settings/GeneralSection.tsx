@@ -166,7 +166,8 @@ export function GeneralSection() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <UpdateCard />
+      {/* TODO: 实现更新功能后再启用 */}
+      {/* <UpdateCard /> */}
 
       {/* Auto-approve toggle */}
       <div className={`rounded-lg border p-4 transition-shadow hover:shadow-sm ${skipPermissions ? "border-orange-500/50 bg-orange-500/5" : "border-border/50"}`}>

@@ -79,7 +79,7 @@ const zh: Record<TranslationKey, string> = {
   'settings.general': '通用',
   'settings.providers': '服务商',
   'settings.claudeCli': 'Claude CLI',
-  'settings.codepilot': 'CodePilot',
+  'settings.codepilot': 'Lumos',
   'settings.version': '版本 {version}',
   'settings.checkForUpdates': '检查更新',
   'settings.checking': '检查中...',
@@ -351,7 +351,7 @@ const zh: Record<TranslationKey, string> = {
   'update.downloading': '下载中',
   'update.restartToUpdate': '重启以更新',
   'update.restartNow': '立即重启',
-  'update.readyToInstall': 'CodePilot v{version} 已就绪 — 重启以完成更新',
+  'update.readyToInstall': 'Lumos v{version} 已就绪 — 重启以完成更新',
   'update.installUpdate': '下载并安装',
   'update.later': '稍后',
 

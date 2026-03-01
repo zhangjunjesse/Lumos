@@ -421,7 +421,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       try {
         // Build env for the Claude Code subprocess.
         // Start with process.env (includes user shell env from Electron's loadUserShellEnv).
-        // Then overlay any API config the user set in CodePilot settings (optional).
+        // Then overlay any API config the user set in Lumos settings (optional).
         const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
 
         // Ensure HOME/USERPROFILE are set so Claude Code can find ~/.claude/commands/
@@ -441,7 +441,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // === ISOLATION: Clear all user environment variables ===
         // Remove all CLAUDE_* and ANTHROPIC_* variables from user's environment
         // to prevent pollution from user's local Claude Code installation.
-        // We'll re-inject only what CodePilot needs below.
+        // We'll re-inject only what Lumos needs below.
         for (const key of Object.keys(sdkEnv)) {
           if (key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_')) {
             delete sdkEnv[key];
@@ -589,7 +589,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         // === ISOLATION: MCP servers ===
-        // Only pass explicitly provided config (e.g. from CodePilot UI).
+        // Only pass explicitly provided config (e.g. from Lumos UI).
         // With settingSources: [], the SDK won't load user's ~/.claude.json
         // or ~/.claude/settings.json, so no user MCP servers will be loaded.
         if (mcpServers && Object.keys(mcpServers).length > 0) {

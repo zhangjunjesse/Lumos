@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const GITHUB_REPO = "op7418/CodePilot";
+const GITHUB_REPO = "zhangjunjesse/Lumos";
 
 function compareSemver(a: string, b: string): number {
   const pa = a.replace(/^v/, "").split(".").map(Number);

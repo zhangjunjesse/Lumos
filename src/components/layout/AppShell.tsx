@@ -248,7 +248,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               currentVersion: prev?.currentVersion ?? (process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0'),
               releaseName: event.info?.releaseName ?? `v${event.info?.version}`,
               releaseNotes,
-              releaseUrl: `https://github.com/op7418/CodePilot/releases/tag/v${event.info?.version}`,
+              releaseUrl: `https://github.com/zhangjunjesse/Lumos/releases/tag/v${event.info?.version}`,
               publishedAt: event.info?.releaseDate ?? '',
               downloadProgress: prev?.downloadProgress ?? null,
               readyToInstall: prev?.readyToInstall ?? false,
