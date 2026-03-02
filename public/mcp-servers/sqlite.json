@@ -1,7 +1,0 @@
-{
-  "name": "sqlite",
-  "description": "SQLite database operations",
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "~/.lumos/lumos.db"],
-  "env": {}
-}

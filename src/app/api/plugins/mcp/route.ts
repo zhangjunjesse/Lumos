@@ -11,6 +11,7 @@ import {
   createMcpServer,
   updateMcpServer,
   getMcpServerByNameAndScope,
+  toggleMcpServerEnabled,
 } from '@/lib/db';
 
 export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorResponse>> {
@@ -27,6 +28,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         env: JSON.parse(server.env || '{}'),
         scope: server.scope,
         description: server.description,
+        is_enabled: server.is_enabled === 1,
       };
     }
 
@@ -77,6 +79,40 @@ export async function POST(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to add MCP server' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest
+): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
+  try {
+    const body = await request.json();
+    const { name, scope, is_enabled } = body;
+
+    if (!name || typeof is_enabled !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Missing required fields: name, is_enabled' },
+        { status: 400 }
+      );
+    }
+
+    const server = getMcpServerByNameAndScope(name, scope || 'user') ||
+      getMcpServerByNameAndScope(name, scope === 'user' ? 'builtin' : 'user');
+
+    if (!server) {
+      return NextResponse.json(
+        { error: `MCP server "${name}" not found` },
+        { status: 404 }
+      );
+    }
+
+    toggleMcpServerEnabled(server.id, is_enabled);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to toggle MCP server' },
       { status: 500 }
     );
   }

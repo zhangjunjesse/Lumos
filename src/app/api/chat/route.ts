@@ -31,7 +31,9 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
       config.args = config.args.map(arg => {
         return arg
           .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', process.cwd());
+          .replace('[WORKSPACE_PATH]', process.cwd())
+          .replace('[DATA_DIR]', dataDir)
+          .replace(/^~\//, os.homedir() + '/');
       });
     }
 
@@ -215,12 +217,14 @@ export async function POST(request: NextRequest) {
     }));
 
     // Stream Claude response, using SDK session ID for resume if available
+    const loadedMcpServers = loadMcpServers();
     console.log('[chat API] streamClaude params:', {
       promptLength: content.length,
       promptFirst200: content.slice(0, 200),
       sdkSessionId: session.sdk_session_id || 'none',
       systemPromptLength: finalSystemPrompt?.length || 0,
       systemPromptFirst200: finalSystemPrompt?.slice(0, 200) || 'none',
+      mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
     const stream = streamClaude({
       prompt: content,
@@ -229,7 +233,7 @@ export async function POST(request: NextRequest) {
       model: effectiveModel,
       systemPrompt: finalSystemPrompt,
       workingDirectory: session.sdk_cwd || session.working_directory || undefined,
-      mcpServers: loadMcpServers(),
+      mcpServers: loadedMcpServers,
       abortController,
       permissionMode,
       files: fileAttachments,

@@ -1058,7 +1058,25 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           } else if (rawMessage.includes('exited with code 1') || rawMessage.includes('exit code 1')) {
             const providerHint = activeProvider?.name ? ` (Provider: ${activeProvider.name})` : '';
             const detailHint = extraDetail ? `\n\nDetails: ${extraDetail}` : '';
-            errorMessage = `Claude Code process exited with an error${providerHint}. This is often caused by:\n• Invalid or missing API Key\n• Incorrect Base URL configuration\n• Network connectivity issues${detailHint}\n\nOriginal error: ${rawMessage}`;
+
+            // Build configuration info for debugging
+            const configInfo = {
+              provider: activeProvider?.name || 'Built-in',
+              model: activeProvider?.model || model || 'default',
+              base_url: activeProvider?.base_url || 'default (https://api.anthropic.com)',
+              api_key_set: !!activeProvider?.api_key,
+              api_key_length: activeProvider?.api_key?.length || 0,
+              api_key_prefix: activeProvider?.api_key ? activeProvider.api_key.substring(0, 10) + '...' : 'not set',
+            };
+
+            // Log to server console
+            console.error('[claude-client] Claude API call failed with exit code 1');
+            console.error('[claude-client] Provider configuration:', configInfo);
+
+            // Include config info in error message for user
+            const configDetails = `\n\n📋 Current Configuration:\n• Provider: ${configInfo.provider}\n• Model: ${configInfo.model}\n• Base URL: ${configInfo.base_url}\n• API Key: ${configInfo.api_key_set ? `Set (${configInfo.api_key_length} chars, prefix: ${configInfo.api_key_prefix})` : 'NOT SET ❌'}`;
+
+            errorMessage = `Claude Code process exited with an error${providerHint}. This is often caused by:\n• Invalid or missing API Key\n• Incorrect Base URL configuration\n• Network connectivity issues${detailHint}${configDetails}\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('exited with code')) {
             const providerHint = activeProvider?.name ? ` (Provider: ${activeProvider.name})` : '';
             errorMessage = `Claude Code process crashed unexpectedly${providerHint}.\n\nOriginal error: ${rawMessage}`;

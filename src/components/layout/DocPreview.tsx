@@ -15,6 +15,14 @@ import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { usePanel } from "@/hooks/usePanel";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getFileCategory } from "@/lib/file-categories";
+import { ImagePreview } from "@/components/preview/ImagePreview";
+import { VideoPreview } from "@/components/preview/VideoPreview";
+import { AudioPreview } from "@/components/preview/AudioPreview";
+import { PdfPreview } from "@/components/preview/PdfPreview";
+import { WordPreview } from "@/components/preview/WordPreview";
+import { ExcelPreview } from "@/components/preview/ExcelPreview";
+import { PowerPointPreview } from "@/components/preview/PowerPointPreview";
 import type { FilePreview as FilePreviewType } from "@/types";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
@@ -114,6 +122,8 @@ export function DocPreview({
   }, [filePath]);
 
   const canRender = isRenderable(filePath);
+  const fileCategory = getFileCategory(filePath);
+  const isNonTextFile = fileCategory && fileCategory !== 'text';
 
   return (
     <div
@@ -126,18 +136,20 @@ export function DocPreview({
           <p className="truncate text-sm font-medium">{fileName}</p>
         </div>
 
-        {canRender && (
+        {canRender && !isNonTextFile && (
           <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
         )}
 
-        <Button variant="ghost" size="icon-sm" onClick={handleCopyContent}>
-          {copied ? (
-            <HugeiconsIcon icon={Tick01Icon} className="h-3.5 w-3.5 text-green-500" />
-          ) : (
-            <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
-          )}
-          <span className="sr-only">Copy content</span>
-        </Button>
+        {!isNonTextFile && (
+          <Button variant="ghost" size="icon-sm" onClick={handleCopyContent}>
+            {copied ? (
+              <HugeiconsIcon icon={Tick01Icon} className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+            )}
+            <span className="sr-only">Copy content</span>
+          </Button>
+        )}
 
         <Button variant="ghost" size="icon-sm" onClick={onClose}>
           <HugeiconsIcon icon={Cancel01Icon} className="h-3.5 w-3.5" />
@@ -159,7 +171,24 @@ export function DocPreview({
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto">
-        {loading ? (
+        {isNonTextFile ? (
+          // Render preview component for non-text files
+          fileCategory === 'image' ? (
+            <ImagePreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'video' ? (
+            <VideoPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'audio' ? (
+            <AudioPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'pdf' ? (
+            <PdfPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'word' ? (
+            <WordPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'excel' ? (
+            <ExcelPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : fileCategory === 'powerpoint' ? (
+            <PowerPointPreview filePath={filePath} baseDir={workingDirectory} />
+          ) : null
+        ) : loading ? (
           <div className="flex items-center justify-center py-12">
             <HugeiconsIcon
               icon={Loading02Icon}

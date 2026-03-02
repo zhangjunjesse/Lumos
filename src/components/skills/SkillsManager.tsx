@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -41,6 +42,19 @@ export function SkillsManager() {
   useEffect(() => {
     fetchSkills();
   }, [fetchSkills]);
+
+  const handleToggle = useCallback(async (skill: Skill, enabled: boolean) => {
+    try {
+      await fetch('/api/skills', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: skill.name, scope: skill.scope, is_enabled: enabled }),
+      });
+      setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, is_enabled: enabled } : s));
+    } catch (error) {
+      console.error('Failed to toggle skill:', error);
+    }
+  }, []);
 
   const handleDelete = useCallback(async (name: string) => {
     try {
@@ -107,7 +121,7 @@ export function SkillsManager() {
     const isBuiltin = skill.scope === 'builtin';
 
     return (
-      <Card key={skill.id}>
+      <Card key={skill.id} className={!skill.is_enabled ? 'opacity-60' : ''}>
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
           <div className="flex-1 min-w-0 mr-3">
             <div className="flex items-center gap-2 mb-1">
@@ -123,7 +137,11 @@ export function SkillsManager() {
               {skill.description}
             </CardDescription>
           </div>
-          <div className="flex gap-1 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <Switch
+              checked={skill.is_enabled}
+              onCheckedChange={(checked) => handleToggle(skill, checked)}
+            />
             {isBuiltin ? (
               <Button
                 variant="ghost"

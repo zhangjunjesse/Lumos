@@ -39,7 +39,14 @@ const DISMISSED_VERSION_KEY = "lumos_dismissed_update_version";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  const [chatListOpen, setChatListOpenRaw] = useState(false);
+  const [chatListOpen, setChatListOpenRaw] = useState(() => {
+    // Default to closed on mobile (< 1024px), open on desktop
+    if (typeof window === "undefined") return false;
+    const path = window.location.pathname;
+    const isChatRoute = path === "/chat" || path.startsWith("/chat/");
+    if (!isChatRoute) return false;
+    return window.matchMedia(`(min-width: ${LG_BREAKPOINT}px)`).matches;
+  });
 
   // Panel width state with localStorage persistence
   const [chatListWidth, setChatListWidth] = useState(() => {

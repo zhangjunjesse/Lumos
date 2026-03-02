@@ -82,6 +82,22 @@ export function McpManager() {
     }
   }
 
+  async function handleToggle(name: string, scope: string, enabled: boolean) {
+    try {
+      await fetch("/api/plugins/mcp", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, scope, is_enabled: enabled }),
+      });
+      setServers(prev => ({
+        ...prev,
+        [name]: { ...prev[name], is_enabled: enabled },
+      }));
+    } catch (err) {
+      console.error("Failed to toggle MCP server:", err);
+    }
+  }
+
   async function handleDelete(name: string) {
     try {
       const res = await fetch(`/api/plugins/mcp/${encodeURIComponent(name)}`, {
@@ -209,6 +225,7 @@ export function McpManager() {
               servers={servers}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onToggle={handleToggle}
               onCopyToUser={handleCopyToUser}
             />
           )}

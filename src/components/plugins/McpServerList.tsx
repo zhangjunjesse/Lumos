@@ -3,16 +3,17 @@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { IconSvgElement } from "@hugeicons/react";
 import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon, Copy01Icon } from "@hugeicons/core-free-icons";
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 
 interface McpServerListProps {
-  servers: Record<string, MCPServer & { scope?: string }>;
+  servers: Record<string, MCPServer & { scope?: string; is_enabled?: boolean }>;
   onEdit: (name: string, server: MCPServer) => void;
   onDelete: (name: string) => void;
+  onToggle: (name: string, scope: string, enabled: boolean) => void;
   onCopyToUser?: (name: string, server: MCPServer) => void;
 }
 
@@ -28,7 +29,7 @@ function getServerTypeInfo(server: MCPServer) {
   }
 }
 
-export function McpServerList({ servers, onEdit, onDelete, onCopyToUser }: McpServerListProps) {
+export function McpServerList({ servers, onEdit, onDelete, onToggle, onCopyToUser }: McpServerListProps) {
   const { t } = useTranslation();
   const entries = Object.entries(servers);
 
@@ -48,12 +49,13 @@ export function McpServerList({ servers, onEdit, onDelete, onCopyToUser }: McpSe
   const builtinServers = entries.filter(([_, server]) => server.scope === 'builtin');
   const userServers = entries.filter(([_, server]) => server.scope === 'user');
 
-  const renderServerCard = (name: string, server: MCPServer & { scope?: string }) => {
+  const renderServerCard = (name: string, server: MCPServer & { scope?: string; is_enabled?: boolean }) => {
     const typeInfo = getServerTypeInfo(server);
     const isBuiltin = server.scope === 'builtin';
+    const isEnabled = server.is_enabled !== false;
 
     return (
-      <Card key={name}>
+      <Card key={name} className={!isEnabled ? 'opacity-60' : ''}>
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
           <div className="flex-1 min-w-0 mr-3">
             <div className="flex items-center gap-2 mb-1">
@@ -67,9 +69,6 @@ export function McpServerList({ servers, onEdit, onDelete, onCopyToUser }: McpSe
                   Built-in
                 </Badge>
               )}
-              <Badge variant="secondary" className="text-xs shrink-0">
-                {t('provider.configured')}
-              </Badge>
             </div>
             <CardDescription className="text-xs mt-1 font-mono">
               {server.url
@@ -77,21 +76,23 @@ export function McpServerList({ servers, onEdit, onDelete, onCopyToUser }: McpSe
                 : `${server.command} ${server.args?.join(' ') || ''}`}
             </CardDescription>
           </div>
-          <div className="flex gap-1 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <Switch
+              checked={isEnabled}
+              onCheckedChange={(checked) => onToggle(name, server.scope || 'user', checked)}
+            />
             {isBuiltin ? (
-              <>
-                {onCopyToUser && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => onCopyToUser(name, server)}
-                    title="Copy to User"
-                  >
-                    <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </>
+              onCopyToUser && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => onCopyToUser(name, server)}
+                  title="Copy to User"
+                >
+                  <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+                </Button>
+              )
             ) : (
               <>
                 <Button

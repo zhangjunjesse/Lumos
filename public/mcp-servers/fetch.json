@@ -1,7 +1,0 @@
-{
-  "name": "fetch",
-  "description": "HTTP requests and web content fetching",
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-fetch"],
-  "env": {}
-}

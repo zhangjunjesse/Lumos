@@ -84,6 +84,7 @@ const MIME_TYPES: Record<string, string> = {
  */
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get('path');
+  const baseDir = request.nextUrl.searchParams.get('baseDir');
 
   if (!filePath) {
     return new Response(JSON.stringify({ error: 'path parameter is required' }), {
@@ -92,7 +93,13 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const resolved = path.resolve(filePath);
+  // Resolve path: if baseDir is provided and path is relative, join them
+  let resolved: string;
+  if (baseDir && !path.isAbsolute(filePath)) {
+    resolved = path.resolve(baseDir, filePath);
+  } else {
+    resolved = path.resolve(filePath);
+  }
 
   try {
     await fs.access(resolved);
@@ -114,11 +121,16 @@ export async function GET(request: NextRequest) {
   const buffer = await fs.readFile(resolved);
   const ext = path.extname(resolved).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const fileName = path.basename(resolved);
+
+  // Encode filename for Content-Disposition header (RFC 5987)
+  // This handles non-ASCII characters (e.g., Chinese) properly
+  const encodedFileName = encodeURIComponent(fileName);
 
   return new Response(buffer, {
     headers: {
       'Content-Type': contentType,
-      'Content-Disposition': `inline; filename="${path.basename(resolved)}"`,
+      'Content-Disposition': `inline; filename*=UTF-8''${encodedFileName}`,
     },
   });
 }
