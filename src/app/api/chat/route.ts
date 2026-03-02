@@ -46,6 +46,14 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
         FEISHU_TOKEN_PATH: path.join(dataDir, 'auth', 'feishu.json'),
       };
     }
+
+    // Special handling for bilibili MCP: inject SESSDATA from env if not already set
+    if (name === 'bilibili' && !config.env?.BILIBILI_SESSDATA) {
+      config.env = {
+        ...config.env,
+        BILIBILI_SESSDATA: process.env.BILIBILI_SESSDATA || '',
+      };
+    }
   }
 
   return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;

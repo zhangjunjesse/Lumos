@@ -1,0 +1,9 @@
+{
+  "name": "bilibili",
+  "description": "B站视频搜索、UP主查询、字幕提取。需要配置 BILIBILI_SESSDATA 才能获取 AI 生成字幕，获取方式：浏览器登录B站 → F12 → Application → Cookies → 复制 SESSDATA 值",
+  "command": "python3",
+  "args": ["[RUNTIME_PATH]/mcp-servers/bilibili/bilibili_mcp.py"],
+  "env": {
+    "BILIBILI_SESSDATA": ""
+  }
+}

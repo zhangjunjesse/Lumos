@@ -386,6 +386,7 @@ export interface MCPServerConfig {
   type?: 'stdio' | 'sse' | 'http';
   url?: string;
   headers?: Record<string, string>;
+  description?: string;
 }
 
 export interface MCPConfig {

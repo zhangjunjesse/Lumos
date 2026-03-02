@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon, Copy01Icon } from "@hugeicons/core-free-icons";
+import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon } from "@hugeicons/core-free-icons";
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 
@@ -14,7 +14,6 @@ interface McpServerListProps {
   onEdit: (name: string, server: MCPServer) => void;
   onDelete: (name: string) => void;
   onToggle: (name: string, scope: string, enabled: boolean) => void;
-  onCopyToUser?: (name: string, server: MCPServer) => void;
 }
 
 function getServerTypeInfo(server: MCPServer) {
@@ -29,7 +28,7 @@ function getServerTypeInfo(server: MCPServer) {
   }
 }
 
-export function McpServerList({ servers, onEdit, onDelete, onToggle, onCopyToUser }: McpServerListProps) {
+export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServerListProps) {
   const { t } = useTranslation();
   const entries = Object.entries(servers);
 
@@ -70,6 +69,11 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle, onCopyToUse
                 </Badge>
               )}
             </div>
+            {server.description && (
+              <CardDescription className="text-xs mt-1">
+                {server.description}
+              </CardDescription>
+            )}
             <CardDescription className="text-xs mt-1 font-mono">
               {server.url
                 ? server.url
@@ -82,17 +86,16 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle, onCopyToUse
               onCheckedChange={(checked) => onToggle(name, server.scope || 'user', checked)}
             />
             {isBuiltin ? (
-              onCopyToUser && (
+              <>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8"
-                  onClick={() => onCopyToUser(name, server)}
-                  title="Copy to User"
+                  onClick={() => onEdit(name, server)}
                 >
-                  <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
                 </Button>
-              )
+              </>
             ) : (
               <>
                 <Button

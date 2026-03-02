@@ -329,6 +329,9 @@ export function migrateLumosTables(db: Database.Database): void {
     ['source', "TEXT NOT NULL DEFAULT 'manual'"],
     ['content_hash', "TEXT NOT NULL DEFAULT ''"],
     ['description', "TEXT NOT NULL DEFAULT ''"],
+    ['type', "TEXT NOT NULL DEFAULT 'stdio'"],
+    ['url', "TEXT NOT NULL DEFAULT ''"],
+    ['headers', "TEXT NOT NULL DEFAULT '{}'"],
   ];
 
   for (const [col, def] of mcpNewCols) {

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent } from '@/types';
+import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
 import { usePanel } from '@/hooks/usePanel';
@@ -99,7 +99,7 @@ export default function NewChatPage() {
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendFirstMessage = useCallback(
-    async (content: string, _files?: unknown, systemPromptAppend?: string) => {
+    async (content: string, files?: FileAttachment[], systemPromptAppend?: string) => {
       if (isStreaming) return;
 
       // Require a project directory before sending
@@ -152,12 +152,17 @@ export default function NewChatPage() {
         // Notify ChatListPanel to refresh immediately
         window.dispatchEvent(new CustomEvent('session-created'));
 
-        // Add user message to UI
+        // Add user message to UI (embed file metadata like ChatView)
+        let displayContent = content;
+        if (files && files.length > 0) {
+          const fileMeta = files.map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, data: f.data }));
+          displayContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
+        }
         const userMessage: Message = {
           id: 'temp-' + Date.now(),
           session_id: session.id,
           role: 'user',
-          content,
+          content: displayContent,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -167,7 +172,7 @@ export default function NewChatPage() {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel, provider_id: currentProviderId, ...(systemPromptAppend ? { systemPromptAppend } : {}) }),
+          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel, provider_id: currentProviderId, ...(systemPromptAppend ? { systemPromptAppend } : {}), ...(files && files.length > 0 ? { files } : {}) }),
           signal: controller.signal,
         });
 

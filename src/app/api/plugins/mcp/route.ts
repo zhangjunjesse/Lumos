@@ -22,7 +22,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
     // Convert to the format expected by the UI
     const mcpServers: Record<string, any> = {};
     for (const server of servers) {
-      mcpServers[server.name] = {
+      const entry: Record<string, any> = {
         command: server.command,
         args: JSON.parse(server.args || '[]'),
         env: JSON.parse(server.env || '{}'),
@@ -30,6 +30,12 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         description: server.description,
         is_enabled: server.is_enabled === 1,
       };
+      const type = server.type || 'stdio';
+      if (type !== 'stdio') entry.type = type;
+      if (server.url) entry.url = server.url;
+      const headers = JSON.parse(server.headers || '{}');
+      if (Object.keys(headers).length > 0) entry.headers = headers;
+      mcpServers[server.name] = entry;
     }
 
     return NextResponse.json({ mcpServers });
@@ -69,9 +75,12 @@ export async function POST(
       name,
       scope: 'user',
       description: server.description || `MCP server: ${name}`,
-      command: server.command || 'node',
+      command: server.command || '',
       args: server.args || [],
       env: server.env || {},
+      type: server.type || 'stdio',
+      url: server.url || '',
+      headers: server.headers || {},
       is_enabled: true,
     });
 
@@ -132,11 +141,12 @@ export async function PUT(
       );
     }
 
-    // Only allow updating user-scope servers
-    const existing = getMcpServerByNameAndScope(name, 'user');
+    // Allow updating both user and builtin servers
+    const existing = getMcpServerByNameAndScope(name, 'user') ||
+      getMcpServerByNameAndScope(name, 'builtin');
     if (!existing) {
       return NextResponse.json(
-        { error: `MCP server "${name}" not found or is not editable` },
+        { error: `MCP server "${name}" not found` },
         { status: 404 }
       );
     }
@@ -147,6 +157,9 @@ export async function PUT(
       command: server.command,
       args: server.args,
       env: server.env,
+      type: server.type,
+      url: server.url,
+      headers: server.headers,
     });
 
     return NextResponse.json({ success: true });

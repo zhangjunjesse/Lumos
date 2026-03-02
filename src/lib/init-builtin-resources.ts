@@ -139,6 +139,7 @@ function importMcpServers(): number {
       // Update if content changed
       if (existing.content_hash !== contentHash) {
         updateMcpServer(existing.id, {
+          description: config.description,
           command: config.command,
           args: config.args,
           env: config.env,
@@ -151,6 +152,7 @@ function importMcpServers(): number {
       createMcpServer({
         name: config.name,
         scope: 'builtin',
+        description: config.description || '',
         command: config.command,
         args: config.args,
         env: config.env,

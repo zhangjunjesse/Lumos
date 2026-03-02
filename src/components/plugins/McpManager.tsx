@@ -55,33 +55,6 @@ export function McpManager() {
     setEditorOpen(true);
   }
 
-  async function handleCopyToUser(name: string, server: MCPServer) {
-    try {
-      // Create a copy with a new name (append "-copy" if name exists)
-      let newName = `${name}-copy`;
-      let counter = 1;
-      while (servers[newName]) {
-        newName = `${name}-copy-${counter}`;
-        counter++;
-      }
-
-      const res = await fetch("/api/plugins/mcp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, server }),
-      });
-
-      if (res.ok) {
-        await fetchServers();
-      } else {
-        const data = await res.json();
-        console.error("Failed to copy MCP server:", data.error);
-      }
-    } catch (err) {
-      console.error("Failed to copy MCP server:", err);
-    }
-  }
-
   async function handleToggle(name: string, scope: string, enabled: boolean) {
     try {
       await fetch("/api/plugins/mcp", {
@@ -226,7 +199,6 @@ export function McpManager() {
               onEdit={handleEdit}
               onDelete={handleDelete}
               onToggle={handleToggle}
-              onCopyToUser={handleCopyToUser}
             />
           )}
         </TabsContent>

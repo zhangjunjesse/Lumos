@@ -281,7 +281,8 @@ function mimeFromFilename(name: string): string {
   if (TEXT_EXTS[ext]) return TEXT_EXTS[ext];
   if (IMAGE_EXTS[ext]) return IMAGE_EXTS[ext];
   if (ext === 'pdf') return 'application/pdf';
-  return 'application/octet-stream';
+  // Default to text/plain so unknown extensions still pass text/* validation
+  return 'text/plain';
 }
 
 /**
@@ -305,19 +306,17 @@ function FileTreeAttachmentBridge() {
       try {
         const res = await fetch(`/api/files/raw?path=${encodeURIComponent(filePath)}`);
         if (!res.ok) {
-          console.warn(`[FileTreeAttachment] Failed to fetch file: ${res.status} ${res.statusText}`, filePath);
+          console.error(`[FileTreeAttachment] Failed to fetch file: ${res.status} ${res.statusText}`, filePath);
           return;
         }
         const blob = await res.blob();
-        // Handle both Unix (/) and Windows (\) path separators
         const filename = filePath.split(/[/\\]/).pop() || 'file';
-        // Use a proper MIME type derived from the extension so the file
-        // passes PromptInput's accept-type validation (text/* etc.)
         const mime = mimeFromFilename(filename);
         const file = new File([blob], filename, { type: mime });
+        console.log('[FileTreeAttachment] Adding file:', filename, 'mime:', mime, 'size:', blob.size);
         attachmentsRef.current.add([file]);
       } catch (err) {
-        console.warn('[FileTreeAttachment] Error attaching file:', filePath, err);
+        console.error('[FileTreeAttachment] Error attaching file:', filePath, err);
       }
     };
 

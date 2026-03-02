@@ -12,6 +12,9 @@ export interface McpServerRecord {
   command: string;
   args: string; // JSON array
   env: string; // JSON object
+  type: string; // 'stdio' | 'sse' | 'http'
+  url: string;
+  headers: string; // JSON object
   is_enabled: number;
   scope: 'builtin' | 'user';
   source: string;
@@ -26,6 +29,9 @@ export interface CreateMcpServerData {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  type?: string;
+  url?: string;
+  headers?: Record<string, string>;
   is_enabled?: boolean;
   scope: 'builtin' | 'user';
   source?: string;
@@ -37,6 +43,9 @@ export interface UpdateMcpServerData {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  type?: string;
+  url?: string;
+  headers?: Record<string, string>;
   is_enabled?: boolean;
   description?: string;
   source?: string;
@@ -53,14 +62,18 @@ function recordToConfig(record: McpServerRecord): MCPServerConfig {
   };
 
   const args = JSON.parse(record.args) as string[];
-  if (args.length > 0) {
-    config.args = args;
-  }
+  if (args.length > 0) config.args = args;
 
   const env = JSON.parse(record.env) as Record<string, string>;
-  if (Object.keys(env).length > 0) {
-    config.env = env;
-  }
+  if (Object.keys(env).length > 0) config.env = env;
+
+  const type = record.type || 'stdio';
+  if (type !== 'stdio') config.type = type as 'sse' | 'http';
+
+  if (record.url) config.url = record.url;
+
+  const headers = JSON.parse(record.headers || '{}') as Record<string, string>;
+  if (Object.keys(headers).length > 0) config.headers = headers;
 
   return config;
 }
@@ -100,13 +113,16 @@ export function createMcpServer(data: CreateMcpServerData): McpServerRecord {
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   db.prepare(
-    'INSERT INTO mcp_servers (id, name, command, args, env, is_enabled, scope, source, content_hash, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO mcp_servers (id, name, command, args, env, type, url, headers, is_enabled, scope, source, content_hash, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     data.name,
     data.command,
     JSON.stringify(data.args || []),
     JSON.stringify(data.env || {}),
+    data.type || 'stdio',
+    data.url || '',
+    JSON.stringify(data.headers || {}),
     data.is_enabled ? 1 : 0,
     data.scope,
     data.source || 'manual',
@@ -128,12 +144,15 @@ export function updateMcpServer(id: string, data: UpdateMcpServerData): McpServe
   const command = data.command ?? existing.command;
   const args = data.args !== undefined ? JSON.stringify(data.args) : existing.args;
   const env = data.env !== undefined ? JSON.stringify(data.env) : existing.env;
+  const type = data.type ?? existing.type ?? 'stdio';
+  const url = data.url ?? existing.url ?? '';
+  const headers = data.headers !== undefined ? JSON.stringify(data.headers) : (existing.headers || '{}');
   const isEnabled = data.is_enabled !== undefined ? (data.is_enabled ? 1 : 0) : existing.is_enabled;
   const description = data.description ?? existing.description;
 
   db.prepare(
-    'UPDATE mcp_servers SET command = ?, args = ?, env = ?, is_enabled = ?, description = ?, updated_at = ? WHERE id = ?'
-  ).run(command, args, env, isEnabled, description, now, id);
+    'UPDATE mcp_servers SET command = ?, args = ?, env = ?, type = ?, url = ?, headers = ?, is_enabled = ?, description = ?, updated_at = ? WHERE id = ?'
+  ).run(command, args, env, type, url, headers, isEnabled, description, now, id);
 
   return getMcpServer(id);
 }
