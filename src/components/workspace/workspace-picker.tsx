@@ -164,11 +164,11 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       </div>
 
       {workspaces.map((ws) => (
-        <div key={ws.id} className="group flex items-center">
+        <div key={ws.id} className="group grid grid-cols-[1fr_auto] items-center gap-1 pr-1">
           <button
             type="button"
             className={cn(
-              "flex flex-1 items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer",
+              "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer min-w-0",
               ws.is_active && "bg-accent font-medium"
             )}
             onClick={() => activate(ws.id)}
@@ -176,7 +176,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
             <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">{ws.name}</span>
           </button>
-          <div className="hidden group-hover:flex items-center gap-0.5 pr-1">
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               type="button"
               className="rounded p-0.5 hover:bg-accent cursor-pointer"
