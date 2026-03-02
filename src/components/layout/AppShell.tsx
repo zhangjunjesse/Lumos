@@ -73,7 +73,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Panel state
   const isChatRoute = pathname.startsWith("/chat/") || pathname === "/chat";
-  const isChatDetailRoute = pathname === "/chat" || pathname.startsWith("/chat/");
+  const isChatDetailRoute =
+    pathname === "/chat" ||
+    pathname.startsWith("/chat/") ||
+    pathname.startsWith("/conversations/");
 
   console.log('[AppShell] Route check:', { pathname, isChatRoute, isChatDetailRoute });
 
