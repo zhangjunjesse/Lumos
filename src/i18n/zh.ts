@@ -23,6 +23,7 @@ const zh: Record<TranslationKey, string> = {
   'chatList.noSessions': '暂无会话',
   'chatList.importFromCli': '从 Claude CLI 导入',
   'chatList.addProjectFolder': '添加项目文件夹',
+  'chatList.sessionName': '会话名称',
 
   // ── Message list ────────────────────────────────────────────
   'messageList.claudeChat': 'Claude 对话',
@@ -489,6 +490,7 @@ const zh: Record<TranslationKey, string> = {
   'sidebar.workspaces': '工作区',
   'sidebar.noWorkspaces': '暂无工作区',
   'sidebar.openFolder': '打开文件夹',
+  'sidebar.workspaceName': '工作区名称',
   'sidebar.collapseSidebar': '收起侧边栏',
   'sidebar.expandSidebar': '展开侧边栏',
   'sidebar.lightMode': '浅色模式',

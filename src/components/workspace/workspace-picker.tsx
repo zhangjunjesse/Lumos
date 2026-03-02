@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useTranslation } from "@/hooks/useTranslation";
+import { RenameDialog } from "@/components/ui/rename-dialog";
 
 interface Workspace {
   id: string;
@@ -35,6 +36,8 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const { t } = useTranslation();
   const router = useRouter();
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
     try {
@@ -104,15 +107,20 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   );
 
   const renameWorkspace = useCallback(async (ws: Workspace) => {
-    const newName = window.prompt(t('tooltip.editTitle'), ws.name);
-    if (!newName || newName.trim() === ws.name) return;
-    await fetch(`/api/workspaces/${ws.id}`, {
+    setRenamingWorkspace(ws);
+    setRenameDialogOpen(true);
+  }, []);
+
+  const handleRenameConfirm = useCallback(async (newName: string) => {
+    if (!renamingWorkspace) return;
+    await fetch(`/api/workspaces/${renamingWorkspace.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName.trim() }),
+      body: JSON.stringify({ name: newName }),
     });
-    setWorkspaces(prev => prev.map(w => w.id === ws.id ? { ...w, name: newName.trim() } : w));
-  }, [t]);
+    setWorkspaces(prev => prev.map(w => w.id === renamingWorkspace.id ? { ...w, name: newName } : w));
+    setRenamingWorkspace(null);
+  }, [renamingWorkspace]);
 
   const deleteWorkspace = useCallback(async (id: string) => {
     if (!window.confirm(t('tooltip.deleteItem'))) return;
@@ -190,6 +198,15 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       {workspaces.length === 0 && (
         <p className="px-3 text-xs text-muted-foreground">{t('sidebar.noWorkspaces')}</p>
       )}
+
+      <RenameDialog
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        title={t('tooltip.editTitle')}
+        label={t('sidebar.workspaceName')}
+        defaultValue={renamingWorkspace?.name || ""}
+        onConfirm={handleRenameConfirm}
+      />
     </div>
   );
 }

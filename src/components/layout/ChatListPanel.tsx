@@ -31,6 +31,7 @@ import { useNativeFolderPicker } from "@/hooks/useNativeFolderPicker";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
+import { RenameDialog } from "@/components/ui/rename-dialog";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -133,6 +134,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   );
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
 
   const handleFolderSelect = useCallback(async (path: string) => {
     try {
@@ -277,26 +280,32 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    const newTitle = window.prompt(t('tooltip.editTitle'), session.title);
-    if (!newTitle || newTitle.trim() === session.title) return;
+    setRenamingSession(session);
+    setRenameDialogOpen(true);
+  };
+
+  const handleRenameConfirm = useCallback(async (newTitle: string) => {
+    if (!renamingSession) return;
     try {
-      const res = await fetch(`/api/chat/sessions/${session.id}`, {
+      const res = await fetch(`/api/chat/sessions/${renamingSession.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: newTitle.trim() }),
+        body: JSON.stringify({ title: newTitle }),
       });
       if (res.ok) {
         setSessions((prev) =>
           prev.map((s) =>
-            s.id === session.id ? { ...s, title: newTitle.trim() } : s
+            s.id === renamingSession.id ? { ...s, title: newTitle } : s
           )
         );
         window.dispatchEvent(new CustomEvent("session-updated"));
       }
     } catch {
       // Silently fail
+    } finally {
+      setRenamingSession(null);
     }
-  };
+  }, [renamingSession]);
 
   const handleCreateSessionInProject = async (
     e: React.MouseEvent,
@@ -664,6 +673,16 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
         open={folderPickerOpen}
         onOpenChange={setFolderPickerOpen}
         onSelect={handleFolderSelect}
+      />
+
+      {/* Rename Session Dialog */}
+      <RenameDialog
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        title={t('tooltip.editTitle')}
+        label={t('chatList.sessionName')}
+        defaultValue={renamingSession?.title || ""}
+        onConfirm={handleRenameConfirm}
       />
     </aside>
   );

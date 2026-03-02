@@ -26,6 +26,7 @@ const en = {
   'chatList.noSessions': 'No sessions yet',
   'chatList.importFromCli': 'Import from Claude CLI',
   'chatList.addProjectFolder': 'Add project folder',
+  'chatList.sessionName': 'Session Name',
 
   // ── Message list ────────────────────────────────────────────
   'messageList.claudeChat': 'Claude Chat',
@@ -492,6 +493,7 @@ const en = {
   'sidebar.workspaces': 'WORKSPACES',
   'sidebar.noWorkspaces': 'No workspaces',
   'sidebar.openFolder': 'Open folder',
+  'sidebar.workspaceName': 'Workspace Name',
   'sidebar.collapseSidebar': 'Collapse sidebar',
   'sidebar.expandSidebar': 'Expand sidebar',
   'sidebar.lightMode': 'Light mode',
