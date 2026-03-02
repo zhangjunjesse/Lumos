@@ -1,17 +1,28 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { RightPanel } from "./RightPanel";
+import { DocPreview } from "./DocPreview";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
 
 const RIGHTPANEL_MIN = 200;
 const RIGHTPANEL_MAX = 480;
+const DOCPREVIEW_MIN = 320;
+const DOCPREVIEW_MAX = 800;
+
+const RENDERED_EXTENSIONS = new Set([".md", ".mdx", ".html", ".htm"]);
+
+function defaultViewMode(filePath: string): PreviewViewMode {
+  const dot = filePath.lastIndexOf(".");
+  const ext = dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
+  return RENDERED_EXTENSIONS.has(ext) ? "rendered" : "source";
+}
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -26,7 +37,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Panel state
   const [panelOpen, setPanelOpen] = useState(() => {
     if (typeof window === "undefined") return true;
-    const saved = localStorage.getItem("codepilot_panel_open");
+    const saved = localStorage.getItem("lumos_panel_open");
     return saved !== null ? saved === "true" : true;
   });
 
@@ -34,20 +45,30 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const [workingDirectory, setWorkingDirectory] = useState(() => {
     if (typeof window === "undefined") return "";
-    return localStorage.getItem("codepilot_working_directory") || "";
+    return localStorage.getItem("lumos_working_directory") || "";
   });
 
   const [sessionId, setSessionId] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [streamingSessionId, setStreamingSessionId] = useState("");
   const [pendingApprovalSessionId, setPendingApprovalSessionId] = useState("");
-  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("source");
+
+  const setPreviewFile = useCallback((path: string | null) => {
+    setPreviewFileRaw(path);
+    if (path) setPreviewViewMode(defaultViewMode(path));
+  }, []);
 
   // Panel width state with localStorage persistence
   const [rightPanelWidth, setRightPanelWidth] = useState(() => {
     if (typeof window === "undefined") return 288;
-    return parseInt(localStorage.getItem("codepilot_rightpanel_width") || "288");
+    return parseInt(localStorage.getItem("lumos_rightpanel_width") || "288");
+  });
+
+  const [docPreviewWidth, setDocPreviewWidth] = useState(() => {
+    if (typeof window === "undefined") return 480;
+    return parseInt(localStorage.getItem("lumos_docpreview_width") || "480");
   });
 
   const handleRightPanelResize = useCallback((delta: number) => {
@@ -56,20 +77,36 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const handleRightPanelResizeEnd = useCallback(() => {
     setRightPanelWidth((w) => {
-      localStorage.setItem("codepilot_rightpanel_width", String(w));
+      localStorage.setItem("lumos_rightpanel_width", String(w));
       return w;
     });
   }, []);
 
+  const handleDocPreviewResize = useCallback((delta: number) => {
+    setDocPreviewWidth((w) => Math.min(DOCPREVIEW_MAX, Math.max(DOCPREVIEW_MIN, w - delta)));
+  }, []);
+
+  const handleDocPreviewResizeEnd = useCallback(() => {
+    setDocPreviewWidth((w) => {
+      localStorage.setItem("lumos_docpreview_width", String(w));
+      return w;
+    });
+  }, []);
+
+  // Close doc preview on route change
+  useEffect(() => {
+    setPreviewFileRaw(null);
+  }, [pathname]);
+
   // Persist panel open state
   useEffect(() => {
-    localStorage.setItem("codepilot_panel_open", String(panelOpen));
+    localStorage.setItem("lumos_panel_open", String(panelOpen));
   }, [panelOpen]);
 
   // Persist working directory
   useEffect(() => {
     if (workingDirectory) {
-      localStorage.setItem("codepilot_working_directory", workingDirectory);
+      localStorage.setItem("lumos_working_directory", workingDirectory);
     }
   }, [workingDirectory]);
 
@@ -81,7 +118,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     setAssistantOpen(false);
   }, []);
 
-  const panelContextValue = {
+  const panelContextValue = useMemo(() => ({
     panelOpen,
     setPanelOpen,
     panelContent,
@@ -100,7 +137,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     setPreviewFile,
     previewViewMode,
     setPreviewViewMode,
-  };
+  }), [panelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewViewMode]);
 
   return (
     <PanelContext.Provider value={panelContextValue}>
@@ -121,6 +158,21 @@ export function AppLayout({ children }: AppLayoutProps) {
               <main className="relative flex-1 overflow-auto">
                 <ErrorBoundary>{children}</ErrorBoundary>
               </main>
+
+              {isChatRoute && previewFile && (
+                <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
+              )}
+              {isChatRoute && previewFile && (
+                <ErrorBoundary>
+                  <DocPreview
+                    filePath={previewFile}
+                    viewMode={previewViewMode}
+                    onViewModeChange={setPreviewViewMode}
+                    onClose={() => setPreviewFile(null)}
+                    width={docPreviewWidth}
+                  />
+                </ErrorBoundary>
+              )}
 
               {isChatRoute && panelOpen && (
                 <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />

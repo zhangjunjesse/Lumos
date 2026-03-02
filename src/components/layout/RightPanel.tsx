@@ -98,8 +98,11 @@ export function RightPanel({ width }: RightPanelProps) {
         </div>
       </div>
 
-      {/* Body */}
-      <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+      {/* Body — no-drag ensures Electron doesn't swallow clicks */}
+      <div
+        className="flex flex-1 flex-col min-h-0 overflow-hidden"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <FileTree
           workingDirectory={workingDirectory}
           onFileSelect={handleFileSelect}
