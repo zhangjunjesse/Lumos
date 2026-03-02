@@ -14,6 +14,7 @@ import {
   ArrowRight01Icon,
   PlusSignIcon,
   FolderOpenIcon,
+  PencilEdit01Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -267,6 +268,33 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       // Silently fail
     } finally {
       setDeletingSession(null);
+    }
+  };
+
+  const handleRenameSession = async (
+    e: React.MouseEvent,
+    session: ChatSession
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const newTitle = window.prompt(t('tooltip.editTitle'), session.title);
+    if (!newTitle || newTitle.trim() === session.title) return;
+    try {
+      const res = await fetch(`/api/chat/sessions/${session.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle.trim() }),
+      });
+      if (res.ok) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === session.id ? { ...s, title: newTitle.trim() } : s
+          )
+        );
+        window.dispatchEvent(new CustomEvent("session-updated"));
+      }
+    } catch {
+      // Silently fail
     }
   };
 
@@ -556,30 +584,55 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                               </div>
                             </Link>
                             {(isHovered || isDeleting) && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive"
-                                    onClick={(e) =>
-                                      handleDeleteSession(e, session.id)
-                                    }
-                                    disabled={isDeleting}
-                                  >
-                                    <HugeiconsIcon
-                                      icon={Delete02Icon}
-                                      className="h-3 w-3"
-                                    />
-                                    <span className="sr-only">
-                                      {t('chatList.delete')}
-                                    </span>
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="right">
-                                  {t('chatList.delete')}
-                                </TooltipContent>
-                              </Tooltip>
+                              <div className="absolute right-1 top-1 flex items-center gap-0.5 bg-sidebar rounded-md">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="text-muted-foreground/60 hover:text-foreground"
+                                      onClick={(e) =>
+                                        handleRenameSession(e, session)
+                                      }
+                                    >
+                                      <HugeiconsIcon
+                                        icon={PencilEdit01Icon}
+                                        className="h-3 w-3"
+                                      />
+                                      <span className="sr-only">
+                                        {t('tooltip.editTitle')}
+                                      </span>
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    {t('tooltip.editTitle')}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="text-muted-foreground/60 hover:text-destructive"
+                                      onClick={(e) =>
+                                        handleDeleteSession(e, session.id)
+                                      }
+                                      disabled={isDeleting}
+                                    >
+                                      <HugeiconsIcon
+                                        icon={Delete02Icon}
+                                        className="h-3 w-3"
+                                      />
+                                      <span className="sr-only">
+                                        {t('chatList.delete')}
+                                      </span>
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    {t('chatList.delete')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
                             )}
                           </div>
                         );
