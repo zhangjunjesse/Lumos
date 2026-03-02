@@ -597,22 +597,21 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         // === ISOLATION: Skills ===
-        // Load enabled skills from database instead of ~/.claude/skills/
-        // With settingSources: [], the SDK won't load user's skills directory.
-        // TODO: Skills loading via SDK Options is not yet supported
-        // Need to investigate alternative approach (e.g., custom skills directory)
-        /*
+        // Load enabled skills from database via plugin system.
+        // With settingSources: [], the SDK won't load user's global ~/.claude/skills/.
+        // Instead, we sync enabled skills to a custom plugin directory and load via plugins option.
         try {
-          const { getEnabledSkills } = await import('./db');
-          const enabledSkills = getEnabledSkills();
-          if (enabledSkills.length > 0) {
-            queryOptions.skills = enabledSkills.map(skill => skill.file_path);
-            console.log('[claude-client] Loaded skills:', queryOptions.skills);
-          }
+          const { syncSkillsToPlugin } = await import('./skills-sync');
+          const pluginDir = syncSkillsToPlugin();
+
+          queryOptions.plugins = [
+            { type: 'local', path: pluginDir }
+          ];
+
+          console.log('[claude-client] Loaded skills plugin:', pluginDir);
         } catch (error) {
           console.warn('[claude-client] Failed to load skills:', error);
         }
-        */
 
         // Resume session if we have an SDK session ID from a previous conversation turn.
         // Pre-check: verify working_directory exists before attempting resume.
