@@ -33,6 +33,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
   const { t } = useTranslation();
 
+  console.log('[ChatPage] Render with sessionTitle:', sessionTitle);
+
   const handleStartEditTitle = useCallback(() => {
     setEditTitle(sessionTitle || t('chat.newConversation'));
     setIsEditingTitle(true);
@@ -147,6 +149,23 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => { cancelled = true; };
   }, [id]);
 
+  // Listen for session updates from sidebar
+  useEffect(() => {
+    const handleSessionUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id: string; title: string }>;
+      console.log('[ChatPage] Received session-updated event:', customEvent.detail, 'current id:', id);
+      if (customEvent.detail.id === id) {
+        console.log('[ChatPage] Updating title to:', customEvent.detail.title);
+        setSessionTitle(customEvent.detail.title);
+        setEditTitle(customEvent.detail.title);
+        setPanelSessionTitle(customEvent.detail.title);
+      }
+    };
+
+    window.addEventListener('session-updated', handleSessionUpdate);
+    return () => window.removeEventListener('session-updated', handleSessionUpdate);
+  }, [id, setPanelSessionTitle]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -225,6 +244,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <h2 className="text-sm font-medium text-foreground/80 truncate">
+                {console.log('[ChatPage] Rendering h2 with sessionTitle:', sessionTitle)}
                 {sessionTitle}
               </h2>
               <button

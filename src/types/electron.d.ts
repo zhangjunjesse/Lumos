@@ -41,6 +41,30 @@ interface ElectronUpdaterAPI {
   onStatus: (callback: (data: UpdateStatusEvent) => void) => () => void;
 }
 
+interface BrowserTab {
+  id: string;
+  url: string;
+  title: string;
+  favicon?: string;
+  isPinned: boolean;
+  lastAccess: number;
+}
+
+interface ElectronBrowserAPI {
+  createTab: (url?: string) => Promise<{ success: boolean; tabId?: string; error?: string }>;
+  closeTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
+  switchTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
+  getTabs: () => Promise<{ success: boolean; tabs?: BrowserTab[]; activeTabId?: string; error?: string }>;
+  navigate: (tabId: string, url: string, timeout?: number) => Promise<{ success: boolean; error?: string }>;
+  getCookies: (filter?: any) => Promise<{ success: boolean; cookies?: any[]; error?: string }>;
+  setCookie: (cookie: any) => Promise<{ success: boolean; error?: string }>;
+  connectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
+  disconnectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
+  sendCDPCommand: (tabId: string, method: string, params?: any) => Promise<{ success: boolean; result?: any; error?: string }>;
+  isCDPConnected: (tabId: string) => Promise<{ success: boolean; connected?: boolean; error?: string }>;
+  onEvent: (callback: (event: string, data: any) => void) => () => void;
+}
+
 interface ElectronAPI {
   versions: {
     electron: string;
@@ -58,6 +82,7 @@ interface ElectronAPI {
   };
   install: ElectronInstallAPI;
   updater?: ElectronUpdaterAPI;
+  browser: ElectronBrowserAPI;
 }
 
 declare global {

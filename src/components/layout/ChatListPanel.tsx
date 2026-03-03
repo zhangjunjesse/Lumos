@@ -15,6 +15,7 @@ import {
   PlusSignIcon,
   FolderOpenIcon,
   PencilEdit01Icon,
+  Globe02Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -136,6 +137,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [creatingChat, setCreatingChat] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
+  const [renamingProject, setRenamingProject] = useState<{ workingDirectory: string; displayName: string } | null>(null);
+  const [projectRenameDialogOpen, setProjectRenameDialogOpen] = useState(false);
 
   const handleFolderSelect = useCallback(async (path: string) => {
     try {
@@ -280,11 +283,13 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   ) => {
     e.preventDefault();
     e.stopPropagation();
+    console.log('[ChatListPanel] Opening rename dialog for session:', session.id, session.title);
     setRenamingSession(session);
     setRenameDialogOpen(true);
   };
 
   const handleRenameConfirm = useCallback(async (newTitle: string) => {
+    console.log('[ChatListPanel] handleRenameConfirm called with:', newTitle, 'renamingSession:', renamingSession);
     if (!renamingSession) return;
     try {
       const res = await fetch(`/api/chat/sessions/${renamingSession.id}`, {
@@ -292,13 +297,17 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTitle }),
       });
+      console.log('[ChatListPanel] API response:', res.ok, res.status);
       if (res.ok) {
         setSessions((prev) =>
           prev.map((s) =>
             s.id === renamingSession.id ? { ...s, title: newTitle } : s
           )
         );
-        window.dispatchEvent(new CustomEvent("session-updated"));
+        console.log('[ChatListPanel] Dispatching session-updated event:', { id: renamingSession.id, title: newTitle });
+        window.dispatchEvent(new CustomEvent("session-updated", {
+          detail: { id: renamingSession.id, title: newTitle }
+        }));
       }
     } catch {
       // Silently fail
@@ -306,6 +315,88 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       setRenamingSession(null);
     }
   }, [renamingSession]);
+
+  const handleRenameProject = async (
+    e: React.MouseEvent,
+    workingDirectory: string,
+    displayName: string
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setRenamingProject({ workingDirectory, displayName });
+    setProjectRenameDialogOpen(true);
+  };
+
+  const handleProjectRenameConfirm = useCallback(async (newName: string) => {
+    if (!renamingProject) return;
+    try {
+      // Update all sessions in this project with the new project_name
+      const sessionsInProject = sessions.filter(
+        s => s.working_directory === renamingProject.workingDirectory
+      );
+
+      await Promise.all(
+        sessionsInProject.map(session =>
+          fetch(`/api/chat/sessions/${session.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project_name: newName }),
+          })
+        )
+      );
+
+      // Update local state
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.working_directory === renamingProject.workingDirectory
+            ? { ...s, project_name: newName }
+            : s
+        )
+      );
+
+      // Refresh to update the display
+      fetchSessions();
+    } catch {
+      // Silently fail
+    } finally {
+      setRenamingProject(null);
+    }
+  }, [renamingProject, sessions, fetchSessions]);
+
+  const handleDeleteProject = async (
+    e: React.MouseEvent,
+    workingDirectory: string
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Delete all conversations in this project?")) return;
+
+    try {
+      const sessionsInProject = sessions.filter(
+        s => s.working_directory === workingDirectory
+      );
+
+      await Promise.all(
+        sessionsInProject.map(session =>
+          fetch(`/api/chat/sessions/${session.id}`, {
+            method: "DELETE",
+          })
+        )
+      );
+
+      setSessions((prev) =>
+        prev.filter((s) => s.working_directory !== workingDirectory)
+      );
+
+      // If current session was deleted, redirect to /chat
+      const currentSessionId = pathname.split('/').pop();
+      if (sessionsInProject.some(s => s.id === currentSessionId)) {
+        router.push("/chat");
+      }
+    } catch {
+      // Silently fail
+    }
+  };
 
   const handleCreateSessionInProject = async (
     e: React.MouseEvent,
@@ -368,7 +459,23 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
         <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
           Threads
         </span>
-        <ConnectionStatus />
+        <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7"
+                onClick={() => router.push('/browser')}
+              >
+                <HugeiconsIcon icon={Globe02Icon} className="h-4 w-4" />
+                <span className="sr-only">Open Browser</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Open Browser</TooltipContent>
+          </Tooltip>
+          <ConnectionStatus />
+        </div>
       </div>
 
       {/* New Chat + New Project */}
@@ -550,7 +657,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                             <Link
                               href={`/chat/${session.id}`}
                               className={cn(
-                                "flex items-center gap-1.5 rounded-md pl-7 pr-2 py-1.5 transition-all duration-150 min-w-0",
+                                "flex items-center gap-1.5 rounded-md pl-7 py-1.5 transition-all duration-150 min-w-0",
+                                isHovered ? "pr-16" : "pr-2",
                                 isActive
                                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                                   : "text-sidebar-foreground hover:bg-accent/50"
@@ -572,34 +680,37 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                   />
                                 </span>
                               )}
-                              <div className="flex-1 min-w-0">
-                                <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
+                              <div className="flex-1 min-w-0 overflow-hidden">
+                                <span className="block truncate text-[12px] font-medium leading-tight">
                                   {session.title}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {/* Mode badge */}
-                                <span
-                                  className={cn(
-                                    "text-[9px] px-1 py-0.5 rounded font-medium leading-none",
-                                    badgeCfg.className
-                                  )}
-                                >
-                                  {badgeCfg.label}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground/40">
-                                  {formatRelativeTime(session.updated_at, t)}
-                                </span>
-                              </div>
+                              {/* Hide badge and time when hovering to make room for action buttons */}
+                              {!isHovered && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {/* Mode badge */}
+                                  <span
+                                    className={cn(
+                                      "text-[9px] px-1 py-0.5 rounded font-medium leading-none",
+                                      badgeCfg.className
+                                    )}
+                                  >
+                                    {badgeCfg.label}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground/40">
+                                    {formatRelativeTime(session.updated_at, t)}
+                                  </span>
+                                </div>
+                              )}
                             </Link>
                             {(isHovered || isDeleting) && (
-                              <div className="absolute right-1 top-1 flex items-center gap-0.5 bg-sidebar rounded-md">
+                              <div className="absolute right-1 top-1 flex items-center gap-0.5 bg-sidebar rounded-md px-0.5">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
                                       variant="ghost"
                                       size="icon-xs"
-                                      className="text-muted-foreground/60 hover:text-foreground"
+                                      className="h-5 w-5 text-muted-foreground/60 hover:text-foreground"
                                       onClick={(e) =>
                                         handleRenameSession(e, session)
                                       }
@@ -622,7 +733,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                     <Button
                                       variant="ghost"
                                       size="icon-xs"
-                                      className="text-muted-foreground/60 hover:text-destructive"
+                                      className="h-5 w-5 text-muted-foreground/60 hover:text-destructive"
                                       onClick={(e) =>
                                         handleDeleteSession(e, session.id)
                                       }

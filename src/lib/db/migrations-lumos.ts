@@ -386,4 +386,71 @@ export function migrateLumosTables(db: Database.Database): void {
       }
     }
   }
+
+  // Browser tables (Phase 0: 内置浏览器功能)
+  db.exec(`
+    -- 浏览器标签页表
+    CREATE TABLE IF NOT EXISTS browser_tabs (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'New Tab',
+      favicon TEXT,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      last_access INTEGER NOT NULL,
+      saved_state TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+    );
+
+    -- 浏览器历史记录表
+    CREATE TABLE IF NOT EXISTS browser_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tab_id TEXT NOT NULL,
+      url TEXT NOT NULL,
+      title TEXT,
+      visited_at INTEGER NOT NULL,
+      FOREIGN KEY (tab_id) REFERENCES browser_tabs(id) ON DELETE CASCADE
+    );
+
+    -- Cookie 加密存储表
+    CREATE TABLE IF NOT EXISTS browser_cookies (
+      domain TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value_encrypted BLOB NOT NULL,
+      expires INTEGER,
+      path TEXT NOT NULL DEFAULT '/',
+      secure INTEGER NOT NULL DEFAULT 0,
+      http_only INTEGER NOT NULL DEFAULT 0,
+      same_site TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      PRIMARY KEY (domain, name)
+    );
+
+    -- MCP Cookie 权限表
+    CREATE TABLE IF NOT EXISTS mcp_cookie_permissions (
+      mcp_name TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      granted_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      granted_by TEXT NOT NULL DEFAULT 'user',
+      PRIMARY KEY (mcp_name, domain)
+    );
+
+    -- Cookie 监听配置表
+    CREATE TABLE IF NOT EXISTS cookie_watch_list (
+      domain TEXT NOT NULL,
+      cookie_name TEXT NOT NULL,
+      mcp_name TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      PRIMARY KEY (domain, cookie_name, mcp_name)
+    );
+
+    -- 创建索引
+    CREATE INDEX IF NOT EXISTS idx_browser_history_tab_id ON browser_history(tab_id);
+    CREATE INDEX IF NOT EXISTS idx_browser_history_visited_at ON browser_history(visited_at);
+    CREATE INDEX IF NOT EXISTS idx_browser_history_url ON browser_history(url);
+    CREATE INDEX IF NOT EXISTS idx_browser_tabs_last_access ON browser_tabs(last_access);
+    CREATE INDEX IF NOT EXISTS idx_browser_cookies_domain ON browser_cookies(domain);
+    CREATE INDEX IF NOT EXISTS idx_mcp_cookie_permissions_mcp ON mcp_cookie_permissions(mcp_name);
+    CREATE INDEX IF NOT EXISTS idx_cookie_watch_list_mcp ON cookie_watch_list(mcp_name);
+  `);
 }

@@ -35,4 +35,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => { ipcRenderer.removeListener('updater:status', listener); };
     },
   },
+  browser: {
+    createTab: (url?: string) => ipcRenderer.invoke('browser:create-tab', url),
+    closeTab: (tabId: string) => ipcRenderer.invoke('browser:close-tab', tabId),
+    switchTab: (tabId: string) => ipcRenderer.invoke('browser:switch-tab', tabId),
+    getTabs: () => ipcRenderer.invoke('browser:get-tabs'),
+    navigate: (tabId: string, url: string, timeout?: number) =>
+      ipcRenderer.invoke('browser:navigate', tabId, url, timeout),
+    getCookies: (filter?: any) => ipcRenderer.invoke('browser:get-cookies', filter),
+    setCookie: (cookie: any) => ipcRenderer.invoke('browser:set-cookie', cookie),
+    connectCDP: (tabId: string) => ipcRenderer.invoke('browser:connect-cdp', tabId),
+    disconnectCDP: (tabId: string) => ipcRenderer.invoke('browser:disconnect-cdp', tabId),
+    sendCDPCommand: (tabId: string, method: string, params?: any) =>
+      ipcRenderer.invoke('browser:send-cdp-command', tabId, method, params),
+    isCDPConnected: (tabId: string) => ipcRenderer.invoke('browser:is-cdp-connected', tabId),
+    onEvent: (callback: (event: string, data: unknown) => void) => {
+      const listener = (_event: unknown, eventName: string, data: unknown) =>
+        callback(eventName, data);
+      ipcRenderer.on('browser:event', listener);
+      return () => { ipcRenderer.removeListener('browser:event', listener); };
+    },
+  },
 });
