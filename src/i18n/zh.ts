@@ -177,6 +177,7 @@ const zh: Record<TranslationKey, string> = {
   'panel.files': '文件',
   'panel.openPanel': '打开面板',
   'panel.closePanel': '关闭面板',
+  'panel.openFolder': '在文件管理器中打开',
 
   // ── File tree ───────────────────────────────────────────────
   'fileTree.filterFiles': '筛选文件...',

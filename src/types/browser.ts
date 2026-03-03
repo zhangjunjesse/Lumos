@@ -45,36 +45,4 @@ export interface BrowserAPI {
   onEvent: (callback: (event: string, data: any) => void) => () => void;
 }
 
-declare global {
-  interface Window {
-    electronAPI: {
-      versions: {
-        electron: string;
-        node: string;
-        chrome: string;
-      };
-      shell: {
-        openPath: (folderPath: string) => Promise<string>;
-      };
-      dialog: {
-        openFolder: (options?: { defaultPath?: string; title?: string }) => Promise<string | null>;
-      };
-      install: {
-        checkPrerequisites: () => Promise<any>;
-        start: (options?: { includeNode?: boolean }) => Promise<any>;
-        cancel: () => Promise<any>;
-        getLogs: () => Promise<any>;
-        onProgress: (callback: (data: unknown) => void) => () => void;
-      };
-      updater: {
-        checkForUpdates: () => Promise<any>;
-        downloadUpdate: () => Promise<any>;
-        quitAndInstall: () => Promise<any>;
-        onStatus: (callback: (data: unknown) => void) => () => void;
-      };
-      browser: BrowserAPI;
-    };
-  }
-}
-
 export {};

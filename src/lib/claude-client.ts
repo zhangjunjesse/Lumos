@@ -1062,7 +1062,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             // Build configuration info for debugging
             const configInfo = {
               provider: activeProvider?.name || 'Built-in',
-              model: activeProvider?.model || model || 'default',
+              model: model || 'default',
               base_url: activeProvider?.base_url || 'default (https://api.anthropic.com)',
               api_key_set: !!activeProvider?.api_key,
               api_key_length: activeProvider?.api_key?.length || 0,

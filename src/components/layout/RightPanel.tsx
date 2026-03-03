@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { StructureFolderIcon, PanelRightCloseIcon } from "@hugeicons/core-free-icons";
+import { StructureFolderIcon, PanelRightCloseIcon, FolderOpenIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -40,6 +40,18 @@ export function RightPanel({ width }: RightPanelProps) {
     }
   }, [previewFile, setPreviewFile]);
 
+  const handleOpenFolder = useCallback(async () => {
+    if (!workingDirectory) return;
+
+    try {
+      if (window.electronAPI?.shell?.openPath) {
+        await window.electronAPI.shell.openPath(workingDirectory);
+      }
+    } catch (error) {
+      console.error('Failed to open folder:', error);
+    }
+  }, [workingDirectory]);
+
   if (!panelOpen) {
     return (
       <div className="flex flex-col items-center gap-2 bg-background p-2">
@@ -72,7 +84,22 @@ export function RightPanel({ width }: RightPanelProps) {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t('panel.files')}</span>
         </div>
         {/* Button area - not draggable */}
-        <div className="shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="shrink-0 flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          {workingDirectory && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={handleOpenFolder}
+                >
+                  <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
+                  <span className="sr-only">{t('panel.openFolder')}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">{t('panel.openFolder')}</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

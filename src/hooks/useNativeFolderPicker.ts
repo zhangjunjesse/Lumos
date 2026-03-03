@@ -10,8 +10,8 @@ export function useNativeFolderPicker() {
   const openNativePicker = useCallback(
     async (options?: { defaultPath?: string; title?: string }): Promise<string | null> => {
       if (!window.electronAPI?.dialog?.openFolder) return null;
-      const result = await window.electronAPI.dialog.openFolder(options);
-      return result.canceled ? null : result.filePaths[0] ?? null;
+      const result = (await window.electronAPI.dialog.openFolder(options)) as { canceled: boolean; filePaths: string[] } | null;
+      return result && !result.canceled ? result.filePaths[0] ?? null : null;
     },
     []
   );

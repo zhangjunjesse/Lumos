@@ -46,8 +46,12 @@ interface BrowserTab {
   url: string;
   title: string;
   favicon?: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
   isPinned: boolean;
-  lastAccess: number;
+  createdAt: number;
+  lastAccessedAt: number;
 }
 
 interface ElectronBrowserAPI {

@@ -180,6 +180,7 @@ const en = {
   'panel.files': 'Files',
   'panel.openPanel': 'Open panel',
   'panel.closePanel': 'Close panel',
+  'panel.openFolder': 'Open in file manager',
 
   // ── File tree ───────────────────────────────────────────────
   'fileTree.filterFiles': 'Filter files...',

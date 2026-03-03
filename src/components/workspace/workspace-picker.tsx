@@ -65,7 +65,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   const openFolder = useCallback(async () => {
     try {
       if (window.electronAPI?.dialog?.openFolder) {
-        const result = await window.electronAPI.dialog.openFolder();
+        const result = await window.electronAPI.dialog.openFolder() as { canceled: boolean; filePaths: string[] } | null;
         if (result && !result.canceled && result.filePaths?.[0]) {
           addWorkspace(result.filePaths[0]);
         }
