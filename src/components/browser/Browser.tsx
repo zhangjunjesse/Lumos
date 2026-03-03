@@ -21,10 +21,14 @@ export function Browser({ className }: BrowserProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [aiActivity, setAIActivity] = useState<AIActivity | null>(null);
 
+  // 检查是否在 Electron 环境中
+  const isElectron = typeof window !== 'undefined' && window.electronAPI?.browser;
+
   // 加载标签页列表
   const loadTabs = useCallback(async () => {
+    if (!isElectron) return;
     try {
-      const result = await window.electronAPI.browser.getTabs();
+      const result = await window.electronAPI!.browser.getTabs();
       if (result.success && result.tabs) {
         setTabs(result.tabs);
         setActiveTabId(result.activeTabId || null);
@@ -32,46 +36,50 @@ export function Browser({ className }: BrowserProps) {
     } catch (error) {
       console.error('Failed to load tabs:', error);
     }
-  }, []);
+  }, [isElectron]);
 
   // 创建新标签页
   const handleCreateTab = useCallback(async (url?: string) => {
+    if (!isElectron) return;
     try {
-      const result = await window.electronAPI.browser.createTab(url);
+      const result = await window.electronAPI!.browser.createTab(url);
       if (result.success && result.tabId) {
         await loadTabs();
       }
     } catch (error) {
       console.error('Failed to create tab:', error);
     }
-  }, [loadTabs]);
+  }, [isElectron, loadTabs]);
 
   // 关闭标签页
   const handleCloseTab = useCallback(async (tabId: string) => {
+    if (!isElectron) return;
     try {
-      const result = await window.electronAPI.browser.closeTab(tabId);
+      const result = await window.electronAPI!.browser.closeTab(tabId);
       if (result.success) {
         await loadTabs();
       }
     } catch (error) {
       console.error('Failed to close tab:', error);
     }
-  }, [loadTabs]);
+  }, [isElectron, loadTabs]);
 
   // 切换标签页
   const handleSwitchTab = useCallback(async (tabId: string) => {
+    if (!isElectron) return;
     try {
-      const result = await window.electronAPI.browser.switchTab(tabId);
+      const result = await window.electronAPI!.browser.switchTab(tabId);
       if (result.success) {
         setActiveTabId(tabId);
       }
     } catch (error) {
       console.error('Failed to switch tab:', error);
     }
-  }, []);
+  }, [isElectron]);
 
   // 导航到 URL
   const handleNavigate = useCallback(async (url: string) => {
+    if (!isElectron) return;
     if (!activeTabId) {
       await handleCreateTab(url);
       return;
@@ -79,7 +87,7 @@ export function Browser({ className }: BrowserProps) {
 
     try {
       setIsLoading(true);
-      const result = await window.electronAPI.browser.navigate(activeTabId, url);
+      const result = await window.electronAPI!.browser.navigate(activeTabId, url);
       if (result.success) {
         await loadTabs();
       }
@@ -88,11 +96,13 @@ export function Browser({ className }: BrowserProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [activeTabId, handleCreateTab, loadTabs]);
+  }, [isElectron, activeTabId, handleCreateTab, loadTabs]);
 
   // 监听浏览器事件
   useEffect(() => {
-    const unsubscribe = window.electronAPI.browser.onEvent((event, data) => {
+    if (!isElectron) return;
+
+    const unsubscribe = window.electronAPI!.browser.onEvent((event, data) => {
       switch (event) {
         case 'tab-created':
         case 'tab-closed':
@@ -117,9 +127,26 @@ export function Browser({ className }: BrowserProps) {
     return () => {
       unsubscribe();
     };
-  }, [loadTabs]);
+  }, [isElectron, loadTabs]);
 
   const activeTab = tabs.find(tab => tab.id === activeTabId);
+
+  // 如果不在 Electron 环境中，显示提示
+  if (!isElectron) {
+    return (
+      <div className={`flex flex-col h-full items-center justify-center ${className || ''}`}>
+        <div className="text-center max-w-md p-8">
+          <h2 className="text-2xl font-bold mb-4">浏览器功能不可用</h2>
+          <p className="text-gray-600 mb-4">
+            内置浏览器功能只能在 Electron 桌面应用中使用。
+          </p>
+          <p className="text-gray-500 text-sm">
+            请使用桌面应用访问此功能，而不是在浏览器中访问开发服务器。
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex flex-col h-full ${className || ''}`}>
