@@ -105,17 +105,24 @@ export async function POST(request: NextRequest) {
     let savedContent = content;
     let fileMeta: Array<{ id: string; name: string; type: string; size: number; filePath: string }> | undefined;
     if (files && files.length > 0) {
-      const workDir = session.working_directory;
-      const uploadDir = path.join(workDir, '.codepilot-uploads');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
       fileMeta = files.map((f) => {
-        const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
-        const buffer = Buffer.from(f.data, 'base64');
-        fs.writeFileSync(filePath, buffer);
-        return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
+        // Use original file path if available (from file tree), otherwise save to uploads
+        if (f.filePath) {
+          // File from file tree - use original path directly
+          return { id: f.id, name: f.name, type: f.type, size: f.size, filePath: f.filePath };
+        } else {
+          // File uploaded by user - save to .codepilot-uploads
+          const workDir = session.working_directory;
+          const uploadDir = path.join(workDir, '.codepilot-uploads');
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+          }
+          const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+          const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
+          const buffer = Buffer.from(f.data, 'base64');
+          fs.writeFileSync(filePath, buffer);
+          return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
+        }
       });
       savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
     }
