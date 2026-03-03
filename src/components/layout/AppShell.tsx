@@ -240,7 +240,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isNativeUpdater) return;
 
-    const unsubscribe = window.electronAPI!.updater!.onStatus((event) => {
+    const unsubscribe = window.electronAPI!.updater!.onStatus((event: any) => {
       switch (event.status) {
         case 'checking':
           setChecking(true);

@@ -45,8 +45,8 @@ export function URLAutocomplete({
     // TODO: 从历史记录和书签中获取建议
     // 这里先用模拟数据
     const mockSuggestions: AutocompleteItem[] = [
-      { url: 'https://google.com', title: 'Google', type: 'history' },
-      { url: 'https://github.com', title: 'GitHub', type: 'bookmark' },
+      { url: 'https://google.com', title: 'Google', type: 'history' as const },
+      { url: 'https://github.com', title: 'GitHub', type: 'bookmark' as const },
     ].filter(item =>
       item.url.toLowerCase().includes(value.toLowerCase()) ||
       item.title.toLowerCase().includes(value.toLowerCase())

@@ -119,7 +119,7 @@ export function InstallWizard({
 
     // Subscribe to progress updates
     if (cleanupRef.current) cleanupRef.current();
-    cleanupRef.current = api.onProgress((p) => {
+    cleanupRef.current = api.onProgress((p: any) => {
       setProgress(p);
       setLogs(p.logs);
 

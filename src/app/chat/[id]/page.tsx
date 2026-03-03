@@ -244,7 +244,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <h2 className="text-sm font-medium text-foreground/80 truncate">
-                {console.log('[ChatPage] Rendering h2 with sessionTitle:', sessionTitle)}
                 {sessionTitle}
               </h2>
               <button
