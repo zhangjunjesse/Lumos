@@ -5,11 +5,12 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import { initAutoUpdater, setUpdaterWindow } from './updater';
-import { BrowserManager } from './browser/browser-manager';
-import { setupBrowserIPC } from './ipc/browser-handlers';
+// TODO: 暂时禁用浏览器功能，因为在开发模式下 better-sqlite3 版本冲突
+// import { BrowserManager } from './browser/browser-manager';
+// import { setupBrowserIPC } from './ipc/browser-handlers';
 
 let mainWindow: BrowserWindow | null = null;
-let browserManager: BrowserManager | null = null;
+// let browserManager: BrowserManager | null = null;
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -401,18 +402,19 @@ function createWindow(port: number) {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-    browserManager = null;
+    // browserManager = null;
   });
 
   // 初始化 BrowserManager
-  browserManager = new BrowserManager(mainWindow, {
-    maxTabs: 10,
-    maxActiveViews: 3,
-    sessionPartition: 'persist:lumos-browser',
-  });
+  // TODO: 暂时禁用浏览器功能，因为在开发模式下 better-sqlite3 版本冲突
+  // browserManager = new BrowserManager(mainWindow, {
+  //   maxTabs: 10,
+  //   maxActiveViews: 3,
+  //   sessionPartition: 'persist:lumos-browser',
+  // });
 
   // 设置浏览器 IPC handlers
-  setupBrowserIPC(browserManager);
+  // setupBrowserIPC(browserManager);
 }
 
 app.whenReady().then(async () => {
@@ -864,14 +866,15 @@ app.on('before-quit', async (e) => {
   }
 
   // 清理 BrowserManager
-  if (browserManager) {
-    try {
-      await browserManager.cleanup();
-    } catch (error) {
-      console.error('Failed to cleanup BrowserManager:', error);
-    }
-    browserManager = null;
-  }
+  // TODO: 暂时禁用浏览器功能
+  // if (browserManager) {
+  //   try {
+  //     await browserManager.cleanup();
+  //   } catch (error) {
+  //     console.error('Failed to cleanup BrowserManager:', error);
+  //   }
+  //   browserManager = null;
+  // }
 
   if (serverProcess && !isQuitting) {
     isQuitting = true;

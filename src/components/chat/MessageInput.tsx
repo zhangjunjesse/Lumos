@@ -304,17 +304,10 @@ function FileTreeAttachmentBridge() {
       if (!filePath) return;
 
       try {
-        const res = await fetch(`/api/files/raw?path=${encodeURIComponent(filePath)}`);
-        if (!res.ok) {
-          console.error(`[FileTreeAttachment] Failed to fetch file: ${res.status} ${res.statusText}`, filePath);
-          return;
-        }
-        const blob = await res.blob();
         const filename = filePath.split(/[/\\]/).pop() || 'file';
         const mime = mimeFromFilename(filename);
-        const file = new File([blob], filename, { type: mime });
-        console.log('[FileTreeAttachment] Adding file:', filename, 'mime:', mime, 'size:', blob.size);
-        attachmentsRef.current.add([file]);
+        console.log('[FileTreeAttachment] Adding file reference:', filename, 'path:', filePath);
+        attachmentsRef.current.addReference(filePath, filename, mime);
       } catch (err) {
         console.error('[FileTreeAttachment] Error attaching file:', filePath, err);
       }
@@ -611,7 +604,7 @@ export function MessageInput({
     }
   }, [fetchFiles, fetchSkills, popoverMode, closePopover]);
 
-  const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ type: string; url: string; filename?: string; mediaType?: string }> }, e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ id?: string; type: string; url: string; filename?: string; mediaType?: string; filePath?: string }> }, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const content = inputValue.trim();
 
@@ -623,21 +616,62 @@ export function MessageInput({
 
       const attachments: FileAttachment[] = [];
       for (const file of msg.files) {
-        if (!file.url) continue;
-        try {
-          const attachment = await dataUrlToFileAttachment(
-            file.url,
-            file.filename || 'file',
-            file.mediaType || 'application/octet-stream',
-          );
-          // Enforce per-type size limits
-          const isImage = attachment.type.startsWith('image/');
-          const sizeLimit = isImage ? MAX_IMAGE_SIZE : MAX_DOC_SIZE;
-          if (attachment.size <= sizeLimit) {
-            attachments.push(attachment);
+        // Check if this is a file path reference (has filePath but no url)
+        if ('filePath' in file && file.filePath && !file.url) {
+          try {
+            // Read file content from disk at send time
+            const res = await fetch(`/api/files/raw?path=${encodeURIComponent(file.filePath)}`);
+            if (!res.ok) {
+              console.warn(`[convertFiles] Failed to read ${file.filePath}`);
+              continue;
+            }
+            const blob = await res.blob();
+            const reader = new FileReader();
+            const base64 = await new Promise<string>((resolve, reject) => {
+              reader.onloadend = () => {
+                const dataUrl = reader.result as string;
+                const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+                resolve(base64Data);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+
+            const attachment: FileAttachment = {
+              id: file.id || nanoid(),
+              name: file.filename || 'file',
+              type: file.mediaType || 'application/octet-stream',
+              size: blob.size,
+              data: base64,
+              filePath: file.filePath,
+            };
+
+            // Enforce per-type size limits
+            const isImage = attachment.type.startsWith('image/');
+            const sizeLimit = isImage ? MAX_IMAGE_SIZE : MAX_DOC_SIZE;
+            if (attachment.size <= sizeLimit) {
+              attachments.push(attachment);
+            }
+          } catch (err) {
+            console.error('[convertFiles] Error reading file reference:', file.filePath, err);
           }
-        } catch {
-          // Skip files that fail conversion
+        } else if (file.url) {
+          // Existing logic: user-uploaded files with blob URLs
+          try {
+            const attachment = await dataUrlToFileAttachment(
+              file.url,
+              file.filename || 'file',
+              file.mediaType || 'application/octet-stream',
+            );
+            // Enforce per-type size limits
+            const isImage = attachment.type.startsWith('image/');
+            const sizeLimit = isImage ? MAX_IMAGE_SIZE : MAX_DOC_SIZE;
+            if (attachment.size <= sizeLimit) {
+              attachments.push(attachment);
+            }
+          } catch {
+            // Skip files that fail conversion
+          }
         }
       }
       return attachments;

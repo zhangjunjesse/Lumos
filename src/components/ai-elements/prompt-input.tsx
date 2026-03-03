@@ -103,8 +103,9 @@ const convertBlobUrlToDataUrl = async (url: string): Promise<string | null> => {
 // ============================================================================
 
 export interface AttachmentsContext {
-  files: (FileUIPart & { id: string })[];
+  files: (FileUIPart & { id: string; filePath?: string })[];
   add: (files: File[] | FileList) => void;
+  addReference: (filePath: string, filename: string, mediaType: string) => void;
   remove: (id: string) => void;
   clear: () => void;
   openFileDialog: () => void;
@@ -203,6 +204,20 @@ export const PromptInputProvider = ({
     ]);
   }, []);
 
+  const addReference = useCallback((filePath: string, filename: string, mediaType: string) => {
+    setAttachmentFiles((prev) => [
+      ...prev,
+      {
+        filename,
+        id: nanoid(),
+        mediaType,
+        type: "file" as const,
+        url: "", // Empty URL indicates this is a file path reference
+        filePath, // Store the file path for later reading
+      },
+    ]);
+  }, []);
+
   const remove = useCallback((id: string) => {
     setAttachmentFiles((prev) => {
       const found = prev.find((f) => f.id === id);
@@ -250,13 +265,14 @@ export const PromptInputProvider = ({
   const attachments = useMemo<AttachmentsContext>(
     () => ({
       add,
+      addReference,
       clear,
       fileInputRef,
       files: attachmentFiles,
       openFileDialog,
       remove,
     }),
-    [attachmentFiles, add, remove, clear, openFileDialog]
+    [attachmentFiles, add, addReference, remove, clear, openFileDialog]
   );
 
   const __registerFileInput = useCallback(
@@ -521,6 +537,20 @@ export const PromptInput = ({
     []
   );
 
+  const addReferenceLocal = useCallback((filePath: string, filename: string, mediaType: string) => {
+    setItems((prev) => [
+      ...prev,
+      {
+        filename,
+        id: nanoid(),
+        mediaType,
+        type: "file" as const,
+        url: "", // Empty URL indicates this is a file path reference
+        filePath, // Store the file path for later reading
+      },
+    ]);
+  }, []);
+
   // Wrapper that validates files before calling provider's add
   const addWithProviderValidation = useCallback(
     (fileList: File[] | FileList) => {
@@ -587,6 +617,7 @@ export const PromptInput = ({
 
   const add = usingProvider ? addWithProviderValidation : addLocal;
   const remove = usingProvider ? controller.attachments.remove : removeLocal;
+  const addReference = usingProvider ? controller.attachments.addReference : addReferenceLocal;
   const openFileDialog = usingProvider
     ? controller.attachments.openFileDialog
     : openFileDialogLocal;
@@ -698,13 +729,14 @@ export const PromptInput = ({
   const attachmentsCtx = useMemo<AttachmentsContext>(
     () => ({
       add,
+      addReference,
       clear: clearAttachments,
       fileInputRef: inputRef,
       files: files.map((item) => ({ ...item, id: item.id })),
       openFileDialog,
       remove,
     }),
-    [files, add, remove, clearAttachments, openFileDialog]
+    [files, add, addReference, remove, clearAttachments, openFileDialog]
   );
 
   const refsCtx = useMemo<ReferencedSourcesContext>(
