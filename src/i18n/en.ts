@@ -485,6 +485,7 @@ const en = {
   'sidebar.aiAssistant': 'AI Assistant',
   'sidebar.workspace': 'Workspace',
   'sidebar.recent': 'Recent',
+  'sidebar.browser': 'Browser',
   'sidebar.starred': 'Starred',
   'sidebar.trash': 'Trash',
   'sidebar.knowledge': 'Knowledge',

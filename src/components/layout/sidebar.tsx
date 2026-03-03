@@ -27,6 +27,7 @@ import {
   SidebarRight01Icon,
   Moon02Icon,
   Sun02Icon,
+  Globe02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -41,6 +42,7 @@ const mainNavItems = [
   { href: "/", labelKey: "sidebar.aiAssistant" as const, icon: SparklesIcon, isAssistant: true as const },
   { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, isAssistant: false as const },
   { href: "/recent", labelKey: "sidebar.recent" as const, icon: Clock01Icon, isAssistant: false as const },
+  { href: "/browser", labelKey: "sidebar.browser" as const, icon: Globe02Icon, isAssistant: false as const },
 ];
 
 const secondaryNavItems = [

@@ -482,6 +482,7 @@ const zh: Record<TranslationKey, string> = {
   'sidebar.aiAssistant': 'AI 助手',
   'sidebar.workspace': '工作区',
   'sidebar.recent': '最近',
+  'sidebar.browser': '浏览器',
   'sidebar.starred': '收藏',
   'sidebar.trash': '回收站',
   'sidebar.knowledge': '知识库',
