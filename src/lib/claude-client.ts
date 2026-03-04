@@ -598,6 +598,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           };
         }
 
+        // Check if we should resume session (needed for MCP config decision)
+        let shouldResume = !!sdkSessionId;
+        if (shouldResume && workingDirectory && !fs.existsSync(workingDirectory)) {
+          console.warn(`[claude-client] Working directory "${workingDirectory}" does not exist, skipping resume`);
+          shouldResume = false;
+          if (sessionId) {
+            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+          }
+          controller.enqueue(formatSSE({
+            type: 'status',
+            data: JSON.stringify({
+              notification: true,
+              title: 'Session fallback',
+              message: 'Original working directory no longer exists. Starting fresh conversation.',
+            }),
+          }));
+        }
+
         // === ISOLATION: MCP servers ===
         // Only pass explicitly provided config (e.g. from Lumos UI).
         // With settingSources: [], the SDK won't load user's ~/.claude.json
@@ -630,27 +648,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
         console.timeEnd('[perf] Skills loading');
 
-        // Resume session if we have an SDK session ID from a previous conversation turn.
-        // Pre-check: verify working_directory and session file exist before attempting resume.
-        // Resume depends on session context (cwd/project scope), so if the
-        // original working_directory no longer exists, resume will fail.
-        let shouldResume = !!sdkSessionId;
-        if (shouldResume && workingDirectory && !fs.existsSync(workingDirectory)) {
-          console.warn(`[claude-client] Working directory "${workingDirectory}" does not exist, skipping resume`);
-          shouldResume = false;
-          if (sessionId) {
-            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
-          }
-          controller.enqueue(formatSSE({
-            type: 'status',
-            data: JSON.stringify({
-              notification: true,
-              title: 'Session fallback',
-              message: 'Original working directory no longer exists. Starting fresh conversation.',
-            }),
-          }));
-        }
-
+        // Resume session configuration (shouldResume already defined above)
         if (shouldResume) {
           queryOptions.resume = sdkSessionId;
           console.log('[claude-client] Attempting to resume session:', sdkSessionId);
