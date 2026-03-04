@@ -56,9 +56,17 @@ jobs:
         run: npm run electron:build
 
       - name: Package for Windows
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --config electron-builder.yml --publish always
+        run: npx electron-builder --win --config electron-builder.yml --publish never
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          retention-days: 1
 
   build-macos:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
@@ -82,9 +90,17 @@ jobs:
         run: npm run electron:build
 
       - name: Package for macOS (${{ matrix.arch }})
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish always
+        run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-artifacts
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/latest-mac.yml
+          retention-days: 1
 
   build-linux:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux' }}
@@ -108,9 +124,18 @@ jobs:
         run: npm run electron:build
 
       - name: Package for Linux (${{ matrix.arch }})
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish always
+        run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish never
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-artifacts
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/latest-linux.yml
+          retention-days: 1
 
   release:
     if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(needs.*.result, 'cancelled') }}
@@ -128,6 +153,11 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | sed -n '2p' || echo "")
           echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
 
       - name: Generate changelog
         id: changelog
@@ -195,7 +225,10 @@ jobs:
           CHANGELOG_INLINE_EOF
           fi
 
-          # Update the draft release created by electron-builder with full notes
+          # Upload all artifacts to release
+          gh release upload "${GITHUB_REF_NAME}" artifacts/*/* --clobber
+
+          # Update the draft release with full notes and publish
           gh release edit "${GITHUB_REF_NAME}" \
             --title "Lumos v${VERSION}" \
             --notes-file release-notes.md \

@@ -80,7 +80,7 @@ export function DocPreview({
       setError(null);
       try {
         const res = await fetch(
-          `/api/files/preview?path=${encodeURIComponent(filePath)}&maxLines=500${workingDirectory ? `&baseDir=${encodeURIComponent(workingDirectory)}` : ''}`
+          `/api/files/preview?path=${encodeURIComponent(filePath)}&maxLines=500${workingDirectory ? `&baseDir=${encodeURIComponent(workingDirectory)}` : ''}&_t=${Date.now()}`
         );
         if (!res.ok) {
           const data = await res.json();
@@ -105,7 +105,25 @@ export function DocPreview({
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, workingDirectory]);
+
+  // Auto-refresh when AI finishes editing files
+  useEffect(() => {
+    const handler = () => {
+      // Reload current file preview
+      setLoading(true);
+      setError(null);
+      fetch(
+        `/api/files/preview?path=${encodeURIComponent(filePath)}&maxLines=500${workingDirectory ? `&baseDir=${encodeURIComponent(workingDirectory)}` : ''}&_t=${Date.now()}`
+      )
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to load file')))
+        .then(data => setPreview(data.preview))
+        .catch(err => setError(err instanceof Error ? err.message : 'Failed to load file'))
+        .finally(() => setLoading(false));
+    };
+    window.addEventListener('refresh-file-tree', handler);
+    return () => window.removeEventListener('refresh-file-tree', handler);
+  }, [filePath, workingDirectory]);
 
   const handleCopyContent = async () => {
     const text = preview?.content || filePath;
