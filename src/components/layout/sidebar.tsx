@@ -42,7 +42,6 @@ const mainNavItems = [
   { href: "/", labelKey: "sidebar.aiAssistant" as const, icon: SparklesIcon, isAssistant: true as const },
   { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, isAssistant: false as const },
   { href: "/recent", labelKey: "sidebar.recent" as const, icon: Clock01Icon, isAssistant: false as const },
-  { href: "/browser", labelKey: "sidebar.browser" as const, icon: Globe02Icon, isAssistant: false as const },
 ];
 
 const secondaryNavItems = [

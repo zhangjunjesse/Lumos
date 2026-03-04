@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { StructureFolderIcon } from '@hugeicons/core-free-icons';
+import { Button } from '@/components/ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useContentPanelStore, type Tab } from '@/stores/content-panel';
+import { usePanel } from '@/hooks/usePanel';
+import { useTranslation } from '@/hooks/useTranslation';
 import { TabBar } from './TabBar';
 import { ContentRenderer } from './ContentRenderer';
 
@@ -9,8 +19,65 @@ interface ContentPanelProps {
   width?: number;
 }
 
+const FILE_TREE_TAB_ID = 'fixed-file-tree';
+
 export function ContentPanel({ width = 288 }: ContentPanelProps) {
   const { tabs, activeTabId, setActiveTab, removeTab, addTab } = useContentPanelStore();
+  const { contentPanelOpen, setContentPanelOpen } = usePanel();
+  const { t } = useTranslation();
+
+  console.log('[ContentPanel] Render:', { tabsLength: tabs.length, activeTabId, width, contentPanelOpen });
+
+  // 初始化固定的 FileTree 标签（只在挂载时运行一次）
+  useEffect(() => {
+    console.log('[ContentPanel] Initializing, current tabs:', tabs);
+
+    // 查找所有 file-tree 类型的标签
+    const fileTreeTabs = tabs.filter(t => t.type === 'file-tree');
+
+    if (fileTreeTabs.length > 1) {
+      // 如果有多个 file-tree 标签，只保留第一个，删除其他的
+      console.log('[ContentPanel] Found multiple file-tree tabs, cleaning up');
+      fileTreeTabs.slice(1).forEach(tab => {
+        removeTab(tab.id);
+      });
+
+      // 更新第一个标签的 id 和 title
+      const firstTab = fileTreeTabs[0];
+      if (firstTab.id !== FILE_TREE_TAB_ID) {
+        removeTab(firstTab.id);
+        addTab({
+          id: FILE_TREE_TAB_ID,
+          type: 'file-tree',
+          title: t('panel.files'),
+          closable: false,
+        });
+      }
+    } else if (fileTreeTabs.length === 0) {
+      // 如果没有 file-tree 标签，创建一个
+      console.log('[ContentPanel] No file-tree tab found, creating one');
+      addTab({
+        id: FILE_TREE_TAB_ID,
+        type: 'file-tree',
+        title: t('panel.files'),
+        closable: false,
+      });
+    } else {
+      // 如果只有一个，确保它的 id 和 title 正确
+      const tab = fileTreeTabs[0];
+      if (tab.id !== FILE_TREE_TAB_ID || tab.title !== t('panel.files')) {
+        console.log('[ContentPanel] Updating existing file-tree tab');
+        removeTab(tab.id);
+        addTab({
+          id: FILE_TREE_TAB_ID,
+          type: 'file-tree',
+          title: t('panel.files'),
+          closable: false,
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -76,6 +143,27 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  // 收缩状态下的窄条
+  if (!contentPanelOpen) {
+    return (
+      <div className="flex flex-col items-center gap-2 bg-background p-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setContentPanelOpen(true)}
+            >
+              <HugeiconsIcon icon={StructureFolderIcon} className="h-4 w-4" />
+              <span className="sr-only">{t('contentPanel.openPanel')}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">{t('contentPanel.openPanel')}</TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  }
 
   return (
     <aside

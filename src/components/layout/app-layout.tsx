@@ -6,18 +6,13 @@ import dynamic from "next/dynamic";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
-import { RightPanel } from "./RightPanel";
-import { DocPreview } from "./DocPreview";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
+import { useContentPanelStore } from "@/stores/content-panel";
 
 const ContentPanel = dynamic(() => import("./ContentPanel").then(m => m.ContentPanel), { ssr: false });
 
-const RIGHTPANEL_MIN = 200;
-const RIGHTPANEL_MAX = 480;
-const DOCPREVIEW_MIN = 320;
-const DOCPREVIEW_MAX = 800;
 const CONTENTPANEL_MIN = 320;
 const CONTENTPANEL_MAX = 800;
 
@@ -40,68 +35,67 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   const [assistantOpen, setAssistantOpen] = useState(false);
 
-  // Panel state
-  const [panelOpen, setPanelOpen] = useState(() => {
-    if (typeof window === "undefined") return true;
-    const saved = localStorage.getItem("lumos_panel_open");
-    return saved !== null ? saved === "true" : true;
-  });
+  // ContentPanel store
+  const { addTab } = useContentPanelStore();
+
+  // Panel state - 使用固定初始值避免 hydration 错误
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [contentPanelOpen, setContentPanelOpen] = useState(true);
 
   const [panelContent, setPanelContent] = useState<PanelContent>("files");
 
-  const [workingDirectory, setWorkingDirectory] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return localStorage.getItem("lumos_working_directory") || "";
-  });
+  const [workingDirectory, setWorkingDirectory] = useState("");
 
   const [sessionId, setSessionId] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [streamingSessionId, setStreamingSessionId] = useState("");
   const [pendingApprovalSessionId, setPendingApprovalSessionId] = useState("");
-  const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
-  const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("source");
 
   const setPreviewFile = useCallback((path: string | null) => {
-    setPreviewFileRaw(path);
-    if (path) setPreviewViewMode(defaultViewMode(path));
-  }, []);
+    console.log('[app-layout] setPreviewFile called:', path);
+    if (!path) return;
 
-  // Panel width state with localStorage persistence
-  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
-    if (typeof window === "undefined") return 288;
-    return parseInt(localStorage.getItem("lumos_rightpanel_width") || "288");
-  });
+    const fileName = path.split('/').pop() || path;
+    const viewMode = defaultViewMode(path);
 
-  const [docPreviewWidth, setDocPreviewWidth] = useState(() => {
-    if (typeof window === "undefined") return 480;
-    return parseInt(localStorage.getItem("lumos_docpreview_width") || "480");
-  });
+    console.log('[app-layout] Adding tab:', { fileName, viewMode, path });
 
-  const [contentPanelWidth, setContentPanelWidth] = useState(() => {
-    if (typeof window === "undefined") return 480;
-    return parseInt(localStorage.getItem("lumos_contentpanel_width") || "480");
-  });
-
-  const handleRightPanelResize = useCallback((delta: number) => {
-    setRightPanelWidth((w) => Math.min(RIGHTPANEL_MAX, Math.max(RIGHTPANEL_MIN, w - delta)));
-  }, []);
-
-  const handleRightPanelResizeEnd = useCallback(() => {
-    setRightPanelWidth((w) => {
-      localStorage.setItem("lumos_rightpanel_width", String(w));
-      return w;
+    // 添加到 ContentPanel（每次都添加新标签，不使用临时标签）
+    addTab({
+      type: 'file-preview',
+      title: fileName,
+      closable: true,
+      filePath: path,
+      data: { viewMode },
     });
-  }, []);
+  }, [addTab]);
 
-  const handleDocPreviewResize = useCallback((delta: number) => {
-    setDocPreviewWidth((w) => Math.min(DOCPREVIEW_MAX, Math.max(DOCPREVIEW_MIN, w - delta)));
-  }, []);
+  // Panel width state - 使用固定初始值避免 hydration 错误
+  const [contentPanelWidth, setContentPanelWidth] = useState(480);
 
-  const handleDocPreviewResizeEnd = useCallback(() => {
-    setDocPreviewWidth((w) => {
-      localStorage.setItem("lumos_docpreview_width", String(w));
-      return w;
-    });
+  // 在客户端挂载后从 localStorage 恢复状态
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const savedPanelOpen = localStorage.getItem("lumos_panel_open");
+    if (savedPanelOpen !== null) {
+      setPanelOpen(savedPanelOpen === "true");
+    }
+
+    const savedContentPanelOpen = localStorage.getItem("lumos_contentpanel_open");
+    if (savedContentPanelOpen !== null) {
+      setContentPanelOpen(savedContentPanelOpen === "true");
+    }
+
+    const savedWorkingDirectory = localStorage.getItem("lumos_working_directory");
+    if (savedWorkingDirectory) {
+      setWorkingDirectory(savedWorkingDirectory);
+    }
+
+    const savedContentPanelWidth = localStorage.getItem("lumos_contentpanel_width");
+    if (savedContentPanelWidth) {
+      setContentPanelWidth(parseInt(savedContentPanelWidth));
+    }
   }, []);
 
   const handleContentPanelResize = useCallback((delta: number) => {
@@ -115,15 +109,20 @@ export function AppLayout({ children }: AppLayoutProps) {
     });
   }, []);
 
-  // Close doc preview on route change
+  // Close doc preview on route change (no longer needed, but keep for compatibility)
   useEffect(() => {
-    setPreviewFileRaw(null);
+    // Temporary tabs are automatically cleared by ContentPanel
   }, [pathname]);
 
   // Persist panel open state
   useEffect(() => {
     localStorage.setItem("lumos_panel_open", String(panelOpen));
   }, [panelOpen]);
+
+  // Persist content panel open state
+  useEffect(() => {
+    localStorage.setItem("lumos_contentpanel_open", String(contentPanelOpen));
+  }, [contentPanelOpen]);
 
   // Persist working directory
   useEffect(() => {
@@ -143,6 +142,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const panelContextValue = useMemo(() => ({
     panelOpen,
     setPanelOpen,
+    contentPanelOpen,
+    setContentPanelOpen,
     panelContent,
     setPanelContent,
     workingDirectory,
@@ -155,11 +156,8 @@ export function AppLayout({ children }: AppLayoutProps) {
     setStreamingSessionId,
     pendingApprovalSessionId,
     setPendingApprovalSessionId,
-    previewFile,
-    setPreviewFile,
-    previewViewMode,
-    setPreviewViewMode,
-  }), [panelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewViewMode]);
+    setPreviewFile, // 保留用于触发文件预览
+  }), [panelOpen, contentPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, setPreviewFile]);
 
   return (
     <PanelContext.Provider value={panelContextValue}>
@@ -181,38 +179,15 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <ErrorBoundary>{children}</ErrorBoundary>
               </main>
 
-              {isChatDetailRoute && (
+              {isChatRoute && (
                 <>
-                  <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
+                  {contentPanelOpen && (
+                    <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
+                  )}
                   <ErrorBoundary>
-                    <ContentPanel width={contentPanelWidth} />
+                    <ContentPanel width={contentPanelOpen ? contentPanelWidth : undefined} />
                   </ErrorBoundary>
                 </>
-              )}
-
-              {isChatRoute && previewFile && (
-                <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
-              )}
-              {isChatRoute && previewFile && (
-                <ErrorBoundary>
-                  <DocPreview
-                    filePath={previewFile}
-                    viewMode={previewViewMode}
-                    onViewModeChange={setPreviewViewMode}
-                    onClose={() => setPreviewFile(null)}
-                    width={docPreviewWidth}
-                  />
-                </ErrorBoundary>
-              )}
-
-              {isChatRoute && panelOpen && (
-                <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />
-              )}
-
-              {isChatRoute && (
-                <ErrorBoundary>
-                  <RightPanel width={rightPanelWidth} />
-                </ErrorBoundary>
               )}
             </div>
           </div>

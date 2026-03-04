@@ -9,6 +9,8 @@ export type PreviewViewMode = "source" | "rendered";
 export interface PanelContextValue {
   panelOpen: boolean;
   setPanelOpen: (open: boolean) => void;
+  contentPanelOpen: boolean;
+  setContentPanelOpen: (open: boolean) => void;
   panelContent: PanelContent;
   setPanelContent: (content: PanelContent) => void;
   workingDirectory: string;
@@ -21,10 +23,7 @@ export interface PanelContextValue {
   setStreamingSessionId: (id: string) => void;
   pendingApprovalSessionId: string;
   setPendingApprovalSessionId: (id: string) => void;
-  previewFile: string | null;
   setPreviewFile: (path: string | null) => void;
-  previewViewMode: PreviewViewMode;
-  setPreviewViewMode: (mode: PreviewViewMode) => void;
 }
 
 export const PanelContext = createContext<PanelContextValue | null>(null);
@@ -33,6 +32,8 @@ const noop = () => {};
 const noopPanel: PanelContextValue = {
   panelOpen: false,
   setPanelOpen: noop,
+  contentPanelOpen: false,
+  setContentPanelOpen: noop,
   panelContent: "files",
   setPanelContent: noop,
   workingDirectory: "",
@@ -45,10 +46,7 @@ const noopPanel: PanelContextValue = {
   setStreamingSessionId: noop,
   pendingApprovalSessionId: "",
   setPendingApprovalSessionId: noop,
-  previewFile: null,
   setPreviewFile: noop,
-  previewViewMode: "source",
-  setPreviewViewMode: noop,
 };
 
 export function usePanel(): PanelContextValue {

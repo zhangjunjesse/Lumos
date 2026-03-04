@@ -182,6 +182,18 @@ const en = {
   'panel.closePanel': 'Close panel',
   'panel.openFolder': 'Open in file manager',
 
+  // ── Content panel ───────────────────────────────────────────
+  'contentPanel.openPanel': 'Open content panel',
+  'contentPanel.closePanel': 'Close content panel',
+
+  // ── Tab types ───────────────────────────────────────────────
+  'tab.fileTree': 'Files',
+  'tab.filePreview': 'File Preview',
+  'tab.feishuDoc': 'Feishu Doc',
+  'tab.settings': 'Settings',
+  'tab.knowledge': 'Knowledge',
+  'tab.plugins': 'Plugins',
+
   // ── File tree ───────────────────────────────────────────────
   'fileTree.filterFiles': 'Filter files...',
   'fileTree.refresh': 'Refresh',
@@ -486,7 +498,6 @@ const en = {
   'sidebar.aiAssistant': 'AI Assistant',
   'sidebar.workspace': 'Library',
   'sidebar.recent': 'Recent',
-  'sidebar.browser': 'Browser',
   'sidebar.starred': 'Starred',
   'sidebar.trash': 'Trash',
   'sidebar.knowledge': 'Knowledge',

@@ -1,6 +1,8 @@
 "use client";
 
 import { useContentPanelStore, type Tab, type TabType } from '@/stores/content-panel';
+import { usePanel } from '@/hooks/usePanel';
+import { useTranslation } from '@/hooks/useTranslation';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -17,6 +19,8 @@ import {
   Settings02Icon,
   BookOpen01Icon,
   PuzzleIcon,
+  PinIcon,
+  PanelRightCloseIcon,
 } from '@hugeicons/core-free-icons';
 import { cn } from '@/lib/utils';
 import {
@@ -37,22 +41,26 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+// Tab type configuration (icons and closable state)
 const TAB_TYPE_CONFIG: Record<
   TabType,
-  { label: string; icon: typeof FolderOpenIcon; closable: boolean }
+  { i18nKey: string; icon: typeof FolderOpenIcon; closable: boolean }
 > = {
-  'file-tree': { label: 'File Tree', icon: FolderOpenIcon, closable: false },
-  'feishu-doc': { label: 'Feishu Doc', icon: File02Icon, closable: true },
-  settings: { label: 'Settings', icon: Settings02Icon, closable: true },
-  knowledge: { label: 'Knowledge', icon: BookOpen01Icon, closable: true },
-  plugins: { label: 'Plugins', icon: PuzzleIcon, closable: true },
+  'file-tree': { i18nKey: 'tab.fileTree', icon: FolderOpenIcon, closable: false },
+  'file-preview': { i18nKey: 'tab.filePreview', icon: File02Icon, closable: true },
+  'feishu-doc': { i18nKey: 'tab.feishuDoc', icon: File02Icon, closable: true },
+  settings: { i18nKey: 'tab.settings', icon: Settings02Icon, closable: true },
+  knowledge: { i18nKey: 'tab.knowledge', icon: BookOpen01Icon, closable: true },
+  plugins: { i18nKey: 'tab.plugins', icon: PuzzleIcon, closable: true },
 };
 
 // Pixels to move before drag starts (prevents accidental drags)
 const DRAG_ACTIVATION_DISTANCE = 8;
 
 export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, removeTab, addTab, reorderTabs } = useContentPanelStore();
+  const { tabs, activeTabId, setActiveTab, removeTab, addTab, reorderTabs, pinTab } = useContentPanelStore();
+  const { setContentPanelOpen } = usePanel();
+  const { t } = useTranslation();
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -87,7 +95,7 @@ export function TabBar() {
     const config = TAB_TYPE_CONFIG[type];
     addTab({
       type,
-      title: config.label,
+      title: t(config.i18nKey),
       closable: config.closable,
     });
   };
@@ -112,6 +120,7 @@ export function TabBar() {
                 active={tab.id === activeTabId}
                 onSelect={() => setActiveTab(tab.id)}
                 onClose={() => removeTab(tab.id)}
+                onPin={() => pinTab(tab.id)}
               />
             ))}
           </div>
@@ -133,11 +142,22 @@ export function TabBar() {
               className="flex items-center gap-2"
             >
               <HugeiconsIcon icon={config.icon} className="h-4 w-4" />
-              <span>{config.label}</span>
+              <span>{t(config.i18nKey)}</span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Collapse button */}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0"
+        onClick={() => setContentPanelOpen(false)}
+        title={t('contentPanel.closePanel')}
+      >
+        <HugeiconsIcon icon={PanelRightCloseIcon} className="h-4 w-4" />
+      </Button>
     </div>
   );
 }
@@ -147,9 +167,10 @@ interface TabItemProps {
   active: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onPin: () => void;
 }
 
-function SortableTabItem({ tab, active, onSelect, onClose }: TabItemProps) {
+function SortableTabItem({ tab, active, onSelect, onClose, onPin }: TabItemProps) {
   const {
     attributes,
     listeners,
@@ -177,13 +198,29 @@ function SortableTabItem({ tab, active, onSelect, onClose }: TabItemProps) {
       className={cn(
         'flex items-center gap-1 rounded px-2 py-1 text-xs cursor-grab active:cursor-grabbing transition-colors',
         active ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
-        isDragging && 'z-50'
+        isDragging && 'z-50',
+        tab.isTemporary && 'italic' // 临时标签用斜体显示
       )}
       onClick={onSelect}
     >
       {tab.icon && <span className="text-sm">{tab.icon}</span>}
       <span className="truncate max-w-[100px]">{tab.title}</span>
-      {tab.closable && (
+      {tab.isTemporary ? (
+        // 临时标签显示固定按钮
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPin();
+          }}
+          className="ml-1 h-4 w-4 p-0"
+          title="Pin tab"
+        >
+          <HugeiconsIcon icon={PinIcon} className="h-3 w-3" />
+        </Button>
+      ) : tab.closable ? (
+        // 持久标签显示关闭按钮
         <Button
           variant="ghost"
           size="icon-xs"
@@ -195,7 +232,7 @@ function SortableTabItem({ tab, active, onSelect, onClose }: TabItemProps) {
         >
           <HugeiconsIcon icon={Cancel01Icon} className="h-3 w-3" />
         </Button>
-      )}
+      ) : null}
     </div>
   );
 }

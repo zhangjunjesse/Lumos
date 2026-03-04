@@ -179,6 +179,18 @@ const zh: Record<TranslationKey, string> = {
   'panel.closePanel': '关闭面板',
   'panel.openFolder': '在文件管理器中打开',
 
+  // ── Content panel ───────────────────────────────────────────
+  'contentPanel.openPanel': '打开内容面板',
+  'contentPanel.closePanel': '关闭内容面板',
+
+  // ── Tab types ───────────────────────────────────────────────
+  'tab.fileTree': '文件',
+  'tab.filePreview': '文件预览',
+  'tab.feishuDoc': '飞书文档',
+  'tab.settings': '设置',
+  'tab.knowledge': '知识库',
+  'tab.plugins': '插件',
+
   // ── File tree ───────────────────────────────────────────────
   'fileTree.filterFiles': '筛选文件...',
   'fileTree.refresh': '刷新',
@@ -483,7 +495,6 @@ const zh: Record<TranslationKey, string> = {
   'sidebar.aiAssistant': 'AI 助手',
   'sidebar.workspace': '资料库',
   'sidebar.recent': '最近',
-  'sidebar.browser': '浏览器',
   'sidebar.starred': '收藏',
   'sidebar.trash': '回收站',
   'sidebar.knowledge': '知识库',

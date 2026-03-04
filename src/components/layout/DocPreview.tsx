@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -34,6 +34,7 @@ interface DocPreviewProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   onClose: () => void;
+  onAdd?: () => void;
   width: number;
 }
 
@@ -59,8 +60,10 @@ export function DocPreview({
   viewMode,
   onViewModeChange,
   onClose,
+  onAdd,
   width,
 }: DocPreviewProps) {
+  const { t } = useTranslation();
   const { resolvedTheme } = useTheme();
   const { workingDirectory } = usePanel();
   const isDark = resolvedTheme === "dark";
@@ -127,8 +130,7 @@ export function DocPreview({
 
   return (
     <div
-      className="hidden h-full shrink-0 flex-col overflow-hidden border-l border-border/40 bg-background lg:flex"
-      style={{ width }}
+      className="flex h-full flex-col overflow-hidden bg-background"
     >
       {/* Header */}
       <div className="flex h-12 mt-5 shrink-0 items-center gap-2 px-3">
@@ -148,6 +150,13 @@ export function DocPreview({
               <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
             )}
             <span className="sr-only">Copy content</span>
+          </Button>
+        )}
+
+        {onAdd && (
+          <Button variant="ghost" size="icon-sm" onClick={onAdd}>
+            <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+            <span className="sr-only">{t('common.addToChat')}</span>
           </Button>
         )}
 

@@ -19,7 +19,7 @@ interface RightPanelProps {
 }
 
 export function RightPanel({ width }: RightPanelProps) {
-  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile } = usePanel();
+  const { panelOpen, setPanelOpen, workingDirectory, setPreviewFile } = usePanel();
   const { t } = useTranslation();
 
   console.log('[RightPanel] Render:', { panelOpen, workingDirectory, width });
@@ -29,16 +29,17 @@ export function RightPanel({ width }: RightPanelProps) {
   }, []);
 
   const handleFileSelect = useCallback((path: string) => {
+    console.log('[RightPanel] handleFileSelect called:', path);
     // Check if file is previewable using centralized utility
-    if (!isPreviewable(path)) return;
-
-    // Toggle: clicking the same file closes the preview
-    if (previewFile === path) {
-      setPreviewFile(null);
-    } else {
-      setPreviewFile(path);
+    if (!isPreviewable(path)) {
+      console.log('[RightPanel] File is not previewable:', path);
+      return;
     }
-  }, [previewFile, setPreviewFile]);
+
+    console.log('[RightPanel] Calling setPreviewFile:', path);
+    // Add to ContentPanel as temporary tab
+    setPreviewFile(path);
+  }, [setPreviewFile]);
 
   const handleOpenFolder = useCallback(async () => {
     if (!workingDirectory) return;
