@@ -602,8 +602,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Only pass explicitly provided config (e.g. from Lumos UI).
         // With settingSources: [], the SDK won't load user's ~/.claude.json
         // or ~/.claude/settings.json, so no user MCP servers will be loaded.
-        if (mcpServers && Object.keys(mcpServers).length > 0) {
+        // IMPORTANT: Only pass MCP config on first message (not when resuming)
+        // to avoid restarting MCP servers on every message.
+        if (!shouldResume && mcpServers && Object.keys(mcpServers).length > 0) {
           queryOptions.mcpServers = toSdkMcpConfig(mcpServers);
+          console.log('[claude-client] Loading MCP servers:', Object.keys(mcpServers));
+        } else if (shouldResume) {
+          console.log('[claude-client] Resuming session, reusing existing MCP connections');
         }
 
         // === ISOLATION: Skills ===
