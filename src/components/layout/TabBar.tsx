@@ -13,10 +13,10 @@ import {
   Cancel01Icon,
   Add01Icon,
   FolderOpenIcon,
-  FileDocumentIcon,
+  File02Icon,
   Settings02Icon,
   BookOpen01Icon,
-  PlugIcon,
+  PuzzleIcon,
 } from '@hugeicons/core-free-icons';
 import { cn } from '@/lib/utils';
 import {
@@ -42,10 +42,10 @@ const TAB_TYPE_CONFIG: Record<
   { label: string; icon: typeof FolderOpenIcon; closable: boolean }
 > = {
   'file-tree': { label: 'File Tree', icon: FolderOpenIcon, closable: false },
-  'feishu-doc': { label: 'Feishu Doc', icon: FileDocumentIcon, closable: true },
+  'feishu-doc': { label: 'Feishu Doc', icon: File02Icon, closable: true },
   settings: { label: 'Settings', icon: Settings02Icon, closable: true },
   knowledge: { label: 'Knowledge', icon: BookOpen01Icon, closable: true },
-  plugins: { label: 'Plugins', icon: PlugIcon, closable: true },
+  plugins: { label: 'Plugins', icon: PuzzleIcon, closable: true },
 };
 
 // Pixels to move before drag starts (prevents accidental drags)
