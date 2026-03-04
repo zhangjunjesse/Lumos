@@ -1049,6 +1049,17 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             case 'result': {
               const resultMsg = message as SDKResultMessage;
               tokenUsage = extractTokenUsage(resultMsg);
+
+              // Save SDK session ID to database for future resume
+              if (resultMsg.session_id && sessionId) {
+                try {
+                  updateSdkSessionId(sessionId, resultMsg.session_id);
+                  console.log('[claude-client] Saved SDK session ID:', resultMsg.session_id);
+                } catch (err) {
+                  console.warn('[claude-client] Failed to save SDK session ID:', err);
+                }
+              }
+
               controller.enqueue(formatSSE({
                 type: 'result',
                 data: JSON.stringify({
