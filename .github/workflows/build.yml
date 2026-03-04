@@ -32,6 +32,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          # Delete existing release if it exists
+          gh release delete "${GITHUB_REF_NAME}" -y || true
+          # Create new draft release
           gh release create "${GITHUB_REF_NAME}" \
             --draft \
             --title "Lumos v${VERSION}" \
@@ -224,11 +227,6 @@ jobs:
           ${{ steps.changelog.outputs.changelog }}
           CHANGELOG_INLINE_EOF
           fi
-
-          # Delete existing assets from release
-          gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | while read asset; do
-            gh release delete-asset "${GITHUB_REF_NAME}" "$asset" -y || true
-          done
 
           # Upload all artifacts to release
           gh release upload "${GITHUB_REF_NAME}" artifacts/*/*
