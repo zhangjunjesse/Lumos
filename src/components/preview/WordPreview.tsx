@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import mammoth from 'mammoth';
 
 interface WordPreviewProps {
@@ -17,40 +17,46 @@ export function WordPreview({ filePath, baseDir }: WordPreviewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadDocument() {
-      setLoading(true);
-      setError(null);
+  const loadDocument = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
-      try {
-        // Fetch the .docx file as ArrayBuffer
-        const params = new URLSearchParams({ path: filePath });
-        if (baseDir) params.set('baseDir', baseDir);
+    try {
+      // Fetch the .docx file as ArrayBuffer
+      const params = new URLSearchParams({ path: filePath });
+      if (baseDir) params.set('baseDir', baseDir);
+      params.set('_t', Date.now().toString());
 
-        const response = await fetch(`/api/files/raw?${params.toString()}`);
-        if (!response.ok) throw new Error('Failed to fetch document');
+      const response = await fetch(`/api/files/raw?${params.toString()}`);
+      if (!response.ok) throw new Error('Failed to fetch document');
 
-        const arrayBuffer = await response.arrayBuffer();
+      const arrayBuffer = await response.arrayBuffer();
 
-        // Convert to HTML using mammoth
-        const result = await mammoth.convertToHtml({ arrayBuffer });
-        setHtml(result.value);
+      // Convert to HTML using mammoth
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      setHtml(result.value);
 
-        // Log any warnings
-        if (result.messages.length > 0) {
-          console.warn('Mammoth conversion warnings:', result.messages);
-        }
-      } catch (err) {
-        console.error('Word preview error:', err);
-        const errorMessage = err instanceof Error ? err.message : 'Failed to load document';
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
+      // Log any warnings
+      if (result.messages.length > 0) {
+        console.warn('Mammoth conversion warnings:', result.messages);
       }
+    } catch (err) {
+      console.error('Word preview error:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load document';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
     }
-
-    loadDocument();
   }, [filePath, baseDir]);
+
+  useEffect(() => {
+    loadDocument();
+  }, [loadDocument]);
+
+  useEffect(() => {
+    window.addEventListener('refresh-file-tree', loadDocument);
+    return () => window.removeEventListener('refresh-file-tree', loadDocument);
+  }, [loadDocument]);
 
   if (loading) {
     return (

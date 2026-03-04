@@ -110,7 +110,6 @@ export function DocPreview({
   // Auto-refresh when AI finishes editing files
   useEffect(() => {
     const handler = () => {
-      // Reload current file preview
       setLoading(true);
       setError(null);
       fetch(
