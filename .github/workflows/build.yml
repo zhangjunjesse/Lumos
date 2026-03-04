@@ -65,10 +65,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: |
-            release/*.exe
-            release/*.exe.blockmap
-            release/latest.yml
+          path: release/*.exe
           retention-days: 1
 
   build-macos:
@@ -99,10 +96,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}-artifacts
-          path: |
-            release/*.dmg
-            release/*.dmg.blockmap
-            release/latest-mac.yml
+          path: release/*.dmg
           retention-days: 1
 
   build-linux:
@@ -137,7 +131,6 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
-            release/latest-linux.yml
           retention-days: 1
 
   release:
