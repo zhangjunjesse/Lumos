@@ -9,6 +9,11 @@ import { initAutoUpdater, setUpdaterWindow } from './updater';
 // import { BrowserManager } from './browser/browser-manager';
 // import { setupBrowserIPC } from './ipc/browser-handlers';
 
+// Database and IPC imports
+import { initDatabase, registerDbShutdownHandlers } from './db/connection';
+import { DatabaseService } from './db/service';
+import { registerIpcHandlers } from './ipc/handlers';
+
 let mainWindow: BrowserWindow | null = null;
 // let browserManager: BrowserManager | null = null;
 let serverProcess: Electron.UtilityProcess | null = null;
@@ -423,6 +428,14 @@ app.whenReady().then(async () => {
 
   // Verify native module ABI compatibility before starting the server
   checkNativeModuleABI();
+
+  // === DATABASE: Initialize database and IPC handlers ===
+  console.log('[main] Initializing database...');
+  const db = initDatabase();
+  const dbService = new DatabaseService(db);
+  registerIpcHandlers(dbService);
+  registerDbShutdownHandlers();
+  console.log('[main] Database and IPC handlers initialized');
 
   // === ISOLATION: Verify Claude CLI config directory ===
   const claudeConfigDir = path.join(app.getPath('userData'), '.claude');

@@ -75,6 +75,9 @@ interface ElectronAPI {
     node: string;
     chrome: string;
   };
+  ipcRenderer: {
+    invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+  };
   shell: {
     openPath: (path: string) => Promise<string>;
   };

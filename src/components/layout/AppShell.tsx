@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NavRail } from "./NavRail";
@@ -10,11 +10,13 @@ import { ResizeHandle } from "./ResizeHandle";
 import { UpdateDialog } from "./UpdateDialog";
 import { UpdateBanner } from "./UpdateBanner";
 import { DocPreview } from "./DocPreview";
+import { ContentPanel } from "./ContentPanel";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
 import { UpdateContext, type UpdateInfo } from "@/hooks/useUpdate";
 import { ImageGenContext, useImageGenState } from "@/hooks/useImageGen";
 import { BatchImageGenContext, useBatchImageGenState } from "@/hooks/useBatchImageGen";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { useContentPanelStore } from "@/stores/content-panel";
 
 const CHATLIST_MIN = 180;
 const CHATLIST_MAX = 400;
@@ -22,6 +24,8 @@ const RIGHTPANEL_MIN = 200;
 const RIGHTPANEL_MAX = 480;
 const DOCPREVIEW_MIN = 320;
 const DOCPREVIEW_MAX = 800;
+const CONTENTPANEL_MIN = 320;
+const CONTENTPANEL_MAX = 800;
 
 /** Extensions that default to "rendered" view mode */
 const RENDERED_EXTENSIONS = new Set([".md", ".mdx", ".html", ".htm"]);
@@ -38,6 +42,21 @@ const DISMISSED_VERSION_KEY = "lumos_dismissed_update_version";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { tabs, addTab } = useContentPanelStore();
+  const initialized = useRef(false);
+
+  // Initialize default file-tree tab if no tabs exist
+  useEffect(() => {
+    if (!initialized.current && tabs.length === 0) {
+      initialized.current = true;
+      addTab({
+        type: 'file-tree',
+        title: 'Files',
+        icon: 'folder-02',
+        closable: false,
+      });
+    }
+  }, [tabs.length, addTab]);
 
   const [chatListOpen, setChatListOpenRaw] = useState(() => {
     // Default to closed on mobile (< 1024px), open on desktop
@@ -119,6 +138,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return 480;
     return parseInt(localStorage.getItem("lumos_docpreview_width") || "480");
   });
+  const [contentPanelWidth, setContentPanelWidth] = useState(() => {
+    if (typeof window === "undefined") return 480;
+    return parseInt(localStorage.getItem("lumos_contentpanel_width") || "480");
+  });
 
   const setPreviewFile = useCallback((path: string | null) => {
     setPreviewFileRaw(path);
@@ -133,6 +156,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const handleDocPreviewResizeEnd = useCallback(() => {
     setDocPreviewWidth((w) => {
       localStorage.setItem("lumos_docpreview_width", String(w));
+      return w;
+    });
+  }, []);
+
+  const handleContentPanelResize = useCallback((delta: number) => {
+    setContentPanelWidth((w) => Math.min(CONTENTPANEL_MAX, Math.max(CONTENTPANEL_MIN, w - delta)));
+  }, []);
+  const handleContentPanelResizeEnd = useCallback(() => {
+    setContentPanelWidth((w) => {
+      localStorage.setItem("lumos_contentpanel_width", String(w));
       return w;
     });
   }, []);
@@ -411,31 +444,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <ErrorBoundary>{children}</ErrorBoundary>
               </main>
             </div>
-            {isChatDetailRoute && previewFile && (
-              <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
-            )}
-            {isChatDetailRoute && previewFile && (
-              <ErrorBoundary>
-                <DocPreview
-                  filePath={previewFile}
-                  viewMode={previewViewMode}
-                  onViewModeChange={setPreviewViewMode}
-                  onClose={() => setPreviewFile(null)}
-                  width={docPreviewWidth}
-                />
-              </ErrorBoundary>
-            )}
-            {isChatDetailRoute && panelOpen && (
-              <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />
-            )}
-            {(() => {
-              console.log('[AppShell] RightPanel render check:', { isChatDetailRoute, panelOpen, willRender: isChatDetailRoute });
-              return isChatDetailRoute && (
+            {isChatDetailRoute && (
+              <>
+                <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
                 <ErrorBoundary>
-                  <RightPanel width={rightPanelWidth} />
+                  <ContentPanel width={contentPanelWidth} />
                 </ErrorBoundary>
-              );
-            })()}
+              </>
+            )}
           </div>
           <UpdateDialog />
         </TooltipProvider>

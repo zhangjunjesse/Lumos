@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     node: process.versions.node,
     chrome: process.versions.chrome,
   },
+  // Expose ipcRenderer.invoke for database IPC calls
+  ipcRenderer: {
+    invoke: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
+  },
   shell: {
     openPath: (folderPath: string) => ipcRenderer.invoke('shell:open-path', folderPath),
   },
