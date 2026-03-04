@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from './seed-builtin';
 
 export function migrateLumosTables(db: Database.Database): void {
   // Knowledge base tables
@@ -453,4 +454,9 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_mcp_cookie_permissions_mcp ON mcp_cookie_permissions(mcp_name);
     CREATE INDEX IF NOT EXISTS idx_cookie_watch_list_mcp ON cookie_watch_list(mcp_name);
   `);
+
+  // Seed built-in data on first run
+  seedBuiltinProviders(db);
+  seedBuiltinSkills(db);
+  seedBuiltinMcpServers(db);
 }
