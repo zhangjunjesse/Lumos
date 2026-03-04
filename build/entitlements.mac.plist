@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 允许读写用户选择的文件 -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!-- 允许读写下载目录 -->
+  <key>com.apple.security.files.downloads.read-write</key>
+  <true/>
+
+  <!-- 允许网络访问（API 调用） -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- 允许网络服务器（本地开发服务器） -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+
+  <!-- 禁用 App Sandbox（开发工具需要） -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
+
+  <!-- 允许执行未签名的可执行文件 -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- 允许 JIT 编译 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- 允许禁用库验证 -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
