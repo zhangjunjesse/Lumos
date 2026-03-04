@@ -221,8 +221,12 @@ jobs:
           CHANGELOG_INLINE_EOF
           fi
 
-          # Upload all artifacts to release
-          gh release upload "${GITHUB_REF_NAME}" artifacts/*/* --clobber
+          # Upload artifacts by platform to avoid conflicts
+          gh release upload "${GITHUB_REF_NAME}" artifacts/windows-artifacts/* --clobber || true
+          gh release upload "${GITHUB_REF_NAME}" artifacts/macos-x64-artifacts/* --clobber || true
+          gh release upload "${GITHUB_REF_NAME}" artifacts/macos-arm64-artifacts/* --clobber || true
+          gh release upload "${GITHUB_REF_NAME}" artifacts/linux-x64-artifacts/* --clobber || true
+          gh release upload "${GITHUB_REF_NAME}" artifacts/linux-arm64-artifacts/* --clobber || true
 
           # Update the draft release with full notes and publish
           gh release edit "${GITHUB_REF_NAME}" \
