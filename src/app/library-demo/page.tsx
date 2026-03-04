@@ -12,6 +12,26 @@ type PathItem = {
   title: string;
 };
 
+type Tag = {
+  label: string;
+  type: 'custom' | 'ai' | 'system';
+  color?: string;
+};
+
+type LibraryItem = {
+  id: string;
+  type: string;
+  title: string;
+  preview: string;
+  path: string;
+  timeLabel: string;
+  date: string;
+  fullDate: string;
+  tags: Tag[];
+  isDirectory?: boolean;
+  children?: LibraryItem[];
+};
+
 // 文件类型 Logo 组件
 const FileTypeLogo = ({ type }: { type: string }) => {
   const logos: Record<string, React.ReactElement> = {
@@ -159,14 +179,14 @@ export default function LibraryDemoPage() {
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
 
   // 详情页状态
-  const [selectedItem, setSelectedItem] = useState<typeof mockItems[0] | null>(null);
+  const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
 
   // 目录导航状态
   const [currentPath, setCurrentPath] = useState<PathItem[]>([]); // 当前路径（面包屑）
-  const [currentItems, setCurrentItems] = useState(mockItems); // 当前显示的项目列表
+  const [currentItems, setCurrentItems] = useState<LibraryItem[]>(mockItems); // 当前显示的项目列表
 
   const handleSend = (content: string) => {
     // 添加用户消息
@@ -224,7 +244,7 @@ export default function LibraryDemoPage() {
   };
 
   // 进入目录
-  const enterDirectory = (item: typeof mockItems[0]) => {
+  const enterDirectory = (item: LibraryItem) => {
     if (item.type === "文件目录" && item.children) {
       // 添加到路径
       setCurrentPath([...currentPath, { id: item.id, title: item.title }]);
@@ -245,7 +265,7 @@ export default function LibraryDemoPage() {
       setCurrentItems(mockItems);
     } else {
       // 找到父目录的 children
-      let items: typeof mockItems = mockItems;
+      let items: LibraryItem[] = mockItems;
       for (const pathItem of newPath) {
         const found = items.find((i) => i.id === pathItem.id);
         if (found && found.children) {
@@ -257,7 +277,7 @@ export default function LibraryDemoPage() {
   };
 
   // 打开详情页（修改为支持目录导航）
-  const openDetail = (item: typeof mockItems[0]) => {
+  const openDetail = (item: LibraryItem) => {
     // 如果是目录，进入目录
     if (item.type === "文件目录") {
       enterDirectory(item);
@@ -1179,7 +1199,7 @@ function ContentCard({
   const remainingCount = (item.tags?.length || 0) - visibleTags.length;
 
   // 根据标签类型返回样式
-  const getTagStyle = (tag: typeof item.tags[0]) => {
+  const getTagStyle = (tag: Tag) => {
     if (tag.type === 'custom') {
       // 自定义标签：彩色背景
       const colors: Record<string, string> = {
@@ -1305,7 +1325,7 @@ function ContentCard({
 }
 
 // 模拟数据
-const mockItems = [
+const mockItems: LibraryItem[] = [
   {
     id: "dir_1",
     type: "文件目录",
