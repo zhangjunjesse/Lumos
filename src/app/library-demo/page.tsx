@@ -6,6 +6,12 @@ import { Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { MessageInput } from "@/components/chat/MessageInput";
 
+// 类型定义
+type PathItem = {
+  id: string;
+  title: string;
+};
+
 // 文件类型 Logo 组件
 const FileTypeLogo = ({ type }: { type: string }) => {
   const logos: Record<string, React.ReactElement> = {
@@ -125,6 +131,13 @@ const FileTypeLogo = ({ type }: { type: string }) => {
         </svg>
       </div>
     ),
+    "文件目录": (
+      <div className="w-8 h-8 rounded flex items-center justify-center bg-gradient-to-br from-amber-500 to-orange-600">
+        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+      </div>
+    ),
   };
 
   return logos[type] || logos["Word 文档"];
@@ -150,6 +163,10 @@ export default function LibraryDemoPage() {
   const [showDetail, setShowDetail] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
+
+  // 目录导航状态
+  const [currentPath, setCurrentPath] = useState<PathItem[]>([]); // 当前路径（面包屑）
+  const [currentItems, setCurrentItems] = useState(mockItems); // 当前显示的项目列表
 
   const handleSend = (content: string) => {
     // 添加用户消息
@@ -206,8 +223,48 @@ export default function LibraryDemoPage() {
     });
   };
 
-  // 打开详情页
+  // 进入目录
+  const enterDirectory = (item: typeof mockItems[0]) => {
+    if (item.type === "文件目录" && item.children) {
+      // 添加到路径
+      setCurrentPath([...currentPath, { id: item.id, title: item.title }]);
+      // 更新当前显示的项目列表
+      setCurrentItems(item.children);
+    }
+  };
+
+  // 返回上一级目录
+  const goBack = () => {
+    if (currentPath.length === 0) return;
+
+    const newPath = currentPath.slice(0, -1);
+    setCurrentPath(newPath);
+
+    // 如果回到根目录
+    if (newPath.length === 0) {
+      setCurrentItems(mockItems);
+    } else {
+      // 找到父目录的 children
+      let items: typeof mockItems = mockItems;
+      for (const pathItem of newPath) {
+        const found = items.find((i) => i.id === pathItem.id);
+        if (found && found.children) {
+          items = found.children;
+        }
+      }
+      setCurrentItems(items);
+    }
+  };
+
+  // 打开详情页（修改为支持目录导航）
   const openDetail = (item: typeof mockItems[0]) => {
+    // 如果是目录，进入目录
+    if (item.type === "文件目录") {
+      enterDirectory(item);
+      return;
+    }
+
+    // 否则打开详情页
     setSelectedItem(item);
     setShowDetail(true);
     setIsEditing(false);
@@ -271,7 +328,7 @@ export default function LibraryDemoPage() {
   }, [showDetail]);
 
   // 过滤逻辑
-  const filteredItems = mockItems.filter((item) => {
+  const filteredItems = currentItems.filter((item) => {
     // 类型筛选
     const typeMatch = (() => {
       if (filter === "all") return true;
@@ -480,6 +537,41 @@ export default function LibraryDemoPage() {
           {(searchQuery || filter !== "all" || selectedTags.length > 0) && (
             <div className="text-sm text-muted-foreground">
               找到 <span className="font-medium text-foreground">{filteredItems.length}</span> 条结果
+            </div>
+          )}
+
+          {/* 面包屑导航 */}
+          {currentPath.length > 0 && (
+            <div className="flex items-center gap-2 text-sm">
+              <button
+                onClick={goBack}
+                className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                返回
+              </button>
+              <span className="text-muted-foreground">/</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setCurrentPath([]);
+                    setCurrentItems(mockItems);
+                  }}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  资料库
+                </button>
+                {currentPath.map((pathItem, index) => (
+                  <div key={pathItem.id} className="flex items-center gap-2">
+                    <span className="text-muted-foreground">/</span>
+                    <span className={index === currentPath.length - 1 ? "text-foreground font-medium" : "text-muted-foreground"}>
+                      {pathItem.title}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1214,6 +1306,96 @@ function ContentCard({
 
 // 模拟数据
 const mockItems = [
+  {
+    id: "dir_1",
+    type: "文件目录",
+    title: "Lumos 项目文档",
+    preview: "包含 15 个文件和 3 个子目录，涵盖产品需求、设计规范、技术文档等核心资料",
+    path: "/Users/zhangjun/Projects/lumos/docs",
+    timeLabel: "最后更新",
+    date: "1 小时前",
+    fullDate: "2024-01-15 15:00",
+    tags: [
+      { label: "项目", type: "custom", color: "blue" },
+      { label: "文档", type: "ai" },
+    ],
+    // 文件目录特有字段
+    isDirectory: true,
+    children: [
+      {
+        id: "dir_1_1",
+        type: "文件目录",
+        title: "产品需求",
+        preview: "包含 5 个需求文档",
+        path: "/Users/zhangjun/Projects/lumos/docs/产品需求",
+        timeLabel: "最后更新",
+        date: "2 小时前",
+        fullDate: "2024-01-15 14:00",
+        tags: [{ label: "需求", type: "custom", color: "green" }],
+        isDirectory: true,
+        children: [
+          {
+            id: "dir_1_1_1",
+            type: "Word 文档",
+            title: "产品需求文档 - Lumos 资料库设计",
+            preview: "本文档描述了 Lumos 资料库的核心功能和设计理念...",
+            path: "/Users/zhangjun/Projects/lumos/docs/产品需求/PRD-资料库.docx",
+            timeLabel: "最后编辑",
+            date: "2 小时前",
+            fullDate: "2024-01-15 14:30",
+            tags: [{ label: "产品", type: "custom", color: "blue" }],
+          },
+          {
+            id: "dir_1_1_2",
+            type: "PDF 文档",
+            title: "用户故事地图",
+            preview: "详细的用户故事和使用场景分析...",
+            path: "/Users/zhangjun/Projects/lumos/docs/产品需求/用户故事地图.pdf",
+            timeLabel: "最后编辑",
+            date: "3 小时前",
+            fullDate: "2024-01-15 13:00",
+            tags: [{ label: "用户研究", type: "ai" }],
+          },
+        ],
+      },
+      {
+        id: "dir_1_2",
+        type: "文件目录",
+        title: "设计规范",
+        preview: "包含 3 个设计文档",
+        path: "/Users/zhangjun/Projects/lumos/docs/设计规范",
+        timeLabel: "最后更新",
+        date: "5 小时前",
+        fullDate: "2024-01-15 11:00",
+        tags: [{ label: "设计", type: "custom", color: "orange" }],
+        isDirectory: true,
+        children: [
+          {
+            id: "dir_1_2_1",
+            type: "PDF 文档",
+            title: "UI 设计规范",
+            preview: "Lumos 的完整 UI 设计规范，包含颜色、字体、组件库等...",
+            path: "/Users/zhangjun/Projects/lumos/docs/设计规范/UI设计规范.pdf",
+            timeLabel: "最后编辑",
+            date: "5 小时前",
+            fullDate: "2024-01-15 11:00",
+            tags: [{ label: "UI", type: "ai" }],
+          },
+        ],
+      },
+      {
+        id: "dir_1_3",
+        type: "Markdown",
+        title: "技术架构文档",
+        preview: "Lumos 采用 Electron + Next.js 架构...",
+        path: "/Users/zhangjun/Projects/lumos/docs/architecture.md",
+        timeLabel: "最后编辑",
+        date: "1 周前",
+        fullDate: "2024-01-08 09:15",
+        tags: [{ label: "技术", type: "custom", color: "blue" }],
+      },
+    ],
+  },
   {
     id: "1",
     type: "Word 文档",
