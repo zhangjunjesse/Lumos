@@ -53,8 +53,16 @@ export function seedBuiltinSkills(db: Database.Database): void {
     return;
   }
 
-  // Find skills directory
-  const skillsDir = path.join(process.cwd(), 'public', 'skills');
+  // Find skills directory (handle both dev and production)
+  let skillsDir: string;
+  if (process.resourcesPath) {
+    // Production: extraResources are in process.resourcesPath
+    skillsDir = path.join(process.resourcesPath, 'standalone', 'public', 'skills');
+  } else {
+    // Development: use cwd
+    skillsDir = path.join(process.cwd(), 'public', 'skills');
+  }
+
   if (!fs.existsSync(skillsDir)) {
     console.warn('[seed] Skills directory not found:', skillsDir);
     return;
