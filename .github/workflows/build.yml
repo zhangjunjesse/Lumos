@@ -222,7 +222,7 @@ jobs:
           fi
 
           # Upload all artifacts to release
-          gh release upload "${GITHUB_REF_NAME}" artifacts/*/*
+          gh release upload "${GITHUB_REF_NAME}" artifacts/*/* --clobber
 
           # Update the draft release with full notes and publish
           gh release edit "${GITHUB_REF_NAME}" \
