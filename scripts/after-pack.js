@@ -35,12 +35,27 @@ module.exports = async function afterPack(context) {
 
   try {
     // Use @electron/rebuild via npx (it's a dependency of electron-builder)
+    // CRITICAL: Set target arch environment variables for cross-compilation
+    const env = { ...process.env };
+    if (archName === 'x64' && process.arch === 'arm64') {
+      // Cross-compiling x64 on arm64 (Apple Silicon)
+      env.npm_config_arch = 'x64';
+      env.npm_config_target_arch = 'x64';
+      console.log('[afterPack] Cross-compiling: arm64 host -> x64 target');
+    } else if (archName === 'arm64' && process.arch === 'x64') {
+      // Cross-compiling arm64 on x64 (Intel)
+      env.npm_config_arch = 'arm64';
+      env.npm_config_target_arch = 'arm64';
+      console.log('[afterPack] Cross-compiling: x64 host -> arm64 target');
+    }
+
     const rebuildCmd = `npx electron-rebuild -f -o better-sqlite3 -v ${electronVersion} -a ${archName}`;
     console.log(`[afterPack] Running: ${rebuildCmd}`);
     execSync(rebuildCmd, {
       cwd: projectDir,
       stdio: 'inherit',
       timeout: 120000,
+      env,
     });
     console.log('[afterPack] Rebuild completed successfully');
   } catch (err) {
