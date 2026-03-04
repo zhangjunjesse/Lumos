@@ -7,6 +7,7 @@ import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { RightPanel } from "./RightPanel";
 import { DocPreview } from "./DocPreview";
+import { ContentPanel } from "./ContentPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
@@ -15,6 +16,8 @@ const RIGHTPANEL_MIN = 200;
 const RIGHTPANEL_MAX = 480;
 const DOCPREVIEW_MIN = 320;
 const DOCPREVIEW_MAX = 800;
+const CONTENTPANEL_MIN = 320;
+const CONTENTPANEL_MAX = 800;
 
 const RENDERED_EXTENSIONS = new Set([".md", ".mdx", ".html", ".htm"]);
 
@@ -31,6 +34,7 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
   const isChatRoute = pathname.startsWith("/chat");
+  const isChatDetailRoute = /^\/chat\/[^/]+/.test(pathname);
 
   const [assistantOpen, setAssistantOpen] = useState(false);
 
@@ -71,6 +75,11 @@ export function AppLayout({ children }: AppLayoutProps) {
     return parseInt(localStorage.getItem("lumos_docpreview_width") || "480");
   });
 
+  const [contentPanelWidth, setContentPanelWidth] = useState(() => {
+    if (typeof window === "undefined") return 480;
+    return parseInt(localStorage.getItem("lumos_contentpanel_width") || "480");
+  });
+
   const handleRightPanelResize = useCallback((delta: number) => {
     setRightPanelWidth((w) => Math.min(RIGHTPANEL_MAX, Math.max(RIGHTPANEL_MIN, w - delta)));
   }, []);
@@ -89,6 +98,17 @@ export function AppLayout({ children }: AppLayoutProps) {
   const handleDocPreviewResizeEnd = useCallback(() => {
     setDocPreviewWidth((w) => {
       localStorage.setItem("lumos_docpreview_width", String(w));
+      return w;
+    });
+  }, []);
+
+  const handleContentPanelResize = useCallback((delta: number) => {
+    setContentPanelWidth((w) => Math.min(CONTENTPANEL_MAX, Math.max(CONTENTPANEL_MIN, w - delta)));
+  }, []);
+
+  const handleContentPanelResizeEnd = useCallback(() => {
+    setContentPanelWidth((w) => {
+      localStorage.setItem("lumos_contentpanel_width", String(w));
       return w;
     });
   }, []);
@@ -158,6 +178,15 @@ export function AppLayout({ children }: AppLayoutProps) {
               <main className="relative flex-1 overflow-auto">
                 <ErrorBoundary>{children}</ErrorBoundary>
               </main>
+
+              {isChatDetailRoute && (
+                <>
+                  <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
+                  <ErrorBoundary>
+                    <ContentPanel width={contentPanelWidth} />
+                  </ErrorBoundary>
+                </>
+              )}
 
               {isChatRoute && previewFile && (
                 <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
