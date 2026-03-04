@@ -228,8 +228,6 @@ export function AppLayout({ children }: AppLayoutProps) {
 }
 
 /** Lazy-load the assistant modal to keep initial bundle small */
-import dynamic from "next/dynamic";
-
 const AssistantModalLazy = dynamic(
   () =>
     import("@/components/ai-assistant/assistant-modal").then(
