@@ -450,7 +450,7 @@ export class DatabaseService {
       .get(params.id) as Skill | undefined;
 
     if (!skill) {
-      throw new Error(\`Skill not found: \${params.id}\`);
+      throw new Error(`Skill not found: ${params.id}`);
     }
 
     return skill;
@@ -462,10 +462,10 @@ export class DatabaseService {
 
     this.db
       .prepare(
-        \`INSERT INTO skills (
+        `INSERT INTO skills (
           id, name, scope, description, file_path, content_hash, is_enabled,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -525,7 +525,7 @@ export class DatabaseService {
     values.push(params.id);
 
     this.db
-      .prepare(\`UPDATE skills SET \${updates.join(', ')} WHERE id = ?\`)
+      .prepare(`UPDATE skills SET ${updates.join(', ')} WHERE id = ?`)
       .run(...values);
 
     return this.getSkill({ id: params.id });
@@ -537,7 +537,7 @@ export class DatabaseService {
       .run(params.id);
 
     if (result.changes === 0) {
-      throw new Error(\`Skill not found: \${params.id}\`);
+      throw new Error(`Skill not found: ${params.id}`);
     }
   }
 
@@ -563,10 +563,10 @@ export class DatabaseService {
     }
 
     if (conditions.length > 0) {
-      query += \` WHERE \${conditions.join(' AND ')}\`;
+      query += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    query += \` ORDER BY \${sortBy} \${sortOrder} LIMIT ? OFFSET ?\`;
+    query += ` ORDER BY ${sortBy} ${sortOrder} LIMIT ? OFFSET ?`;
     queryParams.push(limit, offset);
 
     const tasks = this.db.prepare(query).all(...queryParams) as Task[];
@@ -575,7 +575,7 @@ export class DatabaseService {
     const countParams: unknown[] = [];
 
     if (conditions.length > 0) {
-      countQuery += \` WHERE \${conditions.join(' AND ')}\`;
+      countQuery += ` WHERE ${conditions.join(' AND ')}`;
       countParams.push(...(session_id ? [session_id] : []), ...(status ? [status] : []));
     }
 
@@ -590,7 +590,7 @@ export class DatabaseService {
       .get(params.id) as Task | undefined;
 
     if (!task) {
-      throw new Error(\`Task not found: \${params.id}\`);
+      throw new Error(`Task not found: ${params.id}`);
     }
 
     return task;
@@ -602,10 +602,10 @@ export class DatabaseService {
 
     this.db
       .prepare(
-        \`INSERT INTO tasks (
+        `INSERT INTO tasks (
           id, session_id, title, status, description,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)\`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -648,7 +648,7 @@ export class DatabaseService {
     values.push(params.id);
 
     this.db
-      .prepare(\`UPDATE tasks SET \${updates.join(', ')} WHERE id = ?\`)
+      .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
       .run(...values);
 
     return this.getTask({ id: params.id });
@@ -660,7 +660,7 @@ export class DatabaseService {
       .run(params.id);
 
     if (result.changes === 0) {
-      throw new Error(\`Task not found: \${params.id}\`);
+      throw new Error(`Task not found: ${params.id}`);
     }
   }
 
@@ -697,17 +697,17 @@ export class DatabaseService {
       values.push(session_id);
     }
 
-    const whereClause = conditions.length > 0 ? \`WHERE \${conditions.join(' AND ')}\` : '';
-    const orderClause = \`ORDER BY \${sortBy} \${sortOrder.toUpperCase()}\`;
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderClause = `ORDER BY ${sortBy} ${sortOrder.toUpperCase()}`;
 
     const media = this.db
       .prepare(
-        \`SELECT * FROM media_generations \${whereClause} \${orderClause} LIMIT ? OFFSET ?\`
+        `SELECT * FROM media_generations ${whereClause} ${orderClause} LIMIT ? OFFSET ?`
       )
       .all(...values, limit, offset) as MediaGeneration[];
 
     const totalResult = this.db
-      .prepare(\`SELECT COUNT(*) as count FROM media_generations \${whereClause}\`)
+      .prepare(`SELECT COUNT(*) as count FROM media_generations ${whereClause}`)
       .get(...values) as { count: number };
 
     return {
@@ -722,7 +722,7 @@ export class DatabaseService {
       .get(params.id) as MediaGeneration | undefined;
 
     if (!media) {
-      throw new Error(\`Media not found: \${params.id}\`);
+      throw new Error(`Media not found: ${params.id}`);
     }
 
     return media;
@@ -734,11 +734,11 @@ export class DatabaseService {
 
     this.db
       .prepare(
-        \`INSERT INTO media_generations (
+        `INSERT INTO media_generations (
           id, type, status, provider, model, prompt, aspect_ratio, image_size,
           local_path, thumbnail_path, session_id, message_id, tags, metadata,
           favorited, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -813,7 +813,7 @@ export class DatabaseService {
     values.push(params.id);
 
     this.db
-      .prepare(\`UPDATE media_generations SET \${updates.join(', ')} WHERE id = ?\`)
+      .prepare(`UPDATE media_generations SET ${updates.join(', ')} WHERE id = ?`)
       .run(...values);
 
     return this.getMedia({ id: params.id });
@@ -825,7 +825,7 @@ export class DatabaseService {
       .run(params.id);
 
     if (result.changes === 0) {
-      throw new Error(\`Media not found: \${params.id}\`);
+      throw new Error(`Media not found: ${params.id}`);
     }
   }
 }
