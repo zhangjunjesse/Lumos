@@ -410,6 +410,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
   return new ReadableStream<string>({
     async start(controller) {
+      const perfStart = Date.now();
+      console.log('[perf] streamClaude start');
+
       // Hoist activeProvider so it's accessible in the catch block for error messages
       const activeProvider: ApiProvider | undefined = options.provider ?? getActiveProvider();
       console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');
@@ -608,6 +611,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // With settingSources: [], the SDK won't load user's global ~/.claude/skills/.
         // Skills are synced at app startup and when skills are modified in settings.
         // We just reference the pre-synced plugin directory here (no I/O).
+        console.time('[perf] Skills loading');
         const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
         const pluginDir = path.join(dataDir, 'skills-plugin');
 
@@ -619,6 +623,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         } else {
           console.warn('[claude-client] Skills plugin directory not found:', pluginDir);
         }
+        console.timeEnd('[perf] Skills loading');
 
         // Resume session if we have an SDK session ID from a previous conversation turn.
         // Pre-check: verify working_directory and session file exist before attempting resume.
@@ -854,6 +859,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           console.log('[claude-client] Sandbox: execPath →', systemNode, '| PATH prepended:', nodeDir);
         }
 
+        console.log(`[perf] Pre-SDK setup took ${Date.now() - perfStart}ms`);
+        console.time('[perf] SDK query call');
+
         // Try to start the conversation. If resuming a previous session fails
         // (e.g. stale/corrupt session file, CLI version mismatch), automatically
         // fall back to starting a fresh conversation without resume.
@@ -907,8 +915,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         let lastAssistantText = '';
         let tokenUsage: TokenUsage | null = null;
+        let firstMessageReceived = false;
 
         for await (const message of conversation) {
+          if (!firstMessageReceived) {
+            console.timeEnd('[perf] SDK query call');
+            console.log(`[perf] First message received after ${Date.now() - perfStart}ms total`);
+            firstMessageReceived = true;
+          }
+
           if (abortController?.signal.aborted) {
             break;
           }

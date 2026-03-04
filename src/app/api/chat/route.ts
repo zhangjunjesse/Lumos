@@ -232,7 +232,9 @@ export async function POST(request: NextRequest) {
     }));
 
     // Stream Claude response, using SDK session ID for resume if available
+    console.time('[perf] MCP servers loading');
     const loadedMcpServers = loadMcpServers();
+    console.timeEnd('[perf] MCP servers loading');
     console.log('[chat API] streamClaude params:', {
       promptLength: content.length,
       promptFirst200: content.slice(0, 200),
