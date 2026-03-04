@@ -109,13 +109,28 @@ export function seedBuiltinMcpServers(db: Database.Database): void {
     return;
   }
 
+  // Find feishu-mcp-server path (handle both dev and production)
+  let feishuServerPath: string;
+  if (process.resourcesPath) {
+    // Production: extraResources are in process.resourcesPath
+    feishuServerPath = path.join(process.resourcesPath, 'feishu-mcp-server', 'index.js');
+  } else {
+    // Development: use resources directory
+    feishuServerPath = path.join(process.cwd(), 'resources', 'feishu-mcp-server', 'index.js');
+  }
+
+  if (!fs.existsSync(feishuServerPath)) {
+    console.warn('[seed] Feishu MCP server not found:', feishuServerPath);
+    return;
+  }
+
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const servers = [
     {
       id: crypto.randomBytes(16).toString('hex'),
       name: 'feishu',
       command: 'node',
-      args: JSON.stringify(['feishu-mcp-server/index.js']),
+      args: JSON.stringify([feishuServerPath]),
       env: JSON.stringify({}),
       scope: 'builtin',
       source: 'builtin',
