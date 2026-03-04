@@ -23,6 +23,7 @@ import {
   PanelRightCloseIcon,
 } from '@hugeicons/core-free-icons';
 import { cn } from '@/lib/utils';
+import type { TranslationKey } from '@/i18n';
 import {
   DndContext,
   closestCenter,
@@ -44,7 +45,7 @@ import { CSS } from '@dnd-kit/utilities';
 // Tab type configuration (icons and closable state)
 const TAB_TYPE_CONFIG: Record<
   TabType,
-  { i18nKey: string; icon: typeof FolderOpenIcon; closable: boolean }
+  { i18nKey: TranslationKey; icon: typeof FolderOpenIcon; closable: boolean }
 > = {
   'file-tree': { i18nKey: 'tab.fileTree', icon: FolderOpenIcon, closable: false },
   'file-preview': { i18nKey: 'tab.filePreview', icon: File02Icon, closable: true },
