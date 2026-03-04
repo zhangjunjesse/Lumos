@@ -647,7 +647,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         // Pre-check: verify session file exists to avoid slow resume failure
-        if (shouldResume && claudeConfigDir) {
+        if (shouldResume && claudeConfigDir && sdkSessionId) {
           const sessionFile = path.join(claudeConfigDir, 'sessions', sdkSessionId, 'session.json');
           if (!fs.existsSync(sessionFile)) {
             console.warn(`[claude-client] Session file not found: ${sessionFile}, skipping resume`);
