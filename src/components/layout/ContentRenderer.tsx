@@ -58,7 +58,7 @@ function renderContent(
           filePath={tab.filePath}
           viewMode={(tab.data as { viewMode?: 'source' | 'rendered' })?.viewMode || 'source'}
           onViewModeChange={(mode) => {
-            const currentData = (tab.data as Record<string, unknown>) || ;
+            const currentData = (tab.data as Record<string, unknown>) || {};
             useContentPanelStore.getState().updateTab(tab.id, {
               data: { ...currentData, viewMode: mode },
             });
