@@ -36,7 +36,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   // ContentPanel store
-  const { addTab } = useContentPanelStore();
+  const { tabs, addTab, setActiveTab } = useContentPanelStore();
 
   // Panel state - 使用固定初始值避免 hydration 错误
   const [panelOpen, setPanelOpen] = useState(true);
@@ -55,12 +55,22 @@ export function AppLayout({ children }: AppLayoutProps) {
     console.log('[app-layout] setPreviewFile called:', path);
     if (!path) return;
 
+    // 检查是否已存在该文件的标签
+    const existingTab = tabs.find(tab => tab.type === 'file-preview' && tab.filePath === path);
+
+    if (existingTab) {
+      // 如果已存在，切换到该标签
+      console.log('[app-layout] Tab already exists, switching to:', existingTab.id);
+      setActiveTab(existingTab.id);
+      return;
+    }
+
     const fileName = path.split('/').pop() || path;
     const viewMode = defaultViewMode(path);
 
-    console.log('[app-layout] Adding tab:', { fileName, viewMode, path });
+    console.log('[app-layout] Adding new tab:', { fileName, viewMode, path });
 
-    // 添加到 ContentPanel（每次都添加新标签，不使用临时标签）
+    // 添加到 ContentPanel
     addTab({
       type: 'file-preview',
       title: fileName,
@@ -68,7 +78,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       filePath: path,
       data: { viewMode },
     });
-  }, [addTab]);
+  }, [tabs, addTab, setActiveTab]);
 
   // Panel width state - 使用固定初始值避免 hydration 错误
   const [contentPanelWidth, setContentPanelWidth] = useState(480);

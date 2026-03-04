@@ -16,6 +16,7 @@ interface SidebarNavItemProps {
   expanded: boolean;
   active: boolean;
   onClick?: () => void;
+  comingSoon?: boolean;
 }
 
 export function SidebarNavItem({
@@ -25,7 +26,16 @@ export function SidebarNavItem({
   expanded,
   active,
   onClick,
+  comingSoon,
 }: SidebarNavItemProps) {
+  const handleClick = () => {
+    if (comingSoon) {
+      alert("功能即将上线，敬请期待");
+      return;
+    }
+    onClick?.();
+  };
+
   const content = (
     <div
       className={cn(
@@ -53,9 +63,9 @@ export function SidebarNavItem({
     </Tooltip>
   );
 
-  if (onClick) {
+  if (comingSoon || onClick) {
     return (
-      <button type="button" className="w-full" onClick={onClick}>
+      <button type="button" className="w-full" onClick={handleClick}>
         {wrapped}
       </button>
     );

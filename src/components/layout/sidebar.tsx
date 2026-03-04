@@ -39,18 +39,13 @@ interface SidebarProps {
 }
 
 const mainNavItems = [
-  { href: "/", labelKey: "sidebar.aiAssistant" as const, icon: SparklesIcon, isAssistant: true as const },
-  { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, isAssistant: false as const },
-  { href: "/recent", labelKey: "sidebar.recent" as const, icon: Clock01Icon, isAssistant: false as const },
+  { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, comingSoon: true },
 ];
 
-const secondaryNavItems = [
-  { href: "/starred", labelKey: "sidebar.starred" as const, icon: StarIcon },
-];
+const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof StarIcon }> = [];
 
 const bottomNavItems = [
-  { href: "/trash", labelKey: "sidebar.trash" as const, icon: Delete02Icon },
-  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen01Icon },
+  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen01Icon, comingSoon: true },
   { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: PuzzleIcon },
 ];
 
@@ -127,35 +122,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
       <ScrollArea className="flex-1 px-2 py-1">
         {/* Main nav */}
         <nav className="space-y-0.5">
-          {mainNavItems.map((item) =>
-            item.isAssistant ? (
-              <SidebarNavItem
-                key="assistant"
-                icon={item.icon}
-                label={t(item.labelKey)}
-                expanded={expanded}
-                active={false}
-                onClick={onOpenAssistant}
-              />
-            ) : (
-              <SidebarNavItem
-                key={item.href}
-                icon={item.icon}
-                label={t(item.labelKey)}
-                href={item.href}
-                expanded={expanded}
-                active={isActive(item.href)}
-              />
-            )
-          )}
-        </nav>
-
-        {/* Divider */}
-        <div className="my-2 h-px bg-border/50" />
-
-        {/* Secondary nav */}
-        <nav className="space-y-0.5">
-          {secondaryNavItems.map((item) => (
+          {mainNavItems.map((item) => (
             <SidebarNavItem
               key={item.href}
               icon={item.icon}
@@ -163,9 +130,29 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
               href={item.href}
               expanded={expanded}
               active={isActive(item.href)}
+              comingSoon={item.comingSoon}
             />
           ))}
         </nav>
+
+        {/* Secondary nav - only show if not empty */}
+        {secondaryNavItems.length > 0 && (
+          <>
+            <div className="my-2 h-px bg-border/50" />
+            <nav className="space-y-0.5">
+              {secondaryNavItems.map((item) => (
+                <SidebarNavItem
+                  key={item.href}
+                  icon={item.icon}
+                  label={t(item.labelKey)}
+                  href={item.href}
+                  expanded={expanded}
+                  active={isActive(item.href)}
+                />
+              ))}
+            </nav>
+          </>
+        )}
 
         {/* Workspace area */}
         <div className="my-2 h-px bg-border/50" />
@@ -184,6 +171,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
               href={item.href}
               expanded={expanded}
               active={isActive(item.href)}
+              comingSoon={'comingSoon' in item ? item.comingSoon : undefined}
             />
           ))}
         </nav>
