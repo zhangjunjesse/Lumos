@@ -646,20 +646,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }));
         }
 
-        // Pre-check: verify session file exists to avoid slow resume failure
-        if (shouldResume && claudeConfigDir && sdkSessionId) {
-          const sessionFile = path.join(claudeConfigDir, 'sessions', sdkSessionId, 'session.json');
-          if (!fs.existsSync(sessionFile)) {
-            console.warn(`[claude-client] Session file not found: ${sessionFile}, skipping resume`);
-            shouldResume = false;
-            if (sessionId) {
-              try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
-            }
-          }
-        }
-
         if (shouldResume) {
           queryOptions.resume = sdkSessionId;
+          console.log('[claude-client] Attempting to resume session:', sdkSessionId);
         }
 
         // Permission handler: sends SSE event and waits for user response
