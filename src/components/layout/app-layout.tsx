@@ -2,15 +2,17 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
+import dynamic from "next/dynamic";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { RightPanel } from "./RightPanel";
 import { DocPreview } from "./DocPreview";
-import { ContentPanel } from "./ContentPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
+
+const ContentPanel = dynamic(() => import("./ContentPanel").then(m => m.ContentPanel), { ssr: false });
 
 const RIGHTPANEL_MIN = 200;
 const RIGHTPANEL_MAX = 480;
