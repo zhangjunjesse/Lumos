@@ -572,12 +572,19 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.model = model;
         }
 
-        // Knowledge base context injection
+        // Knowledge base context injection (only if enabled)
         let kbContext = '';
-        try {
-          const kbResults = await searchAll(prompt, 3);
-          kbContext = buildContext(kbResults);
-        } catch { /* skip if KB not ready */ }
+        const kbEnabled = getSetting('kb_context_enabled') === 'true';
+        if (kbEnabled) {
+          try {
+            console.time('[perf] KB search');
+            const kbResults = await searchAll(prompt, 3);
+            kbContext = buildContext(kbResults);
+            console.timeEnd('[perf] KB search');
+          } catch (err) {
+            console.warn('[claude-client] KB search failed:', err);
+          }
+        }
 
         const fullSystemPrompt = [systemPrompt, kbContext].filter(Boolean).join('\n\n');
         if (fullSystemPrompt) {
@@ -599,22 +606,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // === ISOLATION: Skills ===
         // Load enabled skills from database via plugin system.
         // With settingSources: [], the SDK won't load user's global ~/.claude/skills/.
-        // Instead, we sync enabled skills to a custom plugin directory and load via plugins option.
-        try {
-          const { syncSkillsToPlugin } = await import('./skills-sync');
-          const pluginDir = syncSkillsToPlugin();
+        // Skills are synced at app startup and when skills are modified in settings.
+        // We just reference the pre-synced plugin directory here (no I/O).
+        const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+        const pluginDir = path.join(dataDir, 'skills-plugin');
 
+        if (fs.existsSync(pluginDir)) {
           queryOptions.plugins = [
             { type: 'local', path: pluginDir }
           ];
-
           console.log('[claude-client] Loaded skills plugin:', pluginDir);
-        } catch (error) {
-          console.warn('[claude-client] Failed to load skills:', error);
+        } else {
+          console.warn('[claude-client] Skills plugin directory not found:', pluginDir);
         }
 
         // Resume session if we have an SDK session ID from a previous conversation turn.
-        // Pre-check: verify working_directory exists before attempting resume.
+        // Pre-check: verify working_directory and session file exist before attempting resume.
         // Resume depends on session context (cwd/project scope), so if the
         // original working_directory no longer exists, resume will fail.
         let shouldResume = !!sdkSessionId;
@@ -633,6 +640,19 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             }),
           }));
         }
+
+        // Pre-check: verify session file exists to avoid slow resume failure
+        if (shouldResume && claudeConfigDir) {
+          const sessionFile = path.join(claudeConfigDir, 'sessions', sdkSessionId, 'session.json');
+          if (!fs.existsSync(sessionFile)) {
+            console.warn(`[claude-client] Session file not found: ${sessionFile}, skipping resume`);
+            shouldResume = false;
+            if (sessionId) {
+              try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+            }
+          }
+        }
+
         if (shouldResume) {
           queryOptions.resume = sdkSessionId;
         }

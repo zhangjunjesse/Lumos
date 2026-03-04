@@ -471,6 +471,16 @@ app.whenReady().then(async () => {
     console.warn('Failed to check/clear version cache:', err);
   }
 
+  // === PERFORMANCE: Sync skills at startup (avoid per-message sync) ===
+  try {
+    console.log('[main] Syncing skills to plugin directory...');
+    const { syncSkillsToPlugin } = require('../src/lib/skills-sync');
+    syncSkillsToPlugin();
+    console.log('[main] Skills synced successfully');
+  } catch (err) {
+    console.warn('[main] Failed to sync skills:', err);
+  }
+
   // Set macOS Dock icon
   if (process.platform === 'darwin' && app.dock) {
     const iconPath = getIconPath();
