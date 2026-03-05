@@ -76,7 +76,7 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: macos-13
+            runner: macos-12
           - arch: arm64
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
