@@ -8,6 +8,7 @@ import path from 'path';
 import os from 'os';
 
 import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
+import { syncMessageToFeishu } from '@/lib/bridge/sync-helper';
 
 /** Load MCP servers from database (builtin + user) */
 function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
@@ -127,6 +128,9 @@ export async function POST(request: NextRequest) {
       savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
     }
     addMessage(session_id, 'user', savedContent);
+    syncMessageToFeishu(session_id, 'user', content).catch(err =>
+      console.error('[Sync] User message sync failed:', err)
+    );
 
     // Auto-generate title from first message if still default
     if (session.title === 'New Chat') {
@@ -406,6 +410,9 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
           content,
           tokenUsage ? JSON.stringify(tokenUsage) : null,
         );
+        syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
+          console.error('[Sync] Assistant message sync failed:', err)
+        );
       }
     }
   } catch {
@@ -426,6 +433,9 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             .trim();
       if (content) {
         addMessage(sessionId, 'assistant', content);
+        syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
+          console.error('[Sync] Assistant message sync failed:', err)
+        );
       }
     }
   } finally {

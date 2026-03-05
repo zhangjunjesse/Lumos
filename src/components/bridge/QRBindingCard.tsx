@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import QRCode from "qrcode";
 
 interface QRBindingCardProps {
   sessionId: string;
@@ -11,10 +9,9 @@ interface QRBindingCardProps {
 }
 
 export function QRBindingCard({ sessionId, sessionTitle, onBind }: QRBindingCardProps) {
-  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrImageUrl, setQrImageUrl] = useState("");
   const [loading, setLoading] = useState(true);
-  const [bindingId, setBindingId] = useState("");
-  const [status, setStatus] = useState<"pending" | "active">("pending");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const createBinding = async () => {
@@ -25,52 +22,40 @@ export function QRBindingCard({ sessionId, sessionTitle, onBind }: QRBindingCard
           body: JSON.stringify({ sessionId }),
         });
         const data = await res.json();
-        const qrDataUrl = await QRCode.toDataURL(data.qrUrl, { width: 200 });
-        setQrDataUrl(qrDataUrl);
-        setBindingId(data.bindToken);
+
+        if (!res.ok) {
+          setError(data.message || data.error || "创建失败");
+          return;
+        }
+
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(data.shareLink)}&size=200x200`;
+        setQrImageUrl(qrImageUrl);
+        onBind?.();
       } catch (err) {
-        console.error(err);
+        setError("网络错误");
       } finally {
         setLoading(false);
       }
     };
     createBinding();
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId || status === "active") return;
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/bridge/bindings?sessionId=${sessionId}`);
-        const data = await res.json();
-        const activeBinding = data.bindings?.find((b: any) => b.status === "active");
-        if (activeBinding) {
-          setStatus("active");
-          onBind?.();
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }, 2000);
-    return () => clearInterval(poll);
-  }, [sessionId, status, onBind]);
+  }, [sessionId, onBind]);
 
   return (
     <div className="rounded-lg border p-4 space-y-3">
-      <h3 className="text-sm font-medium">扫码绑定飞书群组</h3>
+      <h3 className="text-sm font-medium">扫码加入飞书群组</h3>
       <div className="flex justify-center">
         {loading ? (
           <div className="h-[200px] w-[200px] bg-muted animate-pulse rounded" />
-        ) : status === "active" ? (
-          <div className="flex h-[200px] w-[200px] items-center justify-center rounded bg-green-50 dark:bg-green-950">
-            <p className="text-sm text-green-600 dark:text-green-400">✓ 绑定成功</p>
+        ) : error ? (
+          <div className="flex h-[200px] w-[200px] items-center justify-center rounded bg-red-50 dark:bg-red-950">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
         ) : (
-          <img src={qrDataUrl} alt="QR Code" className="rounded" />
+          <img src={qrImageUrl} alt="QR Code" className="rounded" />
         )}
       </div>
       <p className="text-xs text-muted-foreground text-center">
-        {status === "active" ? "已成功绑定飞书群组" : "使用飞书扫码创建群组并绑定此会话"}
+        {error ? "创建群组失败，请重试" : "使用飞书扫码加入群组，消息将实时同步"}
       </p>
     </div>
   );

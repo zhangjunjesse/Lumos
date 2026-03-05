@@ -63,7 +63,15 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
   const extraEnv = data.extra_env ?? existing.extra_env;
   const notes = data.notes ?? existing.notes;
   const sortOrder = data.sort_order ?? existing.sort_order;
-  const isActive = data.is_active ?? existing.is_active;
+  let isActive = data.is_active ?? existing.is_active;
+
+  // Auto-activate builtin provider when user modifies API key or base_url
+  if (existing.is_builtin && existing.is_active === 0) {
+    if ((data.api_key && data.api_key.trim() !== '') ||
+        (data.base_url !== undefined && data.base_url !== existing.base_url)) {
+      isActive = 1;
+    }
+  }
 
   // If this is a builtin provider, mark it as user_modified
   const userModified = existing.is_builtin ? 1 : existing.user_modified;

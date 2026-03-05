@@ -4,9 +4,9 @@ export function migrateSyncTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS session_bindings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      lumos_session_id TEXT NOT NULL UNIQUE,
+      lumos_session_id TEXT NOT NULL,
       platform TEXT NOT NULL,
-      platform_chat_id TEXT NOT NULL UNIQUE,
+      platform_chat_id TEXT NOT NULL DEFAULT '',
       bind_token TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL,
@@ -15,6 +15,7 @@ export function migrateSyncTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_bindings_session ON session_bindings(lumos_session_id);
     CREATE INDEX IF NOT EXISTS idx_bindings_platform_chat ON session_bindings(platform, platform_chat_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bindings_token ON session_bindings(bind_token) WHERE bind_token IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS message_sync_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { migrateCoreTables } from './migrations';
 import { migrateLumosTables } from './migrations-lumos';
+import { migrateSyncTables } from './migrations-sync';
 
 export function initDb(db: Database.Database): void {
   db.exec(`
@@ -154,4 +155,5 @@ export function initDb(db: Database.Database): void {
   // Run migrations for existing databases
   migrateCoreTables(db);
   migrateLumosTables(db);
+  migrateSyncTables(db);
 }

@@ -16,6 +16,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 
 let mainWindow: BrowserWindow | null = null;
 // let browserManager: BrowserManager | null = null;
+let bridgeManager: any = null;
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -430,12 +431,18 @@ app.whenReady().then(async () => {
   checkNativeModuleABI();
 
   // === DATABASE: Initialize database and IPC handlers ===
+  // TODO: 暂时禁用 Electron 主进程的数据库，因为与 Next.js 共享 better-sqlite3 有 ABI 冲突
+  // 当前只有 Next.js 使用数据库，Electron 主进程不使用
+  /*
   console.log('[main] Initializing database...');
   const db = initDatabase();
   const dbService = new DatabaseService(db);
   registerIpcHandlers(dbService);
   registerDbShutdownHandlers();
   console.log('[main] Database and IPC handlers initialized');
+  */
+  let db: any = null;
+  let dbService: any = null;
 
   // === ISOLATION: Verify Claude CLI config directory ===
   const claudeConfigDir = path.join(app.getPath('userData'), '.claude');
@@ -480,6 +487,27 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn('[main] Failed to sync skills:', err);
   }
+
+  // === BRIDGE: Initialize Bridge system for IM integration ===
+  // TODO: 暂时禁用，因为 Electron 和 Next.js 共享 better-sqlite3 有 ABI 版本冲突
+  // 当前只支持单向同步（Lumos → 飞书），不支持双向同步（飞书 → Lumos）
+  // 长期方案：重构为 IPC 架构，Electron 主进程管理数据库，Next.js 通过 IPC 调用
+  /*
+  try {
+    console.log('[main] Initializing Bridge system...');
+    const { BridgeManager } = require('../src/lib/bridge');
+    bridgeManager = new BridgeManager(db);
+    bridgeManager.setMessageHandler((sessionId: string, userMessage: string, aiResponse: string) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('bridge:message-received', { sessionId, userMessage, aiResponse });
+      }
+    });
+    await bridgeManager.start(['feishu']);
+    console.log('[main] Bridge system started successfully');
+  } catch (err) {
+    console.warn('[main] Failed to start Bridge system:', err);
+  }
+  */
 
   // Set macOS Dock icon
   if (process.platform === 'darwin' && app.dock) {
@@ -894,6 +922,16 @@ app.on('before-quit', async (e) => {
   //   try {
   //     await browserManager.cleanup();
   //   } catch (error) {
+
+  // 清理 BridgeManager
+  if (bridgeManager) {
+    try {
+      await bridgeManager.stop();
+      console.log('[main] Bridge system stopped');
+    } catch (error) {
+      console.error('[main] Failed to stop Bridge system:', error);
+    }
+  }
   //     console.error('Failed to cleanup BrowserManager:', error);
   //   }
   //   browserManager = null;

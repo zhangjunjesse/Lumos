@@ -1,10 +1,13 @@
 import type { ChannelType, InboundMessage } from './types';
 import { BaseChannelAdapter } from './channel-adapter';
+import './adapters'; // 确保注册代码执行
 import { createAdapter } from './adapters/adapter-factory';
 import { ChannelRouter } from './channel-router';
 import { DeliveryLayer } from './delivery-layer';
 import { ConversationEngine } from './conversation-engine';
 import type Database from 'better-sqlite3';
+
+type MessageHandler = (sessionId: string, userMessage: string, aiResponse: string) => void;
 
 export class BridgeManager {
   private adapters = new Map<ChannelType, BaseChannelAdapter>();
@@ -12,9 +15,14 @@ export class BridgeManager {
   private delivery = new DeliveryLayer();
   private conversation = new ConversationEngine();
   private running = false;
+  private onMessageHandled?: MessageHandler;
 
   constructor(database: Database.Database) {
     this.router = new ChannelRouter(database);
+  }
+
+  setMessageHandler(handler: MessageHandler) {
+    this.onMessageHandled = handler;
   }
 
   async start(enabledAdapters: ChannelType[]) {
@@ -56,6 +64,10 @@ export class BridgeManager {
       }
       const response = await this.conversation.sendMessage(binding.lumos_session_id, message.text);
       await this.delivery.deliver(adapter, { address: message.address, text: response });
+
+      if (this.onMessageHandled) {
+        this.onMessageHandled(binding.lumos_session_id, message.text, response);
+      }
     } catch (error) {
       console.error('Failed to handle message:', error);
     }

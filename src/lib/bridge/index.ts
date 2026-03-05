@@ -1,3 +1,5 @@
+import './adapters'; // 确保 adapter 注册代码执行
+
 export * from './types';
 export { BridgeManager } from './bridge-manager';
 export { ChannelRouter } from './channel-router';

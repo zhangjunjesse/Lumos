@@ -24,39 +24,11 @@ export function getDbPath(): string {
 
 /**
  * Initialize the database connection in Main Process
+ * TODO: 暂时禁用，因为与 Next.js 共享 better-sqlite3 有 ABI 冲突
  */
 export function initDatabase(): Database.Database {
-  if (db) {
-    return db;
-  }
-
-  const dbPath = getDbPath();
-  const dir = path.dirname(dbPath);
-
-  // Ensure directory exists
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  console.log('[db] Initializing database at:', dbPath);
-
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  // Initialize database schema
-  initDb(db);
-
-  // Initialize built-in resources (Skills, MCP servers, Providers)
-  import('../../src/lib/init-builtin-resources').then(({ initBuiltinResources }) => {
-    initBuiltinResources().catch(err => {
-      console.error('[db] Failed to initialize builtin resources:', err);
-    });
-  });
-
-  console.log('[db] Database initialized successfully');
-
-  return db;
+  console.log('[db] Database initialization disabled in Electron main process');
+  return null as any;
 }
 
 /**

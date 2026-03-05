@@ -150,6 +150,28 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => { cancelled = true; };
   }, [id]);
 
+  // Listen for bridge messages from Electron IPC
+  useEffect(() => {
+    const handleBridgeMessage = (_event: any, data: { sessionId: string }) => {
+      if (data.sessionId === id) {
+        fetch(`/api/chat/sessions/${id}/messages?limit=100`)
+          .then(res => res.json())
+          .then((data: MessagesResponse) => {
+            setMessages(data.messages);
+            setHasMore(data.hasMore ?? false);
+          })
+          .catch(err => console.error('[Bridge] Failed to refresh messages:', err));
+      }
+    };
+
+    if (typeof window !== 'undefined' && (window as any).electron?.ipcRenderer) {
+      (window as any).electron.ipcRenderer.on('bridge:message-received', handleBridgeMessage);
+      return () => {
+        (window as any).electron.ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
+      };
+    }
+  }, [id]);
+
   // Listen for session updates from sidebar
   useEffect(() => {
     const handleSessionUpdate = (event: Event) => {
