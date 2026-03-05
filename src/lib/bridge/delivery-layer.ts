@@ -1,54 +1,63 @@
 import type { BaseChannelAdapter } from './channel-adapter';
 import type { OutboundMessage, SendResult } from './types';
+import { MessageQueue } from './queue/message-queue';
+import { MessageSplitter } from './utils/message-splitter';
+import { RetryQueue } from './queue/retry-queue';
 
+/**
+ * Delivery layer with queue, rate limiting, and smart message splitting
+ */
 export class DeliveryLayer {
-  private rateLimiter = new Map<string, number>();
+  private queue = new MessageQueue();
+  private splitter = new MessageSplitter();
+  private retryQueue = new RetryQueue();
 
+  constructor() {
+    this.retryQueue.start();
+  }
+
+  /**
+   * Deliver message with rate limiting and smart splitting
+   */
   async deliver(adapter: BaseChannelAdapter, message: OutboundMessage): Promise<SendResult> {
-    await this.rateLimit(message.address.chatId);
-    const chunks = this.splitMessage(message.text, 8000);
+    return this.queue.enqueue(async () => {
+      const chunks = this.splitter.split(message.text);
 
-    for (let i = 0; i < chunks.length; i++) {
-      const result = await adapter.send({ ...message, text: chunks[i] });
-      if (!result.ok) {
-        const retry = await this.retry(adapter, { ...message, text: chunks[i] });
-        if (!retry.ok) return retry;
+      for (let i = 0; i < chunks.length; i++) {
+        const result = await adapter.send({ ...message, text: chunks[i] });
+
+        if (!result.ok) {
+          // Enqueue for retry
+          this.retryQueue.enqueue({ ...message, text: chunks[i] }, adapter);
+          return result;
+        }
+
+        // Small delay between chunks
+        if (i < chunks.length - 1) {
+          await this.sleep(300);
+        }
       }
-      if (i < chunks.length - 1) await this.sleep(300);
-    }
 
-    return { ok: true };
+      return { ok: true };
+    });
   }
 
-  private async rateLimit(chatId: string): Promise<void> {
-    const now = Date.now();
-    const last = this.rateLimiter.get(chatId) || 0;
-    const wait = Math.max(0, 50 - (now - last));
-    if (wait > 0) await this.sleep(wait);
-    this.rateLimiter.set(chatId, Date.now());
+  /**
+   * Get queue statistics
+   */
+  getStats() {
+    return {
+      queue: this.queue.getStats(),
+      retry: this.retryQueue.getStats(),
+    };
   }
 
-  private splitMessage(text: string, maxLength: number): string[] {
-    if (text.length <= maxLength) return [text];
-    const chunks: string[] = [];
-    let current = '';
-    for (const line of text.split('\n')) {
-      if (current.length + line.length + 1 > maxLength) {
-        chunks.push(current);
-        current = line;
-      } else {
-        current += (current ? '\n' : '') + line;
-      }
-    }
-    if (current) chunks.push(current);
-    return chunks;
-  }
-
-  private async retry(adapter: BaseChannelAdapter, message: OutboundMessage, attempt = 0): Promise<SendResult> {
-    if (attempt >= 3) return { ok: false, error: 'Max retries exceeded' };
-    await this.sleep(Math.pow(2, attempt) * 1000);
-    const result = await adapter.send(message);
-    return result.ok ? result : this.retry(adapter, message, attempt + 1);
+  /**
+   * Stop delivery layer
+   */
+  stop() {
+    this.queue.clear();
+    this.retryQueue.stop();
   }
 
   private sleep(ms: number): Promise<void> {

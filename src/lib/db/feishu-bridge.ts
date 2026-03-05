@@ -57,24 +57,65 @@ export function deleteSessionBinding(id: number): void {
 // ==========================================
 
 export function recordMessageSync(params: {
-  lumosMessageId?: string;
-  platform: string;
-  platformMessageId: string;
+  bindingId: number;
+  messageId: string;
+  sourcePlatform: string;
   direction: 'to_platform' | 'from_platform';
+  status: 'success' | 'failed';
+  errorMessage?: string;
 }): void {
   const db = getDb();
   db.prepare(
-    `INSERT OR IGNORE INTO message_sync_log (lumos_message_id, platform, platform_message_id, direction, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(params.lumosMessageId || null, params.platform, params.platformMessageId, params.direction, Date.now());
+    `INSERT OR IGNORE INTO message_sync_log
+     (binding_id, message_id, source_platform, direction, status, error_message, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.bindingId,
+    params.messageId,
+    params.sourcePlatform,
+    params.direction,
+    params.status,
+    params.errorMessage || null,
+    Date.now()
+  );
 }
 
-export function isMessageSynced(platform: string, platformMessageId: string): boolean {
+export function isMessageSynced(messageId: string): boolean {
   const db = getDb();
   const row = db.prepare(
-    'SELECT 1 FROM message_sync_log WHERE platform = ? AND platform_message_id = ?'
-  ).get(platform, platformMessageId);
+    'SELECT 1 FROM message_sync_log WHERE message_id = ?'
+  ).get(messageId);
   return !!row;
+}
+
+export function getSyncStats(bindingId: number) {
+  const db = getDb();
+  const stats = db.prepare(`
+    SELECT
+      COUNT(*) as totalMessages,
+      SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successCount,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failedCount,
+      MAX(synced_at) as lastSyncAt
+    FROM message_sync_log
+    WHERE binding_id = ?
+  `).get(bindingId) as {
+    totalMessages: number;
+    successCount: number;
+    failedCount: number;
+    lastSyncAt: number | null;
+  };
+  return stats;
+}
+
+export function getSessionBindingById(id: number) {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM session_bindings WHERE id = ?'
+  ).get(id) as {
+    id: number; lumos_session_id: string; platform: string;
+    platform_chat_id: string; bind_token: string | null; status: string;
+    created_at: number; updated_at: number;
+  } | undefined;
 }
 
 // ==========================================

@@ -31,5 +31,17 @@ export function migrateSyncTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_sync_log_message ON message_sync_log(message_id);
     CREATE INDEX IF NOT EXISTS idx_sync_log_binding ON message_sync_log(binding_id);
+
+    CREATE TABLE IF NOT EXISTS platform_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL,
+      platform_user_id TEXT NOT NULL,
+      platform_username TEXT,
+      lumos_user_id TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(platform, platform_user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_platform_users_platform ON platform_users(platform, platform_user_id);
   `);
 }
