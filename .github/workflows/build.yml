@@ -55,6 +55,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild better-sqlite3 for Electron
+        run: npx electron-rebuild -f -o better-sqlite3
+
       - name: Build Electron app
         run: npm run electron:build
 
@@ -124,6 +127,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Rebuild better-sqlite3 for Electron
+        run: npx electron-rebuild -f -o better-sqlite3 -a ${{ matrix.arch }}
 
       - name: Build Electron app
         run: npm run electron:build
