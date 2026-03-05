@@ -62,7 +62,9 @@ jobs:
         run: npm run electron:build
 
       - name: Package for Windows
-        run: npx electron-builder --win --config electron-builder.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --config electron-builder.yml --publish always
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -101,7 +103,9 @@ jobs:
         run: npm run electron:build
 
       - name: Package for macOS (${{ matrix.arch }})
-        run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish always
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -135,7 +139,9 @@ jobs:
         run: npm run electron:build
 
       - name: Package for Linux (${{ matrix.arch }})
-        run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish always
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
