@@ -47,6 +47,8 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
     }
 
     // Electron version: use native updater
+    if (!window.electronAPI) return;
+
     setChecking(true);
     try {
       await window.electronAPI.updater.checkForUpdates();
@@ -57,7 +59,7 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
   }, [isElectron]);
 
   const downloadUpdate = useCallback(() => {
-    if (!isElectron) return;
+    if (!isElectron || !window.electronAPI) return;
     window.electronAPI.updater.downloadUpdate();
   }, [isElectron]);
 
@@ -66,13 +68,13 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
   }, []);
 
   const quitAndInstall = useCallback(() => {
-    if (!isElectron) return;
+    if (!isElectron || !window.electronAPI) return;
     window.electronAPI.updater.quitAndInstall();
   }, [isElectron]);
 
   // Listen to electron-updater status events
   useEffect(() => {
-    if (!isElectron) return;
+    if (!isElectron || !window.electronAPI) return;
 
     const unsubscribe = window.electronAPI.updater.onStatus((data: any) => {
       console.log("[UpdateProvider] Status:", data);
