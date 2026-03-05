@@ -88,7 +88,7 @@ interface ElectronAPI {
     }) => Promise<{ canceled: boolean; filePaths: string[] }>;
   };
   install: ElectronInstallAPI;
-  updater?: ElectronUpdaterAPI;
+  updater: ElectronUpdaterAPI;
   browser: ElectronBrowserAPI;
 }
 
