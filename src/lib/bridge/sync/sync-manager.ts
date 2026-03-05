@@ -6,6 +6,7 @@ interface SyncBinding {
   platform_chat_id: string;
   platform: string;
   status: 'active' | 'pending' | 'inactive';
+  syncDirection?: 'bidirectional' | 'lumos_to_channel' | 'channel_to_lumos';
 }
 
 export class SyncManager {
