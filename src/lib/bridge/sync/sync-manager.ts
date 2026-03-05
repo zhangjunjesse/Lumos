@@ -66,9 +66,9 @@ export class SyncManager {
     this.seenMessages.add(messageId);
     this.db.prepare(
       `INSERT INTO message_sync_log
-       (binding_id, message_id, source_platform, direction, status, error_message)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(bindingId, messageId, source, direction, status, error || null);
+       (binding_id, message_id, source_platform, direction, status, error_message, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(bindingId, messageId, source, direction, status, error || null, Date.now());
   }
 
   shouldSync(binding: SyncBinding | null, direction: 'to_channel' | 'from_channel'): boolean {
