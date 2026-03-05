@@ -29,7 +29,19 @@ if (platform === 'win32') {
   downloadUrl = `${baseUrl}/node-${NODE_VERSION}-win-${arch}.zip`;
   const zipPath = path.join(runtimeDir, 'node.zip');
   execSync(`curl -L -o "${zipPath}" "${downloadUrl}"`, { stdio: 'inherit' });
-  execSync(`unzip -j "${zipPath}" "*/node.exe" -d "${runtimeDir}"`, { stdio: 'inherit' });
+
+  // Use PowerShell Expand-Archive instead of unzip (Windows doesn't have unzip by default)
+  const tempExtractDir = path.join(runtimeDir, 'temp');
+  fs.mkdirSync(tempExtractDir, { recursive: true });
+  execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tempExtractDir}' -Force"`, { stdio: 'inherit' });
+
+  // Find and move node.exe to target directory
+  const extractedDir = fs.readdirSync(tempExtractDir)[0];
+  const nodeExePath = path.join(tempExtractDir, extractedDir, 'node.exe');
+  fs.renameSync(nodeExePath, targetPath);
+
+  // Clean up
+  fs.rmSync(tempExtractDir, { recursive: true, force: true });
   fs.unlinkSync(zipPath);
 } else {
   downloadUrl = `${baseUrl}/node-${NODE_VERSION}-${platform}-${arch}.tar.gz`;
