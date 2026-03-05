@@ -7,7 +7,7 @@ export class MessageDeduplicator {
     this.seen.add(messageId);
     if (this.seen.size > this.maxSize) {
       const first = this.seen.values().next().value;
-      this.seen.delete(first);
+      this.seen.delete(first!);
     }
     return false;
   }
