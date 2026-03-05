@@ -247,9 +247,13 @@ export async function getClaudeVersion(claudePath: string): Promise<string | nul
  * Returns the path to bash.exe or null if not found.
  */
 export function findGitBash(): string | null {
+  console.log('[findGitBash] Searching for git-bash on Windows...');
+
   // 1. Check user-specified environment variable
   const envPath = process.env.CLAUDE_CODE_GIT_BASH_PATH;
+  console.log('[findGitBash] Checking env var CLAUDE_CODE_GIT_BASH_PATH:', envPath || 'not set');
   if (envPath && fs.existsSync(envPath)) {
+    console.log('[findGitBash] ✓ Found via env var:', envPath);
     return envPath;
   }
 
@@ -258,13 +262,17 @@ export function findGitBash(): string | null {
     'C:\\Program Files\\Git\\bin\\bash.exe',
     'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
   ];
+  console.log('[findGitBash] Checking common paths:', commonPaths);
   for (const p of commonPaths) {
+    console.log('[findGitBash] Checking:', p, '→', fs.existsSync(p) ? 'EXISTS' : 'not found');
     if (fs.existsSync(p)) {
+      console.log('[findGitBash] ✓ Found at common path:', p);
       return p;
     }
   }
 
   // 3. Try to locate git.exe via `where git` and derive bash.exe path
+  console.log('[findGitBash] Trying to locate via "where git" command...');
   try {
     const result = execFileSync('where', ['git'], {
       timeout: 3000,
@@ -272,19 +280,23 @@ export function findGitBash(): string | null {
       shell: true,
     });
     const lines = result.toString().trim().split(/\r?\n/);
+    console.log('[findGitBash] "where git" returned:', lines);
     for (const line of lines) {
       const gitExe = line.trim();
       if (!gitExe) continue;
       // git.exe is typically at <GitDir>\cmd\git.exe or <GitDir>\bin\git.exe
       const gitDir = path.dirname(path.dirname(gitExe));
       const bashPath = path.join(gitDir, 'bin', 'bash.exe');
+      console.log('[findGitBash] Derived bash path:', bashPath, '→', fs.existsSync(bashPath) ? 'EXISTS' : 'not found');
       if (fs.existsSync(bashPath)) {
+        console.log('[findGitBash] ✓ Found via git location:', bashPath);
         return bashPath;
       }
     }
-  } catch {
-    // where git failed or timed out
+  } catch (err) {
+    console.log('[findGitBash] "where git" command failed:', err);
   }
 
+  console.log('[findGitBash] ✗ git-bash not found');
   return null;
 }

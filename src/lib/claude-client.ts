@@ -444,9 +444,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // On Windows, auto-detect Git Bash if not already configured
         if (process.platform === 'win32' && !process.env.CLAUDE_CODE_GIT_BASH_PATH) {
+          console.log('[claude-client] Windows detected, searching for git-bash...');
           const gitBashPath = findGitBash();
           if (gitBashPath) {
             sdkEnv.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
+            console.log('[claude-client] ✓ Set CLAUDE_CODE_GIT_BASH_PATH:', gitBashPath);
+          } else {
+            console.log('[claude-client] ✗ git-bash not found! Claude Code will fail.');
+            console.log('[claude-client] Please install Git for Windows: https://git-scm.com/downloads/win');
           }
         }
 
