@@ -71,10 +71,14 @@ jobs:
   build-macos:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     needs: [create-release]
-    runs-on: macos-latest
     strategy:
       matrix:
-        arch: [x64, arm64]
+        include:
+          - arch: x64
+            runner: macos-13
+          - arch: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,6 +92,9 @@ jobs:
 
       - name: Build Electron app
         run: npm run electron:build
+
+      - name: Rebuild better-sqlite3 for target arch
+        run: npx electron-rebuild -f -o better-sqlite3 -a ${{ matrix.arch }}
 
       - name: Package for macOS (${{ matrix.arch }})
         run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
