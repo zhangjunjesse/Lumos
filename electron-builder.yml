@@ -49,6 +49,9 @@ extraResources:
   - from: node_modules/@anthropic-ai/claude-agent-sdk/
     to: standalone/node_modules/@anthropic-ai/claude-agent-sdk/
     filter: ["**/*"]
+  - from: resources/node-runtime/
+    to: node-runtime/
+    filter: ["**/*"]
 # afterPack: scripts/after-pack.js  # Disabled: rebuild handled in CI workflow
 asarUnpack:
   - "**/*.node"

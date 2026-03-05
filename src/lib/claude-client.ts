@@ -57,9 +57,39 @@ function isNodeVersionOk(nodePath: string): boolean {
   }
 }
 
+/**
+ * Find bundled Node.js runtime in packaged app.
+ * Returns path to node executable or undefined if not found.
+ */
+function findBundledNode(): string | undefined {
+  const platform = process.platform;
+  const arch = process.arch;
+  const ext = platform === 'win32' ? '.exe' : '';
+  const exeName = `node${ext}`;
+
+  // In packaged app, resources are at process.resourcesPath
+  const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
+  const nodePath = path.join(resourcesPath, 'node-runtime', platform, arch, exeName);
+
+  if (fs.existsSync(nodePath)) {
+    return nodePath;
+  }
+
+  return undefined;
+}
+
 function findSystemNode(): string | undefined {
   if (_cachedNodePath !== undefined) return _cachedNodePath || undefined;
 
+  // 1. Try bundled Node.js first (packaged app)
+  const bundled = findBundledNode();
+  if (bundled && isNodeVersionOk(bundled)) {
+    console.log('[claude-client] Using bundled Node.js:', bundled);
+    _cachedNodePath = bundled;
+    return bundled;
+  }
+
+  // 2. Fall back to system Node.js
   const candidates: string[] = [];
   const home = os.homedir();
 
