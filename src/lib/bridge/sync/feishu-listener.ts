@@ -66,7 +66,7 @@ export class FeishuEventListener {
     if (this.syncManager.isDuplicate(message_id)) return;
     const text = JSON.parse(content).text;
     await this.onMessageReceived?.({ messageId: message_id, chatId: chat_id, content: text, senderId: sender.sender_id.open_id });
-    this.syncManager.logSync(binding!.id, message_id, 'feishu', 'feishu_to_lumos', 'success');
+    this.syncManager.logSync(String(binding!.id), message_id, 'feishu', 'feishu_to_lumos', 'success');
   }
 
   private reconnect(): void {
