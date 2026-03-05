@@ -27,10 +27,10 @@ export class SyncCoordinator {
     if (!this.syncManager.shouldSync(binding, 'to_channel')) return;
     try {
       const card = this.toFeishuCard(message);
-      await this.feishuClient.sendMessage(binding!.chatId, card);
-      this.syncManager.logSync(binding!.id, message.id, 'lumos', 'lumos_to_feishu', 'success');
+      await this.feishuClient.sendMessage(binding!.platform_chat_id, card);
+      this.syncManager.logSync(String(binding!.id), message.id, 'lumos', 'lumos_to_feishu', 'success');
     } catch (error: any) {
-      this.syncManager.logSync(binding!.id, message.id, 'lumos', 'lumos_to_feishu', 'failed', error.message);
+      this.syncManager.logSync(String(binding!.id), message.id, 'lumos', 'lumos_to_feishu', 'failed', error.message);
     }
   }
 
