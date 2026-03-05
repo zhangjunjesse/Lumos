@@ -47,6 +47,13 @@ export function initDatabase(): Database.Database {
   // Initialize database schema
   initDb(db);
 
+  // Initialize built-in resources (Skills, MCP servers, Providers)
+  import('../../src/lib/init-builtin-resources').then(({ initBuiltinResources }) => {
+    initBuiltinResources().catch(err => {
+      console.error('[db] Failed to initialize builtin resources:', err);
+    });
+  });
+
   console.log('[db] Database initialized successfully');
 
   return db;
