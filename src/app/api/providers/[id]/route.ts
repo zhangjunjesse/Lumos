@@ -54,6 +54,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       delete body.api_key;
     }
 
+    // Auto-activate built-in provider when user fills in API key
+    if (existing.is_builtin && body.api_key && body.api_key.trim() !== '') {
+      body.is_active = 1;
+    }
+
     const updated = updateProvider(id, body);
     if (!updated) {
       return NextResponse.json<ErrorResponse>(

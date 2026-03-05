@@ -8,6 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading02Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -252,6 +253,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               >
                 <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
               </button>
+              <BindingButton sessionId={id} />
             </div>
           )}
         </div>

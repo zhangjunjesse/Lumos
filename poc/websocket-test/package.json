@@ -1,0 +1,11 @@
+{
+  "name": "websocket-poc",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node test-client.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

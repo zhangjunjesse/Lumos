@@ -143,6 +143,7 @@ export interface UpdateProviderRequest {
   extra_env?: string;
   notes?: string;
   sort_order?: number;
+  is_active?: number;
 }
 
 export interface ProvidersResponse {

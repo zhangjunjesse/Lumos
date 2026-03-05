@@ -1,0 +1,73 @@
+/**
+ * Feishu API utilities
+ */
+
+interface TokenCache {
+  token: string;
+  expiresAt: number;
+}
+
+export class FeishuAPI {
+  private cache: TokenCache | null = null;
+
+  constructor(
+    private appId: string,
+    private appSecret: string,
+    private baseUrl = 'https://open.feishu.cn'
+  ) {}
+
+  async getToken(): Promise<string> {
+    if (this.cache && this.cache.expiresAt > Date.now() + 300000) {
+      return this.cache.token;
+    }
+
+    const res = await fetch(`${this.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
+    });
+
+    const data = await res.json();
+    if (!data.tenant_access_token) throw new Error('Token failed');
+
+    this.cache = {
+      token: data.tenant_access_token,
+      expiresAt: Date.now() + (data.expire || 7200) * 1000,
+    };
+
+    return this.cache.token;
+  }
+
+  async downloadFile(messageId: string, fileKey: string): Promise<Buffer> {
+    const token = await this.getToken();
+    const res = await fetch(
+      `${this.baseUrl}/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=image`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  async createChat(name: string, description: string): Promise<{ chat_id: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/chats`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, chat_mode: 'group', chat_type: 'private' })
+    });
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Create chat failed: ${data.msg}`);
+    return data.data;
+  }
+
+  async createChatLink(chatId: string): Promise<{ share_link: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/chats/${chatId}/link`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Create link failed: ${data.msg}`);
+    return data.data;
+  }
+}

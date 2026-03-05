@@ -196,11 +196,15 @@ function importProviders(): void {
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
 
+  // Check if there's already an active provider
+  const activeProvider = db.prepare('SELECT id FROM api_providers WHERE is_active = 1 LIMIT 1').get();
+  const isActive = activeProvider ? 0 : 1;
+
   db.prepare(
     'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, 'Anthropic (Built-in)', 'anthropic', '', '', 0, 0, '{}', 'Built-in provider. Fill in your API key to activate.', 1, 0, now, now);
+  ).run(id, 'Anthropic (Built-in)', 'anthropic', '', '', isActive, 0, '{}', 'Built-in provider. Fill in your API key to activate.', 1, 0, now, now);
 
-  console.log('[init-builtin-resources] Created built-in Anthropic provider');
+  console.log(`[init-builtin-resources] Created built-in Anthropic provider (is_active=${isActive})`);
 }
 
 // ==========================================

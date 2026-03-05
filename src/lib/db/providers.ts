@@ -63,13 +63,19 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
   const extraEnv = data.extra_env ?? existing.extra_env;
   const notes = data.notes ?? existing.notes;
   const sortOrder = data.sort_order ?? existing.sort_order;
+  const isActive = data.is_active ?? existing.is_active;
 
   // If this is a builtin provider, mark it as user_modified
   const userModified = existing.is_builtin ? 1 : existing.user_modified;
 
+  // If activating this provider, deactivate all others first
+  if (isActive === 1 && existing.is_active === 0) {
+    db.prepare('UPDATE api_providers SET is_active = 0').run();
+  }
+
   db.prepare(
-    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, notes = ?, sort_order = ?, user_modified = ?, updated_at = ? WHERE id = ?'
-  ).run(name, providerType, baseUrl, apiKey, extraEnv, notes, sortOrder, userModified, now, id);
+    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, notes = ?, sort_order = ?, is_active = ?, user_modified = ?, updated_at = ? WHERE id = ?'
+  ).run(name, providerType, baseUrl, apiKey, extraEnv, notes, sortOrder, isActive, userModified, now, id);
 
   return getProvider(id);
 }
