@@ -43,7 +43,7 @@ extraResources:
   - from: resources/feishu-mcp-server/
     to: feishu-mcp-server/
     filter: ["**/*"]
-afterPack: scripts/after-pack.js
+# afterPack: scripts/after-pack.js  # Disabled: rebuild handled in CI workflow
 asarUnpack:
   - "**/*.node"
   - "**/better-sqlite3/**"
