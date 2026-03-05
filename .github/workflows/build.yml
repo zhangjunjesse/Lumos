@@ -243,6 +243,8 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" artifacts/linux-arm64-artifacts/* --clobber || true
 
           # Update the draft release with full notes and publish
+          # Note: For private repos, releases are private by default
+          # Use --discussion-category to make it public (requires public releases enabled in repo settings)
           gh release edit "${GITHUB_REF_NAME}" \
             --title "Lumos v${VERSION}" \
             --notes-file release-notes.md \

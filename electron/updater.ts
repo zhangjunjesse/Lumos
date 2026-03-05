@@ -40,6 +40,15 @@ export function initAutoUpdater(win: BrowserWindow) {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  // For private repos: configure GitHub token
+  // Use environment variable for security (set GH_TOKEN during build)
+  if (process.env.GH_TOKEN) {
+    autoUpdater.requestHeaders = {
+      Authorization: `token ${process.env.GH_TOKEN}`,
+    };
+    console.log('[updater] Using GitHub token from environment variable');
+  }
+
   // Resolve and apply system proxy for update downloads
   configureProxy();
 
