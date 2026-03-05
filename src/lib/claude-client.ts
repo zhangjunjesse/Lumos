@@ -31,7 +31,9 @@ let cachedClaudePath: string | null | undefined;
 
 function findClaudePath(): string | undefined {
   if (cachedClaudePath !== undefined) return cachedClaudePath || undefined;
+  console.log('[claude-client] Searching for Claude CLI...');
   const found = findClaudeBinary();
+  console.log('[claude-client] Claude CLI search result:', found || 'NOT FOUND');
   cachedClaudePath = found ?? null;
   return found;
 }
@@ -71,23 +73,41 @@ function findBundledNode(): string | undefined {
   const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
   const nodePath = path.join(resourcesPath, 'node-runtime', platform, arch, exeName);
 
+  console.log('[claude-client] Looking for bundled Node.js:', {
+    platform,
+    arch,
+    resourcesPath,
+    nodePath,
+    exists: fs.existsSync(nodePath),
+  });
+
   if (fs.existsSync(nodePath)) {
+    console.log('[claude-client] Found bundled Node.js at:', nodePath);
     return nodePath;
   }
 
+  console.log('[claude-client] Bundled Node.js not found');
   return undefined;
 }
 
 function findSystemNode(): string | undefined {
   if (_cachedNodePath !== undefined) return _cachedNodePath || undefined;
 
+  console.log('[claude-client] Searching for Node.js runtime...');
+
   // 1. Try bundled Node.js first (packaged app)
   const bundled = findBundledNode();
-  if (bundled && isNodeVersionOk(bundled)) {
-    console.log('[claude-client] Using bundled Node.js:', bundled);
-    _cachedNodePath = bundled;
-    return bundled;
+  if (bundled) {
+    const versionOk = isNodeVersionOk(bundled);
+    console.log('[claude-client] Bundled Node.js version check:', { path: bundled, versionOk });
+    if (versionOk) {
+      console.log('[claude-client] ✓ Using bundled Node.js:', bundled);
+      _cachedNodePath = bundled;
+      return bundled;
+    }
   }
+
+  console.log('[claude-client] Falling back to system Node.js...');
 
   // 2. Fall back to system Node.js
   const candidates: string[] = [];
@@ -813,14 +833,25 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // The SDK uses child_process.spawn('node', ...) which resolves from
         // PATH, so we must prepend the correct node directory to PATH.
         // We also override process.execPath for any fork() calls.
+        console.log('[claude-client] ========== Initializing Claude SDK ==========');
+        console.log('[claude-client] Platform:', process.platform);
+        console.log('[claude-client] Architecture:', process.arch);
+        console.log('[claude-client] Resources path:', process.resourcesPath);
+        console.log('[claude-client] Current working directory:', process.cwd());
+        console.log('[claude-client] Original execPath:', process.execPath);
+
         systemNode = findSystemNode();
         if (systemNode) {
           process.execPath = systemNode;
           const nodeDir = path.dirname(systemNode);
           sdkEnv.PATH = `${nodeDir}${path.delimiter}${sdkEnv.PATH || ''}`;
           queryOptions.env = sanitizeEnv(sdkEnv);
-          console.log('[claude-client] Sandbox: execPath →', systemNode, '| PATH prepended:', nodeDir);
+          console.log('[claude-client] ✓ Sandbox: execPath →', systemNode);
+          console.log('[claude-client] ✓ PATH prepended:', nodeDir);
+        } else {
+          console.error('[claude-client] ✗ Failed to find Node.js runtime!');
         }
+        console.log('[claude-client] ==========================================');
 
         console.log(`[perf] Pre-SDK setup took ${Date.now() - perfStart}ms`);
         console.time('[perf] SDK query call');
