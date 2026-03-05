@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     const db = getDb();
     const binding = db.prepare(
       'SELECT id, lumos_session_id as sessionId FROM session_bindings WHERE bind_token = ? AND status = ?'
-    ).get(token, 'pending');
+    ).get(token, 'pending') as any;
 
     console.log('[Feishu Callback] Binding:', binding);
 
