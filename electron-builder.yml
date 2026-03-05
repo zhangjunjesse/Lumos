@@ -52,6 +52,9 @@ extraResources:
   - from: resources/node-runtime/
     to: node-runtime/
     filter: ["**/*"]
+  - from: resources/git-bash/
+    to: git-bash/
+    filter: ["**/*"]
 # afterPack: scripts/after-pack.js  # Disabled: rebuild handled in CI workflow
 asarUnpack:
   - "**/*.node"

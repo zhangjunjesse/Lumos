@@ -249,7 +249,19 @@ export async function getClaudeVersion(claudePath: string): Promise<string | nul
 export function findGitBash(): string | null {
   console.log('[findGitBash] Searching for git-bash on Windows...');
 
-  // 1. Check user-specified environment variable
+  // 1. Check bundled git-bash first (packaged app)
+  const platform = process.platform;
+  const arch = process.arch;
+  const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
+  const bundledBashPath = path.join(resourcesPath, 'git-bash', platform, arch, 'bash.exe');
+
+  console.log('[findGitBash] Checking bundled git-bash:', bundledBashPath, '→', fs.existsSync(bundledBashPath) ? 'EXISTS' : 'not found');
+  if (fs.existsSync(bundledBashPath)) {
+    console.log('[findGitBash] ✓ Found bundled git-bash:', bundledBashPath);
+    return bundledBashPath;
+  }
+
+  // 2. Check user-specified environment variable
   const envPath = process.env.CLAUDE_CODE_GIT_BASH_PATH;
   console.log('[findGitBash] Checking env var CLAUDE_CODE_GIT_BASH_PATH:', envPath || 'not set');
   if (envPath && fs.existsSync(envPath)) {
@@ -257,7 +269,7 @@ export function findGitBash(): string | null {
     return envPath;
   }
 
-  // 2. Check common installation paths
+  // 3. Check common installation paths
   const commonPaths = [
     'C:\\Program Files\\Git\\bin\\bash.exe',
     'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
@@ -271,7 +283,7 @@ export function findGitBash(): string | null {
     }
   }
 
-  // 3. Try to locate git.exe via `where git` and derive bash.exe path
+  // 4. Try to locate git.exe via `where git` and derive bash.exe path
   console.log('[findGitBash] Trying to locate via "where git" command...');
   try {
     const result = execFileSync('where', ['git'], {
