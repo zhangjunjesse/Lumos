@@ -46,6 +46,9 @@ extraResources:
   - from: resources/feishu-mcp-server/
     to: feishu-mcp-server/
     filter: ["**/*"]
+  - from: node_modules/@anthropic-ai/claude-agent-sdk/
+    to: standalone/node_modules/@anthropic-ai/claude-agent-sdk/
+    filter: ["**/*"]
 # afterPack: scripts/after-pack.js  # Disabled: rebuild handled in CI workflow
 asarUnpack:
   - "**/*.node"
