@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import type {
   Binding,
   SyncStats,
-  GetBindingResponse,
   UpdateBindingResponse,
   GetStatsResponse,
 } from "@/components/bridge/types";
@@ -18,10 +17,10 @@ export function useBinding(sessionId: string) {
   const fetchBinding = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/bridge/bindings/${sessionId}`);
+      const res = await fetch(`/api/bridge/bindings?sessionId=${encodeURIComponent(sessionId)}`);
       if (res.ok) {
-        const data: GetBindingResponse = await res.json();
-        setBinding(data.binding);
+        const data: { bindings?: Binding[] } = await res.json();
+        setBinding((data.bindings && data.bindings[0]) || null);
       } else {
         setBinding(null);
       }
@@ -32,9 +31,9 @@ export function useBinding(sessionId: string) {
     }
   }, [sessionId]);
 
-  const fetchStats = useCallback(async (bindingId: number) => {
+  const fetchStats = useCallback(async (_bindingId: number) => {
     try {
-      const res = await fetch(`/api/bridge/stats/${bindingId}`);
+      const res = await fetch(`/api/bridge/stats?sessionId=${encodeURIComponent(sessionId)}`);
       if (res.ok) {
         const data: GetStatsResponse = await res.json();
         setStats(data.stats);
@@ -42,7 +41,7 @@ export function useBinding(sessionId: string) {
     } catch (err) {
       console.error("Failed to fetch stats:", err);
     }
-  }, []);
+  }, [sessionId]);
 
   const updateBinding = useCallback(async (
     bindingId: number,
@@ -110,4 +109,3 @@ export function useBinding(sessionId: string) {
     deleteBinding,
   };
 }
-

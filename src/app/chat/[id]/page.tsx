@@ -150,6 +150,32 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => { cancelled = true; };
   }, [id]);
 
+  // Periodically refresh messages so that Feishu-originated
+  // messages appear in the UI without manual reload.
+  useEffect(() => {
+    let cancelled = false;
+    const interval = setInterval(() => {
+      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
+        .then(res => {
+          if (!res.ok) return null;
+          return res.json() as Promise<MessagesResponse>;
+        })
+        .then(data => {
+          if (!data || cancelled) return;
+          setMessages(data.messages);
+          setHasMore(data.hasMore ?? false);
+        })
+        .catch(err => {
+          console.error('[ChatPage] Polling messages failed:', err);
+        });
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [id]);
+
   // Listen for bridge messages from Electron IPC
   useEffect(() => {
     const handleBridgeMessage = (_event: any, data: { sessionId: string }) => {

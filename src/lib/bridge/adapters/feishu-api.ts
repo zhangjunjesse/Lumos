@@ -70,4 +70,55 @@ export class FeishuAPI {
     if (data.code !== 0) throw new Error(`Create link failed: ${data.msg}`);
     return data.data;
   }
+
+  /**
+   * Upload an arbitrary file (pdf/doc/zip/etc.) for messaging.
+   * Uses generic file_type=stream so most types are accepted.
+   */
+  async uploadFile(fileName: string, buffer: Buffer): Promise<{ file_key: string }> {
+    const token = await this.getToken();
+    const url = `${this.baseUrl}/open-apis/im/v1/files`;
+
+    const form = new FormData();
+    // Required fields per Feishu API
+    form.append('file_type', 'stream');
+    form.append('file_name', fileName);
+    const blob = new Blob([buffer]);
+    form.append('file', blob, fileName);
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: form,
+    });
+
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Upload file failed: ${data.msg}`);
+    return data.data;
+  }
+
+  /**
+   * Send a file message to a chat_id using a previously uploaded file_key.
+   */
+  async sendFileMessage(chatId: string, fileKey: string): Promise<{ message_id: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: 'file',
+        content: JSON.stringify({ file_key: fileKey }),
+      }),
+    });
+
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Send file message failed: ${data.msg}`);
+    return data.data;
+  }
 }

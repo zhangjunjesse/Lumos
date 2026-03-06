@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { WebSocketManager } from '@/lib/bridge/websocket/websocket-manager';
 import { handleFeishuMessage } from '@/lib/bridge/message-handler';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 let listenerStarted = false;
 
 export async function GET() {

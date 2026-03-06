@@ -10,7 +10,7 @@ import {
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { GeneralSection } from "./GeneralSection";
-import { ProviderManager } from "./ProviderManager";
+import { ClaudeConfigSection } from "./ClaudeConfigSection";
 import { CliSettingsSection } from "./CliSettingsSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -102,7 +102,7 @@ export function SettingsLayout() {
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
           {activeSection === "general" && <GeneralSection />}
-          {activeSection === "providers" && <ProviderManager />}
+          {activeSection === "providers" && <ClaudeConfigSection />}
           {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "usage" && <UsageStatsSection />}
         </div>

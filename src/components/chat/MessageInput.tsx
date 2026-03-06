@@ -54,7 +54,13 @@ const MAX_DOC_SIZE = 10 * 1024 * 1024;   // 10MB
 const MAX_FILE_SIZE = MAX_DOC_SIZE;       // Use larger limit; we validate per-type in conversion
 
 interface MessageInputProps {
-  onSend: (content: string, files?: FileAttachment[], systemPromptAppend?: string, displayOverride?: string) => void;
+  onSend: (
+    content: string,
+    files?: FileAttachment[],
+    systemPromptAppend?: string,
+    displayOverride?: string,
+    options?: { sendToFeishu?: boolean },
+  ) => void;
   onImageGenerate?: (prompt: string, files?: FileAttachment[]) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
@@ -358,6 +364,7 @@ export function MessageInput({
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiSearchAbortRef = useRef<AbortController | null>(null);
   const aiSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sendToFeishu, setSendToFeishu] = useState(false);
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
@@ -732,9 +739,16 @@ export function MessageInput({
       }
     }
 
-    onSend(content || 'Please review the attached file(s).', hasFiles ? files : undefined);
+    onSend(
+      content || 'Please review the attached file(s).',
+      hasFiles ? files : undefined,
+      undefined,
+      undefined,
+      sendToFeishu ? { sendToFeishu: true } : undefined,
+    );
     setInputValue('');
-  }, [inputValue, onSend, onImageGenerate, onCommand, disabled, isStreaming, closePopover, badge, imageGen]);
+    if (sendToFeishu) setSendToFeishu(false);
+  }, [inputValue, onSend, onImageGenerate, onCommand, disabled, isStreaming, closePopover, badge, imageGen, sendToFeishu]);
 
   const filteredItems = popoverItems.filter((item) => {
     const q = popoverFilter.toLowerCase();
@@ -1115,6 +1129,21 @@ export function MessageInput({
               <PromptInputTools>
                 {/* Attach file button */}
                 <AttachFileButton />
+
+                {/* One-shot "send to Feishu" toggle */}
+                <button
+                  type="button"
+                  onClick={() => setSendToFeishu((prev) => !prev)}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors',
+                    sendToFeishu
+                      ? 'bg-emerald-500 text-white border-emerald-500'
+                      : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  <HugeiconsIcon icon={Globe} className="h-3 w-3" />
+                  <span>{sendToFeishu ? '本轮同步到飞书' : '同步到飞书'}</span>
+                </button>
 
                 {/* Mode capsule toggle */}
                 <div className="flex items-center rounded-full border border-border/60 overflow-hidden h-7">

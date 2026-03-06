@@ -131,13 +131,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     };
   }, []);
 
-  const initializedRef = useRef(false);
+  // Keep local messages in sync with server-provided messages
+  // when not actively streaming. This allows external updates
+  // (e.g. Feishu-originated messages written to DB) to appear
+  // in the UI without manual reload.
   useEffect(() => {
-    if (initialMessages.length > 0 && !initializedRef.current) {
-      initializedRef.current = true;
+    if (!isStreaming) {
       setMessages(initialMessages);
     }
-  }, [initialMessages]);
+  }, [initialMessages, isStreaming]);
 
   // Sync mode when session data loads
   useEffect(() => {
@@ -224,7 +226,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendMessage = useCallback(
-    async (content: string, files?: FileAttachment[], systemPromptAppend?: string, displayOverride?: string) => {
+    async (
+      content: string,
+      files?: FileAttachment[],
+      systemPromptAppend?: string,
+      displayOverride?: string,
+      options?: { sendToFeishu?: boolean },
+    ) => {
       if (isStreaming) return;
 
       // Use displayOverride for UI if provided (e.g. image-gen skill injection hides the skill prompt)
@@ -295,6 +303,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             provider_id: currentProviderId,
             ...(files && files.length > 0 ? { files } : {}),
             ...(systemPromptAppend ? { systemPromptAppend } : {}),
+            send_to_feishu: options?.sendToFeishu === true,
           }),
           signal: controller.signal,
         });

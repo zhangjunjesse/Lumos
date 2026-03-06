@@ -93,10 +93,11 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
 
   if (configLoading || loading || !configured) return null;
 
-  // 未绑定：显示"同步到飞书"按钮
-  if (!binding) {
-    return (
-      <>
+  const showBindButton = !binding;
+
+  return (
+    <>
+      {showBindButton ? (
         <Button
           size="sm"
           variant="ghost"
@@ -113,33 +114,23 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
           )}
           <span className="text-xs">同步到飞书</span>
         </Button>
-        <ShareLinkDialog
-          open={showShareDialog}
-          onOpenChange={setShowShareDialog}
-          shareLink={shareLink}
-        />
-        {toast && (
-          <Toast
-            type={toast.type}
-            message={toast.message}
-            onClose={() => setToast(null)}
-          />
-        )}
-      </>
-    );
-  }
+      ) : (
+        <BindingStatusPopover
+          binding={binding}
+          stats={stats}
+          onToggleSync={handleToggleSync}
+          onUnbind={handleUnbind}
+        >
+          <BindingStatusBadge status={binding.status} onClick={handleCreate} />
+        </BindingStatusPopover>
+      )}
 
-  // 已绑定：显示状态徽章
-  return (
-    <>
-      <BindingStatusPopover
-        binding={binding}
-        stats={stats}
-        onToggleSync={handleToggleSync}
-        onUnbind={handleUnbind}
-      >
-        <BindingStatusBadge status={binding.status} />
-      </BindingStatusPopover>
+      <ShareLinkDialog
+        open={showShareDialog}
+        onOpenChange={setShowShareDialog}
+        shareLink={shareLink}
+      />
+
       {toast && (
         <Toast
           type={toast.type}

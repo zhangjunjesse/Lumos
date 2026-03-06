@@ -8,7 +8,7 @@ import path from 'path';
 import os from 'os';
 
 import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
-import { syncMessageToFeishu } from '@/lib/bridge/sync-helper';
+import { syncMessageToFeishu, feishuSend } from '@/lib/bridge/sync-helper';
 
 /** Load MCP servers from database (builtin + user) */
 function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; provider_id?: string; systemPromptAppend?: string } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout, provider_id, systemPromptAppend } = body;
+    const { session_id, content, model, mode, files, toolTimeout, provider_id, systemPromptAppend, send_to_feishu } = body;
 
     console.log('[chat API] content length:', content.length, 'first 200 chars:', content.slice(0, 200));
     console.log('[chat API] systemPromptAppend:', systemPromptAppend ? `${systemPromptAppend.length} chars` : 'none');
@@ -273,7 +273,7 @@ export async function POST(request: NextRequest) {
     collectStreamResponse(streamForCollect, session_id, () => {
       releaseSessionLock(session_id, lockId);
       setSessionRuntimeStatus(session_id, 'idle');
-    });
+    }, !!send_to_feishu);
 
     return new Response(streamForClient, {
       headers: {
@@ -299,7 +299,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function collectStreamResponse(stream: ReadableStream<string>, sessionId: string, onComplete?: () => void) {
+async function collectStreamResponse(
+  stream: ReadableStream<string>,
+  sessionId: string,
+  onComplete?: () => void,
+  sendToFeishu?: boolean,
+) {
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
@@ -413,6 +418,14 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err)
         );
+
+        // Phase 2: 用户显式请求时再额外调用一次统一的 feishuSend，
+        // 用于“只发摘要到飞书”场景。这里先简单用 content 作为摘要。
+        if (sendToFeishu) {
+          feishuSend({ sessionId, mode: 'text', content }).catch(err =>
+            console.error('[Sync] feishuSend failed:', err),
+          );
+        }
       }
     }
   } catch {
@@ -436,6 +449,12 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err)
         );
+
+        if (sendToFeishu) {
+          feishuSend({ sessionId, mode: 'text', content }).catch(err =>
+            console.error('[Sync] feishuSend failed:', err),
+          );
+        }
       }
     }
   } finally {

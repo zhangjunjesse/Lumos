@@ -4,30 +4,48 @@ import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
 import { randomBytes } from 'crypto';
 import Database from 'better-sqlite3';
 
-async function syncHistoryMessages(db: Database.Database, feishuApi: FeishuAPI, sessionId: string, chatId: string) {
+async function syncHistoryMessages(
+  db: Database.Database,
+  feishuApi: FeishuAPI,
+  sessionId: string,
+  chatId: string
+) {
   const messages = db.prepare(
     'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC'
   ).all(sessionId) as any[];
 
   for (const msg of messages) {
-    const card = {
-      msg_type: 'interactive',
-      card: {
-        header: {
-          title: { tag: 'plain_text', content: msg.role === 'user' ? '👤 用户' : '🤖 AI' },
-          template: msg.role === 'user' ? 'blue' : 'green'
+    const cardContent = {
+      config: { wide_screen_mode: true },
+      header: {
+        title: {
+          tag: 'plain_text',
+          content: msg.role === 'user' ? '👤 用户' : '🤖 AI',
         },
-        elements: [{ tag: 'div', text: { tag: 'lark_md', content: msg.content } }]
-      }
+        template: msg.role === 'user' ? 'blue' : 'green',
+      },
+      elements: [
+        { tag: 'div', text: { tag: 'lark_md', content: msg.content } },
+      ],
     };
 
     try {
       const token = await feishuApi.getToken();
-      await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receive_id: chatId, ...card })
-      });
+      await fetch(
+        'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            receive_id: chatId,
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          }),
+        },
+      );
     } catch (err) {
       console.error('[Sync] Failed to sync message:', err);
     }
@@ -91,7 +109,10 @@ export async function GET(req: NextRequest) {
     const db = getDb();
     const bindings = db.prepare(
       `SELECT id, platform_chat_id as chatId, status, created_at as createdAt
-       FROM session_bindings WHERE lumos_session_id = ? AND status != 'deleted'`
+       FROM session_bindings
+       WHERE lumos_session_id = ?
+         AND platform = 'feishu'
+         AND status != 'deleted'`
     ).all(sessionId);
 
     return NextResponse.json({ bindings });

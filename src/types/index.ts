@@ -184,6 +184,8 @@ export interface SendMessageRequest {
   model?: string;
   mode?: string;
   provider_id?: string;
+  // Optional: when true, server should also send this reply to Feishu
+  send_to_feishu?: boolean;
 }
 
 export interface UpdateMCPConfigRequest {
