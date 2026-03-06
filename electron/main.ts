@@ -13,10 +13,11 @@ import { initAutoUpdater, setUpdaterWindow } from './updater';
 import { initDatabase, registerDbShutdownHandlers } from './db/connection';
 import { DatabaseService } from './db/service';
 import { registerIpcHandlers } from './ipc/handlers';
+import { FeishuListener } from '../src/lib/bridge/feishu-listener';
 
 let mainWindow: BrowserWindow | null = null;
 // let browserManager: BrowserManager | null = null;
-let bridgeManager: any = null;
+let feishuListener: FeishuListener | null = null;
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -488,26 +489,56 @@ app.whenReady().then(async () => {
     console.warn('[main] Failed to sync skills:', err);
   }
 
-  // === BRIDGE: Initialize Bridge system for IM integration ===
-  // TODO: 暂时禁用，因为 Electron 和 Next.js 共享 better-sqlite3 有 ABI 版本冲突
-  // 当前只支持单向同步（Lumos → 飞书），不支持双向同步（飞书 → Lumos）
-  // 长期方案：重构为 IPC 架构，Electron 主进程管理数据库，Next.js 通过 IPC 调用
-  /*
-  try {
-    console.log('[main] Initializing Bridge system...');
-    const { BridgeManager } = require('../src/lib/bridge');
-    bridgeManager = new BridgeManager(db);
-    bridgeManager.setMessageHandler((sessionId: string, userMessage: string, aiResponse: string) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('bridge:message-received', { sessionId, userMessage, aiResponse });
-      }
-    });
-    await bridgeManager.start(['feishu']);
-    console.log('[main] Bridge system started successfully');
-  } catch (err) {
-    console.warn('[main] Failed to start Bridge system:', err);
+  // === BRIDGE: Feishu listener function (will be called after server starts) ===
+  async function startFeishuListener() {
+    if (!process.env.FEISHU_APP_ID || !process.env.FEISHU_APP_SECRET) {
+      console.log('[Bridge] Feishu not configured');
+      return;
+    }
+
+    if (!serverPort) {
+      console.warn('[Bridge] Server port not ready');
+      return;
+    }
+
+    try {
+      feishuListener = new FeishuListener({
+        appId: process.env.FEISHU_APP_ID,
+        appSecret: process.env.FEISHU_APP_SECRET,
+        serverPort,
+        onMessage: async (chatId: string, text: string, messageId: string) => {
+          try {
+            const res = await fetch(`http://localhost:${serverPort}/api/bridge/query-binding?chatId=${chatId}`);
+            if (!res.ok) {
+              console.log('[Bridge] No binding for chat:', chatId);
+              return;
+            }
+
+            const { sessionId } = await res.json();
+
+            await fetch(`http://localhost:${serverPort}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: sessionId,
+                content: text,
+                mode: 'acceptEdits'
+              })
+            });
+
+            console.log('[Bridge] Message synced from Feishu');
+          } catch (err) {
+            console.error('[Bridge] Handle message failed:', err);
+          }
+        }
+      });
+
+      await feishuListener.start();
+      console.log('[Bridge] Feishu listener started');
+    } catch (err) {
+      console.error('[Bridge] Start listener failed:', err);
+    }
   }
-  */
 
   // Set macOS Dock icon
   if (process.platform === 'darwin' && app.dock) {
@@ -860,6 +891,9 @@ app.whenReady().then(async () => {
     serverPort = port;
     createWindow(port);
 
+    // Start Feishu listener after server is ready
+    await startFeishuListener();
+
     // Initialize auto-updater in packaged mode only
     if (!isDev && mainWindow) {
       initAutoUpdater(mainWindow);
@@ -875,6 +909,10 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', async () => {
+  if (feishuListener) {
+    await feishuListener.stop();
+    feishuListener = null;
+  }
   await killServer();
   if (process.platform !== 'darwin') {
     app.quit();
