@@ -13,7 +13,7 @@ interface Provider {
   id: number;
   name: string;
   base_url: string;
-  is_enabled: boolean;
+  is_active: number;
 }
 
 export function ApiKeyManagementCard() {
@@ -32,7 +32,7 @@ export function ApiKeyManagementCard() {
       .then(res => res.json())
       .then(data => {
         const providers = data.providers || [];
-        const enabled = providers.find((p: Provider) => p.is_enabled);
+        const enabled = providers.find((p: Provider) => p.is_active === 1);
         if (enabled) {
           setProvider(enabled);
           setUseCustom(true);
@@ -94,7 +94,7 @@ export function ApiKeyManagementCard() {
           api_key: apiKey,
           base_url: baseUrl,
           model_name: 'claude-opus-4-6',
-          is_enabled: true,
+          is_active: 1,
         }),
       });
 

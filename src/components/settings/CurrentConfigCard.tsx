@@ -10,7 +10,7 @@ interface Provider {
   name: string;
   base_url: string;
   model_name: string;
-  is_enabled: boolean;
+  is_active: number;
 }
 
 export function CurrentConfigCard() {
@@ -22,7 +22,7 @@ export function CurrentConfigCard() {
       .then(res => res.json())
       .then(data => {
         const providers = data.providers || [];
-        const enabled = providers.find((p: Provider) => p.is_enabled);
+        const enabled = providers.find((p: Provider) => p.is_active === 1);
         setProvider(enabled || null);
       })
       .catch(console.error);
