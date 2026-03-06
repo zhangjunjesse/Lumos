@@ -3,22 +3,22 @@
 import { useRef, useState, useCallback, useEffect, type KeyboardEvent, type FormEvent } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  AtIcon,
+  At,
   HelpCircleIcon,
-  ArrowDown01Icon,
-  ArrowUp02Icon,
-  CommandLineIcon,
-  PlusSignIcon,
-  Cancel01Icon,
-  Delete02Icon,
-  Coins01Icon,
-  FileZipIcon,
-  Stethoscope02Icon,
-  FileEditIcon,
+  ArrowDown01,
+  ArrowUp,
+  CommandIcon,
+  Add,
+  Cancel,
+  Delete,
+  Coins,
+  ZipIcon,
+  Stethoscope,
+  Edit,
   SearchList01Icon,
-  BrainIcon,
-  GlobalIcon,
-  StopIcon,
+  Brain,
+  Globe,
+  Stop,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -79,7 +79,7 @@ interface PopoverItem {
   immediate?: boolean;
   installedSource?: "agents" | "claude";
   source?: "global" | "project" | "plugin" | "installed";
-  icon?: typeof CommandLineIcon;
+  icon?: typeof CommandIcon;
 }
 
 interface CommandBadge {
@@ -102,14 +102,14 @@ const COMMAND_PROMPTS: Record<string, string> = {
 
 const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'help', value: '/help', description: 'Show available commands and tips', descriptionKey: 'messageInput.helpDesc', builtIn: true, immediate: true, icon: HelpCircleIcon },
-  { label: 'clear', value: '/clear', description: 'Clear conversation history', descriptionKey: 'messageInput.clearDesc', builtIn: true, immediate: true, icon: Delete02Icon },
-  { label: 'cost', value: '/cost', description: 'Show token usage statistics', descriptionKey: 'messageInput.costDesc', builtIn: true, immediate: true, icon: Coins01Icon },
-  { label: 'compact', value: '/compact', description: 'Compress conversation context', descriptionKey: 'messageInput.compactDesc', builtIn: true, icon: FileZipIcon },
-  { label: 'doctor', value: '/doctor', description: 'Diagnose project health', descriptionKey: 'messageInput.doctorDesc', builtIn: true, icon: Stethoscope02Icon },
-  { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', descriptionKey: 'messageInput.initDesc', builtIn: true, icon: FileEditIcon },
+  { label: 'clear', value: '/clear', description: 'Clear conversation history', descriptionKey: 'messageInput.clearDesc', builtIn: true, immediate: true, icon: Delete },
+  { label: 'cost', value: '/cost', description: 'Show token usage statistics', descriptionKey: 'messageInput.costDesc', builtIn: true, immediate: true, icon: Coins },
+  { label: 'compact', value: '/compact', description: 'Compress conversation context', descriptionKey: 'messageInput.compactDesc', builtIn: true, icon: ZipIcon },
+  { label: 'doctor', value: '/doctor', description: 'Diagnose project health', descriptionKey: 'messageInput.doctorDesc', builtIn: true, icon: Stethoscope },
+  { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', descriptionKey: 'messageInput.initDesc', builtIn: true, icon: Edit },
   { label: 'review', value: '/review', description: 'Review code quality', descriptionKey: 'messageInput.reviewDesc', builtIn: true, icon: SearchList01Icon },
-  { label: 'terminal-setup', value: '/terminal-setup', description: 'Configure terminal settings', descriptionKey: 'messageInput.terminalSetupDesc', builtIn: true, icon: CommandLineIcon },
-  { label: 'memory', value: '/memory', description: 'Edit project memory file', descriptionKey: 'messageInput.memoryDesc', builtIn: true, icon: BrainIcon },
+  { label: 'terminal-setup', value: '/terminal-setup', description: 'Configure terminal settings', descriptionKey: 'messageInput.terminalSetupDesc', builtIn: true, icon: CommandIcon },
+  { label: 'memory', value: '/memory', description: 'Edit project memory file', descriptionKey: 'messageInput.memoryDesc', builtIn: true, icon: Brain },
 ];
 
 interface ModeOption {
@@ -180,9 +180,9 @@ function FileAwareSubmitButton({
       className="rounded-full"
     >
       {isStreaming ? (
-        <HugeiconsIcon icon={StopIcon} className="size-4" />
+        <HugeiconsIcon icon={Stop} className="size-4" />
       ) : (
-        <HugeiconsIcon icon={ArrowUp02Icon} className="h-4 w-4" strokeWidth={2} />
+        <HugeiconsIcon icon={ArrowUp} className="h-4 w-4" strokeWidth={2} />
       )}
     </PromptInputSubmit>
   );
@@ -200,7 +200,7 @@ function AttachFileButton() {
       onClick={() => attachments.openFileDialog()}
       tooltip={t('messageInput.attachFiles')}
     >
-      <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+      <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
     </PromptInputButton>
   );
 }
@@ -312,7 +312,7 @@ function FileAttachmentsCapsules() {
               onClick={() => attachments.remove(file.id)}
               className="ml-0.5 rounded-full p-0.5 hover:bg-emerald-500/20 transition-colors"
             >
-              <HugeiconsIcon icon={Cancel01Icon} className="h-3 w-3" />
+              <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
             </button>
           </span>
         );
@@ -937,15 +937,15 @@ export function MessageInput({
                 onMouseEnter={() => setSelectedIndex(idx)}
               >
                 {popoverMode === 'file' ? (
-                  <HugeiconsIcon icon={AtIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <HugeiconsIcon icon={At} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : item.builtIn && item.icon ? (
                   <HugeiconsIcon icon={item.icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : !item.builtIn && item.source === 'project' ? (
-                  <HugeiconsIcon icon={FileEditIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <HugeiconsIcon icon={Edit} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : !item.builtIn ? (
-                  <HugeiconsIcon icon={GlobalIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <HugeiconsIcon icon={Globe} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 ) : (
-                  <HugeiconsIcon icon={CommandLineIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <HugeiconsIcon icon={CommandIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
                 <span className="font-mono text-xs truncate">{item.label}</span>
                 {(item.descriptionKey || item.description) && (
@@ -1052,7 +1052,7 @@ export function MessageInput({
                       {(aiSuggestions.length > 0 || aiSearchLoading) && (
                         <>
                           <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                            <HugeiconsIcon icon={BrainIcon} className="h-3.5 w-3.5" />
+                            <HugeiconsIcon icon={Brain} className="h-3.5 w-3.5" />
                             {t('messageInput.aiSuggested')}
                             {aiSearchLoading && (
                               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -1143,7 +1143,7 @@ export function MessageInput({
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
                     <span className="text-xs font-mono">{currentModelOption.label}</span>
-                    <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
+                    <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
                   {modelMenuOpen && (

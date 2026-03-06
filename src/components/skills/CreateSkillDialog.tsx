@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon, GlobeIcon, FolderOpenIcon } from "@hugeicons/core-free-icons";
+import { Loading, Globe, FolderOpen } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 import { cn } from "@/lib/utils";
 
@@ -138,7 +138,7 @@ export function CreateSkillDialog({
                     : "border-border hover:bg-accent"
                 )}
               >
-                <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={FolderOpen} className="h-4 w-4" />
                 {t('skills.project')}
               </button>
               <button
@@ -151,7 +151,7 @@ export function CreateSkillDialog({
                     : "border-border hover:bg-accent"
                 )}
               >
-                <HugeiconsIcon icon={GlobeIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={Globe} className="h-4 w-4" />
                 {t('skills.global')}
               </button>
             </div>
@@ -196,7 +196,7 @@ export function CreateSkillDialog({
             {t('common.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={creating} className="gap-2">
-            {creating && <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />}
+            {creating && <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />}
             {t('skills.createSkill')}
           </Button>
         </DialogFooter>

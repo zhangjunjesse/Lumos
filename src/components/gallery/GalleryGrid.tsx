@@ -1,7 +1,7 @@
 'use client';
 
 import { HugeiconsIcon } from '@hugeicons/react';
-import { PaintBrush01Icon, FavouriteIcon } from '@hugeicons/core-free-icons';
+import { Paintbrush, Favorite } from '@hugeicons/core-free-icons';
 
 export interface GalleryItem {
   id: string;
@@ -64,7 +64,7 @@ export function GalleryGrid({ items, onSelect }: GalleryGridProps) {
                 />
               ) : (
                 <div className="flex aspect-square items-center justify-center">
-                  <HugeiconsIcon icon={PaintBrush01Icon} className="h-8 w-8 text-muted-foreground/30" />
+                  <HugeiconsIcon icon={Paintbrush} className="h-8 w-8 text-muted-foreground/30" />
                 </div>
               )}
               {item.images.length > 1 && (
@@ -74,7 +74,7 @@ export function GalleryGrid({ items, onSelect }: GalleryGridProps) {
               )}
               {item.favorited && (
                 <span className="absolute top-1.5 left-1.5">
-                  <HugeiconsIcon icon={FavouriteIcon} className="h-4 w-4 text-red-500 drop-shadow" fill="currentColor" />
+                  <HugeiconsIcon icon={Favorite} className="h-4 w-4 text-red-500 drop-shadow" fill="currentColor" />
                 </span>
               )}
             </div>

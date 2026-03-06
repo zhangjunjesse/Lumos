@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ReloadIcon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { Reload, Loading } from "@hugeicons/core-free-icons";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useTranslation } from "@/hooks/useTranslation";
 import { SUPPORTED_LOCALES, type Locale } from "@/i18n";
@@ -60,9 +60,9 @@ function UpdateCard() {
             className="gap-2"
           >
             {checking ? (
-              <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 animate-spin" />
+              <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <HugeiconsIcon icon={ReloadIcon} className="h-3.5 w-3.5" />
+              <HugeiconsIcon icon={Reload} className="h-3.5 w-3.5" />
             )}
             {checking ? t('settings.checking') : t('settings.checkForUpdates')}
           </Button>

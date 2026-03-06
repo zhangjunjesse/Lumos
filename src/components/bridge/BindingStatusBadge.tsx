@@ -1,0 +1,56 @@
+"use client";
+
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import type { BindingStatus } from "./types";
+
+export interface BindingStatusBadgeProps {
+  status: BindingStatus;
+  onClick?: () => void;
+  className?: string;
+}
+
+const badgeConfig = {
+  active: {
+    label: "已绑定",
+    className: "bg-[#10B981] text-white hover:bg-[#059669] cursor-pointer",
+  },
+  inactive: {
+    label: "已暂停",
+    className: "bg-[#F59E0B] text-white hover:bg-[#D97706] cursor-pointer",
+  },
+  expired: {
+    label: "已过期",
+    className: "bg-gray-400 text-white",
+  },
+};
+
+export function BindingStatusBadge({ status, onClick, className }: BindingStatusBadgeProps) {
+  const config = badgeConfig[status];
+
+  return (
+    <Badge
+      className={cn(
+        "h-7 px-3 rounded-full gap-1.5 transition-all",
+        config.className,
+        onClick && "hover:scale-105",
+        className
+      )}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      aria-label={onClick ? `${config.label}，点击查看详情` : config.label}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      } : undefined}
+    >
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+      </svg>
+      <span className="text-sm font-medium">{config.label}</span>
+    </Badge>
+  );
+}

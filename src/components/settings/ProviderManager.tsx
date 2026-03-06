@@ -26,12 +26,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Loading02Icon,
+  Loading,
   PencilEdit01Icon,
-  ArrowDown01Icon,
-  ArrowUp01Icon,
+  ArrowDown01,
+  ArrowUp01,
   ServerStack01Icon,
-  Settings02Icon,
+  Settings2,
 } from "@hugeicons/core-free-icons";
 import { ProviderForm } from "./ProviderForm";
 import type { ProviderFormData } from "./ProviderForm";
@@ -106,7 +106,7 @@ const QUICK_PRESETS: QuickPreset[] = [
     name: "Custom API",
     description: "Custom API endpoint — fill in all fields",
     descriptionZh: "自定义 API 端点 — 填写所有信息",
-    icon: <HugeiconsIcon icon={Settings02Icon} className="h-[18px] w-[18px] text-muted-foreground" />,
+    icon: <HugeiconsIcon icon={Settings2} className="h-[18px] w-[18px] text-muted-foreground" />,
     provider_type: "custom",
     base_url: "",
     extra_env: "{}",
@@ -158,8 +158,8 @@ const QUICK_PRESETS: QuickPreset[] = [
   },
   {
     key: "glm-global",
-    name: "GLM (Global)",
-    description: "Zhipu GLM Code Plan — Global region",
+    name: "GLM (Globe)",
+    description: "Zhipu GLM Code Plan — Globe region",
     descriptionZh: "智谱 GLM 编程套餐 — 国际区",
     icon: <Zhipu size={18} />,
     provider_type: "custom",
@@ -202,8 +202,8 @@ const QUICK_PRESETS: QuickPreset[] = [
   },
   {
     key: "minimax-global",
-    name: "MiniMax (Global)",
-    description: "MiniMax Code Plan — Global region",
+    name: "MiniMax (Globe)",
+    description: "MiniMax Code Plan — Globe region",
     descriptionZh: "MiniMax 编程套餐 — 国际区",
     icon: <Minimax size={18} />,
     provider_type: "custom",
@@ -432,7 +432,7 @@ function PresetConnectDialog({
                 onClick={() => setShowAdvanced(!showAdvanced)}
               >
                 <HugeiconsIcon
-                  icon={showAdvanced ? ArrowUp01Icon : ArrowDown01Icon}
+                  icon={showAdvanced ? ArrowUp01 : ArrowDown01}
                   className="h-3 w-3"
                 />
                 {t('provider.advancedOptions')}
@@ -463,7 +463,7 @@ function PresetConnectDialog({
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={saving} className="gap-2">
-              {saving && <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />}
+              {saving && <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />}
               {saving ? t('provider.saving') : t('provider.connect')}
             </Button>
           </DialogFooter>
@@ -621,7 +621,7 @@ export function ProviderManager() {
       {/* Loading */}
       {loading && (
         <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-          <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+          <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
           <p className="text-sm">{t('common.loading')}</p>
         </div>
       )}

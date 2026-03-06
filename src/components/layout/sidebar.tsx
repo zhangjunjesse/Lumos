@@ -15,19 +15,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspacePicker } from "@/components/workspace/workspace-picker";
 import { SidebarNavItem } from "./sidebar-nav-item";
 import {
-  SparklesIcon,
+  Sparkles,
   DashboardSquare01Icon,
-  Clock01Icon,
-  StarIcon,
-  Delete02Icon,
-  BookOpen01Icon,
-  PuzzleIcon,
-  Settings02Icon,
+  Clock1,
+  Star,
+  Delete,
+  BookOpen,
+  Puzzle,
+  Settings2,
   SidebarLeft01Icon,
   SidebarRight01Icon,
-  Moon02Icon,
-  Sun02Icon,
-  Globe02Icon,
+  Moon,
+  Sun,
+  Globe,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -42,11 +42,11 @@ const mainNavItems = [
   { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, comingSoon: true },
 ];
 
-const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof StarIcon }> = [];
+const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];
 
 const bottomNavItems = [
-  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen01Icon, comingSoon: true },
-  { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: PuzzleIcon },
+  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen, comingSoon: true },
+  { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: Puzzle },
 ];
 
 export function Sidebar({ onOpenAssistant }: SidebarProps) {
@@ -180,7 +180,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
       {/* Bottom controls */}
       <div className="border-t border-border/50 px-2 py-2 space-y-0.5">
         <SidebarNavItem
-          icon={Settings02Icon}
+          icon={Settings2}
           label={t('sidebar.settings')}
           href="/settings"
           expanded={expanded}
@@ -198,7 +198,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
                 onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               >
                 <HugeiconsIcon
-                  icon={theme === "dark" ? Sun02Icon : Moon02Icon}
+                  icon={theme === "dark" ? Sun : Moon}
                   className="h-4 w-4"
                 />
               </Button>

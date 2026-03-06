@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Delete02Icon, PencilIcon, ServerStack01Icon, Wifi01Icon, GlobeIcon } from "@hugeicons/core-free-icons";
+import { Delete, Pencil, ServerStack01Icon, Wifi, Globe } from "@hugeicons/core-free-icons";
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 
@@ -20,9 +20,9 @@ function getServerTypeInfo(server: MCPServer) {
   const type = server.type || 'stdio';
   switch (type) {
     case 'sse':
-      return { label: 'SSE', icon: Wifi01Icon, color: 'text-blue-500' };
+      return { label: 'SSE', icon: Wifi, color: 'text-blue-500' };
     case 'http':
-      return { label: 'HTTP', icon: GlobeIcon, color: 'text-green-500' };
+      return { label: 'HTTP', icon: Globe, color: 'text-green-500' };
     default:
       return { label: 'stdio', icon: ServerStack01Icon, color: 'text-muted-foreground' };
   }
@@ -93,7 +93,7 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
                   className="h-8 w-8"
                   onClick={() => onEdit(name, server)}
                 >
-                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Pencil} className="h-3.5 w-3.5" />
                 </Button>
               </>
             ) : (
@@ -104,7 +104,7 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
                   className="h-8 w-8"
                   onClick={() => onEdit(name, server)}
                 >
-                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Pencil} className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -112,7 +112,7 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
                   className="h-8 w-8 text-destructive hover:text-destructive"
                   onClick={() => onDelete(name)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Delete} className="h-3.5 w-3.5" />
                 </Button>
               </>
             )}

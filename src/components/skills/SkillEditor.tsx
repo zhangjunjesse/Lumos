@@ -6,13 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  FloppyDiskIcon,
-  Delete02Icon,
-  EyeIcon,
-  Edit02Icon,
-  GlobeIcon,
-  FolderOpenIcon,
-  Loading02Icon,
+  Save,
+  Delete,
+  Eye,
+  Edit,
+  Globe,
+  FolderOpen,
+  Loading,
   LayoutTwoColumnIcon,
 } from "@hugeicons/core-free-icons";
 import {
@@ -131,11 +131,11 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
             )}
           >
             {skill.source === "global" ? (
-              <HugeiconsIcon icon={GlobeIcon} className="h-2.5 w-2.5 mr-0.5" />
+              <HugeiconsIcon icon={Globe} className="h-2.5 w-2.5 mr-0.5" />
             ) : skill.source === "installed" ? (
-              <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
+              <HugeiconsIcon icon={FolderOpen} className="h-2.5 w-2.5 mr-0.5" />
             ) : (
-              <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
+              <HugeiconsIcon icon={FolderOpen} className="h-2.5 w-2.5 mr-0.5" />
             )}
             {skill.source === "installed" && skill.installedSource
               ? `installed:${skill.installedSource}`
@@ -152,7 +152,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
                 size="icon-xs"
                 onClick={() => setViewMode("edit")}
               >
-                <HugeiconsIcon icon={Edit02Icon} className="h-3 w-3" />
+                <HugeiconsIcon icon={Edit} className="h-3 w-3" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('skills.edit')}</TooltipContent>
@@ -164,7 +164,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
                 size="icon-xs"
                 onClick={() => setViewMode("preview")}
               >
-                <HugeiconsIcon icon={EyeIcon} className="h-3 w-3" />
+                <HugeiconsIcon icon={Eye} className="h-3 w-3" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('skills.preview')}</TooltipContent>
@@ -192,9 +192,9 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
             className="gap-1"
           >
             {saving ? (
-              <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+              <HugeiconsIcon icon={Loading} className="h-3 w-3 animate-spin" />
             ) : (
-              <HugeiconsIcon icon={FloppyDiskIcon} className="h-3 w-3" />
+              <HugeiconsIcon icon={Save} className="h-3 w-3" />
             )}
             {saving ? "Saving" : saved ? t('skills.saved') : t('skills.save')}
           </Button>
@@ -205,7 +205,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
             size="icon-xs"
             onClick={handleDelete}
           >
-            <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
+            <HugeiconsIcon icon={Delete} className="h-3 w-3" />
           </Button>
         </div>
       </div>

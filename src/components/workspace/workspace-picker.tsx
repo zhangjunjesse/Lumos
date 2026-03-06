@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  FolderOpenIcon,
+  FolderOpen,
   FolderAddIcon,
   PencilEdit01Icon,
-  Delete02Icon,
+  Delete,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -173,7 +173,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
             )}
             onClick={() => activate(ws.id)}
           >
-            <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <HugeiconsIcon icon={FolderOpen} className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">{ws.name}</span>
           </button>
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -189,7 +189,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
               className="rounded p-0.5 hover:bg-destructive/20 cursor-pointer"
               onClick={(e) => { e.stopPropagation(); deleteWorkspace(ws.id); }}
             >
-              <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3 text-muted-foreground" />
+              <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
             </button>
           </div>
         </div>

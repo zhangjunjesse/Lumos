@@ -6,15 +6,15 @@ import { oneDark, vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/p
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
-  Copy01Icon,
-  Tick01Icon,
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  SourceCodeIcon,
-  CommandLineIcon,
-  CodeIcon,
-  File01Icon,
-  HashtagIcon,
+  Copy,
+  Tick,
+  ArrowDown01,
+  ArrowUp01,
+  SquareCode,
+  CommandIcon,
+  Code,
+  File,
+  Hashtag,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -27,12 +27,12 @@ const TERMINAL_LANGUAGES = new Set(['bash', 'sh', 'shell', 'terminal', 'zsh', 'c
 
 function getLanguageIcon(language: string): IconSvgElement {
   const lower = language.toLowerCase();
-  if (TERMINAL_LANGUAGES.has(lower)) return CommandLineIcon;
-  if (['typescript', 'tsx', 'javascript', 'jsx'].includes(lower)) return CodeIcon;
-  if (['json', 'yaml', 'yml', 'toml', 'xml'].includes(lower)) return CodeIcon;
-  if (['python', 'ruby', 'go', 'rust', 'java', 'c', 'cpp'].includes(lower)) return HashtagIcon;
-  if (['css', 'scss', 'html'].includes(lower)) return File01Icon;
-  return SourceCodeIcon;
+  if (TERMINAL_LANGUAGES.has(lower)) return CommandIcon;
+  if (['typescript', 'tsx', 'javascript', 'jsx'].includes(lower)) return Code;
+  if (['json', 'yaml', 'yml', 'toml', 'xml'].includes(lower)) return Code;
+  if (['python', 'ruby', 'go', 'rust', 'java', 'c', 'cpp'].includes(lower)) return Hashtag;
+  if (['css', 'scss', 'html'].includes(lower)) return File;
+  return SquareCode;
 }
 
 interface CodeBlockProps {
@@ -155,12 +155,12 @@ export function CodeBlock({
               >
                 {copied ? (
                   <>
-                    <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
+                    <HugeiconsIcon icon={Tick} className="h-3 w-3" />
                     <span>{t('codeBlock.copied')}</span>
                   </>
                 ) : (
                   <>
-                    <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
+                    <HugeiconsIcon icon={Copy} className="h-3 w-3" />
                     <span>{t('codeBlock.copy')}</span>
                   </>
                 )}
@@ -176,12 +176,12 @@ export function CodeBlock({
               >
                 {copiedMarkdown ? (
                   <>
-                    <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3" />
+                    <HugeiconsIcon icon={Tick} className="h-3 w-3" />
                     <span>{t('codeBlock.copied')}</span>
                   </>
                 ) : (
                   <>
-                    <HugeiconsIcon icon={SourceCodeIcon} className="h-3 w-3" />
+                    <HugeiconsIcon icon={SquareCode} className="h-3 w-3" />
                     <span>{t('codeBlock.markdown')}</span>
                   </>
                 )}
@@ -251,12 +251,12 @@ export function CodeBlock({
             >
               {expanded ? (
                 <>
-                  <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
+                  <HugeiconsIcon icon={ArrowUp01} className="h-3 w-3" />
                   <span>{t('codeBlock.collapse')}</span>
                 </>
               ) : (
                 <>
-                  <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
+                  <HugeiconsIcon icon={ArrowDown01} className="h-3 w-3" />
                   <span>Expand all {totalLines} lines</span>
                 </>
               )}

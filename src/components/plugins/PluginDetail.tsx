@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, ZapIcon } from "@hugeicons/core-free-icons";
+import { Cancel, Zap } from "@hugeicons/core-free-icons";
 import type { SkillInfo } from './PluginCard';
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -25,10 +25,10 @@ export function PluginDetail({ plugin, onClose }: PluginDetailProps) {
       <div className="flex items-start justify-between mb-3">
         <div>
           <div className="flex items-center gap-2">
-            <HugeiconsIcon icon={ZapIcon} className="h-4 w-4 text-muted-foreground" />
+            <HugeiconsIcon icon={Zap} className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-lg font-semibold">/{displayName}</h3>
             <Badge variant={isProject ? 'secondary' : 'outline'}>
-              {isProject ? 'Project' : 'Global'}
+              {isProject ? 'Project' : 'Globe'}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
@@ -36,7 +36,7 @@ export function PluginDetail({ plugin, onClose }: PluginDetailProps) {
           </p>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose}>
-          <HugeiconsIcon icon={Cancel01Icon} className="h-4 w-4" />
+          <HugeiconsIcon icon={Cancel} className="h-4 w-4" />
         </Button>
       </div>
 

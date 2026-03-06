@@ -6,14 +6,14 @@ import { useTheme } from "next-themes";
 import { useCallback, useSyncExternalStore } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Message02Icon,
-  GridIcon,
-  Image01Icon,
-  Settings02Icon,
-  Moon02Icon,
-  Sun02Icon,
-  File02Icon,
-  BookOpen01Icon,
+  Message,
+  Grid,
+  Image,
+  Settings2,
+  Moon,
+  Sun,
+  File,
+  BookOpen,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,12 +35,12 @@ interface NavRailProps {
 }
 
 const navItems = [
-  { href: "/documents", label: "Documents", icon: File02Icon },
-  { href: "/chat", label: "Chats", icon: Message02Icon },
-  { href: "/knowledge", label: "Knowledge", icon: BookOpen01Icon },
-  { href: "/extensions", label: "Extensions", icon: GridIcon },
-  { href: "/gallery", label: "Gallery", icon: Image01Icon },
-  { href: "/settings", label: "Settings", icon: Settings02Icon },
+  { href: "/documents", label: "Documents", icon: File },
+  { href: "/chat", label: "Chats", icon: Message },
+  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/extensions", label: "Extensions", icon: Grid },
+  { href: "/gallery", label: "Gallery", icon: Image },
+  { href: "/settings", label: "Settings", icon: Settings2 },
 ] as const;
 
 export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermissionsActive }: NavRailProps) {
@@ -150,9 +150,9 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
                 className="h-8 w-8"
               >
                 {theme === "dark" ? (
-                  <HugeiconsIcon icon={Sun02Icon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Sun} className="h-4 w-4" />
                 ) : (
-                  <HugeiconsIcon icon={Moon02Icon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Moon} className="h-4 w-4" />
                 )}
                 <span className="sr-only">{t('nav.toggleTheme')}</span>
               </Button>

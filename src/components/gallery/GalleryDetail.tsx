@@ -4,13 +4,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Download04Icon,
-  Delete02Icon,
-  PaintBrush01Icon,
-  Message02Icon,
-  ArrowLeft01Icon,
-  ArrowRight01Icon,
-  FavouriteIcon,
+  Download,
+  Delete,
+  Paintbrush,
+  Message,
+  ArrowLeft,
+  ArrowRight,
+  Favorite,
 } from '@hugeicons/core-free-icons';
 import { cn, parseDBDate } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -151,7 +151,7 @@ export function GalleryDetail({
                       onClick={() => setCurrentImageIndex((i) => (i > 0 ? i - 1 : item.images.length - 1))}
                       className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
                     >
-                      <HugeiconsIcon icon={ArrowLeft01Icon} className="h-5 w-5" />
+                      <HugeiconsIcon icon={ArrowLeft} className="h-5 w-5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{t('tooltip.previousImage' as TranslationKey)}</TooltipContent>
@@ -163,7 +163,7 @@ export function GalleryDetail({
                       onClick={() => setCurrentImageIndex((i) => (i < item.images.length - 1 ? i + 1 : 0))}
                       className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
                     >
-                      <HugeiconsIcon icon={ArrowRight01Icon} className="h-5 w-5" />
+                      <HugeiconsIcon icon={ArrowRight} className="h-5 w-5" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{t('tooltip.nextImage' as TranslationKey)}</TooltipContent>
@@ -191,7 +191,7 @@ export function GalleryDetail({
                   )}
                 >
                   <HugeiconsIcon
-                    icon={FavouriteIcon}
+                    icon={Favorite}
                     className="h-5 w-5"
                     fill={item.favorited ? 'currentColor' : 'none'}
                   />
@@ -219,7 +219,7 @@ export function GalleryDetail({
             <div className="flex items-center gap-1.5 flex-wrap">
               {item.model && (
                 <Badge variant="secondary" className="text-[10px] gap-1">
-                  <HugeiconsIcon icon={PaintBrush01Icon} className="h-3 w-3" />
+                  <HugeiconsIcon icon={Paintbrush} className="h-3 w-3" />
                   {item.model}
                 </Badge>
               )}
@@ -274,12 +274,12 @@ export function GalleryDetail({
                     router.push(`/chat/${item.session_id}`);
                   }}
                 >
-                  <HugeiconsIcon icon={Message02Icon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Message} className="h-3.5 w-3.5" />
                   {t('gallery.openChat' as TranslationKey)}
                 </Button>
               )}
               <Button variant="outline" size="sm" onClick={handleDownload}>
-                <HugeiconsIcon icon={Download04Icon} className="h-3.5 w-3.5" />
+                <HugeiconsIcon icon={Download} className="h-3.5 w-3.5" />
                 {t('gallery.download' as TranslationKey)}
               </Button>
               <div className="ml-auto">
@@ -288,7 +288,7 @@ export function GalleryDetail({
                   size="sm"
                   onClick={handleDelete}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Delete} className="h-3.5 w-3.5" />
                   {confirmDelete
                     ? t('gallery.confirmDelete' as TranslationKey)
                     : t('gallery.delete' as TranslationKey)}

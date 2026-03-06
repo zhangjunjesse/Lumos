@@ -8,12 +8,12 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  SparklesIcon,
-  Cancel01Icon,
-  PinIcon,
-  File02Icon,
-  Message02Icon,
-  ArrowUp01Icon,
+  Sparkles,
+  Cancel,
+  Pin,
+  File,
+  Message,
+  ArrowUp01,
 } from "@hugeicons/core-free-icons";
 import { AssistantMessage } from "./assistant-message";
 
@@ -180,23 +180,23 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
       >
         {/* Header */}
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <HugeiconsIcon icon={SparklesIcon} className="h-4 w-4 text-primary" />
+          <HugeiconsIcon icon={Sparkles} className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">{t('aiAssistant.title')}</span>
           <div className="flex-1" />
           {inConversation && (
             <>
               <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={pinConversation}>
-                <HugeiconsIcon icon={PinIcon} className="h-3.5 w-3.5" />
+                <HugeiconsIcon icon={Pin} className="h-3.5 w-3.5" />
                 Save
               </Button>
               <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs">
-                <HugeiconsIcon icon={File02Icon} className="h-3.5 w-3.5" />
+                <HugeiconsIcon icon={File} className="h-3.5 w-3.5" />
                 To Doc
               </Button>
             </>
           )}
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
-            <HugeiconsIcon icon={Cancel01Icon} className="h-4 w-4" />
+            <HugeiconsIcon icon={Cancel} className="h-4 w-4" />
           </Button>
         </div>
 
@@ -225,7 +225,7 @@ export function AssistantModal({ onClose }: AssistantModalProps) {
               disabled={!input.trim() || streaming}
               onClick={handleSend}
             >
-              <HugeiconsIcon icon={ArrowUp01Icon} className="h-4 w-4" />
+              <HugeiconsIcon icon={ArrowUp01} className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -262,7 +262,7 @@ function IdleBody({
                   router.push(`/conversations/${c.id}`);
                 }}
               >
-                <HugeiconsIcon icon={Message02Icon} className="h-3.5 w-3.5 text-muted-foreground" />
+                <HugeiconsIcon icon={Message} className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="truncate">{c.title || "Untitled"}</span>
                 <span className="ml-auto text-xs text-muted-foreground">
                   {formatRelative(c.updated_at)}

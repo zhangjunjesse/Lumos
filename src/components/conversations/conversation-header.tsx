@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
 interface ConversationHeaderProps {
@@ -34,7 +34,7 @@ export function ConversationHeader({
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onBack}>
-        <HugeiconsIcon icon={ArrowLeft01Icon} className="h-4 w-4" />
+        <HugeiconsIcon icon={ArrowLeft} className="h-4 w-4" />
       </Button>
 
       {editing ? (

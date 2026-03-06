@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search01Icon } from "@hugeicons/core-free-icons";
+import { Search } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { MessageInput } from "@/components/chat/MessageInput";
 
@@ -264,7 +264,7 @@ export default function LibraryDemoV2Page() {
       <div className="h-14 border-b border-border flex items-center px-4 gap-3">
         <div className="flex-1 max-w-2xl">
           <div className="relative">
-            <HugeiconsIcon icon={Search01Icon} className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <HugeiconsIcon icon={Search} className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
               placeholder="搜索资料..."

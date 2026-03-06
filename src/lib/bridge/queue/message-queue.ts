@@ -19,7 +19,7 @@ export class MessageQueue {
    * Enqueue a task with rate limiting
    */
   async enqueue<T>(task: () => Promise<T>): Promise<T> {
-    return this.queue.add(task);
+    return this.queue.add(task) as Promise<T>;
   }
 
   /**

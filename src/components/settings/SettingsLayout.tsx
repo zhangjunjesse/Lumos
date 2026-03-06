@@ -4,10 +4,10 @@ import { useState, useCallback, useSyncExternalStore } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
-  Settings02Icon,
-  CodeIcon,
+  Settings2,
+  Code,
 } from "@hugeicons/core-free-icons";
-import { Plug01Icon, Analytics02Icon } from "@hugeicons/core-free-icons";
+import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { GeneralSection } from "./GeneralSection";
 import { ProviderManager } from "./ProviderManager";
@@ -25,10 +25,10 @@ interface SidebarItem {
 }
 
 const sidebarItems: SidebarItem[] = [
-  { id: "general", label: "General", icon: Settings02Icon },
-  { id: "providers", label: "Providers", icon: Plug01Icon },
-  { id: "cli", label: "Claude CLI", icon: CodeIcon },
-  { id: "usage", label: "Usage", icon: Analytics02Icon },
+  { id: "general", label: "General", icon: Settings2 },
+  { id: "providers", label: "Providers", icon: Plug },
+  { id: "cli", label: "Claude CLI", icon: Code },
+  { id: "usage", label: "Usage", icon: Analytics },
 ];
 
 function getSectionFromHash(): Section {

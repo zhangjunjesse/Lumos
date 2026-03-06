@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft, ArrowRight } from "@hugeicons/core-free-icons";
 import {
   Dialog,
   DialogContent,
@@ -68,14 +68,14 @@ export function ImageLightbox({ images, initialIndex, open, onOpenChange }: Imag
                 onClick={goToPrev}
                 className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 transition"
               >
-                <HugeiconsIcon icon={ArrowLeft01Icon} className="h-6 w-6" />
+                <HugeiconsIcon icon={ArrowLeft} className="h-6 w-6" />
               </button>
               <button
                 type="button"
                 onClick={goToNext}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 transition"
               >
-                <HugeiconsIcon icon={ArrowRight01Icon} className="h-6 w-6" />
+                <HugeiconsIcon icon={ArrowRight} className="h-6 w-6" />
               </button>
               <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-white/70 text-sm">
                 {currentIndex + 1} / {images.length}

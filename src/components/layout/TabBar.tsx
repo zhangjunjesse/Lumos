@@ -12,15 +12,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Cancel01Icon,
-  Add01Icon,
-  FolderOpenIcon,
-  File02Icon,
-  Settings02Icon,
-  BookOpen01Icon,
-  PuzzleIcon,
-  PinIcon,
-  PanelRightCloseIcon,
+  Cancel,
+  Add,
+  FolderOpen,
+  File,
+  Settings2,
+  BookOpen,
+  Puzzle,
+  Pin,
+  PanelRightClose,
 } from '@hugeicons/core-free-icons';
 import { cn } from '@/lib/utils';
 import type { TranslationKey } from '@/i18n';
@@ -45,14 +45,14 @@ import { CSS } from '@dnd-kit/utilities';
 // Tab type configuration (icons and closable state)
 const TAB_TYPE_CONFIG: Record<
   TabType,
-  { i18nKey: TranslationKey; icon: typeof FolderOpenIcon; closable: boolean }
+  { i18nKey: TranslationKey; icon: typeof FolderOpen; closable: boolean }
 > = {
-  'file-tree': { i18nKey: 'tab.fileTree', icon: FolderOpenIcon, closable: false },
-  'file-preview': { i18nKey: 'tab.filePreview', icon: File02Icon, closable: true },
-  'feishu-doc': { i18nKey: 'tab.feishuDoc', icon: File02Icon, closable: true },
-  settings: { i18nKey: 'tab.settings', icon: Settings02Icon, closable: true },
-  knowledge: { i18nKey: 'tab.knowledge', icon: BookOpen01Icon, closable: true },
-  plugins: { i18nKey: 'tab.plugins', icon: PuzzleIcon, closable: true },
+  'file-tree': { i18nKey: 'tab.fileTree', icon: FolderOpen, closable: false },
+  'file-preview': { i18nKey: 'tab.filePreview', icon: File, closable: true },
+  'feishu-doc': { i18nKey: 'tab.feishuDoc', icon: File, closable: true },
+  settings: { i18nKey: 'tab.settings', icon: Settings2, closable: true },
+  knowledge: { i18nKey: 'tab.knowledge', icon: BookOpen, closable: true },
+  plugins: { i18nKey: 'tab.plugins', icon: Puzzle, closable: true },
 };
 
 // Pixels to move before drag starts (prevents accidental drags)
@@ -132,7 +132,7 @@ export function TabBar() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon-sm" className="shrink-0">
-            <HugeiconsIcon icon={Add01Icon} className="h-4 w-4" />
+            <HugeiconsIcon icon={Add} className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -157,7 +157,7 @@ export function TabBar() {
         onClick={() => setContentPanelOpen(false)}
         title={t('contentPanel.closePanel')}
       >
-        <HugeiconsIcon icon={PanelRightCloseIcon} className="h-4 w-4" />
+        <HugeiconsIcon icon={PanelRightClose} className="h-4 w-4" />
       </Button>
     </div>
   );
@@ -218,7 +218,7 @@ function SortableTabItem({ tab, active, onSelect, onClose, onPin }: TabItemProps
           className="ml-1 h-4 w-4 p-0"
           title="Pin tab"
         >
-          <HugeiconsIcon icon={PinIcon} className="h-3 w-3" />
+          <HugeiconsIcon icon={Pin} className="h-3 w-3" />
         </Button>
       ) : tab.closable ? (
         // 持久标签显示关闭按钮
@@ -231,7 +231,7 @@ function SortableTabItem({ tab, active, onSelect, onClose, onPin }: TabItemProps
           }}
           className="ml-1 h-4 w-4 p-0"
         >
-          <HugeiconsIcon icon={Cancel01Icon} className="h-3 w-3" />
+          <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
         </Button>
       ) : null}
     </div>

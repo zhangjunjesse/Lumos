@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import { Delete } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { cn, parseDBDate } from "@/lib/utils";
 import type { TaskItem, TaskStatus } from "@/types";
@@ -133,7 +133,7 @@ export function TaskCard({ task, onUpdate, onDelete }: TaskCardProps) {
           onClick={() => onDelete(task.id)}
           className="shrink-0 text-muted-foreground hover:text-destructive"
         >
-          <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
+          <HugeiconsIcon icon={Delete} className="h-3 w-3" />
           <span className="sr-only">Delete task</span>
         </Button>
       )}

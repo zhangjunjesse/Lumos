@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { PlusSignIcon, ListViewIcon, CodeIcon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { Add, ListVideo, Code, Loading } from "@hugeicons/core-free-icons";
 import { McpServerList } from "@/components/plugins/McpServerList";
 import { McpServerEditor } from "@/components/plugins/McpServerEditor";
 import { ConfigEditor } from "@/components/plugins/ConfigEditor";
@@ -164,7 +164,7 @@ export function McpManager() {
           </p>
         </div>
         <Button size="sm" className="gap-1" onClick={handleAdd}>
-          <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
           {t('mcp.addServer')}
         </Button>
       </div>
@@ -178,11 +178,11 @@ export function McpManager() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as "list" | "json")}>
         <TabsList>
           <TabsTrigger value="list" className="gap-1.5">
-            <HugeiconsIcon icon={ListViewIcon} className="h-3.5 w-3.5" />
+            <HugeiconsIcon icon={ListVideo} className="h-3.5 w-3.5" />
             {t('mcp.listTab')}
           </TabsTrigger>
           <TabsTrigger value="json" className="gap-1.5">
-            <HugeiconsIcon icon={CodeIcon} className="h-3.5 w-3.5" />
+            <HugeiconsIcon icon={Code} className="h-3.5 w-3.5" />
             {t('mcp.jsonTab')}
           </TabsTrigger>
         </TabsList>
@@ -190,7 +190,7 @@ export function McpManager() {
         <TabsContent value="list" className="mt-4">
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
-              <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+              <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
               <p className="text-sm">{t('mcp.loadingServers')}</p>
             </div>
           ) : (

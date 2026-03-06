@@ -11,11 +11,11 @@ import {
 import { cn } from "@/lib/utils";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Folder01Icon,
-  FolderOpenIcon,
-  File01Icon,
-  ArrowRight01Icon,
-  PlusSignIcon,
+  Folder,
+  FolderOpen,
+  File,
+  ArrowRight,
+  Add,
 } from "@hugeicons/core-free-icons";
 import {
   createContext,
@@ -157,7 +157,7 @@ export const FileTreeFolder = ({
                 onClick={(e) => e.stopPropagation()}
               >
                 <HugeiconsIcon
-                  icon={ArrowRight01Icon}
+                  icon={ArrowRight}
                   className={cn(
                     "size-4 text-muted-foreground transition-transform",
                     isExpanded && "rotate-90"
@@ -167,9 +167,9 @@ export const FileTreeFolder = ({
             </CollapsibleTrigger>
             <FileTreeIcon>
               {isExpanded ? (
-                <HugeiconsIcon icon={FolderOpenIcon} className="size-4 text-muted-foreground" />
+                <HugeiconsIcon icon={FolderOpen} className="size-4 text-muted-foreground" />
               ) : (
-                <HugeiconsIcon icon={Folder01Icon} className="size-4 text-muted-foreground" />
+                <HugeiconsIcon icon={Folder} className="size-4 text-muted-foreground" />
               )}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
@@ -251,7 +251,7 @@ export const FileTreeFile = ({
         {children ?? (
           <>
             <FileTreeIcon>
-              {icon ?? <HugeiconsIcon icon={File01Icon} className="size-4 text-muted-foreground" />}
+              {icon ?? <HugeiconsIcon icon={File} className="size-4 text-muted-foreground" />}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
             {onAdd && (
@@ -261,7 +261,7 @@ export const FileTreeFile = ({
                 onClick={handleAdd}
                 title={t('common.addToChat')}
               >
-                <HugeiconsIcon icon={PlusSignIcon} className="size-3 text-muted-foreground" />
+                <HugeiconsIcon icon={Add} className="size-3 text-muted-foreground" />
               </button>
             )}
           </>

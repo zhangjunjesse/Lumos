@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { PlusSignIcon } from "@hugeicons/core-free-icons";
+import { Add } from "@hugeicons/core-free-icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -145,7 +145,7 @@ export function TaskList({ sessionId }: TaskListProps) {
           onClick={handleCreate}
           disabled={!newTitle.trim()}
         >
-          <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
           <span className="sr-only">{t('tasks.addTask')}</span>
         </Button>
       </div>

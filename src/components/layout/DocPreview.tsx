@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
+import { Cancel, Copy, Tick, Loading, Add } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -162,9 +162,9 @@ export function DocPreview({
         {!isNonTextFile && (
           <Button variant="ghost" size="icon-sm" onClick={handleCopyContent}>
             {copied ? (
-              <HugeiconsIcon icon={Tick01Icon} className="h-3.5 w-3.5 text-green-500" />
+              <HugeiconsIcon icon={Tick} className="h-3.5 w-3.5 text-green-500" />
             ) : (
-              <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+              <HugeiconsIcon icon={Copy} className="h-3.5 w-3.5" />
             )}
             <span className="sr-only">Copy content</span>
           </Button>
@@ -172,13 +172,13 @@ export function DocPreview({
 
         {onAdd && (
           <Button variant="ghost" size="icon-sm" onClick={onAdd}>
-            <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+            <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
             <span className="sr-only">{t('common.addToChat')}</span>
           </Button>
         )}
 
         <Button variant="ghost" size="icon-sm" onClick={onClose}>
-          <HugeiconsIcon icon={Cancel01Icon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Cancel} className="h-3.5 w-3.5" />
           <span className="sr-only">Close preview</span>
         </Button>
       </div>
@@ -217,7 +217,7 @@ export function DocPreview({
         ) : loading ? (
           <div className="flex items-center justify-center py-12">
             <HugeiconsIcon
-              icon={Loading02Icon}
+              icon={Loading}
               className="h-5 w-5 animate-spin text-muted-foreground"
             />
           </div>

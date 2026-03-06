@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { StructureFolderIcon, PanelRightCloseIcon, FolderOpenIcon } from "@hugeicons/core-free-icons";
+import { StructureFolderIcon, PanelRightClose, FolderOpen } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -94,7 +94,7 @@ export function RightPanel({ width }: RightPanelProps) {
                   size="icon-sm"
                   onClick={handleOpenFolder}
                 >
-                  <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={FolderOpen} className="h-4 w-4" />
                   <span className="sr-only">{t('panel.openFolder')}</span>
                 </Button>
               </TooltipTrigger>
@@ -108,7 +108,7 @@ export function RightPanel({ width }: RightPanelProps) {
                 size="icon-sm"
                 onClick={() => setPanelOpen(false)}
               >
-                <HugeiconsIcon icon={PanelRightCloseIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={PanelRightClose} className="h-4 w-4" />
                 <span className="sr-only">{t('panel.closePanel')}</span>
               </Button>
             </TooltipTrigger>

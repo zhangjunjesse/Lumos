@@ -5,15 +5,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
-  File01Icon,
-  FileEditIcon,
-  CommandLineIcon,
-  Search01Icon,
-  Wrench01Icon,
-  Loading02Icon,
+  File,
+  Edit,
+  CommandIcon,
+  Search,
+  Wrench,
+  Loading,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
-  ArrowRight01Icon,
+  ArrowRight,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 
@@ -63,11 +63,11 @@ function getToolCategory(name: string): ToolCategory {
 
 function getToolIcon(category: ToolCategory): IconSvgElement {
   switch (category) {
-    case 'read':   return File01Icon;
-    case 'write':  return FileEditIcon;
-    case 'bash':   return CommandLineIcon;
-    case 'search': return Search01Icon;
-    case 'other':  return Wrench01Icon;
+    case 'read':   return File;
+    case 'write':  return Edit;
+    case 'bash':   return CommandIcon;
+    case 'search': return Search;
+    case 'other':  return Wrench;
   }
 }
 
@@ -130,7 +130,7 @@ function StatusDot({ status }: { status: ToolStatus }) {
   switch (status) {
     case 'running':
       return (
-        <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/50" />
+        <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/50" />
       );
     case 'success':
       return <HugeiconsIcon icon={CheckmarkCircle02Icon} className="h-3.5 w-3.5 shrink-0 text-green-500" />;
@@ -230,7 +230,7 @@ export function ToolActionsGroup({
         className="flex w-full items-center gap-2 py-1 text-xs rounded-sm hover:bg-muted/30 transition-colors"
       >
         <HugeiconsIcon
-          icon={ArrowRight01Icon}
+          icon={ArrowRight}
           className={cn(
             "h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
             expanded && "rotate-90"

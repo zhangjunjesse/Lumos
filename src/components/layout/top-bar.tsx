@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Search01Icon, UserIcon } from "@hugeicons/core-free-icons";
+import { Search, User } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -56,7 +56,7 @@ export function TopBar({ onOpenAssistant }: TopBarProps) {
         className="h-7 gap-2 px-3 text-xs text-muted-foreground"
         onClick={onOpenAssistant}
       >
-        <HugeiconsIcon icon={Search01Icon} className="h-3.5 w-3.5" />
+        <HugeiconsIcon icon={Search} className="h-3.5 w-3.5" />
         <span>{t('topbar.search')}</span>
         <kbd className="ml-2 rounded border bg-muted px-1 text-[10px]">
           ⌘K
@@ -67,7 +67,7 @@ export function TopBar({ onOpenAssistant }: TopBarProps) {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-7 w-7">
-            <HugeiconsIcon icon={UserIcon} className="h-4 w-4" />
+            <HugeiconsIcon icon={User} className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">

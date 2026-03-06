@@ -4,14 +4,14 @@ import { useState } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
-  File01Icon,
-  FileEditIcon,
-  CommandLineIcon,
-  Search01Icon,
-  Wrench01Icon,
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-  Loading02Icon,
+  File,
+  Edit,
+  CommandIcon,
+  Search,
+  Wrench,
+  ArrowDown01,
+  ArrowRight,
+  Loading,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
 } from "@hugeicons/core-free-icons";
@@ -47,11 +47,11 @@ function getToolCategory(name: string): 'read' | 'write' | 'bash' | 'search' | '
 
 function getToolIcon(category: ReturnType<typeof getToolCategory>): IconSvgElement {
   switch (category) {
-    case 'read': return File01Icon;
-    case 'write': return FileEditIcon;
-    case 'bash': return CommandLineIcon;
-    case 'search': return Search01Icon;
-    case 'other': return Wrench01Icon;
+    case 'read': return File;
+    case 'write': return Edit;
+    case 'bash': return CommandIcon;
+    case 'search': return Search;
+    case 'other': return Wrench;
   }
 }
 
@@ -102,7 +102,7 @@ function StatusIndicator({ status }: { status: ToolStatus }) {
       return (
         <span className="relative flex h-3.5 w-3.5 items-center justify-center">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-30" />
-          <HugeiconsIcon icon={Loading02Icon} className="relative h-3.5 w-3.5 animate-spin text-blue-500" />
+          <HugeiconsIcon icon={Loading} className="relative h-3.5 w-3.5 animate-spin text-blue-500" />
         </span>
       );
     case 'success':
@@ -175,7 +175,7 @@ export function ToolCallBlock({
             )}
             {!result && status === 'running' && (
               <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-                <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+                <HugeiconsIcon icon={Loading} className="h-3 w-3 animate-spin" />
                 Reading file...
               </div>
             )}
@@ -226,7 +226,7 @@ export function ToolCallBlock({
             )}
             {!result && status === 'running' && (
               <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-                <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+                <HugeiconsIcon icon={Loading} className="h-3 w-3 animate-spin" />
                 Executing...
               </div>
             )}
@@ -305,9 +305,9 @@ export function ToolCallBlock({
         )}
       >
         {expanded ? (
-          <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <HugeiconsIcon icon={ArrowDown01} className="h-3 w-3 shrink-0 text-muted-foreground" />
         ) : (
-          <HugeiconsIcon icon={ArrowRight01Icon} className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <HugeiconsIcon icon={ArrowRight} className="h-3 w-3 shrink-0 text-muted-foreground" />
         )}
         <HugeiconsIcon icon={toolIconData} className={cn(
           "h-3.5 w-3.5 shrink-0",

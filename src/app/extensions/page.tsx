@@ -4,7 +4,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon } from "@hugeicons/core-free-icons";
+import { Loading } from "@hugeicons/core-free-icons";
 import { SkillsManager } from "@/components/skills/SkillsManager";
 import { McpManager } from "@/components/plugins/McpManager";
 import { FeishuPanel } from "@/components/feishu/FeishuPanel";
@@ -17,7 +17,7 @@ export default function ExtensionsPage() {
     <Suspense
       fallback={
         <div className="flex h-full items-center justify-center">
-          <HugeiconsIcon icon={Loading02Icon} className="h-5 w-5 animate-spin text-muted-foreground" />
+          <HugeiconsIcon icon={Loading} className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       }
     >

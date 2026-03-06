@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import { ArrowUp01 } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
 interface ConversationInputProps {
@@ -49,7 +49,7 @@ export function ConversationInput({ onSend, disabled }: ConversationInputProps) 
           disabled={!input.trim() || disabled}
           onClick={handleSend}
         >
-          <HugeiconsIcon icon={ArrowUp01Icon} className="h-4 w-4" />
+          <HugeiconsIcon icon={ArrowUp01} className="h-4 w-4" />
         </Button>
       </div>
     </div>

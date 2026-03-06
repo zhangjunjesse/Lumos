@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { SparklesIcon } from "@hugeicons/core-free-icons";
+import { Sparkles } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
 export function AiEntryCard() {
@@ -56,7 +56,7 @@ export function AiEntryCard() {
   return (
     <div className="rounded-xl border bg-card p-5">
       <div className="mb-3 flex items-center gap-2">
-        <HugeiconsIcon icon={SparklesIcon} className="h-4 w-4 text-primary" />
+        <HugeiconsIcon icon={Sparkles} className="h-4 w-4 text-primary" />
         <span className="text-sm font-medium">{t('workspace.whatCreate')}</span>
       </div>
 

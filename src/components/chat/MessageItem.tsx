@@ -9,7 +9,7 @@ import {
 } from '@/components/ai-elements/message';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Copy01Icon, Tick01Icon, ArrowDown01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import { Copy, Tick, ArrowDown01, ArrowUp01 } from "@hugeicons/core-free-icons";
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -292,9 +292,9 @@ function CopyButton({ text }: { text: string }) {
           className="cursor-pointer inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted transition-colors"
         >
           {copied ? (
-            <HugeiconsIcon icon={Tick01Icon} className="h-3 w-3 text-green-500" />
+            <HugeiconsIcon icon={Tick} className="h-3 w-3 text-green-500" />
           ) : (
-            <HugeiconsIcon icon={Copy01Icon} className="h-3 w-3" />
+            <HugeiconsIcon icon={Copy} className="h-3 w-3" />
           )}
         </button>
       </TooltipTrigger>
@@ -416,12 +416,12 @@ export function MessageItem({ message }: MessageItemProps) {
                     >
                       {isExpanded ? (
                         <>
-                          <HugeiconsIcon icon={ArrowUp01Icon} className="h-3 w-3" />
+                          <HugeiconsIcon icon={ArrowUp01} className="h-3 w-3" />
                           <span>收起</span>
                         </>
                       ) : (
                         <>
-                          <HugeiconsIcon icon={ArrowDown01Icon} className="h-3 w-3" />
+                          <HugeiconsIcon icon={ArrowDown01} className="h-3 w-3" />
                           <span>展开</span>
                         </>
                       )}

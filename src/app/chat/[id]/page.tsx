@@ -5,7 +5,7 @@ import Link from 'next/link';
 import type { Message, MessagesResponse, ChatSession } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
+import { Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { BindingButton } from '@/components/bridge/BindingButton';
@@ -192,7 +192,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <HugeiconsIcon icon={Loading02Icon} className="h-8 w-8 animate-spin text-muted-foreground" />
+        <HugeiconsIcon icon={Loading} className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }

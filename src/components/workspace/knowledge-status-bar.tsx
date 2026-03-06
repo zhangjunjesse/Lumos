@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { BookOpen01Icon } from "@hugeicons/core-free-icons";
+import { BookOpen } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
 interface KbStatus {
@@ -54,7 +54,7 @@ export function KnowledgeStatusBar() {
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-2 border-t bg-muted/50 px-4 text-xs text-muted-foreground">
-      <HugeiconsIcon icon={BookOpen01Icon} className="h-3.5 w-3.5" />
+      <HugeiconsIcon icon={BookOpen} className="h-3.5 w-3.5" />
       <span className={`h-2 w-2 rounded-full ${dot}`} />
       <span>{label}</span>
       <div className="flex-1" />

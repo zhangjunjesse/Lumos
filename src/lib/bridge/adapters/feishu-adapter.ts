@@ -117,7 +117,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
     return true;
   }
 
-  private async handleMessage(data: any): Promise<void> {
+  async handleMessage(data: any): Promise<void> {
     const msg = data.message;
     if (!msg || data.sender?.sender_type === 'app') return;
     if (this.seenIds.has(msg.message_id)) return;

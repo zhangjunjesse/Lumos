@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon, ArrowDown01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import { Loading, ArrowDown01, ArrowUp01 } from "@hugeicons/core-free-icons";
 import type { ApiProvider } from "@/types";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -257,7 +257,7 @@ export function ProviderForm({
             onClick={() => setShowAdvanced(!showAdvanced)}
           >
             <HugeiconsIcon
-              icon={showAdvanced ? ArrowUp01Icon : ArrowDown01Icon}
+              icon={showAdvanced ? ArrowUp01 : ArrowDown01}
               className="h-3 w-3"
             />
             {t('provider.advancedOptions')}
@@ -333,7 +333,7 @@ export function ProviderForm({
             </Button>
             <Button type="submit" disabled={saving} className="gap-2">
               {saving && (
-                <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+                <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
               )}
               {saving ? t('provider.saving') : mode === "edit" ? t('provider.update') : t('provider.addProvider')}
             </Button>

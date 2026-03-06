@@ -13,13 +13,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  Tick01Icon,
-  Cancel01Icon,
-  MinusSignIcon,
-  Loading02Icon,
-  RecordIcon,
-  Copy01Icon,
-  Download04Icon,
+  Tick,
+  Cancel,
+  Minus,
+  Loading,
+  Circle,
+  Copy,
+  Download,
 } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -66,15 +66,15 @@ function getInstallAPI() {
 function StepIcon({ status }: { status: string }) {
   switch (status) {
     case "success":
-      return <HugeiconsIcon icon={Tick01Icon} className="size-4 text-emerald-500" />;
+      return <HugeiconsIcon icon={Tick} className="size-4 text-emerald-500" />;
     case "running":
-      return <HugeiconsIcon icon={Loading02Icon} className="size-4 text-blue-500 animate-spin" />;
+      return <HugeiconsIcon icon={Loading} className="size-4 text-blue-500 animate-spin" />;
     case "failed":
-      return <HugeiconsIcon icon={Cancel01Icon} className="size-4 text-red-500" />;
+      return <HugeiconsIcon icon={Cancel} className="size-4 text-red-500" />;
     case "skipped":
-      return <HugeiconsIcon icon={MinusSignIcon} className="size-4 text-muted-foreground" />;
+      return <HugeiconsIcon icon={Minus} className="size-4 text-muted-foreground" />;
     default:
-      return <HugeiconsIcon icon={RecordIcon} className="size-3.5 text-muted-foreground/40" />;
+      return <HugeiconsIcon icon={Circle} className="size-3.5 text-muted-foreground/40" />;
   }
 }
 
@@ -282,7 +282,7 @@ export function InstallWizard({
           {/* Phase: checking */}
           {phase === "checking" && steps.length === 0 && (
             <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-              <HugeiconsIcon icon={Loading02Icon} className="size-4 animate-spin" />
+              <HugeiconsIcon icon={Loading} className="size-4 animate-spin" />
               <span>{t('install.checkingPrereqs')}</span>
             </div>
           )}
@@ -315,7 +315,7 @@ export function InstallWizard({
           {/* Phase: already-installed */}
           {phase === "already-installed" && (
             <div className="flex items-center gap-3 rounded-lg bg-emerald-500/10 px-4 py-3">
-              <HugeiconsIcon icon={Tick01Icon} className="size-5 text-emerald-500 shrink-0" />
+              <HugeiconsIcon icon={Tick} className="size-5 text-emerald-500 shrink-0" />
               <div className="text-sm">
                 <p className="font-medium text-emerald-700 dark:text-emerald-400">
                   Already installed
@@ -330,7 +330,7 @@ export function InstallWizard({
           {/* Phase: success */}
           {phase === "success" && (
             <div className="flex items-center gap-3 rounded-lg bg-emerald-500/10 px-4 py-3">
-              <HugeiconsIcon icon={Tick01Icon} className="size-5 text-emerald-500 shrink-0" />
+              <HugeiconsIcon icon={Tick} className="size-5 text-emerald-500 shrink-0" />
               <div className="text-sm">
                 <p className="font-medium text-emerald-700 dark:text-emerald-400">
                   {t('install.complete')}
@@ -364,7 +364,7 @@ export function InstallWizard({
               size="sm"
               onClick={handleCopyLogs}
             >
-              <HugeiconsIcon icon={Copy01Icon} />
+              <HugeiconsIcon icon={Copy} />
               {copied ? t('install.copied') : t('install.copyLogs')}
             </Button>
           )}
@@ -372,7 +372,7 @@ export function InstallWizard({
           {/* Confirm phase: single "Install" button */}
           {phase === "confirm" && (
             <Button size="sm" onClick={handleConfirmInstall}>
-              <HugeiconsIcon icon={Download04Icon} />
+              <HugeiconsIcon icon={Download} />
               {t('install.install')}
             </Button>
           )}

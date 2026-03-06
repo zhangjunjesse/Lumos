@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon, Logout02Icon, Login01Icon, CheckmarkCircle02Icon } from "@hugeicons/core-free-icons";
+import { Loading, Logout, Login, CheckmarkCircle02Icon } from "@hugeicons/core-free-icons";
 import { useFeishu } from "@/hooks/useFeishu";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -36,7 +36,7 @@ export function FeishuAuth() {
   if (auth.loading) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
-        <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+        <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
         <span className="ml-2 text-sm">{t('common.loading')}</span>
       </div>
     );
@@ -115,9 +115,9 @@ function AuthenticatedView({
         className="gap-1.5"
       >
         {loading ? (
-          <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 animate-spin" />
+          <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <HugeiconsIcon icon={Logout02Icon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Logout} className="h-3.5 w-3.5" />
         )}
         {t('feishu.logout')}
       </Button>
@@ -142,9 +142,9 @@ function UnauthenticatedView({
       </p>
       <Button onClick={onLogin} disabled={loading} className="gap-1.5">
         {loading ? (
-          <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 animate-spin" />
+          <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <HugeiconsIcon icon={Login01Icon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Login} className="h-3.5 w-3.5" />
         )}
         {t('feishu.login')}
       </Button>

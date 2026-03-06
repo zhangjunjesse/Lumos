@@ -13,11 +13,9 @@ import { initAutoUpdater, setUpdaterWindow } from './updater';
 import { initDatabase, registerDbShutdownHandlers } from './db/connection';
 import { DatabaseService } from './db/service';
 import { registerIpcHandlers } from './ipc/handlers';
-import { FeishuListener } from '../src/lib/bridge/feishu-listener';
 
 let mainWindow: BrowserWindow | null = null;
 // let browserManager: BrowserManager | null = null;
-let feishuListener: FeishuListener | null = null;
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -489,57 +487,6 @@ app.whenReady().then(async () => {
     console.warn('[main] Failed to sync skills:', err);
   }
 
-  // === BRIDGE: Feishu listener function (will be called after server starts) ===
-  async function startFeishuListener() {
-    if (!process.env.FEISHU_APP_ID || !process.env.FEISHU_APP_SECRET) {
-      console.log('[Bridge] Feishu not configured');
-      return;
-    }
-
-    if (!serverPort) {
-      console.warn('[Bridge] Server port not ready');
-      return;
-    }
-
-    try {
-      feishuListener = new FeishuListener({
-        appId: process.env.FEISHU_APP_ID,
-        appSecret: process.env.FEISHU_APP_SECRET,
-        serverPort,
-        onMessage: async (chatId: string, text: string, messageId: string) => {
-          try {
-            const res = await fetch(`http://localhost:${serverPort}/api/bridge/query-binding?chatId=${chatId}`);
-            if (!res.ok) {
-              console.log('[Bridge] No binding for chat:', chatId);
-              return;
-            }
-
-            const { sessionId } = await res.json();
-
-            await fetch(`http://localhost:${serverPort}/api/chat`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                session_id: sessionId,
-                content: text,
-                mode: 'acceptEdits'
-              })
-            });
-
-            console.log('[Bridge] Message synced from Feishu');
-          } catch (err) {
-            console.error('[Bridge] Handle message failed:', err);
-          }
-        }
-      });
-
-      await feishuListener.start();
-      console.log('[Bridge] Feishu listener started');
-    } catch (err) {
-      console.error('[Bridge] Start listener failed:', err);
-    }
-  }
-
   // Set macOS Dock icon
   if (process.platform === 'darwin' && app.dock) {
     const iconPath = getIconPath();
@@ -891,8 +838,15 @@ app.whenReady().then(async () => {
     serverPort = port;
     createWindow(port);
 
-    // Start Feishu listener after server is ready
-    await startFeishuListener();
+    // Start WebSocket listener via API
+    try {
+      const res = await fetch(`http://localhost:${port}/api/bridge/websocket`, { method: 'POST' });
+      if (res.ok) {
+        console.log('[Bridge] WebSocket listener started via API');
+      }
+    } catch (err) {
+      console.error('[Bridge] Failed to start WebSocket listener:', err);
+    }
 
     // Initialize auto-updater in packaged mode only
     if (!isDev && mainWindow) {
@@ -960,6 +914,16 @@ app.on('before-quit', async (e) => {
   //   try {
   //     await browserManager.cleanup();
   //   } catch (error) {
+
+  // Stop WebSocket listener
+  if (serverPort) {
+    try {
+      await fetch(`http://localhost:${serverPort}/api/bridge/websocket`, { method: 'DELETE' });
+      console.log('[Bridge] WebSocket listener stopped');
+    } catch (err) {
+      // Server might already be down
+    }
+  }
 
   // 清理 BridgeManager
   if (bridgeManager) {

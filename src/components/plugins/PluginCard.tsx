@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowDown01Icon, ArrowUp01Icon, ZapIcon } from "@hugeicons/core-free-icons";
+import { ArrowDown01, ArrowUp01, Zap } from "@hugeicons/core-free-icons";
 import { useTranslation } from '@/hooks/useTranslation';
 
 export interface SkillInfo {
@@ -40,7 +40,7 @@ export function PluginCard({ plugin, onSelect }: PluginCardProps) {
       >
         <div className="flex-1 min-w-0 mr-3">
           <div className="flex items-center gap-2 mb-1">
-            <HugeiconsIcon icon={ZapIcon} className="h-4 w-4 text-muted-foreground shrink-0" />
+            <HugeiconsIcon icon={Zap} className="h-4 w-4 text-muted-foreground shrink-0" />
             <CardTitle className="text-sm font-medium truncate">
               /{displayName}
             </CardTitle>
@@ -48,7 +48,7 @@ export function PluginCard({ plugin, onSelect }: PluginCardProps) {
               variant={isProject ? 'secondary' : 'outline'}
               className="text-xs shrink-0"
             >
-              {isPlugin ? 'Plugin' : isProject ? 'Project' : 'Global'}
+              {isPlugin ? 'Plugin' : isProject ? 'Project' : 'Globe'}
             </Badge>
           </div>
           <CardDescription className="text-xs line-clamp-2">
@@ -67,9 +67,9 @@ export function PluginCard({ plugin, onSelect }: PluginCardProps) {
               }}
             >
               {expanded ? (
-                <HugeiconsIcon icon={ArrowUp01Icon} className="h-4 w-4" />
+                <HugeiconsIcon icon={ArrowUp01} className="h-4 w-4" />
               ) : (
-                <HugeiconsIcon icon={ArrowDown01Icon} className="h-4 w-4" />
+                <HugeiconsIcon icon={ArrowDown01} className="h-4 w-4" />
               )}
             </Button>
           </TooltipTrigger>

@@ -3,7 +3,7 @@
 import { useTheme } from "next-themes";
 import { useCallback, useSyncExternalStore } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Moon02Icon, Sun02Icon } from "@hugeicons/core-free-icons";
+import { Moon, Sun } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -29,9 +29,9 @@ export function Header() {
                 className="h-7 w-7"
               >
                 {theme === "dark" ? (
-                  <HugeiconsIcon icon={Sun02Icon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Sun} className="h-4 w-4" />
                 ) : (
-                  <HugeiconsIcon icon={Moon02Icon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Moon} className="h-4 w-4" />
                 )}
                 <span className="sr-only">Toggle theme</span>
               </Button>

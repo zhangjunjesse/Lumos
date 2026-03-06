@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { PlusSignIcon, Search01Icon, ZapIcon, Loading02Icon, Delete02Icon, PencilIcon, Copy01Icon } from "@hugeicons/core-free-icons";
+import { Add, Search, Zap, Loading, Delete, Pencil, Copy } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 
 interface Skill {
@@ -109,7 +109,7 @@ export function SkillsManager() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <HugeiconsIcon icon={Loading02Icon} className="h-5 w-5 animate-spin text-muted-foreground" />
+        <HugeiconsIcon icon={Loading} className="h-5 w-5 animate-spin text-muted-foreground" />
         <span className="ml-2 text-sm text-muted-foreground">
           {t('skills.loadingSkills')}
         </span>
@@ -125,7 +125,7 @@ export function SkillsManager() {
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
           <div className="flex-1 min-w-0 mr-3">
             <div className="flex items-center gap-2 mb-1">
-              <HugeiconsIcon icon={ZapIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <HugeiconsIcon icon={Zap} className="h-4 w-4 shrink-0 text-muted-foreground" />
               <CardTitle className="text-sm font-medium">/{skill.name}</CardTitle>
               {isBuiltin && (
                 <Badge variant="secondary" className="text-xs shrink-0">
@@ -150,7 +150,7 @@ export function SkillsManager() {
                 onClick={() => handleCopyToUser(skill)}
                 title="Copy to User"
               >
-                <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+                <HugeiconsIcon icon={Copy} className="h-3.5 w-3.5" />
               </Button>
             ) : (
               <>
@@ -160,7 +160,7 @@ export function SkillsManager() {
                   className="h-8 w-8"
                   onClick={() => {/* TODO: Edit */}}
                 >
-                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Pencil} className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -168,7 +168,7 @@ export function SkillsManager() {
                   className="h-8 w-8 text-destructive hover:text-destructive"
                   onClick={() => handleDelete(skill.name)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
+                  <HugeiconsIcon icon={Delete} className="h-3.5 w-3.5" />
                 </Button>
               </>
             )}
@@ -184,7 +184,7 @@ export function SkillsManager() {
       <div className="flex items-center gap-3 mb-4">
         <h3 className="text-lg font-semibold flex-1">{t('extensions.skills')}</h3>
         <div className="relative flex-1 max-w-sm">
-          <HugeiconsIcon icon={Search01Icon} className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <HugeiconsIcon icon={Search} className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             placeholder={t('skills.searchSkills')}
             value={search}
@@ -193,7 +193,7 @@ export function SkillsManager() {
           />
         </div>
         <Button size="sm" onClick={() => {/* TODO: Create */}} className="gap-1">
-          <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+          <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
           {t('skills.newSkill')}
         </Button>
       </div>
@@ -223,7 +223,7 @@ export function SkillsManager() {
         {/* Empty state */}
         {filtered.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-            <HugeiconsIcon icon={ZapIcon} className="h-10 w-10 opacity-40" />
+            <HugeiconsIcon icon={Zap} className="h-10 w-10 opacity-40" />
             <p className="text-sm">
               {search ? t('skills.noSkillsFound') : t('skills.noSkillsFound')}
             </p>

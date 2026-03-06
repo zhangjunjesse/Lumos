@@ -19,11 +19,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  FloppyDiskIcon,
-  ReloadIcon,
-  CodeIcon,
-  SlidersHorizontalIcon,
-  Loading02Icon,
+  Save,
+  Reload,
+  Code,
+  SlidersHorizontal,
+  Loading,
 } from "@hugeicons/core-free-icons";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
@@ -163,7 +163,7 @@ export function CliSettingsSection() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <HugeiconsIcon icon={Loading02Icon} className="h-5 w-5 animate-spin text-muted-foreground" />
+        <HugeiconsIcon icon={Loading} className="h-5 w-5 animate-spin text-muted-foreground" />
         <span className="ml-2 text-sm text-muted-foreground">{t('cli.loadingSettings')}</span>
       </div>
     );
@@ -174,11 +174,11 @@ export function CliSettingsSection() {
       <Tabs defaultValue="form">
         <TabsList className="mb-4">
           <TabsTrigger value="form" className="gap-2">
-            <HugeiconsIcon icon={SlidersHorizontalIcon} className="h-4 w-4" />
+            <HugeiconsIcon icon={SlidersHorizontal} className="h-4 w-4" />
             {t('cli.form')}
           </TabsTrigger>
           <TabsTrigger value="json" className="gap-2">
-            <HugeiconsIcon icon={CodeIcon} className="h-4 w-4" />
+            <HugeiconsIcon icon={Code} className="h-4 w-4" />
             {t('cli.json')}
           </TabsTrigger>
         </TabsList>
@@ -256,14 +256,14 @@ export function CliSettingsSection() {
             <div className="flex items-center gap-3">
               <Button onClick={() => confirmSave("form")} disabled={!hasChanges || saving} className="gap-2">
                 {saving ? (
-                  <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+                  <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
                 ) : (
-                  <HugeiconsIcon icon={FloppyDiskIcon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Save} className="h-4 w-4" />
                 )}
                 {saving ? t('provider.saving') : t('cli.save')}
               </Button>
               <Button variant="outline" onClick={handleReset} disabled={!hasChanges} className="gap-2">
-                <HugeiconsIcon icon={ReloadIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={Reload} className="h-4 w-4" />
                 {t('cli.reset')}
               </Button>
               {saveSuccess && (
@@ -291,18 +291,18 @@ export function CliSettingsSection() {
             <div className="flex items-center gap-3">
               <Button onClick={() => confirmSave("json")} disabled={saving} className="gap-2">
                 {saving ? (
-                  <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />
+                  <HugeiconsIcon icon={Loading} className="h-4 w-4 animate-spin" />
                 ) : (
-                  <HugeiconsIcon icon={FloppyDiskIcon} className="h-4 w-4" />
+                  <HugeiconsIcon icon={Save} className="h-4 w-4" />
                 )}
                 {saving ? t('provider.saving') : t('cli.save')}
               </Button>
               <Button variant="outline" onClick={handleFormatJson} className="gap-2">
-                <HugeiconsIcon icon={CodeIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={Code} className="h-4 w-4" />
                 {t('cli.format')}
               </Button>
               <Button variant="outline" onClick={handleReset} className="gap-2">
-                <HugeiconsIcon icon={ReloadIcon} className="h-4 w-4" />
+                <HugeiconsIcon icon={Reload} className="h-4 w-4" />
                 {t('cli.reset')}
               </Button>
               {saveSuccess && (

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Download04Icon, RepeatIcon, PaintBrush01Icon } from '@hugeicons/core-free-icons';
+import { Download, Repeat, Paintbrush } from '@hugeicons/core-free-icons';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -142,7 +142,7 @@ export function ImageGenCard({
         <div className="flex items-center gap-1.5 flex-wrap">
           {model && (
             <Badge variant="secondary" className="text-[10px] gap-1">
-              <HugeiconsIcon icon={PaintBrush01Icon} className="h-3 w-3" />
+              <HugeiconsIcon icon={Paintbrush} className="h-3 w-3" />
               {model}
             </Badge>
           )}
@@ -165,7 +165,7 @@ export function ImageGenCard({
             onClick={() => handleDownload(images[0], 0)}
             title={t('imageGen.download' as TranslationKey)}
           >
-            <HugeiconsIcon icon={Download04Icon} className="h-3.5 w-3.5" />
+            <HugeiconsIcon icon={Download} className="h-3.5 w-3.5" />
           </Button>
           {onRegenerate && (
             <Button
@@ -174,7 +174,7 @@ export function ImageGenCard({
               onClick={onRegenerate}
               title={t('imageGen.regenerate' as TranslationKey)}
             >
-              <HugeiconsIcon icon={RepeatIcon} className="h-3.5 w-3.5" />
+              <HugeiconsIcon icon={Repeat} className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
