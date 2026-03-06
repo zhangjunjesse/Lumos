@@ -477,15 +477,7 @@ app.whenReady().then(async () => {
     console.warn('Failed to check/clear version cache:', err);
   }
 
-  // === PERFORMANCE: Sync skills at startup (avoid per-message sync) ===
-  try {
-    console.log('[main] Syncing skills to plugin directory...');
-    const { syncSkillsToPlugin } = require('../src/lib/skills-sync');
-    syncSkillsToPlugin();
-    console.log('[main] Skills synced successfully');
-  } catch (err) {
-    console.warn('[main] Failed to sync skills:', err);
-  }
+  // Skills sync moved to Next.js server to avoid better-sqlite3 ABI conflicts
 
   // Set macOS Dock icon
   if (process.platform === 'darwin' && app.dock) {
@@ -846,6 +838,16 @@ app.whenReady().then(async () => {
       }
     } catch (err) {
       console.error('[Bridge] Failed to start WebSocket listener:', err);
+    }
+
+    // Sync skills via API
+    try {
+      const res = await fetch(`http://localhost:${port}/api/skills/sync`, { method: 'POST' });
+      if (res.ok) {
+        console.log('[Skills] Synced successfully via API');
+      }
+    } catch (err) {
+      console.error('[Skills] Failed to sync:', err);
     }
 
     // Initialize auto-updater in packaged mode only
