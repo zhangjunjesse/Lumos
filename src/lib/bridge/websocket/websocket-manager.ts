@@ -10,6 +10,7 @@ export class WebSocketManager {
   private wsClient: lark.WSClient | null = null;
   private adapters = new Set<FeishuAdapter>();
   private running = false;
+  private onMessage?: (data: any) => Promise<void>;
 
   private constructor() {}
 
@@ -26,10 +27,16 @@ export class WebSocketManager {
   /**
    * Start WebSocket connection
    */
-  async start(config: { appId: string; appSecret: string; domain?: 'feishu' | 'lark' }) {
+  async start(config: {
+    appId: string;
+    appSecret: string;
+    domain?: 'feishu' | 'lark';
+    onMessage?: (data: any) => Promise<void>;
+  }) {
     if (this.running) return;
 
-    const { appId, appSecret, domain = 'feishu' } = config;
+    const { appId, appSecret, domain = 'feishu', onMessage } = config;
+    this.onMessage = onMessage;
     const larkDomain = domain === 'lark' ? lark.Domain.Lark : lark.Domain.Feishu;
 
     const dispatcher = new lark.EventDispatcher({}).register({
@@ -64,6 +71,12 @@ export class WebSocketManager {
    * Broadcast message to all registered adapters
    */
   private async broadcastMessage(data: any) {
+    // Call onMessage callback if provided
+    if (this.onMessage) {
+      await this.onMessage(data);
+    }
+
+    // Also broadcast to adapters
     for (const adapter of this.adapters) {
       await adapter.handleMessage(data);
     }

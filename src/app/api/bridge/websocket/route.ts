@@ -25,7 +25,7 @@ export async function POST() {
 
   try {
     const manager = WebSocketManager.getInstance();
-    await manager.connect(appId, appSecret, handleFeishuMessage);
+    await manager.start({ appId, appSecret, onMessage: handleFeishuMessage });
     listenerStarted = true;
     console.log('[Bridge] WebSocket listener started');
     return NextResponse.json({ status: 'started' });
@@ -45,7 +45,7 @@ export async function DELETE() {
 
   try {
     const manager = WebSocketManager.getInstance();
-    await manager.disconnect();
+    manager.stop();
     listenerStarted = false;
     console.log('[Bridge] WebSocket listener stopped');
     return NextResponse.json({ status: 'stopped' });
