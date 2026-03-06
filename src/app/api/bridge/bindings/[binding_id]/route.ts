@@ -10,7 +10,7 @@ export async function GET(
   try {
     const db = getDb();
     const binding = db.prepare(
-      `SELECT id, session_id as sessionId, chat_id as chatId, status, created_at as createdAt
+      `SELECT id, lumos_session_id as sessionId, platform_chat_id as chatId, status, created_at as createdAt
        FROM session_bindings WHERE id = ?`
     ).get(binding_id);
 
