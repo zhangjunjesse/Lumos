@@ -69,11 +69,12 @@ mac:
   gatekeeperAssess: false
   target:
     - target: dmg
+      arch: [arm64]
 win:
   icon: build/icon.ico
   target:
     - target: nsis
-      arch: [x64, arm64]
+      arch: [x64]
 nsis:
   oneClick: false
   perMachine: false
@@ -81,20 +82,3 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   deleteAppDataOnUninstall: false
-linux:
-  icon: build/icon.png
-  category: Development
-  artifactName: "${productName}-${version}-${arch}.${ext}"
-  desktop:
-    entry:
-      Name: Lumos
-      Comment: Document intelligence assistant powered by AI
-      Categories: Office;TextEditor;
-      StartupWMClass: lumos
-  target:
-    - target: AppImage
-      arch: [x64, arm64]
-    - target: deb
-      arch: [x64, arm64]
-    - target: rpm
-      arch: [x64, arm64]
