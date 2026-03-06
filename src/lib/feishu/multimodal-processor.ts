@@ -35,7 +35,7 @@ export async function processFeishuMessage(
 
   // 处理图片
   if (messageType === 'image') {
-    const imageBuffer = await downloadFeishuImage(parsed.image_key, token);
+    const imageBuffer = await downloadFeishuImage(parsed.image_key, token, messageId);
     const imageBase64 = imageToBase64(imageBuffer);
     return {
       type: 'multimodal',

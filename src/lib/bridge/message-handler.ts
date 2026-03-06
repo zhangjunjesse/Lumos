@@ -90,50 +90,66 @@ export async function handleFeishuMessage(message: any) {
     parsed = null;
   }
 
-  if (messageType === 'text') {
-    text = (parsed?.text || String(content || '')).trim();
-    if (!text) return;
-  } else {
-    const appId = process.env.FEISHU_APP_ID;
-    const appSecret = process.env.FEISHU_APP_SECRET;
-    if (!appId || !appSecret) {
-      console.error('[Bridge] Missing FEISHU_APP_ID/FEISHU_APP_SECRET for media download');
-      return;
-    }
+  try {
+    if (messageType === 'text') {
+      text = (parsed?.text || String(content || '')).trim();
+      if (!text) return;
+    } else {
+      const appId = process.env.FEISHU_APP_ID;
+      const appSecret = process.env.FEISHU_APP_SECRET;
+      if (!appId || !appSecret) {
+        console.error('[Bridge] Missing FEISHU_APP_ID/FEISHU_APP_SECRET for media download');
+        return;
+      }
 
-    const feishuApi = new FeishuAPI(appId, appSecret);
-    const token = await feishuApi.getToken();
+      const feishuApi = new FeishuAPI(appId, appSecret);
+      const token = await feishuApi.getToken();
 
-    if (messageType === 'image') {
-      const imageKey = parsed?.image_key;
-      if (!imageKey) return;
-      const buffer = await downloadFeishuImage(imageKey, token);
-      const base64 = buffer.toString('base64');
-      const fileName = `feishu-image-${messageId || Date.now()}.jpg`;
-      attachments = [{
-        id: `feishu-image-${messageId || Date.now()}`,
-        name: fileName,
-        type: 'image/jpeg',
-        size: buffer.length,
-        data: base64,
-      }];
-      text = '[用户发送了一张图片]';
-    } else if (messageType === 'file') {
-      const fileKey = parsed?.file_key;
-      const fileName = parsed?.file_name || `feishu-file-${messageId || Date.now()}`;
-      if (!fileKey) return;
-      const buffer = await downloadFeishuFile(fileKey, messageId || '', token);
-      const ext = path.extname(fileName);
-      const mime = ext ? getMimeType(ext) : 'application/octet-stream';
-      attachments = [{
-        id: `feishu-file-${messageId || Date.now()}`,
-        name: fileName,
-        type: mime,
-        size: buffer.length,
-        data: buffer.toString('base64'),
-      }];
-      text = `[用户发送了文件: ${fileName}]`;
+      if (messageType === 'image') {
+        const imageKey = parsed?.image_key;
+        if (!imageKey || !messageId) return;
+        const buffer = await downloadFeishuImage(imageKey, token, messageId);
+        const base64 = buffer.toString('base64');
+        const fileName = `feishu-image-${messageId}.jpg`;
+        attachments = [{
+          id: `feishu-image-${messageId}`,
+          name: fileName,
+          type: 'image/jpeg',
+          size: buffer.length,
+          data: base64,
+        }];
+        text = '[用户发送了一张图片]';
+      } else if (messageType === 'file') {
+        const fileKey = parsed?.file_key;
+        const fileName = parsed?.file_name || `feishu-file-${messageId || Date.now()}`;
+        if (!fileKey || !messageId) return;
+        const buffer = await downloadFeishuFile(fileKey, messageId, token);
+        const ext = path.extname(fileName);
+        const mime = ext ? getMimeType(ext) : 'application/octet-stream';
+        attachments = [{
+          id: `feishu-file-${messageId}`,
+          name: fileName,
+          type: mime,
+          size: buffer.length,
+          data: buffer.toString('base64'),
+        }];
+        text = `[用户发送了文件: ${fileName}]`;
+      }
     }
+  } catch (err) {
+    console.error('[Bridge] Failed to download media:', err);
+    if (binding?.lumos_session_id) {
+      try {
+        await syncMessageToFeishu(
+          binding.lumos_session_id,
+          'assistant',
+          '图片/文件下载失败，请重试或更换图片。',
+        );
+      } catch {
+        // ignore
+      }
+    }
+    return;
   }
 
   const sessionId = binding.lumos_session_id;
