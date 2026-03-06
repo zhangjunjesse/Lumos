@@ -31,7 +31,8 @@ export function ApiKeyManagementCard() {
     fetch('/api/providers')
       .then(res => res.json())
       .then(data => {
-        const enabled = data.find((p: Provider) => p.is_enabled);
+        const providers = data.providers || [];
+        const enabled = providers.find((p: Provider) => p.is_enabled);
         if (enabled) {
           setProvider(enabled);
           setUseCustom(true);
