@@ -1,16 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useTranslation } from '@/i18n/client';
+import { useTranslation } from '@/hooks/useTranslation';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
+
+interface Provider {
+  id: number;
+  name: string;
+  base_url: string;
+  is_enabled: boolean;
+}
 
 export function ApiKeyManagementCard() {
   const { t } = useTranslation();
+  const [provider, setProvider] = useState<Provider | null>(null);
   const [useCustom, setUseCustom] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('https://api.anthropic.com');
@@ -18,6 +26,20 @@ export function ApiKeyManagementCard() {
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/providers')
+      .then(res => res.json())
+      .then(data => {
+        const enabled = data.find((p: Provider) => p.is_enabled);
+        if (enabled) {
+          setProvider(enabled);
+          setUseCustom(true);
+          setBaseUrl(enabled.base_url);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const handleTest = async () => {
     if (!apiKey) {
@@ -59,8 +81,11 @@ export function ApiKeyManagementCard() {
     setMessage(null);
 
     try {
-      const res = await fetch('/api/providers', {
-        method: 'POST',
+      const method = provider ? 'PUT' : 'POST';
+      const url = provider ? `/api/providers/${provider.id}` : '/api/providers';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'Custom Claude API',
@@ -74,7 +99,7 @@ export function ApiKeyManagementCard() {
 
       if (res.ok) {
         setMessage({ type: 'success', text: t('provider.saveSuccess') });
-        window.location.reload();
+        setTimeout(() => window.location.reload(), 1000);
       } else {
         const data = await res.json();
         setMessage({ type: 'error', text: data.error || t('provider.saveFailed') });

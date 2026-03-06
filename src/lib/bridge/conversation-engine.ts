@@ -38,6 +38,8 @@ export class ConversationEngine {
         const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
         const buffer = Buffer.from(f.data, 'base64');
         fs.writeFileSync(filePath, buffer);
+        // Mutate the attachment so streamClaude can reuse the persisted path
+        f.filePath = filePath;
         return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
       });
 

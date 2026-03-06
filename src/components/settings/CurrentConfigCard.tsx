@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useTranslation } from '@/i18n/client';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface Provider {
   id: number;
@@ -49,13 +49,6 @@ export function CurrentConfigCard() {
             <div className="text-sm">
               <span className="text-muted-foreground">{t('provider.model')}: </span>
               <span>{provider.model_name}</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{t('provider.status')}: </span>
-              <div className="flex items-center gap-1">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                <span>{t('provider.connected')}</span>
-              </div>
             </div>
           </div>
         ) : (

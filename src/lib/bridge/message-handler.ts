@@ -1,4 +1,9 @@
 import { getSessionBindingByPlatformChat, recordMessageSync } from '@/lib/db/feishu-bridge';
+import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
+import { downloadFeishuImage } from '@/lib/feishu/image-handler';
+import { downloadFeishuFile } from '@/lib/feishu/file-handler';
+import { getMimeType } from '@/lib/file-categories';
+import type { FileAttachment } from '@/types';
 import path from 'node:path';
 import { ConversationEngine } from './conversation-engine';
 import { feishuSend, syncMessageToFeishu } from './sync-helper';
@@ -69,26 +74,72 @@ export async function handleFeishuMessage(message: any) {
 
   if (!chatId || !content || !messageType) return;
 
-  // Only handle text messages for now
-  if (messageType !== 'text') return;
+  // Only handle text/image/file messages for now
+  if (messageType !== 'text' && messageType !== 'image' && messageType !== 'file') return;
 
   const binding = getSessionBindingByPlatformChat('feishu', chatId);
   if (!binding || binding.status !== 'active') return;
 
   let text = '';
+  let attachments: FileAttachment[] | undefined;
+  let parsed: any = null;
+
   try {
-    const parsed = JSON.parse(content);
-    text = (parsed.text || '').trim();
+    parsed = JSON.parse(content);
   } catch {
-    text = String(content || '').trim();
+    parsed = null;
   }
 
-  if (!text) return;
+  if (messageType === 'text') {
+    text = (parsed?.text || String(content || '')).trim();
+    if (!text) return;
+  } else {
+    const appId = process.env.FEISHU_APP_ID;
+    const appSecret = process.env.FEISHU_APP_SECRET;
+    if (!appId || !appSecret) {
+      console.error('[Bridge] Missing FEISHU_APP_ID/FEISHU_APP_SECRET for media download');
+      return;
+    }
+
+    const feishuApi = new FeishuAPI(appId, appSecret);
+    const token = await feishuApi.getToken();
+
+    if (messageType === 'image') {
+      const imageKey = parsed?.image_key;
+      if (!imageKey) return;
+      const buffer = await downloadFeishuImage(imageKey, token);
+      const base64 = buffer.toString('base64');
+      const fileName = `feishu-image-${messageId || Date.now()}.jpg`;
+      attachments = [{
+        id: `feishu-image-${messageId || Date.now()}`,
+        name: fileName,
+        type: 'image/jpeg',
+        size: buffer.length,
+        data: base64,
+      }];
+      text = '[用户发送了一张图片]';
+    } else if (messageType === 'file') {
+      const fileKey = parsed?.file_key;
+      const fileName = parsed?.file_name || `feishu-file-${messageId || Date.now()}`;
+      if (!fileKey) return;
+      const buffer = await downloadFeishuFile(fileKey, messageId || '', token);
+      const ext = path.extname(fileName);
+      const mime = ext ? getMimeType(ext) : 'application/octet-stream';
+      attachments = [{
+        id: `feishu-file-${messageId || Date.now()}`,
+        name: fileName,
+        type: mime,
+        size: buffer.length,
+        data: buffer.toString('base64'),
+      }];
+      text = `[用户发送了文件: ${fileName}]`;
+    }
+  }
 
   const sessionId = binding.lumos_session_id;
 
   try {
-    const response = await conversationEngine.sendMessage(sessionId, text);
+    const response = await conversationEngine.sendMessage(sessionId, text, attachments);
     if (response) {
       const directives = extractFileDirectives(response);
       const cleanResponse = stripFileDirectives(response);
