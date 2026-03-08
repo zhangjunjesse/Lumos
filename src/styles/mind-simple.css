@@ -1,0 +1,151 @@
+/**
+ * Lumos Mind - 极简视觉风格
+ * 大量留白、柔和渐变、自然语言
+ */
+
+@layer components {
+  /* ========== 极简卡片 ========== */
+  .mind-simple-card {
+    background: white;
+    border-radius: 20px;
+    padding: 32px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s ease;
+  }
+
+  .mind-simple-card:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    transform: translateY(-2px);
+  }
+
+  /* ========== 主人画像（金色渐变背景） ========== */
+  .mind-user-card {
+    background: linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%);
+    border: 2px solid #fde68a;
+  }
+
+  .mind-user-card:hover {
+    box-shadow: 0 8px 24px rgba(251, 191, 36, 0.15);
+  }
+
+  /* ========== AI 人格（蓝色渐变背景） ========== */
+  .mind-ai-card {
+    background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
+    border: 2px solid #c7d2fe;
+  }
+
+  .mind-ai-card:hover {
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+  }
+
+  /* ========== 规则（灰色渐变背景） ========== */
+  .mind-rules-card {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: 2px solid #e2e8f0;
+  }
+
+  .mind-rules-card:hover {
+    box-shadow: 0 8px 24px rgba(71, 85, 105, 0.1);
+  }
+
+  /* ========== 自然语言列表 ========== */
+  .mind-insight-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .mind-insight-list li {
+    display: flex;
+    align-items: start;
+    gap: 12px;
+    padding: 12px 0;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--foreground);
+  }
+
+  .mind-insight-list li::before {
+    content: '•';
+    color: var(--user-profile-text);
+    font-size: 20px;
+    font-weight: bold;
+    flex-shrink: 0;
+  }
+
+  /* ========== 极简按钮 ========== */
+  .mind-link-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    color: var(--muted-foreground);
+    border-radius: 8px;
+    transition: all 0.2s ease;
+  }
+
+  .mind-link-button:hover {
+    color: var(--foreground);
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  /* ========== 大标题 ========== */
+  .mind-page-title {
+    font-size: 28px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--foreground);
+  }
+
+  .mind-page-subtitle {
+    font-size: 15px;
+    color: var(--muted-foreground);
+    margin-bottom: 32px;
+  }
+
+  /* ========== Tab 简化 ========== */
+  .mind-tabs {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .mind-tab {
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+  }
+
+  .mind-tab:hover {
+    color: var(--foreground);
+  }
+
+  .mind-tab[data-state='active'] {
+    color: var(--foreground);
+    border-bottom-color: var(--primary);
+  }
+
+  /* ========== 暗色模式 ========== */
+  .dark .mind-simple-card {
+    background: var(--card);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .dark .mind-user-card {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(251, 146, 60, 0.1) 100%);
+    border-color: rgba(253, 230, 138, 0.2);
+  }
+
+  .dark .mind-ai-card {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(129, 140, 248, 0.1) 100%);
+    border-color: rgba(199, 210, 254, 0.2);
+  }
+
+  .dark .mind-rules-card {
+    background: linear-gradient(135deg, rgba(148, 163, 184, 0.1) 0%, rgba(203, 213, 225, 0.1) 100%);
+    border-color: rgba(226, 232, 240, 0.2);
+  }
+}
