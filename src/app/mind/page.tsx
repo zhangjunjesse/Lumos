@@ -22,6 +22,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { MasterProfileCard } from "@/components/mind/master-profile-card";
+import { MindOverview } from "@/components/mind/mind-overview";
+import "@/styles/mind-simple.css";
 
 interface MindMetricStats {
   totalMemories: number;
@@ -1070,43 +1072,31 @@ export default function MindPage() {
           </Card>
         </div>
 
-        <Tabs defaultValue="aboutYou" className="space-y-4">
+        <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="aboutYou">{t("mind.tab.aboutYou")}</TabsTrigger>
-            <TabsTrigger value="aboutLumos">{t("mind.tab.aboutLumos")}</TabsTrigger>
-            <TabsTrigger value="howWeWork">{t("mind.tab.howWeWork")}</TabsTrigger>
+            <TabsTrigger value="overview">概览</TabsTrigger>
+            <TabsTrigger value="edit">编辑</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="aboutYou" className="space-y-4">
-            <MasterProfileCard understanding={68} />
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("mind.aboutYou.title")}</CardTitle>
-                <CardDescription>{t("mind.aboutYou.subtitle")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">{t("mind.aboutYou.empty")}</p>
-              </CardContent>
-            </Card>
+          <TabsContent value="overview">
+            <MindOverview
+              data={{
+                userInsights: [
+                  { text: '你是一名开发者' },
+                  { text: '你喜欢简洁的设计' },
+                  { text: '你常用 TypeScript' },
+                ],
+                aiPersonality: '温暖、专业、注重细节',
+                interactionStyle: '简洁回答，需要时详细解释',
+              }}
+            />
           </TabsContent>
 
-          <TabsContent value="aboutLumos" className="space-y-4">
+          <TabsContent value="edit">
             <Card>
               <CardHeader>
-                <CardTitle>{t("mind.aboutLumos.title")}</CardTitle>
-                <CardDescription>{t("mind.aboutLumos.subtitle")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">即将推出...</p>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="howWeWork" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("mind.howWeWork.title")}</CardTitle>
-                <CardDescription>{t("mind.howWeWork.subtitle")}</CardDescription>
+                <CardTitle>编辑设置</CardTitle>
+                <CardDescription>调整 Lumos 的理解和行为</CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">即将推出...</p>
