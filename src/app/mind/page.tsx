@@ -1153,25 +1153,6 @@ export default function MindPage() {
                     total: snapshot.memories.length,
                   })}
                 </p>
-                    </Button>
-                    {memoryScopeOptions.map((scope) => (
-                      <Button
-                        key={scope}
-                        size="sm"
-                        variant={memoryScopeFilter === scope ? "default" : "outline"}
-                        onClick={() => setMemoryScopeFilter(scope)}
-                      >
-                        {scopeLabel(scope)}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("mind.memories.resultCount", {
-                    shown: filteredMemories.length,
-                    total: snapshot.memories.length,
-                  })}
-                </p>
               </CardContent>
             </Card>
 
