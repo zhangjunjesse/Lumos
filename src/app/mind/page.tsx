@@ -21,9 +21,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MasterProfileCard } from "@/components/mind/master-profile-card";
-import { MindOverview } from "@/components/mind/mind-overview";
-import "@/styles/mind-simple.css";
+import { MindCleanOverview } from "@/components/mind/mind-clean-overview";
+import "@/styles/mind-clean.css";
 
 interface MindMetricStats {
   totalMemories: number;
@@ -1038,39 +1037,6 @@ export default function MindPage() {
           </div>
         </div>
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="gap-0 py-0">
-            <CardHeader className="px-4 py-3">
-              <CardDescription>{t("mind.metric.totalMemories")}</CardDescription>
-              <CardTitle className="text-2xl">{stats?.totalMemories ?? 0}</CardTitle>
-              <p className="text-xs text-muted-foreground">{t("mind.metric.activeOnly")}</p>
-            </CardHeader>
-          </Card>
-          <Card className="gap-0 py-0">
-            <CardHeader className="px-4 py-3">
-              <CardDescription>{t("mind.metric.archivedMemories")}</CardDescription>
-              <CardTitle className="text-2xl">{stats?.archivedMemories ?? 0}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                {t("mind.metric.visibleMemories", { n: stats?.visibleMemories ?? 0 })}
-              </p>
-            </CardHeader>
-          </Card>
-          <Card className="gap-0 py-0">
-            <CardHeader className="px-4 py-3">
-              <CardDescription>{t("mind.metric.activeProjects")}</CardDescription>
-              <CardTitle className="text-2xl">{stats?.activeProjectsCount ?? 0}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                {t("mind.metric.projectMemoriesInline", { n: stats?.projectMemoryCount ?? 0 })}
-              </p>
-            </CardHeader>
-          </Card>
-          <Card className="gap-0 py-0">
-            <CardHeader className="px-4 py-3">
-              <CardDescription>{t("mind.metric.reusedTimes")}</CardDescription>
-              <CardTitle className="text-2xl">{stats?.totalHitCount ?? 0}</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
 
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
@@ -1079,17 +1045,7 @@ export default function MindPage() {
           </TabsList>
 
           <TabsContent value="overview">
-            <MindOverview
-              data={{
-                userInsights: [
-                  { text: '你是一名开发者' },
-                  { text: '你喜欢简洁的设计' },
-                  { text: '你常用 TypeScript' },
-                ],
-                aiPersonality: '温暖、专业、注重细节',
-                interactionStyle: '简洁回答，需要时详细解释',
-              }}
-            />
+            <MindCleanOverview />
           </TabsContent>
 
           <TabsContent value="edit">

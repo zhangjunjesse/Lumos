@@ -1,0 +1,224 @@
+/**
+ * Lumos Mind - 清晰优雅的卡片设计
+ * 纯白背景 + 清晰层级 + 标签式展示
+ */
+
+@layer components {
+  /* ========== 基础卡片 ========== */
+  .mind-clean-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+  }
+
+  .mind-clean-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    border-color: #d1d5db;
+  }
+
+  /* ========== 卡片标题 ========== */
+  .mind-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .mind-card-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  /* ========== 一句话概括 ========== */
+  .mind-card-quote {
+    font-size: 20px;
+    font-weight: 500;
+    color: #374151;
+    text-align: center;
+    padding: 20px 0;
+    margin-bottom: 24px;
+    position: relative;
+  }
+
+  .mind-card-quote::before {
+    content: '"';
+    position: absolute;
+    left: -8px;
+    top: 12px;
+    font-size: 32px;
+    color: #d1d5db;
+    font-family: Georgia, serif;
+  }
+
+  .mind-card-quote::after {
+    content: '"';
+    position: absolute;
+    right: -8px;
+    bottom: 12px;
+    font-size: 32px;
+    color: #d1d5db;
+    font-family: Georgia, serif;
+  }
+
+  /* ========== 分类标题 ========== */
+  .mind-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+  }
+
+  /* ========== 标签容器 ========== */
+  .mind-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .mind-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #374151;
+    transition: all 0.2s ease;
+  }
+
+  .mind-tag:hover {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+  }
+
+  .mind-tag svg {
+    width: 14px;
+    height: 14px;
+    color: #6b7280;
+  }
+
+  /* ========== 列表样式 ========== */
+  .mind-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .mind-list li {
+    display: flex;
+    align-items: start;
+    gap: 12px;
+    padding: 10px 0;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #374151;
+  }
+
+  .mind-list li::before {
+    content: '•';
+    color: #9ca3af;
+    font-size: 18px;
+    font-weight: bold;
+    flex-shrink: 0;
+    margin-top: -2px;
+  }
+
+  /* ========== 主人画像特殊样式 ========== */
+  .mind-user-profile-card {
+    border-color: #fbbf24;
+    background: linear-gradient(to bottom, #fffbeb 0%, white 100%);
+  }
+
+  .mind-user-profile-card:hover {
+    border-color: #f59e0b;
+    box-shadow: 0 4px 12px rgba(251, 191, 36, 0.15);
+  }
+
+  .mind-user-profile-card .mind-card-header {
+    border-bottom-color: #fde68a;
+  }
+
+  .mind-user-profile-card .mind-card-title {
+    color: #d97706;
+  }
+
+  /* ========== 暗色模式 ========== */
+  .dark .mind-clean-card {
+    background: #1f2937;
+    border-color: #374151;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+
+  .dark .mind-clean-card:hover {
+    border-color: #4b5563;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .dark .mind-card-header {
+    border-bottom-color: #374151;
+  }
+
+  .dark .mind-card-title {
+    color: #f9fafb;
+  }
+
+  .dark .mind-card-quote {
+    color: #e5e7eb;
+  }
+
+  .dark .mind-card-quote::before,
+  .dark .mind-card-quote::after {
+    color: #4b5563;
+  }
+
+  .dark .mind-section-title {
+    color: #9ca3af;
+  }
+
+  .dark .mind-tag {
+    background: #374151;
+    border-color: #4b5563;
+    color: #e5e7eb;
+  }
+
+  .dark .mind-tag:hover {
+    background: #4b5563;
+    border-color: #6b7280;
+  }
+
+  .dark .mind-list li {
+    color: #d1d5db;
+  }
+
+  .dark .mind-list li::before {
+    color: #6b7280;
+  }
+
+  .dark .mind-user-profile-card {
+    background: linear-gradient(to bottom, rgba(251, 191, 36, 0.1) 0%, #1f2937 100%);
+    border-color: rgba(251, 191, 36, 0.3);
+  }
+
+  .dark .mind-user-profile-card:hover {
+    border-color: rgba(251, 191, 36, 0.5);
+  }
+
+  .dark .mind-user-profile-card .mind-card-header {
+    border-bottom-color: rgba(253, 230, 138, 0.2);
+  }
+
+  .dark .mind-user-profile-card .mind-card-title {
+    color: #fbbf24;
+  }
+}
