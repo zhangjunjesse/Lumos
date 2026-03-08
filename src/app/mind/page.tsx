@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MasterProfileCard } from "@/components/mind/master-profile-card";
 
 interface MindMetricStats {
   totalMemories: number;
@@ -1071,12 +1072,52 @@ export default function MindPage() {
 
         <Tabs defaultValue="memories" className="space-y-4">
           <TabsList>
+            <TabsTrigger value="aboutYou">{t("mind.tab.aboutYou")}</TabsTrigger>
+            <TabsTrigger value="aboutLumos">{t("mind.tab.aboutLumos")}</TabsTrigger>
+            <TabsTrigger value="howWeWork">{t("mind.tab.howWeWork")}</TabsTrigger>
             <TabsTrigger value="memories">{t("mind.tab.memories")}</TabsTrigger>
             <TabsTrigger value="persona">{t("mind.tab.persona")}</TabsTrigger>
             <TabsTrigger value="rules">{t("mind.tab.rules")}</TabsTrigger>
             <TabsTrigger value="intelligence">{t("mind.tab.intelligence")}</TabsTrigger>
             <TabsTrigger value="experience">{t("mind.tab.experience")}</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="aboutYou" className="space-y-4">
+            <MasterProfileCard understanding={68} />
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("mind.aboutYou.title")}</CardTitle>
+                <CardDescription>{t("mind.aboutYou.subtitle")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">{t("mind.aboutYou.empty")}</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="aboutLumos" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("mind.aboutLumos.title")}</CardTitle>
+                <CardDescription>{t("mind.aboutLumos.subtitle")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">即将推出...</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="howWeWork" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>{t("mind.howWeWork.title")}</CardTitle>
+                <CardDescription>{t("mind.howWeWork.subtitle")}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">即将推出...</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="memories" className="space-y-3">
 
