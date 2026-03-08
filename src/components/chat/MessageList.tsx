@@ -12,6 +12,7 @@ import {
 import { MessageItem } from './MessageItem';
 import { StreamingMessage } from './StreamingMessage';
 import { LumosLogo } from './LumosLogo';
+import { MessageMemoryTag } from './message-memory-tag';
 
 interface ToolUseInfo {
   id: string;
@@ -112,6 +113,7 @@ export function MessageList({
         {messages.map((message) => (
           <div key={message.id} id={`msg-${message.id}`}>
             <MessageItem message={message} />
+            <MessageMemoryTag messageId={message.id} />
           </div>
         ))}
 

@@ -14,6 +14,7 @@ import {
   Sun,
   File,
   BookOpen,
+  Brain,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +39,7 @@ const navItems = [
   { href: "/documents", label: "Documents", icon: File },
   { href: "/chat", label: "Chats", icon: Message },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/mind", label: "Mind", icon: Brain },
   { href: "/extensions", label: "Extensions", icon: Grid },
   { href: "/gallery", label: "Gallery", icon: Image },
   { href: "/settings", label: "Settings", icon: Settings2 },
@@ -52,6 +54,7 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
     'Documents': 'nav.documents',
     'Chats': 'nav.chats',
     'Knowledge': 'nav.knowledge',
+    'Mind': 'nav.mind',
     'Extensions': 'nav.extensions',
     'Gallery': 'gallery.title',
     'Settings': 'nav.settings',

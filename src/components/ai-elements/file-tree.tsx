@@ -16,6 +16,8 @@ import {
   File,
   ArrowRight,
   Add,
+  BookOpen,
+  Favorite,
 } from "@hugeicons/core-free-icons";
 import {
   createContext,
@@ -31,6 +33,9 @@ interface FileTreeContextType {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onAddToLibrary?: (path: string) => void;
+  onFavorite?: (path: string) => void;
+  isFavorited?: (path: string) => boolean;
 }
 
 // Default noop for context default value
@@ -49,6 +54,9 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onAddToLibrary?: (path: string) => void;
+  onFavorite?: (path: string) => void;
+  isFavorited?: (path: string) => boolean;
   onExpandedChange?: (expanded: Set<string>) => void;
 };
 
@@ -58,6 +66,9 @@ export const FileTree = ({
   selectedPath,
   onSelect,
   onAdd,
+  onAddToLibrary,
+  onFavorite,
+  isFavorited,
   onExpandedChange,
   className,
   children,
@@ -81,8 +92,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ expandedPaths, onAdd, onSelect, selectedPath, togglePath }),
-    [expandedPaths, onAdd, onSelect, selectedPath, togglePath]
+    () => ({ expandedPaths, onAdd, onAddToLibrary, onFavorite, onSelect, isFavorited, selectedPath, togglePath }),
+    [expandedPaths, onAdd, onAddToLibrary, onFavorite, onSelect, isFavorited, selectedPath, togglePath]
   );
 
   return (
@@ -144,6 +155,7 @@ export const FileTreeFolder = ({
         <div
           className={cn("", className)}
           role="treeitem"
+          aria-selected={false}
           tabIndex={0}
           {...props}
         >
@@ -208,8 +220,9 @@ export const FileTreeFile = ({
   ...props
 }: FileTreeFileProps) => {
   const { t } = useTranslation();
-  const { selectedPath, onSelect, onAdd } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onAddToLibrary, onFavorite, isFavorited } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
+  const favorited = isFavorited?.(path) ?? false;
 
   const handleClick = useCallback(() => {
     onSelect?.(path);
@@ -232,6 +245,22 @@ export const FileTreeFile = ({
     [onAdd, path]
   );
 
+  const handleAddToLibrary = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onAddToLibrary?.(path);
+    },
+    [onAddToLibrary, path]
+  );
+
+  const handleFavorite = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onFavorite?.(path);
+    },
+    [onFavorite, path]
+  );
+
   const fileContextValue = useMemo(() => ({ name, path }), [name, path]);
 
   return (
@@ -246,6 +275,7 @@ export const FileTreeFile = ({
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         role="treeitem"
+        aria-selected={isSelected}
         tabIndex={0}
       >
         {children ?? (
@@ -254,15 +284,45 @@ export const FileTreeFile = ({
               {icon ?? <HugeiconsIcon icon={File} className="size-4 text-muted-foreground" />}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
-            {onAdd && (
-              <button
-                type="button"
-                className="ml-auto flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100"
-                onClick={handleAdd}
-                title={t('common.addToChat')}
-              >
-                <HugeiconsIcon icon={Add} className="size-3 text-muted-foreground" />
-              </button>
+            {(onFavorite || onAdd || onAddToLibrary) && (
+              <div className="ml-auto flex items-center gap-0.5">
+                {onFavorite && (
+                  <button
+                    type="button"
+                    className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100 focus-visible:opacity-100"
+                    onClick={handleFavorite}
+                    title={favorited ? t("common.removeFromFavorites") : t("common.addToFavorites")}
+                  >
+                    <HugeiconsIcon
+                      icon={Favorite}
+                      className={cn("size-3", favorited ? "text-amber-500" : "text-muted-foreground")}
+                      fill={favorited ? "currentColor" : "none"}
+                    />
+                  </button>
+                )}
+
+                {onAdd && (
+                  <button
+                    type="button"
+                    className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100 focus-visible:opacity-100"
+                    onClick={handleAdd}
+                    title={t('common.addToChat')}
+                  >
+                    <HugeiconsIcon icon={Add} className="size-3 text-muted-foreground" />
+                  </button>
+                )}
+
+                {onAddToLibrary && (
+                  <button
+                    type="button"
+                    className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100 focus-visible:opacity-100"
+                    onClick={handleAddToLibrary}
+                    title={t('common.addToLibrary')}
+                  >
+                    <HugeiconsIcon icon={BookOpen} className="size-3 text-muted-foreground" />
+                  </button>
+                )}
+              </div>
             )}
           </>
         )}

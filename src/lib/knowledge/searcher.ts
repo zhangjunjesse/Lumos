@@ -2,7 +2,7 @@
  * Hybrid search — vector + BM25 with RRF fusion
  * Enhanced: time-aware retrieval (P0) + summary-level retrieval (P0)
  */
-import { getDb } from '@/lib/db';
+import { getDb, getSetting } from '@/lib/db';
 import { embedQuery, bufferToVector } from './embedder';
 import * as bm25 from './bm25';
 import { rewriteQuery } from './query-rewriter';
@@ -11,6 +11,16 @@ import type { SearchResult, KbChunk, SearchOptions, TimeFilter } from './types';
 const RRF_K = 60;
 
 interface RankedItem { chunkId: string; score: number }
+export interface SearchRunMeta {
+  queryVariants: string[];
+  retrievalMode: 'reference' | 'enhanced';
+  timeFilter: TimeFilter | null;
+}
+
+export interface SearchRunOutput {
+  results: SearchResult[];
+  meta: SearchRunMeta;
+}
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, normA = 0, normB = 0;
@@ -176,6 +186,7 @@ function rrfFuse(lists: RankedItem[][]): RankedItem[] {
 function enrichResults(
   ranked: RankedItem[],
   topK: number,
+  retrievalMode: 'reference' | 'enhanced',
   allowedItemIds?: Set<string>,
 ): SearchResult[] {
   if (!ranked.length) return [];
@@ -187,7 +198,7 @@ function enrichResults(
     if (results.length >= topK) break;
     const row = db.prepare(`
       SELECT c.content, i.title, i.source_path, i.source_type,
-             i.id as item_id, col.name as collection_name
+             i.id as item_id, col.name as collection_name, i.health_status
       FROM kb_chunks c
       JOIN kb_items i ON c.item_id = i.id
       JOIN kb_collections col ON i.collection_id = col.id
@@ -195,20 +206,28 @@ function enrichResults(
     `).get(r.chunkId) as {
       content: string; title: string; source_path: string;
       source_type: string; item_id: string; collection_name: string;
+      health_status?: string;
     } | undefined;
 
     if (!row) continue;
     if (seen.has(row.item_id)) continue;
     if (allowedItemIds && !allowedItemIds.has(row.item_id)) continue;
+    if (row.health_status === 'archived') continue;
 
     seen.add(row.item_id);
+    const snippet = retrievalMode === 'reference'
+      ? row.content.slice(0, 140)
+      : row.content;
     results.push({
-      chunk_content: row.content,
+      item_id: row.item_id,
+      kb_uri: `kb://item/${row.item_id}`,
+      chunk_content: snippet,
       item_title: row.title,
       source_path: row.source_path,
       source_type: row.source_type,
       score: Math.round(r.score * 10000) / 100,
       collection_name: row.collection_name,
+      retrieval_mode: retrievalMode,
     });
   }
   return results;
@@ -216,15 +235,33 @@ function enrichResults(
 
 // ---- Main search entry ----
 
+function getDefaultRetrievalMode(): 'reference' | 'enhanced' {
+  return (getSetting('kb_retrieval_mode') || '').trim().toLowerCase() === 'enhanced'
+    ? 'enhanced'
+    : 'reference';
+}
+
+function dedupeQueries(queries: string[]): string[] {
+  const uniq = new Set<string>();
+  for (const query of queries) {
+    const normalized = query.replace(/\s+/g, ' ').trim();
+    if (!normalized) continue;
+    uniq.add(normalized);
+    if (uniq.size >= 4) break;
+  }
+  return Array.from(uniq);
+}
+
 /** Enhanced search: time-aware + summary-level + hybrid (backward-compatible) */
-export async function searchAll(
+export async function searchWithMeta(
   query: string,
   topKOrOpts: number | SearchOptions = 5,
-): Promise<SearchResult[]> {
+): Promise<SearchRunOutput> {
   const opts: SearchOptions = typeof topKOrOpts === 'number'
     ? { topK: topKOrOpts }
     : topKOrOpts;
   const topK = opts.topK ?? 5;
+  const retrievalMode = opts.retrievalMode || getDefaultRetrievalMode();
 
   // 1. Auto-detect time filter from query
   const timeFilter = opts.timeFilter ?? parseTimeFilter(query);
@@ -232,11 +269,17 @@ export async function searchAll(
 
   // 2. Query rewrite
   let queries: string[];
-  try {
-    queries = await withTimeout(rewriteQuery(query), 6000);
-  } catch {
+  if (opts.disableRewrite) {
     queries = [query];
+  } else {
+    try {
+      queries = await withTimeout(rewriteQuery(query), 6000);
+    } catch {
+      queries = [query];
+    }
   }
+  queries = dedupeQueries(queries);
+  if (queries.length === 0) queries = [query];
 
   const allLists: RankedItem[][] = [];
 
@@ -251,23 +294,73 @@ export async function searchAll(
       if (summaryResults.length) allLists.push(summaryResults);
 
       // Chunk-level vector search
-      allLists.push(vectorSearch(vec));
+      allLists.push(vectorSearch(vec, retrievalMode === 'reference' ? Math.max(12, topK * 3) : Math.max(24, topK * 4)));
     }
 
     // BM25 keyword search
-    const bResults = bm25.search(q);
+    const bResults = bm25.search(q, retrievalMode === 'reference' ? Math.max(12, topK * 3) : Math.max(20, topK * 4));
     if (bResults.length) allLists.push(bResults);
   }
 
   const fused = allLists.length ? rrfFuse(allLists) : [];
-  return enrichResults(fused, topK, allowedIds);
+  const results = enrichResults(fused, topK, retrievalMode, allowedIds);
+  return {
+    results,
+    meta: {
+      queryVariants: queries,
+      retrievalMode,
+      timeFilter: timeFilter || null,
+    },
+  };
+}
+
+/** Backward-compatible search entry (returns only results). */
+export async function searchAll(
+  query: string,
+  topKOrOpts: number | SearchOptions = 5,
+): Promise<SearchResult[]> {
+  const run = await searchWithMeta(query, topKOrOpts);
+  return run.results;
 }
 
 /** Format results as context for AI prompt */
-export function buildContext(results: SearchResult[]): string {
+export function buildContext(
+  results: SearchResult[],
+  options?: {
+    retrievalMode?: 'reference' | 'enhanced';
+    queryVariants?: string[];
+  },
+): string {
   if (!results.length) return '';
+  const mode = options?.retrievalMode || results[0]?.retrieval_mode || 'reference';
+  const queryVariantLine = options?.queryVariants?.length
+    ? `查询扩展: ${options.queryVariants.join(' | ')}`
+    : '';
+
+  if (mode === 'reference') {
+    const lines = results.map((r, i) =>
+      `${i + 1}. 《${r.item_title}》 (相关度 ${r.score}%)\n`
+      + `   kb_uri: ${r.kb_uri}\n`
+      + `   source: ${r.source_path || r.source_type}\n`
+      + `   摘要: ${r.chunk_content}`
+    );
+    return [
+      '[知识库命中 - 路径优先模式]',
+      queryVariantLine,
+      '说明: 优先根据 source 路径做二次读取与分析；摘要仅用于快速定位。',
+      ...lines,
+    ].filter(Boolean).join('\n');
+  }
+
   const lines = results.map((r, i) =>
-    `${i + 1}. 《${r.item_title}》(相关度: ${r.score}%)\n   来源: ${r.source_path || r.source_type}\n   内容: ${r.chunk_content.slice(0, 200)}...`
+    `${i + 1}. 《${r.item_title}》(相关度: ${r.score}%)\n`
+    + `   kb_uri: ${r.kb_uri}\n`
+    + `   来源: ${r.source_path || r.source_type}\n`
+    + `   片段: ${r.chunk_content.slice(0, 260)}`
   );
-  return `[知识库检索结果]\n${lines.join('\n')}`;
+  return [
+    '[知识库命中 - 增强模式]',
+    queryVariantLine,
+    ...lines,
+  ].filter(Boolean).join('\n');
 }

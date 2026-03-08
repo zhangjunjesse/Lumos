@@ -1,10 +1,22 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "@hugeicons/core-free-icons";
+import { Search, Delete } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { MessageInput } from "@/components/chat/MessageInput";
+import { LibraryImportPanel } from "@/components/knowledge/library-import-panel";
+import {
+  getDefaultCollection,
+  getDirectoryImportJob,
+  importDirectory,
+  listDirectoryImportJobs,
+  removeDirectoryKnowledge,
+  retryDirectoryImportJob,
+  type KnowledgeIngestJob,
+  type KnowledgeIngestJobItem,
+} from "@/lib/knowledge/client";
+import type { FileTreeNode } from "@/types";
 
 // 类型定义
 type PathItem = {
@@ -15,22 +27,170 @@ type PathItem = {
 type Tag = {
   label: string;
   type: 'custom' | 'ai' | 'system';
+  category?: 'domain' | 'tech' | 'doctype' | 'project' | 'custom';
   color?: string;
 };
+
+type ProcessingStatus =
+  | 'pending'
+  | 'parsing'
+  | 'chunking'
+  | 'indexing'
+  | 'embedding'
+  | 'summarizing'
+  | 'ready'
+  | 'partial'
+  | 'reference_only'
+  | 'failed';
+
+type ViewMode = "all" | "recent" | "ready" | "attention";
+type TypeFilter = "all" | "documents" | "conversations" | "audio" | "video" | "web";
+type DensityMode = "compact" | "comfortable";
+type SortMode = "updated_desc" | "updated_asc" | "title_asc" | "title_desc";
 
 type LibraryItem = {
   id: string;
   type: string;
   title: string;
   preview: string;
+  summary: string;
+  keyPoints: string[];
   path: string;
+  updatedAt?: string;
   timeLabel: string;
   date: string;
   fullDate: string;
   tags: Tag[];
   isDirectory?: boolean;
   children?: LibraryItem[];
+  sourceType?: string;
+  isVirtual?: boolean;
+  processingStatus?: ProcessingStatus;
+  processingError?: string;
+  processingDetail?: string;
+  chunkCount?: number;
+  ingestJobId?: string;
 };
+
+type KbItem = {
+  id: string;
+  title: string;
+  source_type: string;
+  source_path: string;
+  content: string;
+  tags: string;
+  summary?: string;
+  key_points?: string;
+  created_at: string;
+  updated_at: string;
+  processing_status?: ProcessingStatus;
+  processing_detail?: string;
+  processing_error?: string;
+  chunk_count?: number;
+};
+
+type TagCatalogItem = {
+  id: string;
+  name: string;
+  category: 'domain' | 'tech' | 'doctype' | 'project' | 'custom';
+  color: string;
+  usage_count: number;
+};
+
+const PROCESSING_META: Record<ProcessingStatus, { label: string; className: string; brief: string }> = {
+  pending: {
+    label: '待处理',
+    className: 'bg-slate-100 text-slate-600',
+    brief: '资料已入库，等待进入处理管线',
+  },
+  parsing: {
+    label: '解析中',
+    className: 'bg-sky-100 text-sky-700',
+    brief: '正在抽取可检索文本',
+  },
+  chunking: {
+    label: '切片中',
+    className: 'bg-blue-100 text-blue-700',
+    brief: '正在将内容切分为检索片段',
+  },
+  indexing: {
+    label: '建索引',
+    className: 'bg-indigo-100 text-indigo-700',
+    brief: '正在构建关键词索引',
+  },
+  embedding: {
+    label: '向量化',
+    className: 'bg-violet-100 text-violet-700',
+    brief: '正在生成语义向量',
+  },
+  summarizing: {
+    label: '总结中',
+    className: 'bg-amber-100 text-amber-700',
+    brief: '正在生成摘要与要点',
+  },
+  ready: {
+    label: '可用',
+    className: 'bg-emerald-100 text-emerald-700',
+    brief: '可参与语义检索与对话引用',
+  },
+  partial: {
+    label: '部分可用',
+    className: 'bg-yellow-100 text-yellow-700',
+    brief: '部分索引成功，建议稍后重试增强处理',
+  },
+  reference_only: {
+    label: '引用型',
+    className: 'bg-orange-100 text-orange-700',
+    brief: '仅登记来源路径，回答时按需读取原文',
+  },
+  failed: {
+    label: '处理失败',
+    className: 'bg-rose-100 text-rose-700',
+    brief: '处理失败，建议检查格式或重新导入',
+  },
+};
+
+const VIEW_MODE_OPTIONS: Array<{ key: ViewMode; label: string }> = [
+  { key: "all", label: "全部资料" },
+  { key: "recent", label: "最近 7 天" },
+  { key: "ready", label: "可用于对话" },
+  { key: "attention", label: "需要处理" },
+];
+
+const TYPE_FILTER_OPTIONS: Array<{ key: TypeFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "documents", label: "文档" },
+  { key: "conversations", label: "对话" },
+  { key: "audio", label: "音频" },
+  { key: "video", label: "视频" },
+  { key: "web", label: "网页" },
+];
+
+const SORT_MODE_OPTIONS: Array<{ key: SortMode; label: string }> = [
+  { key: "updated_desc", label: "最近更新" },
+  { key: "updated_asc", label: "最早更新" },
+  { key: "title_asc", label: "标题正序" },
+  { key: "title_desc", label: "标题倒序" },
+];
+
+const TAG_CATEGORY_LABEL: Record<TagCatalogItem["category"], string> = {
+  domain: "领域",
+  tech: "技术",
+  doctype: "文档类型",
+  project: "项目",
+  custom: "自定义",
+};
+
+const TAG_CATEGORY_ORDER: TagCatalogItem["category"][] = [
+  "domain",
+  "tech",
+  "doctype",
+  "project",
+  "custom",
+];
+
+const TOP_ACTION_BUTTON_CLASS =
+  "h-9 shrink-0 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent";
 
 // 文件类型 Logo 组件
 const FileTypeLogo = ({ type }: { type: string }) => {
@@ -59,6 +219,23 @@ const FileTypeLogo = ({ type }: { type: string }) => {
       <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-700">
         <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
           <path d="M22.27 19.385H1.73A1.73 1.73 0 010 17.655V6.345a1.73 1.73 0 011.73-1.73h20.54A1.73 1.73 0 0124 6.345v11.308a1.73 1.73 0 01-1.73 1.731zM5.769 15.923v-4.5l2.308 2.885 2.307-2.885v4.5h2.308V8.078h-2.308l-2.307 2.885-2.308-2.885H3.46v7.847zM21.232 12h-2.309V8.077h-2.307V12h-2.308l3.461 4.039z"/>
+        </svg>
+      </div>
+    ),
+    "文本": (
+      <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-600">
+        <span className="text-white text-[10px] font-bold">TXT</span>
+      </div>
+    ),
+    "文件": (
+      <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-500">
+        <span className="text-white text-[10px] font-bold">FILE</span>
+      </div>
+    ),
+    "文件目录": (
+      <div className="w-8 h-8 rounded flex items-center justify-center bg-amber-500">
+        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
         </svg>
       </div>
     ),
@@ -151,24 +328,555 @@ const FileTypeLogo = ({ type }: { type: string }) => {
         </svg>
       </div>
     ),
-    "文件目录": (
-      <div className="w-8 h-8 rounded flex items-center justify-center bg-gradient-to-br from-amber-500 to-orange-600">
-        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-      </div>
-    ),
   };
 
   return logos[type] || logos["Word 文档"];
 };
 
+function formatDateParts(timestamp?: string) {
+  if (!timestamp) {
+    return { date: "-", fullDate: "-" };
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return { date: "-", fullDate: timestamp };
+  }
+  return {
+    date: date.toLocaleDateString(),
+    fullDate: date.toLocaleString(),
+  };
+}
+
+function mapPathToType(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() || "";
+  switch (ext) {
+    case "docx":
+      return "Word 文档";
+    case "pdf":
+      return "PDF 文档";
+    case "ppt":
+    case "pptx":
+      return "PowerPoint";
+    case "xls":
+    case "xlsx":
+    case "csv":
+      return "Excel 表格";
+    case "md":
+    case "mdx":
+      return "Markdown";
+    case "mp3":
+      return "MP3 音频";
+    case "wav":
+      return "WAV 音频";
+    case "aac":
+      return "AAC 音频";
+    case "flac":
+      return "FLAC 音频";
+    case "mp4":
+      return "MP4 视频";
+    case "mov":
+      return "MOV 视频";
+    case "avi":
+      return "AVI 视频";
+    case "mkv":
+      return "MKV 视频";
+    default:
+      return "文件";
+  }
+}
+
+function mapSourceToType(item: KbItem): string {
+  if (item.source_type === "local_dir") return "文件目录";
+  if (item.source_type === "webpage") return "网页";
+  if (item.source_type === "manual") return "文本";
+  if (item.source_type === "feishu") return "飞书文档";
+  return mapPathToType(item.source_path || "");
+}
+
+function normalizeProcessingStatus(value?: string): ProcessingStatus {
+  const known: ProcessingStatus[] = [
+    'pending',
+    'parsing',
+    'chunking',
+    'indexing',
+    'embedding',
+    'summarizing',
+    'ready',
+    'partial',
+    'reference_only',
+    'failed',
+  ];
+  return known.includes(value as ProcessingStatus) ? (value as ProcessingStatus) : 'pending';
+}
+
+function parseProcessingDetail(detailRaw?: string): Record<string, string> {
+  if (!detailRaw) return {};
+  try {
+    const parsed = JSON.parse(detailRaw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, String(value)]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function processingMeta(status?: string) {
+  const normalized = normalizeProcessingStatus(status);
+  return PROCESSING_META[normalized];
+}
+
+function isReadyStatus(status?: ProcessingStatus) {
+  return ["ready", "reference_only", "partial"].includes(status || "pending");
+}
+
+function isAttentionStatus(status?: ProcessingStatus) {
+  return ["failed", "pending", "parsing", "chunking", "indexing", "embedding", "summarizing"].includes(status || "pending");
+}
+
+function normalizeFsPath(value: string): string {
+  return (value || "")
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/$/, "");
+}
+
+function basenameFsPath(value: string): string {
+  const normalized = normalizeFsPath(value);
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+}
+
+function isPathInsideDir(pathLike: string, dirPath: string): boolean {
+  const path = normalizeFsPath(pathLike);
+  const dir = normalizeFsPath(dirPath);
+  if (!path || !dir) return false;
+  return path === dir || path.startsWith(`${dir}/`);
+}
+
+function isRootIngestDirectory(item?: LibraryItem | null): boolean {
+  if (!item?.isVirtual || !item.isDirectory || !item.ingestJobId) return false;
+  return item.id === `ingest:${item.ingestJobId}`;
+}
+
+function canRemoveLibraryItem(item?: LibraryItem | null): boolean {
+  if (!item) return false;
+  if (!item.isVirtual) return true;
+  return isRootIngestDirectory(item);
+}
+
+function removeDisabledReason(item?: LibraryItem | null): string {
+  if (!item) return "请选择资料";
+  if (isRootIngestDirectory(item)) return "移除目录（含队列任务与已入库文件）";
+  if (canRemoveLibraryItem(item)) return "移除资料";
+  if (item.isVirtual) return "仅支持移除目录根节点";
+  return "移除资料";
+}
+
+function relativeFsPath(baseDir: string, targetPath: string): string {
+  const base = normalizeFsPath(baseDir);
+  const target = normalizeFsPath(targetPath);
+  if (!base || !target) return target || "";
+  if (target === base) return "";
+  if (target.startsWith(`${base}/`)) return target.slice(base.length + 1);
+  return basenameFsPath(target);
+}
+
+function mapIngestJobStatusToProcessing(status: KnowledgeIngestJob["status"]): ProcessingStatus {
+  if (status === "running") return "parsing";
+  if (status === "completed") return "ready";
+  if (status === "failed" || status === "cancelled") return "failed";
+  return "pending";
+}
+
+function mapIngestItemStatusToProcessing(status: KnowledgeIngestJobItem["status"]): ProcessingStatus {
+  if (status === "running") return "parsing";
+  if (status === "completed" || status === "duplicate") return "ready";
+  if (status === "failed") return "failed";
+  if (status === "skipped") return "partial";
+  return "pending";
+}
+
+function isRecentUpdate(updatedAt?: string, days = 7) {
+  if (!updatedAt) return false;
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= days * 24 * 60 * 60 * 1000;
+}
+
+function matchesTypeFilter(item: LibraryItem, filter: TypeFilter) {
+  if (filter === "all") return true;
+  if (filter === "documents") {
+    return [
+      "Word 文档",
+      "PDF 文档",
+      "PowerPoint",
+      "Excel 表格",
+      "Markdown",
+      "飞书文档",
+      "Google Docs",
+      "Notion",
+      "语雀文档",
+      "文本",
+      "文件",
+      "文件目录",
+    ].includes(item.type);
+  }
+  if (filter === "conversations") return item.type === "AI 对话";
+  if (filter === "audio") {
+    return ["MP3 音频", "iPhone 录音", "WAV 音频", "AAC 音频", "FLAC 音频"].includes(item.type);
+  }
+  if (filter === "video") {
+    return ["MP4 视频", "MOV 视频", "AVI 视频", "MKV 视频"].includes(item.type);
+  }
+  if (filter === "web") return item.type === "网页";
+  return true;
+}
+
+function parseKeyPoints(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function mapKbItemToLibrary(
+  item: KbItem,
+  tagMetaByName: Map<string, TagCatalogItem> = new Map(),
+): LibraryItem {
+  const { date, fullDate } = formatDateParts(item.updated_at || item.created_at);
+  const tags: string[] = (() => {
+    try {
+      const parsed = JSON.parse(item.tags || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const isDirectory = item.source_type === "local_dir";
+  const statusMeta = processingMeta(item.processing_status);
+  const summary = (item.summary || "").trim();
+  const keyPoints = parseKeyPoints(item.key_points);
+  const fallbackPreview = isDirectory
+    ? statusMeta.brief
+    : item.content?.trim()
+      ? item.content.slice(0, 180)
+      : item.source_path
+        ? `来源: ${item.source_path}`
+        : statusMeta.brief;
+  const preview = summary || fallbackPreview;
+
+  return {
+    id: item.id,
+    type: mapSourceToType(item),
+    title: item.title || "Untitled",
+    preview,
+    summary,
+    keyPoints,
+    path: item.source_path || "",
+    updatedAt: item.updated_at || item.created_at,
+    timeLabel: "更新于",
+    date,
+    fullDate,
+    tags: tags.map((tag) => {
+      const meta = tagMetaByName.get(tag.toLowerCase());
+      const category = meta?.category || "custom";
+      return {
+        label: tag,
+        category,
+        color: meta?.color,
+        type: category === "custom" ? ("custom" as const) : ("ai" as const),
+      };
+    }),
+    isDirectory,
+    sourceType: item.source_type,
+    processingStatus: normalizeProcessingStatus(item.processing_status),
+    processingError: item.processing_error || "",
+    processingDetail: item.processing_detail || "",
+    chunkCount: Number(item.chunk_count || 0),
+  };
+}
+
+function mapFileNodeToLibrary(node: FileTreeNode): LibraryItem {
+  const isDirectory = node.type === "directory";
+  const { date, fullDate } = formatDateParts();
+  return {
+    id: `${isDirectory ? "dir" : "file"}:${node.path}`,
+    type: isDirectory ? "文件目录" : mapPathToType(node.path),
+    title: node.name,
+    preview: isDirectory ? "文件目录" : "未入库文件",
+    summary: "",
+    keyPoints: [],
+    path: node.path,
+    timeLabel: "更新于",
+    date,
+    fullDate,
+    tags: [],
+    isDirectory,
+    sourceType: isDirectory ? "local_dir" : "local_file",
+    isVirtual: true,
+    processingStatus: "pending",
+    processingError: "",
+    processingDetail: "",
+    chunkCount: 0,
+  };
+}
+
+function mapIngestJobToFolderItem(job: KnowledgeIngestJob): LibraryItem {
+  const { date, fullDate } = formatDateParts(job.updated_at || job.created_at);
+  const total = Math.max(0, Number(job.total_files || 0));
+  const processed = Math.max(0, Number(job.processed_files || 0));
+  const status = mapIngestJobStatusToProcessing(job.status);
+  const isReprocess = Number(job.force_reprocess || 0) === 1;
+  const progress = total > 0 ? `${processed}/${total}` : `${processed}`;
+  const preview = job.status === "completed"
+    ? `${isReprocess ? "重处理完成" : "入库完成"}，已处理 ${progress}`
+    : job.status === "failed"
+      ? `${isReprocess ? "重处理失败" : "入库失败"}，已处理 ${progress}`
+      : job.status === "cancelled"
+        ? `任务已取消，已处理 ${progress}`
+        : `${isReprocess ? "后台重处理中" : "后台处理中"}，已处理 ${progress}`;
+
+  return {
+    id: `ingest:${job.id}`,
+    ingestJobId: job.id,
+    type: "文件目录",
+    title: basenameFsPath(job.source_dir) || "未命名目录",
+    preview,
+    summary: "",
+    keyPoints: [],
+    path: job.source_dir,
+    updatedAt: job.updated_at || job.created_at,
+    timeLabel: "更新于",
+    date,
+    fullDate,
+    tags: [],
+    isDirectory: true,
+    sourceType: "local_dir",
+    isVirtual: true,
+    processingStatus: status,
+    processingError: job.error || "",
+    processingDetail: JSON.stringify({ mode: "ingest_queue", status: job.status, progress }),
+    chunkCount: 0,
+  };
+}
+
+function buildIngestJobChildren(
+  job: KnowledgeIngestJob,
+  jobItems: KnowledgeIngestJobItem[],
+  kbItems: LibraryItem[],
+): LibraryItem[] {
+  type TreeNode = {
+    item: LibraryItem;
+    children: Map<string, TreeNode>;
+  };
+
+  const byId = new Map<string, LibraryItem>();
+  const byPath = new Map<string, LibraryItem>();
+  kbItems.forEach((item) => {
+    byId.set(item.id, item);
+    const path = normalizeFsPath(item.path);
+    if (path) byPath.set(path, item);
+  });
+
+  const root = new Map<string, TreeNode>();
+  const sourceRoot = normalizeFsPath(job.source_dir);
+
+  const ensureDir = (parent: Map<string, TreeNode>, segment: string, absPath: string, relPath: string): TreeNode => {
+    const existing = parent.get(segment);
+    if (existing) return existing;
+    const dirItem: LibraryItem = {
+      id: `ingest:${job.id}:dir:${relPath}`,
+      ingestJobId: job.id,
+      type: "文件目录",
+      title: segment,
+      preview: "文件夹",
+      summary: "",
+      keyPoints: [],
+      path: absPath,
+      updatedAt: job.updated_at || job.created_at,
+      timeLabel: "更新于",
+      date: formatDateParts(job.updated_at || job.created_at).date,
+      fullDate: formatDateParts(job.updated_at || job.created_at).fullDate,
+      tags: [],
+      isDirectory: true,
+      sourceType: "local_dir",
+      isVirtual: true,
+      processingStatus: "pending",
+      processingError: "",
+      processingDetail: "",
+      chunkCount: 0,
+    };
+    const node = { item: dirItem, children: new Map<string, TreeNode>() };
+    parent.set(segment, node);
+    return node;
+  };
+
+  const sorted = [...jobItems].sort((a, b) => {
+    const pa = normalizeFsPath(a.file_path);
+    const pb = normalizeFsPath(b.file_path);
+    return pa.localeCompare(pb, "zh-Hans-CN", { sensitivity: "base" });
+  });
+
+  for (const queued of sorted) {
+    const normalizedFile = normalizeFsPath(queued.file_path);
+    const rel = relativeFsPath(sourceRoot, normalizedFile);
+    if (!rel) continue;
+    const segments = rel.split("/").filter(Boolean);
+    if (segments.length === 0) continue;
+
+    let parent = root;
+    let relAcc = "";
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      const segment = segments[i];
+      relAcc = relAcc ? `${relAcc}/${segment}` : segment;
+      const absDir = sourceRoot ? `${sourceRoot}/${relAcc}` : relAcc;
+      const node = ensureDir(parent, segment, absDir, relAcc);
+      parent = node.children;
+    }
+
+    const fileName = segments[segments.length - 1];
+    const imported = (queued.item_id && byId.get(queued.item_id)) || byPath.get(normalizedFile);
+    const fallbackStatus = mapIngestItemStatusToProcessing(queued.status);
+    const fallbackPreview = fallbackStatus === "ready"
+      ? "已入库"
+      : fallbackStatus === "failed"
+        ? (queued.error || queued.parse_error || "处理失败")
+        : fallbackStatus === "partial"
+          ? "处理跳过"
+          : "等待后台处理";
+    const fileItem: LibraryItem = imported
+      ? { ...imported, ingestJobId: job.id }
+      : {
+          id: `ingest:${job.id}:file:${queued.id}`,
+          ingestJobId: job.id,
+          type: mapPathToType(queued.file_path),
+          title: fileName,
+          preview: fallbackPreview,
+          summary: "",
+          keyPoints: [],
+          path: queued.file_path,
+          updatedAt: queued.updated_at || queued.created_at,
+          timeLabel: "更新于",
+          date: formatDateParts(queued.updated_at || queued.created_at).date,
+          fullDate: formatDateParts(queued.updated_at || queued.created_at).fullDate,
+          tags: [],
+          isDirectory: false,
+          sourceType: "local_file",
+          isVirtual: true,
+          processingStatus: fallbackStatus,
+          processingError: queued.error || queued.parse_error || "",
+          processingDetail: JSON.stringify({ mode: queued.mode, queue_status: queued.status }),
+          chunkCount: 0,
+        };
+
+    parent.set(fileName, { item: fileItem, children: new Map<string, TreeNode>() });
+  }
+
+  const toArray = (nodeMap: Map<string, TreeNode>): LibraryItem[] => {
+    const nodes = Array.from(nodeMap.values()).map((node) => {
+      const children = toArray(node.children);
+      const isDir = Boolean(node.item.isDirectory);
+      if (!isDir) return node.item;
+
+      const childStatuses = children.map((entry) => entry.processingStatus || "pending");
+      const nextStatus: ProcessingStatus = childStatuses.some((s) => s === "failed")
+        ? "failed"
+        : childStatuses.some((s) => s === "pending" || s === "parsing" || s === "chunking" || s === "indexing" || s === "embedding" || s === "summarizing")
+          ? "pending"
+          : childStatuses.length > 0
+            ? "ready"
+            : "pending";
+      return {
+        ...node.item,
+        preview: children.length > 0 ? `包含 ${children.length} 项` : "空文件夹",
+        processingStatus: nextStatus,
+        children,
+      };
+    });
+    nodes.sort((a, b) => {
+      const aDir = a.isDirectory ? 1 : 0;
+      const bDir = b.isDirectory ? 1 : 0;
+      if (aDir !== bDir) return bDir - aDir;
+      return a.title.localeCompare(b.title, "zh-Hans-CN", { sensitivity: "base" });
+    });
+    return nodes;
+  };
+
+  return toArray(root);
+}
+
+function updateItemChildren(items: LibraryItem[], targetId: string, children: LibraryItem[]): LibraryItem[] {
+  return items.map((item) => {
+    if (item.id === targetId) {
+      return { ...item, children };
+    }
+    if (item.children) {
+      return { ...item, children: updateItemChildren(item.children, targetId, children) };
+    }
+    return item;
+  });
+}
+
+function resolveItemsByPath(rootItems: LibraryItem[], path: PathItem[]): LibraryItem[] | null {
+  if (path.length === 0) return rootItems;
+  let nextItems = rootItems;
+  for (const pathItem of path) {
+    const found = nextItems.find((entry) => entry.id === pathItem.id);
+    if (!found?.children) return null;
+    nextItems = found.children;
+  }
+  return nextItems;
+}
+
+function patchItemInTree(
+  items: LibraryItem[],
+  targetId: string,
+  patcher: (item: LibraryItem) => LibraryItem,
+): LibraryItem[] {
+  return items.map((item) => {
+    if (item.id === targetId) {
+      return patcher(item);
+    }
+    if (item.children?.length) {
+      return {
+        ...item,
+        children: patchItemInTree(item.children, targetId, patcher),
+      };
+    }
+    return item;
+  });
+}
+
 export default function LibraryDemoPage() {
   const router = useRouter();
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<TypeFilter>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showTagSelector, setShowTagSelector] = useState(false);
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
+  const [densityMode, setDensityMode] = useState<DensityMode>("comfortable");
+  const [sortMode, setSortMode] = useState<SortMode>("updated_desc");
+
+  const [collectionId, setCollectionId] = useState<string | null>(null);
+  const [items, setItems] = useState<LibraryItem[]>([]);
+  const [allKbItems, setAllKbItems] = useState<LibraryItem[]>([]);
+  const [ingestJobs, setIngestJobs] = useState<KnowledgeIngestJob[]>([]);
+  const [tagCatalog, setTagCatalog] = useState<TagCatalogItem[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
 
   // 对话相关状态
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
@@ -177,16 +885,104 @@ export default function LibraryDemoPage() {
 
   // 收藏状态
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reindexingId, setReindexingId] = useState<string | null>(null);
+  const [retryingDirectoryId, setRetryingDirectoryId] = useState<string | null>(null);
 
   // 详情页状态
   const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editFeedback, setEditFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // 目录导航状态
   const [currentPath, setCurrentPath] = useState<PathItem[]>([]); // 当前路径（面包屑）
-  const [currentItems, setCurrentItems] = useState<LibraryItem[]>(mockItems); // 当前显示的项目列表
+  const [currentItems, setCurrentItems] = useState<LibraryItem[]>([]); // 当前显示的项目列表
+
+  const loadItems = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setItemsLoading(true);
+    }
+    setItemsError(null);
+    try {
+      const collection = await getDefaultCollection();
+      setCollectionId(collection.id);
+      const [itemRes, tagRes, jobs] = await Promise.all([
+        fetch(`/api/knowledge/items?collection_id=${collection.id}`),
+        fetch('/api/knowledge/tags'),
+        listDirectoryImportJobs({ collectionId: collection.id, limit: 200 }),
+      ]);
+      const [itemData, tagData] = await Promise.all([itemRes.json(), tagRes.json()]);
+      if (!itemRes.ok) {
+        throw new Error(itemData?.error || "加载资料失败");
+      }
+
+      const catalog = (Array.isArray(tagData) ? tagData : []) as TagCatalogItem[];
+      setTagCatalog(catalog);
+      setIngestJobs(Array.isArray(jobs) ? jobs : []);
+      const tagMetaByName = new Map<string, TagCatalogItem>(
+        catalog.map((tag) => [String(tag.name || '').trim().toLowerCase(), tag]),
+      );
+      const mapped = (Array.isArray(itemData) ? itemData : []).map((item) =>
+        mapKbItemToLibrary(item as KbItem, tagMetaByName),
+      );
+      setAllKbItems(mapped);
+
+      const latestJobsByDir = new Map<string, KnowledgeIngestJob>();
+      for (const job of Array.isArray(jobs) ? jobs : []) {
+        if (job.status === "cancelled") continue;
+        const key = normalizeFsPath(job.source_dir);
+        if (!key || latestJobsByDir.has(key)) continue;
+        latestJobsByDir.set(key, job);
+      }
+      const folderCards = Array.from(latestJobsByDir.values()).map((job) => mapIngestJobToFolderItem(job));
+      const ingestDirs = folderCards.map((folder) => folder.path).filter(Boolean);
+      const rootFiles = mapped.filter((item) => !ingestDirs.some((dir) => isPathInsideDir(item.path, dir)));
+      const rootItems = [...folderCards, ...rootFiles];
+
+      setItems((prev) => {
+        const prevMap = new Map(prev.map((item) => [item.id, item]));
+        return rootItems.map((item) => {
+          const prevItem = prevMap.get(item.id);
+          return prevItem?.children ? { ...item, children: prevItem.children } : item;
+        });
+      });
+    } catch (error) {
+      setItemsError(error instanceof Error ? error.message : "加载资料失败");
+    } finally {
+      if (!options?.silent) {
+        setItemsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadItems();
+  }, [loadItems]);
+
+  useEffect(() => {
+    const resolved = resolveItemsByPath(items, currentPath);
+    if (resolved) {
+      setCurrentItems(resolved);
+      return;
+    }
+    if (currentPath.length > 0) {
+      setCurrentPath([]);
+    }
+    setCurrentItems(items);
+  }, [items, currentPath]);
+
+  const hasActiveIngestJobs = ingestJobs.some((job) => job.status === "pending" || job.status === "running");
+
+  useEffect(() => {
+    if (!hasActiveIngestJobs) return;
+    const timer = window.setInterval(() => {
+      void loadItems({ silent: true });
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [hasActiveIngestJobs, loadItems]);
 
   const handleSend = (content: string) => {
     // 添加用户消息
@@ -225,8 +1021,13 @@ export default function LibraryDemoPage() {
     setSelectedTags(prev => prev.filter(t => t !== tagLabel));
   };
 
-  const clearAllTags = () => {
+  const clearAllFilters = () => {
+    setViewMode("all");
+    setFilter("all");
+    setSearchQuery("");
     setSelectedTags([]);
+    setFavoriteOnly(false);
+    setShowTagSelector(false);
   };
 
   // 收藏功能
@@ -243,44 +1044,188 @@ export default function LibraryDemoPage() {
     });
   };
 
-  // 进入目录
-  const enterDirectory = (item: LibraryItem) => {
-    if (item.type === "文件目录" && item.children) {
-      // 添加到路径
-      setCurrentPath([...currentPath, { id: item.id, title: item.title }]);
-      // 更新当前显示的项目列表
-      setCurrentItems(item.children);
+  const deleteItem = useCallback(async (item: LibraryItem) => {
+    const canRemove = canRemoveLibraryItem(item);
+    if (!canRemove) {
+      alert("该资料当前不支持移除");
+      return;
     }
-  };
+    const deletingDirectory = isRootIngestDirectory(item);
+    const confirmed = window.confirm(
+      deletingDirectory
+        ? `确定移除目录「${item.title}」吗？将清理该目录的后台任务与已入库资料。`
+        : `确定移除「${item.title}」吗？该操作不可撤销。`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(item.id);
+    try {
+      if (deletingDirectory) {
+        if (!collectionId) {
+          throw new Error("未找到默认资料集合");
+        }
+        await removeDirectoryKnowledge({
+          collectionId,
+          sourceDir: item.path,
+        });
+      } else {
+        const res = await fetch("/api/knowledge/items", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: item.id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.deleted) {
+          throw new Error(data?.error || "移除失败");
+        }
+      }
+      if (selectedItem?.id === item.id) {
+        setShowDetail(false);
+        setSelectedItem(null);
+      }
+      setCurrentPath([]);
+      setCurrentItems([]);
+      await loadItems();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "移除失败");
+    } finally {
+      setDeletingId(null);
+    }
+  }, [collectionId, loadItems, selectedItem]);
+
+  const loadDirectoryChildren = useCallback(async (dirPath: string) => {
+    const params = new URLSearchParams({
+      dir: dirPath,
+      depth: "1",
+      baseDir: dirPath,
+    });
+    const res = await fetch(`/api/files?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || "读取目录失败");
+    }
+    const nodes: FileTreeNode[] = Array.isArray(data.tree) ? data.tree : [];
+    return nodes.map(mapFileNodeToLibrary);
+  }, []);
+
+  const loadIngestJobChildren = useCallback(async (jobId: string) => {
+    const { job, items: jobItems } = await getDirectoryImportJob(jobId, {
+      includeItems: true,
+      limit: 2000,
+    });
+    if (!job || !Array.isArray(jobItems)) {
+      return [] as LibraryItem[];
+    }
+    return buildIngestJobChildren(job, jobItems, allKbItems);
+  }, [allKbItems]);
+
+  // 进入目录
+  const enterDirectory = useCallback(async (item: LibraryItem) => {
+    if (item.type !== "文件目录") return;
+    setItemsError(null);
+    let children = item.children;
+    if (!children) {
+      try {
+        children = item.ingestJobId
+          ? await loadIngestJobChildren(item.ingestJobId)
+          : await loadDirectoryChildren(item.path);
+        setItems((prev) => updateItemChildren(prev, item.id, children!));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "读取目录失败";
+        setItemsError(message);
+        return;
+      }
+    }
+    if (!children) return;
+    setCurrentPath((prev) => [...prev, { id: item.id, title: item.title }]);
+    setCurrentItems(children);
+  }, [loadDirectoryChildren, loadIngestJobChildren, setItemsError]);
 
   // 返回上一级目录
   const goBack = () => {
     if (currentPath.length === 0) return;
-
-    const newPath = currentPath.slice(0, -1);
-    setCurrentPath(newPath);
-
-    // 如果回到根目录
-    if (newPath.length === 0) {
-      setCurrentItems(mockItems);
-    } else {
-      // 找到父目录的 children
-      let items: LibraryItem[] = mockItems;
-      for (const pathItem of newPath) {
-        const found = items.find((i) => i.id === pathItem.id);
-        if (found && found.children) {
-          items = found.children;
-        }
-      }
-      setCurrentItems(items);
-    }
+    setCurrentPath((prev) => prev.slice(0, -1));
   };
+
+  const refreshCurrentView = useCallback(async () => {
+    if (currentPath.length === 0) {
+      await loadItems();
+      return;
+    }
+
+    const root = currentPath[0];
+    if (root.id.startsWith("ingest:")) {
+      const jobId = root.id.slice("ingest:".length);
+      try {
+        const children = await loadIngestJobChildren(jobId);
+        setItems((prev) => updateItemChildren(prev, root.id, children));
+      } catch (error) {
+        setItemsError(error instanceof Error ? error.message : "刷新目录失败");
+      }
+      return;
+    }
+
+    let target: LibraryItem | undefined;
+    let layer = items;
+    for (const pathItem of currentPath) {
+      target = layer.find((entry) => entry.id === pathItem.id);
+      if (!target) break;
+      layer = target.children || [];
+    }
+    if (!target?.path) return;
+
+    try {
+      const children = await loadDirectoryChildren(target.path);
+      setItems((prev) => updateItemChildren(prev, target!.id, children));
+    } catch (error) {
+      setItemsError(error instanceof Error ? error.message : "刷新目录失败");
+    }
+  }, [currentPath, items, loadDirectoryChildren, loadIngestJobChildren, loadItems]);
+
+  const retryDirectoryProcessing = useCallback(async (item: LibraryItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!item.ingestJobId) return;
+
+    const job = ingestJobs.find((entry) => entry.id === item.ingestJobId);
+    if (!job) {
+      await loadItems();
+      return;
+    }
+    if (job.status === "running" || job.status === "pending") {
+      alert("该目录仍在处理中，请稍后再试");
+      return;
+    }
+
+    setRetryingDirectoryId(item.id);
+    try {
+      const hasRetryableErrors = Number(job.failed_files || 0) + Number(job.skipped_files || 0) > 0;
+      if (hasRetryableErrors) {
+        await retryDirectoryImportJob(job.id);
+      } else {
+        await importDirectory({
+          directory: job.source_dir,
+          collectionId: collectionId || undefined,
+          recursive: job.recursive !== 0,
+          baseDir: job.source_dir,
+          mode: 'ingest',
+          forceReprocess: true,
+          maxFiles: Math.max(Number(job.max_files || 0), 2000),
+          maxFileSize: Number(job.max_file_size || 20 * 1024 * 1024),
+        });
+      }
+      await loadItems();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "目录重试失败");
+    } finally {
+      setRetryingDirectoryId(null);
+    }
+  }, [collectionId, ingestJobs, loadItems]);
 
   // 打开详情页（修改为支持目录导航）
   const openDetail = (item: LibraryItem) => {
     // 如果是目录，进入目录
     if (item.type === "文件目录") {
-      enterDirectory(item);
+      void enterDirectory(item);
       return;
     }
 
@@ -289,19 +1234,26 @@ export default function LibraryDemoPage() {
     setShowDetail(true);
     setIsEditing(false);
     setEditContent('');
+    setEditFeedback(null);
   };
 
   // 关闭详情页
   const closeDetail = () => {
     setShowDetail(false);
     setIsEditing(false);
+    setEditFeedback(null);
     setTimeout(() => setSelectedItem(null), 300); // 等待动画结束
   };
 
   // 进入编辑模式
   const enterEditMode = () => {
     if (selectedItem) {
+      if (selectedItem.isVirtual || selectedItem.type === "文件目录") {
+        setEditFeedback({ type: "error", message: "该资料暂不支持在线编辑" });
+        return;
+      }
       setIsEditing(true);
+      setEditFeedback(null);
       // 根据文件类型设置初始内容
       if (selectedItem.type === 'Markdown') {
         setEditContent(`# ${selectedItem.title}\n\n${selectedItem.preview}\n\n## 更多内容\n\n这里可以继续编辑...`);
@@ -312,27 +1264,98 @@ export default function LibraryDemoPage() {
   };
 
   // 保存编辑
-  const saveEdit = () => {
-    // 这里应该调用 API 保存
-    console.log('保存内容:', editContent);
-    setIsEditing(false);
-    // 显示保存成功提示
-    alert('保存成功！');
+  const saveEdit = async () => {
+    if (!selectedItem) return;
+    if (!editContent.trim()) {
+      setEditFeedback({ type: "error", message: "内容不能为空" });
+      return;
+    }
+    setEditSaving(true);
+    setEditFeedback(null);
+    try {
+      const res = await fetch(`/api/knowledge/items/${encodeURIComponent(selectedItem.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: editContent }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.item) {
+        throw new Error(data?.error || "保存失败");
+      }
+      const mapped = mapKbItemToLibrary(data.item as KbItem);
+      const mergeItem = (origin: LibraryItem): LibraryItem => ({
+        ...origin,
+        ...mapped,
+        children: origin.children,
+      });
+      setItems((prev) => patchItemInTree(prev, selectedItem.id, mergeItem));
+      setCurrentItems((prev) => patchItemInTree(prev, selectedItem.id, mergeItem));
+      setSelectedItem((prev) => (prev ? mergeItem(prev) : prev));
+      setIsEditing(false);
+      setEditFeedback({ type: "success", message: "保存成功，知识索引已更新" });
+    } catch (error) {
+      setEditFeedback({ type: "error", message: error instanceof Error ? error.message : "保存失败" });
+    } finally {
+      setEditSaving(false);
+    }
   };
+
+  const reindexItem = useCallback(async (item: LibraryItem) => {
+    if (item.isVirtual) {
+      setEditFeedback({ type: "error", message: "该资料尚未入库，无法重建索引" });
+      return;
+    }
+    setReindexingId(item.id);
+    setEditFeedback(null);
+    try {
+      const res = await fetch(`/api/knowledge/items/${encodeURIComponent(item.id)}/reindex`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reparse: true }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.item) {
+        throw new Error(data?.error || "重建索引失败");
+      }
+      const mapped = mapKbItemToLibrary(data.item as KbItem);
+      const mergeItem = (origin: LibraryItem): LibraryItem => ({
+        ...origin,
+        ...mapped,
+        children: origin.children,
+      });
+      setItems((prev) => patchItemInTree(prev, item.id, mergeItem));
+      setCurrentItems((prev) => patchItemInTree(prev, item.id, mergeItem));
+      setSelectedItem((prev) => (prev && prev.id === item.id ? mergeItem(prev) : prev));
+      setEditFeedback({ type: "success", message: "索引重建完成" });
+    } catch (error) {
+      setEditFeedback({ type: "error", message: error instanceof Error ? error.message : "重建索引失败" });
+    } finally {
+      setReindexingId(null);
+    }
+  }, []);
 
   // 取消编辑
   const cancelEdit = () => {
     setIsEditing(false);
     setEditContent('');
+    setEditFeedback(null);
   };
 
   // 基于此创作（跳转到创作页面）
   const createProject = () => {
     if (selectedItem) {
+      if (selectedItem.isVirtual || selectedItem.type === "文件目录") {
+        alert("该资料尚未入库，无法基于此创作");
+        return;
+      }
+      if (selectedItem.processingStatus === "failed") {
+        alert("该资料处理失败，请重新导入或先修复解析问题");
+        return;
+      }
       // 先关闭弹窗
       setShowDetail(false);
       // 跳转到创作页面，传递资料 ID
-      router.push(`/library-demo/create?itemId=${selectedItem.id}`);
+      router.push(`/library/create?itemId=${selectedItem.id}`);
     }
   };
 
@@ -347,216 +1370,349 @@ export default function LibraryDemoPage() {
     return () => window.removeEventListener('keydown', handleEsc);
   }, [showDetail]);
 
-  // 过滤逻辑
-  const filteredItems = currentItems.filter((item) => {
-    // 类型筛选
-    const typeMatch = (() => {
-      if (filter === "all") return true;
-      if (filter === "documents") {
-        return ["Word 文档", "PDF 文档", "PowerPoint", "Excel 表格", "Markdown", "飞书文档", "Google Docs", "Notion", "语雀文档"].includes(item.type);
-      }
-      if (filter === "conversations") {
-        return item.type === "AI 对话";
-      }
-      if (filter === "audio") {
-        return ["MP3 音频", "iPhone 录音", "WAV 音频", "AAC 音频", "FLAC 音频"].includes(item.type);
-      }
-      if (filter === "video") {
-        return ["MP4 视频", "MOV 视频", "AVI 视频", "MKV 视频"].includes(item.type);
-      }
-      if (filter === "web") {
-        return item.type === "网页";
-      }
-      return true;
-    })();
-
-    if (!typeMatch) return false;
-
-    // 标签筛选（包含任意一个选中的标签即可 - OR 逻辑）
-    if (selectedTags.length > 0) {
-      const itemTagLabels = item.tags?.map(tag => tag.label) || [];
-      const hasAnyTag = selectedTags.some(selectedTag =>
-        itemTagLabels.includes(selectedTag)
-      );
-      if (!hasAnyTag) return false;
-    }
-
-    // 搜索过滤
-    if (!searchQuery.trim()) return true;
-
-    const query = searchQuery.toLowerCase();
-    const titleMatch = item.title.toLowerCase().includes(query);
-    const previewMatch = item.preview.toLowerCase().includes(query);
-    const tagMatch = item.tags?.some(tag => tag.label.toLowerCase().includes(query));
-
-    return titleMatch || previewMatch || tagMatch;
+  // 过滤管线：视图 -> 类型 -> 标签 -> 搜索
+  const viewFilteredItems = currentItems.filter((item) => {
+    if (viewMode === "all") return true;
+    if (viewMode === "recent") return isRecentUpdate(item.updatedAt, 7);
+    if (viewMode === "ready") return isReadyStatus(item.processingStatus);
+    return isAttentionStatus(item.processingStatus);
   });
 
-  // 收集所有标签及其使用次数
-  const allTags = mockItems.reduce((acc, item) => {
-    item.tags?.forEach(tag => {
-      if (acc[tag.label]) {
-        acc[tag.label].count++;
+  const typeFilteredItems = viewFilteredItems.filter((item) => matchesTypeFilter(item, filter));
+
+  const tagFilteredItems = typeFilteredItems.filter((item) => {
+    if (selectedTags.length === 0) return true;
+    const itemTagLabels = item.tags?.map((tag) => tag.label) || [];
+    return selectedTags.some((tag) => itemTagLabels.includes(tag));
+  });
+
+  const favoriteFilteredItems = tagFilteredItems.filter((item) => {
+    if (!favoriteOnly) return true;
+    return favorites.has(item.id);
+  });
+
+  const query = searchQuery.trim().toLowerCase();
+  const filteredItems = favoriteFilteredItems.filter((item) => {
+    if (!query) return true;
+    const titleMatch = item.title.toLowerCase().includes(query);
+    const previewMatch = item.preview.toLowerCase().includes(query);
+    const tagMatch = item.tags?.some((tag) => tag.label.toLowerCase().includes(query));
+    const pathMatch = item.path.toLowerCase().includes(query);
+    return titleMatch || previewMatch || tagMatch || pathMatch;
+  });
+
+  const sortedFilteredItems = [...filteredItems].sort((a, b) => {
+    const timeA = Date.parse(a.updatedAt || "") || 0;
+    const timeB = Date.parse(b.updatedAt || "") || 0;
+    const titleA = a.title || "";
+    const titleB = b.title || "";
+
+    if (sortMode === "updated_desc") return timeB - timeA;
+    if (sortMode === "updated_asc") return timeA - timeB;
+    if (sortMode === "title_asc") return titleA.localeCompare(titleB, "zh-Hans-CN", { sensitivity: "base" });
+    return titleB.localeCompare(titleA, "zh-Hans-CN", { sensitivity: "base" });
+  });
+
+  const catalogMetaByName = new Map(
+    tagCatalog.map((tag) => [String(tag.name || '').trim().toLowerCase(), tag]),
+  );
+
+  // 收集当前目录可用标签及其使用次数（按标签体系分类）
+  const allTags = currentItems.reduce((acc, item) => {
+    item.tags?.forEach((tag) => {
+      const key = tag.label.toLowerCase();
+      const meta = catalogMetaByName.get(key);
+      if (acc[key]) {
+        acc[key].count += 1;
       } else {
-        acc[tag.label] = {
+        const category = meta?.category || tag.category || "custom";
+        acc[key] = {
           label: tag.label,
-          type: tag.type,
-          color: tag.color,
+          type: category === "custom" ? "custom" : "ai",
+          category,
+          color: meta?.color || tag.color,
           count: 1,
         };
       }
     });
     return acc;
-  }, {} as Record<string, { label: string; type: string; color?: string; count: number }>);
+  }, {} as Record<string, { label: string; type: "custom" | "ai" | "system"; category: TagCatalogItem["category"]; color?: string; count: number }>);
 
   // 转换为数组并按使用次数排序
-  const sortedTags = Object.values(allTags).sort((a, b) => b.count - a.count);
+  const sortedTags = Object.values(allTags).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.label.localeCompare(b.label, "zh-Hans-CN", { sensitivity: "base" });
+  });
+  const tagsGroupedByCategory = TAG_CATEGORY_ORDER
+    .map((category) => ({
+      category,
+      label: TAG_CATEGORY_LABEL[category],
+      tags: sortedTags.filter((tag) => tag.category === category),
+    }))
+    .filter((entry) => entry.tags.length > 0);
+  const canCreateProject = !!selectedItem
+    && !selectedItem.isVirtual
+    && selectedItem.type !== "文件目录"
+    && selectedItem.processingStatus !== "failed";
+  const canReindexSelected = !!selectedItem && !selectedItem.isVirtual;
+  const hasAttentionItem = currentItems.some((item) => isAttentionStatus(item.processingStatus));
+  const hasReadyItem = currentItems.some((item) => isReadyStatus(item.processingStatus));
+  const hasRecentItem = currentItems.some((item) => isRecentUpdate(item.updatedAt, 7));
+  const hasActiveFilters = !!query || filter !== "all" || viewMode !== "all" || selectedTags.length > 0 || favoriteOnly;
+  const activeFilterCount = (query ? 1 : 0) + (viewMode !== "all" ? 1 : 0) + (filter !== "all" ? 1 : 0) + selectedTags.length + (favoriteOnly ? 1 : 0);
+  const totalInScope = currentItems.length;
+  const filteredCount = sortedFilteredItems.length;
+  const activeIngestJobs = ingestJobs.filter((job) => job.status === "pending" || job.status === "running");
+  const ingestTotalFiles = activeIngestJobs.reduce((sum, job) => sum + Number(job.total_files || 0), 0);
+  const ingestProcessedFiles = activeIngestJobs.reduce((sum, job) => sum + Number(job.processed_files || 0), 0);
 
   return (
     <div className="flex h-full flex-col bg-background">
       {/* 主内容区 */}
       <div className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-6xl px-8 py-8 space-y-6">
+        <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 lg:px-8 lg:py-5 space-y-4">
 
-          {/* 筛选栏 */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FilterButton active={filter === "all"} onClick={() => setFilter("all")}>
-                全部
-              </FilterButton>
-              <FilterButton active={filter === "documents"} onClick={() => setFilter("documents")}>
-                📄 文档
-              </FilterButton>
-              <FilterButton active={filter === "conversations"} onClick={() => setFilter("conversations")}>
-                💬 对话
-              </FilterButton>
-              <FilterButton active={filter === "audio"} onClick={() => setFilter("audio")}>
-                🎵 音频
-              </FilterButton>
-              <FilterButton active={filter === "video"} onClick={() => setFilter("video")}>
-                🎬 视频
-              </FilterButton>
-              <FilterButton active={filter === "web"} onClick={() => setFilter("web")}>
-                🌐 网页
-              </FilterButton>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <HugeiconsIcon icon={Search} className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="搜索资料..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-4 py-2 rounded-lg border border-border bg-background text-sm outline-none focus:border-primary/50 transition-colors w-64"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 标签筛选区 */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {selectedTags.length > 0 && (
-              <>
-                <span className="text-sm text-muted-foreground">筛选标签:</span>
-                {selectedTags.map((tag) => (
-                  <button
-                    key={tag}
-                    onClick={() => removeTag(tag)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                  >
-                    {tag}
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                ))}
-                {selectedTags.length > 1 && (
-                  <button
-                    onClick={clearAllTags}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
-                  >
-                    清除全部
-                  </button>
-                )}
-              </>
-            )}
-
-            {/* 添加标签按钮 */}
-            <div className="relative">
-              <button
-                onClick={() => setShowTagSelector(!showTagSelector)}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-border hover:border-primary/50 hover:bg-accent transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                添加标签
-              </button>
-
-              {/* 标签选择器下拉面板 */}
-              {showTagSelector && (
-                <>
-                  {/* 遮罩层 */}
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setShowTagSelector(false)}
+          <section className="sticky top-2 z-20 rounded-xl border border-border/70 bg-background/95 p-3 shadow-sm backdrop-blur">
+            <div className="flex flex-col gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <HugeiconsIcon icon={Search} className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="搜索资料"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full min-w-0 rounded-lg border border-border bg-background py-2 pl-9 pr-4 text-sm outline-none transition-colors focus:border-primary/50"
                   />
+                </div>
+                <LibraryImportPanel
+                  collectionId={collectionId}
+                  onImported={loadItems}
+                  triggerClassName={TOP_ACTION_BUTTON_CLASS}
+                />
+                <button
+                  onClick={() => void refreshCurrentView()}
+                  className={TOP_ACTION_BUTTON_CLASS}
+                >
+                  刷新
+                </button>
+                <button
+                  onClick={() => router.push("/settings#knowledge")}
+                  className={TOP_ACTION_BUTTON_CLASS}
+                >
+                  检索设置
+                </button>
+              </div>
 
-                  {/* 下拉面板 */}
-                  <div className="absolute top-full left-0 mt-2 w-96 max-h-80 overflow-auto bg-popover border border-border rounded-lg shadow-lg z-20 p-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-xs font-medium text-muted-foreground">选择标签</span>
-                        <span className="text-xs text-muted-foreground">{sortedTags.length} 个标签</span>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {sortedTags.map((tag) => {
-                          const isSelected = selectedTags.includes(tag.label);
-                          const getTagStyle = () => {
-                            if (tag.type === 'custom') {
-                              const colors: Record<string, string> = {
-                                red: 'bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20',
-                                orange: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20',
-                                yellow: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20',
-                                green: 'bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20',
-                                blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20',
-                                purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20',
-                              };
-                              return colors[tag.color || 'blue'] || colors.blue;
-                            } else if (tag.type === 'ai') {
-                              return 'border border-blue-500/50 text-blue-600 dark:text-blue-400 bg-transparent hover:bg-blue-500/10';
-                            } else {
-                              return 'bg-gray-500/10 text-gray-600 dark:text-gray-400 hover:bg-gray-500/20';
-                            }
-                          };
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={viewMode}
+                  onChange={(e) => setViewMode(e.target.value as ViewMode)}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-primary/50"
+                >
+                  {VIEW_MODE_OPTIONS.map((option) => (
+                    <option
+                      key={option.key}
+                      value={option.key}
+                      disabled={
+                        option.key === "recent"
+                          ? !hasRecentItem
+                          : option.key === "ready"
+                            ? !hasReadyItem
+                            : option.key === "attention"
+                              ? !hasAttentionItem
+                              : false
+                      }
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
 
-                          return (
-                            <button
-                              key={tag.label}
-                              onClick={() => handleTagClick(tag.label)}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-all ${
-                                isSelected ? 'ring-2 ring-primary ring-offset-1 ring-offset-popover' : ''
-                              } ${getTagStyle()}`}
-                            >
-                              {tag.label}
-                              <span className="text-[10px] opacity-60">({tag.count})</span>
-                            </button>
-                          );
-                        })}
+                <select
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value as TypeFilter)}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-primary/50"
+                >
+                  {TYPE_FILTER_OPTIONS.map((option) => (
+                    <option
+                      key={option.key}
+                      value={option.key}
+                      disabled={option.key !== "all" && !viewFilteredItems.some((item) => matchesTypeFilter(item, option.key))}
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-primary/50"
+                >
+                  {SORT_MODE_OPTIONS.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={() => setFavoriteOnly((prev) => !prev)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                    favoriteOnly
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:bg-accent"
+                  }`}
+                >
+                  仅收藏
+                </button>
+
+                <div className="inline-flex items-center rounded-lg border border-border bg-background p-0.5">
+                  <button
+                    onClick={() => setDensityMode("compact")}
+                    className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+                      densityMode === "compact" ? "bg-accent text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    紧凑
+                  </button>
+                  <button
+                    onClick={() => setDensityMode("comfortable")}
+                    className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
+                      densityMode === "comfortable" ? "bg-accent text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    舒展
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <button
+                    onClick={() => setShowTagSelector(!showTagSelector)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+                  >
+                    标签
+                    {selectedTags.length > 0 ? (
+                      <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground">{selectedTags.length}</span>
+                    ) : null}
+                  </button>
+
+                  {showTagSelector && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowTagSelector(false)}
+                      />
+                      <div className="absolute top-full left-0 z-20 mt-2 max-h-80 w-[min(24rem,calc(100vw-2rem))] overflow-auto rounded-lg border border-border bg-popover p-3 shadow-lg">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between px-1">
+                            <span className="text-xs font-medium text-muted-foreground">选择标签</span>
+                            <span className="text-xs text-muted-foreground">{sortedTags.length} 个标签</span>
+                          </div>
+                          <div className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                            标签体系会在资料入库或重建索引后自动更新。
+                          </div>
+                          {tagsGroupedByCategory.map((group) => (
+                            <div key={group.category} className="space-y-1.5">
+                              <div className="text-[11px] font-medium text-muted-foreground">{group.label}</div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {group.tags.map((tag) => {
+                                  const isSelected = selectedTags.includes(tag.label);
+                                  const getTagStyle = () => {
+                                    if (tag.type === "custom") {
+                                      const colors: Record<string, string> = {
+                                        red: "bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20",
+                                        orange: "bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20",
+                                        yellow: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20",
+                                        green: "bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20",
+                                        blue: "bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20",
+                                        purple: "bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20",
+                                      };
+                                      return colors[tag.color || "blue"] || colors.blue;
+                                    }
+                                    if (tag.type === "ai") {
+                                      return "border border-blue-500/50 bg-transparent text-blue-600 hover:bg-blue-500/10 dark:text-blue-400";
+                                    }
+                                    return "bg-gray-500/10 text-gray-600 hover:bg-gray-500/20 dark:text-gray-400";
+                                  };
+
+                                  return (
+                                    <button
+                                      key={tag.label}
+                                      onClick={() => handleTagClick(tag.label)}
+                                      className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                                        isSelected ? "ring-2 ring-primary ring-offset-1 ring-offset-popover" : ""
+                                      } ${getTagStyle()}`}
+                                    >
+                                      {tag.label}
+                                      <span className="text-[10px] opacity-60">({tag.count})</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                          {tagsGroupedByCategory.length === 0 ? (
+                            <div className="rounded-md border border-dashed border-border px-2.5 py-3 text-center text-xs text-muted-foreground">
+                              暂无可用标签，导入资料后会自动构建标签体系
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                </>
-              )}
+                    </>
+                  )}
+                </div>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {filteredCount} / {totalInScope}
+                  </span>
+                  {hasActiveFilters ? (
+                    <button
+                      onClick={clearAllFilters}
+                      className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+                    >
+                      清空 {activeFilterCount}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {hasActiveIngestJobs ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-1.5 text-[11px] text-amber-800">
+                  <span className="font-medium">后台入库进行中</span>
+                  <span>{activeIngestJobs.length} 个文件夹任务</span>
+                  <span>{ingestProcessedFiles}/{ingestTotalFiles || 0} 文件已处理</span>
+                  <button
+                    onClick={() => void refreshCurrentView()}
+                    className="ml-auto rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] text-amber-700 hover:bg-amber-100"
+                  >
+                    刷新状态
+                  </button>
+                </div>
+              ) : null}
+
+              {selectedTags.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {selectedTags.map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => removeTag(tag)}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent transition-colors"
+                    >
+                      {tag}
+                      <span>×</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          </div>
+          </section>
 
-          {/* 搜索结果计数 */}
-          {(searchQuery || filter !== "all" || selectedTags.length > 0) && (
-            <div className="text-sm text-muted-foreground">
-              找到 <span className="font-medium text-foreground">{filteredItems.length}</span> 条结果
+          {itemsError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
+              {itemsError}
             </div>
           )}
 
@@ -574,13 +1730,12 @@ export default function LibraryDemoPage() {
               </button>
               <span className="text-muted-foreground">/</span>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setCurrentPath([]);
-                    setCurrentItems(mockItems);
-                  }}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
+                  <button
+                    onClick={() => {
+                      setCurrentPath([]);
+                    }}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
                   资料库
                 </button>
                 {currentPath.map((pathItem, index) => (
@@ -596,25 +1751,49 @@ export default function LibraryDemoPage() {
           )}
 
           {/* 内容卡片网格 */}
-          <div className="grid grid-cols-3 gap-4">
-            {filteredItems.length > 0 ? (
-              filteredItems.map((item) => (
-                <ContentCard
-                  key={item.id}
-                  item={item}
-                  onTagClick={handleTagClick}
-                  selectedTags={selectedTags}
-                  isFavorite={favorites.has(item.id)}
-                  onToggleFavorite={toggleFavorite}
-                  onClick={openDetail}
-                />
-              ))
+          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${densityMode === "compact" ? "gap-2 xl:grid-cols-4" : "gap-3"}`}>
+            {itemsLoading ? (
+              <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
+                <div className="text-sm text-muted-foreground">加载资料中...</div>
+              </div>
+            ) : sortedFilteredItems.length > 0 ? (
+              sortedFilteredItems.map((item) => {
+                const job = item.ingestJobId ? ingestJobs.find((entry) => entry.id === item.ingestJobId) : undefined;
+                const showDirectoryRetry = Boolean(
+                  item.ingestJobId
+                  && item.type === "文件目录"
+                  && job
+                  && job.status !== "running"
+                  && job.status !== "pending",
+                );
+                const hasRetryableErrors = Number(job?.failed_files || 0) + Number(job?.skipped_files || 0) > 0;
+                return (
+                  <ContentCard
+                    key={item.id}
+                    item={item}
+                    onTagClick={handleTagClick}
+                    selectedTags={selectedTags}
+                    isFavorite={favorites.has(item.id)}
+                    onToggleFavorite={toggleFavorite}
+                    onClick={openDetail}
+                    onDelete={(target, e) => {
+                      e.stopPropagation();
+                      deleteItem(target);
+                    }}
+                    deleting={deletingId === item.id}
+                    densityMode={densityMode}
+                    showDirectoryRetry={showDirectoryRetry}
+                    directoryRetrying={retryingDirectoryId === item.id}
+                    directoryRetryLabel={hasRetryableErrors ? "重试失败项" : "重处理目录"}
+                    onDirectoryRetry={retryDirectoryProcessing}
+                  />
+                );
+              })
             ) : (
-              <div className="col-span-3 flex flex-col items-center justify-center py-16 text-center">
-                <div className="text-4xl mb-4">🔍</div>
-                <h3 className="text-lg font-medium text-foreground mb-2">未找到相关资料</h3>
-                <p className="text-sm text-muted-foreground">
-                  {searchQuery ? `没有找到包含"${searchQuery}"的资料` : "该分类下暂无资料"}
+              <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
+                  <h3 className="text-lg font-medium text-foreground mb-2">未找到相关资料</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {searchQuery ? `没有找到包含“${searchQuery}”的资料` : "该分类下暂无资料"}
                 </p>
               </div>
             )}
@@ -724,19 +1903,74 @@ export default function LibraryDemoPage() {
                 <div className="flex-1 min-w-0">
                   <h2 className="text-lg font-semibold truncate">{selectedItem.title}</h2>
                   <p className="text-sm text-muted-foreground">{selectedItem.type} · {selectedItem.date}</p>
+                  {selectedItem.processingStatus ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${processingMeta(selectedItem.processingStatus).className}`}>
+                        {processingMeta(selectedItem.processingStatus).label}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {processingMeta(selectedItem.processingStatus).brief}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {/* 基于此创作按钮 */}
                 <button
                   onClick={createProject}
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+                  disabled={!canCreateProject}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    canCreateProject
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "bg-muted text-muted-foreground cursor-not-allowed"
+                  }`}
                   title="基于此创作"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                   基于此创作
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (selectedItem) {
+                      void reindexItem(selectedItem);
+                    }
+                  }}
+                  disabled={!canReindexSelected || reindexingId === selectedItem?.id}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    !canReindexSelected
+                      ? "bg-muted text-muted-foreground cursor-not-allowed"
+                      : "bg-sky-500/10 text-sky-700 hover:bg-sky-500/20"
+                  }`}
+                  title="重新解析并重建索引"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m14.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0A8.003 8.003 0 015.582 15m13.837 0H15" />
+                  </svg>
+                  {reindexingId === selectedItem?.id ? "重建中..." : "重建索引"}
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (selectedItem) {
+                      deleteItem(selectedItem);
+                    }
+                  }}
+                  disabled={!selectedItem || !canRemoveLibraryItem(selectedItem) || deletingId === selectedItem?.id}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    !selectedItem || !canRemoveLibraryItem(selectedItem)
+                      ? "bg-muted text-muted-foreground cursor-not-allowed"
+                      : "bg-red-500/10 text-red-600 hover:bg-red-500/20"
+                  }`}
+                  title={removeDisabledReason(selectedItem)}
+                >
+                  <HugeiconsIcon icon={Delete} className="h-4 w-4" />
+                  移除
                 </button>
 
                 <button
@@ -783,10 +2017,10 @@ export default function LibraryDemoPage() {
                       className="flex-1 w-full p-4 rounded-lg border border-border bg-background font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
                       placeholder="在这里编辑内容..."
                     />
-                    <div className="text-xs text-muted-foreground mt-2">
-                      💾 自动保存于 2 分钟前
+                      <div className="text-xs text-muted-foreground mt-2">
+                        保存后会同步更新该资料的检索索引
+                      </div>
                     </div>
-                  </div>
 
                   {/* 右侧：实时预览 */}
                   <div className="flex flex-col">
@@ -812,288 +2046,61 @@ export default function LibraryDemoPage() {
                 </div>
               ) : (
                 /* 预览模式 */
-                <>
-              {/* 根据文件类型渲染不同的预览 */}
-              {(() => {
-                const type = selectedItem.type;
-
-                // Markdown 文件
-                if (type === "Markdown") {
-                  return (
-                    <div className="prose prose-sm dark:prose-invert max-w-none mb-6">
-                      <h2>React 19 新特性</h2>
-                      <p className="lead">{selectedItem.preview}</p>
-
-                      <h3>1. Server Components</h3>
-                      <p>React Server Components 允许你在服务器端渲染组件，减少客户端 JavaScript 的体积。</p>
-                      <pre><code>{`// app/page.tsx
-export default async function Page() {
-  const data = await fetch('https://api.example.com/data');
-  return <div>{data.title}</div>;
-}`}</code></pre>
-
-                      <h3>2. Actions</h3>
-                      <p>Actions 提供了一种新的方式来处理表单提交和数据变更。</p>
-                      <pre><code>{`'use server'
-
-async function createPost(formData: FormData) {
-  const title = formData.get('title');
-  // 保存到数据库
-}`}</code></pre>
-
-                      <h3>3. use API</h3>
-                      <p>新的 use Hook 可以在组件中读取 Promise 或 Context。</p>
-                      <pre><code>{`function Component() {
-  const data = use(fetchData());
-  return <div>{data}</div>;
-}`}</code></pre>
+                <div className="space-y-4">
+                  {selectedItem.summary ? (
+                    <div className="rounded-lg border border-border bg-muted/30 p-4">
+                      <h3 className="text-sm font-medium mb-2">索引概述</h3>
+                      <p className="whitespace-pre-wrap text-sm text-foreground leading-relaxed">
+                        {selectedItem.summary}
+                      </p>
                     </div>
-                  );
-                }
-
-                // PDF 文档
-                if (type === "PDF 文档") {
-                  return (
-                    <div className="mb-6">
-                      <div className="bg-muted/30 rounded-lg p-8 text-center">
-                        <svg className="w-16 h-16 mx-auto mb-4 text-red-500" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6zm2-2h8v-2H8v2zm0-4h8v-2H8v2zm0-4h5V8H8v2z"/>
-                        </svg>
-                        <h3 className="text-lg font-semibold mb-2">PDF 文档预览</h3>
-                        <p className="text-sm text-muted-foreground mb-4">{selectedItem.preview}</p>
-                        <div className="flex items-center justify-center gap-2">
-                          <button className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90">
-                            打开 PDF
-                          </button>
-                          <button className="px-4 py-2 bg-muted text-foreground rounded-lg text-sm font-medium hover:bg-muted/80">
-                            下载
-                          </button>
-                        </div>
-                      </div>
+                  ) : (
+                    <div className="rounded-lg border border-border bg-muted/30 p-4">
+                      <h3 className="text-sm font-medium mb-2">内容预览</h3>
+                      <pre className="whitespace-pre-wrap text-sm text-foreground">
+{selectedItem.preview || "暂无预览"}
+                      </pre>
                     </div>
-                  );
-                }
-
-                // Word 文档
-                if (type === "Word 文档") {
-                  return (
-                    <div className="prose prose-sm dark:prose-invert max-w-none mb-6">
-                      <h2>{selectedItem.title}</h2>
-                      <p className="lead">{selectedItem.preview}</p>
-
-                      <h3>一、项目背景</h3>
-                      <p>随着 AI 技术的快速发展，用户对知识管理工具的需求也在不断演进。传统的笔记软件已经无法满足用户对智能化、个性化的需求。Lumos 资料库旨在打造一个 AI 原生的知识管理平台。</p>
-
-                      <h3>二、核心功能</h3>
-                      <ul>
-                        <li><strong>智能分类</strong>：AI 自动分析内容并打标签</li>
-                        <li><strong>语义搜索</strong>：基于向量检索的智能搜索</li>
-                        <li><strong>AI 对话</strong>：与资料库内容进行对话</li>
-                        <li><strong>知识图谱</strong>：自动构建内容之间的关联</li>
-                      </ul>
-
-                      <h3>三、技术架构</h3>
-                      <p>前端采用 Next.js + React 19，后端使用 Node.js + PostgreSQL，向量检索使用 Pinecone。</p>
-                    </div>
-                  );
-                }
-
-                // AI 对话
-                if (type === "AI 对话") {
-                  return (
-                    <div className="mb-6 space-y-4">
-                      <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-                          <span className="text-white text-xs font-bold">我</span>
-                        </div>
-                        <div className="flex-1 bg-primary/10 rounded-lg rounded-tl-none p-4">
-                          <p className="text-sm">我想设计一个资料库页面，应该采用什么样的布局和交互方式？</p>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
-                          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 bg-muted rounded-lg rounded-tl-none p-4">
-                          <div className="prose prose-sm dark:prose-invert max-w-none">
-                            <p>对于资料库页面，我建议采用<strong>卡片网格布局</strong>，原因如下：</p>
-                            <ol>
-                              <li><strong>视觉扫描效率高</strong>：卡片布局让用户可以快速浏览大量内容</li>
-                              <li><strong>信息层次清晰</strong>：每张卡片包含标题、预览、标签等关键信息</li>
-                              <li><strong>响应式友好</strong>：可以根据屏幕宽度自动调整列数</li>
-                            </ol>
-                            <p>具体建议：</p>
-                            <ul>
-                              <li>桌面端：3 列网格</li>
-                              <li>平板：2 列网格</li>
-                              <li>手机：1 列列表</li>
-                            </ul>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-                          <span className="text-white text-xs font-bold">我</span>
-                        </div>
-                        <div className="flex-1 bg-primary/10 rounded-lg rounded-tl-none p-4">
-                          <p className="text-sm">那色彩方案呢？应该用什么样的配色？</p>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
-                          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 bg-muted rounded-lg rounded-tl-none p-4">
-                          <div className="prose prose-sm dark:prose-invert max-w-none">
-                            <p>建议采用<strong>极简主义</strong>的配色方案，参考乔布斯的设计哲学：</p>
-                            <ul>
-                              <li><strong>主色调</strong>：使用单一的品牌色（如蓝色）</li>
-                              <li><strong>背景</strong>：纯白或浅灰，营造干净的视觉空间</li>
-                              <li><strong>文字</strong>：深灰色而非纯黑，减少视觉疲劳</li>
-                              <li><strong>强调色</strong>：用于重要操作按钮和状态提示</li>
-                            </ul>
-                            <p>避免使用过多颜色，保持整体的统一性和专业感。</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 网页
-                if (type === "网页") {
-                  return (
-                    <div className="prose prose-sm dark:prose-invert max-w-none mb-6">
-                      <div className="not-prose bg-muted/30 rounded-lg p-4 mb-4 flex items-center gap-3">
-                        <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                        </svg>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-muted-foreground truncate">{selectedItem.path}</p>
-                        </div>
-                        <button className="text-xs text-primary hover:underline">访问原网页</button>
-                      </div>
-
-                      <h2>{selectedItem.title}</h2>
-                      <p className="lead">{selectedItem.preview}</p>
-
-                      <p>这是从网页中提取的主要内容。原始网页包含了更多的交互元素和样式，建议访问原网页查看完整内容。</p>
-
-                      <h3>主要内容摘要</h3>
-                      <ul>
-                        <li>介绍了最新的技术趋势和发展方向</li>
-                        <li>提供了详细的代码示例和最佳实践</li>
-                        <li>包含了社区讨论和用户反馈</li>
+                  )}
+                  {selectedItem.keyPoints.length > 0 ? (
+                    <div className="rounded-lg border border-border bg-background p-3">
+                      <div className="text-xs text-muted-foreground">关键要点</div>
+                      <ul className="mt-2 space-y-1.5 text-sm text-foreground">
+                        {selectedItem.keyPoints.map((point, index) => (
+                          <li key={`${selectedItem.id}-kp-${index}`} className="flex gap-2">
+                            <span className="mt-0.5 text-muted-foreground">{index + 1}.</span>
+                            <span className="leading-relaxed">{point}</span>
+                          </li>
+                        ))}
                       </ul>
                     </div>
-                  );
-                }
-
-                // 音频文件
-                if (type.includes("音频") || type.includes("录音")) {
-                  return (
-                    <div className="mb-6">
-                      <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 rounded-lg p-8">
-                        <div className="flex items-center gap-4 mb-6">
-                          <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
-                            <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-                            </svg>
-                          </div>
-                          <div className="flex-1">
-                            <h3 className="font-semibold mb-1">{selectedItem.title}</h3>
-                            <p className="text-sm text-muted-foreground">时长: 45:32</p>
-                          </div>
-                        </div>
-
-                        {/* 音频播放器 */}
-                        <div className="bg-background/50 rounded-lg p-4">
-                          <div className="flex items-center gap-4 mb-3">
-                            <button className="w-12 h-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors">
-                              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M8 5v14l11-7z"/>
-                              </svg>
-                            </button>
-                            <div className="flex-1">
-                              <div className="h-1 bg-muted rounded-full overflow-hidden">
-                                <div className="h-full w-1/3 bg-primary"></div>
-                              </div>
-                              <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                                <span>15:24</span>
-                                <span>45:32</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 prose prose-sm dark:prose-invert max-w-none">
-                          <p className="text-sm">{selectedItem.preview}</p>
-                        </div>
+                  ) : null}
+                  {selectedItem.path && (
+                    <div className="rounded-lg border border-border bg-background p-3">
+                      <div className="text-xs text-muted-foreground">来源</div>
+                      <div className="mt-1 text-sm break-all">{selectedItem.path}</div>
+                    </div>
+                  )}
+                  {selectedItem.processingError ? (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+                      <div className="text-xs text-rose-700">处理异常</div>
+                      <div className="mt-1 text-sm text-rose-700 break-all">{selectedItem.processingError}</div>
+                    </div>
+                  ) : null}
+                  {selectedItem.processingDetail ? (
+                    <div className="rounded-lg border border-border bg-background p-3">
+                      <div className="text-xs text-muted-foreground">处理阶段</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {Object.entries(parseProcessingDetail(selectedItem.processingDetail)).map(([stage, stageStatus]) => (
+                          <span key={`${stage}-${stageStatus}`} className="rounded-full bg-muted px-2 py-0.5 text-[11px]">
+                            {stage}: {stageStatus}
+                          </span>
+                        ))}
                       </div>
                     </div>
-                  );
-                }
-
-                // 视频文件
-                if (type.includes("视频")) {
-                  return (
-                    <div className="mb-6">
-                      <div className="bg-black rounded-lg overflow-hidden mb-4">
-                        <div className="aspect-video bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-                          <button className="w-20 h-20 rounded-full bg-white/20 backdrop-blur flex items-center justify-center hover:bg-white/30 transition-colors">
-                            <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M8 5v14l11-7z"/>
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <h3>{selectedItem.title}</h3>
-                        <p>{selectedItem.preview}</p>
-                        <div className="not-prose flex items-center gap-4 text-sm text-muted-foreground">
-                          <span>时长: 12:45</span>
-                          <span>•</span>
-                          <span>分辨率: 1920x1080</span>
-                          <span>•</span>
-                          <span>大小: 156 MB</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-
-                // 默认：显示预览文本
-                return (
-                  <div className="prose prose-sm dark:prose-invert max-w-none mb-6">
-                    <p className="text-base leading-relaxed">{selectedItem.preview}</p>
-                    <p className="text-sm text-muted-foreground mt-4">
-                      这是内容的预览摘要。完整内容需要在编辑模式下查看。
-                    </p>
-                  </div>
-                );
-              })()}
-              </>
-              )}
-
-              {/* 路径信息 */}
-              {selectedItem.path && (
-                <div className="mb-6 p-4 rounded-lg bg-muted/50">
-                  <div className="flex items-center gap-2 text-sm">
-                    <svg className="w-4 h-4 text-muted-foreground flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                    </svg>
-                    <span className="text-muted-foreground font-mono text-xs break-all">{selectedItem.path}</span>
-                  </div>
+                  ) : null}
                 </div>
               )}
-
               {/* 标签 */}
               {selectedItem.tags && selectedItem.tags.length > 0 && (
                 <div className="mb-6">
@@ -1138,6 +2145,10 @@ async function createPost(formData: FormData) {
                     <p className="font-medium mt-1">{selectedItem.type}</p>
                   </div>
                   <div>
+                    <span className="text-muted-foreground">切片数</span>
+                    <p className="font-medium mt-1">{selectedItem.chunkCount || 0}</p>
+                  </div>
+                  <div>
                     <span className="text-muted-foreground">{selectedItem.timeLabel}</span>
                     <p className="font-medium mt-1">{selectedItem.fullDate}</p>
                   </div>
@@ -1147,35 +2158,53 @@ async function createPost(formData: FormData) {
 
             {/* 底部操作栏 */}
             <div className="sticky bottom-0 flex items-center justify-end gap-2 px-6 py-4 border-t border-border bg-background/95 backdrop-blur">
+              {editFeedback ? (
+                <div
+                  className={`mr-auto rounded-lg px-3 py-1.5 text-xs ${
+                    editFeedback.type === "success"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-rose-100 text-rose-700"
+                  }`}
+                >
+                  {editFeedback.message}
+                </div>
+              ) : null}
               <button className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
                 分享
               </button>
               <button className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
                 导出
               </button>
-              <button className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-                编辑
-              </button>
+              {isEditing ? (
+                <>
+                  <button
+                    onClick={cancelEdit}
+                    disabled={editSaving}
+                    className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => void saveEdit()}
+                    disabled={editSaving}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {editSaving ? "保存中..." : "保存"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={enterEditMode}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  编辑
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
     </div>
-  );
-}
-
-function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-accent"
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -1185,15 +2214,32 @@ function ContentCard({
   selectedTags,
   isFavorite,
   onToggleFavorite,
-  onClick
+  onClick,
+  onDelete,
+  deleting,
+  densityMode,
+  showDirectoryRetry = false,
+  directoryRetrying = false,
+  directoryRetryLabel = "重试",
+  onDirectoryRetry,
 }: {
-  item: typeof mockItems[0];
+  item: LibraryItem;
   onTagClick: (tagLabel: string) => void;
   selectedTags: string[];
   isFavorite: boolean;
   onToggleFavorite: (id: string, e: React.MouseEvent) => void;
-  onClick: (item: typeof mockItems[0]) => void;
+  onClick: (item: LibraryItem) => void;
+  onDelete: (item: LibraryItem, e: React.MouseEvent) => void;
+  deleting: boolean;
+  densityMode: DensityMode;
+  showDirectoryRetry?: boolean;
+  directoryRetrying?: boolean;
+  directoryRetryLabel?: string;
+  onDirectoryRetry?: (item: LibraryItem, e: React.MouseEvent) => void;
 }) {
+  const compact = densityMode === "compact";
+  const summaryText = (item.summary || item.preview || "").trim();
+  const canDelete = canRemoveLibraryItem(item);
   // 标签最多显示3个
   const visibleTags = item.tags?.slice(0, 3) || [];
   const remainingCount = (item.tags?.length || 0) - visibleTags.length;
@@ -1223,33 +2269,56 @@ function ContentCard({
   return (
     <div
       onClick={() => onClick(item)}
-      className="group relative rounded-xl border border-border bg-card p-5 hover:border-primary/50 hover:shadow-lg hover:scale-[1.02] transition-all cursor-pointer"
+      className={`group relative cursor-pointer rounded-xl border border-border bg-card transition-all hover:scale-[1.01] hover:border-primary/50 hover:shadow-md ${compact ? "p-3" : "p-4"}`}
     >
-      {/* 收藏按钮 */}
-      <button
-        onClick={(e) => onToggleFavorite(item.id, e)}
-        className="absolute top-3 right-3 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-accent transition-all z-10"
-        title={isFavorite ? "取消收藏" : "收藏"}
-      >
-        {isFavorite ? (
-          <svg className="w-5 h-5 text-yellow-500 fill-current" viewBox="0 0 24 24">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-          </svg>
-        ) : (
-          <svg className="w-5 h-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-          </svg>
-        )}
-      </button>
-
-      <div className="space-y-3">
-        {/* 文件类型 Logo 和标题 */}
-        <div className="flex items-start gap-3">
-          <FileTypeLogo type={item.type} />
-          <div className="flex-1 min-w-0">
-            <h3 className="font-medium text-sm line-clamp-2 mb-2">{item.title}</h3>
-            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{item.preview}</p>
+      <div className={compact ? "space-y-2" : "space-y-2.5"}>
+        {/* 顶部：Logo + 标题（单行）+ 操作按钮（右对齐） */}
+        <div className="flex items-center gap-2.5">
+          <div className="shrink-0 scale-[0.88] transform-gpu">
+            <FileTypeLogo type={item.type} />
           </div>
+          <div className="min-w-0 flex-1">
+            <h3 className={`truncate font-medium ${compact ? "text-xs" : "text-sm"}`} title={item.title}>
+              {item.title}
+            </h3>
+          </div>
+          <div className="ml-1 flex shrink-0 items-center gap-1">
+            <button
+              onClick={(e) => onDelete(item, e)}
+              disabled={!canDelete || deleting}
+              className={`rounded-md p-1 transition-all ${
+                !canDelete
+                  ? "cursor-not-allowed text-muted-foreground/50"
+                  : "text-red-500 hover:bg-red-500/10"
+              }`}
+              title={removeDisabledReason(item)}
+            >
+              <HugeiconsIcon icon={Delete} className="h-4 w-4" />
+            </button>
+
+            <button
+              onClick={(e) => onToggleFavorite(item.id, e)}
+              className="rounded-md p-1 text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
+              title={isFavorite ? "取消收藏" : "收藏"}
+            >
+              {isFavorite ? (
+                <svg className="h-4 w-4 text-yellow-500 fill-current" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+              ) : (
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* 概况：整行展示 */}
+        <div className="rounded-md bg-muted/40 px-2.5 py-1.5">
+          <p className={`text-muted-foreground leading-relaxed ${compact ? "text-[11px] line-clamp-2" : "text-xs line-clamp-3"}`}>
+            {summaryText || "暂无概述"}
+          </p>
         </div>
 
         {/* 路径信息 */}
@@ -1293,457 +2362,31 @@ function ContentCard({
         )}
 
         {/* 元信息 */}
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">{item.type}</span>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-muted-foreground">{item.type}</span>
+            {item.processingStatus ? (
+              <span className={`inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${processingMeta(item.processingStatus).className}`}>
+                {processingMeta(item.processingStatus).label}
+              </span>
+            ) : null}
+            {showDirectoryRetry && onDirectoryRetry ? (
+              <button
+                onClick={(e) => onDirectoryRetry(item, e)}
+                disabled={directoryRetrying}
+                className="inline-flex shrink-0 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                title={directoryRetryLabel}
+              >
+                {directoryRetrying ? "处理中..." : directoryRetryLabel}
+              </button>
+            ) : null}
+          </div>
           <span className="text-muted-foreground" title={item.fullDate}>
             {item.timeLabel} {item.date}
           </span>
         </div>
       </div>
 
-      {/* 悬停操作按钮 */}
-      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-        <button className="p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border hover:bg-accent transition-colors" title="查看详情">
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-        </button>
-        <button className="p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border hover:bg-accent transition-colors" title="添加标签">
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-          </svg>
-        </button>
-        <button className="p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border hover:bg-accent transition-colors" title="更多操作">
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
-          </svg>
-        </button>
-      </div>
     </div>
   );
 }
-
-// 模拟数据
-const mockItems: LibraryItem[] = [
-  {
-    id: "dir_1",
-    type: "文件目录",
-    title: "Lumos 项目文档",
-    preview: "包含 15 个文件和 3 个子目录，涵盖产品需求、设计规范、技术文档等核心资料",
-    path: "/Users/zhangjun/Projects/lumos/docs",
-    timeLabel: "最后更新",
-    date: "1 小时前",
-    fullDate: "2024-01-15 15:00",
-    tags: [
-      { label: "项目", type: "custom", color: "blue" },
-      { label: "文档", type: "ai" },
-    ],
-    // 文件目录特有字段
-    isDirectory: true,
-    children: [
-      {
-        id: "dir_1_1",
-        type: "文件目录",
-        title: "产品需求",
-        preview: "包含 5 个需求文档",
-        path: "/Users/zhangjun/Projects/lumos/docs/产品需求",
-        timeLabel: "最后更新",
-        date: "2 小时前",
-        fullDate: "2024-01-15 14:00",
-        tags: [{ label: "需求", type: "custom", color: "green" }],
-        isDirectory: true,
-        children: [
-          {
-            id: "dir_1_1_1",
-            type: "Word 文档",
-            title: "产品需求文档 - Lumos 资料库设计",
-            preview: "本文档描述了 Lumos 资料库的核心功能和设计理念...",
-            path: "/Users/zhangjun/Projects/lumos/docs/产品需求/PRD-资料库.docx",
-            timeLabel: "最后编辑",
-            date: "2 小时前",
-            fullDate: "2024-01-15 14:30",
-            tags: [{ label: "产品", type: "custom", color: "blue" }],
-          },
-          {
-            id: "dir_1_1_2",
-            type: "PDF 文档",
-            title: "用户故事地图",
-            preview: "详细的用户故事和使用场景分析...",
-            path: "/Users/zhangjun/Projects/lumos/docs/产品需求/用户故事地图.pdf",
-            timeLabel: "最后编辑",
-            date: "3 小时前",
-            fullDate: "2024-01-15 13:00",
-            tags: [{ label: "用户研究", type: "ai" }],
-          },
-        ],
-      },
-      {
-        id: "dir_1_2",
-        type: "文件目录",
-        title: "设计规范",
-        preview: "包含 3 个设计文档",
-        path: "/Users/zhangjun/Projects/lumos/docs/设计规范",
-        timeLabel: "最后更新",
-        date: "5 小时前",
-        fullDate: "2024-01-15 11:00",
-        tags: [{ label: "设计", type: "custom", color: "orange" }],
-        isDirectory: true,
-        children: [
-          {
-            id: "dir_1_2_1",
-            type: "PDF 文档",
-            title: "UI 设计规范",
-            preview: "Lumos 的完整 UI 设计规范，包含颜色、字体、组件库等...",
-            path: "/Users/zhangjun/Projects/lumos/docs/设计规范/UI设计规范.pdf",
-            timeLabel: "最后编辑",
-            date: "5 小时前",
-            fullDate: "2024-01-15 11:00",
-            tags: [{ label: "UI", type: "ai" }],
-          },
-        ],
-      },
-      {
-        id: "dir_1_3",
-        type: "Markdown",
-        title: "技术架构文档",
-        preview: "Lumos 采用 Electron + Next.js 架构...",
-        path: "/Users/zhangjun/Projects/lumos/docs/architecture.md",
-        timeLabel: "最后编辑",
-        date: "1 周前",
-        fullDate: "2024-01-08 09:15",
-        tags: [{ label: "技术", type: "custom", color: "blue" }],
-      },
-    ],
-  },
-  {
-    id: "1",
-    type: "Word 文档",
-    title: "产品需求文档 - Lumos 资料库设计",
-    preview: "本文档描述了 Lumos 资料库的核心功能和设计理念，包括 AI 创作入口、内容管理、知识库集成等核心模块的详细说明...",
-    path: "/Users/zhangjun/Documents/产品需求文档-Lumos资料库设计.docx",
-    timeLabel: "最后编辑",
-    date: "2 小时前",
-    fullDate: "2024-01-15 14:30",
-    tags: [
-      { label: "产品", type: "custom", color: "blue" },
-      { label: "重要", type: "custom", color: "red" },
-      { label: "Lumos", type: "custom", color: "purple" },
-      { label: "需求文档", type: "ai" },
-    ],
-  },
-  {
-    id: "2",
-    type: "AI 对话",
-    title: "与 Claude 讨论 UI 设计方案",
-    preview: "讨论了资料库页面的布局、色彩方案和交互细节，确定了乔布斯式的极简美学方向，并提出了具体的实现建议...",
-    path: "lumos://conversations/conv_abc123",
-    timeLabel: "创建于",
-    date: "5 小时前",
-    fullDate: "2024-01-15 11:00",
-    tags: [
-      { label: "设计", type: "custom", color: "orange" },
-      { label: "UI/UX", type: "ai" },
-      { label: "对话", type: "system" },
-    ],
-  },
-  {
-    id: "3",
-    type: "PDF 文档",
-    title: "2024 年度产品规划",
-    preview: "详细规划了 Lumos 在 2024 年的产品路线图，包括 Q1-Q4 的核心功能迭代、市场策略和团队扩张计划...",
-    path: "/Users/zhangjun/Documents/2024年度产品规划.pdf",
-    timeLabel: "最后编辑",
-    date: "昨天",
-    fullDate: "2024-01-14 16:20",
-    tags: [
-      { label: "规划", type: "custom", color: "green" },
-      { label: "产品", type: "custom", color: "blue" },
-      { label: "2024", type: "ai" },
-      { label: "战略", type: "ai" },
-    ],
-  },
-  {
-    id: "4",
-    type: "PowerPoint",
-    title: "产品发布会演示文稿",
-    preview: "Lumos 2.0 产品发布会的完整演示文稿，包括产品介绍、核心功能演示、竞品对比和未来规划等内容...",
-    path: "/Users/zhangjun/Documents/产品发布会演示文稿.pptx",
-    timeLabel: "最后编辑",
-    date: "2 天前",
-    fullDate: "2024-01-13 10:00",
-    tags: [
-      { label: "演示", type: "custom", color: "orange" },
-      { label: "发布会", type: "ai" },
-    ],
-  },
-  {
-    id: "5",
-    type: "Excel 表格",
-    title: "用户反馈数据分析",
-    preview: "收集了 500+ 用户的反馈数据，包括功能使用频率、满意度评分、改进建议等，为产品优化提供数据支持...",
-    path: "/Users/zhangjun/Documents/用户反馈数据分析.xlsx",
-    timeLabel: "最后编辑",
-    date: "3 天前",
-    fullDate: "2024-01-12 15:30",
-    tags: [
-      { label: "数据分析", type: "custom", color: "green" },
-      { label: "用户研究", type: "ai" },
-      { label: "反馈", type: "ai" },
-    ],
-  },
-  {
-    id: "6",
-    type: "Markdown",
-    title: "技术架构文档",
-    preview: "Lumos 采用 Electron + Next.js 架构，使用 SQLite 作为本地数据库，支持多模型 AI 对话和飞书文档集成...",
-    path: "/Users/zhangjun/Projects/lumos/docs/architecture.md",
-    timeLabel: "最后编辑",
-    date: "1 周前",
-    fullDate: "2024-01-08 09:15",
-    tags: [
-      { label: "技术", type: "custom", color: "blue" },
-      { label: "架构", type: "ai" },
-      { label: "文档", type: "system" },
-    ],
-  },
-  {
-    id: "7",
-    type: "MP3 音频",
-    title: "产品会议录音 - 2024-01-15",
-    preview: "讨论了产品路线图和下一阶段的开发计划，包括知识库功能、Tiptap 编辑器集成等重要议题...",
-    path: "/Users/zhangjun/Recordings/产品会议录音-20240115.mp3",
-    timeLabel: "录制于",
-    date: "1 周前",
-    fullDate: "2024-01-08 10:00",
-    tags: [
-      { label: "会议", type: "custom", color: "blue" },
-      { label: "录音", type: "system" },
-      { label: "产品规划", type: "ai" },
-    ],
-  },
-  {
-    id: "8",
-    type: "iPhone 录音",
-    title: "用户访谈录音 - 张三",
-    preview: "与用户张三的深度访谈,了解他在知识管理方面的痛点和需求，为产品设计提供了重要参考...",
-    path: "icloud://voice-memos/recording_20240108_142000.m4a",
-    timeLabel: "录制于",
-    date: "1 周前",
-    fullDate: "2024-01-08 14:20",
-    tags: [
-      { label: "用户研究", type: "custom", color: "green" },
-      { label: "访谈", type: "ai" },
-      { label: "iPhone", type: "system" },
-    ],
-  },
-  {
-    id: "9",
-    type: "WAV 音频",
-    title: "产品 Kickoff 会议录音",
-    preview: "Lumos 项目启动会议录音，讨论了产品愿景、核心功能、技术架构和团队分工等重要议题...",
-    path: "/Users/zhangjun/Recordings/产品Kickoff会议.wav",
-    timeLabel: "录制于",
-    date: "2 周前",
-    fullDate: "2024-01-01 09:30",
-    tags: [
-      { label: "Kickoff", type: "custom", color: "purple" },
-      { label: "重要", type: "custom", color: "red" },
-      { label: "会议", type: "ai" },
-    ],
-  },
-  {
-    id: "10",
-    type: "AAC 音频",
-    title: "播客录制 - AI 时代的知识管理",
-    preview: "探讨了在 AI 时代，个人和团队应该如何进行知识管理，分享了 Lumos 的设计理念和实践经验...",
-    path: "/Users/zhangjun/Podcasts/AI时代的知识管理.aac",
-    timeLabel: "录制于",
-    date: "2 周前",
-    fullDate: "2024-01-01 15:00",
-    tags: [
-      { label: "播客", type: "custom", color: "orange" },
-      { label: "AI", type: "ai" },
-      { label: "知识管理", type: "ai" },
-    ],
-  },
-  {
-    id: "11",
-    type: "FLAC 音频",
-    title: "音乐素材 - 产品演示背景音乐",
-    preview: "为产品演示视频准备的背景音乐，采用无损 FLAC 格式，确保音质完美...",
-    path: "/Users/zhangjun/Music/产品演示背景音乐.flac",
-    timeLabel: "添加于",
-    date: "2 周前",
-    fullDate: "2024-01-01 11:00",
-    tags: [
-      { label: "音乐", type: "custom", color: "purple" },
-      { label: "素材", type: "ai" },
-    ],
-  },
-  {
-    id: "12",
-    type: "MP4 视频",
-    title: "Lumos 产品演示视频",
-    preview: "展示了 Lumos 的核心功能和使用场景，包括 AI 对话、文档管理、飞书集成等主要特性的实际操作演示...",
-    path: "/Users/zhangjun/Videos/Lumos产品演示.mp4",
-    timeLabel: "创建于",
-    date: "3 周前",
-    fullDate: "2023-12-25 16:00",
-    tags: [
-      { label: "演示", type: "custom", color: "orange" },
-      { label: "产品", type: "custom", color: "blue" },
-      { label: "视频", type: "system" },
-    ],
-  },
-  {
-    id: "13",
-    type: "MOV 视频",
-    title: "iPhone 拍摄 - 团队 Offsite 活动",
-    preview: "记录了团队 Offsite 活动的精彩瞬间，包括团建游戏、产品讨论和晚宴等环节...",
-    path: "icloud://photos/IMG_20231225_100000.MOV",
-    timeLabel: "拍摄于",
-    date: "3 周前",
-    fullDate: "2023-12-25 10:00",
-    tags: [
-      { label: "团队", type: "custom", color: "green" },
-      { label: "Offsite", type: "ai" },
-      { label: "iPhone", type: "system" },
-    ],
-  },
-  {
-    id: "14",
-    type: "AVI 视频",
-    title: "竞品分析 - Notion 功能演示",
-    preview: "详细演示了 Notion 的核心功能和交互设计，分析其优缺点，为 Lumos 的产品设计提供借鉴...",
-    path: "/Users/zhangjun/Videos/竞品分析-Notion.avi",
-    timeLabel: "创建于",
-    date: "3 周前",
-    fullDate: "2023-12-24 14:00",
-    tags: [
-      { label: "竞品分析", type: "custom", color: "purple" },
-      { label: "Notion", type: "ai" },
-      { label: "研究", type: "ai" },
-    ],
-  },
-  {
-    id: "15",
-    type: "MKV 视频",
-    title: "设计系统演示视频",
-    preview: "展示了 Lumos 的设计系统，包括色彩、字体、组件库、图标等设计规范和使用示例...",
-    path: "/Users/zhangjun/Videos/设计系统演示.mkv",
-    timeLabel: "创建于",
-    date: "1 个月前",
-    fullDate: "2023-12-15 09:00",
-    tags: [
-      { label: "设计系统", type: "custom", color: "blue" },
-      { label: "规范", type: "ai" },
-      { label: "视频", type: "system" },
-    ],
-  },
-  {
-    id: "16",
-    type: "飞书文档",
-    title: "产品需求评审会议纪要",
-    preview: "记录了产品需求评审会议的讨论内容，包括新功能的优先级排序、技术可行性分析和开发排期安排...",
-    path: "https://feishu.cn/docs/doccnXXXXXXXXXXXXXXXXXXXXXX",
-    timeLabel: "最后编辑",
-    date: "1 个月前",
-    fullDate: "2023-12-10 10:00",
-    tags: [
-      { label: "会议纪要", type: "custom", color: "blue" },
-      { label: "需求评审", type: "ai" },
-      { label: "飞书", type: "system" },
-    ],
-  },
-  {
-    id: "17",
-    type: "Google Docs",
-    title: "市场调研报告 - 知识管理赛道分析",
-    preview: "深入分析了知识管理工具市场的现状、竞争格局、用户需求和发展趋势，为产品战略提供参考...",
-    path: "https://docs.google.com/document/d/1XXXXXXXXXXXXXXXXXXXXXXXX",
-    timeLabel: "最后编辑",
-    date: "1 个月前",
-    fullDate: "2023-12-08 15:00",
-    tags: [
-      { label: "市场调研", type: "custom", color: "green" },
-      { label: "报告", type: "ai" },
-      { label: "Google Docs", type: "system" },
-    ],
-  },
-  {
-    id: "18",
-    type: "Notion",
-    title: "团队 Wiki - 开发规范",
-    preview: "团队共享的开发规范文档，包括代码风格、Git 工作流、测试规范、文档规范等内容...",
-    path: "https://notion.so/team-wiki-dev-standards-XXXXXXXX",
-    timeLabel: "最后编辑",
-    date: "1 个月前",
-    fullDate: "2023-12-05 11:00",
-    tags: [
-      { label: "开发规范", type: "custom", color: "blue" },
-      { label: "Wiki", type: "ai" },
-      { label: "Notion", type: "system" },
-    ],
-  },
-  {
-    id: "19",
-    type: "语雀文档",
-    title: "产品设计规范 v3.0",
-    preview: "详细定义了产品的设计规范，包括视觉风格、组件库、交互规范、动效规范等，确保产品体验一致性...",
-    path: "https://yuque.com/team/design-system-v3",
-    timeLabel: "最后编辑",
-    date: "1 个月前",
-    fullDate: "2023-12-03 14:00",
-    tags: [
-      { label: "设计规范", type: "custom", color: "purple" },
-      { label: "v3.0", type: "ai" },
-      { label: "语雀", type: "system" },
-    ],
-  },
-  {
-    id: "20",
-    type: "网页",
-    title: "用户研究报告 - 知识管理工具调研",
-    preview: "通过用户访谈和问卷调查，我们发现用户最需要的是一个能够整合各类资料的中心，支持智能搜索和 AI 辅助...",
-    path: "https://example.com/research/knowledge-management-tools",
-    timeLabel: "发布于",
-    date: "2 个月前",
-    fullDate: "2023-11-15 10:00",
-    tags: [
-      { label: "用户研究", type: "custom", color: "green" },
-      { label: "报告", type: "ai" },
-      { label: "网页", type: "system" },
-    ],
-  },
-  {
-    id: "21",
-    type: "网页",
-    title: "AI 技术趋势报告 2024",
-    preview: "分析了 2024 年 AI 技术的最新趋势，包括大语言模型、多模态 AI、AI Agent 等前沿技术的发展方向...",
-    path: "https://techcrunch.com/ai-trends-2024",
-    timeLabel: "保存于",
-    date: "2 个月前",
-    fullDate: "2023-11-10 16:00",
-    tags: [
-      { label: "AI", type: "custom", color: "purple" },
-      { label: "技术趋势", type: "ai" },
-      { label: "网页", type: "system" },
-    ],
-  },
-  {
-    id: "22",
-    type: "网页",
-    title: "Electron 最佳实践指南",
-    preview: "总结了 Electron 开发的最佳实践，包括性能优化、安全性、打包发布等方面的经验和技巧...",
-    path: "https://electronjs.org/docs/tutorial/best-practices",
-    timeLabel: "保存于",
-    date: "2 个月前",
-    fullDate: "2023-11-05 09:00",
-    tags: [
-      { label: "Electron", type: "custom", color: "blue" },
-      { label: "最佳实践", type: "ai" },
-      { label: "技术文档", type: "ai" },
-    ],
-  },
-];

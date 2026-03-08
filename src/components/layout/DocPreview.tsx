@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel, Copy, Tick, Loading, Add } from "@hugeicons/core-free-icons";
+import { Cancel, Copy, Tick, Loading, Add, BookOpen } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -35,6 +35,7 @@ interface DocPreviewProps {
   onViewModeChange: (mode: ViewMode) => void;
   onClose: () => void;
   onAdd?: () => void;
+  onAddToLibrary?: () => void;
   width: number;
 }
 
@@ -61,6 +62,7 @@ export function DocPreview({
   onViewModeChange,
   onClose,
   onAdd,
+  onAddToLibrary,
   width,
 }: DocPreviewProps) {
   const { t } = useTranslation();
@@ -174,6 +176,13 @@ export function DocPreview({
           <Button variant="ghost" size="icon-sm" onClick={onAdd}>
             <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
             <span className="sr-only">{t('common.addToChat')}</span>
+          </Button>
+        )}
+
+        {onAddToLibrary && (
+          <Button variant="ghost" size="icon-sm" onClick={onAddToLibrary}>
+            <HugeiconsIcon icon={BookOpen} className="h-3.5 w-3.5" />
+            <span className="sr-only">{t('common.addToLibrary')}</span>
           </Button>
         )}
 

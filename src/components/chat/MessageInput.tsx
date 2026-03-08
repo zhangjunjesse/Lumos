@@ -17,8 +17,8 @@ import {
   Edit,
   SearchList01Icon,
   Brain,
-  Globe,
   Stop,
+  Globe,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -35,10 +35,6 @@ import {
 import type { ChatStatus } from 'ai';
 import type { FileAttachment, ProviderModelGroup } from '@/types';
 import { nanoid } from 'nanoid';
-import { ImageGenToggle } from './ImageGenToggle';
-import { useImageGen } from '@/hooks/useImageGen';
-import { PENDING_KEY, setRefImages, deleteRefImages } from '@/lib/image-ref-store';
-import { IMAGE_AGENT_SYSTEM_PROMPT } from '@/lib/prompts/image-gen';
 
 // Accepted file types for upload
 const ACCEPTED_FILE_TYPES = [
@@ -59,7 +55,6 @@ interface MessageInputProps {
     files?: FileAttachment[],
     systemPromptAppend?: string,
     displayOverride?: string,
-    options?: { sendToFeishu?: boolean },
   ) => void;
   onImageGenerate?: (prompt: string, files?: FileAttachment[]) => void;
   onCommand?: (command: string) => void;
@@ -344,7 +339,6 @@ export function MessageInput({
   onModeChange,
 }: MessageInputProps) {
   const { t } = useTranslation();
-  const imageGen = useImageGen();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -364,7 +358,6 @@ export function MessageInput({
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiSearchAbortRef = useRef<AbortController | null>(null);
   const aiSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [sendToFeishu, setSendToFeishu] = useState(false);
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
@@ -644,25 +637,6 @@ export function MessageInput({
     };
 
     // If Image Agent toggle is on and no badge, send via normal LLM with systemPromptAppend
-    if (imageGen.state.enabled && !badge && !isStreaming) {
-      const files = await convertFiles();
-      if (!content && files.length === 0) return;
-
-      // Store uploaded images as pending reference images for ImageGenConfirmation
-      const imageFiles = files.filter(f => f.type.startsWith('image/'));
-      if (imageFiles.length > 0) {
-        setRefImages(PENDING_KEY, imageFiles.map(f => ({ mimeType: f.type, data: f.data })));
-      } else {
-        deleteRefImages(PENDING_KEY);
-      }
-
-      setInputValue('');
-      if (onSend) {
-        onSend(content, files.length > 0 ? files : undefined, IMAGE_AGENT_SYSTEM_PROMPT);
-      }
-      return;
-    }
-
     // If badge is active, expand the command/skill and send
     if (badge && !isStreaming) {
       let expandedPrompt = '';
@@ -744,11 +718,9 @@ export function MessageInput({
       hasFiles ? files : undefined,
       undefined,
       undefined,
-      sendToFeishu ? { sendToFeishu: true } : undefined,
     );
     setInputValue('');
-    if (sendToFeishu) setSendToFeishu(false);
-  }, [inputValue, onSend, onImageGenerate, onCommand, disabled, isStreaming, closePopover, badge, imageGen, sendToFeishu]);
+  }, [inputValue, onSend, onImageGenerate, onCommand, disabled, isStreaming, closePopover, badge]);
 
   const filteredItems = popoverItems.filter((item) => {
     const q = popoverFilter.toLowerCase();
@@ -1130,21 +1102,6 @@ export function MessageInput({
                 {/* Attach file button */}
                 <AttachFileButton />
 
-                {/* One-shot "send to Feishu" toggle */}
-                <button
-                  type="button"
-                  onClick={() => setSendToFeishu((prev) => !prev)}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors',
-                    sendToFeishu
-                      ? 'bg-emerald-500 text-white border-emerald-500'
-                      : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-                  )}
-                >
-                  <HugeiconsIcon icon={Globe} className="h-3 w-3" />
-                  <span>{sendToFeishu ? '本轮同步到飞书' : '同步到飞书'}</span>
-                </button>
-
                 {/* Mode capsule toggle */}
                 <div className="flex items-center rounded-full border border-border/60 overflow-hidden h-7">
                   {MODE_OPTIONS.map((opt) => {
@@ -1217,8 +1174,6 @@ export function MessageInput({
                   )}
                 </div>
 
-                {/* Image Agent toggle */}
-                <ImageGenToggle />
               </PromptInputTools>
 
               <FileAwareSubmitButton

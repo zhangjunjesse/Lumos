@@ -2,10 +2,11 @@
  * Auto-summarizer — generate document summaries + key points via Claude Haiku
  * Stores summary embedding for summary-level retrieval (P0)
  */
-import { getDb, getSetting } from '@/lib/db';
+import { getDb } from '@/lib/db';
 import { genId } from '@/lib/stores/helpers';
 import { getEmbeddings, vectorToBuffer } from './embedder';
 import type { DocumentSummary } from './types';
+import { callKnowledgeModel } from './llm';
 
 const SUMMARY_PROMPT = `你是文档摘要专家。为以下文档生成：
 1. 一段100-200字的摘要（summary）
@@ -17,35 +18,12 @@ const SUMMARY_PROMPT = `你是文档摘要专家。为以下文档生成：
 `;
 
 async function callHaiku(content: string): Promise<string> {
-  const apiKey = getSetting('anthropic_api_key') || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('未配置 API Key');
-
-  const baseUrl = getSetting('anthropic_base_url') || 'https://api.anthropic.com';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-
-  const res = await fetch(`${baseUrl}/v1/messages`, {
-    method: 'POST',
-    signal: controller.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-20250514',
-      max_tokens: 600,
-      messages: [{
-        role: 'user',
-        content: SUMMARY_PROMPT + content.slice(0, 6000),
-      }],
-    }),
+  return callKnowledgeModel({
+    model: 'claude-haiku-4-20250514',
+    maxTokens: 600,
+    timeoutMs: 15000,
+    prompt: SUMMARY_PROMPT + content.slice(0, 6000),
   });
-  clearTimeout(timer);
-
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message);
-  return json.content?.[0]?.text || '';
 }
 
 function parseResponse(text: string): { summary: string; keyPoints: string[] } {

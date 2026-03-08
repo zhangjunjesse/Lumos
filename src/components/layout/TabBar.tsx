@@ -16,6 +16,8 @@ import {
   Add,
   FolderOpen,
   File,
+  Globe,
+  Star,
   Settings2,
   BookOpen,
   Puzzle,
@@ -48,12 +50,18 @@ const TAB_TYPE_CONFIG: Record<
   { i18nKey: TranslationKey; icon: typeof FolderOpen; closable: boolean }
 > = {
   'file-tree': { i18nKey: 'tab.fileTree', icon: FolderOpen, closable: false },
+  browser: { i18nKey: 'tab.browser', icon: Globe, closable: true },
+  favorites: { i18nKey: 'tab.favorites', icon: Star, closable: true },
   'file-preview': { i18nKey: 'tab.filePreview', icon: File, closable: true },
   'feishu-doc': { i18nKey: 'tab.feishuDoc', icon: File, closable: true },
+  'feishu-doc-preview': { i18nKey: 'tab.feishuDocPreview', icon: File, closable: true },
   settings: { i18nKey: 'tab.settings', icon: Settings2, closable: true },
   knowledge: { i18nKey: 'tab.knowledge', icon: BookOpen, closable: true },
   plugins: { i18nKey: 'tab.plugins', icon: Puzzle, closable: true },
 };
+
+// "Files" tab is fixed by ContentPanel, and preview tabs are created by user actions.
+const ADDABLE_TAB_TYPES: TabType[] = ['feishu-doc', 'browser', 'favorites'];
 
 // Pixels to move before drag starts (prevents accidental drags)
 const DRAG_ACTIVATION_DISTANCE = 8;
@@ -93,6 +101,14 @@ export function TabBar() {
   };
 
   const handleAddTab = (type: TabType) => {
+    if (type === 'feishu-doc' || type === 'favorites') {
+      const existing = tabs.find((tab) => tab.type === type);
+      if (existing) {
+        setActiveTab(existing.id);
+        return;
+      }
+    }
+
     const config = TAB_TYPE_CONFIG[type];
     addTab({
       type,
@@ -136,16 +152,19 @@ export function TabBar() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {Object.entries(TAB_TYPE_CONFIG).map(([type, config]) => (
+          {ADDABLE_TAB_TYPES.map((type) => {
+            const config = TAB_TYPE_CONFIG[type];
+            return (
             <DropdownMenuItem
               key={type}
-              onClick={() => handleAddTab(type as TabType)}
+              onClick={() => handleAddTab(type)}
               className="flex items-center gap-2"
             >
               <HugeiconsIcon icon={config.icon} className="h-4 w-4" />
               <span>{t(config.i18nKey)}</span>
             </DropdownMenuItem>
-          ))}
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
 

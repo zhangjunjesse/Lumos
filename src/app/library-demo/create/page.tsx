@@ -4,90 +4,66 @@ import React, { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MessageInput } from "@/components/chat/MessageInput";
 
-// Mock 数据（与 library-demo 保持一致）
-const mockItems = [
-  {
-    id: "1",
-    title: "React 19 新特性",
-    type: "Markdown",
-    preview: "React 19 引入了多个重要特性，包括 Server Components、Actions 和 use API...",
-    content: `# React 19 新特性
+type KbItem = {
+  id: string;
+  title: string;
+  source_type: string;
+  source_path: string;
+  content: string;
+  tags: string;
+  created_at: string;
+  updated_at: string;
+};
 
-## Server Components
-React 19 引入了 Server Components，允许组件在服务器端渲染...
-
-## Actions
-新的 Actions API 简化了表单处理和数据提交...
-
-## use API
-use API 提供了更简洁的异步数据获取方式...`,
-    date: "2024-01-15",
-    tags: ["React", "前端", "教程"],
-    path: "/docs/react-19.md",
-  },
-  {
-    id: "2",
-    title: "产品需求文档",
-    type: "Word 文档",
-    preview: "Lumos 资料库产品需求文档，包含核心功能、用户故事和技术架构...",
-    content: `产品需求文档
-
-项目名称：Lumos 资料库
-版本：v1.0
-
-一、产品概述
-Lumos 资料库是一个智能文档管理系统...
-
-二、核心功能
-1. 文档导入与管理
-2. AI 辅助创作
-3. 标签分类
-4. 全文搜索`,
-    date: "2024-01-14",
-    tags: ["产品", "需求"],
-    path: "/docs/prd.docx",
-  },
-  {
-    id: "3",
-    title: "UI 设计规范",
-    type: "PDF 文档",
-    preview: "Lumos 的完整 UI 设计规范，包含颜色、字体、组件库等...",
-    content: `UI 设计规范
-
-一、颜色系统
-主色：#3B82F6
-辅助色：#10B981
-警告色：#F59E0B
-
-二、字体规范
-标题：Inter Bold
-正文：Inter Regular
-
-三、组件库
-按钮、输入框、卡片等组件的设计规范...`,
-    date: "2024-01-13",
-    tags: ["设计", "规范"],
-    path: "/docs/ui-spec.pdf",
-  },
-];
+function sourceLabel(item: KbItem) {
+  if (item.source_type === "webpage") return "网页";
+  if (item.source_type === "feishu") return "飞书文档";
+  if (item.source_type === "manual") return "文本";
+  if (item.source_path) {
+    const ext = item.source_path.split(".").pop()?.toLowerCase();
+    if (ext === "pdf") return "PDF 文档";
+    if (ext === "docx") return "Word 文档";
+    if (ext === "xlsx" || ext === "xls" || ext === "csv") return "Excel 表格";
+    if (ext === "md" || ext === "mdx") return "Markdown";
+  }
+  return "本地文件";
+}
 
 export default function CreatePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const itemId = searchParams.get("itemId");
 
-  const [item, setItem] = useState<typeof mockItems[0] | null>(null);
+  const [item, setItem] = useState<KbItem | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [isStreaming, setIsStreaming] = useState(false);
 
   useEffect(() => {
-    // 根据 itemId 加载资料
-    if (itemId) {
-      const foundItem = mockItems.find(i => i.id === itemId);
-      if (foundItem) {
-        setItem(foundItem);
+    if (!itemId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoadError(null);
+        const res = await fetch(`/api/knowledge/items/${itemId}`);
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data?.error || "加载资料失败");
+        }
+        const data = (await res.json()) as KbItem;
+        if (!cancelled) {
+          setItem(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "加载资料失败");
+        }
       }
-    }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [itemId]);
 
   const handleSend = (content: string) => {
@@ -104,6 +80,30 @@ export default function CreatePage() {
       setIsStreaming(false);
     }, 1000);
   };
+
+  const tags = (() => {
+    if (!item) return [] as string[];
+    try {
+      const parsed = JSON.parse(item.tags || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  })();
+  const typeLabel = item ? sourceLabel(item) : "-";
+  const updatedAtLabel = item
+    ? new Date(item.updated_at || item.created_at).toLocaleDateString()
+    : "-";
+
+  if (loadError) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-destructive">{loadError}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!item) {
     return (
@@ -142,12 +142,12 @@ export default function CreatePage() {
             <div className="mb-6 p-4 bg-accent/50 rounded-lg">
               <h2 className="text-xl font-bold mb-2">{item.title}</h2>
               <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <span>{item.type}</span>
+                <span>{typeLabel}</span>
                 <span>·</span>
-                <span>{item.date}</span>
+                <span>{updatedAtLabel}</span>
               </div>
               <div className="flex gap-2 mt-3">
-                {item.tags.map(tag => (
+                {tags.map((tag) => (
                   <span
                     key={tag}
                     className="px-2 py-1 bg-primary/10 text-primary text-xs rounded"
@@ -161,7 +161,7 @@ export default function CreatePage() {
             {/* 资料内容预览 */}
             <div className="prose prose-sm max-w-none">
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                {item.content}
+                {item.content || "内容已入库，可在资料库中查看完整内容。"}
               </pre>
             </div>
           </div>
@@ -223,4 +223,3 @@ export default function CreatePage() {
     </div>
   );
 }
-

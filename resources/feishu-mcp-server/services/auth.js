@@ -38,18 +38,26 @@ function readUserToken() {
 }
 
 /**
- * 获取 access token
- * 优先使用 user_access_token，fallback 到 tenant_access_token
- * @returns {Promise<string>}
+ * 获取当前登录用户信息（若存在）
  */
-export async function getToken() {
-  // 优先尝试 user token（每次重新读取，因为可能被外部更新）
+export function getActiveUserInfo() {
   const userToken = readUserToken();
-  if (userToken) {
-    return userToken.userAccessToken;
-  }
+  return userToken?.userInfo || null;
+}
 
-  // fallback: tenant_access_token
+/**
+ * 强制获取 user_access_token（用于“按登录用户权限”访问）
+ * 无有效用户登录时抛错，不回退 tenant_access_token。
+ */
+export function requireUserAccessToken() {
+  const userToken = readUserToken();
+  if (!userToken) {
+    throw new Error('需要先完成飞书用户登录，且 token 仍在有效期内');
+  }
+  return userToken.userAccessToken;
+}
+
+async function fetchTenantAccessToken() {
   if (cachedToken && Date.now() < tokenExpiresAt - 5 * 60 * 1000) {
     return cachedToken;
   }
@@ -75,6 +83,29 @@ export async function getToken() {
 }
 
 /**
+ * 强制获取 tenant_access_token（用于仅支持应用身份调用的 API）
+ */
+export async function getTenantAccessToken() {
+  return fetchTenantAccessToken();
+}
+
+/**
+ * 获取 access token
+ * 优先使用 user_access_token，fallback 到 tenant_access_token
+ * @returns {Promise<string>}
+ */
+export async function getToken() {
+  // 优先尝试 user token（每次重新读取，因为可能被外部更新）
+  const userToken = readUserToken();
+  if (userToken) {
+    return userToken.userAccessToken;
+  }
+
+  // fallback: tenant_access_token
+  return fetchTenantAccessToken();
+}
+
+/**
  * 获取认证状态
  */
 export async function getAuthStatus() {
@@ -88,7 +119,7 @@ export async function getAuthStatus() {
       };
     }
 
-    const token = await getToken();
+    await getToken();
     return {
       authorized: true,
       tokenType: 'tenant_access_token',

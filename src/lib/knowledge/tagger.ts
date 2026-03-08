@@ -2,8 +2,8 @@
  * AI auto-tagger — analyze document content and suggest categorized tags
  * Uses Claude Haiku for cost control (~$0.03/100 docs)
  */
-import { getSetting } from '@/lib/db';
 import type { TagResult, CategorizedTagResult, CategorizedTag, TagCategory } from './types';
+import { callKnowledgeModel } from './llm';
 
 const VALID_CATEGORIES: TagCategory[] = ['domain', 'tech', 'doctype', 'project', 'custom'];
 
@@ -30,35 +30,12 @@ ${existing}标签分类：
 }
 
 async function callHaiku(content: string, existingTags: string[]): Promise<string> {
-  const apiKey = getSetting('anthropic_api_key') || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('未配置 API Key');
-
-  const baseUrl = getSetting('anthropic_base_url') || 'https://api.anthropic.com';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-
-  const res = await fetch(`${baseUrl}/v1/messages`, {
-    method: 'POST',
-    signal: controller.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-20250514',
-      max_tokens: 400,
-      messages: [{
-        role: 'user',
-        content: buildCategorizedPrompt(existingTags) + content.slice(0, 3000),
-      }],
-    }),
+  return callKnowledgeModel({
+    model: 'claude-haiku-4-20250514',
+    maxTokens: 400,
+    timeoutMs: 8000,
+    prompt: buildCategorizedPrompt(existingTags) + content.slice(0, 3000),
   });
-  clearTimeout(timer);
-
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message);
-  return json.content?.[0]?.text || '';
 }
 
 function validTag(t: unknown): t is CategorizedTag {

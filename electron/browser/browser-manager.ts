@@ -36,6 +36,8 @@ export interface BrowserBounds {
   height: number;
 }
 
+export type BrowserDisplayTarget = 'default' | 'panel' | 'hidden';
+
 export interface NavigationOptions {
   url: string;
   timeout?: number;
@@ -58,6 +60,8 @@ export class BrowserManager extends EventEmitter {
   private sessionPartition: string;
   private cdpManager: CDPManager;
   private database: BrowserDatabase;
+  private displayTarget: BrowserDisplayTarget;
+  private panelBounds: BrowserBounds | null;
 
   constructor(mainWindow: BaseWindow | BrowserWindow, options?: BrowserManagerOptions) {
     super();
@@ -70,6 +74,8 @@ export class BrowserManager extends EventEmitter {
     this.sessionPartition = options?.sessionPartition || 'persist:lumos-browser';
     this.cdpManager = new CDPManager();
     this.database = new BrowserDatabase();
+    this.displayTarget = 'default';
+    this.panelBounds = null;
 
     // 监听窗口大小变化
     this.setupWindowListeners();
@@ -113,9 +119,26 @@ export class BrowserManager extends EventEmitter {
 
     const view = this.tabs.get(this.activeTabId);
     if (view) {
-      const bounds = this.calculateBounds();
-      view.setBounds(bounds);
+      view.setBounds(this.calculateBounds());
     }
+  }
+
+  /**
+   * 设置浏览器显示目标
+   * - default: 主窗口默认浏览器区域
+   * - panel: 渲染到指定面板区域
+   * - hidden: 完全隐藏 WebContentsView
+   */
+  setDisplayTarget(target: BrowserDisplayTarget, bounds?: BrowserBounds): void {
+    this.displayTarget = target;
+
+    if (target === 'panel') {
+      this.panelBounds = bounds ? this.normalizeBounds(bounds) : null;
+    } else if (target !== 'panel') {
+      this.panelBounds = null;
+    }
+
+    this.handleWindowResize();
   }
 
   /**
@@ -256,7 +279,7 @@ export class BrowserManager extends EventEmitter {
         }
       };
 
-      const onFail = (_event: any, errorCode: number, errorDescription: string) => {
+      const onFail = (_event: unknown, errorCode: number, errorDescription: string) => {
         cleanup();
         reject(new Error(`Navigation failed: ${errorDescription} (${errorCode})`));
       };
@@ -298,7 +321,7 @@ export class BrowserManager extends EventEmitter {
 
       if (view) {
         this.mainWindow.contentView.removeChildView(view);
-        (view.webContents as any).destroy();
+        view.webContents.destroy();
       }
 
       this.tabs.delete(tabId);
@@ -357,7 +380,7 @@ export class BrowserManager extends EventEmitter {
   /**
    * 发送 CDP 命令
    */
-  async sendCDPCommand(tabId: string, method: string, params?: any): Promise<any> {
+  async sendCDPCommand(tabId: string, method: string, params?: Record<string, unknown>): Promise<unknown> {
     try {
       const response = await this.cdpManager.sendCommand(tabId, { method, params });
       if (response.error) {
@@ -478,6 +501,14 @@ export class BrowserManager extends EventEmitter {
   }
 
   private calculateBounds(): BrowserBounds {
+    if (this.displayTarget === 'hidden') {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+
+    if (this.displayTarget === 'panel' && this.panelBounds) {
+      return this.panelBounds;
+    }
+
     const windowBounds = this.mainWindow.getBounds();
     const layout = getPlatformLayout();
 
@@ -486,6 +517,15 @@ export class BrowserManager extends EventEmitter {
       y: layout.titleBarHeight + layout.toolbarHeight,
       width: windowBounds.width,
       height: windowBounds.height - layout.titleBarHeight - layout.toolbarHeight,
+    };
+  }
+
+  private normalizeBounds(bounds: BrowserBounds): BrowserBounds {
+    return {
+      x: Math.max(0, Math.round(bounds.x)),
+      y: Math.max(0, Math.round(bounds.y)),
+      width: Math.max(0, Math.round(bounds.width)),
+      height: Math.max(0, Math.round(bounds.height)),
     };
   }
 
@@ -512,7 +552,7 @@ export class BrowserManager extends EventEmitter {
         const view = this.tabs.get(victim.id);
         if (view) {
           this.mainWindow.contentView.removeChildView(view);
-          (view.webContents as any).destroy();
+          view.webContents.destroy();
           this.tabs.set(victim.id, null);
         }
 

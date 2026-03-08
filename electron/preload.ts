@@ -13,10 +13,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   shell: {
     openPath: (folderPath: string) => ipcRenderer.invoke('shell:open-path', folderPath),
+    openExternal: (targetUrl: string) => ipcRenderer.invoke('shell:open-external', targetUrl),
+  },
+  auth: {
+    open: (targetUrl: string) => ipcRenderer.invoke('window:open-auth', targetUrl),
   },
   dialog: {
     openFolder: (options?: { defaultPath?: string; title?: string }) =>
       ipcRenderer.invoke('dialog:open-folder', options),
+    openFile: (options?: { defaultPath?: string; title?: string; filters?: Electron.FileFilter[]; multi?: boolean }) =>
+      ipcRenderer.invoke('dialog:open-file', options),
   },
   install: {
     checkPrerequisites: () => ipcRenderer.invoke('install:check-prerequisites'),
@@ -46,18 +52,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTabs: () => ipcRenderer.invoke('browser:get-tabs'),
     navigate: (tabId: string, url: string, timeout?: number) =>
       ipcRenderer.invoke('browser:navigate', tabId, url, timeout),
-    getCookies: (filter?: any) => ipcRenderer.invoke('browser:get-cookies', filter),
-    setCookie: (cookie: any) => ipcRenderer.invoke('browser:set-cookie', cookie),
+    getCookies: (filter?: Electron.CookiesGetFilter) => ipcRenderer.invoke('browser:get-cookies', filter),
+    setCookie: (cookie: Electron.CookiesSetDetails) => ipcRenderer.invoke('browser:set-cookie', cookie),
     connectCDP: (tabId: string) => ipcRenderer.invoke('browser:connect-cdp', tabId),
     disconnectCDP: (tabId: string) => ipcRenderer.invoke('browser:disconnect-cdp', tabId),
-    sendCDPCommand: (tabId: string, method: string, params?: any) =>
+    sendCDPCommand: (tabId: string, method: string, params?: Record<string, unknown>) =>
       ipcRenderer.invoke('browser:send-cdp-command', tabId, method, params),
     isCDPConnected: (tabId: string) => ipcRenderer.invoke('browser:is-cdp-connected', tabId),
+    getBridgeConfig: () => ipcRenderer.invoke('browser:get-bridge-config'),
+    setDisplayTarget: (
+      target: 'default' | 'panel' | 'hidden',
+      bounds?: { x: number; y: number; width: number; height: number },
+    ) => ipcRenderer.invoke('browser:set-display-target', target, bounds),
     onEvent: (callback: (event: string, data: unknown) => void) => {
       const listener = (_event: unknown, eventName: string, data: unknown) =>
         callback(eventName, data);
       ipcRenderer.on('browser:event', listener);
       return () => { ipcRenderer.removeListener('browser:event', listener); };
+    },
+    onOpenInContentTab: (callback: (payload: { url: string; pageId?: string }) => void) => {
+      const listener = (_event: unknown, data: { url?: string; pageId?: string } | null) => {
+        const url = data?.url;
+        if (typeof url === 'string' && url.length > 0) {
+          const pageId = typeof data?.pageId === 'string' ? data.pageId : undefined;
+          callback({ url, ...(pageId ? { pageId } : {}) });
+        }
+      };
+      ipcRenderer.on('content-browser:open-url-in-tab', listener);
+      return () => { ipcRenderer.removeListener('content-browser:open-url-in-tab', listener); };
     },
   },
 });

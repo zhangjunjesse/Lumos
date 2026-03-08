@@ -63,10 +63,10 @@ export class BridgeManager {
         await this.conversation.createSession(binding.lumos_session_id);
       }
       const response = await this.conversation.sendMessage(binding.lumos_session_id, message.text);
-      await this.delivery.deliver(adapter, { address: message.address, text: response });
+      await this.delivery.deliver(adapter, { address: message.address, text: response.visibleText });
 
       if (this.onMessageHandled) {
-        this.onMessageHandled(binding.lumos_session_id, message.text, response);
+        this.onMessageHandled(binding.lumos_session_id, message.text, response.visibleText);
       }
     } catch (error) {
       console.error('Failed to handle message:', error);

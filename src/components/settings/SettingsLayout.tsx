@@ -6,6 +6,7 @@ import type { IconSvgElement } from "@hugeicons/react";
 import {
   Settings2,
   Code,
+  BookOpen,
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -13,10 +14,11 @@ import { GeneralSection } from "./GeneralSection";
 import { ClaudeConfigSection } from "./ClaudeConfigSection";
 import { CliSettingsSection } from "./CliSettingsSection";
 import { UsageStatsSection } from "./UsageStatsSection";
+import { KnowledgeSection } from "./KnowledgeSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
-type Section = "general" | "providers" | "cli" | "usage";
+type Section = "general" | "knowledge" | "providers" | "cli" | "usage";
 
 interface SidebarItem {
   id: Section;
@@ -26,6 +28,7 @@ interface SidebarItem {
 
 const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings2 },
+  { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
   { id: "cli", label: "Claude CLI", icon: Code },
   { id: "usage", label: "Usage", icon: Analytics },
@@ -58,6 +61,7 @@ export function SettingsLayout() {
 
   const settingsLabelKeys: Record<string, TranslationKey> = {
     'General': 'settings.general',
+    'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
     'Claude CLI': 'settings.claudeCli',
     'Usage': 'settings.usage',
@@ -102,6 +106,7 @@ export function SettingsLayout() {
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
           {activeSection === "general" && <GeneralSection />}
+          {activeSection === "knowledge" && <KnowledgeSection />}
           {activeSection === "providers" && <ClaudeConfigSection />}
           {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "usage" && <UsageStatsSection />}

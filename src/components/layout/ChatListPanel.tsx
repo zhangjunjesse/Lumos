@@ -77,7 +77,7 @@ interface ProjectGroup {
   workingDirectory: string;
   displayName: string;
   sessions: ChatSession[];
-  latestUpdatedAt: number;
+  createdAt: number;
 }
 
 function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
@@ -99,17 +99,19 @@ function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
       wd === ""
         ? "No Project"
         : groupSessions[0]?.project_name || wd.split("/").pop() || wd;
-    const latestUpdatedAt = parseDBDate(groupSessions[0].updated_at).getTime();
+    const createdAt = Math.min(
+      ...groupSessions.map((s) => parseDBDate(s.created_at).getTime()),
+    );
     groups.push({
       workingDirectory: wd,
       displayName,
       sessions: groupSessions,
-      latestUpdatedAt,
+      createdAt,
     });
   }
 
-  // Sort groups by most recently active first
-  groups.sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
+  // Sort groups by project creation time (newest first)
+  groups.sort((a, b) => b.createdAt - a.createdAt);
   return groups;
 }
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Refresh, Search, SquareCode, Code, File } from "@hugeicons/core-free-icons";
+import { Refresh, Search, SquareCode, Code, File, BookOpen } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -14,11 +14,14 @@ import {
 } from "@/components/ai-elements/file-tree";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { ReactNode } from "react";
+import { useFavoritesStore } from "@/stores/favorites";
 
 interface FileTreeProps {
   workingDirectory: string;
   onFileSelect: (path: string) => void;
   onFileAdd?: (path: string) => void;
+  onFileAddToLibrary?: (path: string) => void;
+  onFolderAddToLibrary?: (dir: string) => void;
 }
 
 function getFileIcon(extension?: string): ReactNode {
@@ -106,21 +109,26 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
   );
 }
 
-export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTreeProps) {
+export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileAddToLibrary, onFolderAddToLibrary }: FileTreeProps) {
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const { t } = useTranslation();
-
-  console.log('[FileTree] Render:', { workingDirectory, treeLength: tree.length, loading });
+  const toggleFileFavorite = useFavoritesStore((state) => state.toggleFile);
+  const favoriteItems = useFavoritesStore((state) => state.items);
+  const fileFavoriteSet = useMemo(() => {
+    return new Set(
+      favoriteItems
+        .filter((item) => item.type === "file")
+        .map((item) => item.path)
+    );
+  }, [favoriteItems]);
 
   const fetchTree = useCallback(async () => {
     if (!workingDirectory) {
-      console.log('[FileTree] No working directory, clearing tree');
       setTree([]);
       return;
     }
-    console.log('[FileTree] Fetching tree for:', workingDirectory);
     setLoading(true);
     try {
       const res = await fetch(
@@ -128,14 +136,11 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
       );
       if (res.ok) {
         const data = await res.json();
-        console.log('[FileTree] Fetched tree:', data.tree?.length || 0, 'items');
         setTree(data.tree || []);
       } else {
-        console.error('[FileTree] Fetch failed:', res.status, res.statusText);
         setTree([]);
       }
-    } catch (err) {
-      console.error('[FileTree] Fetch error:', err);
+    } catch {
       setTree([]);
     } finally {
       setLoading(false);
@@ -156,6 +161,17 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
   // Default to all directories collapsed
   const defaultExpanded = new Set<string>();
 
+  const handleFileFavorite = useCallback((path: string) => {
+    toggleFileFavorite({
+      path,
+      title: path.split("/").pop() || path,
+    });
+  }, [toggleFileFavorite]);
+
+  const isFileFavorited = useCallback((path: string) => {
+    return fileFavoriteSet.has(path);
+  }, [fileFavoriteSet]);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Search + Refresh */}
@@ -169,6 +185,17 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
             className="h-7 pl-7 text-xs"
           />
         </div>
+        {workingDirectory && onFolderAddToLibrary && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => onFolderAddToLibrary(workingDirectory)}
+            className="h-7 w-7 shrink-0"
+          >
+            <HugeiconsIcon icon={BookOpen} className="h-3 w-3" />
+            <span className="sr-only">{t('common.addToLibrary')}</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -197,6 +224,9 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd }: FileTree
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
             onSelect={onFileSelect as any}
             onAdd={onFileAdd}
+            onAddToLibrary={onFileAddToLibrary}
+            onFavorite={handleFileFavorite}
+            isFavorited={isFileFavorited}
             className="border-0 rounded-none"
           >
             <RenderTreeNodes nodes={tree} searchQuery={searchQuery} />

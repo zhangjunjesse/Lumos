@@ -4,18 +4,18 @@ import { execFileSync, spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
-import { initAutoUpdater, setUpdaterWindow } from './updater';
-// TODO: 暂时禁用浏览器功能，因为在开发模式下 better-sqlite3 版本冲突
-// import { BrowserManager } from './browser/browser-manager';
-// import { setupBrowserIPC } from './ipc/browser-handlers';
-
-// Database and IPC imports
-import { initDatabase, registerDbShutdownHandlers } from './db/connection';
-import { DatabaseService } from './db/service';
-import { registerIpcHandlers } from './ipc/handlers';
+import { initAutoUpdater, setUpdaterWindow, registerUpdaterHandlers } from './updater';
+import { BrowserManager } from './browser/browser-manager';
+import { setupBrowserIPC } from './ipc/browser-handlers';
+import { BrowserBridgeServer } from './browser/bridge-server';
 
 let mainWindow: BrowserWindow | null = null;
-// let browserManager: BrowserManager | null = null;
+let authWindow: BrowserWindow | null = null;
+let browserManager: BrowserManager | null = null;
+const browserBridgeContext: { browserManager: BrowserManager | null } = { browserManager: null };
+let browserBridgeServer: BrowserBridgeServer | null = null;
+let browserBridgeUrl = '';
+let browserBridgeToken = '';
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -23,6 +23,47 @@ let serverExited = false;
 let serverExitCode: number | null = null;
 let userShellEnv: Record<string, string> = {};
 let isQuitting = false;
+let appOriginPrefix = '';
+const BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH = path.join('runtime', 'browser-bridge.json');
+
+function getBrowserBridgeRuntimeFilePath(): string {
+  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+  return path.join(dataDir, BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
+}
+
+function persistBrowserBridgeRuntime(url: string, token: string): void {
+  try {
+    const filePath = getBrowserBridgeRuntimeFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(
+        {
+          url,
+          token,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+    console.log('[browser-bridge] runtime config persisted:', filePath);
+  } catch (error) {
+    console.warn('[browser-bridge] failed to persist runtime config:', error);
+  }
+}
+
+function clearBrowserBridgeRuntime(): void {
+  try {
+    const filePath = getBrowserBridgeRuntimeFilePath();
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    console.warn('[browser-bridge] failed to clear runtime config:', error);
+  }
+}
 
 // --- Install orchestrator ---
 interface InstallStep {
@@ -323,6 +364,8 @@ function startServer(port: number): Electron.UtilityProcess {
     PATH: constructedPath,
     // Sandbox: isolate CLI config into app's own directory
     LUMOS_CLAUDE_CONFIG_DIR: claudeConfigDir,
+    ...(browserBridgeUrl ? { LUMOS_BROWSER_BRIDGE_URL: browserBridgeUrl } : {}),
+    ...(browserBridgeToken ? { LUMOS_BROWSER_BRIDGE_TOKEN: browserBridgeToken } : {}),
     ...(defaultKey ? { LUMOS_DEFAULT_API_KEY: defaultKey } : {}),
     ...(process.env.CODEPILOT_DEFAULT_BASE_URL
       ? { CODEPILOT_DEFAULT_BASE_URL: process.env.CODEPILOT_DEFAULT_BASE_URL }
@@ -401,30 +444,221 @@ function createWindow(port: number) {
 
   mainWindow = new BrowserWindow(windowOptions);
 
+  appOriginPrefix = `http://127.0.0.1:${port}`;
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    const targetUrl = details.url;
+    const isHttpUrl = /^https?:\/\//i.test(targetUrl);
+    const forceExternal = details.features.includes('lumos_external=1');
+
+    if (isDev) {
+      console.log('[window-open:main]', {
+        targetUrl,
+        disposition: details.disposition,
+        referrer: details.referrer?.url ?? '',
+        forceExternal,
+      });
+    }
+
+    if (forceExternal) {
+      if (isHttpUrl) {
+        void shell.openExternal(targetUrl);
+      }
+      return { action: 'deny' };
+    }
+
+    if (isHttpUrl) {
+      // Page initiated target=_blank: forward to content panel browser tab.
+      mainWindow?.webContents.send('content-browser:open-url-in-tab', { url: targetUrl });
+    }
+    return { action: 'deny' };
+  });
+
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
 
   mainWindow.maximize();
 
   mainWindow.on('closed', () => {
+    browserBridgeContext.browserManager = null;
+    browserManager = null;
     mainWindow = null;
-    // browserManager = null;
   });
 
   // 初始化 BrowserManager
-  // TODO: 暂时禁用浏览器功能，因为在开发模式下 better-sqlite3 版本冲突
-  // browserManager = new BrowserManager(mainWindow, {
-  //   maxTabs: 10,
-  //   maxActiveViews: 3,
-  //   sessionPartition: 'persist:lumos-browser',
-  // });
+  browserManager = new BrowserManager(mainWindow, {
+    maxTabs: 10,
+    maxActiveViews: 3,
+    sessionPartition: 'persist:lumos-browser',
+  });
+  browserBridgeContext.browserManager = browserManager;
 
-  // 设置浏览器 IPC handlers
-  // setupBrowserIPC(browserManager);
+  // Register browser IPC and (re)bind event forwarding to current manager.
+  setupBrowserIPC(() => browserManager);
+}
+
+function openAuthWindow(targetUrl: string) {
+  if (!targetUrl) return;
+  if (authWindow && !authWindow.isDestroyed()) {
+    authWindow.loadURL(targetUrl);
+    authWindow.focus();
+    return;
+  }
+
+  authWindow = new BrowserWindow({
+    width: 920,
+    height: 760,
+    minWidth: 720,
+    minHeight: 560,
+    parent: mainWindow ?? undefined,
+    modal: true,
+    center: true,
+    title: 'Lumos Login',
+    icon: getIconPath(),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  authWindow.setMenuBarVisibility(false);
+  authWindow.loadURL(targetUrl);
+  authWindow.on('closed', () => {
+    authWindow = null;
+  });
 }
 
 app.whenReady().then(async () => {
+  // Clear stale bridge runtime file from previous crashes/restarts.
+  clearBrowserBridgeRuntime();
+
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler((details) => {
+      const targetUrl = details.url;
+      const isHttpUrl = /^https?:\/\//i.test(targetUrl);
+      const forceExternal = details.features.includes('lumos_external=1');
+
+      if (isDev) {
+        console.log('[window-open:global]', {
+          sourceContentsId: contents.id,
+          targetUrl,
+          disposition: details.disposition,
+          referrer: details.referrer?.url ?? '',
+          forceExternal,
+        });
+      }
+
+      if (forceExternal) {
+        if (isHttpUrl) {
+          void shell.openExternal(targetUrl);
+        }
+        return { action: 'deny' };
+      }
+
+      if (isHttpUrl && mainWindow && !targetUrl.startsWith(appOriginPrefix)) {
+        mainWindow.webContents.send('content-browser:open-url-in-tab', { url: targetUrl });
+      }
+      return { action: 'deny' };
+    });
+
+    // Fallback: if any popup window is still created (e.g. special _blank flow),
+    // immediately close it and forward the real URL into the content browser tab.
+    contents.on('did-create-window', (createdWindow, details) => {
+      const tryForwardToContentTab = (candidateUrl: string): boolean => {
+        const isHttpUrl = /^https?:\/\//i.test(candidateUrl);
+        if (!isHttpUrl || !mainWindow) {
+          return false;
+        }
+        if (candidateUrl.startsWith(appOriginPrefix)) {
+          return false;
+        }
+
+        if (isDev) {
+          console.log('[window-open:fallback-forward]', {
+            sourceContentsId: contents.id,
+            candidateUrl,
+          });
+        }
+
+        mainWindow.webContents.send('content-browser:open-url-in-tab', { url: candidateUrl });
+
+        if (!createdWindow.isDestroyed()) {
+          setImmediate(() => {
+            if (!createdWindow.isDestroyed()) {
+              createdWindow.close();
+            }
+          });
+        }
+        return true;
+      };
+
+      if (isDev) {
+        console.log('[window-open:fallback-created]', {
+          sourceContentsId: contents.id,
+          initialUrl: details.url,
+        });
+      }
+
+      if (tryForwardToContentTab(details.url)) {
+        return;
+      }
+
+      const cleanup = () => {
+        createdWindow.webContents.removeListener('did-start-navigation', onDidStartNavigation);
+        createdWindow.webContents.removeListener('will-redirect', onWillRedirect);
+        createdWindow.removeListener('closed', cleanup);
+      };
+
+      const onDidStartNavigation = (
+        _event: unknown,
+        navUrl: string,
+        _isInPlace: boolean,
+        isMainFrame: boolean
+      ) => {
+        if (!isMainFrame) return;
+        if (tryForwardToContentTab(navUrl)) {
+          cleanup();
+        }
+      };
+
+      const onWillRedirect = (
+        _event: unknown,
+        navUrl: string,
+      ) => {
+        if (tryForwardToContentTab(navUrl)) {
+          cleanup();
+        }
+      };
+
+      createdWindow.webContents.on('did-start-navigation', onDidStartNavigation);
+      createdWindow.webContents.on('will-redirect', onWillRedirect);
+      createdWindow.on('closed', cleanup);
+    });
+  });
+
   // Load user's full shell environment (API keys, PATH, etc.)
   userShellEnv = loadUserShellEnv();
+
+  // Start local browser bridge (for built-in chrome-devtools MCP).
+  // Bridge can start before BrowserManager; requests will return unavailable
+  // until a window is created and manager is initialized.
+  browserBridgeServer = new BrowserBridgeServer(browserBridgeContext);
+  try {
+    await browserBridgeServer.start();
+    browserBridgeUrl = browserBridgeServer.getBaseUrl();
+    browserBridgeToken = browserBridgeServer.getToken();
+    persistBrowserBridgeRuntime(browserBridgeUrl, browserBridgeToken);
+  } catch (error) {
+    console.error('[browser-bridge] failed to start:', error);
+    browserBridgeServer = null;
+    browserBridgeUrl = '';
+    browserBridgeToken = '';
+    clearBrowserBridgeRuntime();
+  }
+
+  // In dev mode, register updater IPC handlers early to avoid "No handler registered"
+  if (isDev) {
+    registerUpdaterHandlers();
+  }
 
   // Verify native module ABI compatibility before starting the server
   checkNativeModuleABI();
@@ -440,9 +674,6 @@ app.whenReady().then(async () => {
   registerDbShutdownHandlers();
   console.log('[main] Database and IPC handlers initialized');
   */
-  let db: any = null;
-  let dbService: any = null;
-
   // === ISOLATION: Verify Claude CLI config directory ===
   const claudeConfigDir = path.join(app.getPath('userData'), '.claude');
   if (!fs.existsSync(claudeConfigDir)) {
@@ -802,6 +1033,23 @@ app.whenReady().then(async () => {
     return shell.openPath(folderPath);
   });
 
+  ipcMain.handle('shell:open-external', async (_event: Electron.IpcMainInvokeEvent, targetUrl: string) => {
+    return shell.openExternal(targetUrl);
+  });
+
+  ipcMain.handle('window:open-auth', async (_event: Electron.IpcMainInvokeEvent, targetUrl: string) => {
+    if (!mainWindow) return;
+    openAuthWindow(targetUrl);
+  });
+
+  ipcMain.handle('browser:get-bridge-config', async () => {
+    return {
+      success: Boolean(browserBridgeUrl && browserBridgeToken),
+      url: browserBridgeUrl,
+      token: browserBridgeToken,
+    };
+  });
+
   // Native folder picker dialog
   ipcMain.handle('dialog:open-folder', async (_event, options?: { defaultPath?: string; title?: string }) => {
     if (!mainWindow) return { canceled: true, filePaths: [] };
@@ -809,6 +1057,18 @@ app.whenReady().then(async () => {
       title: options?.title || 'Select a project folder',
       defaultPath: options?.defaultPath || undefined,
       properties: ['openDirectory', 'createDirectory'],
+    });
+    return { canceled: result.canceled, filePaths: result.filePaths };
+  });
+
+  // Native file picker dialog
+  ipcMain.handle('dialog:open-file', async (_event, options?: { defaultPath?: string; title?: string; filters?: Electron.FileFilter[]; multi?: boolean }) => {
+    if (!mainWindow) return { canceled: true, filePaths: [] };
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: options?.title || 'Select a file',
+      defaultPath: options?.defaultPath || undefined,
+      filters: options?.filters,
+      properties: options?.multi === false ? ['openFile'] : ['openFile', 'multiSelections'],
     });
     return { canceled: result.canceled, filePaths: result.filePaths };
   });
@@ -853,6 +1113,8 @@ app.whenReady().then(async () => {
     // Initialize auto-updater in packaged mode only
     if (!isDev && mainWindow) {
       initAutoUpdater(mainWindow);
+    } else if (mainWindow) {
+      registerUpdaterHandlers(mainWindow);
     }
   } catch (err) {
     console.error('Failed to start:', err);
@@ -889,6 +1151,8 @@ app.on('activate', async () => {
       // Re-attach updater to the new window
       if (!isDev && mainWindow) {
         setUpdaterWindow(mainWindow);
+      } else if (mainWindow) {
+        registerUpdaterHandlers(mainWindow);
       }
     } catch (err) {
       console.error('Failed to restart server:', err);
@@ -911,18 +1175,34 @@ app.on('before-quit', async (e) => {
   }
 
   // 清理 BrowserManager
-  // TODO: 暂时禁用浏览器功能
-  // if (browserManager) {
-  //   try {
-  //     await browserManager.cleanup();
-  //   } catch (error) {
+  if (browserManager) {
+    try {
+      await browserManager.cleanup();
+    } catch (error) {
+      console.error('Failed to cleanup BrowserManager:', error);
+    }
+    browserManager = null;
+    browserBridgeContext.browserManager = null;
+  }
+
+  if (browserBridgeServer) {
+    try {
+      await browserBridgeServer.stop();
+    } catch (error) {
+      console.error('Failed to stop browser bridge server:', error);
+    }
+    browserBridgeServer = null;
+    browserBridgeUrl = '';
+    browserBridgeToken = '';
+  }
+  clearBrowserBridgeRuntime();
 
   // Stop WebSocket listener
   if (serverPort) {
     try {
       await fetch(`http://localhost:${serverPort}/api/bridge/websocket`, { method: 'DELETE' });
       console.log('[Bridge] WebSocket listener stopped');
-    } catch (err) {
+    } catch {
       // Server might already be down
     }
   }
@@ -936,11 +1216,6 @@ app.on('before-quit', async (e) => {
       console.error('[main] Failed to stop Bridge system:', error);
     }
   }
-  //     console.error('Failed to cleanup BrowserManager:', error);
-  //   }
-  //   browserManager = null;
-  // }
-
   if (serverProcess && !isQuitting) {
     isQuitting = true;
     e.preventDefault();

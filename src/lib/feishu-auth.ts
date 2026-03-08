@@ -42,13 +42,17 @@ export function getRedirectUri() {
 
 export function buildAuthUrl(): string {
   const { appId } = getConfig();
-  const scopes = [
+  const defaultScopes = [
     "offline_access",
     "wiki:wiki",
     "docx:document",
     "docx:document.block:convert",
     "drive:drive",
-  ].join(" ");
+    "mail:user_mailbox.message:send",
+    "contact:user.base:readonly",
+    "contact:user.email:readonly",
+  ];
+  const scopes = (process.env.FEISHU_OAUTH_SCOPES || defaultScopes.join(" ")).trim();
 
   const params = new URLSearchParams({
     app_id: appId,

@@ -1,0 +1,10 @@
+{
+  "name": "chrome-devtools",
+  "description": "Lumos built-in browser MCP. Shares session/cookies with Lumos browser context.",
+  "command": "node",
+  "args": ["[RUNTIME_PATH]/mcp-servers/chrome-devtools/lumos_chrome_mcp.mjs"],
+  "env": {
+    "LUMOS_BROWSER_BRIDGE_URL": "",
+    "LUMOS_BROWSER_BRIDGE_TOKEN": ""
+  }
+}

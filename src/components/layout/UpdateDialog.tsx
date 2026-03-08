@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useTranslation } from "@/hooks/useTranslation";
+import { openExternalUrl } from "@/lib/open-external";
 
 export function UpdateDialog() {
   const { updateInfo, showDialog, dismissUpdate, downloadUpdate, quitAndInstall } = useUpdate();
@@ -91,7 +92,7 @@ export function UpdateDialog() {
           {!isNativeUpdate ? (
             <Button
               onClick={() => {
-                window.open(updateInfo.releaseUrl, "_blank");
+                void openExternalUrl(updateInfo.releaseUrl);
               }}
             >
               {t('settings.viewRelease')}

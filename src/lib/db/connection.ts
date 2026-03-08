@@ -160,6 +160,13 @@ export function getDb(): Database.Database {
     }).catch(err => {
       console.error('[db] Failed to load migrate-existing-resources module:', err);
     });
+
+    // Start knowledge ingest worker for resumable directory imports
+    import('../knowledge/ingest-worker').then(({ ensureKnowledgeIngestWorker }) => {
+      ensureKnowledgeIngestWorker();
+    }).catch(err => {
+      console.error('[db] Failed to start ingest worker:', err);
+    });
   }
   return db;
 }

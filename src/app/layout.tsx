@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { I18nProvider } from "@/components/layout/I18nProvider";
 import { AppLayout } from "@/components/layout/app-layout";
+import { MemoryToastProvider } from "@/components/memory/memory-toast-container";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,7 +33,9 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <I18nProvider>
-            <AppLayout>{children}</AppLayout>
+            <MemoryToastProvider>
+              <AppLayout>{children}</AppLayout>
+            </MemoryToastProvider>
           </I18nProvider>
         </ThemeProvider>
       </body>

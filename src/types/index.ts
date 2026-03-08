@@ -184,8 +184,6 @@ export interface SendMessageRequest {
   model?: string;
   mode?: string;
   provider_id?: string;
-  // Optional: when true, server should also send this reply to Feishu
-  send_to_feishu?: boolean;
 }
 
 export interface UpdateMCPConfigRequest {
@@ -331,6 +329,8 @@ export type SSEEventType =
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
   | 'mode_changed'       // SDK permission mode changed (e.g. plan → code)
+  | 'memory_captured'    // explicit memory captured from user input
+  | 'memory_conflict'    // memory conflict detected
   | 'done';              // stream complete
 
 export interface SSEEvent {
@@ -596,6 +596,8 @@ export interface MediaJobListResponse {
 
 export interface ClaudeStreamOptions {
   prompt: string;
+  /** Raw user prompt before any app-side context expansion (used by memory hooks). */
+  rawPrompt?: string;
   sessionId: string;
   sdkSessionId?: string; // SDK session ID for resuming conversations
   model?: string;

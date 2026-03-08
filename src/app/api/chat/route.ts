@@ -1,17 +1,492 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
+import { isImageFile } from '@/types';
+import { parseMessageContent } from '@/types';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { loadToken } from '@/lib/feishu-auth';
+import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
+import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
+import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
+import { linkMessageMemory } from '@/lib/db/message-memories';
 
-import { getClaudeConfigDir, getFeishuMcpPath } from '@/lib/platform';
-import { syncMessageToFeishu, feishuSend } from '@/lib/bridge/sync-helper';
+import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
+import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
+
+const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
+const CHROME_MCP_NAMES = new Set(['chrome-devtools', 'chrome_devtools']);
+const CHROME_BRIDGE_URL_HEADER = 'x-lumos-browser-bridge-url';
+const CHROME_BRIDGE_TOKEN_HEADER = 'x-lumos-browser-bridge-token';
+const FILE_DIRECTIVE_PREFIX = 'FEISHU_SEND_FILE::';
+const MAIL_DIRECTIVE_PREFIX = 'FEISHU_SEND_MAIL::';
+const MAX_FEISHU_CONTEXT_DOCS = 2;
+const FEISHU_CONTEXT_MAX_CHARS = 3500;
+const GEMINI_IMAGE_MCP_SYSTEM_HINT = `When the user asks to generate, draw, edit, restyle, or otherwise transform images, use the MCP tool \`generate_image\` from the \`gemini-image\` server.
+Do not output fenced planning blocks like \`image-gen-request\` or \`batch-plan\` when this tool is available.
+Tool argument guidance:
+- \`prompt\` (required): write a clear English prompt. For editing tasks, describe only the requested changes.
+- \`reference_images\` (optional): include local file paths of user-attached images or previously generated images when relevant.
+- \`output_dir\` (optional): prefer the current workspace root. Avoid temporary directories like /tmp.
+- \`aspect_ratio\` (optional): use values like 1:1, 16:9, 9:16, 3:2, 2:3, 4:3, 3:4 if requested.
+Rules:
+- For image requests, call \`generate_image\` before you claim success.
+- If no successful \`tool_result\` with image paths is available, do not claim the image is generated.
+- Do not claim anything was sent to Feishu unless the user explicitly asked to send to Feishu in this turn.
+- If user explicitly asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on a separate line for each file.
+- MCP config in Lumos is managed internally (database + built-in resources). Never ask users to edit \`.kiro/settings/mcp.json\`, \`.claude.json\`, or external client configs.
+- If tool result reports missing Gemini key, tell user to configure it in Lumos UI: Settings -> Providers -> \`gemini-image\` (API Key, optional Base URL/Model).
+After successful tool execution, briefly summarize what was generated and include returned image paths.`;
+const FEISHU_REPORT_MCP_SYSTEM_HINT = `When user asks for Feishu reports, weekly reports, daily reports, monthly summaries, or "汇报", prefer these MCP tools from server \`feishu\`:
+- \`feishu_report_list\`: find candidate report tasks first.
+- \`feishu_report_read\`: read the selected report task detail.
+Rules:
+- Do not claim report content before successful tool_result.
+- These tools target Feishu report app APIs (\`report/v1\`), not generic docs search.
+- If API reports missing scopes, tell user to enable app identity scopes: \`report:rule:readonly\` and \`report:task:readonly\`.
+- If auth/token is missing, ask user to login Feishu in Lumos first.`;
+
+function pickNonEmpty(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function parseExtraEnv(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string') env[key] = value;
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+function resolveGeminiMcpEnv(
+  existingEnv?: Record<string, string>,
+  sessionWorkingDirectory?: string,
+): Record<string, string> {
+  const env = { ...(existingEnv || {}) };
+  const geminiProvider = getAllProviders().find((p) => p.provider_type === 'gemini-image');
+  const providerEnv = parseExtraEnv(geminiProvider?.extra_env);
+
+  const providerApiKey = pickNonEmpty(geminiProvider?.api_key, providerEnv.GEMINI_API_KEY);
+  const providerBaseUrl = pickNonEmpty(geminiProvider?.base_url, providerEnv.GEMINI_BASE_URL);
+  const providerModel = pickNonEmpty(providerEnv.GEMINI_MODEL, providerEnv.GEMINI_IMAGE_MODEL);
+
+  // Provider settings in Lumos UI are canonical and should override stale MCP env values.
+  env.GEMINI_API_KEY = pickNonEmpty(
+    providerApiKey,
+    env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY,
+  );
+  env.GEMINI_BASE_URL = pickNonEmpty(
+    providerBaseUrl,
+    env.GEMINI_BASE_URL,
+    process.env.GEMINI_BASE_URL,
+    DEFAULT_GEMINI_BASE_URL,
+  );
+  env.GEMINI_MODEL = pickNonEmpty(
+    providerModel,
+    env.GEMINI_MODEL,
+    process.env.GEMINI_MODEL,
+    DEFAULT_GEMINI_MODEL,
+  );
+  env.GEMINI_OUTPUT_DIR = pickNonEmpty(
+    env.GEMINI_OUTPUT_DIR,
+    sessionWorkingDirectory,
+    process.env.GEMINI_OUTPUT_DIR,
+  );
+
+  return env;
+}
+
+function readChromeBridgeEnvFromRequest(request: NextRequest): { url?: string; token?: string } {
+  const url = pickNonEmpty(request.headers.get(CHROME_BRIDGE_URL_HEADER) || undefined);
+  const token = pickNonEmpty(request.headers.get(CHROME_BRIDGE_TOKEN_HEADER) || undefined);
+  return { url, token };
+}
+
+function readChromeBridgeEnvFromRuntimeFile(): { url?: string; token?: string } {
+  try {
+    const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+    const runtimePath = path.join(dataDir, 'runtime', 'browser-bridge.json');
+    if (!fs.existsSync(runtimePath)) return {};
+
+    const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as {
+      url?: unknown;
+      token?: unknown;
+    };
+
+    return {
+      url: typeof parsed.url === 'string' ? parsed.url : undefined,
+      token: typeof parsed.token === 'string' ? parsed.token : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function resolveChromeBridgeEnv(
+  existingEnv?: Record<string, string>,
+  bridgeFromRequest?: { url?: string; token?: string },
+  bridgeFromRuntime?: { url?: string; token?: string },
+): Record<string, string> {
+  const env = { ...(existingEnv || {}) };
+  env.LUMOS_BROWSER_BRIDGE_URL = pickNonEmpty(
+    bridgeFromRequest?.url,
+    process.env.LUMOS_BROWSER_BRIDGE_URL,
+    bridgeFromRuntime?.url,
+    env.LUMOS_BROWSER_BRIDGE_URL,
+  );
+  env.LUMOS_BROWSER_BRIDGE_TOKEN = pickNonEmpty(
+    bridgeFromRequest?.token,
+    process.env.LUMOS_BROWSER_BRIDGE_TOKEN,
+    bridgeFromRuntime?.token,
+    env.LUMOS_BROWSER_BRIDGE_TOKEN,
+  );
+  return env;
+}
+
+function hasGeminiImageMcp(
+  servers: Record<string, MCPServerConfig> | undefined,
+): boolean {
+  if (!servers) return false;
+  return Boolean(servers['gemini-image'] || servers['gemini_image']);
+}
+
+function hasFeishuMcp(
+  servers: Record<string, MCPServerConfig> | undefined,
+): boolean {
+  if (!servers) return false;
+  return Boolean(servers.feishu);
+}
+
+function isLegacyImageAgentPrompt(systemPromptAppend?: string): boolean {
+  if (!systemPromptAppend) return false;
+  const prompt = systemPromptAppend.toLowerCase();
+  return prompt.includes('image-gen-request') || prompt.includes('batch-plan');
+}
+
+function toFeishuDisplayText(rawContent: string): string {
+  const blocks = parseMessageContent(rawContent);
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text.trim()) {
+      parts.push(block.text.trim());
+    }
+  }
+  const text = parts.join('\n\n').trim();
+  return text || rawContent;
+}
+
+function extractFileDirectives(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const directives: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+    if (trimmed.startsWith(FILE_DIRECTIVE_PREFIX)) {
+      const filePath = trimmed.slice(FILE_DIRECTIVE_PREFIX.length).trim();
+      if (filePath) directives.push(filePath);
+    }
+  }
+  return directives;
+}
+
+function normalizeMailDraft(raw: unknown): FeishuMailDraft | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const draft = raw as FeishuMailDraft;
+  if (draft.attachments && !Array.isArray(draft.attachments)) {
+    draft.attachments = [draft.attachments as unknown as string];
+  }
+  return draft;
+}
+
+function extractMailDirectives(text: string): FeishuMailDraft[] {
+  const lines = text.split(/\r?\n/);
+  const directives: FeishuMailDraft[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+    if (trimmed.startsWith(MAIL_DIRECTIVE_PREFIX)) {
+      const raw = trimmed.slice(MAIL_DIRECTIVE_PREFIX.length).trim();
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        const draft = normalizeMailDraft(parsed);
+        if (draft) directives.push(draft);
+      } catch {
+        // ignore invalid directive
+      }
+    }
+  }
+  return directives;
+}
+
+function stripFileDirectives(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const output: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      output.push(line);
+      continue;
+    }
+    if (!inCodeBlock && trimmed.startsWith(FILE_DIRECTIVE_PREFIX)) {
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join('\n').trim();
+}
+
+function stripMailDirectives(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const output: string[] = [];
+  let inCodeBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      output.push(line);
+      continue;
+    }
+    if (!inCodeBlock && trimmed.startsWith(MAIL_DIRECTIVE_PREFIX)) {
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join('\n').trim();
+}
+
+function stripFeishuDirectives(text: string): string {
+  return stripMailDirectives(stripFileDirectives(text));
+}
+
+function prependMemoryEvent(
+  stream: ReadableStream<string>,
+  memory: import('@/lib/db/memories').MemoryRecord,
+  eventType: 'captured' | 'conflict',
+  newContent?: string,
+): ReadableStream<string> {
+  const encoder = new TextEncoder();
+  const eventData = eventType === 'captured'
+    ? {
+        id: memory.id,
+        scope: memory.scope,
+        category: memory.category,
+        content: memory.content,
+        action: memory.created_at === memory.updated_at ? 'created' : 'updated',
+      }
+    : {
+        conflictingMemory: {
+          id: memory.id,
+          scope: memory.scope,
+          category: memory.category,
+          content: memory.content,
+        },
+        newContent: newContent || '',
+      };
+
+  const memoryEvent = `data: ${JSON.stringify({
+    type: eventType === 'captured' ? 'memory_captured' : 'memory_conflict',
+    data: JSON.stringify(eventData),
+  })}\n\n`;
+
+  return new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode(memoryEvent));
+      const reader = stream.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(encoder.encode(value));
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+}
+
+function parseMessageSource(content: string): string | undefined {
+  let text = content;
+  while (true) {
+    const match = text.match(/^<!--(.*?)-->\s*/);
+    if (!match) break;
+    const payload = match[1] || '';
+    if (payload.startsWith('source:')) {
+      return payload.slice('source:'.length).trim();
+    }
+    text = text.slice(match[0].length);
+  }
+  return undefined;
+}
+
+function isLatestUserMessageFromFeishu(sessionId: string): boolean {
+  const { messages } = getMessages(sessionId);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== 'user') continue;
+    return parseMessageSource(message.content) === 'feishu';
+  }
+  return false;
+}
+
+function decodeBase64ToUtf8(base64: string): string {
+  try {
+    return Buffer.from(base64, 'base64').toString('utf-8');
+  } catch {
+    return '';
+  }
+}
+
+async function buildFeishuOnDemandContext(
+  userPrompt: string,
+  files?: FileAttachment[],
+): Promise<string> {
+  if (!files || files.length === 0) return '';
+
+  const references: Array<{ token: string; type: string; title: string; url: string }> = [];
+  const seen = new Set<string>();
+
+  for (const file of files) {
+    if (isImageFile(file.type)) continue;
+    if (!file.data) continue;
+    if (!file.type.startsWith('text/') && !file.type.includes('markdown') && file.type !== 'application/json') {
+      continue;
+    }
+
+    const content = decodeBase64ToUtf8(file.data);
+    if (!content) continue;
+
+    const ref = parseFeishuReferenceMarkdown(content);
+    if (!ref) continue;
+
+    const key = `${ref.type}:${ref.token}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    references.push(ref);
+  }
+
+  if (references.length === 0) return '';
+
+  const auth = loadToken();
+  if (!auth || Date.now() > auth.expiresAt) {
+    return '';
+  }
+
+  const sections: string[] = [];
+  for (const ref of references.slice(0, MAX_FEISHU_CONTEXT_DOCS)) {
+    try {
+      const context = await fetchFeishuDocumentContext({
+        userAccessToken: auth.userAccessToken,
+        token: ref.token,
+        type: ref.type,
+        query: userPrompt,
+        maxChars: FEISHU_CONTEXT_MAX_CHARS,
+      });
+      if (!context.excerpt.trim()) continue;
+      sections.push([
+        `Title: ${ref.title}`,
+        `Source: ${ref.url}`,
+        context.truncated ? '(excerpt, query-focused)' : '(full excerpt)',
+        '',
+        context.excerpt,
+      ].join('\n'));
+    } catch (error) {
+      console.warn('[chat API] Failed to resolve Feishu reference context:', ref.token, error);
+    }
+  }
+
+  if (sections.length === 0) return '';
+
+  return [
+    '<feishu_reference_context>',
+    'The following content was fetched on-demand from attached Feishu references for the current query.',
+    '',
+    sections.join('\n\n---\n\n'),
+    '',
+    '</feishu_reference_context>',
+  ].join('\n');
+}
+
+async function syncAssistantContentToFeishu(
+  sessionId: string,
+  rawContent: string,
+): Promise<void> {
+  const displayText = toFeishuDisplayText(rawContent);
+  const fileDirectives = extractFileDirectives(displayText);
+  const mailDirectives = extractMailDirectives(displayText);
+  const cleanText = stripFeishuDirectives(displayText);
+  const artifactPaths = extractAssistantArtifactPaths(rawContent);
+  const shouldAutoSendMedia = isLatestUserMessageFromFeishu(sessionId);
+  const autoMediaPaths = shouldAutoSendMedia ? artifactPaths.mediaPaths : [];
+  const mediaPathsToSend = Array.from(new Set([...fileDirectives, ...autoMediaPaths]));
+
+  if (cleanText) {
+    await syncMessageToFeishu(sessionId, 'assistant', cleanText);
+  }
+
+  if (mediaPathsToSend.length > 0) {
+    const sendResult = await feishuSendLocalFiles({
+      sessionId,
+      filePaths: mediaPathsToSend,
+    });
+    if (sendResult.failed.length > 0) {
+      console.error('[Sync] Assistant media auto-send failed:', sendResult.failed.join(', '));
+    }
+  }
+
+  if (mailDirectives.length > 0) {
+    for (const draft of mailDirectives) {
+      const result = await feishuSendMail({ sessionId, draft });
+      if (!result.ok) {
+        console.error('[Sync] Assistant mail directive send failed:', result.error);
+      }
+    }
+  }
+}
 
 /** Load MCP servers from database (builtin + user) */
-function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
+function loadMcpServers(
+  sessionWorkingDirectory?: string,
+  bridgeFromRequest?: { url?: string; token?: string },
+  bridgeFromRuntime?: { url?: string; token?: string },
+): Record<string, MCPServerConfig> | undefined {
   // Load enabled MCP servers from database
   const mcpServers = getEnabledMcpServersAsConfig();
 
@@ -26,16 +501,31 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
   }
 
   const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+  const workspacePath = sessionWorkingDirectory || process.cwd();
+  const legacyMcpPathPattern = /[/\\]feishu-mcp-server[/\\]mcp-servers[/\\]/g;
+  const normalizedMcpPathSegment = `${path.sep}mcp-servers${path.sep}`;
 
   for (const [name, config] of Object.entries(mcpServers)) {
     if (config.args) {
       config.args = config.args.map(arg => {
-        return arg
+        const normalizedArg = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
+        return normalizedArg
           .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', process.cwd())
+          .replace('[WORKSPACE_PATH]', workspacePath)
           .replace('[DATA_DIR]', dataDir)
           .replace(/^~\//, os.homedir() + '/');
       });
+    }
+    if (config.env) {
+      const resolvedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(config.env)) {
+        resolvedEnv[key] = value
+          .replace('[RUNTIME_PATH]', runtimePath)
+          .replace('[WORKSPACE_PATH]', workspacePath)
+          .replace('[DATA_DIR]', dataDir)
+          .replace(/^~\//, os.homedir() + '/');
+      }
+      config.env = resolvedEnv;
     }
 
     // Special handling for feishu MCP: inject environment variables
@@ -55,6 +545,33 @@ function loadMcpServers(): Record<string, MCPServerConfig> | undefined {
         BILIBILI_SESSDATA: process.env.BILIBILI_SESSDATA || '',
       };
     }
+
+    // Special handling for gemini-image MCP: allow provider-managed URL/KEY/model
+    if (name === 'gemini-image' || name === 'gemini_image') {
+      config.env = resolveGeminiMcpEnv(config.env, sessionWorkingDirectory);
+      console.log('[chat API] gemini-image MCP resolved:', {
+        command: config.command,
+        args: config.args,
+        hasApiKey: Boolean(config.env?.GEMINI_API_KEY),
+        baseUrl: config.env?.GEMINI_BASE_URL || '',
+        model: config.env?.GEMINI_MODEL || '',
+        outputDir: config.env?.GEMINI_OUTPUT_DIR || '',
+      });
+    }
+
+    if (CHROME_MCP_NAMES.has(name)) {
+      config.env = resolveChromeBridgeEnv(config.env, bridgeFromRequest, bridgeFromRuntime);
+      console.log('[chat API] chrome-devtools MCP bridge resolved:', {
+        name,
+        command: config.command,
+        args: config.args,
+        hasUrl: Boolean(config.env?.LUMOS_BROWSER_BRIDGE_URL),
+        hasToken: Boolean(config.env?.LUMOS_BROWSER_BRIDGE_TOKEN),
+        fromRequest: Boolean(bridgeFromRequest?.url && bridgeFromRequest?.token),
+        fromRuntimeFile: Boolean(bridgeFromRuntime?.url && bridgeFromRuntime?.token),
+        fromProcessEnv: Boolean(process.env.LUMOS_BROWSER_BRIDGE_URL && process.env.LUMOS_BROWSER_BRIDGE_TOKEN),
+      });
+    }
   }
 
   return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
@@ -69,7 +586,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; provider_id?: string; systemPromptAppend?: string } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout, provider_id, systemPromptAppend, send_to_feishu } = body;
+    const { session_id, content, model, mode, files, toolTimeout, provider_id, systemPromptAppend } = body;
 
     console.log('[chat API] content length:', content.length, 'first 200 chars:', content.slice(0, 200));
     console.log('[chat API] systemPromptAppend:', systemPromptAppend ? `${systemPromptAppend.length} chars` : 'none');
@@ -102,6 +619,43 @@ export async function POST(request: NextRequest) {
     activeLockId = lockId;
     setSessionRuntimeStatus(session_id, 'running');
 
+    // Capture explicit user memory instructions with conflict detection
+    let capturedMemory: import('@/lib/db/memories').MemoryRecord | null = null;
+    let memoryConflict: import('@/lib/db/memories').MemoryRecord | null = null;
+    try {
+      const result = captureExplicitMemoryWithConflictCheck({
+        sessionId: session_id,
+        projectPath: session.sdk_cwd || session.working_directory || undefined,
+        userInput: content,
+      });
+      capturedMemory = result.memory;
+      memoryConflict = result.conflict;
+      if (capturedMemory) {
+        console.log('[memory] captured explicit memory:', {
+          id: capturedMemory.id,
+          scope: capturedMemory.scope,
+          category: capturedMemory.category,
+        });
+      }
+      if (memoryConflict) {
+        console.log('[memory] conflict detected:', {
+          id: memoryConflict.id,
+          content: memoryConflict.content,
+        });
+      }
+    } catch (error) {
+      console.warn('[memory] Failed to capture memory from user input:', error);
+    }
+
+    const weakSignal = detectWeakMemorySignal(content);
+    if (weakSignal.matched) {
+      console.log('[memory] weak signal detected:', {
+        sessionId: session_id,
+        score: weakSignal.score,
+        labels: weakSignal.labels,
+      });
+    }
+
     // Save user message — persist file metadata so attachments survive page reload
     let savedContent = content;
     let fileMeta: Array<{ id: string; name: string; type: string; size: number; filePath: string }> | undefined;
@@ -112,9 +666,9 @@ export async function POST(request: NextRequest) {
           // File from file tree - use original path directly
           return { id: f.id, name: f.name, type: f.type, size: f.size, filePath: f.filePath };
         } else {
-          // File uploaded by user - save to .codepilot-uploads
+          // File uploaded by user - save to .lumos-uploads
           const workDir = session.working_directory;
-          const uploadDir = path.join(workDir, '.codepilot-uploads');
+          const uploadDir = path.join(workDir, '.lumos-uploads');
           if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
           }
@@ -127,7 +681,17 @@ export async function POST(request: NextRequest) {
       });
       savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
     }
-    addMessage(session_id, 'user', savedContent);
+    const userMessageId = addMessage(session_id, 'user', savedContent).id;
+
+    // Link captured memory to user message
+    if (capturedMemory) {
+      try {
+        linkMessageMemory(userMessageId, capturedMemory.id, 'created');
+      } catch (error) {
+        console.warn('[memory] Failed to link memory to message:', error);
+      }
+    }
+
     syncMessageToFeishu(session_id, 'user', content).catch(err =>
       console.error('[Sync] User message sync failed:', err)
     );
@@ -136,6 +700,10 @@ export async function POST(request: NextRequest) {
     if (session.title === 'New Chat') {
       const title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
       updateSessionTitle(session_id, title);
+      // Best-effort: sync auto-title to Feishu group name
+      syncSessionTitleToFeishu(session_id, title).catch(err =>
+        console.error('[Sync] Failed to update Feishu chat title:', err),
+      );
     }
 
     // Determine model: request override > session model > default setting
@@ -219,10 +787,33 @@ export async function POST(request: NextRequest) {
         })
       : undefined;
 
+    const feishuContext = await buildFeishuOnDemandContext(content, fileAttachments);
+    const promptForModel = feishuContext ? `${content}\n\n${feishuContext}` : content;
+
+    console.time('[perf] MCP servers loading');
+    const bridgeFromRequest = readChromeBridgeEnvFromRequest(request);
+    const bridgeFromRuntime = readChromeBridgeEnvFromRuntimeFile();
+    const loadedMcpServers = loadMcpServers(
+      session.sdk_cwd || session.working_directory || undefined,
+      bridgeFromRequest,
+      bridgeFromRuntime,
+    );
+    console.timeEnd('[perf] MCP servers loading');
+
     // Append per-request system prompt (e.g. skill injection for image generation)
     let finalSystemPrompt = systemPromptOverride || session.system_prompt || undefined;
     if (systemPromptAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + systemPromptAppend;
+    }
+    if (
+      permissionMode !== 'default'
+      && hasGeminiImageMcp(loadedMcpServers)
+      && !isLegacyImageAgentPrompt(systemPromptAppend)
+    ) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + GEMINI_IMAGE_MCP_SYSTEM_HINT;
+    }
+    if (permissionMode !== 'default' && hasFeishuMcp(loadedMcpServers)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + FEISHU_REPORT_MCP_SYSTEM_HINT;
     }
 
     // Load recent conversation history from DB as fallback context.
@@ -232,23 +823,22 @@ export async function POST(request: NextRequest) {
     // Exclude the user message we just saved (last in the list) — it's already the prompt
     const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
       role: m.role as 'user' | 'assistant',
-      content: m.content,
+      content: stripFeishuDirectives(m.content),
     }));
 
     // Stream Claude response, using SDK session ID for resume if available
-    console.time('[perf] MCP servers loading');
-    const loadedMcpServers = loadMcpServers();
-    console.timeEnd('[perf] MCP servers loading');
     console.log('[chat API] streamClaude params:', {
-      promptLength: content.length,
-      promptFirst200: content.slice(0, 200),
+      promptLength: promptForModel.length,
+      promptFirst200: promptForModel.slice(0, 200),
       sdkSessionId: session.sdk_session_id || 'none',
       systemPromptLength: finalSystemPrompt?.length || 0,
       systemPromptFirst200: finalSystemPrompt?.slice(0, 200) || 'none',
       mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
-    const stream = streamClaude({
-      prompt: content,
+
+    const claudeStream = streamClaude({
+      prompt: promptForModel,
+      rawPrompt: content,
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
@@ -266,14 +856,25 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Prepend memory event if captured or conflict detected
+    const stream = capturedMemory
+      ? prependMemoryEvent(claudeStream, capturedMemory, 'captured')
+      : memoryConflict
+      ? prependMemoryEvent(claudeStream, memoryConflict, 'conflict', content)
+      : claudeStream;
+
     // Tee the stream: one for client, one for collecting the response
     const [streamForClient, streamForCollect] = stream.tee();
 
     // Save assistant message in background, with cleanup callback to release lock
-    collectStreamResponse(streamForCollect, session_id, () => {
-      releaseSessionLock(session_id, lockId);
-      setSessionRuntimeStatus(session_id, 'idle');
-    }, !!send_to_feishu);
+    collectStreamResponse(streamForCollect, {
+      sessionId: session_id,
+      weakSignalDetected: weakSignal.matched,
+      onComplete: () => {
+        releaseSessionLock(session_id, lockId);
+        setSessionRuntimeStatus(session_id, 'idle');
+      },
+    });
 
     return new Response(streamForClient, {
       headers: {
@@ -301,14 +902,35 @@ export async function POST(request: NextRequest) {
 
 async function collectStreamResponse(
   stream: ReadableStream<string>,
-  sessionId: string,
-  onComplete?: () => void,
-  sendToFeishu?: boolean,
+  options: {
+    sessionId: string;
+    weakSignalDetected?: boolean;
+    onComplete?: () => void;
+  },
 ) {
+  const sessionId = options.sessionId;
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
   let tokenUsage: TokenUsage | null = null;
+
+  const triggerWeakSignalMemory = async () => {
+    if (!options.weakSignalDetected) return;
+    try {
+      const result = await runMemoryIntelligenceForSession({
+        sessionId,
+        trigger: 'weak_signal',
+      });
+      console.log('[memory] weak-signal trigger result:', {
+        sessionId,
+        outcome: result.outcome,
+        savedCount: result.savedCount,
+        reason: result.reason,
+      });
+    } catch (error) {
+      console.warn('[memory] weak-signal trigger failed:', error);
+    }
+  };
 
   try {
     while (true) {
@@ -409,23 +1031,20 @@ async function collectStreamResponse(
             .trim();
 
       if (content) {
-        addMessage(
-          sessionId,
-          'assistant',
-          content,
-          tokenUsage ? JSON.stringify(tokenUsage) : null,
-        );
-        syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
-          console.error('[Sync] Assistant message sync failed:', err)
-        );
-
-        // Phase 2: 用户显式请求时再额外调用一次统一的 feishuSend，
-        // 用于“只发摘要到飞书”场景。这里先简单用 content 作为摘要。
-        if (sendToFeishu) {
-          feishuSend({ sessionId, mode: 'text', content }).catch(err =>
-            console.error('[Sync] feishuSend failed:', err),
+        const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
+        if (storedContent) {
+          addMessage(
+            sessionId,
+            'assistant',
+            storedContent,
+            tokenUsage ? JSON.stringify(tokenUsage) : null,
           );
         }
+        syncAssistantContentToFeishu(sessionId, content).catch(err =>
+          console.error('[Sync] Assistant message sync failed:', err),
+        );
+        void triggerWeakSignalMemory();
+
       }
     }
   } catch {
@@ -445,19 +1064,18 @@ async function collectStreamResponse(
             .join('')
             .trim();
       if (content) {
-        addMessage(sessionId, 'assistant', content);
-        syncMessageToFeishu(sessionId, 'assistant', content).catch(err =>
-          console.error('[Sync] Assistant message sync failed:', err)
-        );
-
-        if (sendToFeishu) {
-          feishuSend({ sessionId, mode: 'text', content }).catch(err =>
-            console.error('[Sync] feishuSend failed:', err),
-          );
+        const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
+        if (storedContent) {
+          addMessage(sessionId, 'assistant', storedContent);
         }
+        syncAssistantContentToFeishu(sessionId, content).catch(err =>
+          console.error('[Sync] Assistant message sync failed:', err),
+        );
+        void triggerWeakSignalMemory();
+
       }
     }
   } finally {
-    onComplete?.();
+    options.onComplete?.();
   }
 }

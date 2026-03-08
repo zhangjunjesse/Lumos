@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type {
-  MCPServerConfig,
   MCPConfigResponse,
   ErrorResponse,
   SuccessResponse,
@@ -20,9 +19,29 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
     const servers = getAllMcpServers();
 
     // Convert to the format expected by the UI
-    const mcpServers: Record<string, any> = {};
+    const mcpServers: Record<string, {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      scope: 'builtin' | 'user';
+      description: string;
+      is_enabled: boolean;
+      type?: 'sse' | 'http';
+      url?: string;
+      headers?: Record<string, string>;
+    }> = {};
     for (const server of servers) {
-      const entry: Record<string, any> = {
+      const entry: {
+        command: string;
+        args: string[];
+        env: Record<string, string>;
+        scope: 'builtin' | 'user';
+        description: string;
+        is_enabled: boolean;
+        type?: 'sse' | 'http';
+        url?: string;
+        headers?: Record<string, string>;
+      } = {
         command: server.command,
         args: JSON.parse(server.args || '[]'),
         env: JSON.parse(server.env || '{}'),
@@ -31,7 +50,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         is_enabled: server.is_enabled === 1,
       };
       const type = server.type || 'stdio';
-      if (type !== 'stdio') entry.type = type;
+      if (type === 'sse' || type === 'http') entry.type = type;
       if (server.url) entry.url = server.url;
       const headers = JSON.parse(server.headers || '{}');
       if (Object.keys(headers).length > 0) entry.headers = headers;
@@ -141,26 +160,45 @@ export async function PUT(
       );
     }
 
-    // Allow updating both user and builtin servers
-    const existing = getMcpServerByNameAndScope(name, 'user') ||
-      getMcpServerByNameAndScope(name, 'builtin');
-    if (!existing) {
+    // Prefer user-scope override; fallback to builtin.
+    // IMPORTANT: When editing builtin servers, we write to a user-scope
+    // override instead of mutating builtin rows. This prevents builtin
+    // resource refresh from resetting user custom env/args.
+    const existingUser = getMcpServerByNameAndScope(name, 'user');
+    const existingBuiltin = getMcpServerByNameAndScope(name, 'builtin');
+    if (!existingUser && !existingBuiltin) {
       return NextResponse.json(
         { error: `MCP server "${name}" not found` },
         { status: 404 }
       );
     }
 
-    // Update server
-    updateMcpServer(existing.id, {
-      description: server.description,
-      command: server.command,
-      args: server.args,
-      env: server.env,
-      type: server.type,
-      url: server.url,
-      headers: server.headers,
-    });
+    if (existingUser) {
+      updateMcpServer(existingUser.id, {
+        description: server.description,
+        command: server.command,
+        args: server.args,
+        env: server.env,
+        type: server.type,
+        url: server.url,
+        headers: server.headers,
+      });
+    } else {
+      // Create user override for builtin server
+      createMcpServer({
+        name,
+        scope: 'user',
+        description: server.description || existingBuiltin?.description || `MCP server: ${name}`,
+        command: server.command || existingBuiltin?.command || '',
+        args: server.args || (existingBuiltin ? JSON.parse(existingBuiltin.args || '[]') as string[] : []),
+        env: server.env || (existingBuiltin ? JSON.parse(existingBuiltin.env || '{}') as Record<string, string> : {}),
+        type: server.type || existingBuiltin?.type || 'stdio',
+        url: server.url || existingBuiltin?.url || '',
+        headers: server.headers || (existingBuiltin ? JSON.parse(existingBuiltin.headers || '{}') as Record<string, string> : {}),
+        is_enabled: existingBuiltin ? existingBuiltin.is_enabled === 1 : true,
+        source: 'manual',
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

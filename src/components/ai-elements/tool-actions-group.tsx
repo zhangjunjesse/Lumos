@@ -10,12 +10,14 @@ import {
   CommandIcon,
   Search,
   Wrench,
+  Globe,
   Loading,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
   ArrowRight,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
+import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,6 +151,7 @@ function ToolActionRow({ tool }: { tool: ToolAction }) {
   const summary = getToolSummary(tool.name, tool.input, category);
   const filePath = getFilePath(tool.input);
   const status = getStatus(tool);
+  const chromeUrl = extractChromeMcpUrl(tool.name, tool.input);
 
   const label = category === 'bash' ? '' : tool.name;
 
@@ -168,6 +171,21 @@ function ToolActionRow({ tool }: { tool: ToolAction }) {
         <span className="text-muted-foreground/40 text-[11px] font-mono truncate max-w-[200px] hidden sm:inline">
           {truncatePath(filePath)}
         </span>
+      )}
+
+      {chromeUrl && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+          onClick={(event) => {
+            event.stopPropagation();
+            openBrowserUrlInPanel(chromeUrl);
+          }}
+          title={chromeUrl}
+        >
+          <HugeiconsIcon icon={Globe} className="h-3 w-3" />
+          Open
+        </button>
       )}
 
       <StatusDot status={status} />

@@ -15,10 +15,12 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ImageGenConfirmation } from './ImageGenConfirmation';
 import { ImageGenCard } from './ImageGenCard';
+import { ArtifactReferencePreview } from './ArtifactReferencePreview';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
 import { buildReferenceImages } from '@/lib/image-ref-store';
 import { parseDBDate } from '@/lib/utils';
 import type { PlannerOutput } from '@/types';
+import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -119,6 +121,42 @@ function parseBatchPlan(text: string): { beforeText: string; plan: PlannerOutput
           sourceRefs: Array.isArray(item.sourceRefs) ? item.sourceRefs : [],
         })) : [],
       },
+      afterText,
+    };
+  } catch {
+    return null;
+  }
+}
+
+type ExtensionPlan = {
+  type?: string;
+  summary?: string;
+  skills?: Array<{ name?: string; description?: string; content?: string }>;
+  mcpServers?: Array<{
+    name?: string;
+    description?: string;
+    config?: {
+      type?: 'stdio' | 'sse' | 'http';
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      url?: string;
+      headers?: Record<string, string>;
+    };
+  }>;
+};
+
+function parseExtensionPlan(text: string): { beforeText: string; plan: ExtensionPlan; afterText: string } | null {
+  const regex = /```lumos-extension-plan\s*\n?([\s\S]*?)\n?\s*```/;
+  const match = text.match(regex);
+  if (!match) return null;
+  try {
+    const json = JSON.parse(match[1]);
+    const beforeText = text.slice(0, match.index).trim();
+    const afterText = text.slice((match.index || 0) + match[0].length).trim();
+    return {
+      beforeText,
+      plan: json,
       afterText,
     };
   } catch {
@@ -257,16 +295,28 @@ function pairTools(tools: ToolBlock[]): Array<{
   return paired;
 }
 
-function parseMessageFiles(content: string): { files: FileAttachment[]; text: string } {
-  const match = content.match(/^<!--files:(.*?)-->\n?/);
-  if (!match) return { files: [], text: content };
-  try {
-    const files = JSON.parse(match[1]);
-    const text = content.slice(match[0].length);
-    return { files, text };
-  } catch {
-    return { files: [], text: content };
+function parseMessageMeta(content: string): { files: FileAttachment[]; source?: string; text: string } {
+  let text = content;
+  let files: FileAttachment[] = [];
+  let source: string | undefined;
+
+  while (true) {
+    const match = text.match(/^<!--(.*?)-->\s*/);
+    if (!match) break;
+    const payload = match[1] || '';
+    if (payload.startsWith('files:')) {
+      try {
+        files = JSON.parse(payload.slice('files:'.length));
+      } catch {
+        // ignore parse errors
+      }
+    } else if (payload.startsWith('source:')) {
+      source = payload.slice('source:'.length).trim();
+    }
+    text = text.slice(match[0].length);
   }
+
+  return { files, source, text };
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -326,32 +376,33 @@ const COLLAPSE_HEIGHT = 300;
 export function MessageItem({ message }: MessageItemProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
+  const shouldHideImageNotice = isUser && message.content.startsWith('[__IMAGE_GEN_NOTICE__');
 
   // Collapse/expand state for long user messages (hooks must be called unconditionally)
   const [isExpanded, setIsExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Hide image-gen system notices — they exist in DB for Claude's context but shouldn't render
-  if (isUser && message.content.startsWith('[__IMAGE_GEN_NOTICE__')) {
-    return null;
-  }
-
   const { text, tools } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
 
   // Parse file attachments from user messages
-  const { files, text: textWithoutFiles } = isUser
-    ? parseMessageFiles(text)
-    : { files: [], text };
+  const { files, source, text: textWithoutMeta } = isUser
+    ? parseMessageMeta(text)
+    : { files: [], source: undefined, text };
 
-  const displayText = isUser ? textWithoutFiles : text;
+  const displayText = isUser ? textWithoutMeta : text;
 
   useEffect(() => {
     if (isUser && contentRef.current) {
       setIsOverflowing(contentRef.current.scrollHeight > COLLAPSE_HEIGHT);
     }
   }, [isUser, displayText]);
+
+  // Hide image-gen system notices — they exist in DB for Claude's context but shouldn't render
+  if (shouldHideImageNotice) {
+    return null;
+  }
 
   let tokenUsage: TokenUsage | null = null;
   if (message.token_usage) {
@@ -370,6 +421,15 @@ export function MessageItem({ message }: MessageItemProps) {
   return (
     <AIMessage from={isUser ? 'user' : 'assistant'}>
       <MessageContent>
+        {/* Source badge for user messages */}
+        {isUser && source === 'feishu' && (
+          <div className="mb-1">
+            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-200">
+              Feishu
+            </span>
+          </div>
+        )}
+
         {/* File attachments for user messages */}
         {isUser && files.length > 0 && (
           <FileAttachmentDisplay files={files} />
@@ -382,6 +442,17 @@ export function MessageItem({ message }: MessageItemProps) {
               id: `hist-${i}`,
               name: tool.name,
               input: tool.input,
+              result: tool.result,
+              isError: tool.isError,
+            }))}
+          />
+        )}
+
+        {!isUser && (
+          <ArtifactReferencePreview
+            text={displayText}
+            tools={pairedTools.map((tool) => ({
+              name: tool.name,
               result: tool.result,
               isError: tool.isError,
             }))}
@@ -440,6 +511,17 @@ export function MessageItem({ message }: MessageItemProps) {
                   {batchPlanResult.beforeText && <MessageResponse>{batchPlanResult.beforeText}</MessageResponse>}
                   <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId={message.id} />
                   {batchPlanResult.afterText && <MessageResponse>{batchPlanResult.afterText}</MessageResponse>}
+                </>
+              );
+            }
+
+            const extensionPlanResult = parseExtensionPlan(displayText);
+            if (extensionPlanResult) {
+              return (
+                <>
+                  {extensionPlanResult.beforeText && <MessageResponse>{extensionPlanResult.beforeText}</MessageResponse>}
+                  <ExtensionPlanCard plan={extensionPlanResult.plan} />
+                  {extensionPlanResult.afterText && <MessageResponse>{extensionPlanResult.afterText}</MessageResponse>}
                 </>
               );
             }
@@ -518,6 +600,7 @@ export function MessageItem({ message }: MessageItemProps) {
               .replace(/```image-gen-request[\s\S]*?```/g, '')
               .replace(/```image-gen-result[\s\S]*?```/g, '')
               .replace(/```batch-plan[\s\S]*?```/g, '')
+              .replace(/```lumos-extension-plan[\s\S]*?```/g, '')
               .trim();
             return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;
           })()

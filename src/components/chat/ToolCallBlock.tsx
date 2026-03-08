@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
@@ -143,6 +144,57 @@ function renderDiff(input: unknown): React.ReactNode | null {
   );
 }
 
+interface ParsedImageResult {
+  images: Array<{ path: string; previewUrl: string }>;
+  text?: string;
+}
+
+function parseImageToolResult(toolName: string, result?: string): ParsedImageResult | null {
+  if (!result) return null;
+  const lower = toolName.toLowerCase();
+  if (!lower.includes('image')) return null;
+
+  try {
+    const parsed = JSON.parse(result) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    const rawImages = Array.isArray(parsed.images) ? parsed.images : [];
+    const images = rawImages
+      .map((item) => {
+        if (typeof item === 'string' && item.trim()) {
+          const p = item.trim();
+          return { path: p, previewUrl: `/api/files/raw?path=${encodeURIComponent(p)}` };
+        }
+        if (item && typeof item === 'object') {
+          const obj = item as Record<string, unknown>;
+          const p = typeof obj.path === 'string'
+            ? obj.path
+            : typeof obj.localPath === 'string'
+              ? obj.localPath
+              : '';
+          if (p.trim()) {
+            const pathValue = p.trim();
+            return {
+              path: pathValue,
+              previewUrl: typeof obj.preview_url === 'string' && obj.preview_url.trim()
+                ? obj.preview_url
+                : `/api/files/raw?path=${encodeURIComponent(pathValue)}`,
+            };
+          }
+        }
+        return null;
+      })
+      .filter((item): item is { path: string; previewUrl: string } => item !== null);
+
+    if (images.length === 0) return null;
+
+    const text = typeof parsed.text === 'string' ? parsed.text : undefined;
+    return { images, ...(text ? { text } : {}) };
+  } catch {
+    return null;
+  }
+}
+
 export function ToolCallBlock({
   name,
   input,
@@ -261,6 +313,7 @@ export function ToolCallBlock({
       }
 
       default: {
+        const imageResult = parseImageToolResult(name, result);
         return (
           <div className="space-y-2">
             <div>
@@ -269,7 +322,40 @@ export function ToolCallBlock({
                 {JSON.stringify(input, null, 2)}
               </pre>
             </div>
-            {result && (
+            {imageResult && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">Generated images</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {imageResult.images.map((img, idx) => (
+                    <div key={`${img.path}-${idx}`} className="space-y-1">
+                      <Image
+                        src={img.previewUrl}
+                        alt={`generated-${idx + 1}`}
+                        width={640}
+                        height={640}
+                        unoptimized
+                        className="h-auto w-full rounded-md border border-border/50 object-cover"
+                      />
+                      <a
+                        href={img.previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block truncate text-[11px] font-mono text-muted-foreground hover:text-foreground"
+                        title={img.path}
+                      >
+                        {img.path}
+                      </a>
+                    </div>
+                  ))}
+                </div>
+                {imageResult.text && (
+                  <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 max-h-60 overflow-auto">
+                    {imageResult.text}
+                  </pre>
+                )}
+              </div>
+            )}
+            {result && !imageResult && (
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-1">{t('tool.output')}</div>
                 <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 max-h-60 overflow-auto">

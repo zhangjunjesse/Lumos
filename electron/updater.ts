@@ -139,3 +139,29 @@ export function initAutoUpdater(win: BrowserWindow) {
 export function setUpdaterWindow(win: BrowserWindow) {
   mainWindow = win;
 }
+
+/**
+ * Register no-op updater handlers for dev mode to avoid IPC errors.
+ */
+export function registerUpdaterHandlers(win?: BrowserWindow) {
+  if (win) mainWindow = win;
+
+  // Ensure handlers are not duplicated
+  ipcMain.removeHandler('updater:check');
+  ipcMain.removeHandler('updater:download');
+  ipcMain.removeHandler('updater:quit-and-install');
+
+  ipcMain.handle('updater:check', async () => {
+    sendStatus({ status: 'not-available', reason: 'dev' });
+    return { status: 'not-available' };
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    sendStatus({ status: 'not-available', reason: 'dev' });
+    return { status: 'not-available' };
+  });
+
+  ipcMain.handle('updater:quit-and-install', () => {
+    sendStatus({ status: 'not-available', reason: 'dev' });
+  });
+}

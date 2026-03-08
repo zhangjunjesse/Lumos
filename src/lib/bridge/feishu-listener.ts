@@ -17,17 +17,16 @@ export class FeishuListener {
   }
 
   async start(): Promise<void> {
-    const dispatcher = new lark.EventDispatcher().register({
+    const dispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': this.handleMessage.bind(this)
     });
 
     this.client = new lark.WSClient({
       appId: this.config.appId,
       appSecret: this.config.appSecret,
-      eventDispatcher: dispatcher
     });
 
-    await this.client.start();
+    await this.client.start({ eventDispatcher: dispatcher });
     console.log('[FeishuListener] Started');
   }
 
@@ -53,7 +52,7 @@ export class FeishuListener {
 
   async stop(): Promise<void> {
     if (this.client) {
-      await this.client.stop();
+      this.client.close({ force: true });
       this.client = null;
     }
   }

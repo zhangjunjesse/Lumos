@@ -60,13 +60,19 @@ interface ElectronBrowserAPI {
   switchTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
   getTabs: () => Promise<{ success: boolean; tabs?: BrowserTab[]; activeTabId?: string; error?: string }>;
   navigate: (tabId: string, url: string, timeout?: number) => Promise<{ success: boolean; error?: string }>;
-  getCookies: (filter?: any) => Promise<{ success: boolean; cookies?: any[]; error?: string }>;
-  setCookie: (cookie: any) => Promise<{ success: boolean; error?: string }>;
+  getCookies: (filter?: Electron.CookiesGetFilter) => Promise<{ success: boolean; cookies?: Electron.Cookie[]; error?: string }>;
+  setCookie: (cookie: Electron.CookiesSetDetails) => Promise<{ success: boolean; error?: string }>;
   connectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
   disconnectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  sendCDPCommand: (tabId: string, method: string, params?: any) => Promise<{ success: boolean; result?: any; error?: string }>;
+  sendCDPCommand: (tabId: string, method: string, params?: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
   isCDPConnected: (tabId: string) => Promise<{ success: boolean; connected?: boolean; error?: string }>;
-  onEvent: (callback: (event: string, data: any) => void) => () => void;
+  getBridgeConfig: () => Promise<{ success: boolean; url?: string; token?: string }>;
+  setDisplayTarget: (
+    target: 'default' | 'panel' | 'hidden',
+    bounds?: { x: number; y: number; width: number; height: number },
+  ) => Promise<{ success: boolean; error?: string }>;
+  onEvent: (callback: (event: string, data: unknown) => void) => () => void;
+  onOpenInContentTab: (callback: (payload: { url: string; pageId?: string }) => void) => () => void;
 }
 
 interface ElectronAPI {
@@ -80,11 +86,21 @@ interface ElectronAPI {
   };
   shell: {
     openPath: (path: string) => Promise<string>;
+    openExternal: (url: string) => Promise<void>;
+  };
+  auth: {
+    open: (url: string) => Promise<void>;
   };
   dialog: {
     openFolder: (options?: {
       defaultPath?: string;
       title?: string;
+    }) => Promise<{ canceled: boolean; filePaths: string[] }>;
+    openFile: (options?: {
+      defaultPath?: string;
+      title?: string;
+      filters?: Electron.FileFilter[];
+      multi?: boolean;
     }) => Promise<{ canceled: boolean; filePaths: string[] }>;
   };
   install: ElectronInstallAPI;

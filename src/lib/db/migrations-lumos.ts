@@ -18,8 +18,24 @@ export function migrateLumosTables(db: Database.Database): void {
       title TEXT NOT NULL,
       source_type TEXT NOT NULL,
       source_path TEXT NOT NULL DEFAULT '',
+      source_key TEXT NOT NULL DEFAULT '',
       content TEXT NOT NULL DEFAULT '',
       tags TEXT NOT NULL DEFAULT '[]',
+      summary TEXT NOT NULL DEFAULT '',
+      key_points TEXT NOT NULL DEFAULT '[]',
+      doc_date TEXT DEFAULT NULL,
+      content_hash TEXT NOT NULL DEFAULT '',
+      reference_count INTEGER NOT NULL DEFAULT 0,
+      last_referenced_at TEXT DEFAULT NULL,
+      health_status TEXT NOT NULL DEFAULT 'healthy',
+      health_reason TEXT NOT NULL DEFAULT '',
+      health_checked_at TEXT DEFAULT NULL,
+      summary_embedding BLOB DEFAULT NULL,
+      chunk_count INTEGER NOT NULL DEFAULT 0,
+      processing_status TEXT NOT NULL DEFAULT 'pending',
+      processing_detail TEXT NOT NULL DEFAULT '{"parse":"pending","chunk":"pending","bm25":"pending","embedding":"pending","summary":"pending","mode":"full"}',
+      processing_error TEXT NOT NULL DEFAULT '',
+      processing_updated_at TEXT DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -41,6 +57,68 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_kb_chunks_item ON kb_chunks(item_id);
     CREATE INDEX IF NOT EXISTS idx_kb_bm25_term ON kb_bm25_index(term);
   `);
+
+  // Add source_key to kb_items if missing
+  const kbItemColsExt = db.prepare("PRAGMA table_info(kb_items)").all() as { name: string }[];
+  const kbItemColNamesExt = kbItemColsExt.map(c => c.name);
+  if (!kbItemColNamesExt.includes('source_key')) {
+    db.exec("ALTER TABLE kb_items ADD COLUMN source_key TEXT NOT NULL DEFAULT ''");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_kb_items_source_key ON kb_items(collection_id, source_key)");
+
+  // Knowledge ingest queue tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kb_ingest_jobs (
+      id TEXT PRIMARY KEY,
+      collection_id TEXT NOT NULL REFERENCES kb_collections(id),
+      source_dir TEXT NOT NULL,
+      recursive INTEGER NOT NULL DEFAULT 1,
+      max_files INTEGER NOT NULL DEFAULT 200,
+      max_file_size INTEGER NOT NULL DEFAULT 20971520,
+      force_reprocess INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','completed','failed','cancelled')),
+      total_files INTEGER NOT NULL DEFAULT 0,
+      processed_files INTEGER NOT NULL DEFAULT 0,
+      success_files INTEGER NOT NULL DEFAULT 0,
+      failed_files INTEGER NOT NULL DEFAULT 0,
+      skipped_files INTEGER NOT NULL DEFAULT 0,
+      duplicate_files INTEGER NOT NULL DEFAULT 0,
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT DEFAULT NULL,
+      completed_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS kb_ingest_job_items (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES kb_ingest_jobs(id) ON DELETE CASCADE,
+      idx INTEGER NOT NULL DEFAULT 0,
+      file_path TEXT NOT NULL,
+      source_key TEXT NOT NULL DEFAULT '',
+      file_size INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','completed','failed','skipped','duplicate')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      item_id TEXT DEFAULT NULL REFERENCES kb_items(id) ON DELETE SET NULL,
+      mode TEXT NOT NULL DEFAULT 'full'
+        CHECK(mode IN ('full','reference')),
+      parse_error TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_kb_ingest_jobs_status ON kb_ingest_jobs(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_kb_ingest_jobs_collection ON kb_ingest_jobs(collection_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_kb_ingest_job_items_job ON kb_ingest_job_items(job_id, idx);
+    CREATE INDEX IF NOT EXISTS idx_kb_ingest_job_items_status ON kb_ingest_job_items(status, updated_at);
+  `);
+  const ingestJobCols = db.prepare("PRAGMA table_info(kb_ingest_jobs)").all() as { name: string }[];
+  const ingestJobColNames = ingestJobCols.map(c => c.name);
+  if (!ingestJobColNames.includes('force_reprocess')) {
+    db.exec("ALTER TABLE kb_ingest_jobs ADD COLUMN force_reprocess INTEGER NOT NULL DEFAULT 0");
+  }
 
   // Documents table (for built-in editor) — extended for Lumos v1.2
   db.exec(`
@@ -247,12 +325,18 @@ export function migrateLumosTables(db: Database.Database): void {
     ['health_reason', "TEXT NOT NULL DEFAULT ''"],
     ['health_checked_at', "TEXT DEFAULT NULL"],
     ['summary_embedding', "BLOB DEFAULT NULL"],
+    ['chunk_count', "INTEGER NOT NULL DEFAULT 0"],
+    ['processing_status', "TEXT NOT NULL DEFAULT 'pending'"],
+    ['processing_detail', "TEXT NOT NULL DEFAULT '{\"parse\":\"pending\",\"chunk\":\"pending\",\"bm25\":\"pending\",\"embedding\":\"pending\",\"summary\":\"pending\",\"mode\":\"full\"}'"],
+    ['processing_error', "TEXT NOT NULL DEFAULT ''"],
+    ['processing_updated_at', "TEXT DEFAULT NULL"],
   ];
   for (const [col, def] of kbItemNewCols) {
     if (!kbItemColNames.includes(col)) {
       db.exec(`ALTER TABLE kb_items ADD COLUMN ${col} ${def}`);
     }
   }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_kb_items_processing_status ON kb_items(processing_status)");
 
   // Lumos conversations extension columns (8.11)
   const convCols = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
@@ -361,6 +445,55 @@ export function migrateLumosTables(db: Database.Database): void {
     )
   `);
 
+  // Persistent memory table (used by Lumos memory runtime)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      project_path TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'project', 'session')),
+      category TEXT NOT NULL DEFAULT 'other',
+      content TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      source TEXT NOT NULL DEFAULT 'user_explicit',
+      confidence REAL NOT NULL DEFAULT 1.0,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT DEFAULT NULL,
+      hit_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memories_scope_project ON memories(scope, project_path);
+    CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(is_archived, is_pinned);
+  `);
+
+  // Memory intelligence events (trigger/decision observability)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_intelligence_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      trigger TEXT NOT NULL DEFAULT 'manual',
+      outcome TEXT NOT NULL DEFAULT 'skipped',
+      reason TEXT NOT NULL DEFAULT '',
+      candidate_count INTEGER NOT NULL DEFAULT 0,
+      saved_count INTEGER NOT NULL DEFAULT 0,
+      token_estimate INTEGER NOT NULL DEFAULT 0,
+      should_model TEXT NOT NULL DEFAULT '',
+      extract_model TEXT NOT NULL DEFAULT '',
+      details TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mem_int_events_created ON memory_intelligence_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mem_int_events_session ON memory_intelligence_events(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mem_int_events_trigger ON memory_intelligence_events(trigger, created_at DESC);
+  `);
+
   // Auto-create or mark "Built-in" provider from the embedded default API key
   const builtinProvider = db.prepare('SELECT id FROM api_providers WHERE is_builtin = 1').get() as { id: string } | undefined;
 
@@ -453,6 +586,32 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_browser_cookies_domain ON browser_cookies(domain);
     CREATE INDEX IF NOT EXISTS idx_mcp_cookie_permissions_mcp ON mcp_cookie_permissions(mcp_name);
     CREATE INDEX IF NOT EXISTS idx_cookie_watch_list_mcp ON cookie_watch_list(mcp_name);
+  `);
+
+  // Message-memory associations (for memory visibility in chat)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS message_memories (
+      message_id TEXT NOT NULL,
+      memory_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL CHECK(relation_type IN ('created', 'used')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (message_id, memory_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_msg_mem_message ON message_memories(message_id);
+    CREATE INDEX IF NOT EXISTS idx_msg_mem_memory ON message_memories(memory_id);
+  `);
+
+  // Memory usage log (for memory detail page timeline)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_usage_log (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      used_at TEXT NOT NULL DEFAULT (datetime('now')),
+      context TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_usage_memory ON memory_usage_log(memory_id);
+    CREATE INDEX IF NOT EXISTS idx_mem_usage_session ON memory_usage_log(session_id);
   `);
 
   // Seed built-in data on first run

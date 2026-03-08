@@ -40,6 +40,9 @@ extraResources:
   - from: public/
     to: standalone/public/
     filter: ["**/*"]
+  - from: resources/mcp-servers/
+    to: mcp-servers/
+    filter: ["**/*"]
   - from: build/
     to: .
     filter: ["icon.*"]

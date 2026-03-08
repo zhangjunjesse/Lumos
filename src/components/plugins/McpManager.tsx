@@ -11,7 +11,11 @@ import { ConfigEditor } from "@/components/plugins/ConfigEditor";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { MCPServer } from "@/types";
 
-export function McpManager() {
+interface McpManagerProps {
+  refreshKey?: number;
+}
+
+export function McpManager({ refreshKey = 0 }: McpManagerProps) {
   const { t } = useTranslation();
   const [servers, setServers] = useState<Record<string, MCPServer & { scope?: string }>>({});
   const [loading, setLoading] = useState(true);
@@ -41,7 +45,7 @@ export function McpManager() {
 
   useEffect(() => {
     fetchServers();
-  }, [fetchServers]);
+  }, [fetchServers, refreshKey]);
 
   function handleEdit(name: string, server: MCPServer) {
     setEditingName(name);
@@ -137,7 +141,7 @@ export function McpManager() {
 
   async function handleJsonSave(jsonStr: string) {
     try {
-      const parsed = JSON.parse(jsonStr);
+      JSON.parse(jsonStr);
       // JSON save is not supported in the new architecture
       console.error("JSON save is not supported");
     } catch (err) {

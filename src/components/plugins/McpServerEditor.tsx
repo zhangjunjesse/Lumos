@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -176,14 +176,14 @@ export function McpServerEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-hidden p-0 flex flex-col gap-0">
+        <DialogHeader className="px-6 pt-6 pb-2">
           <DialogTitle>
             {isEditing ? `${t('mcp.editServer')}: ${initialName}` : t('mcp.addServer')}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="space-y-4 py-2 px-6 overflow-y-auto overflow-x-hidden">
           <div className="space-y-2">
             <Label htmlFor="server-name">{t('mcp.serverName')}</Label>
             <Input
@@ -252,7 +252,7 @@ export function McpServerEditor({
                   setJsonText(e.target.value);
                   setError(null);
                 }}
-                className="font-mono text-sm min-h-[250px]"
+                className="font-mono text-sm min-h-[250px] [overflow-wrap:anywhere]"
                 placeholder='{"command": "npx", "args": ["-y", "@server/name"]}'
               />
             </div>
@@ -357,7 +357,7 @@ export function McpServerEditor({
                     setError(null);
                   }}
                   placeholder='{"API_KEY": "..."}'
-                  className="font-mono text-sm min-h-[80px]"
+                  className="font-mono text-sm min-h-[80px] [overflow-wrap:anywhere]"
                 />
               </div>
             </>
@@ -366,7 +366,7 @@ export function McpServerEditor({
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t px-6 py-4 bg-background">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>

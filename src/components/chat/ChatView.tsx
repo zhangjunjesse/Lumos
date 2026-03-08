@@ -9,6 +9,7 @@ import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
+import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
 
 interface ToolUseInfo {
   id: string;
@@ -30,9 +31,35 @@ interface ChatViewProps {
   providerId?: string;
 }
 
+interface MemoryIdleTriggerConfig {
+  enabled: boolean;
+  timeoutMs: number;
+}
+
+const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
+const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
+
+async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
+  if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
+    return {};
+  }
+
+  try {
+    const bridge = await window.electronAPI.browser.getBridgeConfig();
+    if (!bridge?.success) return {};
+
+    const headers: Record<string, string> = {};
+    if (bridge.url) headers['x-lumos-browser-bridge-url'] = bridge.url;
+    if (bridge.token) headers['x-lumos-browser-bridge-token'] = bridge.token;
+    return headers;
+  } catch {
+    return {};
+  }
+}
+
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, providerId }: ChatViewProps) {
   const { t } = useTranslation();
-  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setContentPanelOpen, setPendingApprovalSessionId } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -48,7 +75,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
+  const [memoryIdleConfig, setMemoryIdleConfig] = useState<MemoryIdleTriggerConfig>({
+    enabled: true,
+    timeoutMs: DEFAULT_MEMORY_IDLE_TIMEOUT_MS,
+  });
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
+  const idleMemoryTimerRef = useRef<number | null>(null);
 
   const handleModeChange = useCallback((newMode: string) => {
     setMode(newMode);
@@ -59,7 +91,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: newMode }),
       }).then(() => {
-        window.dispatchEvent(new CustomEvent('session-updated'));
+        window.dispatchEvent(new CustomEvent('session-updated', { detail: { id: sessionId } }));
       }).catch(() => { /* silent */ });
 
       // Try to switch SDK permission mode in real-time (works if streaming)
@@ -78,6 +110,32 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const clearIdleMemoryTimer = useCallback(() => {
+    if (idleMemoryTimerRef.current) {
+      window.clearTimeout(idleMemoryTimerRef.current);
+      idleMemoryTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleIdleMemoryTrigger = useCallback(() => {
+    clearIdleMemoryTimer();
+    if (!memoryIdleConfig.enabled) return;
+
+    const delay = Math.max(MIN_MEMORY_IDLE_TIMEOUT_MS, memoryIdleConfig.timeoutMs || DEFAULT_MEMORY_IDLE_TIMEOUT_MS);
+    idleMemoryTimerRef.current = window.setTimeout(() => {
+      fetch('/api/memory/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          trigger: 'idle',
+        }),
+      }).catch(() => {
+        // Best effort only.
+      });
+    }, delay);
+  }, [clearIdleMemoryTimer, memoryIdleConfig.enabled, memoryIdleConfig.timeoutMs, sessionId]);
+
   // Abort active stream on unmount (e.g., session switch via key={id} remount).
   // This triggers the existing server-side cleanup chain:
   //   fetch abort → request.signal 'abort' → route abortController.abort()
@@ -89,10 +147,32 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
+      clearIdleMemoryTimer();
       setStreamingSessionId('');
       setPendingApprovalSessionId('');
     };
-  }, [setStreamingSessionId, setPendingApprovalSessionId]);
+  }, [clearIdleMemoryTimer, setStreamingSessionId, setPendingApprovalSessionId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/settings/app', { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data?.settings) return;
+        const settings = data.settings as Record<string, string>;
+        const enabled = settings.memory_intelligence_trigger_idle_enabled !== 'false';
+        const parsedTimeout = Number(settings.memory_intelligence_idle_timeout_ms || '');
+        const timeoutMs = Number.isFinite(parsedTimeout)
+          ? Math.max(MIN_MEMORY_IDLE_TIMEOUT_MS, Math.floor(parsedTimeout))
+          : DEFAULT_MEMORY_IDLE_TIMEOUT_MS;
+        setMemoryIdleConfig({ enabled, timeoutMs });
+      })
+      .catch(() => {
+        // Use defaults when settings are unavailable.
+      });
+
+    return () => controller.abort();
+  }, []);
 
   // Warn before closing window/tab while streaming to prevent accidental data loss
   useEffect(() => {
@@ -131,14 +211,26 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     };
   }, []);
 
+  function isTempMessageId(id: string): boolean {
+    return id.startsWith('temp-');
+  }
+
   // Keep local messages in sync with server-provided messages
   // when not actively streaming. This allows external updates
   // (e.g. Feishu-originated messages written to DB) to appear
   // in the UI without manual reload.
+  // Guard: if local list contains optimistic temp messages and parent data
+  // is clearly behind (fewer rows), do not overwrite to avoid "disappear then reappear".
   useEffect(() => {
-    if (!isStreaming) {
-      setMessages(initialMessages);
-    }
+    if (isStreaming) return;
+
+    setMessages((prev) => {
+      const localHasTemp = prev.some((msg) => isTempMessageId(msg.id));
+      if (localHasTemp && initialMessages.length < prev.length) {
+        return prev;
+      }
+      return initialMessages;
+    });
   }, [initialMessages, isStreaming]);
 
   // Sync mode when session data loads
@@ -231,9 +323,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       files?: FileAttachment[],
       systemPromptAppend?: string,
       displayOverride?: string,
-      options?: { sendToFeishu?: boolean },
     ) => {
       if (isStreaming) return;
+      clearIdleMemoryTimer();
 
       // Use displayOverride for UI if provided (e.g. image-gen skill injection hides the skill prompt)
       const displayUserContent = displayOverride || content;
@@ -267,6 +359,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       abortControllerRef.current = controller;
 
       let accumulated = '';
+      let shouldScheduleIdleTrigger = false;
 
       // Stream idle timeout: abort if no SSE events arrive for this duration.
       // Set slightly above the 5-minute permission timeout (300s) to avoid races.
@@ -292,9 +385,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
 
       try {
+        const bridgeHeaders = await getBrowserBridgeHeaders();
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...bridgeHeaders,
+          },
           body: JSON.stringify({
             session_id: sessionId,
             content: effectiveContent,
@@ -303,7 +400,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             provider_id: currentProviderId,
             ...(files && files.length > 0 ? { files } : {}),
             ...(systemPromptAppend ? { systemPromptAppend } : {}),
-            send_to_feishu: options?.sendToFeishu === true,
           }),
           signal: controller.signal,
         });
@@ -332,6 +428,20 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               toolUsesRef.current = next;
               return next;
             });
+
+            const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
+            const normalizedToolName = String(tool.name || '').toLowerCase();
+            const isBuiltinChromeMcpTool =
+              normalizedToolName.includes('chrome-devtools')
+              || normalizedToolName === 'new_page'
+              || normalizedToolName === 'navigate_page';
+
+            // Built-in chrome MCP has dedicated bridge events with stable pageId.
+            // Avoid URL-only fallback events here to prevent duplicate/misaligned tabs.
+            if (browserUrl && !isBuiltinChromeMcpTool) {
+              setContentPanelOpen(true);
+              openBrowserUrlInPanel(browserUrl);
+            }
           },
           onToolResult: (res) => {
             markActive();
@@ -435,6 +545,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           transferPendingToMessage(assistantMessage.id);
 
           setMessages((prev) => [...prev, assistantMessage]);
+          shouldScheduleIdleTrigger = true;
         }
       } catch (error) {
         clearInterval(idleCheckTimer);
@@ -539,9 +650,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         abortControllerRef.current = null;
         // Notify file tree to refresh after AI finishes
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+        if (shouldScheduleIdleTrigger) {
+          scheduleIdleMemoryTrigger();
+        }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, currentProviderId, t]
+    [
+      clearIdleMemoryTimer,
+      sessionId,
+      isStreaming,
+      setStreamingSessionId,
+      setContentPanelOpen,
+      setPendingApprovalSessionId,
+      mode,
+      currentModel,
+      currentProviderId,
+      scheduleIdleMemoryTrigger,
+      t,
+    ]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it

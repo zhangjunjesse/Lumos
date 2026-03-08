@@ -27,7 +27,15 @@ export function FileAttachmentDisplay({ files }: FileAttachmentDisplayProps) {
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const imageFiles = files.filter((f) => isImageFile(f.type) && fileUrl(f));
-  const otherFiles = files.filter((f) => !isImageFile(f.type) || !fileUrl(f));
+  const videoFiles = files.filter((f) => f.type.startsWith('video/') && fileUrl(f));
+  const audioFiles = files.filter((f) => f.type.startsWith('audio/') && fileUrl(f));
+  const otherFiles = files.filter((f) => {
+    const hasUrl = !!fileUrl(f);
+    if (hasUrl && (isImageFile(f.type) || f.type.startsWith('video/') || f.type.startsWith('audio/'))) {
+      return false;
+    }
+    return true;
+  });
 
   const lightboxImages = imageFiles.map((f) => ({
     src: fileUrl(f),
@@ -59,6 +67,33 @@ export function FileAttachmentDisplay({ files }: FileAttachmentDisplayProps) {
               alt={file.name}
               onClick={() => handlePreview(i)}
             />
+          ))}
+        </div>
+      )}
+
+      {videoFiles.length > 0 && (
+        <div className="space-y-2">
+          {videoFiles.map((file) => (
+            <video
+              key={file.id}
+              controls
+              preload="metadata"
+              className="w-full max-w-md rounded-md border"
+            >
+              <source src={fileUrl(file)} type={file.type} />
+              Your browser does not support the video tag.
+            </video>
+          ))}
+        </div>
+      )}
+
+      {audioFiles.length > 0 && (
+        <div className="space-y-2">
+          {audioFiles.map((file) => (
+            <audio key={file.id} controls className="w-full">
+              <source src={fileUrl(file)} type={file.type} />
+              Your browser does not support the audio element.
+            </audio>
           ))}
         </div>
       )}

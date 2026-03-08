@@ -118,4 +118,26 @@ export {
   getEnabledMcpServersAsConfig,
 } from './mcp-servers';
 
+// Memories
+export {
+  getMemory,
+  listMemoriesForContext,
+  listRecentMemories,
+  upsertMemory,
+  touchMemoriesUsage,
+  archiveMemory,
+  setMemoryPinned,
+  setMemoryArchived,
+  updateMemory,
+  updateMemoryContent,
+  deleteMemory,
+} from './memories';
 
+// Memory intelligence events
+export {
+  createMemoryIntelligenceEvent,
+  listRecentMemoryIntelligenceEvents,
+  getLatestMemoryIntelligenceEventForSession,
+  countMemoryIntelligenceEventsByDay,
+  listMemoryIntelligenceEventsSince,
+} from './memory-intelligence-events';

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, clearSessionMessages } from '@/lib/db';
+import { syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 
 export async function GET(
   _request: NextRequest,
@@ -36,6 +37,10 @@ export async function PATCH(
     }
     if (body.title) {
       updateSessionTitle(id, body.title);
+      // Best-effort: sync updated title to Feishu group name
+      syncSessionTitleToFeishu(id, body.title).catch(err =>
+        console.error('[Sync] Failed to update Feishu chat title:', err),
+      );
     }
     if (body.mode) {
       updateSessionMode(id, body.mode);

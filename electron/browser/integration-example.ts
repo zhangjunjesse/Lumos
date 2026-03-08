@@ -37,7 +37,7 @@ export class BrowserIntegration {
     this.mcpEnvironment = new MCPEnvironmentManager(this.cookieSync);
 
     // 设置 IPC handlers
-    setupBrowserIPC(this.browserManager);
+    setupBrowserIPC(() => this.browserManager);
 
     // 设置 MCP Cookie 监听（示例）
     this.setupMCPCookieWatches();

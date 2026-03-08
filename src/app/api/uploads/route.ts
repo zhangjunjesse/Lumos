@@ -11,6 +11,15 @@ const MIME_TYPES: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
   '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
@@ -20,8 +29,8 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * Serve files from .codepilot-uploads/ directories.
- * Only allows reading from paths that contain '.codepilot-uploads/' to prevent directory traversal.
+ * Serve files from .lumos-uploads/ directories (and legacy .codepilot-uploads).
+ * Only allows reading from known directories to prevent directory traversal.
  */
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get('path');
@@ -33,9 +42,16 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Security: only allow files within known .codepilot-* directories
+  // Security: only allow files within known .lumos-* directories (and legacy .codepilot-*)
   const resolved = path.resolve(filePath);
-  const allowedDirs = ['.codepilot-uploads', '.codepilot-media', '.codepilot-images'];
+  const allowedDirs = [
+    '.lumos-uploads',
+    '.lumos-media',
+    '.lumos-images',
+    '.codepilot-uploads',
+    '.codepilot-media',
+    '.codepilot-images',
+  ];
   if (!allowedDirs.some(dir => resolved.includes(dir))) {
     return new Response(JSON.stringify({ error: 'Access denied' }), {
       status: 403,

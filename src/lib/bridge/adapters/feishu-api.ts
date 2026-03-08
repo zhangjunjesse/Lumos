@@ -83,7 +83,8 @@ export class FeishuAPI {
     // Required fields per Feishu API
     form.append('file_type', 'stream');
     form.append('file_name', fileName);
-    const blob = new Blob([buffer]);
+    // Convert Buffer to Uint8Array to satisfy DOM BlobPart typing in TS strict mode.
+    const blob = new Blob([Uint8Array.from(buffer)]);
     form.append('file', blob, fileName);
 
     const res = await fetch(url, {
@@ -96,6 +97,31 @@ export class FeishuAPI {
 
     const data = await res.json();
     if (data.code !== 0) throw new Error(`Upload file failed: ${data.msg}`);
+    return data.data;
+  }
+
+  /**
+   * Upload an image for chat message preview (msg_type=image).
+   */
+  async uploadImage(fileName: string, buffer: Buffer): Promise<{ image_key: string }> {
+    const token = await this.getToken();
+    const url = `${this.baseUrl}/open-apis/im/v1/images`;
+
+    const form = new FormData();
+    form.append('image_type', 'message');
+    const blob = new Blob([Uint8Array.from(buffer)]);
+    form.append('image', blob, fileName);
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: form,
+    });
+
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Upload image failed: ${data.msg}`);
     return data.data;
   }
 
@@ -120,5 +146,48 @@ export class FeishuAPI {
     const data = await res.json();
     if (data.code !== 0) throw new Error(`Send file message failed: ${data.msg}`);
     return data.data;
+  }
+
+  /**
+   * Send an image message to a chat_id using a previously uploaded image_key.
+   */
+  async sendImageMessage(chatId: string, imageKey: string): Promise<{ message_id: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: 'image',
+        content: JSON.stringify({ image_key: imageKey }),
+      }),
+    });
+
+    const data = await res.json();
+    if (data.code !== 0) throw new Error(`Send image message failed: ${data.msg}`);
+    return data.data;
+  }
+
+  /**
+   * Update chat info (e.g., name/description).
+   * Uses PUT /open-apis/im/v1/chats/:chat_id
+   */
+  async updateChat(chatId: string, data: { name?: string; description?: string }): Promise<{ chat_id: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/chats/${chatId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await res.json();
+    if (result.code !== 0) throw new Error(`Update chat failed: ${result.msg}`);
+    return result.data;
   }
 }

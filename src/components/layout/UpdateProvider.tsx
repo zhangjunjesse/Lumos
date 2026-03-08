@@ -51,8 +51,28 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
 
     setChecking(true);
     try {
-      await window.electronAPI.updater.checkForUpdates();
+      const result: any = await window.electronAPI.updater.checkForUpdates();
+      if (result?.status === 'not-available' || result?.status === 'disabled') {
+        setChecking(false);
+        setUpdateInfo({
+          updateAvailable: false,
+          latestVersion: process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0",
+          currentVersion: process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0",
+          releaseName: "",
+          releaseNotes: "",
+          releaseUrl: "",
+          publishedAt: "",
+          downloadProgress: null,
+          readyToInstall: false,
+          isNativeUpdate: true,
+        });
+      }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("No handler registered")) {
+        setChecking(false);
+        return;
+      }
       console.error("[UpdateProvider] Native check failed:", err);
       setChecking(false);
     }

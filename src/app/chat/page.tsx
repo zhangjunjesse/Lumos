@@ -7,6 +7,9 @@ import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useMemoryToast } from '@/components/memory/memory-toast-container';
+import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog';
+import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
 
 interface ToolUseInfo {
   id: string;
@@ -19,10 +22,29 @@ interface ToolResultInfo {
   content: string;
 }
 
+async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
+  if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
+    return {};
+  }
+
+  try {
+    const bridge = await window.electronAPI.browser.getBridgeConfig();
+    if (!bridge?.success) return {};
+
+    const headers: Record<string, string> = {};
+    if (bridge.url) headers['x-lumos-browser-bridge-url'] = bridge.url;
+    if (bridge.token) headers['x-lumos-browser-bridge-token'] = bridge.token;
+    return headers;
+  } catch {
+    return {};
+  }
+}
+
 export default function NewChatPage() {
   const router = useRouter();
   const { setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
   const { t } = useTranslation();
+  const { showToast } = useMemoryToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -36,6 +58,7 @@ export default function NewChatPage() {
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
+  const [conflictData, setConflictData] = useState<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Auto-populate workingDir from active workspace or localStorage
@@ -169,9 +192,13 @@ export default function NewChatPage() {
         setMessages([userMessage]);
 
         // Send the message via streaming API
+        const bridgeHeaders = await getBrowserBridgeHeaders();
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...bridgeHeaders,
+          },
           body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel, provider_id: currentProviderId, ...(systemPromptAppend ? { systemPromptAppend } : {}), ...(files && files.length > 0 ? { files } : {}) }),
           signal: controller.signal,
         });
@@ -284,6 +311,20 @@ export default function NewChatPage() {
                   setStreamingContent(accumulated);
                   break;
                 }
+                case 'memory_captured': {
+                  try {
+                    const memoryData = JSON.parse(event.data);
+                    showToast(memoryData, memoryData.action || 'created');
+                  } catch { /* skip */ }
+                  break;
+                }
+                case 'memory_conflict': {
+                  try {
+                    const conflictInfo = JSON.parse(event.data);
+                    setConflictData(conflictInfo);
+                  } catch { /* skip */ }
+                  break;
+                }
                 case 'done':
                   break;
               }
@@ -341,6 +382,34 @@ export default function NewChatPage() {
     },
     [isStreaming, router, workingDir, mode, currentModel, currentProviderId, setPendingApprovalSessionId]
   );
+
+  const handleConflictResolve = useCallback(async (action: 'replace' | 'keep_both' | 'cancel') => {
+    if (!conflictData) return;
+
+    if (action === 'cancel') {
+      setConflictData(null);
+      return;
+    }
+
+    try {
+      await fetch('/api/memory/resolve-conflict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conflictingMemoryId: conflictData.conflictingMemory.id,
+          newContent: conflictData.newContent,
+          action,
+          sessionId: '',
+          projectPath: workingDir,
+          scope: conflictData.conflictingMemory.scope,
+          category: conflictData.conflictingMemory.category,
+        }),
+      });
+      setConflictData(null);
+    } catch (error) {
+      console.error('Failed to resolve conflict:', error);
+    }
+  }, [conflictData, workingDir]);
 
   const handleCommand = useCallback((command: string) => {
     switch (command) {
@@ -411,6 +480,12 @@ export default function NewChatPage() {
         mode={mode}
         onModeChange={setMode}
       />
+      <MemoryConflictDialog
+        isOpen={!!conflictData}
+        conflictData={conflictData}
+        onResolve={handleConflictResolve}
+      />
+      <MemoryOnboarding />
     </div>
   );
 }

@@ -19,6 +19,7 @@ import { useUpdate } from "@/hooks/useUpdate";
 import { useTranslation } from "@/hooks/useTranslation";
 import { SUPPORTED_LOCALES, type Locale } from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { openExternalUrl } from "@/lib/open-external";
 
 function UpdateCard() {
   const { updateInfo, checking, checkForUpdates, downloadUpdate, quitAndInstall, setShowDialog } = useUpdate();
@@ -47,7 +48,7 @@ function UpdateCard() {
                 {t('update.installUpdate')}
               </Button>
             ) : !updateInfo.isNativeUpdate ? (
-              <Button size="sm" variant="outline" onClick={() => window.open(updateInfo.releaseUrl, "_blank")}>
+              <Button size="sm" variant="outline" onClick={() => void openExternalUrl(updateInfo.releaseUrl)}>
                 {t('settings.viewRelease')}
               </Button>
             ) : null
@@ -114,8 +115,12 @@ function UpdateCard() {
 
 export function GeneralSection() {
   const [skipPermissions, setSkipPermissions] = useState(false);
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [projectSettingsEnabled, setProjectSettingsEnabled] = useState(false);
   const [showSkipPermWarning, setShowSkipPermWarning] = useState(false);
   const [skipPermSaving, setSkipPermSaving] = useState(false);
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [projectSettingsSaving, setProjectSettingsSaving] = useState(false);
   const { t, locale, setLocale } = useTranslation();
 
   const fetchAppSettings = useCallback(async () => {
@@ -125,6 +130,8 @@ export function GeneralSection() {
         const data = await res.json();
         const appSettings = data.settings || {};
         setSkipPermissions(appSettings.dangerously_skip_permissions === "true");
+        setMemoryEnabled(appSettings.memory_system_enabled !== "false");
+        setProjectSettingsEnabled(appSettings.claude_project_settings_enabled === "true");
       }
     } catch {
       // ignore
@@ -143,17 +150,26 @@ export function GeneralSection() {
     }
   };
 
-  const saveSkipPermissions = async (enabled: boolean) => {
-    setSkipPermSaving(true);
+  const saveAppSettings = async (settings: Record<string, string>): Promise<boolean> => {
     try {
       const res = await fetch("/api/settings/app", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          settings: { dangerously_skip_permissions: enabled ? "true" : "" },
-        }),
+        body: JSON.stringify({ settings }),
       });
-      if (res.ok) {
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const saveSkipPermissions = async (enabled: boolean) => {
+    setSkipPermSaving(true);
+    try {
+      const ok = await saveAppSettings({
+        dangerously_skip_permissions: enabled ? "true" : "",
+      });
+      if (ok) {
         setSkipPermissions(enabled);
       }
     } catch {
@@ -161,6 +177,30 @@ export function GeneralSection() {
     } finally {
       setSkipPermSaving(false);
       setShowSkipPermWarning(false);
+    }
+  };
+
+  const handleMemoryToggle = async (enabled: boolean) => {
+    setMemorySaving(true);
+    try {
+      const ok = await saveAppSettings({
+        memory_system_enabled: enabled ? "true" : "false",
+      });
+      if (ok) setMemoryEnabled(enabled);
+    } finally {
+      setMemorySaving(false);
+    }
+  };
+
+  const handleProjectSettingsToggle = async (enabled: boolean) => {
+    setProjectSettingsSaving(true);
+    try {
+      const ok = await saveAppSettings({
+        claude_project_settings_enabled: enabled ? "true" : "",
+      });
+      if (ok) setProjectSettingsEnabled(enabled);
+    } finally {
+      setProjectSettingsSaving(false);
     }
   };
 
@@ -187,6 +227,42 @@ export function GeneralSection() {
           <div className="mt-3 flex items-center gap-2 rounded-md bg-orange-500/10 px-3 py-2 text-xs text-orange-600 dark:text-orange-400">
             <span className="h-2 w-2 shrink-0 rounded-full bg-orange-500" />
             {t('settings.autoApproveWarning')}
+          </div>
+        )}
+      </div>
+
+      {/* Memory runtime toggle */}
+      <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-medium">{t('settings.memorySystemTitle')}</h2>
+            <p className="text-xs text-muted-foreground">{t('settings.memorySystemDesc')}</p>
+          </div>
+          <Switch
+            checked={memoryEnabled}
+            onCheckedChange={handleMemoryToggle}
+            disabled={memorySaving}
+          />
+        </div>
+      </div>
+
+      {/* Project CLAUDE/rules loading toggle */}
+      <div className={`rounded-lg border p-4 transition-shadow hover:shadow-sm ${projectSettingsEnabled ? "border-amber-500/50 bg-amber-500/5" : "border-border/50"}`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-medium">{t('settings.projectRulesTitle')}</h2>
+            <p className="text-xs text-muted-foreground">{t('settings.projectRulesDesc')}</p>
+          </div>
+          <Switch
+            checked={projectSettingsEnabled}
+            onCheckedChange={handleProjectSettingsToggle}
+            disabled={projectSettingsSaving}
+          />
+        </div>
+        {projectSettingsEnabled && (
+          <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+            {t('settings.projectRulesWarning')}
           </div>
         )}
       </div>

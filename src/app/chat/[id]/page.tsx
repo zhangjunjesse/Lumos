@@ -5,15 +5,51 @@ import Link from 'next/link';
 import type { Message, MessagesResponse, ChatSession } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
+import { Loading, PencilEdit01Icon, Delete } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
+}
+
+interface ElectronIpcRendererLike {
+  on: (channel: string, listener: (event: unknown, payload: { sessionId: string }) => void) => void;
+  removeListener: (channel: string, listener: (event: unknown, payload: { sessionId: string }) => void) => void;
+}
+
+type WindowWithElectronIpc = Window & {
+  electron?: {
+    ipcRenderer?: ElectronIpcRendererLike;
+  };
+};
+
+function triggerMemoryOnSessionSwitch(sessionId: string): void {
+  if (!sessionId) return;
+  fetch('/api/memory/trigger', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+    body: JSON.stringify({
+      sessionId,
+      trigger: 'session_switch',
+    }),
+  }).catch(() => {
+    // Best effort only.
+  });
 }
 
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
@@ -30,6 +66,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionWorkingDir, setSessionWorkingDir] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState('');
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [viewNonce, setViewNonce] = useState(0);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
   const { t } = useTranslation();
@@ -39,7 +78,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const handleStartEditTitle = useCallback(() => {
     setEditTitle(sessionTitle || t('chat.newConversation'));
     setIsEditingTitle(true);
-  }, [sessionTitle]);
+  }, [sessionTitle, t]);
 
   const handleSaveTitle = useCallback(async () => {
     const trimmed = editTitle.trim();
@@ -63,6 +102,29 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
     setIsEditingTitle(false);
   }, [editTitle, id, setPanelSessionTitle]);
+
+  const handleClearMessages = useCallback(async () => {
+    if (clearing) return;
+    setClearing(true);
+    try {
+      const res = await fetch(`/api/chat/sessions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear_messages: true }),
+      });
+      if (res.ok) {
+        setMessages([]);
+        setHasMore(false);
+        setViewNonce((v) => v + 1);
+        window.dispatchEvent(new CustomEvent('session-updated', { detail: { id } }));
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setClearing(false);
+      setClearDialogOpen(false);
+    }
+  }, [clearing, id]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -111,7 +173,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
 
     loadSession();
-  }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen]);
+  }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen, t]);
 
   useEffect(() => {
     // Reset state when switching sessions
@@ -148,6 +210,14 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     loadMessages();
 
     return () => { cancelled = true; };
+  }, [id, t]);
+
+  // Trigger implicit memory analysis when leaving the current session.
+  useEffect(() => {
+    const current = id;
+    return () => {
+      triggerMemoryOnSessionSwitch(current);
+    };
   }, [id]);
 
   // Periodically refresh messages so that Feishu-originated
@@ -178,7 +248,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
 
   // Listen for bridge messages from Electron IPC
   useEffect(() => {
-    const handleBridgeMessage = (_event: any, data: { sessionId: string }) => {
+    const handleBridgeMessage = (_event: unknown, data: { sessionId: string }) => {
       if (data.sessionId === id) {
         fetch(`/api/chat/sessions/${id}/messages?limit=100`)
           .then(res => res.json())
@@ -190,10 +260,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       }
     };
 
-    if (typeof window !== 'undefined' && (window as any).electron?.ipcRenderer) {
-      (window as any).electron.ipcRenderer.on('bridge:message-received', handleBridgeMessage);
+    const ipcRenderer = (window as WindowWithElectronIpc).electron?.ipcRenderer;
+    if (typeof window !== 'undefined' && ipcRenderer) {
+      ipcRenderer.on('bridge:message-received', handleBridgeMessage);
       return () => {
-        (window as any).electron.ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
+        ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
       };
     }
   }, [id]);
@@ -201,13 +272,15 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   // Listen for session updates from sidebar
   useEffect(() => {
     const handleSessionUpdate = (event: Event) => {
-      const customEvent = event as CustomEvent<{ id: string; title: string }>;
-      console.log('[ChatPage] Received session-updated event:', customEvent.detail, 'current id:', id);
-      if (customEvent.detail.id === id) {
-        console.log('[ChatPage] Updating title to:', customEvent.detail.title);
-        setSessionTitle(customEvent.detail.title);
-        setEditTitle(customEvent.detail.title);
-        setPanelSessionTitle(customEvent.detail.title);
+      const customEvent = event as CustomEvent<{ id?: string; title?: string }>;
+      const detail = customEvent.detail;
+      if (!detail || !detail.id) return;
+      console.log('[ChatPage] Received session-updated event:', detail, 'current id:', id);
+      if (detail.id === id && detail.title) {
+        console.log('[ChatPage] Updating title to:', detail.title);
+        setSessionTitle(detail.title);
+        setEditTitle(detail.title);
+        setPanelSessionTitle(detail.title);
       }
     };
 
@@ -302,11 +375,37 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
               </button>
               <BindingButton sessionId={id} />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setClearDialogOpen(true)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
+                  >
+                    <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t('chat.clearConversation')}</TooltipContent>
+              </Tooltip>
             </div>
           )}
         </div>
       )}
-      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} providerId={sessionProviderId} />
+      <ChatView key={`${id}-${viewNonce}`} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} providerId={sessionProviderId} />
+
+      <AlertDialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('chat.clearTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('chat.clearDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleClearMessages} disabled={clearing}>
+              {clearing ? t('common.loading') : t('chat.clearConfirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

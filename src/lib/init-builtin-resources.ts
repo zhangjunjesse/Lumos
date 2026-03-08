@@ -5,7 +5,9 @@ import matter from 'gray-matter';
 import {
   createSkill,
   getSkillByNameAndScope,
+  getSkillsByScope,
   updateSkill,
+  deleteSkill,
   createMcpServer,
   getMcpServerByNameAndScope,
   updateMcpServer,
@@ -53,17 +55,6 @@ function getPublicDir(): string {
   return path.join(process.cwd(), 'public');
 }
 
-/**
- * Get the feishu-mcp-server runtime path.
- * In production, it's in extraResources/feishu-mcp-server/
- */
-function getFeishuServerPath(): string {
-  if (process.resourcesPath) {
-    return path.join(process.resourcesPath, 'feishu-mcp-server', 'index.js');
-  }
-  return path.join(process.cwd(), 'resources', 'feishu-mcp-server', 'index.js');
-}
-
 // ==========================================
 // Import Skills
 // ==========================================
@@ -78,6 +69,7 @@ function importSkills(): number {
 
   const files = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
   let imported = 0;
+  const currentNames = new Set<string>();
 
   for (const file of files) {
     const filePath = path.join(skillsDir, file);
@@ -89,6 +81,7 @@ function importSkills(): number {
       console.warn('[init-builtin-resources] Invalid skill metadata in:', file);
       continue;
     }
+    currentNames.add(metadata.name);
 
     const contentHash = calculateFileHash(filePath);
     const existing = getSkillByNameAndScope(metadata.name, 'builtin');
@@ -116,6 +109,20 @@ function importSkills(): number {
     }
   }
 
+  // Remove builtin skills that no longer exist in public/skills
+  const existingBuiltin = getSkillsByScope('builtin');
+  const removed: string[] = [];
+  for (const skill of existingBuiltin) {
+    if (!currentNames.has(skill.name)) {
+      if (deleteSkill(skill.id)) {
+        removed.push(skill.name);
+      }
+    }
+  }
+  if (removed.length > 0) {
+    console.log(`[init-builtin-resources] Removed builtin skills: ${removed.join(', ')}`);
+  }
+
   return imported;
 }
 
@@ -131,7 +138,6 @@ function importMcpServers(): number {
     return 0;
   }
 
-  const feishuServerPath = getFeishuServerPath();
   const files = fs.readdirSync(mcpDir).filter(f => f.endsWith('.json'));
   let imported = 0;
 
@@ -145,21 +151,31 @@ function importMcpServers(): number {
       continue;
     }
 
-    // Replace [RUNTIME_PATH] placeholder in args with actual runtime directory
-    const runtimeDir = path.dirname(feishuServerPath);
-    const args = (config.args || []).map(arg => arg.replace('[RUNTIME_PATH]', runtimeDir));
-
-    // Hash includes the resolved path so it updates if the path changes
-    const contentHash = crypto.createHash('sha256').update(content + runtimeDir).digest('hex');
+    // Keep placeholders (e.g. [RUNTIME_PATH]) in DB config.
+    // They are resolved at request-time in chat route where full context
+    // (workspace/data dir) is available.
+    const args = config.args || [];
+    const contentHash = calculateFileHash(filePath);
     const existing = getMcpServerByNameAndScope(config.name, 'builtin');
 
     if (existing) {
       if (existing.content_hash !== contentHash) {
+        let mergedEnv = config.env || {};
+        try {
+          const existingEnv = JSON.parse(existing.env || '{}') as Record<string, string>;
+          // Preserve user-edited env values on builtin upgrades (e.g. API keys).
+          mergedEnv = {
+            ...(config.env || {}),
+            ...existingEnv,
+          };
+        } catch {
+          // Keep builtin defaults if existing env cannot be parsed
+        }
         updateMcpServer(existing.id, {
           description: config.description,
           command: config.command,
           args,
-          env: config.env,
+          env: mergedEnv,
           content_hash: contentHash,
         });
         console.log('[init-builtin-resources] Updated MCP server:', config.name);

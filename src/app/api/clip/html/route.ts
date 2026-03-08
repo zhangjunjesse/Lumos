@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as store from '@/lib/knowledge/store';
 import { importWebPage } from '@/lib/knowledge/importer';
+import { ensureDefaultCollectionId } from '@/lib/knowledge/default-collection';
+import * as store from '@/lib/knowledge/store';
+import { buildSourceKey } from '@/lib/knowledge/source-key';
 
 /**
  * POST /api/clip/html
@@ -12,17 +14,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'text required' }, { status: 400 });
   }
 
-  let collections = store.listCollections();
-  if (collections.length === 0) {
-    store.createCollection('Default', 'Auto-created');
-    collections = store.listCollections();
+  const collectionId = ensureDefaultCollectionId();
+  const sourceKey = buildSourceKey({ sourceType: 'webpage', sourcePath: url || '' });
+  let existing = store.findItemBySourceKey(collectionId, sourceKey);
+  if (!existing && url) {
+    existing = store.findItemBySource(collectionId, 'webpage', url);
+  }
+  if (existing) {
+    return NextResponse.json({ duplicate: true, item: existing, message: '网页已存在，已跳过添加' });
   }
 
   const result = await importWebPage(
-    collections[0].id,
+    collectionId,
     title || url || 'Web Clip',
     url || '',
     text,
+    sourceKey,
   );
   return NextResponse.json(result);
 }

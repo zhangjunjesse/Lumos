@@ -129,6 +129,16 @@ export function Browser({ className }: BrowserProps) {
     };
   }, [isElectron, loadTabs]);
 
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.browser?.setDisplayTarget) {
+      return;
+    }
+    void window.electronAPI.browser.setDisplayTarget('default');
+    return () => {
+      void window.electronAPI?.browser?.setDisplayTarget?.('hidden');
+    };
+  }, [isElectron]);
+
   const activeTab = tabs.find(tab => tab.id === activeTabId);
 
   // 如果不在 Electron 环境中，显示提示
@@ -186,4 +196,3 @@ export function Browser({ className }: BrowserProps) {
     </div>
   );
 }
-

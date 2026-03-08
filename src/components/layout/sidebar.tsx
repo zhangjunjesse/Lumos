@@ -15,11 +15,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspacePicker } from "@/components/workspace/workspace-picker";
 import { SidebarNavItem } from "./sidebar-nav-item";
 import {
-  Sparkles,
   DashboardSquare01Icon,
-  Clock1,
   Star,
-  Delete,
   BookOpen,
   Puzzle,
   Settings2,
@@ -27,7 +24,7 @@ import {
   SidebarRight01Icon,
   Moon,
   Sun,
-  Globe,
+  Brain,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -39,22 +36,25 @@ interface SidebarProps {
 }
 
 const mainNavItems = [
-  { href: "/", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon, comingSoon: true },
+  { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
 ];
 
 const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];
 
 const bottomNavItems = [
-  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen, comingSoon: true },
+  { href: "/mind", labelKey: "sidebar.mind" as const, icon: Brain },
+  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen },
   { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: Puzzle },
 ];
 
 export function Sidebar({ onOpenAssistant }: SidebarProps) {
+  void onOpenAssistant;
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(() => {
     if (typeof window === "undefined") return true;
+    if (window.matchMedia("(max-width: 1279px)").matches) return false;
     return localStorage.getItem(SIDEBAR_EXPANDED_KEY) !== "false";
   });
 
@@ -84,7 +84,6 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
     const handler = (e: MediaQueryListEvent) => {
       if (e.matches) setExpanded(false);
     };
-    if (mql.matches) setExpanded(false);
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);
   }, []);
@@ -109,7 +108,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
 
       {/* Logo */}
       <div className={cn("flex items-center px-3 py-2", expanded ? "gap-2" : "justify-center")}>
-        <Link href="/" className="flex items-center gap-2">
+        <Link href="/library" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold">
             L
           </div>
@@ -130,7 +129,6 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
               href={item.href}
               expanded={expanded}
               active={isActive(item.href)}
-              comingSoon={item.comingSoon}
             />
           ))}
         </nav>
@@ -171,7 +169,6 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
               href={item.href}
               expanded={expanded}
               active={isActive(item.href)}
-              comingSoon={'comingSoon' in item ? item.comingSoon : undefined}
             />
           ))}
         </nav>

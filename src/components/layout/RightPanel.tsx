@@ -13,6 +13,7 @@ import { usePanel } from "@/hooks/usePanel";
 import { useTranslation } from "@/hooks/useTranslation";
 import { FileTree } from "@/components/project/FileTree";
 import { isPreviewable } from "@/lib/file-categories";
+import { importDirectory, importLocalFile } from "@/lib/knowledge/client";
 
 interface RightPanelProps {
   width?: number;
@@ -26,6 +27,14 @@ export function RightPanel({ width }: RightPanelProps) {
 
   const handleFileAdd = useCallback((path: string) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path } }));
+  }, []);
+
+  const handleFileAddToLibrary = useCallback(async (path: string) => {
+    try {
+      await importLocalFile(path);
+    } catch (error) {
+      console.error('[RightPanel] Failed to add file to library:', error);
+    }
   }, []);
 
   const handleFileSelect = useCallback((path: string) => {
@@ -50,6 +59,20 @@ export function RightPanel({ width }: RightPanelProps) {
       }
     } catch (error) {
       console.error('Failed to open folder:', error);
+    }
+  }, [workingDirectory]);
+
+  const handleAddFolderToLibrary = useCallback(async () => {
+    if (!workingDirectory) return;
+    try {
+      await importDirectory({
+        directory: workingDirectory,
+        baseDir: workingDirectory,
+        recursive: true,
+        mode: 'ingest',
+      });
+    } catch (error) {
+      console.error('[RightPanel] Failed to add folder to library:', error);
     }
   }, [workingDirectory]);
 
@@ -126,6 +149,8 @@ export function RightPanel({ width }: RightPanelProps) {
           workingDirectory={workingDirectory}
           onFileSelect={handleFileSelect}
           onFileAdd={handleFileAdd}
+          onFileAddToLibrary={handleFileAddToLibrary}
+          onFolderAddToLibrary={handleAddFolderToLibrary}
         />
       </div>
     </aside>

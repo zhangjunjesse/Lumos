@@ -16,11 +16,14 @@ import { useTranslation } from "@/hooks/useTranslation";
 
 const routeKeys: Record<string, string> = {
   "/": "topbar.workspace",
+  "/library": "topbar.workspace",
   "/documents": "topbar.document",
   "/recent": "topbar.recent",
   "/starred": "topbar.starred",
   "/trash": "topbar.trash",
   "/knowledge": "topbar.knowledge",
+  "/library-demo": "topbar.workspace",
+  "/mind": "topbar.mind",
   "/settings": "topbar.settings",
   "/chat": "topbar.chat",
 };
@@ -34,7 +37,9 @@ export function TopBar({ onOpenAssistant }: TopBarProps) {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
 
-  const routeKey = routeKeys[pathname];
+  const routeKey = routeKeys[pathname]
+    || (pathname.startsWith("/library") ? "topbar.workspace" : undefined)
+    || (pathname.startsWith("/knowledge") ? "topbar.knowledge" : undefined);
   const breadcrumb = routeKey
     ? t(routeKey as Parameters<typeof t>[0])
     : pathname.startsWith("/documents/")

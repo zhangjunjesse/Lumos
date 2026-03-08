@@ -24,9 +24,18 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.ok) {
+      const errorCode = result.error || 'SEND_FAILED';
+      const status =
+        errorCode === 'FEISHU_AUTH_REQUIRED' ||
+        errorCode === 'FEISHU_AUTH_EXPIRED' ||
+        errorCode === 'FEISHU_USER_INFO_MISSING'
+          ? 401
+          : errorCode === 'EMPTY_CONTENT' || errorCode === 'EMPTY_MEDIA'
+            ? 400
+            : 500;
       return NextResponse.json(
-        { error: result.error || 'SEND_FAILED', code: 'SEND_FAILED' },
-        { status: 500 },
+        { error: errorCode, code: errorCode },
+        { status },
       );
     }
 
@@ -38,4 +47,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

@@ -1,6 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  SDKMessage,
   SDKAssistantMessage,
   SDKUserMessage,
   SDKResultMessage,
@@ -14,29 +13,21 @@ import type {
   McpServerConfig,
   NotificationHookInput,
   PostToolUseHookInput,
+  UserPromptSubmitHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, FileAttachment, ApiProvider } from '@/types';
 import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
-import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest, getEnabledSkills } from './db';
+import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest } from './db';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
+import { execFileSync } from 'child_process';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { searchAll, buildContext } from '@/lib/knowledge/searcher';
+import { searchWithMeta, buildContext } from '@/lib/knowledge/searcher';
 import { sanitizeEnv, resolveScriptFromCmd } from './claude/utils';
-
-let cachedClaudePath: string | null | undefined;
-
-function findClaudePath(): string | undefined {
-  if (cachedClaudePath !== undefined) return cachedClaudePath || undefined;
-  console.log('[claude-client] Searching for Claude CLI...');
-  const found = findClaudeBinary();
-  console.log('[claude-client] Claude CLI search result:', found || 'NOT FOUND');
-  cachedClaudePath = found ?? null;
-  return found;
-}
+import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -48,7 +39,6 @@ let _cachedNodePath: string | null | undefined;
 /** Check if a node binary is version >= 18 (required for ReadableStream etc.) */
 function isNodeVersionOk(nodePath: string): boolean {
   try {
-    const { execFileSync } = require('child_process');
     const ver = execFileSync(nodePath, ['--version'], {
       timeout: 3000, encoding: 'utf-8', stdio: 'pipe',
     }).toString().trim();
@@ -166,7 +156,6 @@ function findSystemNode(): string | undefined {
 
   // Last resort: `which node`
   try {
-    const { execFileSync } = require('child_process');
     const cmd = process.platform === 'win32' ? 'where' : '/usr/bin/which';
     const result = execFileSync(cmd, ['node'], {
       timeout: 3000, encoding: 'utf-8', stdio: 'pipe',
@@ -316,7 +305,7 @@ function extractTokenUsage(msg: SDKResultMessage): TokenUsage | null {
 /**
  * Get file paths for non-image attachments. If the file already has a
  * persisted filePath (written by the uploads route), reuse it. Otherwise
- * fall back to writing the file to .codepilot-uploads/.
+ * fall back to writing the file to .lumos-uploads/.
  */
 function getUploadedFilePaths(files: FileAttachment[], workDir: string): string[] {
   const paths: string[] = [];
@@ -327,7 +316,7 @@ function getUploadedFilePaths(files: FileAttachment[], workDir: string): string[
     } else {
       // Fallback: write file to disk (should not happen in normal flow)
       if (!uploadDir) {
-        uploadDir = path.join(workDir, '.codepilot-uploads');
+        uploadDir = path.join(workDir, '.lumos-uploads');
         if (!fs.existsSync(uploadDir)) {
           fs.mkdirSync(uploadDir, { recursive: true });
         }
@@ -385,6 +374,7 @@ function buildPromptWithHistory(
 export function streamClaude(options: ClaudeStreamOptions): ReadableStream<string> {
   const {
     prompt,
+    rawPrompt,
     sessionId,
     sdkSessionId,
     model,
@@ -512,6 +502,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Check if dangerously_skip_permissions is enabled in app settings
         const skipPermissions = getSetting('dangerously_skip_permissions') === 'true';
+        const enableProjectSettings = getSetting('claude_project_settings_enabled') === 'true';
+        const settingSources: Options['settingSources'] = enableProjectSettings ? ['project'] : [];
 
         const queryOptions: Options = {
           cwd: workingDirectory || os.homedir(),
@@ -527,9 +519,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           // - ~/.claude.json (user's global MCP servers)
           // - .claude/settings.json (project settings)
           // - .claude.json (project MCP servers)
-          // All config (API key, MCP servers, skills, hooks) must be injected
-          // programmatically via this Options object.
-          settingSources: [],
+          // When 'claude_project_settings_enabled' is true, we load ONLY project
+          // settings (including CLAUDE.md/rules) while still isolating user-level config.
+          settingSources,
         };
 
         if (skipPermissions) {
@@ -573,12 +565,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Knowledge base context injection (only if enabled)
         let kbContext = '';
-        const kbEnabled = getSetting('kb_context_enabled') === 'true';
+        const kbEnabled = getSetting('kb_context_enabled') !== 'false';
         if (kbEnabled) {
           try {
             console.time('[perf] KB search');
-            const kbResults = await searchAll(prompt, 3);
-            kbContext = buildContext(kbResults);
+            const kbTopK = Math.max(1, Math.min(Number(getSetting('kb_context_top_k') || '4') || 4, 10));
+            const kbMode = (getSetting('kb_retrieval_mode') || '').trim().toLowerCase() === 'enhanced'
+              ? 'enhanced'
+              : 'reference';
+            const rewriteDisabled = getSetting('kb_query_rewrite_enabled') === 'false';
+            const kbRun = await searchWithMeta(prompt, {
+              topK: kbTopK,
+              retrievalMode: kbMode,
+              disableRewrite: rewriteDisabled,
+            });
+            kbContext = buildContext(kbRun.results, {
+              retrievalMode: kbRun.meta.retrievalMode,
+              queryVariants: kbRun.meta.queryVariants,
+            });
             console.timeEnd('[perf] KB search');
           } catch (err) {
             console.warn('[claude-client] KB search failed:', err);
@@ -614,20 +618,33 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // === ISOLATION: MCP servers ===
         // Only pass explicitly provided config (e.g. from Lumos UI).
-        // With settingSources: [], the SDK won't load user's ~/.claude.json
-        // or ~/.claude/settings.json, so no user MCP servers will be loaded.
-        // IMPORTANT: Only pass MCP config on first message (not when resuming)
-        // to avoid restarting MCP servers on every message.
-        if (!shouldResume && mcpServers && Object.keys(mcpServers).length > 0) {
-          queryOptions.mcpServers = toSdkMcpConfig(mcpServers);
-          console.log('[claude-client] Loading MCP servers:', Object.keys(mcpServers));
+        // User-level ~/.claude.json and ~/.claude/settings.json are still
+        // isolated. Project-level MCP may load only when project settings
+        // loading is explicitly enabled.
+        const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
+        if (hasMcpServers) {
+          const serverNames = Object.keys(mcpServers!);
+          const hasGeminiImageServer = serverNames.includes('gemini-image') || serverNames.includes('gemini_image');
+          const hasChromeDevtoolsServer = serverNames.includes('chrome-devtools') || serverNames.includes('chrome_devtools');
+          const forceReloadOnResume = shouldResume
+            && (hasGeminiImageServer || hasChromeDevtoolsServer || getSetting('mcp_reload_on_resume') === 'true');
+
+          if (!shouldResume || forceReloadOnResume) {
+            queryOptions.mcpServers = toSdkMcpConfig(mcpServers!);
+            console.log('[claude-client] Loading MCP servers:', {
+              names: serverNames,
+              reason: shouldResume ? 'resume-reload' : 'initial',
+            });
+          } else if (shouldResume) {
+            console.log('[claude-client] Resuming session, reusing existing MCP connections');
+          }
         } else if (shouldResume) {
-          console.log('[claude-client] Resuming session, reusing existing MCP connections');
+          console.log('[claude-client] Resuming session without MCP servers');
         }
 
         // === ISOLATION: Skills ===
         // Load enabled skills from database via plugin system.
-        // With settingSources: [], the SDK won't load user's global ~/.claude/skills/.
+        // User-level ~/.claude/skills remains isolated.
         // Skills are synced at app startup and when skills are modified in settings.
         // We just reference the pre-synced plugin directory here (no I/O).
         console.time('[perf] Skills loading');
@@ -706,6 +723,29 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Hooks: capture notifications and tool completion events
         queryOptions.hooks = {
+          UserPromptSubmit: [{
+            hooks: [async (input) => {
+              try {
+                const userInput = input as UserPromptSubmitHookInput;
+                const runtimePack = buildMindRuntimePack({
+                  sessionId,
+                  projectPath: workingDirectory || queryOptions.cwd,
+                  prompt: rawPrompt || userInput.prompt || prompt,
+                });
+
+                if (!runtimePack.additionalContext) return {};
+                return {
+                  hookSpecificOutput: {
+                    hookEventName: 'UserPromptSubmit',
+                    additionalContext: runtimePack.additionalContext,
+                  },
+                };
+              } catch (error) {
+                console.warn('[memory] UserPromptSubmit hook failed:', error);
+                return {};
+              }
+            }],
+          }],
           Notification: [{
             hooks: [async (input) => {
               const notif = input as NotificationHookInput;
@@ -831,7 +871,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           return textPrompt;
         }
 
-        let finalPrompt = buildFinalPrompt(!shouldResume);
+        const finalPrompt = buildFinalPrompt(!shouldResume);
 
         // Sandbox: override process.execPath AND PATH so the SDK forks the
         // CLI with a proper Node.js >= 18 instead of the Electron binary.
@@ -912,7 +952,6 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         registerConversation(sessionId, conversation);
 
-        let lastAssistantText = '';
         let tokenUsage: TokenUsage | null = null;
         let firstMessageReceived = false;
 
@@ -931,11 +970,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             case 'assistant': {
               const assistantMsg = message as SDKAssistantMessage;
               // Text deltas are handled by stream_event for real-time streaming.
-              // Only track lastAssistantText here and process tool_use blocks.
               const text = extractTextFromMessage(assistantMsg);
-              if (text) {
-                lastAssistantText = text;
-              }
+              if (text) { /* noop: text already streamed via stream_event */ }
 
               // Check for tool use blocks
               for (const block of assistantMsg.message.content) {

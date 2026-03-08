@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as store from '@/lib/knowledge/store';
 import { importWebPage } from '@/lib/knowledge/importer';
+import { ensureDefaultCollectionId } from '@/lib/knowledge/default-collection';
+import * as store from '@/lib/knowledge/store';
+import { buildSourceKey } from '@/lib/knowledge/source-key';
 
 /**
  * POST /api/clip/url
@@ -12,13 +14,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'url required' }, { status: 400 });
   }
 
-  // Ensure a default collection exists
-  let collections = store.listCollections();
-  if (collections.length === 0) {
-    store.createCollection('Default', 'Auto-created');
-    collections = store.listCollections();
+  const collectionId = ensureDefaultCollectionId();
+  const sourceKey = buildSourceKey({ sourceType: 'webpage', sourcePath: url });
+  let existing = store.findItemBySourceKey(collectionId, sourceKey);
+  if (!existing) {
+    existing = store.findItemBySource(collectionId, 'webpage', url);
   }
-  const collectionId = collections[0].id;
+  if (existing) {
+    return NextResponse.json({ duplicate: true, item: existing, message: '网页已存在，已跳过添加' });
+  }
 
   try {
     const res = await fetch(url, {
@@ -30,7 +34,7 @@ export async function POST(req: NextRequest) {
     const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const title = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || url;
 
-    const result = await importWebPage(collectionId, title, url, text);
+    const result = await importWebPage(collectionId, title, url, text, sourceKey);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

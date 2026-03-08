@@ -1,7 +1,16 @@
 import create from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type TabType = 'file-tree' | 'feishu-doc' | 'settings' | 'knowledge' | 'plugins' | 'file-preview';
+export type TabType =
+  | 'file-tree'
+  | 'browser'
+  | 'favorites'
+  | 'feishu-doc'
+  | 'feishu-doc-preview'
+  | 'settings'
+  | 'knowledge'
+  | 'plugins'
+  | 'file-preview';
 
 export interface Tab {
   id: string; // UUID
@@ -145,6 +154,7 @@ export const useContentPanelStore = create<ContentPanelStore>(
     }),
     {
       name: 'content-panel-storage',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Zustand persist typing conflicts with Tab.data unknown.
       partialize: (state: any) => ({
         tabs: state.tabs.filter((t: Tab) => !t.isTemporary), // 排除临时标签
         activeTabId: state.activeTabId,

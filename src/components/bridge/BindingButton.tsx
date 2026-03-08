@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useBinding } from "@/hooks/useBinding";
@@ -8,6 +8,7 @@ import { BindingStatusBadge } from "./BindingStatusBadge";
 import { BindingStatusPopover } from "./BindingStatusPopover";
 import { ShareLinkDialog } from "./ShareLinkDialog";
 import { Toast } from "@/components/ui/toast";
+import { openAuthUrl } from "@/lib/open-auth";
 
 interface BindingButtonProps {
   sessionId: string;
@@ -18,9 +19,20 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
   const [configured, setConfigured] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [loginInFlight, setLoginInFlight] = useState(false);
   const [shareLink, setShareLink] = useState("");
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const pendingCreateRef = useRef(false);
+  const createBindingRef = useRef<() => void>(() => {});
+
+  const handleAuthSuccess = useCallback(() => {
+    setLoginInFlight(false);
+    if (pendingCreateRef.current) {
+      pendingCreateRef.current = false;
+      createBindingRef.current();
+    }
+  }, []);
 
   useEffect(() => {
     const checkConfig = async () => {
@@ -37,7 +49,58 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
     checkConfig();
   }, []);
 
-  const handleCreate = async () => {
+  useEffect(() => {
+    const onAuthSuccess = (event: MessageEvent) => {
+      const data = event.data as { type?: string } | null;
+      if (data?.type === "feishu-auth-success") {
+        handleAuthSuccess();
+      }
+    };
+    window.addEventListener("message", onAuthSuccess);
+    return () => window.removeEventListener("message", onAuthSuccess);
+  }, [handleAuthSuccess]);
+
+  const openFeishuLogin = useCallback(async (retryAfterLogin: boolean) => {
+    if (loginInFlight) return;
+    setLoginInFlight(true);
+    if (retryAfterLogin) pendingCreateRef.current = true;
+
+    try {
+      const res = await fetch("/api/feishu/auth/login");
+      const data = await res.json();
+      if (!data?.url) {
+        setLoginInFlight(false);
+        setToast({ type: "error", message: "飞书登录入口获取失败，请稍后重试" });
+        return;
+      }
+
+      await openAuthUrl(data.url);
+
+      let count = 0;
+      const timer = setInterval(async () => {
+        count += 1;
+        try {
+          const statusRes = await fetch("/api/feishu/auth/status");
+          const status = await statusRes.json();
+          if (status?.authenticated) {
+            clearInterval(timer);
+            handleAuthSuccess();
+          }
+        } catch {
+          // ignore transient errors
+        }
+        if (count >= 30) {
+          clearInterval(timer);
+          setLoginInFlight(false);
+        }
+      }, 2000);
+    } catch (err) {
+      setLoginInFlight(false);
+      setToast({ type: "error", message: "飞书登录失败，请稍后重试" });
+    }
+  }, [handleAuthSuccess, loginInFlight]);
+
+  const handleCreate = useCallback(async () => {
     setCreating(true);
     try {
       const res = await fetch("/api/bridge/bindings", {
@@ -53,14 +116,26 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
         await refetch();
       } else {
         const errorData = await res.json();
-        setToast({ type: "error", message: errorData.error || "创建绑定失败" });
+        if (
+          errorData?.action === "goto_feishu_login" ||
+          errorData?.error === "FEISHU_AUTH_REQUIRED" ||
+          errorData?.error === "FEISHU_AUTH_EXPIRED"
+        ) {
+          await openFeishuLogin(true);
+        } else {
+          setToast({ type: "error", message: errorData.message || errorData.error || "创建绑定失败" });
+        }
       }
     } catch (err) {
       setToast({ type: "error", message: "网络连接失败，请检查网络后重试" });
     } finally {
       setCreating(false);
     }
-  };
+  }, [openFeishuLogin, refetch]);
+
+  useEffect(() => {
+    createBindingRef.current = () => handleCreate();
+  }, [handleCreate]);
 
   const handleToggleSync = async (enabled: boolean) => {
     if (!binding) return;

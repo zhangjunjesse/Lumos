@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
-import { randomBytes } from 'crypto';
 import Database from 'better-sqlite3';
+import { requireActiveFeishuUserAuth } from '@/lib/bridge/feishu-auth-guard';
 
 async function syncHistoryMessages(
   db: Database.Database,
@@ -65,6 +65,18 @@ export async function POST(req: NextRequest) {
         message: '请先配置飞书应用',
         action: 'goto_settings'
       }, { status: 400 });
+    }
+
+    const auth = requireActiveFeishuUserAuth();
+    if (!auth.ok) {
+      return NextResponse.json(
+        {
+          error: auth.code,
+          message: auth.message,
+          action: 'goto_feishu_login',
+        },
+        { status: 401 },
+      );
     }
 
     const db = getDb();

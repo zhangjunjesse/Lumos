@@ -19,7 +19,11 @@ interface Skill {
   is_enabled: boolean;
 }
 
-export function SkillsManager() {
+interface SkillsManagerProps {
+  refreshKey?: number;
+}
+
+export function SkillsManager({ refreshKey = 0 }: SkillsManagerProps) {
   const { t } = useTranslation();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +45,7 @@ export function SkillsManager() {
 
   useEffect(() => {
     fetchSkills();
-  }, [fetchSkills]);
+  }, [fetchSkills, refreshKey]);
 
   const handleToggle = useCallback(async (skill: Skill, enabled: boolean) => {
     try {
@@ -233,4 +237,3 @@ export function SkillsManager() {
     </div>
   );
 }
-

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllMcpServers, createMcpServer } from "@/lib/db";
+import { getAllMcpServers, createMcpServer, getMcpServerByNameAndScope } from "@/lib/db";
 
 export async function GET() {
   try {
@@ -17,12 +17,33 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name, command, args, env, scope } = body;
+    const { name, command, args, env, scope, type, url, headers, description } = body;
+    const effectiveType = type || 'stdio';
 
-    if (!name || !command) {
+    if (!name) {
       return NextResponse.json(
-        { error: "Name and command are required" },
+        { error: "Name is required" },
         { status: 400 }
+      );
+    }
+    if (effectiveType === 'stdio' && !command) {
+      return NextResponse.json(
+        { error: "Command is required for stdio MCP servers" },
+        { status: 400 }
+      );
+    }
+    if ((effectiveType === 'sse' || effectiveType === 'http') && !url) {
+      return NextResponse.json(
+        { error: "URL is required for sse/http MCP servers" },
+        { status: 400 }
+      );
+    }
+
+    const existing = getMcpServerByNameAndScope(name, scope || "user");
+    if (existing) {
+      return NextResponse.json(
+        { error: `MCP server \"${name}\" already exists` },
+        { status: 409 }
       );
     }
 
@@ -31,6 +52,10 @@ export async function POST(request: Request) {
       command,
       args: args || [],
       env: env || {},
+      type: effectiveType,
+      url: url || '',
+      headers: headers || {},
+      description: description || '',
       scope: scope || "user",
       is_enabled: true,
     });

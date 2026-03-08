@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllProviders, getDefaultProviderId } from '@/lib/db';
-import type { ErrorResponse, ProviderModelGroup } from '@/types';
+import type { ApiProvider, ErrorResponse, ProviderModelGroup } from '@/types';
 
 // Default Claude model options
 const DEFAULT_MODELS = [
@@ -53,6 +53,29 @@ const PROVIDER_MODEL_LABELS: Record<string, { value: string; label: string }[]> 
   ],
 };
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().toLowerCase().replace(/\/+$/, '');
+}
+
+const NORMALIZED_PROVIDER_MODEL_LABELS = new Map<string, { value: string; label: string }[]>(
+  Object.entries(PROVIDER_MODEL_LABELS).map(([baseUrl, labels]) => [normalizeBaseUrl(baseUrl), labels]),
+);
+
+function getProviderGroupKey(provider: ApiProvider): string {
+  const normalizedBaseUrl = normalizeBaseUrl(provider.base_url || '');
+  if (!normalizedBaseUrl) {
+    return `${provider.provider_type}::id:${provider.id}`;
+  }
+  return `${provider.provider_type}::${normalizedBaseUrl}`;
+}
+
+function providerPriority(provider: ApiProvider, defaultProviderId: string): number {
+  if (provider.id === defaultProviderId) return 3;
+  if (provider.is_active === 1) return 2;
+  if (provider.is_builtin === 1) return 1;
+  return 0;
+}
+
 /**
  * Deduplicate models: if multiple aliases map to the same label, keep only the first one.
  */
@@ -72,6 +95,7 @@ export async function GET() {
   try {
     const providers = getAllProviders();
     const groups: ProviderModelGroup[] = [];
+    const defaultProviderId = getDefaultProviderId() || '';
 
     // Check for environment variables
     const hasEnvKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
@@ -87,10 +111,31 @@ export async function GET() {
     // Provider types that are not LLMs (e.g. image generation) — skip in chat model selector
     const MEDIA_PROVIDER_TYPES = new Set(['gemini-image']);
 
-    // Build a group for each configured provider
+    // Collapse providers that point to the same upstream to avoid duplicate model groups.
+    const dedupedProviders = new Map<string, ApiProvider>();
+    const providerKeyById = new Map<string, string>();
+
     for (const provider of providers) {
       if (MEDIA_PROVIDER_TYPES.has(provider.provider_type)) continue;
-      const matched = PROVIDER_MODEL_LABELS[provider.base_url];
+      const key = getProviderGroupKey(provider);
+      providerKeyById.set(provider.id, key);
+
+      const existing = dedupedProviders.get(key);
+      if (!existing) {
+        dedupedProviders.set(key, provider);
+        continue;
+      }
+
+      const existingPriority = providerPriority(existing, defaultProviderId);
+      const candidatePriority = providerPriority(provider, defaultProviderId);
+      if (candidatePriority > existingPriority) {
+        dedupedProviders.set(key, provider);
+      }
+    }
+
+    // Build a group for each configured provider
+    for (const provider of dedupedProviders.values()) {
+      const matched = NORMALIZED_PROVIDER_MODEL_LABELS.get(normalizeBaseUrl(provider.base_url || ''));
       const rawModels = matched || DEFAULT_MODELS;
       const models = deduplicateModels(rawModels);
 
@@ -112,12 +157,26 @@ export async function GET() {
       });
     }
 
-    // Determine default provider
-    const defaultProviderId = getDefaultProviderId() || groups[0].provider_id;
+    // Resolve default provider after deduplication.
+    let resolvedDefaultProviderId = defaultProviderId;
+    const groupIds = new Set(groups.map((g) => g.provider_id));
+
+    if (!resolvedDefaultProviderId || !groupIds.has(resolvedDefaultProviderId)) {
+      const key = resolvedDefaultProviderId ? providerKeyById.get(resolvedDefaultProviderId) : undefined;
+      if (key) {
+        const resolved = dedupedProviders.get(key);
+        if (resolved && groupIds.has(resolved.id)) {
+          resolvedDefaultProviderId = resolved.id;
+        }
+      }
+    }
+    if (!resolvedDefaultProviderId || !groupIds.has(resolvedDefaultProviderId)) {
+      resolvedDefaultProviderId = groups[0].provider_id;
+    }
 
     return NextResponse.json({
       groups,
-      default_provider_id: defaultProviderId,
+      default_provider_id: resolvedDefaultProviderId,
     });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

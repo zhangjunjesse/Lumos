@@ -26,6 +26,8 @@ import * as imageDownload from './tools/image-download.js';
 import * as driveList from './tools/drive-list.js';
 import * as driveSearch from './tools/drive-search.js';
 import * as wikiListSpaces from './tools/wiki-list-spaces.js';
+import * as reportList from './tools/report-list.js';
+import * as reportRead from './tools/report-read.js';
 import * as authStatus from './tools/auth-status.js';
 
 // 工具注册表
@@ -34,6 +36,7 @@ const tools = [
   sheetRead, sheetAppendRows, sheetUpdateCells,
   imageList, imageDownload,
   driveList, driveSearch, wikiListSpaces,
+  reportList, reportRead,
   authStatus
 ];
 const toolMap = new Map(tools.map(t => [t.name, t]));
