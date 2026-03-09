@@ -1,5 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
+/* Use project-local package paths to avoid parent workspace resolution. */
+@import "../../node_modules/tailwindcss/index.css";
+@import "../../node_modules/tw-animate-css/dist/tw-animate.css";
 
 /* Global: all interactive elements show pointer cursor */
 @layer base {

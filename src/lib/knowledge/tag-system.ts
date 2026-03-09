@@ -191,7 +191,7 @@ export function syncItemTagSystem(itemId: string, candidates: TagSystemCandidate
           CATEGORY_COLOR_MAP[candidate.category] || CATEGORY_COLOR_MAP.custom,
           ts,
         );
-      } else if (existing.category === 'custom' && candidate.category !== 'custom') {
+      } else if (existing && existing.category === 'custom' && candidate.category !== 'custom') {
         updateTagMeta.run(
           candidate.category,
           CATEGORY_COLOR_MAP[candidate.category] || CATEGORY_COLOR_MAP.custom,
