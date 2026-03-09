@@ -13,6 +13,29 @@ import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
 import { importDirectory, importLocalFile, importFeishuDoc, importUrl } from '@/lib/knowledge/client';
 
+const BROWSER_BASE_WIDTH = 1366;
+
+function buildApplyFitWidthScript(scale: number): string {
+  const normalizedScale = Math.max(0.25, Math.min(1, scale));
+  return `(() => {
+    const root = document.documentElement;
+    if (!root) return false;
+    root.style.zoom = '${normalizedScale}';
+    root.style.transformOrigin = 'top left';
+    root.dataset.lumosWidthMode = 'fit';
+    return true;
+  })()`;
+}
+
+const CLEAR_FIT_WIDTH_SCRIPT = `(() => {
+  const root = document.documentElement;
+  if (!root) return false;
+  root.style.zoom = '';
+  root.style.transformOrigin = '';
+  delete root.dataset.lumosWidthMode;
+  return true;
+})()`;
+
 function getBrowserTabTitle(url: string, fallback: string): string {
   try {
     const parsed = new URL(url);
@@ -31,7 +54,7 @@ interface BrowserTabData {
 
 export function ContentRenderer() {
   const { tabs, activeTabId, addTab, setActiveTab, updateTab } = useContentPanelStore();
-  const { workingDirectory, setPreviewFile, sessionId, contentPanelOpen, setContentPanelOpen } = usePanel();
+  const { workingDirectory, setPreviewFile, sessionId, contentPanelOpen } = usePanel();
   const { t } = useTranslation();
   const rendererHostRef = useRef<HTMLDivElement | null>(null);
 
@@ -185,86 +208,6 @@ export function ContentRenderer() {
     });
   }, [activeTabId, addTab, setActiveTab, t, tabs]);
 
-  const handleOpenBrowserUrlFromMcp = useCallback((url: string, pageId?: string) => {
-    const normalizedUrl = url.trim();
-    if (!normalizedUrl) return;
-    setContentPanelOpen(true);
-
-    const normalizedPageId = typeof pageId === 'string' ? pageId.trim() : '';
-    if (normalizedPageId) {
-      const existingByPage = tabs.find((tab) => {
-        if (tab.type !== 'browser') return false;
-        const tabData = (tab.data as BrowserTabData | undefined) || {};
-        return tabData.pageId === normalizedPageId;
-      });
-      if (existingByPage) {
-        const currentData = (existingByPage.data as Record<string, unknown> | undefined) || {};
-        updateTab(existingByPage.id, {
-          title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
-          data: { ...currentData, url: normalizedUrl, pageId: normalizedPageId },
-        });
-        setActiveTab(existingByPage.id);
-        return;
-      }
-    }
-
-    const existingByUrl = tabs.find((tab) => {
-      if (tab.type !== 'browser') return false;
-      const browserUrl = (tab.data as BrowserTabData | undefined)?.url || '';
-      return browserUrl === normalizedUrl;
-    });
-    if (existingByUrl) {
-      if (normalizedPageId) {
-        const currentData = (existingByUrl.data as Record<string, unknown> | undefined) || {};
-        updateTab(existingByUrl.id, {
-          data: { ...currentData, pageId: normalizedPageId },
-        });
-      }
-      setActiveTab(existingByUrl.id);
-      return;
-    }
-
-    const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const fitWidth = (activeBrowserTab?.data as BrowserTabData | undefined)?.fitWidth ?? true;
-
-    addTab({
-      type: 'browser',
-      title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
-      closable: true,
-      data: {
-        url: normalizedUrl,
-        fitWidth,
-        ...(normalizedPageId ? { pageId: normalizedPageId } : {}),
-      },
-    });
-  }, [activeTabId, addTab, setActiveTab, setContentPanelOpen, t, tabs, updateTab]);
-
-  useEffect(() => {
-    const api = window.electronAPI?.browser;
-    if (!api?.onOpenInContentTab) {
-      return;
-    }
-
-    return api.onOpenInContentTab(({ url, pageId }) => {
-      handleOpenBrowserUrlFromMcp(url, pageId);
-    });
-  }, [handleOpenBrowserUrlFromMcp]);
-
-  useEffect(() => {
-    const onOpenFromMcp = (event: Event) => {
-      const detail = (event as CustomEvent<{ url?: string; pageId?: string } | undefined>).detail;
-      const url = typeof detail?.url === 'string' ? detail.url : '';
-      const pageId = typeof detail?.pageId === 'string' ? detail.pageId : undefined;
-      if (!url) return;
-      handleOpenBrowserUrlFromMcp(url, pageId);
-    };
-
-    window.addEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
-    return () => {
-      window.removeEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
-    };
-  }, [handleOpenBrowserUrlFromMcp]);
-
   const activeTab = tabs.find((t: Tab) => t.id === activeTabId);
   const browserTabs = tabs.filter((tab) => tab.type === 'browser');
   const activeTabType = activeTab?.type || null;
@@ -318,19 +261,69 @@ export function ContentRenderer() {
 
   useEffect(() => {
     const api = window.electronAPI?.browser;
-    const host = rendererHostRef.current;
     if (!api?.setDisplayTarget) {
       return;
     }
 
     const shouldShowBrowserView = Boolean(contentPanelOpen && activeTabType === 'browser');
-    if (!shouldShowBrowserView || !host) {
+    const rootHost = rendererHostRef.current;
+    if (!shouldShowBrowserView || !rootHost) {
       void api.setDisplayTarget('hidden');
       return;
     }
 
+    const currentTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
+    const currentData = (currentTab?.data as BrowserTabData | undefined) || {};
+    const pageId = typeof currentData.pageId === 'string' ? currentData.pageId : '';
+    const shouldFitWidth = currentData.fitWidth !== false;
+    let cancelled = false;
+
+    const findBoundsTarget = () => {
+      const activeBrowserContainer = rootHost.querySelector(`[data-browser-tab-id="${activeTabId}"]`);
+      const nativeHost = activeBrowserContainer?.querySelector('[data-browser-native-host="true"]');
+      return (nativeHost as HTMLElement | null) || rootHost;
+    };
+
+    const syncViewportMode = async (rect: DOMRect) => {
+      if (!pageId || !api.connectCDP || !api.sendCDPCommand) {
+        return;
+      }
+
+      try {
+        await api.connectCDP(pageId);
+        if (cancelled) return;
+
+        if (shouldFitWidth) {
+          const scale = Math.min(1, rect.width / BROWSER_BASE_WIDTH);
+          const emulatedHeight = Math.max(1, Math.round(rect.height / Math.max(scale, 0.01)));
+          await api.sendCDPCommand(pageId, 'Emulation.setDeviceMetricsOverride', {
+            mobile: false,
+            width: BROWSER_BASE_WIDTH,
+            height: emulatedHeight,
+            deviceScaleFactor: 1,
+          });
+          if (cancelled) return;
+          await api.sendCDPCommand(pageId, 'Runtime.evaluate', {
+            expression: buildApplyFitWidthScript(scale),
+            awaitPromise: false,
+          });
+          return;
+        }
+
+        await api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {});
+        if (cancelled) return;
+        await api.sendCDPCommand(pageId, 'Runtime.evaluate', {
+          expression: CLEAR_FIT_WIDTH_SCRIPT,
+          awaitPromise: false,
+        });
+      } catch (error) {
+        console.error('[ContentRenderer] Failed to sync browser viewport mode:', error);
+      }
+    };
+
     const syncBounds = () => {
-      const rect = host.getBoundingClientRect();
+      const boundsTarget = findBoundsTarget();
+      const rect = boundsTarget.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) {
         void api.setDisplayTarget('hidden');
         return;
@@ -342,19 +335,34 @@ export function ContentRenderer() {
         width: rect.width,
         height: rect.height,
       });
+
+      void syncViewportMode(rect);
     };
 
     syncBounds();
     const observer = new ResizeObserver(() => syncBounds());
-    observer.observe(host);
+    observer.observe(findBoundsTarget());
     window.addEventListener('resize', syncBounds);
 
     return () => {
+      cancelled = true;
       observer.disconnect();
       window.removeEventListener('resize', syncBounds);
+
+      if (pageId && api.connectCDP && api.sendCDPCommand) {
+        void api.connectCDP(pageId)
+          .then(() => api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {}))
+          .then(() => api.sendCDPCommand(pageId, 'Runtime.evaluate', {
+            expression: CLEAR_FIT_WIDTH_SCRIPT,
+            awaitPromise: false,
+          }))
+          .catch((error) => {
+            console.error('[ContentRenderer] Failed to reset browser viewport mode:', error);
+          });
+      }
       void api.setDisplayTarget('hidden');
     };
-  }, [activeTabType, contentPanelOpen]);
+  }, [activeTabId, activeTabType, contentPanelOpen, tabs]);
 
   if (!activeTab) {
     return null;
@@ -365,6 +373,7 @@ export function ContentRenderer() {
       {browserTabs.map((tab) => (
         <div
           key={tab.id}
+          data-browser-tab-id={tab.id}
           className={cn('absolute inset-0', tab.id === activeTabId ? 'block' : 'hidden')}
         >
           <EmbeddedBrowserPanel
@@ -374,6 +383,7 @@ export function ContentRenderer() {
             onOpenInNewTab={(url) => handleCreateBrowserTab(tab.id, url)}
             onFitWidthChange={(fitWidth) => handleBrowserFitWidthChange(tab.id, fitWidth)}
             onAddToLibrary={handleAddBrowserUrlToLibrary}
+            nativeHost
           />
         </div>
       ))}

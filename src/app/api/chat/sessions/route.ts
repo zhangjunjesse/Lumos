@@ -2,10 +2,11 @@ import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import { getAllSessions, createSession } from '@/lib/db';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
+import { isLibraryChatSession } from '@/lib/chat/library-session';
 
 export async function GET() {
   try {
-    const sessions = getAllSessions();
+    const sessions = getAllSessions().filter((session) => !isLibraryChatSession(session));
     const response: SessionsResponse = { sessions };
     return Response.json(response);
   } catch (error) {

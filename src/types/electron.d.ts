@@ -60,6 +60,7 @@ interface ElectronBrowserAPI {
   switchTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
   getTabs: () => Promise<{ success: boolean; tabs?: BrowserTab[]; activeTabId?: string; error?: string }>;
   navigate: (tabId: string, url: string, timeout?: number) => Promise<{ success: boolean; error?: string }>;
+  setZoomFactor: (tabId: string, zoomFactor: number) => Promise<{ success: boolean; error?: string }>;
   getCookies: (filter?: Electron.CookiesGetFilter) => Promise<{ success: boolean; cookies?: Electron.Cookie[]; error?: string }>;
   setCookie: (cookie: Electron.CookiesSetDetails) => Promise<{ success: boolean; error?: string }>;
   connectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;

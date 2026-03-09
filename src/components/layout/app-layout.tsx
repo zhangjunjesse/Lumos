@@ -188,7 +188,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
               />
 
-              <TopBar onOpenAssistant={openAssistant} />
+              <TopBar />
 
               <div className="flex flex-1 overflow-hidden">
                 <main className="relative flex-1 overflow-auto">

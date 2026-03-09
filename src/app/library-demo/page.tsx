@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Delete } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { MessageInput } from "@/components/chat/MessageInput";
+import { LibraryChatPanel } from "@/components/knowledge/LibraryChatPanel";
 import { LibraryImportPanel } from "@/components/knowledge/library-import-panel";
 import {
   getDefaultCollection,
@@ -45,7 +45,6 @@ type ProcessingStatus =
 
 type ViewMode = "all" | "recent" | "ready" | "attention";
 type TypeFilter = "all" | "documents" | "conversations" | "audio" | "video" | "web";
-type DensityMode = "compact" | "comfortable";
 type SortMode = "updated_desc" | "updated_asc" | "title_asc" | "title_desc";
 
 type LibraryItem = {
@@ -56,6 +55,7 @@ type LibraryItem = {
   summary: string;
   keyPoints: string[];
   path: string;
+  displayPath?: string;
   updatedAt?: string;
   timeLabel: string;
   date: string;
@@ -64,6 +64,7 @@ type LibraryItem = {
   isDirectory?: boolean;
   children?: LibraryItem[];
   sourceType?: string;
+  sourceKey?: string;
   isVirtual?: boolean;
   processingStatus?: ProcessingStatus;
   processingError?: string;
@@ -77,6 +78,7 @@ type KbItem = {
   title: string;
   source_type: string;
   source_path: string;
+  source_key?: string;
   content: string;
   tags: string;
   summary?: string;
@@ -191,6 +193,11 @@ const TAG_CATEGORY_ORDER: TagCatalogItem["category"][] = [
 
 const TOP_ACTION_BUTTON_CLASS =
   "h-9 shrink-0 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent";
+
+const FEISHU_SYSTEM_TAG: Tag = {
+  label: "飞书",
+  type: "system",
+};
 
 // 文件类型 Logo 组件
 const FileTypeLogo = ({ type }: { type: string }) => {
@@ -370,8 +377,14 @@ function mapPathToType(filePath: string): string {
       return "WAV 音频";
     case "aac":
       return "AAC 音频";
+    case "m4a":
+      return "M4A 音频";
     case "flac":
       return "FLAC 音频";
+    case "ogg":
+      return "OGG 音频";
+    case "opus":
+      return "OPUS 音频";
     case "mp4":
       return "MP4 视频";
     case "mov":
@@ -385,11 +398,134 @@ function mapPathToType(filePath: string): string {
   }
 }
 
-function mapSourceToType(item: KbItem): string {
+function isFeishuDocSourceKey(sourceKey?: string): boolean {
+  const key = String(sourceKey || "").trim().toLowerCase();
+  return key.startsWith("feishu:") && !key.startsWith("feishu:file:");
+}
+
+function isFeishuSource(sourceType?: string, sourceKey?: string, pathLike?: string): boolean {
+  if (sourceType === "feishu") return true;
+  const normalizedKey = String(sourceKey || "").trim().toLowerCase();
+  if (normalizedKey.startsWith("feishu:")) return true;
+  const normalizedPath = normalizeFsPath(pathLike || "");
+  return normalizedPath.includes("/.lumos-uploads/feishu-folders/")
+    || normalizedPath.includes("/.lumos-uploads/feishu-docs/")
+    || normalizedPath.includes("/.lumos-uploads/feishu-files/");
+}
+
+function stripLeadingTimestamp(value: string): string {
+  return value.replace(/^\d{10,}-/, "");
+}
+
+function stripTrailingTokenSuffix(value: string): string {
+  return value.replace(/-[A-Za-z0-9]{6}$/, "");
+}
+
+function stripTrailingDocModeSuffix(value: string): string {
+  return value.replace(/-(ref|full)$/i, "");
+}
+
+function decodeFeishuFileName(name: string): string {
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return stripTrailingTokenSuffix(name);
+  }
+  const stem = name.slice(0, dotIndex);
+  const ext = name.slice(dotIndex);
+  return `${stripTrailingTokenSuffix(stem)}${ext}`;
+}
+
+function extractMirrorSegments(pathLike: string, marker: string): string[] {
+  const normalized = normalizeFsPath(pathLike);
+  const index = normalized.indexOf(marker);
+  if (index < 0) return [];
+  return normalized
+    .slice(index + marker.length)
+    .split("/")
+    .filter(Boolean);
+}
+
+function decodeFeishuFolderDisplayPath(pathLike: string): string | null {
+  const segments = extractMirrorSegments(pathLike, "/.lumos-uploads/feishu-folders/");
+  if (segments.length === 0) return null;
+  const [rootSegment, ...restSegments] = segments;
+  const rootTitle = stripTrailingTokenSuffix(stripLeadingTimestamp(rootSegment)) || "未命名目录";
+  const tail = restSegments.map((segment, index) => {
+    const isLast = index === restSegments.length - 1;
+    if (isLast && segment.includes(".")) {
+      return decodeFeishuFileName(segment);
+    }
+    return segment;
+  });
+  return ["飞书云盘", rootTitle, ...tail].join(" / ");
+}
+
+function decodeFeishuDocDisplayPath(pathLike: string): string | null {
+  const segments = extractMirrorSegments(pathLike, "/.lumos-uploads/feishu-docs/");
+  const fileName = segments[segments.length - 1];
+  if (!fileName) return null;
+  const withoutTimestamp = stripLeadingTimestamp(fileName);
+  const withoutExt = withoutTimestamp.replace(/\.md$/i, "");
+  const title = stripTrailingDocModeSuffix(withoutExt) || "未命名文档";
+  return `飞书文档 / ${title}`;
+}
+
+function decodeFeishuFileDisplayPath(pathLike: string): string | null {
+  const segments = extractMirrorSegments(pathLike, "/.lumos-uploads/feishu-files/");
+  const fileName = segments[segments.length - 1];
+  if (!fileName) return null;
+  const title = stripLeadingTimestamp(fileName) || "未命名文件";
+  return `飞书文件 / ${title}`;
+}
+
+function resolveDisplayPath(pathLike: string, options?: { sourceType?: string; sourceKey?: string }): string {
+  if (!pathLike) return "";
+  if (!isFeishuSource(options?.sourceType, options?.sourceKey, pathLike)) {
+    return pathLike;
+  }
+  const folderDisplayPath = decodeFeishuFolderDisplayPath(pathLike);
+  if (folderDisplayPath) {
+    return options?.sourceType === "feishu" || isFeishuDocSourceKey(options?.sourceKey)
+      ? folderDisplayPath.replace(/\.md$/i, "")
+      : folderDisplayPath;
+  }
+  return (
+    decodeFeishuDocDisplayPath(pathLike)
+    || decodeFeishuFileDisplayPath(pathLike)
+    || pathLike
+  );
+}
+
+function isMirroredTitle(value: string, pathLike: string): boolean {
+  const title = String(value || "").trim();
+  if (!title) return true;
+  const baseName = basenameFsPath(pathLike);
+  if (title === baseName) return true;
+  return /^\d{10,}-/.test(title) || /-[A-Za-z0-9]{6}(\.[^.]+)?$/i.test(title);
+}
+
+function resolveDisplayTitle(title: string, pathLike: string, options?: { sourceType?: string; sourceKey?: string }): string {
+  const fallbackTitle = title || basenameFsPath(pathLike) || "Untitled";
+  if (!isFeishuSource(options?.sourceType, options?.sourceKey, pathLike)) {
+    return fallbackTitle;
+  }
+  const displayPath = resolveDisplayPath(pathLike, options);
+  const displayLeaf = displayPath.split(" / ").filter(Boolean).pop();
+  if (!displayLeaf) return fallbackTitle;
+  return isMirroredTitle(fallbackTitle, pathLike) ? displayLeaf : fallbackTitle;
+}
+
+function withSourceTags(tags: Tag[], options?: { isFeishu?: boolean }): Tag[] {
+  if (!options?.isFeishu) return tags;
+  if (tags.some((tag) => tag.label === FEISHU_SYSTEM_TAG.label)) return tags;
+  return [FEISHU_SYSTEM_TAG, ...tags];
+}
+
+function mapSourceToType(item: Pick<KbItem, "source_type" | "source_path" | "source_key">): string {
   if (item.source_type === "local_dir") return "文件目录";
   if (item.source_type === "webpage") return "网页";
   if (item.source_type === "manual") return "文本";
-  if (item.source_type === "feishu") return "飞书文档";
+  if (item.source_type === "feishu" || isFeishuDocSourceKey(item.source_key)) return "飞书文档";
   return mapPathToType(item.source_path || "");
 }
 
@@ -526,7 +662,7 @@ function matchesTypeFilter(item: LibraryItem, filter: TypeFilter) {
   }
   if (filter === "conversations") return item.type === "AI 对话";
   if (filter === "audio") {
-    return ["MP3 音频", "iPhone 录音", "WAV 音频", "AAC 音频", "FLAC 音频"].includes(item.type);
+    return ["MP3 音频", "iPhone 录音", "WAV 音频", "AAC 音频", "M4A 音频", "FLAC 音频", "OGG 音频", "OPUS 音频"].includes(item.type);
   }
   if (filter === "video") {
     return ["MP4 视频", "MOV 视频", "AVI 视频", "MKV 视频"].includes(item.type);
@@ -555,6 +691,11 @@ function mapKbItemToLibrary(
   tagMetaByName: Map<string, TagCatalogItem> = new Map(),
 ): LibraryItem {
   const { date, fullDate } = formatDateParts(item.updated_at || item.created_at);
+  const displayPath = resolveDisplayPath(item.source_path || "", {
+    sourceType: item.source_type,
+    sourceKey: item.source_key,
+  });
+  const feishuSource = isFeishuSource(item.source_type, item.source_key, item.source_path);
   const tags: string[] = (() => {
     try {
       const parsed = JSON.parse(item.tags || "[]");
@@ -572,35 +713,43 @@ function mapKbItemToLibrary(
     ? statusMeta.brief
     : item.content?.trim()
       ? item.content.slice(0, 180)
-      : item.source_path
-        ? `来源: ${item.source_path}`
+      : displayPath
+        ? `来源: ${displayPath}`
         : statusMeta.brief;
   const preview = summary || fallbackPreview;
 
   return {
     id: item.id,
     type: mapSourceToType(item),
-    title: item.title || "Untitled",
+    title: resolveDisplayTitle(item.title || "Untitled", item.source_path || "", {
+      sourceType: item.source_type,
+      sourceKey: item.source_key,
+    }),
     preview,
     summary,
     keyPoints,
     path: item.source_path || "",
+    displayPath,
     updatedAt: item.updated_at || item.created_at,
     timeLabel: "更新于",
     date,
     fullDate,
-    tags: tags.map((tag) => {
-      const meta = tagMetaByName.get(tag.toLowerCase());
-      const category = meta?.category || "custom";
-      return {
-        label: tag,
-        category,
-        color: meta?.color,
-        type: category === "custom" ? ("custom" as const) : ("ai" as const),
-      };
-    }),
+    tags: withSourceTags(
+      tags.map((tag) => {
+        const meta = tagMetaByName.get(tag.toLowerCase());
+        const category = meta?.category || "custom";
+        return {
+          label: tag,
+          category,
+          color: meta?.color,
+          type: category === "custom" ? ("custom" as const) : ("ai" as const),
+        };
+      }),
+      { isFeishu: feishuSource },
+    ),
     isDirectory,
     sourceType: item.source_type,
+    sourceKey: item.source_key,
     processingStatus: normalizeProcessingStatus(item.processing_status),
     processingError: item.processing_error || "",
     processingDetail: item.processing_detail || "",
@@ -619,6 +768,7 @@ function mapFileNodeToLibrary(node: FileTreeNode): LibraryItem {
     summary: "",
     keyPoints: [],
     path: node.path,
+    displayPath: node.path,
     timeLabel: "更新于",
     date,
     fullDate,
@@ -635,39 +785,53 @@ function mapFileNodeToLibrary(node: FileTreeNode): LibraryItem {
 
 function mapIngestJobToFolderItem(job: KnowledgeIngestJob): LibraryItem {
   const { date, fullDate } = formatDateParts(job.updated_at || job.created_at);
+  const feishuSource = isFeishuSource(undefined, undefined, job.source_dir);
+  const displayPath = resolveDisplayPath(job.source_dir);
   const total = Math.max(0, Number(job.total_files || 0));
   const processed = Math.max(0, Number(job.processed_files || 0));
   const status = mapIngestJobStatusToProcessing(job.status);
+  const isFileJob = job.source_type === "file";
   const isReprocess = Number(job.force_reprocess || 0) === 1;
   const progress = total > 0 ? `${processed}/${total}` : `${processed}`;
+  const actionLabel = isReprocess ? "重处理" : (isFileJob ? "文件入库" : "入库");
   const preview = job.status === "completed"
-    ? `${isReprocess ? "重处理完成" : "入库完成"}，已处理 ${progress}`
+    ? `${actionLabel}完成，已处理 ${progress}`
     : job.status === "failed"
-      ? `${isReprocess ? "重处理失败" : "入库失败"}，已处理 ${progress}`
+      ? `${actionLabel}失败，已处理 ${progress}`
       : job.status === "cancelled"
         ? `任务已取消，已处理 ${progress}`
-        : `${isReprocess ? "后台重处理中" : "后台处理中"}，已处理 ${progress}`;
+        : `后台${actionLabel}中，已处理 ${progress}`;
 
   return {
     id: `ingest:${job.id}`,
     ingestJobId: job.id,
-    type: "文件目录",
-    title: basenameFsPath(job.source_dir) || "未命名目录",
+    type: isFileJob
+      ? mapSourceToType({
+          source_type: decodeFeishuDocDisplayPath(job.source_dir) ? "feishu" : "local_file",
+          source_path: job.source_dir,
+          source_key: "",
+        })
+      : "文件目录",
+    title: resolveDisplayTitle(
+      basenameFsPath(job.source_dir) || (isFileJob ? "未命名文件" : "未命名目录"),
+      job.source_dir,
+    ),
     preview,
     summary: "",
     keyPoints: [],
     path: job.source_dir,
+    displayPath,
     updatedAt: job.updated_at || job.created_at,
     timeLabel: "更新于",
     date,
     fullDate,
-    tags: [],
-    isDirectory: true,
-    sourceType: "local_dir",
+    tags: withSourceTags([], { isFeishu: feishuSource }),
+    isDirectory: !isFileJob,
+    sourceType: isFileJob ? "local_file" : "local_dir",
     isVirtual: true,
     processingStatus: status,
     processingError: job.error || "",
-    processingDetail: JSON.stringify({ mode: "ingest_queue", status: job.status, progress }),
+    processingDetail: JSON.stringify({ mode: "ingest_queue", status: job.status, progress, source_type: isFileJob ? "file" : "directory" }),
     chunkCount: 0,
   };
 }
@@ -692,6 +856,7 @@ function buildIngestJobChildren(
 
   const root = new Map<string, TreeNode>();
   const sourceRoot = normalizeFsPath(job.source_dir);
+  const feishuJob = isFeishuSource(undefined, undefined, job.source_dir);
 
   const ensureDir = (parent: Map<string, TreeNode>, segment: string, absPath: string, relPath: string): TreeNode => {
     const existing = parent.get(segment);
@@ -705,11 +870,12 @@ function buildIngestJobChildren(
       summary: "",
       keyPoints: [],
       path: absPath,
+      displayPath: resolveDisplayPath(absPath),
       updatedAt: job.updated_at || job.created_at,
       timeLabel: "更新于",
       date: formatDateParts(job.updated_at || job.created_at).date,
       fullDate: formatDateParts(job.updated_at || job.created_at).fullDate,
-      tags: [],
+      tags: withSourceTags([], { isFeishu: feishuJob }),
       isDirectory: true,
       sourceType: "local_dir",
       isVirtual: true,
@@ -748,6 +914,7 @@ function buildIngestJobChildren(
 
     const fileName = segments[segments.length - 1];
     const imported = (queued.item_id && byId.get(queued.item_id)) || byPath.get(normalizedFile);
+    const feishuItem = isFeishuSource(imported?.sourceType, queued.source_key, normalizedFile);
     const fallbackStatus = mapIngestItemStatusToProcessing(queued.status);
     const fallbackPreview = fallbackStatus === "ready"
       ? "已入库"
@@ -761,19 +928,29 @@ function buildIngestJobChildren(
       : {
           id: `ingest:${job.id}:file:${queued.id}`,
           ingestJobId: job.id,
-          type: mapPathToType(queued.file_path),
-          title: fileName,
+          type: mapSourceToType({
+            source_type: isFeishuDocSourceKey(queued.source_key) ? "feishu" : "local_file",
+            source_path: queued.file_path,
+            source_key: queued.source_key,
+          }),
+          title: resolveDisplayTitle(fileName, queued.file_path, {
+            sourceKey: queued.source_key,
+          }),
           preview: fallbackPreview,
           summary: "",
           keyPoints: [],
           path: queued.file_path,
+          displayPath: resolveDisplayPath(queued.file_path, {
+            sourceKey: queued.source_key,
+          }),
           updatedAt: queued.updated_at || queued.created_at,
           timeLabel: "更新于",
           date: formatDateParts(queued.updated_at || queued.created_at).date,
           fullDate: formatDateParts(queued.updated_at || queued.created_at).fullDate,
-          tags: [],
+          tags: withSourceTags([], { isFeishu: feishuItem }),
           isDirectory: false,
           sourceType: "local_file",
+          sourceKey: queued.source_key,
           isVirtual: true,
           processingStatus: fallbackStatus,
           processingError: queued.error || queued.parse_error || "",
@@ -867,7 +1044,6 @@ export default function LibraryDemoPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showTagSelector, setShowTagSelector] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
-  const [densityMode, setDensityMode] = useState<DensityMode>("comfortable");
   const [sortMode, setSortMode] = useState<SortMode>("updated_desc");
 
   const [collectionId, setCollectionId] = useState<string | null>(null);
@@ -877,11 +1053,6 @@ export default function LibraryDemoPage() {
   const [tagCatalog, setTagCatalog] = useState<TagCatalogItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
-
-  // 对话相关状态
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const [showChat, setShowChat] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
 
   // 收藏状态
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
@@ -896,6 +1067,7 @@ export default function LibraryDemoPage() {
   const [editContent, setEditContent] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [editFeedback, setEditFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [libraryChatCollapsed, setLibraryChatCollapsed] = useState(true);
 
   // 目录导航状态
   const [currentPath, setCurrentPath] = useState<PathItem[]>([]); // 当前路径（面包屑）
@@ -933,12 +1105,15 @@ export default function LibraryDemoPage() {
       const latestJobsByDir = new Map<string, KnowledgeIngestJob>();
       for (const job of Array.isArray(jobs) ? jobs : []) {
         if (job.status === "cancelled") continue;
+        if (job.source_type === "file" && job.status !== "pending" && job.status !== "running") {
+          continue;
+        }
         const key = normalizeFsPath(job.source_dir);
         if (!key || latestJobsByDir.has(key)) continue;
         latestJobsByDir.set(key, job);
       }
       const folderCards = Array.from(latestJobsByDir.values()).map((job) => mapIngestJobToFolderItem(job));
-      const ingestDirs = folderCards.map((folder) => folder.path).filter(Boolean);
+      const ingestDirs = folderCards.filter((folder) => folder.isDirectory).map((folder) => folder.path).filter(Boolean);
       const rootFiles = mapped.filter((item) => !ingestDirs.some((dir) => isPathInsideDir(item.path, dir)));
       const rootItems = [...folderCards, ...rootFiles];
 
@@ -983,27 +1158,6 @@ export default function LibraryDemoPage() {
     }, 3500);
     return () => window.clearInterval(timer);
   }, [hasActiveIngestJobs, loadItems]);
-
-  const handleSend = (content: string) => {
-    // 添加用户消息
-    setMessages(prev => [...prev, { role: 'user', content }]);
-    setShowChat(true); // 展开对话区
-    setIsStreaming(true);
-
-    // 模拟 AI 回复
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: '这是一个模拟的 AI 回复。在实际应用中，这里会调用 AI API 来生成回复。我可以帮你分析资料库中的内容，回答问题，或者基于这些资料创作新内容。'
-      }]);
-      setIsStreaming(false);
-    }, 1000);
-  };
-
-  const clearChat = () => {
-    setMessages([]);
-    setShowChat(false);
-  };
 
   const handleTagClick = (tagLabel: string) => {
     setSelectedTags(prev => {
@@ -1189,6 +1343,10 @@ export default function LibraryDemoPage() {
     const job = ingestJobs.find((entry) => entry.id === item.ingestJobId);
     if (!job) {
       await loadItems();
+      return;
+    }
+    if (job.source_type === "file") {
+      alert("单文件任务请使用“重试失败项”");
       return;
     }
     if (job.status === "running" || job.status === "pending") {
@@ -1397,7 +1555,7 @@ export default function LibraryDemoPage() {
     const titleMatch = item.title.toLowerCase().includes(query);
     const previewMatch = item.preview.toLowerCase().includes(query);
     const tagMatch = item.tags?.some((tag) => tag.label.toLowerCase().includes(query));
-    const pathMatch = item.path.toLowerCase().includes(query);
+    const pathMatch = (item.displayPath || item.path).toLowerCase().includes(query);
     return titleMatch || previewMatch || tagMatch || pathMatch;
   });
 
@@ -1568,25 +1726,6 @@ export default function LibraryDemoPage() {
                   仅收藏
                 </button>
 
-                <div className="inline-flex items-center rounded-lg border border-border bg-background p-0.5">
-                  <button
-                    onClick={() => setDensityMode("compact")}
-                    className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
-                      densityMode === "compact" ? "bg-accent text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    紧凑
-                  </button>
-                  <button
-                    onClick={() => setDensityMode("comfortable")}
-                    className={`rounded-md px-2 py-1 text-[11px] transition-colors ${
-                      densityMode === "comfortable" ? "bg-accent text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    舒展
-                  </button>
-                </div>
-
                 <div className="relative">
                   <button
                     onClick={() => setShowTagSelector(!showTagSelector)}
@@ -1751,7 +1890,7 @@ export default function LibraryDemoPage() {
           )}
 
           {/* 内容卡片网格 */}
-          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 ${densityMode === "compact" ? "gap-2 xl:grid-cols-4" : "gap-3"}`}>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {itemsLoading ? (
               <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
                 <div className="text-sm text-muted-foreground">加载资料中...</div>
@@ -1781,7 +1920,6 @@ export default function LibraryDemoPage() {
                       deleteItem(target);
                     }}
                     deleting={deletingId === item.id}
-                    densityMode={densityMode}
                     showDirectoryRetry={showDirectoryRetry}
                     directoryRetrying={retryingDirectoryId === item.id}
                     directoryRetryLabel={hasRetryableErrors ? "重试失败项" : "重处理目录"}
@@ -1802,86 +1940,46 @@ export default function LibraryDemoPage() {
       </div>
 
       {/* 底部 AI 对话框 */}
-      <div className="border-t border-border/50 bg-background">
-        <div className="mx-auto max-w-4xl px-4">
-          {/* 对话记录区域 */}
-          {showChat && messages.length > 0 && (
-            <div className="border-b border-border/50">
-              <div className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">对话记录</span>
-                  <span className="text-xs text-muted-foreground">({messages.length} 条消息)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={clearChat}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    清空对话
-                  </button>
-                  <button
-                    onClick={() => setShowChat(false)}
-                    className="p-1 rounded hover:bg-accent transition-colors"
-                    title="折叠对话"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                </div>
+      <div className="border-t border-border/50 bg-background/95 backdrop-blur">
+        <div className="mx-auto max-w-4xl px-4 py-3">
+          <div
+            className={`transition-all duration-200 ${
+              libraryChatCollapsed
+                ? ""
+                : "overflow-hidden rounded-2xl border border-border/70 bg-background shadow-sm"
+            }`}
+          >
+            {!libraryChatCollapsed ? (
+              <div className="flex justify-end px-3 pt-3">
+                <button
+                  onClick={() => setLibraryChatCollapsed(true)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  收起
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />
+                  </svg>
+                </button>
               </div>
-
-              {/* 消息列表 */}
-              <div className="max-h-96 overflow-y-auto pb-4 space-y-4">
-                {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-lg px-4 py-2.5 ${
-                        message.role === 'user'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-foreground'
-                      }`}
-                    >
-                      <div className="text-sm whitespace-pre-wrap">{message.content}</div>
-                    </div>
-                  </div>
-                ))}
-                {isStreaming && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-lg px-4 py-2.5 bg-muted">
-                      <div className="flex items-center gap-1">
-                        <div className="w-2 h-2 rounded-full bg-foreground/40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 rounded-full bg-foreground/40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 rounded-full bg-foreground/40 animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </div>
-                    </div>
-                  </div>
-                )}
+            ) : null}
+            <div
+              className={`transition-all duration-200 ${
+                libraryChatCollapsed ? "" : "h-[min(48vh,40rem)]"
+              }`}
+            >
+              <div className={`h-full ${libraryChatCollapsed ? "" : "pb-3"}`}>
+                <LibraryChatPanel
+                  compactInputOnly={libraryChatCollapsed}
+                  fullWidth
+                  hideEmptyState
+                  onInputFocus={() => {
+                    if (libraryChatCollapsed) {
+                      setLibraryChatCollapsed(false);
+                    }
+                  }}
+                />
               </div>
             </div>
-          )}
-
-          {/* 输入框 */}
-          <div className="py-4">
-            {!showChat && messages.length > 0 && (
-              <button
-                onClick={() => setShowChat(true)}
-                className="mb-3 text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                </svg>
-                展开对话记录 ({messages.length} 条消息)
-              </button>
-            )}
-            <MessageInput
-              onSend={handleSend}
-              disabled={false}
-              isStreaming={isStreaming}
-            />
           </div>
         </div>
       </div>
@@ -2075,10 +2173,10 @@ export default function LibraryDemoPage() {
                       </ul>
                     </div>
                   ) : null}
-                  {selectedItem.path && (
+                  {(selectedItem.displayPath || selectedItem.path) && (
                     <div className="rounded-lg border border-border bg-background p-3">
                       <div className="text-xs text-muted-foreground">来源</div>
-                      <div className="mt-1 text-sm break-all">{selectedItem.path}</div>
+                      <div className="mt-1 text-sm break-all">{selectedItem.displayPath || selectedItem.path}</div>
                     </div>
                   )}
                   {selectedItem.processingError ? (
@@ -2217,7 +2315,6 @@ function ContentCard({
   onClick,
   onDelete,
   deleting,
-  densityMode,
   showDirectoryRetry = false,
   directoryRetrying = false,
   directoryRetryLabel = "重试",
@@ -2231,13 +2328,11 @@ function ContentCard({
   onClick: (item: LibraryItem) => void;
   onDelete: (item: LibraryItem, e: React.MouseEvent) => void;
   deleting: boolean;
-  densityMode: DensityMode;
   showDirectoryRetry?: boolean;
   directoryRetrying?: boolean;
   directoryRetryLabel?: string;
   onDirectoryRetry?: (item: LibraryItem, e: React.MouseEvent) => void;
 }) {
-  const compact = densityMode === "compact";
   const summaryText = (item.summary || item.preview || "").trim();
   const canDelete = canRemoveLibraryItem(item);
   // 标签最多显示3个
@@ -2269,121 +2364,125 @@ function ContentCard({
   return (
     <div
       onClick={() => onClick(item)}
-      className={`group relative cursor-pointer rounded-xl border border-border bg-card transition-all hover:scale-[1.01] hover:border-primary/50 hover:shadow-md ${compact ? "p-3" : "p-4"}`}
+      className="group relative flex h-full cursor-pointer flex-col rounded-xl border border-border bg-card p-4 transition-all hover:scale-[1.01] hover:border-primary/50 hover:shadow-md"
     >
-      <div className={compact ? "space-y-2" : "space-y-2.5"}>
+      <div className="flex h-full flex-col">
         {/* 顶部：Logo + 标题（单行）+ 操作按钮（右对齐） */}
-        <div className="flex items-center gap-2.5">
-          <div className="shrink-0 scale-[0.88] transform-gpu">
-            <FileTypeLogo type={item.type} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className={`truncate font-medium ${compact ? "text-xs" : "text-sm"}`} title={item.title}>
-              {item.title}
-            </h3>
-          </div>
-          <div className="ml-1 flex shrink-0 items-center gap-1">
-            <button
-              onClick={(e) => onDelete(item, e)}
-              disabled={!canDelete || deleting}
-              className={`rounded-md p-1 transition-all ${
-                !canDelete
-                  ? "cursor-not-allowed text-muted-foreground/50"
-                  : "text-red-500 hover:bg-red-500/10"
-              }`}
-              title={removeDisabledReason(item)}
-            >
-              <HugeiconsIcon icon={Delete} className="h-4 w-4" />
-            </button>
-
-            <button
-              onClick={(e) => onToggleFavorite(item.id, e)}
-              className="rounded-md p-1 text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
-              title={isFavorite ? "取消收藏" : "收藏"}
-            >
-              {isFavorite ? (
-                <svg className="h-4 w-4 text-yellow-500 fill-current" viewBox="0 0 24 24">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                </svg>
-              ) : (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                </svg>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* 概况：整行展示 */}
-        <div className="rounded-md bg-muted/40 px-2.5 py-1.5">
-          <p className={`text-muted-foreground leading-relaxed ${compact ? "text-[11px] line-clamp-2" : "text-xs line-clamp-3"}`}>
-            {summaryText || "暂无概述"}
-          </p>
-        </div>
-
-        {/* 路径信息 */}
-        {item.path && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
-            <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-            <span className="truncate" title={item.path}>{item.path}</span>
-          </div>
-        )}
-
-        {/* 标签 */}
-        {item.tags && item.tags.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {visibleTags.map((tag, index) => {
-              const isSelected = selectedTags.includes(tag.label);
-              return (
-                <button
-                  key={index}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTagClick(tag.label);
-                  }}
-                  className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium transition-all hover:scale-105 ${
-                    isSelected
-                      ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
-                      : ''
-                  } ${getTagStyle(tag)}`}
-                >
-                  {tag.label}
-                </button>
-              );
-            })}
-            {remainingCount > 0 && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
-                +{remainingCount}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* 元信息 */}
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-muted-foreground">{item.type}</span>
-            {item.processingStatus ? (
-              <span className={`inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${processingMeta(item.processingStatus).className}`}>
-                {processingMeta(item.processingStatus).label}
-              </span>
-            ) : null}
-            {showDirectoryRetry && onDirectoryRetry ? (
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="shrink-0 scale-[0.88] transform-gpu">
+              <FileTypeLogo type={item.type} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-medium" title={item.title}>
+                {item.title}
+              </h3>
+            </div>
+            <div className="ml-1 flex shrink-0 items-center gap-1">
               <button
-                onClick={(e) => onDirectoryRetry(item, e)}
-                disabled={directoryRetrying}
-                className="inline-flex shrink-0 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
-                title={directoryRetryLabel}
+                onClick={(e) => onDelete(item, e)}
+                disabled={!canDelete || deleting}
+                className={`rounded-md p-1 transition-all ${
+                  !canDelete
+                    ? "cursor-not-allowed text-muted-foreground/50"
+                    : "text-red-500 hover:bg-red-500/10"
+                }`}
+                title={removeDisabledReason(item)}
               >
-                {directoryRetrying ? "处理中..." : directoryRetryLabel}
+                <HugeiconsIcon icon={Delete} className="h-4 w-4" />
               </button>
-            ) : null}
+
+              <button
+                onClick={(e) => onToggleFavorite(item.id, e)}
+                className="rounded-md p-1 text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
+                title={isFavorite ? "取消收藏" : "收藏"}
+              >
+                {isFavorite ? (
+                  <svg className="h-4 w-4 text-yellow-500 fill-current" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                ) : (
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
-          <span className="text-muted-foreground" title={item.fullDate}>
-            {item.timeLabel} {item.date}
-          </span>
+
+          {/* 概况：整行展示 */}
+          <div className="flex min-h-[4.5rem] rounded-md bg-muted/40 px-2.5 py-1.5">
+            <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
+              {summaryText || "暂无概述"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-auto space-y-2.5 pt-2.5">
+          {/* 路径信息 */}
+          {(item.displayPath || item.path) && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
+              <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              <span className="truncate" title={item.displayPath || item.path}>{item.displayPath || item.path}</span>
+            </div>
+          )}
+
+          {/* 标签 */}
+          {item.tags && item.tags.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {visibleTags.map((tag, index) => {
+                const isSelected = selectedTags.includes(tag.label);
+                return (
+                  <button
+                    key={index}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTagClick(tag.label);
+                    }}
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium transition-all hover:scale-105 ${
+                      isSelected
+                        ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
+                        : ''
+                    } ${getTagStyle(tag)}`}
+                  >
+                    {tag.label}
+                  </button>
+                );
+              })}
+              {remainingCount > 0 && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-gray-500/10 text-gray-600 dark:text-gray-400">
+                  +{remainingCount}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 元信息 */}
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-muted-foreground">{item.type}</span>
+              {item.processingStatus ? (
+                <span className={`inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${processingMeta(item.processingStatus).className}`}>
+                  {processingMeta(item.processingStatus).label}
+                </span>
+              ) : null}
+              {showDirectoryRetry && onDirectoryRetry ? (
+                <button
+                  onClick={(e) => onDirectoryRetry(item, e)}
+                  disabled={directoryRetrying}
+                  className="inline-flex shrink-0 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  title={directoryRetryLabel}
+                >
+                  {directoryRetrying ? "处理中..." : directoryRetryLabel}
+                </button>
+              ) : null}
+            </div>
+            <span className="text-muted-foreground" title={item.fullDate}>
+              {item.timeLabel} {item.date}
+            </span>
+          </div>
         </div>
       </div>
 

@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Search, User } from "@hugeicons/core-free-icons";
+import { User } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,11 +28,7 @@ const routeKeys: Record<string, string> = {
   "/chat": "topbar.chat",
 };
 
-interface TopBarProps {
-  onOpenAssistant: () => void;
-}
-
-export function TopBar({ onOpenAssistant }: TopBarProps) {
+export function TopBar() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
@@ -53,20 +49,6 @@ export function TopBar({ onOpenAssistant }: TopBarProps) {
       </span>
 
       <div className="flex-1" />
-
-      {/* Search trigger */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 gap-2 px-3 text-xs text-muted-foreground"
-        onClick={onOpenAssistant}
-      >
-        <HugeiconsIcon icon={Search} className="h-3.5 w-3.5" />
-        <span>{t('topbar.search')}</span>
-        <kbd className="ml-2 rounded border bg-muted px-1 text-[10px]">
-          ⌘K
-        </kbd>
-      </Button>
 
       {/* User avatar menu */}
       <DropdownMenu>

@@ -3,6 +3,8 @@ import * as store from '@/lib/knowledge/store';
 import { processImport } from '@/lib/knowledge/importer';
 import { isPathSafe, isRootPath } from '@/lib/files';
 import { buildSourceKey } from '@/lib/knowledge/source-key';
+import { createIngestJob } from '@/lib/knowledge/ingest-queue';
+import { ensureKnowledgeIngestWorker, triggerKnowledgeIngestNow } from '@/lib/knowledge/ingest-worker';
 import os from 'os';
 import { parseFileForKnowledge, buildReferenceContent } from '@/lib/knowledge/parsers';
 import fs from 'fs';
@@ -16,7 +18,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { collection_id, title, source_type, content, source_path, tags, source_key, source_id } = body;
+  const { collection_id, title, source_type, content, source_path, tags, source_key, source_id, ingest_mode } = body;
 
   if (!collection_id || !title) {
     return NextResponse.json({ error: 'collection_id and title required' }, { status: 400 });
@@ -99,6 +101,36 @@ export async function POST(req: NextRequest) {
     }
     if (existing) {
       return NextResponse.json({ duplicate: true, item: existing, message: '资料已存在，已跳过添加' });
+    }
+    const shouldQueueIngest = ingest_mode !== 'sync';
+    if (shouldQueueIngest) {
+      const sourceKeyForQueue = computedSourceKey || buildSourceKey({
+        sourceType: source_type,
+        sourcePath: resolved,
+        extraId: typeof source_id === 'string' ? source_id : undefined,
+      });
+      const job = createIngestJob({
+        collectionId: collection_id,
+        sourceDir: resolved,
+        sourceType: 'file',
+        recursive: false,
+        maxFiles: 1,
+        maxFileSize: 0, // no file size cap for single-file imports
+        files: [{
+          filePath: resolved,
+          sourceKey: sourceKeyForQueue,
+          fileSize: stat.size,
+        }],
+      });
+      ensureKnowledgeIngestWorker();
+      triggerKnowledgeIngestNow();
+      return NextResponse.json({
+        queued: true,
+        mode: 'ingest',
+        total: 1,
+        message: '资料已加入后台入库队列',
+        job,
+      });
     }
     const parsed = await parseFileForKnowledge(resolved);
     text = parsed.content;

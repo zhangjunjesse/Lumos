@@ -3,11 +3,13 @@ import { genId, now } from '@/lib/stores/helpers';
 
 export type KbIngestJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type KbIngestItemStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'duplicate';
+export type KbIngestJobSourceType = 'directory' | 'file';
 
 export interface KbIngestJob {
   id: string;
   collection_id: string;
   source_dir: string;
+  source_type: KbIngestJobSourceType;
   recursive: number;
   max_files: number;
   max_file_size: number;
@@ -47,6 +49,7 @@ export interface KbIngestJobItem {
 interface CreateIngestJobParams {
   collectionId: string;
   sourceDir: string;
+  sourceType?: KbIngestJobSourceType;
   recursive: boolean;
   maxFiles: number;
   maxFileSize: number;
@@ -81,6 +84,8 @@ function ensureIngestQueueTables(): void {
       id TEXT PRIMARY KEY,
       collection_id TEXT NOT NULL REFERENCES kb_collections(id),
       source_dir TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'directory'
+        CHECK(source_type IN ('directory','file')),
       recursive INTEGER NOT NULL DEFAULT 1,
       max_files INTEGER NOT NULL DEFAULT 200,
       max_file_size INTEGER NOT NULL DEFAULT 20971520,
@@ -127,6 +132,9 @@ function ensureIngestQueueTables(): void {
   const jobColNames = jobCols.map((col) => col.name);
   if (!jobColNames.includes('force_reprocess')) {
     db.exec("ALTER TABLE kb_ingest_jobs ADD COLUMN force_reprocess INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!jobColNames.includes('source_type')) {
+    db.exec("ALTER TABLE kb_ingest_jobs ADD COLUMN source_type TEXT NOT NULL DEFAULT 'directory'");
   }
   ingestQueueSchemaChecked = true;
 }
@@ -182,9 +190,9 @@ export function createIngestJob(params: CreateIngestJobParams): KbIngestJob {
 
   const insertJob = db.prepare(`
     INSERT INTO kb_ingest_jobs
-      (id, collection_id, source_dir, recursive, max_files, max_file_size, force_reprocess, status, total_files, processed_files, success_files, failed_files, skipped_files, duplicate_files, error, created_at, updated_at)
+      (id, collection_id, source_dir, source_type, recursive, max_files, max_file_size, force_reprocess, status, total_files, processed_files, success_files, failed_files, skipped_files, duplicate_files, error, created_at, updated_at)
     VALUES
-      (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, 0, 0, 0, 0, '', ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 0, 0, 0, 0, 0, '', ?, ?)
   `);
   const insertItem = db.prepare(`
     INSERT INTO kb_ingest_job_items
@@ -198,6 +206,7 @@ export function createIngestJob(params: CreateIngestJobParams): KbIngestJob {
       id,
       params.collectionId,
       params.sourceDir,
+      params.sourceType || 'directory',
       params.recursive ? 1 : 0,
       params.maxFiles,
       params.maxFileSize,

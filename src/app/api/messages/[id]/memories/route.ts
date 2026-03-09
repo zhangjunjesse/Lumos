@@ -5,10 +5,10 @@ export const runtime = 'nodejs';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const messageId = params.id;
+    const { id: messageId } = await context.params;
     const memories = getMessageMemories(messageId);
     return NextResponse.json({ memories });
   } catch (error) {

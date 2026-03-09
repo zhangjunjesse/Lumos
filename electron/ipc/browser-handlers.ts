@@ -142,6 +142,16 @@ export function setupBrowserIPC(getBrowserManager: () => BrowserManager | null):
     }
   });
 
+  // 设置缩放
+  ipcMain.handle('browser:set-zoom-factor', async (_event, tabId: string, zoomFactor: number) => {
+    try {
+      await withManager((manager) => manager.setZoomFactor(tabId, zoomFactor))();
+      return { success: true };
+    } catch (error: unknown) {
+      return { success: false, error: formatError(error) };
+    }
+  });
+
   // 获取 Cookies
   ipcMain.handle('browser:get-cookies', async (_event, filter?: Electron.CookiesGetFilter) => {
     try {

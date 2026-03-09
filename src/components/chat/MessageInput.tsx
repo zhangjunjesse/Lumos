@@ -69,6 +69,8 @@ interface MessageInputProps {
   workingDirectory?: string;
   mode?: string;
   onModeChange?: (mode: string) => void;
+  onInputFocus?: () => void;
+  fullWidth?: boolean;
 }
 
 interface PopoverItem {
@@ -337,6 +339,8 @@ export function MessageInput({
   workingDirectory,
   mode = 'code',
   onModeChange,
+  onInputFocus,
+  fullWidth = false,
 }: MessageInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -902,7 +906,7 @@ export function MessageInput({
 
   return (
     <div className="bg-background/80 backdrop-blur-lg px-4 py-3">
-      <div className="mx-auto">
+      <div className={fullWidth ? "mx-auto w-full" : "mx-auto w-full max-w-3xl"}>
         <div className="relative">
           {/* Popover */}
           {popoverMode && (allDisplayedItems.length > 0 || aiSearchLoading) && (() => {
@@ -1093,6 +1097,7 @@ export function MessageInput({
               placeholder={badge ? t('messageInput.badgePlaceholder') : t('messageInput.placeholder')}
               value={inputValue}
               onChange={(e) => handleInputChange(e.currentTarget.value)}
+              onFocus={onInputFocus}
               onKeyDown={handleKeyDown}
               disabled={disabled}
               className="min-h-10"

@@ -6,10 +6,10 @@ export const runtime = 'nodejs';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const memoryId = params.id;
+    const { id: memoryId } = await context.params;
     const memory = getMemory(memoryId);
 
     if (!memory) {

@@ -53,6 +53,7 @@ interface EmbeddedBrowserPanelProps {
   onOpenInNewTab?: (url: string) => void;
   onFitWidthChange?: (fitWidth: boolean) => void;
   onAddToLibrary?: (url: string) => void;
+  nativeHost?: boolean;
 }
 
 export function EmbeddedBrowserPanel({
@@ -62,6 +63,7 @@ export function EmbeddedBrowserPanel({
   onOpenInNewTab,
   onFitWidthChange,
   onAddToLibrary,
+  nativeHost = false,
 }: EmbeddedBrowserPanelProps) {
   const { t } = useTranslation();
   const resolvedUrl = url?.trim() || DEFAULT_HOME_URL;
@@ -282,6 +284,7 @@ export function EmbeddedBrowserPanel({
 
       <div
         ref={viewportRef}
+        data-browser-native-host={nativeHost ? "true" : undefined}
         className={cn(
           "relative min-h-0 flex-1 bg-muted/10",
           shouldFitWidth ? "overflow-hidden" : "overflow-auto",

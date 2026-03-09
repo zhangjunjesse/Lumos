@@ -12,6 +12,7 @@ import {
 import type { MemoryRecord } from '@/lib/db/memories';
 import { getMindPersonaHistory, getMindPersonaProfile } from '@/lib/mind/profile';
 import { getMindRulesHistory, getMindRulesProfile } from '@/lib/mind/rules-profile';
+import { getMindUserHistory, getMindUserProfile } from '@/lib/mind/user-profile';
 import { buildMindRuntimePack, type MindRuntimePackSection } from '@/lib/mind/runtime-pack';
 import { getDefaultMemoryIntelligencePrompts, getMemoryIntelligenceConfig } from '@/lib/memory/intelligence';
 import { parseMessageContent } from '@/types';
@@ -95,6 +96,14 @@ interface MindRuntimePackPreview {
   memoryItems: number;
   samplePrompt: string;
   preview: string;
+}
+
+interface MindGrowthProfile {
+  understandingScore: number;
+  consistencyScore: number;
+  tacitScore: number;
+  stage: '初识' | '熟悉' | '默契' | '共创';
+  narrative: string;
 }
 
 function parseTags(raw: string): string[] {
@@ -190,6 +199,11 @@ function getMemoryContextLimit(): number {
   const parsed = Number(raw || '');
   if (!Number.isFinite(parsed)) return 8;
   return Math.max(1, Math.min(Math.floor(parsed), 20));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 function toMindMemoryItem(record: MemoryRecord): MindMemoryItem {
@@ -417,6 +431,73 @@ function buildWeeklyDigest(memories: MindMemoryItem[]): MindWeeklyDigest {
   };
 }
 
+function deriveGrowthProfile(params: {
+  memories: MindMemoryItem[];
+  weeklyDigest: MindWeeklyDigest;
+  personaProfile: { identity: string; relationship: string; tone: string; mission: string };
+  rulesProfile: { collaborationStyle: string; responseRules: string; safetyBoundaries: string; memoryPolicy: string };
+}): MindGrowthProfile {
+  const { memories, weeklyDigest, personaProfile, rulesProfile } = params;
+
+  const preferenceCount = memories.filter((item) => item.category === 'preference').length;
+  const factCount = memories.filter((item) => item.category === 'fact').length;
+  const constraintCount = memories.filter((item) => item.category === 'constraint').length;
+  const workflowCount = memories.filter((item) => item.category === 'workflow').length;
+  const totalHits = memories.reduce((sum, item) => sum + item.hitCount, 0);
+
+  const understandingScore = clampInt(
+    38
+      + preferenceCount * 2.5
+      + factCount * 2
+      + constraintCount * 2
+      + Math.min(totalHits, 80) * 0.5,
+    25,
+    98,
+  );
+
+  const profileFields = [
+    personaProfile.identity,
+    personaProfile.relationship,
+    personaProfile.tone,
+    personaProfile.mission,
+    rulesProfile.collaborationStyle,
+    rulesProfile.responseRules,
+    rulesProfile.safetyBoundaries,
+    rulesProfile.memoryPolicy,
+  ];
+  const completeness = profileFields.filter((item) => item.trim().length >= 12).length;
+  const consistencyScore = clampInt(
+    42 + completeness * 6 + Math.min(workflowCount, 8) * 2,
+    30,
+    99,
+  );
+
+  const tacitScore = clampInt(
+    35
+      + Math.min(weeklyDigest.reusedTimes, 60) * 0.7
+      + weeklyDigest.activeDays * 3
+      + Math.min(weeklyDigest.newMemories, 16) * 1.5,
+    22,
+    99,
+  );
+
+  const average = (understandingScore + consistencyScore + tacitScore) / 3;
+  let stage: MindGrowthProfile['stage'] = '初识';
+  if (average >= 82) stage = '共创';
+  else if (average >= 68) stage = '默契';
+  else if (average >= 54) stage = '熟悉';
+
+  const narrative = `当前阶段：${stage}。我对你的理解度 ${understandingScore}，自洽度 ${consistencyScore}，默契度 ${tacitScore}。本周复用记忆 ${weeklyDigest.reusedTimes} 次。`;
+
+  return {
+    understandingScore,
+    consistencyScore,
+    tacitScore,
+    stage,
+    narrative,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const includeArchived = request.nextUrl.searchParams.get('includeArchived') === 'true';
@@ -432,6 +513,8 @@ export async function GET(request: NextRequest) {
     const personaHistory = getMindPersonaHistory(20);
     const rulesProfile = getMindRulesProfile();
     const rulesHistory = getMindRulesHistory(20);
+    const userProfile = getMindUserProfile();
+    const userHistory = getMindUserHistory(20);
 
     const activeSession = getActiveSession();
     const activeProjectPath = (activeSession?.sdk_cwd || activeSession?.working_directory || '').trim();
@@ -444,7 +527,7 @@ export async function GET(request: NextRequest) {
     const runtimePackPreview = activeSession
       ? buildRuntimePackPreview(activeSession.id, activeProjectPath)
       : {
-          sourceOrder: ['platform_safety', 'user_current_turn', 'lumos_persona', 'lumos_rules', 'persisted_memory'],
+          sourceOrder: ['platform_safety', 'user_current_turn', 'lumos_user', 'lumos_persona', 'lumos_rules', 'persisted_memory'],
           sections: [],
           memoryItems: 0,
           samplePrompt: '',
@@ -463,6 +546,13 @@ export async function GET(request: NextRequest) {
     const memoryIntelligenceConfig = getMemoryIntelligenceConfig();
     const memoryIntelligenceDefaults = getDefaultMemoryIntelligencePrompts();
     const memoryIntelligence = buildMemoryIntelligenceStats(7);
+    const weeklyDigest = buildWeeklyDigest(activeMemories);
+    const growth = deriveGrowthProfile({
+      memories: activeMemories,
+      weeklyDigest,
+      personaProfile,
+      rulesProfile,
+    });
 
     const response = {
       snapshotAt: new Date().toISOString(),
@@ -482,6 +572,8 @@ export async function GET(request: NextRequest) {
       },
       personaProfile,
       personaHistory,
+      userProfile,
+      userHistory,
       rulesProfile,
       rulesHistory,
       rules: {
@@ -499,6 +591,7 @@ export async function GET(request: NextRequest) {
         hooksFiles,
       },
       runtimePack: runtimePackPreview,
+      growth,
       memoryIntelligence: {
         activeSession: activeSession ? {
           id: activeSession.id,
@@ -520,7 +613,7 @@ export async function GET(request: NextRequest) {
           .slice(0, 12),
       },
       timeline: buildTimeline(visibleMemories),
-      weeklyDigest: buildWeeklyDigest(activeMemories),
+      weeklyDigest,
       memories: visibleMemories,
     };
 

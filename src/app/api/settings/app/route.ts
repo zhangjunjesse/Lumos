@@ -13,6 +13,7 @@ const ALLOWED_KEYS = [
   'kb_context_enabled',
   'kb_retrieval_mode',
   'kb_context_top_k',
+  'kb_candidate_pool_size',
   'kb_query_rewrite_enabled',
   'kb_query_rewrite_model',
   'memory_system_enabled',

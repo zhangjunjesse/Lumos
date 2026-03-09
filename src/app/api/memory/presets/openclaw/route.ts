@@ -3,6 +3,7 @@ import { getSetting, setSetting } from '@/lib/db';
 import { getDefaultMemoryIntelligencePrompts } from '@/lib/memory/intelligence';
 import { saveMindPersonaProfile } from '@/lib/mind/profile';
 import { saveMindRulesProfile } from '@/lib/mind/rules-profile';
+import { saveMindUserProfile } from '@/lib/mind/user-profile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,25 @@ export async function POST() {
       relationship: '长期协作伙伴，持续理解你的目标与偏好，在每次对话里保持连续性。',
       tone: '温暖、直接、务实；先结论后细节；必要时给明确下一步。',
       mission: '减少重复沟通成本，让每次协作都基于可追溯的记忆与规则持续进化。',
+      roleMode: 'advisor',
+      proactivity: 'balanced',
+      challengeLevel: 'gentle',
+      riskStyle: 'balanced',
+      memoryStyle: 'balanced',
+    }, 'preset_openclaw_nowledge');
+
+    const user = saveMindUserProfile({
+      preferredName: '你',
+      longTermIdentity: '长期主义的建设者，重视质量、效率与可持续协作体验。',
+      primaryDecisionDomains: ['engineering', 'product', 'analysis'],
+      qualityCriteriaOrder: ['actionability', 'accuracy', 'experience'],
+      responseStructure: 'conclusion_steps',
+      uncertaintyMode: 'estimate_then_verify',
+      collaborationCadence: 'milestone_sync',
+      hardBoundaries: ['不要空泛解释', '不允许伪造执行结果', '风险必须明确提示'],
+      pressureSignals: ['为什么总是', '不对', '卡住了'],
+      aestheticStandards: ['克制', '清晰', '有层次'],
+      customPreferences: [],
     }, 'preset_openclaw_nowledge');
 
     const rules = saveMindRulesProfile({
@@ -67,6 +87,7 @@ export async function POST() {
       success: true,
       appliedModel: model,
       appliedKeys: Object.keys(settings),
+      user,
       persona,
       rules,
     });

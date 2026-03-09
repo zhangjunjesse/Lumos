@@ -41,6 +41,8 @@ interface MessageListProps {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  fullWidth?: boolean;
+  hideEmptyState?: boolean;
 }
 
 export function MessageList({
@@ -58,6 +60,8 @@ export function MessageList({
   hasMore,
   loadingMore,
   onLoadMore,
+  fullWidth = false,
+  hideEmptyState = false,
 }: MessageListProps) {
   const { t } = useTranslation();
   // Scroll anchor: preserve position when older messages are prepended
@@ -85,6 +89,9 @@ export function MessageList({
   }, [messages]);
 
   if (messages.length === 0 && !isStreaming) {
+    if (hideEmptyState) {
+      return <div className="flex-1" />;
+    }
     return (
       <div className="flex flex-1 items-center justify-center">
         <ConversationEmptyState
@@ -98,7 +105,7 @@ export function MessageList({
 
   return (
     <Conversation>
-      <ConversationContent className="mx-auto max-w-3xl px-4 py-6 gap-6">
+      <ConversationContent className={fullWidth ? "px-4 py-6 gap-6" : "mx-auto max-w-3xl px-4 py-6 gap-6"}>
         {hasMore && (
           <div className="flex justify-center">
             <button

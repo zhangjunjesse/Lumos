@@ -55,7 +55,7 @@ export function MemoryOnboarding() {
             <div>
               <h3 className="font-medium mb-1">记忆管理中心</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                访问 <span className="font-mono bg-green-50 dark:bg-green-900/30 px-1 rounded">/mind</span> 页面查看、编辑和管理所有记忆。
+                在「了解彼此」页面（<span className="font-mono bg-green-50 dark:bg-green-900/30 px-1 rounded">/mind</span>）查看、编辑和管理记忆。
                 支持按类别、作用域筛选，查看使用历史。
               </p>
             </div>

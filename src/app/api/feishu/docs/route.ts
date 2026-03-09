@@ -31,6 +31,14 @@ function buildDocUrl(type: string, token: string): string {
   return `https://feishu.cn/${seg}/${token}`;
 }
 
+function buildDriveUrl(type: string, token: string, currentUrl?: string): string {
+  if (currentUrl) return currentUrl;
+  if (!token) return '';
+  if (type === 'folder') return `https://feishu.cn/drive/folder/${token}`;
+  if (type === 'file') return `https://feishu.cn/file/${token}`;
+  return buildDocUrl(type, token);
+}
+
 export async function GET(req: NextRequest) {
   try {
     const token = loadToken();
@@ -51,7 +59,6 @@ export async function GET(req: NextRequest) {
     const q = req.nextUrl.searchParams.get('q')?.trim() || '';
     const folderToken = req.nextUrl.searchParams.get('folderToken')?.trim() || '';
     const view = req.nextUrl.searchParams.get('view')?.trim() || '';
-    const scope = req.nextUrl.searchParams.get('scope')?.trim() || 'my';
     const isDriveView = view === 'drive';
 
     if (q) {
@@ -125,13 +132,8 @@ export async function GET(req: NextRequest) {
     if (pageToken) {
       params.set('page_token', pageToken);
     }
-    let resolvedFolderToken = folderToken;
-    const sharedFallback = scope === 'shared' && !resolvedFolderToken;
-    if (sharedFallback) {
-      resolvedFolderToken = 'shared';
-    }
-    if (resolvedFolderToken) {
-      params.set('folder_token', resolvedFolderToken);
+    if (folderToken) {
+      params.set('folder_token', folderToken);
     }
 
     const response = await fetch(`${FEISHU_BASE_URL}/drive/v1/files?${params.toString()}`, {
@@ -152,15 +154,6 @@ export async function GET(req: NextRequest) {
     };
 
     if (!response.ok || data.code !== 0) {
-      if (sharedFallback) {
-        return NextResponse.json({
-          items: [],
-          hasMore: false,
-          pageToken: null,
-          needsSharedFolder: true,
-          message: data.msg || '共享文件夹需要提供具体链接或 Token',
-        });
-      }
       return NextResponse.json(
         {
           error: 'FEISHU_API_ERROR',
@@ -178,7 +171,7 @@ export async function GET(req: NextRequest) {
         const tokenValue = file.token || file.node_token || file.obj_token || '';
         const type = file.type || file.obj_type || 'doc';
         const title = file.name || file.title || 'Untitled';
-        const url = file.url || (docTypes.has(type) ? buildDocUrl(type, tokenValue) : '');
+        const url = buildDriveUrl(type, tokenValue, file.url);
         return {
           token: tokenValue,
           title,
@@ -203,7 +196,6 @@ export async function GET(req: NextRequest) {
       items,
       hasMore: !!data.data?.has_more,
       pageToken: data.data?.page_token || null,
-      needsSharedFolder: sharedFallback && items.length === 0,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to fetch Feishu docs';

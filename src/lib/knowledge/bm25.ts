@@ -20,6 +20,13 @@ const STOPWORDS = new Set([
 ]);
 
 let _jieba: { cutForSearch(text: string): string[] } | null = null;
+let _indexRevision = 0;
+let _statsCache: {
+  revision: number;
+  totalDocs: number;
+  avgdl: number;
+  dlMap: Record<string, number>;
+} | null = null;
 
 function getJieba() {
   if (!_jieba) {
@@ -31,6 +38,11 @@ function getJieba() {
   return _jieba!;
 }
 
+function invalidateStatsCache() {
+  _indexRevision += 1;
+  _statsCache = null;
+}
+
 /** Tokenize + remove stopwords */
 export function tokenize(text: string): string[] {
   return getJieba().cutForSearch(text)
@@ -38,9 +50,14 @@ export function tokenize(text: string): string[] {
 }
 
 /** Add a chunk's terms to the BM25 inverted index */
-export function addToIndex(chunkId: string, text: string) {
+export function addToIndex(
+  chunkId: string,
+  text: string,
+  options?: { skipInvalidate?: boolean },
+) {
   const db = getDb();
   const tokens = tokenize(text);
+  if (!tokens.length) return;
   const tf: Record<string, number> = {};
   for (const t of tokens) tf[t] = (tf[t] || 0) + 1;
   const total = tokens.length || 1;
@@ -54,11 +71,13 @@ export function addToIndex(chunkId: string, text: string) {
     }
   });
   txn();
+  if (!options?.skipInvalidate) invalidateStatsCache();
 }
 
 /** Remove a chunk from the index */
 export function removeFromIndex(chunkId: string) {
   getDb().prepare('DELETE FROM kb_bm25_index WHERE chunk_id=?').run(chunkId);
+  invalidateStatsCache();
 }
 
 /** Remove all index entries for an item's chunks */
@@ -66,42 +85,71 @@ export function removeItemFromIndex(itemId: string) {
   getDb().prepare(
     'DELETE FROM kb_bm25_index WHERE chunk_id IN (SELECT id FROM kb_chunks WHERE item_id=?)'
   ).run(itemId);
+  invalidateStatsCache();
 }
 
-/** BM25 search across all indexed chunks */
-export function search(query: string, topK = 20): { chunkId: string; score: number }[] {
+function getCorpusStats(): {
+  totalDocs: number;
+  avgdl: number;
+  dlMap: Record<string, number>;
+} {
+  if (_statsCache && _statsCache.revision === _indexRevision) {
+    return _statsCache;
+  }
+
   const db = getDb();
-  const queryTokens = tokenize(query);
-  if (!queryTokens.length) return [];
+  const totalDocs = (db.prepare(
+    'SELECT COUNT(DISTINCT chunk_id) as c FROM kb_bm25_index'
+  ).get() as { c: number }).c;
 
-  const totalDocs = (db.prepare('SELECT COUNT(DISTINCT chunk_id) as c FROM kb_bm25_index').get() as { c: number }).c;
-  if (!totalDocs) return [];
-
-  // Document length: number of terms per chunk (for BM25 length normalization)
   const dlRows = db.prepare(
     'SELECT chunk_id, COUNT(*) as dl FROM kb_bm25_index GROUP BY chunk_id'
   ).all() as { chunk_id: string; dl: number }[];
   const dlMap: Record<string, number> = {};
   let totalTerms = 0;
-  for (const r of dlRows) { dlMap[r.chunk_id] = r.dl; totalTerms += r.dl; }
-  const avgdl = totalTerms / (dlRows.length || 1);
+  for (const row of dlRows) {
+    dlMap[row.chunk_id] = row.dl;
+    totalTerms += row.dl;
+  }
+
+  const cache = {
+    revision: _indexRevision,
+    totalDocs,
+    avgdl: totalTerms / Math.max(dlRows.length, 1),
+    dlMap,
+  };
+  _statsCache = cache;
+  return cache;
+}
+
+/** BM25 search across all indexed chunks */
+export function search(query: string, topK = 20): { chunkId: string; score: number }[] {
+  const db = getDb();
+  const queryTokens = Array.from(new Set(tokenize(query)));
+  if (!queryTokens.length) return [];
+
+  const { totalDocs, avgdl, dlMap } = getCorpusStats();
+  if (!totalDocs) return [];
+
+  const placeholders = queryTokens.map(() => '?').join(',');
+  const postings = db.prepare(
+    `SELECT term, chunk_id, tf FROM kb_bm25_index WHERE term IN (${placeholders})`
+  ).all(...queryTokens) as { term: string; chunk_id: string; tf: number }[];
+  if (!postings.length) return [];
+
+  const dfMap = new Map<string, number>();
+  for (const row of postings) {
+    dfMap.set(row.term, (dfMap.get(row.term) || 0) + 1);
+  }
 
   const scores: Record<string, number> = {};
-
-  for (const term of queryTokens) {
-    const rows = db.prepare(
-      'SELECT chunk_id, tf FROM kb_bm25_index WHERE term=?'
-    ).all(term) as { chunk_id: string; tf: number }[];
-
-    const df = rows.length;
+  for (const row of postings) {
+    const df = dfMap.get(row.term) || 0;
     if (!df) continue;
     const idf = Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1);
-
-    for (const row of rows) {
-      const dl = dlMap[row.chunk_id] || avgdl;
-      const tfScore = (row.tf * (K1 + 1)) / (row.tf + K1 * (1 - B + B * dl / avgdl));
-      scores[row.chunk_id] = (scores[row.chunk_id] || 0) + idf * tfScore;
-    }
+    const dl = dlMap[row.chunk_id] || avgdl;
+    const tfScore = (row.tf * (K1 + 1)) / (row.tf + K1 * (1 - B + B * dl / Math.max(avgdl, 1e-6)));
+    scores[row.chunk_id] = (scores[row.chunk_id] || 0) + idf * tfScore;
   }
 
   return Object.entries(scores)
@@ -121,6 +169,7 @@ export function indexItemChunks(itemId: string, chunks: string[], title: string)
     const text = row.chunk_index === 0 && title
       ? `${title}\n${chunks[row.chunk_index]}`
       : chunks[row.chunk_index];
-    if (text) addToIndex(row.id, text);
+    if (text) addToIndex(row.id, text, { skipInvalidate: true });
   }
+  invalidateStatsCache();
 }

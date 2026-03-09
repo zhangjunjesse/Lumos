@@ -321,6 +321,7 @@ export async function POST(req: NextRequest) {
     const job = createIngestJob({
       collectionId,
       sourceDir: resolvedDir,
+      sourceType: 'directory',
       recursive,
       maxFiles,
       maxFileSize,

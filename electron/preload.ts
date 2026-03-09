@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTabs: () => ipcRenderer.invoke('browser:get-tabs'),
     navigate: (tabId: string, url: string, timeout?: number) =>
       ipcRenderer.invoke('browser:navigate', tabId, url, timeout),
+    setZoomFactor: (tabId: string, zoomFactor: number) =>
+      ipcRenderer.invoke('browser:set-zoom-factor', tabId, zoomFactor),
     getCookies: (filter?: Electron.CookiesGetFilter) => ipcRenderer.invoke('browser:get-cookies', filter),
     setCookie: (cookie: Electron.CookiesSetDetails) => ipcRenderer.invoke('browser:set-cookie', cookie),
     connectCDP: (tabId: string) => ipcRenderer.invoke('browser:connect-cdp', tabId),

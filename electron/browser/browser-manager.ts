@@ -74,7 +74,10 @@ export class BrowserManager extends EventEmitter {
     this.sessionPartition = options?.sessionPartition || 'persist:lumos-browser';
     this.cdpManager = new CDPManager();
     this.database = new BrowserDatabase();
-    this.displayTarget = 'default';
+    // Keep browser views hidden until a concrete host (full browser page or right panel)
+    // explicitly requests them. This prevents MCP-driven tab switches from overlaying
+    // the main Lumos UI before the panel is mounted and measured.
+    this.displayTarget = 'hidden';
     this.panelBounds = null;
 
     // 监听窗口大小变化
@@ -296,6 +299,19 @@ export class BrowserManager extends EventEmitter {
         reject(error);
       });
     });
+  }
+
+  /**
+   * 设置标签页缩放比例
+   */
+  async setZoomFactor(tabId: string, zoomFactor: number): Promise<void> {
+    const view = this.tabs.get(tabId);
+    if (!view) {
+      throw new Error(`Tab ${tabId} not found`);
+    }
+
+    const normalized = Math.max(0.25, Math.min(5, zoomFactor));
+    view.webContents.setZoomFactor(normalized);
   }
 
   /**

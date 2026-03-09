@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { StructureFolderIcon } from '@hugeicons/core-free-icons';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,24 @@ interface ContentPanelProps {
 
 const FILE_TREE_TAB_ID = 'fixed-file-tree';
 
+interface BrowserTabData {
+  url?: string;
+  fitWidth?: boolean;
+  pageId?: string;
+}
+
+function getBrowserTabTitle(url: string, fallback: string): string {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./, '');
+    return hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function ContentPanel({ width = 288 }: ContentPanelProps) {
-  const { tabs, activeTabId, setActiveTab, removeTab, addTab } = useContentPanelStore();
+  const { tabs, activeTabId, setActiveTab, removeTab, addTab, updateTab } = useContentPanelStore();
   const { contentPanelOpen, setContentPanelOpen } = usePanel();
   const { t } = useTranslation();
 
@@ -143,6 +159,89 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  const handleOpenBrowserUrl = useCallback((url: string, pageId?: string) => {
+    const normalizedUrl = url.trim();
+    if (!normalizedUrl) return;
+
+    setContentPanelOpen(true);
+
+    const normalizedPageId = typeof pageId === 'string' ? pageId.trim() : '';
+    if (normalizedPageId) {
+      const existingByPage = tabs.find((tab) => {
+        if (tab.type !== 'browser') return false;
+        const tabData = (tab.data as BrowserTabData | undefined) || {};
+        return tabData.pageId === normalizedPageId;
+      });
+
+      if (existingByPage) {
+        const currentData = (existingByPage.data as Record<string, unknown> | undefined) || {};
+        updateTab(existingByPage.id, {
+          title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
+          data: { ...currentData, url: normalizedUrl, pageId: normalizedPageId },
+        });
+        setActiveTab(existingByPage.id);
+        return;
+      }
+    }
+
+    const existingByUrl = tabs.find((tab) => {
+      if (tab.type !== 'browser') return false;
+      const browserUrl = (tab.data as BrowserTabData | undefined)?.url || '';
+      return browserUrl === normalizedUrl;
+    });
+
+    if (existingByUrl) {
+      if (normalizedPageId) {
+        const currentData = (existingByUrl.data as Record<string, unknown> | undefined) || {};
+        updateTab(existingByUrl.id, {
+          data: { ...currentData, pageId: normalizedPageId },
+        });
+      }
+      setActiveTab(existingByUrl.id);
+      return;
+    }
+
+    const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
+    const fitWidth = (activeBrowserTab?.data as BrowserTabData | undefined)?.fitWidth ?? true;
+
+    addTab({
+      type: 'browser',
+      title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
+      closable: true,
+      data: {
+        url: normalizedUrl,
+        fitWidth,
+        ...(normalizedPageId ? { pageId: normalizedPageId } : {}),
+      },
+    });
+  }, [activeTabId, addTab, setActiveTab, setContentPanelOpen, t, tabs, updateTab]);
+
+  useEffect(() => {
+    const api = window.electronAPI?.browser;
+    if (!api?.onOpenInContentTab) {
+      return;
+    }
+
+    return api.onOpenInContentTab(({ url, pageId }) => {
+      handleOpenBrowserUrl(url, pageId);
+    });
+  }, [handleOpenBrowserUrl]);
+
+  useEffect(() => {
+    const onOpenFromMcp = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string; pageId?: string } | undefined>).detail;
+      const url = typeof detail?.url === 'string' ? detail.url : '';
+      const pageId = typeof detail?.pageId === 'string' ? detail.pageId : undefined;
+      if (!url) return;
+      handleOpenBrowserUrl(url, pageId);
+    };
+
+    window.addEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
+    return () => {
+      window.removeEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
+    };
+  }, [handleOpenBrowserUrl]);
 
   // 收缩状态下的窄条
   if (!contentPanelOpen) {

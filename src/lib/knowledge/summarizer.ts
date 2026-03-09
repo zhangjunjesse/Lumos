@@ -8,6 +8,9 @@ import { getEmbeddings, vectorToBuffer } from './embedder';
 import type { DocumentSummary } from './types';
 import { callKnowledgeModel } from './llm';
 
+const MAX_SUMMARY_SOURCE_CHARS = 9000;
+const SUMMARY_SECTION_COUNT = 3;
+
 const SUMMARY_PROMPT = `你是文档摘要专家。为以下文档生成：
 1. 一段100-200字的摘要（summary）
 2. 3-5个关键要点（key_points），每个要点一句话
@@ -17,17 +20,62 @@ const SUMMARY_PROMPT = `你是文档摘要专家。为以下文档生成：
 文档内容：
 `;
 
+function sanitizeText(input: string): string {
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function pickWindow(content: string, start: number, size: number): string {
+  const clampedStart = Math.max(0, Math.min(content.length, start));
+  const end = Math.min(content.length, clampedStart + size);
+  return content.slice(clampedStart, end).trim();
+}
+
+function buildSummarySource(title: string, content: string): string {
+  const normalized = sanitizeText(content);
+  if (!normalized) return `标题：${title}`;
+  if (normalized.length <= MAX_SUMMARY_SOURCE_CHARS) {
+    return `标题：${title}\n\n${normalized}`;
+  }
+
+  const sectionSize = Math.floor(MAX_SUMMARY_SOURCE_CHARS / SUMMARY_SECTION_COUNT);
+  const head = pickWindow(normalized, 0, sectionSize);
+  const middleStart = Math.max(0, Math.floor(normalized.length / 2 - sectionSize / 2));
+  const middle = pickWindow(normalized, middleStart, sectionSize);
+  const tail = pickWindow(normalized, normalized.length - sectionSize, sectionSize);
+  const sections = [head, middle, tail].filter(Boolean);
+
+  return [
+    `标题：${title}`,
+    '',
+    '[文档开头]',
+    sections[0] || '',
+    '',
+    '[文档中段]',
+    sections[1] || '',
+    '',
+    '[文档结尾]',
+    sections[2] || '',
+  ].join('\n');
+}
+
 async function callHaiku(content: string): Promise<string> {
   return callKnowledgeModel({
     model: 'claude-haiku-4-20250514',
     maxTokens: 600,
     timeoutMs: 15000,
-    prompt: SUMMARY_PROMPT + content.slice(0, 6000),
+    prompt: SUMMARY_PROMPT + content,
   });
 }
 
 function parseResponse(text: string): { summary: string; keyPoints: string[] } {
-  const objMatch = text.match(/\{[\s\S]*\}/);
+  const stripped = text
+    .replace(/```json/gi, '```')
+    .replace(/```/g, '')
+    .trim();
+  const objMatch = stripped.match(/\{[\s\S]*\}/);
   if (!objMatch) return { summary: text.slice(0, 200), keyPoints: [] };
 
   try {
@@ -62,7 +110,7 @@ export async function summarizeItem(itemId: string): Promise<DocumentSummary | n
 
   if (!fullContent || fullContent.length < 30) return null;
 
-  const text = await callHaiku(`标题：${item.title}\n\n${fullContent}`);
+  const text = await callHaiku(buildSummarySource(item.title, fullContent));
   const { summary, keyPoints } = parseResponse(text);
   if (!summary) return null;
 
@@ -87,13 +135,23 @@ export async function summarizeItem(itemId: string): Promise<DocumentSummary | n
 export async function embedSummary(itemId: string): Promise<boolean> {
   const db = getDb();
   const row = db.prepare(
-    'SELECT summary FROM kb_items WHERE id=? AND summary != \'\''
-  ).get(itemId) as { summary: string } | undefined;
+    'SELECT summary, key_points FROM kb_items WHERE id=? AND summary != \'\''
+  ).get(itemId) as { summary: string; key_points: string } | undefined;
 
   if (!row?.summary) return false;
 
   try {
-    const [vec] = await getEmbeddings([row.summary]);
+    let keyPoints: string[] = [];
+    try {
+      const parsed = JSON.parse(row.key_points || '[]');
+      if (Array.isArray(parsed)) {
+        keyPoints = parsed.filter((entry) => typeof entry === 'string').slice(0, 5);
+      }
+    } catch {
+      keyPoints = [];
+    }
+    const semanticText = [row.summary, ...keyPoints].filter(Boolean).join('\n');
+    const [vec] = await getEmbeddings([semanticText]);
     if (vec) {
       db.prepare('UPDATE kb_items SET summary_embedding=? WHERE id=?')
         .run(vectorToBuffer(vec), itemId);

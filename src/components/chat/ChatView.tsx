@@ -29,6 +29,11 @@ interface ChatViewProps {
   modelName?: string;
   initialMode?: string;
   providerId?: string;
+  workingDirectoryOverride?: string;
+  compactInputOnly?: boolean;
+  onInputFocus?: () => void;
+  fullWidth?: boolean;
+  hideEmptyState?: boolean;
 }
 
 interface MemoryIdleTriggerConfig {
@@ -57,9 +62,22 @@ async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
   }
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, providerId }: ChatViewProps) {
+export function ChatView({
+  sessionId,
+  initialMessages = [],
+  initialHasMore = false,
+  modelName,
+  initialMode,
+  providerId,
+  workingDirectoryOverride,
+  compactInputOnly = false,
+  onInputFocus,
+  fullWidth = false,
+  hideEmptyState = false,
+}: ChatViewProps) {
   const { t } = useTranslation();
   const { setStreamingSessionId, workingDirectory, setContentPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -430,15 +448,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             });
 
             const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
-            const normalizedToolName = String(tool.name || '').toLowerCase();
-            const isBuiltinChromeMcpTool =
-              normalizedToolName.includes('chrome-devtools')
-              || normalizedToolName === 'new_page'
-              || normalizedToolName === 'navigate_page';
-
-            // Built-in chrome MCP has dedicated bridge events with stable pageId.
-            // Avoid URL-only fallback events here to prevent duplicate/misaligned tabs.
-            if (browserUrl && !isBuiltinChromeMcpTool) {
+            // Open the right-side browser tab as soon as the tool emits a URL.
+            // The Electron bridge can later attach a stable pageId for the same tab.
+            if (browserUrl) {
               setContentPanelOpen(true);
               openBrowserUrlInPanel(browserUrl);
             }
@@ -657,6 +669,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     },
     [
       clearIdleMemoryTimer,
+      handleModeChange,
       sessionId,
       isStreaming,
       setStreamingSessionId,
@@ -745,7 +758,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage, t]);
+  }, [messages, sessionId, sendMessage, t]);
 
   // Listen for image generation completion — persist notice to DB and queue for next user message.
   // The notice is NOT sent as a separate LLM turn (avoids permission popups).
@@ -783,25 +796,33 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <MessageList
-        messages={messages}
-        streamingContent={streamingContent}
-        isStreaming={isStreaming}
-        toolUses={toolUses}
-        toolResults={toolResults}
-        streamingToolOutput={streamingToolOutput}
-        statusText={statusText}
-        pendingPermission={pendingPermission}
-        onPermissionResponse={handlePermissionResponse}
-        permissionResolved={permissionResolved}
-        onForceStop={stopStreaming}
-        hasMore={hasMore}
-        loadingMore={loadingMore}
-        onLoadMore={loadEarlierMessages}
-      />
-      {/* Batch image generation panels — shown above the input area */}
-      <BatchExecutionDashboard />
-      <BatchContextSync />
+      <div className={compactInputOnly ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+        {!compactInputOnly ? (
+          <>
+          <MessageList
+            messages={messages}
+            streamingContent={streamingContent}
+            isStreaming={isStreaming}
+            toolUses={toolUses}
+            toolResults={toolResults}
+            streamingToolOutput={streamingToolOutput}
+            statusText={statusText}
+            pendingPermission={pendingPermission}
+            onPermissionResponse={handlePermissionResponse}
+            permissionResolved={permissionResolved}
+            onForceStop={stopStreaming}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onLoadMore={loadEarlierMessages}
+            fullWidth={fullWidth}
+            hideEmptyState={hideEmptyState}
+          />
+          {/* Batch image generation panels — shown above the input area */}
+          <BatchExecutionDashboard />
+          <BatchContextSync />
+          </>
+        ) : null}
+      </div>
 
       <MessageInput
         onSend={sendMessage}
@@ -814,9 +835,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onModelChange={setCurrentModel}
         providerId={currentProviderId}
         onProviderModelChange={handleProviderModelChange}
-        workingDirectory={workingDirectory}
+        workingDirectory={effectiveWorkingDirectory}
         mode={mode}
         onModeChange={handleModeChange}
+        onInputFocus={onInputFocus}
+        fullWidth={fullWidth}
       />
     </div>
   );

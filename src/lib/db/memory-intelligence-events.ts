@@ -13,6 +13,7 @@ export type MemoryIntelligenceOutcome =
   | 'saved'
   | 'no_memory'
   | 'skipped'
+  | 'preview'
   | 'disabled'
   | 'cooldown'
   | 'budget_limited'

@@ -12,6 +12,7 @@ export interface KnowledgeIngestJob {
   id: string;
   collection_id: string;
   source_dir: string;
+  source_type?: 'directory' | 'file';
   recursive: number;
   max_files: number;
   max_file_size: number;
@@ -60,7 +61,15 @@ export async function getDefaultCollection(): Promise<KbCollection> {
 
 export async function importLocalFile(
   filePath: string,
-  options?: { collectionId?: string; title?: string; sourceType?: 'local_file' | 'feishu'; tags?: string[]; sourceKey?: string; sourceId?: string },
+  options?: {
+    collectionId?: string;
+    title?: string;
+    sourceType?: 'local_file' | 'feishu';
+    tags?: string[];
+    sourceKey?: string;
+    sourceId?: string;
+    ingestMode?: 'async' | 'sync';
+  },
 ) {
   const collectionId = options?.collectionId || (await getDefaultCollection()).id;
   const res = await fetch('/api/knowledge/items', {
@@ -74,6 +83,7 @@ export async function importLocalFile(
       tags: options?.tags,
       source_key: options?.sourceKey,
       source_id: options?.sourceId,
+      ingest_mode: options?.ingestMode || 'async',
     }),
   });
   const data = await res.json();
@@ -90,6 +100,7 @@ export async function importFeishuDoc(options: {
   url: string;
   sessionId?: string;
   collectionId?: string;
+  mode?: 'reference' | 'full';
 }) {
   const res = await fetch('/api/feishu/docs/attach', {
     method: 'POST',
@@ -100,7 +111,7 @@ export async function importFeishuDoc(options: {
       type: options.type,
       title: options.title,
       url: options.url,
-      mode: 'reference',
+      mode: options.mode || 'full',
     }),
   });
   const data = await res.json();
@@ -117,6 +128,35 @@ export async function importFeishuDoc(options: {
     sourceKey: `feishu:${options.token}`,
     sourceId: options.token,
   });
+}
+
+export async function importFeishuFolder(options: {
+  token: string;
+  title?: string;
+  sessionId?: string;
+  collectionId?: string;
+  maxFiles?: number;
+  maxFileSize?: number;
+  forceReprocess?: boolean;
+}) {
+  const res = await fetch('/api/feishu/drive/folder/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: options.token,
+      title: options.title,
+      sessionId: options.sessionId,
+      collectionId: options.collectionId,
+      maxFiles: options.maxFiles,
+      maxFileSize: options.maxFileSize,
+      forceReprocess: options.forceReprocess === true,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.message || data?.error || 'Import folder failed');
+  }
+  return data;
 }
 
 export async function importFeishuFile(options: {

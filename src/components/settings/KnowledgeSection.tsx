@@ -14,6 +14,7 @@ export function KnowledgeSection() {
   const [mode, setMode] = useState<RetrievalMode>("reference");
   const [rewriteEnabled, setRewriteEnabled] = useState(true);
   const [topK, setTopK] = useState(4);
+  const [candidatePool, setCandidatePool] = useState(40);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -32,6 +33,10 @@ export function KnowledgeSection() {
       if (Number.isFinite(parsedTopK) && parsedTopK > 0) {
         setTopK(Math.max(2, Math.min(10, Math.floor(parsedTopK))));
       }
+      const parsedCandidatePool = Number(settings.kb_candidate_pool_size || "40");
+      if (Number.isFinite(parsedCandidatePool) && parsedCandidatePool > 0) {
+        setCandidatePool(Math.max(16, Math.min(120, Math.floor(parsedCandidatePool))));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "读取失败");
     } finally {
@@ -48,11 +53,13 @@ export function KnowledgeSection() {
     mode?: RetrievalMode;
     rewriteEnabled?: boolean;
     topK?: number;
+    candidatePool?: number;
   }) => {
     const nextEnabled = next.enabled ?? enabled;
     const nextMode = next.mode ?? mode;
     const nextRewriteEnabled = next.rewriteEnabled ?? rewriteEnabled;
     const nextTopK = next.topK ?? topK;
+    const nextCandidatePool = next.candidatePool ?? candidatePool;
     setSaving(true);
     setError(null);
     try {
@@ -64,6 +71,7 @@ export function KnowledgeSection() {
             kb_context_enabled: nextEnabled ? "true" : "false",
             kb_retrieval_mode: nextMode,
             kb_context_top_k: String(nextTopK),
+            kb_candidate_pool_size: String(nextCandidatePool),
             kb_query_rewrite_enabled: nextRewriteEnabled ? "true" : "false",
           },
         }),
@@ -76,12 +84,13 @@ export function KnowledgeSection() {
       setMode(nextMode);
       setRewriteEnabled(nextRewriteEnabled);
       setTopK(nextTopK);
+      setCandidatePool(nextCandidatePool);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     } finally {
       setSaving(false);
     }
-  }, [enabled, mode, rewriteEnabled, topK]);
+  }, [enabled, mode, rewriteEnabled, topK, candidatePool]);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -171,6 +180,28 @@ export function KnowledgeSection() {
                   disabled={loading || saving || !enabled}
                   className={`rounded-md px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${
                     topK === value
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border bg-background hover:bg-accent"
+                  }`}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border p-3">
+            <div className="text-sm font-medium">候选池规模</div>
+            <p className="text-xs text-muted-foreground">值越大召回更全，值越小响应更快。建议 32-64。</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[24, 32, 40, 48, 64, 80].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => void saveSettings({ candidatePool: value })}
+                  disabled={loading || saving || !enabled}
+                  className={`rounded-md px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${
+                    candidatePool === value
                       ? "bg-primary text-primary-foreground"
                       : "border border-border bg-background hover:bg-accent"
                   }`}
