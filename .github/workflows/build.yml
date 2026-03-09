@@ -12,7 +12,6 @@ on:
           - all
           - windows
           - macos
-          - linux
   push:
     tags:
       - "v*"
@@ -76,15 +75,7 @@ jobs:
   build-macos:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     needs: [create-release]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: macos-12
-          - arch: arm64
-            runner: macos-latest
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -97,65 +88,26 @@ jobs:
         run: npm ci
 
       - name: Rebuild better-sqlite3 for target arch BEFORE build
-        run: npx electron-rebuild -f -o better-sqlite3 -a ${{ matrix.arch }}
+        run: npx electron-rebuild -f -o better-sqlite3 -a arm64
 
       - name: Build Electron app
         run: npm run electron:build
 
-      - name: Package for macOS (${{ matrix.arch }})
+      - name: Package for macOS (arm64)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish always
+        run: npx electron-builder --mac --arm64 --config electron-builder.yml --publish always
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}-artifacts
+          name: macos-arm64-artifacts
           path: release/*.dmg
-          retention-days: 1
-
-  build-linux:
-    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux' }}
-    needs: [create-release]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Rebuild better-sqlite3 for Electron
-        run: npx electron-rebuild -f -o better-sqlite3 -a ${{ matrix.arch }}
-
-      - name: Build Electron app
-        run: npm run electron:build
-
-      - name: Package for Linux (${{ matrix.arch }})
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish always
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-${{ matrix.arch }}-artifacts
-          path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
           retention-days: 1
 
   release:
     if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(needs.*.result, 'cancelled') }}
-    needs: [build-windows, build-macos, build-linux]
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -202,14 +154,10 @@ jobs:
           ## Downloads
 
           **Windows**
-          - **CodePilot Setup ${{ steps.meta.outputs.version }}.exe** — Windows installer (x64 + arm64)
+          - **CodePilot Setup ${{ steps.meta.outputs.version }}.exe** — Windows installer
 
           **macOS**
           - **CodePilot-${{ steps.meta.outputs.version }}-arm64.dmg** — macOS Apple Silicon (M1/M2/M3/M4)
-          - **CodePilot-${{ steps.meta.outputs.version }}-x64.dmg** — macOS Intel
-
-          **Linux**
-          - **AppImage / deb / rpm** — x64 and arm64
 
           ## Installation
 
@@ -221,11 +169,9 @@ jobs:
           3. If you see a security prompt on first launch, go to **System Settings > Privacy & Security** and click "Open Anyway"
           4. Configure your Anthropic API Key in Settings
 
-          **Linux**: Run the AppImage directly, or install via deb/rpm package.
-
           ## Requirements
 
-          - Windows 10+ / macOS 12.0+ / Linux (glibc 2.31+)
+          - Windows 10+ / macOS 12.0+
           - Anthropic API Key or `ANTHROPIC_API_KEY` environment variable
           - Claude Code CLI recommended for code features
 
@@ -243,10 +189,7 @@ jobs:
 
           # Upload artifacts by platform to avoid conflicts
           gh release upload "${GITHUB_REF_NAME}" artifacts/windows-artifacts/* --clobber || true
-          gh release upload "${GITHUB_REF_NAME}" artifacts/macos-x64-artifacts/* --clobber || true
           gh release upload "${GITHUB_REF_NAME}" artifacts/macos-arm64-artifacts/* --clobber || true
-          gh release upload "${GITHUB_REF_NAME}" artifacts/linux-x64-artifacts/* --clobber || true
-          gh release upload "${GITHUB_REF_NAME}" artifacts/linux-arm64-artifacts/* --clobber || true
 
           # Update the draft release with full notes and publish
           # Note: For private repos, releases are private by default

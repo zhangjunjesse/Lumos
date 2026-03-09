@@ -51,8 +51,9 @@ for (const arch of architectures) {
   } else {
     const downloadUrl = `${baseUrl}/node-${NODE_VERSION}-${platform}-${arch}.tar.gz`;
     const tarPath = path.join(runtimeDir, 'node.tar.gz');
+    const archiveNodePath = `node-${NODE_VERSION}-${platform}-${arch}/bin/node`;
     execSync(`curl -L -o "${tarPath}" "${downloadUrl}"`, { stdio: 'inherit' });
-    execSync(`tar -xzf "${tarPath}" -C "${runtimeDir}" --strip-components=2 "*/bin/node"`, { stdio: 'inherit' });
+    execSync(`tar -xzf "${tarPath}" -C "${runtimeDir}" --strip-components=2 "${archiveNodePath}"`, { stdio: 'inherit' });
     fs.unlinkSync(tarPath);
     fs.chmodSync(targetPath, 0o755);
   }
