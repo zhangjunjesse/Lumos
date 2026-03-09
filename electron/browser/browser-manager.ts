@@ -282,7 +282,16 @@ export class BrowserManager extends EventEmitter {
         }
       };
 
-      const onFail = (_event: unknown, errorCode: number, errorDescription: string) => {
+      const onFail = (
+        _event: unknown,
+        errorCode: number,
+        errorDescription: string,
+        _validatedURL?: string,
+        isMainFrame: boolean = true,
+      ) => {
+        if (!isMainFrame || errorCode === -3) {
+          return;
+        }
         cleanup();
         reject(new Error(`Navigation failed: ${errorDescription} (${errorCode})`));
       };
@@ -492,7 +501,10 @@ export class BrowserManager extends EventEmitter {
       this.emit('tab-loaded', { tabId, metadata });
     });
 
-    view.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    view.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
       metadata.isLoading = false;
       this.emit('tab-error', { tabId, errorCode, errorDescription });
     });

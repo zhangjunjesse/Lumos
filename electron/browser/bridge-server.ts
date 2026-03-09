@@ -10,6 +10,14 @@ interface BridgeContext {
   browserManager: BrowserManager | null;
 }
 
+interface PageRuntimeState {
+  readyState: string;
+  hasBody: boolean;
+  textLength: number;
+  title: string;
+  url: string;
+}
+
 function parseJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -55,6 +63,10 @@ function unauthorized(res: http.ServerResponse): void {
   sendJson(res, 401, { ok: false, error: 'UNAUTHORIZED' });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function ensureTabReady(manager: BrowserManager, tabId: string): Promise<void> {
   await manager.switchTab(tabId);
   if (!manager.isCDPConnected(tabId)) {
@@ -63,6 +75,86 @@ async function ensureTabReady(manager: BrowserManager, tabId: string): Promise<v
   await manager.sendCDPCommand(tabId, 'Runtime.enable');
   await manager.sendCDPCommand(tabId, 'DOM.enable');
   await manager.sendCDPCommand(tabId, 'Page.enable');
+}
+
+function buildPageRuntimeStateScript(): string {
+  return `(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    const text = (body?.innerText || root?.innerText || '').replace(/\\s+/g, ' ').trim();
+    return {
+      readyState: document.readyState || 'loading',
+      hasBody: Boolean(body || root),
+      textLength: text.length,
+      title: document.title || '',
+      url: location.href || '',
+    };
+  })()`;
+}
+
+async function readPageRuntimeState(
+  manager: BrowserManager,
+  tabId: string,
+): Promise<PageRuntimeState | null> {
+  try {
+    const result = (await evalInTab(manager, tabId, buildPageRuntimeStateScript(), true)) as
+      | Partial<PageRuntimeState>
+      | undefined;
+    return {
+      readyState: typeof result?.readyState === 'string' ? result.readyState : 'loading',
+      hasBody: Boolean(result?.hasBody),
+      textLength: typeof result?.textLength === 'number' ? result.textLength : 0,
+      title: typeof result?.title === 'string' ? result.title : '',
+      url: typeof result?.url === 'string' ? result.url : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function waitForPageStable(
+  manager: BrowserManager,
+  tabId: string,
+  options?: { timeoutMs?: number; requireText?: boolean; stableMs?: number },
+): Promise<{ settled: boolean; state: PageRuntimeState | null }> {
+  const timeoutMs = Math.max(500, Math.min(options?.timeoutMs || 12_000, 30_000));
+  const stableMs = Math.max(150, Math.min(options?.stableMs || 500, 2_000));
+  const requireText = options?.requireText === true;
+
+  await ensureTabReady(manager, tabId);
+
+  const startedAt = Date.now();
+  let readySince = 0;
+  let lastState: PageRuntimeState | null = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const metadata = manager.getTabs().find((tab) => tab.id === tabId);
+    lastState = await readPageRuntimeState(manager, tabId);
+
+    const docReady =
+      lastState?.readyState === 'interactive'
+      || lastState?.readyState === 'complete';
+    const hasVisibleContent =
+      !requireText
+      || Boolean(lastState?.title)
+      || (lastState?.textLength || 0) > 24;
+    const ready = Boolean(!metadata?.isLoading && docReady && lastState?.hasBody && hasVisibleContent);
+
+    if (ready) {
+      if (!readySince) {
+        readySince = Date.now();
+      }
+      if (Date.now() - readySince >= stableMs) {
+        return { settled: true, state: lastState };
+      }
+    } else {
+      readySince = 0;
+    }
+
+    await sleep(250);
+  }
+
+  return { settled: false, state: lastState };
 }
 
 async function evalInTab(
@@ -315,6 +407,7 @@ export class BrowserBridgeServer {
       const pageId = await manager.createTab(body?.url);
       await manager.switchTab(pageId);
       if (typeof body?.url === 'string') {
+        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
         forwardUrlToContentTabs(body.url, pageId);
       }
       sendJson(res, 200, { ok: true, pageId });
@@ -369,6 +462,7 @@ export class BrowserBridgeServer {
           return;
         }
         await manager.navigate(pageId, { url: body.url });
+        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
         forwardUrlToContentTabs(body.url, pageId);
       } else {
         await ensureTabReady(manager, pageId);
@@ -379,6 +473,7 @@ export class BrowserBridgeServer {
         } else if (navType === 'forward') {
           await evalInTab(manager, pageId, 'history.forward(); true', false);
         }
+        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
       }
 
       sendJson(res, 200, { ok: true, pageId });
@@ -388,10 +483,16 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/snapshot') {
       const body = (await parseJsonBody(req)) as { pageId?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await ensureTabReady(manager, pageId);
-      const result = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
+      await waitForPageStable(manager, pageId, { timeoutMs: 12_000, requireText: true, stableMs: 700 });
+      let result = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
         | { url?: string; title?: string; lines?: string[] }
         | undefined;
+      if (!Array.isArray(result?.lines) || result.lines.length < 3) {
+        await waitForPageStable(manager, pageId, { timeoutMs: 4_000, requireText: true, stableMs: 500 });
+        result = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
+          | { url?: string; title?: string; lines?: string[] }
+          | undefined;
+      }
       sendJson(res, 200, {
         ok: true,
         pageId,
@@ -409,7 +510,7 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await ensureTabReady(manager, pageId);
+      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
       const result = await evalInTab(manager, pageId, clickByUidScript(body.uid), true);
       sendJson(res, 200, { ok: true, pageId, result });
       return;
@@ -422,7 +523,7 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await ensureTabReady(manager, pageId);
+      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
       const result = await evalInTab(manager, pageId, fillByUidScript(body.uid, body.value || ''), true);
       sendJson(res, 200, { ok: true, pageId, result });
       return;
@@ -431,7 +532,7 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/type') {
       const body = (await parseJsonBody(req)) as { pageId?: string; text?: string; submitKey?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await ensureTabReady(manager, pageId);
+      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
       const result = await evalInTab(manager, pageId, typeTextScript(body?.text || '', body?.submitKey), true);
       sendJson(res, 200, { ok: true, pageId, result });
       return;
@@ -440,7 +541,7 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/press') {
       const body = (await parseJsonBody(req)) as { pageId?: string; key?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await ensureTabReady(manager, pageId);
+      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
       const result = await evalInTab(manager, pageId, pressKeyScript(body?.key || 'Enter'), true);
       sendJson(res, 200, { ok: true, pageId, result });
       return;
@@ -489,7 +590,7 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/screenshot') {
       const body = (await parseJsonBody(req)) as { pageId?: string; filePath?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await ensureTabReady(manager, pageId);
+      await waitForPageStable(manager, pageId, { timeoutMs: 12_000, stableMs: 700 });
       const result = await manager.sendCDPCommand(pageId, 'Page.captureScreenshot', {
         format: 'png',
         captureBeyondViewport: true,

@@ -8,6 +8,10 @@ const __dirname = path.dirname(__filename);
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function pickNonEmpty(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -106,6 +110,38 @@ async function callBridge(pathname, options = {}) {
   return json;
 }
 
+function isRetryableBridgeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /INTERNAL_ERROR|WAIT_FOR_TIMEOUT|CAPTURE_SCREENSHOT_FAILED|UID_NOT_FOUND|NO_ACTIVE_ELEMENT|target closed|CDP command failed/i.test(message);
+}
+
+async function refreshActivePageId(previousPageId) {
+  try {
+    const pages = await callBridge('/v1/pages');
+    const list = Array.isArray(pages?.pages) ? pages.pages : [];
+    if (previousPageId && list.some((page) => page?.pageId === previousPageId)) {
+      return previousPageId;
+    }
+    return normalizePageId(pages?.activePageId);
+  } catch {
+    return normalizePageId(previousPageId);
+  }
+}
+
+async function withBridgeRetry(run, options = {}) {
+  try {
+    return await run(options.pageId);
+  } catch (error) {
+    if (!isRetryableBridgeError(error)) {
+      throw error;
+    }
+
+    await sleep(typeof options.delayMs === 'number' ? options.delayMs : 500);
+    const recoveredPageId = await refreshActivePageId(options.pageId);
+    return run(recoveredPageId);
+  }
+}
+
 function normalizePageId(raw) {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 }
@@ -118,10 +154,13 @@ async function handleTool(name, args) {
 
     case 'new_page': {
       const url = typeof args?.url === 'string' ? args.url : '';
-      const created = await callBridge('/v1/pages/new', {
-        method: 'POST',
-        body: { url: url || undefined },
-      });
+      const created = await withBridgeRetry(
+        () => callBridge('/v1/pages/new', {
+          method: 'POST',
+          body: { url: url || undefined },
+        }),
+        { delayMs: 700 },
+      );
       const pages = await callBridge('/v1/pages');
       return { ...created, pages: pages.pages, activePageId: pages.activePageId };
     }
@@ -129,7 +168,13 @@ async function handleTool(name, args) {
     case 'select_page': {
       const pageId = normalizePageId(args?.pageId);
       if (!pageId) throw new Error('select_page requires pageId');
-      await callBridge('/v1/pages/select', { method: 'POST', body: { pageId } });
+      await withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/select', {
+          method: 'POST',
+          body: { pageId: resolvedPageId || pageId },
+        }),
+        { pageId },
+      );
       return callBridge('/v1/pages');
     }
 
@@ -144,18 +189,24 @@ async function handleTool(name, args) {
       const pageId = normalizePageId(args?.pageId);
       const type = typeof args?.type === 'string' ? args.type : 'url';
       const url = typeof args?.url === 'string' ? args.url : undefined;
-      return callBridge('/v1/pages/navigate', {
-        method: 'POST',
-        body: { pageId, type, url },
-      });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/navigate', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, type, url },
+        }),
+        { pageId, delayMs: 700 },
+      );
     }
 
     case 'take_snapshot': {
       const pageId = normalizePageId(args?.pageId);
-      const snapshot = await callBridge('/v1/pages/snapshot', {
-        method: 'POST',
-        body: { pageId },
-      });
+      const snapshot = await withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/snapshot', {
+          method: 'POST',
+          body: { pageId: resolvedPageId },
+        }),
+        { pageId, delayMs: 700 },
+      );
       const lines = Array.isArray(snapshot.lines) ? snapshot.lines : [];
       return {
         pageId: snapshot.pageId,
@@ -169,7 +220,13 @@ async function handleTool(name, args) {
       const uid = typeof args?.uid === 'string' ? args.uid : '';
       if (!uid) throw new Error('click requires uid');
       const pageId = normalizePageId(args?.pageId);
-      return callBridge('/v1/pages/click', { method: 'POST', body: { pageId, uid } });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/click', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, uid },
+        }),
+        { pageId },
+      );
     }
 
     case 'fill': {
@@ -177,7 +234,13 @@ async function handleTool(name, args) {
       if (!uid) throw new Error('fill requires uid');
       const pageId = normalizePageId(args?.pageId);
       const value = typeof args?.value === 'string' ? args.value : '';
-      return callBridge('/v1/pages/fill', { method: 'POST', body: { pageId, uid, value } });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/fill', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, uid, value },
+        }),
+        { pageId },
+      );
     }
 
     case 'type_text': {
@@ -185,14 +248,26 @@ async function handleTool(name, args) {
       if (!text) throw new Error('type_text requires text');
       const pageId = normalizePageId(args?.pageId);
       const submitKey = typeof args?.submitKey === 'string' ? args.submitKey : undefined;
-      return callBridge('/v1/pages/type', { method: 'POST', body: { pageId, text, submitKey } });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/type', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, text, submitKey },
+        }),
+        { pageId },
+      );
     }
 
     case 'press_key': {
       const key = typeof args?.key === 'string' ? args.key : '';
       if (!key) throw new Error('press_key requires key');
       const pageId = normalizePageId(args?.pageId);
-      return callBridge('/v1/pages/press', { method: 'POST', body: { pageId, key } });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/press', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, key },
+        }),
+        { pageId },
+      );
     }
 
     case 'wait_for': {
@@ -200,29 +275,38 @@ async function handleTool(name, args) {
       if (text.length === 0) throw new Error('wait_for requires non-empty text[]');
       const timeoutMs = typeof args?.timeout === 'number' ? args.timeout : DEFAULT_WAIT_TIMEOUT_MS;
       const pageId = normalizePageId(args?.pageId);
-      return callBridge('/v1/pages/wait-for', {
-        method: 'POST',
-        body: { pageId, text, timeoutMs },
-      });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/wait-for', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, text, timeoutMs },
+        }),
+        { pageId, delayMs: 700 },
+      );
     }
 
     case 'evaluate_script': {
       const expression = typeof args?.expression === 'string' ? args.expression : '';
       if (!expression) throw new Error('evaluate_script requires expression');
       const pageId = normalizePageId(args?.pageId);
-      return callBridge('/v1/pages/evaluate', {
-        method: 'POST',
-        body: { pageId, expression },
-      });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/evaluate', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, expression },
+        }),
+        { pageId },
+      );
     }
 
     case 'take_screenshot': {
       const pageId = normalizePageId(args?.pageId);
       const filePath = typeof args?.filePath === 'string' ? args.filePath : undefined;
-      return callBridge('/v1/pages/screenshot', {
-        method: 'POST',
-        body: { pageId, filePath },
-      });
+      return withBridgeRetry(
+        (resolvedPageId) => callBridge('/v1/pages/screenshot', {
+          method: 'POST',
+          body: { pageId: resolvedPageId, filePath },
+        }),
+        { pageId, delayMs: 700 },
+      );
     }
 
     default:
@@ -400,4 +484,3 @@ main().catch((error) => {
   console.error('[lumos-chrome-mcp] fatal error:', error);
   process.exit(1);
 });
-

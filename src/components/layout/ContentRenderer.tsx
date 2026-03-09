@@ -15,18 +15,6 @@ import { importDirectory, importLocalFile, importFeishuDoc, importUrl } from '@/
 
 const BROWSER_BASE_WIDTH = 1366;
 
-function buildApplyFitWidthScript(scale: number): string {
-  const normalizedScale = Math.max(0.25, Math.min(1, scale));
-  return `(() => {
-    const root = document.documentElement;
-    if (!root) return false;
-    root.style.zoom = '${normalizedScale}';
-    root.style.transformOrigin = 'top left';
-    root.dataset.lumosWidthMode = 'fit';
-    return true;
-  })()`;
-}
-
 const CLEAR_FIT_WIDTH_SCRIPT = `(() => {
   const root = document.documentElement;
   if (!root) return false;
@@ -295,7 +283,7 @@ export function ContentRenderer() {
 
         if (shouldFitWidth) {
           const scale = Math.min(1, rect.width / BROWSER_BASE_WIDTH);
-          const emulatedHeight = Math.max(1, Math.round(rect.height / Math.max(scale, 0.01)));
+          const emulatedHeight = Math.max(1, Math.round(rect.height));
           await api.sendCDPCommand(pageId, 'Emulation.setDeviceMetricsOverride', {
             mobile: false,
             width: BROWSER_BASE_WIDTH,
@@ -304,13 +292,21 @@ export function ContentRenderer() {
           });
           if (cancelled) return;
           await api.sendCDPCommand(pageId, 'Runtime.evaluate', {
-            expression: buildApplyFitWidthScript(scale),
+            expression: CLEAR_FIT_WIDTH_SCRIPT,
             awaitPromise: false,
           });
+          if (cancelled) return;
+          if (api.setZoomFactor) {
+            await api.setZoomFactor(pageId, scale);
+          }
           return;
         }
 
         await api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {});
+        if (cancelled) return;
+        if (api.setZoomFactor) {
+          await api.setZoomFactor(pageId, 1);
+        }
         if (cancelled) return;
         await api.sendCDPCommand(pageId, 'Runtime.evaluate', {
           expression: CLEAR_FIT_WIDTH_SCRIPT,
@@ -351,6 +347,7 @@ export function ContentRenderer() {
 
       if (pageId && api.connectCDP && api.sendCDPCommand) {
         void api.connectCDP(pageId)
+          .then(() => (api.setZoomFactor ? api.setZoomFactor(pageId, 1) : undefined))
           .then(() => api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {}))
           .then(() => api.sendCDPCommand(pageId, 'Runtime.evaluate', {
             expression: CLEAR_FIT_WIDTH_SCRIPT,

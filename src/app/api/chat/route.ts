@@ -300,7 +300,6 @@ function prependMemoryEvent(
   eventType: 'captured' | 'conflict',
   newContent?: string,
 ): ReadableStream<string> {
-  const encoder = new TextEncoder();
   const eventData = eventType === 'captured'
     ? {
         id: memory.id,
@@ -326,13 +325,13 @@ function prependMemoryEvent(
 
   return new ReadableStream({
     async start(controller) {
-      controller.enqueue(encoder.encode(memoryEvent));
+      controller.enqueue(memoryEvent);
       const reader = stream.getReader();
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          controller.enqueue(encoder.encode(value));
+          controller.enqueue(value);
         }
         controller.close();
       } catch (error) {
