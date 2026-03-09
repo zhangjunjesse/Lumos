@@ -15,6 +15,11 @@ export interface BrowserProps {
   className?: string;
 }
 
+function isTabLoadingPayload(data: unknown): data is { isLoading: boolean } {
+  if (typeof data !== 'object' || data === null) return false;
+  return typeof (data as { isLoading?: unknown }).isLoading === 'boolean';
+}
+
 export function Browser({ className }: BrowserProps) {
   const [tabs, setTabs] = useState<BrowserTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -113,7 +118,9 @@ export function Browser({ className }: BrowserProps) {
           loadTabs();
           break;
         case 'tab-loading':
-          setIsLoading(data.isLoading);
+          if (isTabLoadingPayload(data)) {
+            setIsLoading(data.isLoading);
+          }
           break;
         case 'tab-error':
           console.error('Tab error:', data);
