@@ -3,6 +3,20 @@ import { getDb } from '@/lib/db';
 import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
 import Database from 'better-sqlite3';
 import { requireActiveFeishuUserAuth } from '@/lib/bridge/feishu-auth-guard';
+import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
+
+interface StoredMessageRow {
+  role: string;
+  content: string;
+}
+
+interface ActiveBindingRow {
+  platform_chat_id: string;
+}
+
+interface ChatSessionRow {
+  title?: string;
+}
 
 async function syncHistoryMessages(
   db: Database.Database,
@@ -12,7 +26,7 @@ async function syncHistoryMessages(
 ) {
   const messages = db.prepare(
     'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC'
-  ).all(sessionId) as any[];
+  ).all(sessionId) as StoredMessageRow[];
 
   for (const msg of messages) {
     const cardContent = {
@@ -59,7 +73,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
     }
 
-    if (!process.env.FEISHU_APP_ID || !process.env.FEISHU_APP_SECRET) {
+    if (!isFeishuConfigured()) {
       return NextResponse.json({
         error: 'FEISHU_NOT_CONFIGURED',
         message: '请先配置飞书应用',
@@ -80,19 +94,20 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
-    const feishuApi = new FeishuAPI(process.env.FEISHU_APP_ID, process.env.FEISHU_APP_SECRET);
+    const { appId, appSecret } = getFeishuCredentials();
+    const feishuApi = new FeishuAPI(appId, appSecret);
 
     // 检查是否已有绑定
     const existing = db.prepare(
       'SELECT platform_chat_id FROM session_bindings WHERE lumos_session_id = ? AND platform = ? AND status = ?'
-    ).get(sessionId, 'feishu', 'active') as any;
+    ).get(sessionId, 'feishu', 'active') as ActiveBindingRow | undefined;
 
     if (existing?.platform_chat_id) {
       const link = await feishuApi.createChatLink(existing.platform_chat_id);
       return NextResponse.json({ chatId: existing.platform_chat_id, shareLink: link.share_link });
     }
 
-    const session = db.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as any;
+    const session = db.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as ChatSessionRow | undefined;
     const chat = await feishuApi.createChat(`Lumos - ${session?.title || 'Chat'}`, 'Lumos AI助手');
     const link = await feishuApi.createChatLink(chat.chat_id);
 
@@ -106,8 +121,9 @@ export async function POST(req: NextRequest) {
     await syncHistoryMessages(db, feishuApi, sessionId, chat.chat_id);
 
     return NextResponse.json({ chatId: chat.chat_id, shareLink: link.share_link });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create binding';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -128,8 +144,9 @@ export async function GET(req: NextRequest) {
     ).all(sessionId);
 
     return NextResponse.json({ bindings });
-  } catch (error: any) {
+  } catch (error) {
     console.error('[Bindings GET] Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to query bindings';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

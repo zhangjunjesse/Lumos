@@ -8,6 +8,7 @@ import {
   updateSessionModel,
 } from '@/lib/db';
 import { streamClaude } from '@/lib/claude-client';
+import { getFeishuCredentials } from '@/lib/feishu-config';
 import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -135,6 +136,7 @@ function hasFeishuMcp(
 
 function loadMcpServers(sessionWorkingDirectory?: string): Record<string, MCPServerConfig> | undefined {
   const mcpServers = getEnabledMcpServersAsConfig();
+  const { appId: feishuAppId, appSecret: feishuAppSecret } = getFeishuCredentials();
 
   let runtimePath: string;
   if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
@@ -174,8 +176,8 @@ function loadMcpServers(sessionWorkingDirectory?: string): Record<string, MCPSer
     if (name === 'feishu') {
       config.env = {
         ...config.env,
-        FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
-        FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
+        FEISHU_APP_ID: feishuAppId,
+        FEISHU_APP_SECRET: feishuAppSecret,
         FEISHU_TOKEN_PATH: path.join(dataDirPath, 'auth', 'feishu.json'),
       };
     }

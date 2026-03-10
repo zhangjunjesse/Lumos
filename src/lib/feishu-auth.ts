@@ -6,6 +6,11 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import {
+  getFeishuCredentials,
+  getFeishuOAuthScopes,
+  resolveFeishuRedirectUri,
+} from "@/lib/feishu-config";
 
 const FEISHU_BASE_URL = "https://open.feishu.cn/open-apis";
 
@@ -28,35 +33,24 @@ export interface FeishuTokenData {
 }
 
 function getConfig() {
-  const appId = process.env.FEISHU_APP_ID;
-  const appSecret = process.env.FEISHU_APP_SECRET;
+  const { appId, appSecret } = getFeishuCredentials();
   if (!appId || !appSecret) {
-    throw new Error("Missing FEISHU_APP_ID or FEISHU_APP_SECRET env vars");
+    throw new Error("Missing Feishu app credentials");
   }
   return { appId, appSecret };
 }
 
-export function getRedirectUri() {
-  return "http://localhost:3000/api/feishu/auth/callback";
+export function getRedirectUri(requestOrigin?: string) {
+  return resolveFeishuRedirectUri(requestOrigin);
 }
 
-export function buildAuthUrl(): string {
+export function buildAuthUrl(requestOrigin?: string): string {
   const { appId } = getConfig();
-  const defaultScopes = [
-    "offline_access",
-    "wiki:wiki",
-    "docx:document",
-    "docx:document.block:convert",
-    "drive:drive",
-    "mail:user_mailbox.message:send",
-    "contact:user.base:readonly",
-    "contact:user.email:readonly",
-  ];
-  const scopes = (process.env.FEISHU_OAUTH_SCOPES || defaultScopes.join(" ")).trim();
+  const scopes = getFeishuOAuthScopes();
 
   const params = new URLSearchParams({
     app_id: appId,
-    redirect_uri: getRedirectUri(),
+    redirect_uri: getRedirectUri(requestOrigin),
     scope: scopes,
     state: Date.now().toString(),
   });
@@ -65,9 +59,11 @@ export function buildAuthUrl(): string {
 
 /** 用授权码换取 user_access_token (v2 接口) */
 export async function exchangeCodeForToken(
-  code: string
+  code: string,
+  requestOrigin?: string,
 ): Promise<FeishuTokenData> {
   const { appId, appSecret } = getConfig();
+  const redirectUri = getRedirectUri(requestOrigin);
 
   const res = await fetch(`${FEISHU_BASE_URL}/authen/v2/oauth/token`, {
     method: "POST",
@@ -77,7 +73,7 @@ export async function exchangeCodeForToken(
       client_id: appId,
       client_secret: appSecret,
       code,
-      redirect_uri: getRedirectUri(),
+      redirect_uri: redirectUri,
     }),
   });
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { WebSocketManager } from '@/lib/bridge/websocket/websocket-manager';
 import { handleFeishuMessage } from '@/lib/bridge/message-handler';
+import { getFeishuCredentials } from '@/lib/feishu-config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +17,7 @@ export async function POST() {
     return NextResponse.json({ status: 'already_running' });
   }
 
-  const appId = process.env.FEISHU_APP_ID;
-  const appSecret = process.env.FEISHU_APP_SECRET;
+  const { appId, appSecret } = getFeishuCredentials();
 
   if (!appId || !appSecret) {
     return NextResponse.json(

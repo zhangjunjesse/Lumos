@@ -25,6 +25,7 @@ let userShellEnv: Record<string, string> = {};
 let isQuitting = false;
 let appOriginPrefix = '';
 const BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH = path.join('runtime', 'browser-bridge.json');
+const DEFAULT_PACKAGED_SERVER_PORT = 43127;
 
 function getBrowserBridgeRuntimeFilePath(): string {
   const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
@@ -285,21 +286,49 @@ function getExpandedShellPath(): string {
   }
 }
 
-function getPort(): Promise<number> {
+function tryListenOnPort(port: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
     server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       const addr = server.address();
       if (addr && typeof addr === 'object') {
-        const port = addr.port;
-        server.close(() => resolve(port));
+        server.close(() => resolve(addr.port));
       } else {
-        server.close(() => reject(new Error('Failed to get port')));
+        server.close(() => reject(new Error(`Failed to bind port ${port}`)));
       }
     });
   });
+}
+
+function getPreferredServerPort(): number {
+  const raw = process.env.LUMOS_SERVER_PORT?.trim();
+  if (!raw) return DEFAULT_PACKAGED_SERVER_PORT;
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+    return parsed;
+  }
+
+  console.warn(`[main] Invalid LUMOS_SERVER_PORT: ${raw}. Falling back to ${DEFAULT_PACKAGED_SERVER_PORT}.`);
+  return DEFAULT_PACKAGED_SERVER_PORT;
+}
+
+async function getPort(preferredPort?: number): Promise<number> {
+  if (preferredPort) {
+    try {
+      return await tryListenOnPort(preferredPort);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== 'EADDRINUSE' && err.code !== 'EACCES') {
+        throw error;
+      }
+      console.warn(`[main] Preferred port ${preferredPort} unavailable (${err.code}), falling back to a random port.`);
+    }
+  }
+
+  return tryListenOnPort(0);
 }
 
 async function waitForServer(port: number, timeout = 30000): Promise<void> {
@@ -1080,7 +1109,7 @@ app.whenReady().then(async () => {
       port = 3000;
       console.log(`Dev mode: connecting to http://127.0.0.1:${port}`);
     } else {
-      port = await getPort();
+      port = await getPort(getPreferredServerPort());
       console.log(`Starting server on port ${port}...`);
       serverProcess = startServer(port);
       await waitForServer(port);
@@ -1141,12 +1170,12 @@ app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     try {
       if (!isDev && !serverProcess) {
-        const port = await getPort();
+        const port = await getPort(getPreferredServerPort());
         serverProcess = startServer(port);
         await waitForServer(port);
         serverPort = port;
       }
-      createWindow(serverPort || 3000);
+      createWindow(serverPort || getPreferredServerPort());
 
       // Re-attach updater to the new window
       if (!isDev && mainWindow) {

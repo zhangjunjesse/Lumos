@@ -7,12 +7,14 @@ export { registerAdapter, createAdapter, getAvailableAdapters } from './adapter-
 
 import { FeishuAdapter } from './feishu-adapter';
 import { registerAdapter } from './adapter-factory';
+import { getFeishuCredentials } from '@/lib/feishu-config';
 
 registerAdapter('feishu', () => {
+  const { appId, appSecret } = getFeishuCredentials();
   const adapter = new FeishuAdapter();
   adapter.setConfig({
-    appId: process.env.FEISHU_APP_ID!,
-    appSecret: process.env.FEISHU_APP_SECRET!
+    appId,
+    appSecret,
   });
   return adapter;
 });

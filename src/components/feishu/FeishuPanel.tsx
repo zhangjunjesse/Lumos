@@ -5,6 +5,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { FeishuContext } from "@/hooks/useFeishu";
 import type { FeishuAuthState, FeishuContextValue } from "@/hooks/useFeishu";
 import { usePanel } from "@/hooks/usePanel";
+import { FeishuConfigCard } from "@/components/feishu/FeishuConfigCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { openExternalUrl } from "@/lib/open-external";
@@ -329,6 +330,8 @@ export function FeishuPanel({ onOpenDoc, onAddToLibrary }: FeishuPanelProps) {
         </div>
 
         <div className="p-3">
+          <FeishuConfigCard />
+
           {auth.loading ? (
             <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">

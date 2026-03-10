@@ -10,6 +10,7 @@ import { extractAssistantArtifactPaths } from './file-artifact-extractor';
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu } from './sync-helper';
 import { requireActiveFeishuUserAuth } from './feishu-auth-guard';
 import { loadToken } from '@/lib/feishu-auth';
+import { getFeishuCredentials } from '@/lib/feishu-config';
 import { feishuFetch } from '@/lib/feishu/doc-content';
 
 const processedMessages = new Set<string>();
@@ -353,8 +354,7 @@ export async function handleFeishuMessage(message: FeishuWebhookMessage) {
         }
       }
     } else {
-      const appId = process.env.FEISHU_APP_ID;
-      const appSecret = process.env.FEISHU_APP_SECRET;
+      const { appId, appSecret } = getFeishuCredentials();
       if (!appId || !appSecret) {
         console.error('[Bridge] Missing FEISHU_APP_ID/FEISHU_APP_SECRET for media download');
         return;

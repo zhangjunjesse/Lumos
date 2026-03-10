@@ -2,6 +2,7 @@ import { getDb } from '@/lib/db';
 import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
 import { recordMessageSync } from '@/lib/db/feishu-bridge';
 import { loadToken } from '@/lib/feishu-auth';
+import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
 import { feishuFetch } from '@/lib/feishu/doc-content';
 import { parseMessageContent } from '@/types';
 import fs from 'node:fs/promises';
@@ -73,8 +74,7 @@ async function sendInteractiveCard(params: {
   bindingId?: number;
 }): Promise<FeishuSendResult> {
   const { chatId, role, content, bindingId } = params;
-  const appId = process.env.FEISHU_APP_ID;
-  const appSecret = process.env.FEISHU_APP_SECRET;
+  const { appId, appSecret } = getFeishuCredentials();
   if (!appId || !appSecret) {
     return { ok: false, error: 'FEISHU_NOT_CONFIGURED' };
   }
@@ -147,7 +147,7 @@ export async function syncMessageToFeishu(
       return { ok: false, error: auth.code };
     }
 
-    if (!process.env.FEISHU_APP_ID || !process.env.FEISHU_APP_SECRET) {
+    if (!isFeishuConfigured()) {
       return { ok: false, error: 'FEISHU_NOT_CONFIGURED' };
     }
 
@@ -193,8 +193,7 @@ export async function feishuSend(params: {
     return { ok: false, error: auth.code };
   }
 
-  const appId = process.env.FEISHU_APP_ID;
-  const appSecret = process.env.FEISHU_APP_SECRET;
+  const { appId, appSecret } = getFeishuCredentials();
   if (!appId || !appSecret) {
     return { ok: false, error: 'FEISHU_NOT_CONFIGURED' };
   }
@@ -330,8 +329,7 @@ export async function syncSessionTitleToFeishu(sessionId: string, title: string)
       return { ok: false, error: auth.code };
     }
 
-    const appId = process.env.FEISHU_APP_ID;
-    const appSecret = process.env.FEISHU_APP_SECRET;
+    const { appId, appSecret } = getFeishuCredentials();
     if (!appId || !appSecret) {
       return { ok: false, error: 'FEISHU_NOT_CONFIGURED' };
     }

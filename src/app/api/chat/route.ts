@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { loadToken } from '@/lib/feishu-auth';
+import { getFeishuCredentials } from '@/lib/feishu-config';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
 import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
@@ -488,6 +489,7 @@ function loadMcpServers(
 ): Record<string, MCPServerConfig> | undefined {
   // Load enabled MCP servers from database
   const mcpServers = getEnabledMcpServersAsConfig();
+  const { appId: feishuAppId, appSecret: feishuAppSecret } = getFeishuCredentials();
 
   // Resolve [RUNTIME_PATH] placeholder in args
   // In production: process.resourcesPath/
@@ -531,8 +533,8 @@ function loadMcpServers(
     if (name === 'feishu') {
       config.env = {
         ...config.env,
-        FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
-        FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
+        FEISHU_APP_ID: feishuAppId,
+        FEISHU_APP_SECRET: feishuAppSecret,
         FEISHU_TOKEN_PATH: path.join(dataDir, 'auth', 'feishu.json'),
       };
     }

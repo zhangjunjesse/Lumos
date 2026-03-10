@@ -9,7 +9,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const tokenData = await exchangeCodeForToken(code);
+    const redirectUri = request.nextUrl.origin;
+    console.log("[feishu-auth] callback origin:", redirectUri);
+    const tokenData = await exchangeCodeForToken(code, redirectUri);
     const name = tokenData.userInfo?.name || "用户";
 
     // Return HTML that auto-closes the popup window
