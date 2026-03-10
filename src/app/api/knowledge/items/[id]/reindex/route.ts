@@ -8,43 +8,22 @@ import { parseFileForKnowledge, buildReferenceContent } from '@/lib/knowledge/pa
 import { summarizeAndEmbed } from '@/lib/knowledge/summarizer';
 import { autoTagCategorized } from '@/lib/knowledge/tagger';
 import { buildTagCandidates, syncItemTagSystem } from '@/lib/knowledge/tag-system';
-import type { KbItem, KbProcessingStatus, KbStageStatus, CategorizedTag } from '@/lib/knowledge/types';
+import type { KbItem, KbProcessingStatus, CategorizedTag } from '@/lib/knowledge/types';
+import {
+  detailToJson,
+  resolveStatus,
+  stageFailed,
+  type ProcessingDetail,
+} from '@/lib/knowledge/processing-status';
 
-interface ProcessingDetail {
-  mode: 'full' | 'reference';
-  parse: KbStageStatus;
-  chunk: KbStageStatus;
-  bm25: KbStageStatus;
-  embedding: KbStageStatus;
-  summary: KbStageStatus;
-}
-
-function detailToJson(detail: ProcessingDetail): string {
-  return JSON.stringify(detail);
-}
-
-function resolveStatus(detail: ProcessingDetail, hasError: boolean): KbProcessingStatus {
-  if (detail.mode === 'reference') {
-    if (detail.chunk === 'failed' || detail.bm25 === 'failed') return 'partial';
-    return 'reference_only';
+function formatStageError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
   }
-  const hardFailed = detail.parse === 'failed' || detail.chunk === 'failed' || detail.bm25 === 'failed';
-  if (hardFailed) return 'failed';
-  if (detail.summary === 'running') return 'summarizing';
-  if (detail.embedding === 'running') return 'embedding';
-  if (detail.bm25 === 'running') return 'indexing';
-  if (detail.chunk === 'running') return 'chunking';
-  if (detail.parse === 'running') return 'parsing';
-  const stageValues = [detail.parse, detail.chunk, detail.bm25, detail.embedding, detail.summary];
-  if (stageValues.every((value) => value === 'done' || value === 'skipped')) return 'ready';
-  if (detail.embedding === 'failed') return 'partial';
-  if (detail.summary === 'failed') return 'ready';
-  if (hasError) return 'partial';
-  return 'pending';
-}
-
-function stageFailed(detail: ProcessingDetail): boolean {
-  return [detail.parse, detail.chunk, detail.bm25, detail.embedding, detail.summary].includes('failed');
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
 }
 
 function buildMissingSourceReference(sourcePath: string, reason: string): string {
@@ -174,6 +153,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     embedding: resolved.mode === 'reference' ? 'skipped' : 'pending',
     summary: resolved.mode === 'reference' ? 'skipped' : 'pending',
   };
+  let processingError = resolved.parseError;
 
   const persist = (patch?: { status?: KbProcessingStatus; error?: string; chunkCount?: number }) => {
     const status = patch?.status || resolveStatus(detail, stageFailed(detail));
@@ -184,7 +164,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         : resolved.content,
       processing_status: status,
       processing_detail: detailToJson(detail),
-      processing_error: patch?.error ?? resolved.parseError,
+      processing_error: patch?.error ?? processingError,
       processing_updated_at: new Date().toISOString(),
       ...(typeof patch?.chunkCount === 'number' ? { chunk_count: patch.chunkCount } : {}),
     });
@@ -205,8 +185,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       try {
         indexItemChunks(id, [referenceText], resolved.title);
         detail.bm25 = 'done';
-      } catch {
+      } catch (error) {
         detail.bm25 = 'failed';
+        processingError = formatStageError(error, 'bm25_index_failed');
       }
 
       persist({
@@ -242,8 +223,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     try {
       indexItemChunks(id, chunks, resolved.title);
       detail.bm25 = 'done';
-    } catch {
+    } catch (error) {
       detail.bm25 = 'failed';
+      processingError = formatStageError(error, 'bm25_index_failed');
     }
     persist();
 
@@ -252,8 +234,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     try {
       await indexItem(id, chunks);
       detail.embedding = 'done';
-    } catch {
+    } catch (error) {
       detail.embedding = 'failed';
+      processingError = formatStageError(error, 'embedding_failed');
     }
     persist();
 

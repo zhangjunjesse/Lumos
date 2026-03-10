@@ -431,7 +431,13 @@ function renderContent(
       );
 
     case 'feishu-doc':
-      return <FeishuPanel onOpenDoc={handleOpenFeishuDoc} onAddToLibrary={handleImportFeishuDoc} />;
+      return (
+        <FeishuPanel
+          onOpenDoc={handleOpenFeishuDoc}
+          onAddToLibrary={handleImportFeishuDoc}
+          showConfigCard={false}
+        />
+      );
 
     case 'favorites':
       return (

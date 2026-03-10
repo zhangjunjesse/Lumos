@@ -73,6 +73,7 @@ const MIME_MAP: Record<string, string> = {
 };
 
 const FULL_PARSE_EXTS = new Set([
+  '.doc',
   '.docx',
   '.xlsx',
   '.xls',
@@ -149,7 +150,6 @@ const FULL_PARSE_EXTS = new Set([
 ]);
 
 const REFERENCE_ONLY_EXTS = new Set([
-  '.doc',
   '.docm',
   '.ppt',
   '.pptx',
@@ -290,6 +290,7 @@ const MDLS_PROMOTION_EXTS = new Set([
 ]);
 
 const STRINGS_PROMOTION_EXTS = new Set([
+  '.doc',
   '.mpp',
   '.vsd',
   '.vsdx',
@@ -904,7 +905,9 @@ export async function parseDocument(filePath: string): Promise<ParsedDocument> {
 
   let result: { title: string; content: string; extra: Partial<DocumentMetadata> };
 
-  if (ext === '.docx') {
+  if (ext === '.doc') {
+    result = await parseDoc(filePath, baseName);
+  } else if (ext === '.docx') {
     result = await parseDocx(filePath, baseName);
   } else if (ext === '.xlsx' || ext === '.xls' || ext === '.xlsm' || ext === '.ods') {
     result = await parseExcel(filePath, baseName);
@@ -942,12 +945,285 @@ function extractMdTitle(content: string, fallback: string): string {
 
 type ParseResult = { title: string; content: string; extra: Partial<DocumentMetadata> };
 
+type MatrixInput =
+  | ArrayLike<number>
+  | {
+    a?: number;
+    b?: number;
+    c?: number;
+    d?: number;
+    e?: number;
+    f?: number;
+    m11?: number;
+    m12?: number;
+    m21?: number;
+    m22?: number;
+    m41?: number;
+    m42?: number;
+  };
+
+type MatrixRecord = Exclude<MatrixInput, ArrayLike<number>>;
+
+function isMatrixArrayLike(input: MatrixInput): input is ArrayLike<number> {
+  return Array.isArray(input) || ArrayBuffer.isView(input);
+}
+
+function isMatrixRecord(input: MatrixInput): input is MatrixRecord {
+  return !isMatrixArrayLike(input);
+}
+
+function ensurePdfRuntimePolyfills(): void {
+  const globalRef = globalThis as Record<string, unknown>;
+  if (typeof globalRef.DOMMatrix === 'undefined') {
+    class NodeDOMMatrix {
+      m11 = 1;
+      m12 = 0;
+      m13 = 0;
+      m14 = 0;
+      m21 = 0;
+      m22 = 1;
+      m23 = 0;
+      m24 = 0;
+      m31 = 0;
+      m32 = 0;
+      m33 = 1;
+      m34 = 0;
+      m41 = 0;
+      m42 = 0;
+      m43 = 0;
+      m44 = 1;
+      is2D = true;
+
+      constructor(init?: MatrixInput | string) {
+        if (typeof init !== 'string') {
+          this.assign(init);
+        }
+      }
+
+      get a() { return this.m11; }
+      set a(value: number) { this.m11 = value; }
+      get b() { return this.m12; }
+      set b(value: number) { this.m12 = value; }
+      get c() { return this.m21; }
+      set c(value: number) { this.m21 = value; }
+      get d() { return this.m22; }
+      set d(value: number) { this.m22 = value; }
+      get e() { return this.m41; }
+      set e(value: number) { this.m41 = value; }
+      get f() { return this.m42; }
+      set f(value: number) { this.m42 = value; }
+      get isIdentity() {
+        return this.m11 === 1 && this.m12 === 0
+          && this.m21 === 0 && this.m22 === 1
+          && this.m41 === 0 && this.m42 === 0;
+      }
+
+      private assign(init?: MatrixInput): void {
+        if (!init) return;
+        if (isMatrixArrayLike(init)) {
+          const values = Array.from(init).map((value) => Number(value) || 0);
+          if (values.length >= 6) {
+            [this.m11, this.m12, this.m21, this.m22, this.m41, this.m42] = values;
+          }
+          return;
+        }
+        if (!isMatrixRecord(init)) return;
+        this.m11 = Number(init.m11 ?? init.a ?? this.m11);
+        this.m12 = Number(init.m12 ?? init.b ?? this.m12);
+        this.m21 = Number(init.m21 ?? init.c ?? this.m21);
+        this.m22 = Number(init.m22 ?? init.d ?? this.m22);
+        this.m41 = Number(init.m41 ?? init.e ?? this.m41);
+        this.m42 = Number(init.m42 ?? init.f ?? this.m42);
+      }
+
+      private multiplyValues(other: NodeDOMMatrix): void {
+        const m11 = this.m11 * other.m11 + this.m21 * other.m12;
+        const m12 = this.m12 * other.m11 + this.m22 * other.m12;
+        const m21 = this.m11 * other.m21 + this.m21 * other.m22;
+        const m22 = this.m12 * other.m21 + this.m22 * other.m22;
+        const m41 = this.m11 * other.m41 + this.m21 * other.m42 + this.m41;
+        const m42 = this.m12 * other.m41 + this.m22 * other.m42 + this.m42;
+        this.m11 = m11;
+        this.m12 = m12;
+        this.m21 = m21;
+        this.m22 = m22;
+        this.m41 = m41;
+        this.m42 = m42;
+      }
+
+      multiplySelf(other?: MatrixInput): this {
+        this.multiplyValues(new NodeDOMMatrix(other));
+        return this;
+      }
+
+      preMultiplySelf(other?: MatrixInput): this {
+        const lhs = new NodeDOMMatrix(other);
+        lhs.multiplyValues(this);
+        this.assign(lhs);
+        return this;
+      }
+
+      translateSelf(tx = 0, ty = 0): this {
+        this.m41 += tx;
+        this.m42 += ty;
+        return this;
+      }
+
+      scaleSelf(scaleX = 1, scaleY = scaleX): this {
+        this.m11 *= scaleX;
+        this.m12 *= scaleX;
+        this.m21 *= scaleY;
+        this.m22 *= scaleY;
+        return this;
+      }
+
+      rotateSelf(rotX = 0, rotY = 0, rotZ = 0): this {
+        const angle = rotZ || rotY || rotX;
+        if (!angle) return this;
+        const rad = angle * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        this.multiplySelf({ a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 });
+        return this;
+      }
+
+      invertSelf(): this {
+        const det = this.m11 * this.m22 - this.m12 * this.m21;
+        if (!det) {
+          this.m11 = 1;
+          this.m12 = 0;
+          this.m21 = 0;
+          this.m22 = 1;
+          this.m41 = 0;
+          this.m42 = 0;
+          return this;
+        }
+        const m11 = this.m22 / det;
+        const m12 = -this.m12 / det;
+        const m21 = -this.m21 / det;
+        const m22 = this.m11 / det;
+        const m41 = (this.m21 * this.m42 - this.m22 * this.m41) / det;
+        const m42 = (this.m12 * this.m41 - this.m11 * this.m42) / det;
+        this.m11 = m11;
+        this.m12 = m12;
+        this.m21 = m21;
+        this.m22 = m22;
+        this.m41 = m41;
+        this.m42 = m42;
+        return this;
+      }
+
+      inverse(): NodeDOMMatrix {
+        return new NodeDOMMatrix(this).invertSelf();
+      }
+
+      transformPoint(point?: { x?: number; y?: number; z?: number; w?: number }) {
+        const x = Number(point?.x ?? 0);
+        const y = Number(point?.y ?? 0);
+        return {
+          x: this.m11 * x + this.m21 * y + this.m41,
+          y: this.m12 * x + this.m22 * y + this.m42,
+          z: Number(point?.z ?? 0),
+          w: Number(point?.w ?? 1),
+        };
+      }
+
+      toFloat32Array(): Float32Array {
+        return new Float32Array([
+          this.m11, this.m12, this.m13, this.m14,
+          this.m21, this.m22, this.m23, this.m24,
+          this.m31, this.m32, this.m33, this.m34,
+          this.m41, this.m42, this.m43, this.m44,
+        ]);
+      }
+
+      toFloat64Array(): Float64Array {
+        return new Float64Array(this.toFloat32Array());
+      }
+
+      static fromMatrix(other?: MatrixInput): NodeDOMMatrix {
+        return new NodeDOMMatrix(other);
+      }
+    }
+
+    globalRef.DOMMatrix = NodeDOMMatrix;
+  }
+
+  if (typeof globalRef.ImageData === 'undefined') {
+    class NodeImageData {
+      data: Uint8ClampedArray;
+      width: number;
+      height: number;
+
+      constructor(data: Uint8ClampedArray, width: number, height: number) {
+        this.data = data;
+        this.width = width;
+        this.height = height;
+      }
+    }
+
+    globalRef.ImageData = NodeImageData;
+  }
+
+  if (typeof globalRef.DOMPoint === 'undefined') {
+    class NodeDOMPoint {
+      x: number;
+      y: number;
+      z: number;
+      w: number;
+
+      constructor(x = 0, y = 0, z = 0, w = 1) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.w = w;
+      }
+
+      static fromPoint(point?: { x?: number; y?: number; z?: number; w?: number }): NodeDOMPoint {
+        return new NodeDOMPoint(
+          Number(point?.x ?? 0),
+          Number(point?.y ?? 0),
+          Number(point?.z ?? 0),
+          Number(point?.w ?? 1),
+        );
+      }
+    }
+
+    globalRef.DOMPoint = NodeDOMPoint;
+  }
+
+  if (typeof globalRef.Path2D === 'undefined') {
+    class NodePath2D {
+      addPath(): void {}
+      closePath(): void {}
+      moveTo(): void {}
+      lineTo(): void {}
+      rect(): void {}
+      arc(): void {}
+      bezierCurveTo(): void {}
+      quadraticCurveTo(): void {}
+    }
+
+    globalRef.Path2D = NodePath2D;
+  }
+}
+
 async function parseDocx(filePath: string, baseName: string): Promise<ParseResult> {
   const mammoth = await import('mammoth');
   const fileBuf = fs.readFileSync(filePath);
   const result = await mammoth.extractRawText({ buffer: fileBuf });
   const content = result.value;
   return { title: baseName, content, extra: {} };
+}
+
+async function parseDoc(filePath: string, baseName: string): Promise<ParseResult> {
+  const legacyDocText = extractLegacyDocText(filePath)
+    || extractWithTextutil(filePath)
+    || extractWithStrings(filePath);
+  if (!legacyDocText) {
+    throw new Error('legacy_doc_extract_unavailable');
+  }
+  return { title: baseName, content: legacyDocText, extra: {} };
 }
 
 async function parseExcel(filePath: string, baseName: string): Promise<ParseResult> {
@@ -980,6 +1256,8 @@ async function parsePdf(filePath: string, baseName: string): Promise<ParseResult
       extra: {},
     };
   }
+
+  ensurePdfRuntimePolyfills();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mod = await import('pdf-parse' as any);
