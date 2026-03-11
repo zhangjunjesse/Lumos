@@ -226,30 +226,6 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     }
   }, [router, workingDirectory, openFolderPicker]);
 
-  // Added: Create new session under existing project
-  const handleCreateSessionInProject = useCallback(async (projectWorkingDir: string) => {
-    setCreatingSessionForProject(projectWorkingDir);
-    try {
-      const res = await fetch("/api/chat/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          working_directory: projectWorkingDir,
-          model: localStorage.getItem('codepilot:last-model') || '',
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        window.dispatchEvent(new CustomEvent("session-created"));
-        router.push(`/chat/${data.session.id}`);
-      }
-    } catch {
-      // Silently fail
-    } finally {
-      setCreatingSessionForProject(null);
-    }
-  }, [router]);
-
   const toggleProject = useCallback((wd: string) => {
     setCollapsedProjects((prev) => {
       const next = new Set(prev);
@@ -453,11 +429,15 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     workingDirectory: string
   ) => {
     e.stopPropagation();
+    setCreatingSessionForProject(workingDirectory);
     try {
       const res = await fetch("/api/chat/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ working_directory: workingDirectory }),
+        body: JSON.stringify({
+          working_directory: workingDirectory,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -466,6 +446,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       }
     } catch {
       // Silently fail
+    } finally {
+      setCreatingSessionForProject(null);
     }
   };
 
