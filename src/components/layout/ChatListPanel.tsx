@@ -33,6 +33,7 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import { RenameDialog } from "@/components/ui/rename-dialog";
+import { useStreamingStore } from "@/stores/streaming-store";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -78,9 +79,10 @@ interface ProjectGroup {
   displayName: string;
   sessions: ChatSession[];
   createdAt: number;
+  hasStreaming: boolean;  // Added: whether any session in project is streaming
 }
 
-function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
+function groupSessionsByProject(sessions: ChatSession[], streamingStore: ReturnType<typeof useStreamingStore>): ProjectGroup[] {
   const map = new Map<string, ChatSession[]>();
   for (const session of sessions) {
     const key = session.working_directory || "";
@@ -102,11 +104,19 @@ function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
     const createdAt = Math.min(
       ...groupSessions.map((s) => parseDBDate(s.created_at).getTime()),
     );
+
+    // Check if any session in this project is streaming
+    const hasStreaming = groupSessions.some((s) => {
+      const state = streamingStore.getSession(s.id);
+      return state?.status === 'streaming';
+    });
+
     groups.push({
       workingDirectory: wd,
       displayName,
       sessions: groupSessions,
       createdAt,
+      hasStreaming,
     });
   }
 
@@ -126,6 +136,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const { streamingSessionId, pendingApprovalSessionId, workingDirectory } = usePanel();
   const { t } = useTranslation();
   const { isElectron, openNativePicker } = useNativeFolderPicker();
+  const streamingStore = useStreamingStore();  // Added: streaming store
+
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
@@ -141,6 +153,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renamingProject, setRenamingProject] = useState<{ workingDirectory: string; displayName: string } | null>(null);
   const [projectRenameDialogOpen, setProjectRenameDialogOpen] = useState(false);
+  const [creatingSessionForProject, setCreatingSessionForProject] = useState<string | null>(null);  // Added: track which project is creating new session
 
   const handleFolderSelect = useCallback(async (path: string) => {
     try {
@@ -212,6 +225,30 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     }
   }, [router, workingDirectory, openFolderPicker]);
 
+  // Added: Create new session under existing project
+  const handleCreateSessionInProject = useCallback(async (projectWorkingDir: string) => {
+    setCreatingSessionForProject(projectWorkingDir);
+    try {
+      const res = await fetch("/api/chat/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          working_directory: projectWorkingDir,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        window.dispatchEvent(new CustomEvent("session-created"));
+        router.push(`/chat/${data.session.id}`);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setCreatingSessionForProject(null);
+    }
+  }, [router]);
+
   const toggleProject = useCallback((wd: string) => {
     setCollapsedProjects((prev) => {
       const next = new Set(prev);
@@ -253,6 +290,16 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       window.removeEventListener("session-updated", handler);
     };
   }, [fetchSessions]);
+
+  // Force re-render when streaming state changes
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    // Subscribe to streaming store changes to trigger re-render
+    const unsubscribe = streamingStore.subscribe(() => {
+      forceUpdate(v => v + 1);
+    });
+    return unsubscribe;
+  }, [streamingStore]);
 
   const handleDeleteSession = async (
     e: React.MouseEvent,
@@ -433,8 +480,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     : sessions;
 
   const projectGroups = useMemo(
-    () => groupSessionsByProject(filteredSessions),
-    [filteredSessions]
+    () => groupSessionsByProject(filteredSessions, streamingStore),
+    [filteredSessions]  // streamingStore methods are stable, don't need as dependency
   );
 
   // On first use, auto-collapse all project groups except the most recent one
@@ -589,6 +636,13 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                       icon={isCollapsed ? Folder : FolderOpen}
                       className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
                     />
+                    {/* Project-level streaming indicator */}
+                    {group.hasStreaming && (
+                      <span className="relative flex h-2 w-2 shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                      </span>
+                    )}
                     <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                       {group.displayName}
                     </span>
@@ -640,8 +694,12 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                         const isActive = pathname === `/chat/${session.id}`;
                         const isHovered = hoveredSession === session.id;
                         const isDeleting = deletingSession === session.id;
-                        const isSessionStreaming =
-                          streamingSessionId === session.id;
+
+                        // Get streaming state from store
+                        const streamingState = streamingStore.getSession(session.id);
+                        const isSessionStreaming = streamingState?.status === 'streaming';
+                        const isSessionCompleted = streamingState?.status === 'completed';
+
                         const needsApproval =
                           pendingApprovalSessionId === session.id;
                         const mode = session.mode || "code";
@@ -673,6 +731,18 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
                                 </span>
                               )}
+                              {/* Completed indicator */}
+                              {!isSessionStreaming && isSessionCompleted && streamingState && (
+                                <span className="flex h-2 w-2 shrink-0 items-center justify-center">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                </span>
+                              )}
+                              {/* Idle indicator */}
+                              {!isSessionStreaming && !isSessionCompleted && (
+                                <span className="flex h-2 w-2 shrink-0 items-center justify-center">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+                                </span>
+                              )}
                               {/* Approval indicator */}
                               {needsApproval && (
                                 <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
@@ -686,6 +756,12 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                 <span className="block truncate text-[12px] font-medium leading-tight">
                                   {session.title}
                                 </span>
+                                {/* Show streaming content preview */}
+                                {streamingState?.content && (
+                                  <span className="block truncate text-[10px] text-muted-foreground/60 mt-0.5">
+                                    {streamingState.content.slice(-80)}
+                                  </span>
+                                )}
                               </div>
                               {/* Hide badge and time when hovering to make room for action buttons */}
                               {!isHovered && (

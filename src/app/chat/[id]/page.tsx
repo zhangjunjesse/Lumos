@@ -21,6 +21,7 @@ import {
 import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useStreamingStore } from '@/stores/streaming-store';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -54,6 +55,8 @@ function triggerMemoryOnSessionSwitch(sessionId: string): void {
 
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { id } = use(params);
+  const streamingStore = useStreamingStore();  // Added: streaming store
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);

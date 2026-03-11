@@ -10,6 +10,7 @@ import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
+import { useStreamingStore } from '@/stores/streaming-store';
 
 interface ToolUseInfo {
   id: string;
@@ -78,6 +79,10 @@ export function ChatView({
   const { t } = useTranslation();
   const { setStreamingSessionId, workingDirectory, setContentPanelOpen, setPendingApprovalSessionId } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
+
+  // Streaming store
+  const streamingStore = useStreamingStore();
+
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -373,6 +378,9 @@ export function ChatView({
       setToolResults([]);
       setStatusText(undefined);
 
+      // Start streaming in store
+      streamingStore.startStreaming(sessionId);
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
@@ -436,6 +444,11 @@ export function ChatView({
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
+            // Save to streaming store
+            streamingStore.updateSession(sessionId, {
+              content: acc,
+              status: 'streaming',
+            });
           },
           onToolUse: (tool) => {
             markActive();
@@ -444,6 +457,11 @@ export function ChatView({
               if (prev.some((t) => t.id === tool.id)) return prev;
               const next = [...prev, tool];
               toolUsesRef.current = next;
+              // Save to streaming store
+              streamingStore.updateSession(sessionId, {
+                toolUses: next,
+                status: 'streaming',
+              });
               return next;
             });
 
@@ -461,6 +479,11 @@ export function ChatView({
             setToolResults((prev) => {
               const next = [...prev, res];
               toolResultsRef.current = next;
+              // Save to streaming store
+              streamingStore.updateSession(sessionId, {
+                toolResults: next,
+                status: 'streaming',
+              });
               return next;
             });
             // Refresh file tree after each tool completes — file writes,
@@ -471,12 +494,24 @@ export function ChatView({
             markActive();
             setStreamingToolOutput((prev) => {
               const next = prev + (prev ? '\n' : '') + data;
-              return next.length > 5000 ? next.slice(-5000) : next;
+              const truncated = next.length > 5000 ? next.slice(-5000) : next;
+              // Save to streaming store
+              streamingStore.updateSession(sessionId, {
+                streamingToolOutput: truncated,
+                status: 'streaming',
+              });
+              return truncated;
             });
           },
           onToolProgress: (toolName, elapsed) => {
             markActive();
-            setStatusText(`Running ${toolName}... (${elapsed}s)`);
+            const text = `Running ${toolName}... (${elapsed}s)`;
+            setStatusText(text);
+            // Save to streaming store
+            streamingStore.updateSession(sessionId, {
+              statusText: text,
+              status: 'streaming',
+            });
           },
           onStatus: (text) => {
             markActive();
@@ -485,6 +520,13 @@ export function ChatView({
               setTimeout(() => setStatusText(undefined), 2000);
             } else {
               setStatusText(text);
+            }
+            // Save to streaming store
+            if (text) {
+              streamingStore.updateSession(sessionId, {
+                statusText: text,
+                status: 'streaming',
+              });
             }
           },
           onResult: () => {
@@ -512,6 +554,11 @@ export function ChatView({
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
+            // Save error to streaming store
+            streamingStore.updateSession(sessionId, {
+              content: acc,
+              status: 'error',
+            });
           },
         });
 
@@ -660,6 +707,10 @@ export function ChatView({
         setPermissionResolved(null);
         setPendingApprovalSessionId('');
         abortControllerRef.current = null;
+
+        // Complete streaming in store
+        streamingStore.completeStreaming(sessionId);
+
         // Notify file tree to refresh after AI finishes
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
         if (shouldScheduleIdleTrigger) {
@@ -679,6 +730,7 @@ export function ChatView({
       currentModel,
       currentProviderId,
       scheduleIdleMemoryTrigger,
+      streamingStore,
       t,
     ]
   );
