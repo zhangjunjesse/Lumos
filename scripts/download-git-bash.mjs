@@ -1,10 +1,6 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Git for Windows portable version
 const GIT_VERSION = '2.48.1';
@@ -23,11 +19,19 @@ const architectures = ['x64', 'arm64'];
 
 for (const arch of architectures) {
   const gitBashDir = path.join(process.cwd(), 'resources', 'git-bash', 'win32', arch);
-  const bashExePath = path.join(gitBashDir, 'bash.exe');
+  const bashCandidates = [
+    path.join(gitBashDir, 'bin', 'bash.exe'),
+    path.join(gitBashDir, 'usr', 'bin', 'bash.exe'),
+  ];
 
-  if (fs.existsSync(bashExePath)) {
+  if (bashCandidates.some((candidatePath) => fs.existsSync(candidatePath))) {
     console.log(`✓ git-bash for win32-${arch} already exists`);
     continue;
+  }
+
+  if (fs.existsSync(gitBashDir)) {
+    console.log(`  Removing stale git-bash layout for win32-${arch}...`);
+    fs.rmSync(gitBashDir, { recursive: true, force: true });
   }
 
   fs.mkdirSync(gitBashDir, { recursive: true });
@@ -46,42 +50,22 @@ for (const arch of architectures) {
     console.log(`  Downloading from: ${downloadUrl}`);
     execSync(`curl -L -o "${downloadPath}" "${downloadUrl}"`, { stdio: 'inherit' });
 
-    // Extract using 7z self-extractor (the .exe is a self-extracting 7z archive)
+    // Preserve the original PortableGit layout so bash can resolve /tmp and cygpath.
     console.log(`  Extracting...`);
-    const tempExtractDir = path.join(gitBashDir, 'temp');
-    fs.mkdirSync(tempExtractDir, { recursive: true });
+    execSync(`"${downloadPath}" -o"${gitBashDir}" -y`, { stdio: 'inherit' });
 
-    // The portable Git exe is a self-extracting archive, we can run it with -y flag
-    execSync(`"${downloadPath}" -o"${tempExtractDir}" -y`, { stdio: 'inherit' });
-
-    // Copy only the essential files we need for bash
-    const essentialFiles = [
-      'usr/bin/bash.exe',
-      'usr/bin/sh.exe',
-      'usr/bin/msys-2.0.dll',
-      'usr/bin/msys-intl-8.dll',
-      'usr/bin/msys-iconv-2.dll',
-    ];
-
-    console.log(`  Copying essential files...`);
-    for (const file of essentialFiles) {
-      const srcPath = path.join(tempExtractDir, file);
-      const destPath = path.join(gitBashDir, path.basename(file));
-
-      if (fs.existsSync(srcPath)) {
-        fs.copyFileSync(srcPath, destPath);
-        console.log(`    ✓ ${path.basename(file)}`);
-      } else {
-        console.warn(`    ⚠ ${file} not found`);
-      }
+    const extractedBashPath = bashCandidates.find((candidatePath) => fs.existsSync(candidatePath));
+    if (!extractedBashPath) {
+      throw new Error('PortableGit extraction did not produce a usable bash.exe');
     }
+
+    fs.mkdirSync(path.join(gitBashDir, 'tmp'), { recursive: true });
 
     // Clean up
     console.log(`  Cleaning up...`);
-    fs.rmSync(tempExtractDir, { recursive: true, force: true });
     fs.unlinkSync(downloadPath);
 
-    console.log(`✓ git-bash for win32-${arch} downloaded to ${gitBashDir}`);
+    console.log(`✓ git-bash for win32-${arch} downloaded to ${gitBashDir} (${path.relative(gitBashDir, extractedBashPath)})`);
   } catch (error) {
     console.error(`✗ Failed to download git-bash for win32-${arch}:`, error.message);
     // Clean up on error
