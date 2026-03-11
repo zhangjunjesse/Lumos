@@ -272,11 +272,11 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [, forceUpdate] = useState(0);
   useEffect(() => {
     // Subscribe to streaming store changes to trigger re-render
-    const unsubscribe = streamingStore.subscribe(() => {
+    const unsubscribe = useStreamingStore.subscribe(() => {
       forceUpdate(v => v + 1);
     });
     return unsubscribe;
-  }, [streamingStore]);
+  }, []);
 
   const handleDeleteSession = async (
     e: React.MouseEvent,
