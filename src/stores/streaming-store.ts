@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 export interface ToolUseInfo {
   id: string;
   name: string;
-  input: Record<string, unknown>;
+  input: unknown;
 }
 
 export interface ToolResultInfo {
