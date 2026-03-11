@@ -254,10 +254,10 @@ export function SavedConfigsCard() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-sm font-medium">
-                {t('provider.savedConfigs') || '已保存配置'}
+                已保存配置
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
-                {t('provider.quickSwitch') || '快速切换不同的 API 配置'}
+                快速切换不同的 API 配置
               </p>
             </div>
             {configs.length > 0 && (
@@ -278,7 +278,7 @@ export function SavedConfigsCard() {
                   <div className="flex items-center gap-2 mb-1">
                     <p className="font-medium text-sm truncate">{activeConfig.name}</p>
                     <Badge variant="default" className="text-[10px] px-1.5 py-0 h-4">
-                      {t('provider.currentUse') || '当前使用'}
+                      当前使用
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground font-mono truncate">
@@ -372,7 +372,7 @@ export function SavedConfigsCard() {
           {configs.length === 0 && (
             <div className="text-center py-8">
               <p className="text-sm text-muted-foreground mb-3">
-                {t('provider.noSavedConfigs') || '还没有保存的配置'}
+                还没有保存的配置
               </p>
             </div>
           )}
@@ -384,7 +384,7 @@ export function SavedConfigsCard() {
             onClick={handleOpenSaveDialog}
           >
             <Plus className="h-4 w-4" />
-            {t('provider.saveCurrentConfig') || '保存当前配置'}
+            保存当前配置
           </Button>
         </CardContent>
       </Card>
