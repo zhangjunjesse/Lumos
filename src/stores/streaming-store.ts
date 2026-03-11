@@ -66,7 +66,6 @@ export const useStreamingStore = create<StreamingStore>(
             sessions: {
               ...state.sessions,
               [sessionId]: {
-                sessionId,
                 status: 'streaming',
                 content: '',
                 toolUses: [],
@@ -75,6 +74,7 @@ export const useStreamingStore = create<StreamingStore>(
                 statusText: '',
                 startedAt: Date.now(),
                 ...existing,
+                sessionId,
                 ...updates,
                 updatedAt: Date.now(),
               },
