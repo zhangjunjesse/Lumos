@@ -50,7 +50,7 @@ interface StreamingStore {
   cleanupOldSessions: () => void;
 }
 
-export const useStreamingStore = create<StreamingStore>()(
+export const useStreamingStore = create<StreamingStore>(
   persist(
     (set, get) => ({
       sessions: {},
@@ -169,22 +169,6 @@ export const useStreamingStore = create<StreamingStore>()(
     }),
     {
       name: 'lumos-streaming-store',
-      // Only persist completed sessions, streaming sessions are temporary
-      partialize: (state) => {
-        const persistedSessions: Record<string, StreamingState> = {};
-
-        Object.entries(state.sessions).forEach(([id, session]) => {
-          // Only persist recent sessions (last 24h)
-          const now = Date.now();
-          const ONE_DAY = 24 * 60 * 60 * 1000;
-
-          if (now - session.updatedAt < ONE_DAY) {
-            persistedSessions[id] = session;
-          }
-        });
-
-        return { sessions: persistedSessions };
-      },
     }
   )
 );
