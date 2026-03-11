@@ -34,6 +34,7 @@ import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import { RenameDialog } from "@/components/ui/rename-dialog";
 import { useStreamingStore } from "@/stores/streaming-store";
+import type { StreamingStore } from "@/stores/streaming-store";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -82,7 +83,7 @@ interface ProjectGroup {
   hasStreaming: boolean;  // Added: whether any session in project is streaming
 }
 
-function groupSessionsByProject(sessions: ChatSession[], streamingStore: ReturnType<typeof useStreamingStore>): ProjectGroup[] {
+function groupSessionsByProject(sessions: ChatSession[], streamingStore: StreamingStore): ProjectGroup[] {
   const map = new Map<string, ChatSession[]>();
   for (const session of sessions) {
     const key = session.working_directory || "";

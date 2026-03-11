@@ -25,7 +25,7 @@ export interface StreamingState {
   startedAt: number;
 }
 
-interface StreamingStore {
+export interface StreamingStore {
   sessions: Record<string, StreamingState>;
 
   // Get session streaming state
