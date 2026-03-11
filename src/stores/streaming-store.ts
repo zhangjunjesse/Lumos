@@ -62,24 +62,38 @@ export const useStreamingStore = create<StreamingStore>(
       updateSession: (sessionId: string, updates: Partial<Omit<StreamingState, 'sessionId' | 'updatedAt'>>) => {
         set((state) => {
           const existing = state.sessions[sessionId];
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                status: 'streaming',
-                content: '',
-                toolUses: [],
-                toolResults: [],
-                streamingToolOutput: '',
-                statusText: '',
-                startedAt: Date.now(),
-                ...existing,
-                sessionId,
-                ...updates,
-                updatedAt: Date.now(),
+          if (existing) {
+            // Update existing session
+            return {
+              sessions: {
+                ...state.sessions,
+                [sessionId]: {
+                  ...existing,
+                  ...updates,
+                  updatedAt: Date.now(),
+                },
               },
-            },
-          };
+            };
+          } else {
+            // Create new session with defaults
+            return {
+              sessions: {
+                ...state.sessions,
+                [sessionId]: {
+                  sessionId,
+                  status: 'streaming',
+                  content: '',
+                  toolUses: [],
+                  toolResults: [],
+                  streamingToolOutput: '',
+                  statusText: '',
+                  startedAt: Date.now(),
+                  ...updates,
+                  updatedAt: Date.now(),
+                },
+              },
+            };
+          }
         });
       },
 
