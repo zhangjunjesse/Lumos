@@ -237,7 +237,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
 
         return (
           <div key={ws.id} className="space-y-0.5">
-            <div className="group flex items-center gap-1 px-1">
+            <div className="group flex items-center gap-1">
               <button
                 type="button"
                 className={cn(
