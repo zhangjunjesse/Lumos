@@ -196,6 +196,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     () => loadCollapsedFolders()
   );
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
+  const [hoveredFolderItem, setHoveredFolderItem] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
@@ -770,8 +771,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                 "hover:bg-accent/50"
                               )}
                               onClick={() => toggleFolder(folderKey)}
-                              onMouseEnter={() => setHoveredFolder(folderKey)}
-                              onMouseLeave={() => setHoveredFolder(null)}
+                              onMouseEnter={() => setHoveredFolderItem(folderKey)}
+                              onMouseLeave={() => setHoveredFolderItem(null)}
                             >
                               <HugeiconsIcon
                                 icon={isFolderCollapsed ? ArrowRight : ArrowDown01}
@@ -797,9 +798,9 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                     size="icon-xs"
                                     className={cn(
                                       "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                      isFolderHoveredNow ? "opacity-100" : "opacity-0"
+                                      hoveredFolderItem === folderKey ? "opacity-100" : "opacity-0"
                                     )}
-                                    tabIndex={isFolderHoveredNow ? 0 : -1}
+                                    tabIndex={hoveredFolderItem === folderKey ? 0 : -1}
                                     onClick={(e) =>
                                       handleCreateSessionInFolder(
                                         e,
