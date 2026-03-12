@@ -637,6 +637,7 @@ const zh: Record<TranslationKey, string> = {
   'teamHub.runsTitle': '团队运行',
   'teamHub.runsDescription': '这里的每一张卡都代表一个真实的团队运行实例，而不是它下面的子任务。',
   'teamHub.runsHint': '一个用户任务可以对应一个团队运行；团队里的角色和阶段都属于这次运行，不应该被提升成并列一级对象。',
+  'teamHub.createTeam': '创建团队',
   'teamHub.openSettings': '管理角色与模板',
   'teamHub.configTitle': '配置层',
   'teamHub.configDescription': '下面这些是可复用配置，不是正在运行中的团队实体。它们只影响主代理如何规划和组队。',

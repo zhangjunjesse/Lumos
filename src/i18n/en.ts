@@ -640,6 +640,7 @@ const en = {
   'teamHub.runsTitle': 'Team Runs',
   'teamHub.runsDescription': 'Each card below represents one actual team execution started from Main Agent, not individual subtasks.',
   'teamHub.runsHint': 'One user request can create one team run. Internal roles and stages belong inside that run, not alongside it as separate top-level objects.',
+  'teamHub.createTeam': 'Create Team',
   'teamHub.openSettings': 'Manage Roles & Templates',
   'teamHub.configTitle': 'Configuration Layer',
   'teamHub.configDescription': 'Everything below is reusable configuration, not a live team run. These settings only shape how Main Agent plans and assembles a team.',
