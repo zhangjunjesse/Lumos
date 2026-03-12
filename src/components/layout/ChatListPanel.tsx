@@ -722,7 +722,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                             size="icon-xs"
                             className={cn(
                               "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                              isFolderHovered ? "opacity-100" : "opacity-0"
+                              isFolderHovered ? "opacity-100" : "opacity-0 pointer-events-none"
                             )}
                             tabIndex={isFolderHovered ? 0 : -1}
                             onClick={(e) =>
@@ -760,7 +760,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                       {group.folders.map((folderGroup) => {
                         const folderKey = `${group.workingDirectory}:${folderGroup.folder}`;
                         const isFolderCollapsed = !isSearching && collapsedFolders.has(folderKey);
-                        const isFolderHoveredNow = hoveredFolder === folderKey;
+                        const isFolderItemHovered = hoveredFolderItem === folderKey;
 
                         return (
                           <div key={folderKey}>
@@ -798,7 +798,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                     size="icon-xs"
                                     className={cn(
                                       "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                      hoveredFolderItem === folderKey ? "opacity-100" : "opacity-0"
+                                      hoveredFolderItem === folderKey ? "opacity-100" : "opacity-0 pointer-events-none"
                                     )}
                                     tabIndex={hoveredFolderItem === folderKey ? 0 : -1}
                                     onClick={(e) =>
