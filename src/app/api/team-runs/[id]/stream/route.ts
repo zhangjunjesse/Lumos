@@ -6,21 +6,22 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const encoder = new TextEncoder()
   const db = getDb()
 
   const stream = new ReadableStream({
     start(controller) {
       // 发送初始连接消息
-      const data = `data: ${JSON.stringify({ type: 'connected', runId: params.id })}\n\n`
+      const data = `data: ${JSON.stringify({ type: 'connected', runId: id })}\n\n`
       controller.enqueue(encoder.encode(data))
 
       // 轮询数据库获取状态更新
       const interval = setInterval(() => {
         try {
-          const run = db.prepare('SELECT * FROM team_runs WHERE id = ?').get(params.id) as any
+          const run = db.prepare('SELECT * FROM team_runs WHERE id = ?').get(id) as any
 
           if (!run) {
             controller.close()
@@ -28,11 +29,11 @@ export async function GET(
             return
           }
 
-          const stages = db.prepare('SELECT * FROM team_run_stages WHERE run_id = ?').all(params.id) as any[]
+          const stages = db.prepare('SELECT * FROM team_run_stages WHERE run_id = ?').all(id) as any[]
 
           const event = {
             type: 'status_update',
-            runId: params.id,
+            runId: id,
             status: run.status,
             stages: stages.map(s => ({
               id: s.id,
