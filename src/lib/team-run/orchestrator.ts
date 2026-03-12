@@ -84,7 +84,7 @@ export class TeamRunOrchestrator {
         batch.stageIds.map(stageId =>
           this.concurrencyController.execute(async () => {
             const stage = parsedStages.find(s => s.id === stageId)!
-            const worker = new StageWorker()
+            const worker = new StageWorker(true)
 
             // 准备工作目录
             const workspace = this.workspaceManager.prepareStageWorkspace(runId, stageId)
