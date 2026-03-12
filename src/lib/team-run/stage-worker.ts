@@ -120,44 +120,27 @@ export class StageWorker {
   }
 
   private async executeWithClaudeSDK(stage: TeamRunStage, context: ExecutionContext): Promise<string> {
-    const { ClaudeAgent } = await import('@anthropic-ai/claude-agent-sdk')
-
-    // 配置安全策略
-    const fileGuard = new FileAccessGuard({
-      allowedPaths: [
-        context.workspace.stageWorkDir,
-        context.workspace.sharedReadDir,
-        context.workspace.outputDir
-      ],
-      deniedPaths: []
-    })
-
-    const commandGuard = new CommandGuard({
-      allowedCommands: ['git', 'npm', 'node', 'cat', 'ls', 'grep', 'find', 'echo', 'pwd']
-    })
-
-    // 应用文件访问控制
-    // TODO: FileAccessGuard causes "Cannot set property" error in current Node.js version
-    // fileGuard.wrapFileSystem()
+    const { query } = await import('@anthropic-ai/claude-agent-sdk')
 
     const prompt = this.buildPrompt(stage, context)
 
     try {
-      const agent = await ClaudeAgent.create({
-        sessionId: stage.id,
-        workingDirectory: context.workspace.stageWorkDir,
-        systemPrompt: `You are ${stage.roleId}. Execute the following task.`
+      const queryResult = query({
+        prompt,
+        options: {
+          workingDirectory: context.workspace.stageWorkDir
+        }
       })
 
-      const result = await agent.run(prompt)
-      await agent.destroy()
+      let output = ''
+      for await (const message of queryResult) {
+        if ((message as any).text) {
+          output += (message as any).text
+        }
+      }
 
-      // 恢复文件系统
-      // fileGuard.unwrapFileSystem()
-
-      return result
+      return output || 'Execution completed'
     } catch (error) {
-      // fileGuard.unwrapFileSystem()
       throw error
     }
   }
