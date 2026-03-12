@@ -1,3 +1,7 @@
+import { FileAccessGuard } from './security/file-access-guard'
+import { CommandGuard } from './security/command-guard'
+import { ErrorSanitizer } from './security/error-sanitizer'
+
 interface TeamRunStage {
   id: string
   runId: string
@@ -97,12 +101,14 @@ export class StageWorker {
     } catch (error) {
       this.state = 'idle'
 
+      const sanitized = ErrorSanitizer.sanitize(error instanceof Error ? error : new Error('Unknown error'))
+
       return {
         stageId: stage.id,
         status: 'failed',
         output: '',
         artifacts: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: sanitized.userMessage,
         duration: Date.now() - startTime,
         metrics: {
           agentStartTime: startTime,
@@ -115,20 +121,41 @@ export class StageWorker {
   private async executeWithClaudeSDK(stage: TeamRunStage, context: ExecutionContext): Promise<string> {
     const { ClaudeAgent } = await import('@anthropic-ai/claude-agent-sdk')
 
-    const prompt = this.buildPrompt(stage, context)
-
-    const agent = await ClaudeAgent.create({
-      sessionId: stage.id,
-      workingDirectory: context.workspace.stageWorkDir,
-      systemPrompt: `You are ${stage.roleId}. Execute the following task.`
+    // 配置安全策略
+    const fileGuard = new FileAccessGuard({
+      allowedPaths: [
+        context.workspace.stageWorkDir,
+        context.workspace.sharedReadDir,
+        context.workspace.outputDir
+      ],
+      deniedPaths: []
     })
 
+    const commandGuard = new CommandGuard({
+      allowedCommands: ['git', 'npm', 'node', 'cat', 'ls', 'grep', 'find', 'echo', 'pwd']
+    })
+
+    // 应用文件访问控制
+    fileGuard.wrapFileSystem()
+
+    const prompt = this.buildPrompt(stage, context)
+
     try {
+      const agent = await ClaudeAgent.create({
+        sessionId: stage.id,
+        workingDirectory: context.workspace.stageWorkDir,
+        systemPrompt: `You are ${stage.roleId}. Execute the following task.`
+      })
+
       const result = await agent.run(prompt)
       await agent.destroy()
+
+      // 恢复文件系统
+      fileGuard.unwrapFileSystem()
+
       return result
     } catch (error) {
-      await agent.destroy()
+      fileGuard.unwrapFileSystem()
       throw error
     }
   }

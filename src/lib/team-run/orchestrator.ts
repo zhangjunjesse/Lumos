@@ -3,6 +3,7 @@ import { StateManager } from './state-manager'
 import { DependencyResolver } from './dependency-resolver'
 import { StageWorker } from './stage-worker'
 import { WorkspaceManager } from './workspace-manager'
+import { ConcurrencyController } from './concurrency-controller'
 import * as os from 'os'
 import * as path from 'path'
 
@@ -47,13 +48,15 @@ export class TeamRunOrchestrator {
   private resolver: DependencyResolver
   private workers: Map<string, StageWorker> = new Map()
   private workspaceManager: WorkspaceManager
+  private concurrencyController: ConcurrencyController
 
-  constructor(private db: Database.Database, workspaceBaseDir?: string) {
+  constructor(private db: Database.Database, workspaceBaseDir?: string, maxConcurrency: number = 3) {
     this.stateManager = new StateManager(db)
     this.resolver = new DependencyResolver()
     this.workspaceManager = new WorkspaceManager(
       workspaceBaseDir || path.join(os.tmpdir(), 'team-runs')
     )
+    this.concurrencyController = new ConcurrencyController(maxConcurrency)
   }
 
   async startRun(runId: string): Promise<void> {
@@ -78,39 +81,41 @@ export class TeamRunOrchestrator {
 
     for (const batch of batches) {
       await Promise.all(
-        batch.stageIds.map(async stageId => {
-          const stage = parsedStages.find(s => s.id === stageId)!
-          const worker = new StageWorker()
+        batch.stageIds.map(stageId =>
+          this.concurrencyController.execute(async () => {
+            const stage = parsedStages.find(s => s.id === stageId)!
+            const worker = new StageWorker()
 
-          // 准备工作目录
-          const workspace = this.workspaceManager.prepareStageWorkspace(runId, stageId)
+            // 准备工作目录
+            const workspace = this.workspaceManager.prepareStageWorkspace(runId, stageId)
 
-          await this.stateManager.updateStageStatus(stageId, 'running')
+            await this.stateManager.updateStageStatus(stageId, 'running')
 
-          // 获取依赖数据
-          const dependencies = await Promise.all(
-            stage.dependencies.map(async (depId: string) => ({
-              stageId: depId,
-              output: await this.stateManager.getStageOutput(depId)
-            }))
-          )
+            // 获取依赖数据
+            const dependencies = await Promise.all(
+              stage.dependencies.map(async (depId: string) => ({
+                stageId: depId,
+                output: await this.stateManager.getStageOutput(depId)
+              }))
+            )
 
-          const result = await worker.execute(stage, {
-            runId,
-            workspace,
-            dependencies,
-            budget: { maxRunMinutes: 10, maxTokens: 100000 }
+            const result = await worker.execute(stage, {
+              runId,
+              workspace,
+              dependencies,
+              budget: { maxRunMinutes: 10, maxTokens: 100000 }
+            })
+
+            if (result.status === 'done') {
+              await this.stateManager.updateStageStatus(stageId, 'done')
+              await this.stateManager.updateStageResult(stageId, result.output)
+              completed.add(stageId)
+            } else {
+              await this.stateManager.updateStageStatus(stageId, 'failed')
+              await this.stateManager.updateStageError(stageId, result.error || 'Unknown error')
+            }
           })
-
-          if (result.status === 'done') {
-            await this.stateManager.updateStageStatus(stageId, 'done')
-            await this.stateManager.updateStageResult(stageId, result.output)
-            completed.add(stageId)
-          } else {
-            await this.stateManager.updateStageStatus(stageId, 'failed')
-            await this.stateManager.updateStageError(stageId, result.error || 'Unknown error')
-          }
-        })
+        )
       )
     }
 
