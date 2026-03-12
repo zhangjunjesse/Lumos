@@ -33,6 +33,7 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import { RenameDialog } from "@/components/ui/rename-dialog";
+import { CreateFolderDialog } from "@/components/ui/create-folder-dialog";
 import { useStreamingStore } from "@/stores/streaming-store";
 import type { StreamingStore } from "@/stores/streaming-store";
 import type { ChatSession } from "@/types";
@@ -202,7 +203,9 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renamingProject, setRenamingProject] = useState<{ workingDirectory: string; displayName: string } | null>(null);
   const [projectRenameDialogOpen, setProjectRenameDialogOpen] = useState(false);
-  const [creatingSessionForProject, setCreatingSessionForProject] = useState<string | null>(null);  // Added: track which project is creating new session
+  const [creatingSessionForProject, setCreatingSessionForProject] = useState<string | null>(null);
+  const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
+  const [creatingFolderForProject, setCreatingFolderForProject] = useState<string | null>(null);
 
   const handleFolderSelect = useCallback(async (path: string) => {
     try {
@@ -509,6 +512,35 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     }
   };
 
+  const handleCreateFolder = useCallback((workingDirectory: string) => {
+    setCreatingFolderForProject(workingDirectory);
+    setCreateFolderDialogOpen(true);
+  }, []);
+
+  const handleCreateFolderConfirm = useCallback(async (folderName: string) => {
+    if (!creatingFolderForProject) return;
+    try {
+      const res = await fetch("/api/chat/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          working_directory: creatingFolderForProject,
+          folder: folderName,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        window.dispatchEvent(new CustomEvent("session-created"));
+        router.push(`/chat/${data.session.id}`);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setCreatingFolderForProject(null);
+    }
+  }, [creatingFolderForProject, router]);
+
   const handleCreateSessionInFolder = async (
     e: React.MouseEvent,
     workingDirectory: string,
@@ -713,7 +745,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                     <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                       {group.displayName}
                     </span>
-                    {/* New chat in project button (on hover) */}
+                    {/* Create folder button (on hover) */}
                     {group.workingDirectory !== "" && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -725,24 +757,22 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                               isFolderHovered ? "opacity-100" : "opacity-0 pointer-events-none"
                             )}
                             tabIndex={isFolderHovered ? 0 : -1}
-                            onClick={(e) =>
-                              handleCreateSessionInProject(
-                                e,
-                                group.workingDirectory
-                              )
-                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCreateFolder(group.workingDirectory);
+                            }}
                           >
                             <HugeiconsIcon
                               icon={Add}
                               className="h-3 w-3"
                             />
                             <span className="sr-only">
-                              New chat in {group.displayName}
+                              Create folder in {group.displayName}
                             </span>
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent side="right">
-                          New chat in {group.displayName}
+                          Create folder
                         </TooltipContent>
                       </Tooltip>
                     )}
@@ -1008,6 +1038,13 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
         label={t('chatList.sessionName')}
         defaultValue={renamingSession?.title || ""}
         onConfirm={handleRenameConfirm}
+      />
+
+      {/* Create Folder Dialog */}
+      <CreateFolderDialog
+        open={createFolderDialogOpen}
+        onOpenChange={setCreateFolderDialogOpen}
+        onConfirm={handleCreateFolderConfirm}
       />
     </aside>
   );
