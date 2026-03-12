@@ -753,10 +753,74 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                     </TooltipContent>
                   </Tooltip>
 
-                  {/* Session items */}
+                  {/* Folders and sessions */}
                   {!isCollapsed && (
                     <div className="mt-0.5 flex flex-col gap-0.5">
-                      {group.sessions.map((session) => {
+                      {group.folders.map((folderGroup) => {
+                        const folderKey = `${group.workingDirectory}:${folderGroup.folder}`;
+                        const isFolderCollapsed = !isSearching && collapsedFolders.has(folderKey);
+                        const isFolderHoveredNow = hoveredFolder === folderKey;
+
+                        return (
+                          <div key={folderKey}>
+                            {/* Folder header */}
+                            <div
+                              className={cn(
+                                "flex items-center gap-1 rounded-md pl-5 pr-2 py-1 cursor-pointer select-none transition-colors",
+                                "hover:bg-accent/50"
+                              )}
+                              onClick={() => toggleFolder(folderKey)}
+                              onMouseEnter={() => setHoveredFolder(folderKey)}
+                              onMouseLeave={() => setHoveredFolder(null)}
+                            >
+                              <HugeiconsIcon
+                                icon={isFolderCollapsed ? ArrowRight : ArrowDown01}
+                                className="h-3 w-3 shrink-0 text-muted-foreground"
+                              />
+                              <HugeiconsIcon
+                                icon={isFolderCollapsed ? Folder : FolderOpen}
+                                className="h-3 w-3 shrink-0 text-muted-foreground"
+                              />
+                              {folderGroup.hasStreaming && (
+                                <span className="relative flex h-2 w-2 shrink-0">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                                </span>
+                              )}
+                              <span className="flex-1 truncate text-[11px] text-sidebar-foreground">
+                                {folderGroup.folder || 'Default'}
+                              </span>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className={cn(
+                                      "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
+                                      isFolderHoveredNow ? "opacity-100" : "opacity-0"
+                                    )}
+                                    tabIndex={isFolderHoveredNow ? 0 : -1}
+                                    onClick={(e) =>
+                                      handleCreateSessionInFolder(
+                                        e,
+                                        group.workingDirectory,
+                                        folderGroup.folder
+                                      )
+                                    }
+                                  >
+                                    <HugeiconsIcon icon={Add} className="h-3 w-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="right">
+                                  New chat in {folderGroup.folder || 'Default'}
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+
+                            {/* Sessions in folder */}
+                            {!isFolderCollapsed && (
+                              <div className="flex flex-col gap-0.5">
+                                {folderGroup.sessions.map((session) => {
                         const isActive = pathname === `/chat/${session.id}`;
                         const isHovered = hoveredSession === session.id;
                         const isDeleting = deletingSession === session.id;
@@ -896,6 +960,11 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                     {t('chatList.delete')}
                                   </TooltipContent>
                                 </Tooltip>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                               </div>
                             )}
                           </div>
