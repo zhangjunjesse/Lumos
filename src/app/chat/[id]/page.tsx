@@ -21,6 +21,7 @@ import {
 import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useMessagesStore } from '@/stores/messages-store';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -54,11 +55,15 @@ function triggerMemoryOnSessionSwitch(sessionId: string): void {
 
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { id } = use(params);
+  const messagesStore = useMessagesStore();
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use messages from store
+  const sessionData = messagesStore.getSession(id);
+  const messages = sessionData?.messages || [];
+  const hasMore = sessionData?.hasMore || false;
+  const loading = sessionData?.loading ?? true;
+  const error = sessionData?.error || null;
+
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionProviderId, setSessionProviderId] = useState<string>('');
@@ -114,8 +119,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         body: JSON.stringify({ clear_messages: true }),
       });
       if (res.ok) {
-        setMessages([]);
-        setHasMore(false);
+        messagesStore.clearSession(id);
         setViewNonce((v) => v + 1);
         window.dispatchEvent(new CustomEvent('session-updated', { detail: { id } }));
       }
@@ -125,7 +129,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       setClearing(false);
       setClearDialogOpen(false);
     }
-  }, [clearing, id]);
+  }, [clearing, id, messagesStore]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -177,11 +181,16 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen, t]);
 
   useEffect(() => {
-    // Reset state when switching sessions
-    setLoading(true);
-    setError(null);
-    setMessages([]);
-    setHasMore(false);
+    // Check if we have cached messages
+    const cached = messagesStore.getSession(id);
+    if (cached && cached.messages.length > 0) {
+      // Use cached messages, no loading needed
+      console.log('[ChatSessionPage] Using cached messages for session:', id);
+      return;
+    }
+
+    // No cache, load from server
+    messagesStore.updateSession(id, { loading: true, error: null });
 
     let cancelled = false;
 
@@ -191,27 +200,37 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         if (cancelled) return;
         if (!res.ok) {
           if (res.status === 404) {
-            setError(t('chat.sessionNotFound'));
+            messagesStore.updateSession(id, {
+              loading: false,
+              error: t('chat.sessionNotFound'),
+            });
             return;
           }
           throw new Error(t('chat.failedLoadMessages'));
         }
         const data: MessagesResponse = await res.json();
         if (cancelled) return;
-        setMessages(data.messages);
-        setHasMore(data.hasMore ?? false);
+        messagesStore.updateSession(id, {
+          messages: data.messages,
+          hasMore: data.hasMore ?? false,
+          loading: false,
+          error: null,
+        });
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load messages');
-      } finally {
-        if (!cancelled) setLoading(false);
+        messagesStore.updateSession(id, {
+          loading: false,
+          error: err instanceof Error ? err.message : 'Failed to load messages',
+        });
       }
     }
 
     loadMessages();
 
-    return () => { cancelled = true; };
-  }, [id, t]);
+    return () => {
+      cancelled = true;
+    };
+  }, [id, t, messagesStore]);
 
   // Trigger implicit memory analysis when leaving the current session.
   useEffect(() => {
@@ -233,8 +252,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         })
         .then(data => {
           if (!data || cancelled) return;
-          setMessages(data.messages);
-          setHasMore(data.hasMore ?? false);
+          messagesStore.updateSession(id, {
+            messages: data.messages,
+            hasMore: data.hasMore ?? false,
+            loading: false,
+          });
         })
         .catch(err => {
           console.error('[ChatPage] Polling messages failed:', err);
@@ -245,7 +267,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [id]);
+  }, [id, messagesStore]);
 
   // Listen for bridge messages from Electron IPC
   useEffect(() => {
@@ -254,8 +276,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         fetch(`/api/chat/sessions/${id}/messages?limit=100`)
           .then(res => res.json())
           .then((data: MessagesResponse) => {
-            setMessages(data.messages);
-            setHasMore(data.hasMore ?? false);
+            messagesStore.updateSession(id, {
+              messages: data.messages,
+              hasMore: data.hasMore ?? false,
+              loading: false,
+            });
           })
           .catch(err => console.error('[Bridge] Failed to refresh messages:', err));
       }
@@ -268,7 +293,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
       };
     }
-  }, [id]);
+  }, [id, messagesStore]);
 
   // Listen for session updates from sidebar
   useEffect(() => {
