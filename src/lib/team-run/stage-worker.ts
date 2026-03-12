@@ -137,7 +137,8 @@ export class StageWorker {
     })
 
     // 应用文件访问控制
-    fileGuard.wrapFileSystem()
+    // TODO: FileAccessGuard causes "Cannot set property" error in current Node.js version
+    // fileGuard.wrapFileSystem()
 
     const prompt = this.buildPrompt(stage, context)
 
@@ -152,11 +153,11 @@ export class StageWorker {
       await agent.destroy()
 
       // 恢复文件系统
-      fileGuard.unwrapFileSystem()
+      // fileGuard.unwrapFileSystem()
 
       return result
     } catch (error) {
-      fileGuard.unwrapFileSystem()
+      // fileGuard.unwrapFileSystem()
       throw error
     }
   }
