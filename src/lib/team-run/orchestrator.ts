@@ -2,6 +2,9 @@ import Database from 'better-sqlite3'
 import { StateManager } from './state-manager'
 import { DependencyResolver } from './dependency-resolver'
 import { StageWorker } from './stage-worker'
+import { WorkspaceManager } from './workspace-manager'
+import * as os from 'os'
+import * as path from 'path'
 
 type RunStatus = 'pending' | 'ready' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
 type StageStatusType = 'pending' | 'ready' | 'running' | 'waiting' | 'blocked' | 'done' | 'failed' | 'cancelled'
@@ -43,10 +46,14 @@ export class TeamRunOrchestrator {
   private stateManager: StateManager
   private resolver: DependencyResolver
   private workers: Map<string, StageWorker> = new Map()
+  private workspaceManager: WorkspaceManager
 
-  constructor(private db: Database.Database) {
+  constructor(private db: Database.Database, workspaceBaseDir?: string) {
     this.stateManager = new StateManager(db)
     this.resolver = new DependencyResolver()
+    this.workspaceManager = new WorkspaceManager(
+      workspaceBaseDir || path.join(os.tmpdir(), 'team-runs')
+    )
   }
 
   async startRun(runId: string): Promise<void> {
@@ -75,16 +82,23 @@ export class TeamRunOrchestrator {
           const stage = parsedStages.find(s => s.id === stageId)!
           const worker = new StageWorker()
 
+          // 准备工作目录
+          const workspace = this.workspaceManager.prepareStageWorkspace(runId, stageId)
+
           await this.stateManager.updateStageStatus(stageId, 'running')
+
+          // 获取依赖数据
+          const dependencies = await Promise.all(
+            stage.dependencies.map(async (depId: string) => ({
+              stageId: depId,
+              output: await this.stateManager.getStageOutput(depId)
+            }))
+          )
 
           const result = await worker.execute(stage, {
             runId,
-            workspace: {
-              stageWorkDir: `/tmp/${runId}/${stageId}`,
-              sharedReadDir: `/tmp/${runId}/shared`,
-              outputDir: `/tmp/${runId}/${stageId}/output`
-            },
-            dependencies: [],
+            workspace,
+            dependencies,
             budget: { maxRunMinutes: 10, maxTokens: 100000 }
           })
 

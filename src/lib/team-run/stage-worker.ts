@@ -60,6 +60,11 @@ interface WorkerStatus {
 export class StageWorker {
   private currentStageId: string = ''
   private state: WorkerStatus['state'] = 'idle'
+  private useRealAgent: boolean
+
+  constructor(useRealAgent: boolean = false) {
+    this.useRealAgent = useRealAgent
+  }
 
   async execute(stage: TeamRunStage, context: ExecutionContext): Promise<StageResult> {
     this.currentStageId = stage.id
@@ -68,8 +73,13 @@ export class StageWorker {
     const startTime = Date.now()
 
     try {
-      // 模拟执行（实际应调用 Claude SDK）
-      const output = `Executed task: ${stage.task}`
+      let output: string
+
+      if (this.useRealAgent) {
+        output = await this.executeWithClaudeSDK(stage, context)
+      } else {
+        output = `Executed task: ${stage.task}`
+      }
 
       this.state = 'idle'
 
@@ -100,6 +110,41 @@ export class StageWorker {
         }
       }
     }
+  }
+
+  private async executeWithClaudeSDK(stage: TeamRunStage, context: ExecutionContext): Promise<string> {
+    const { ClaudeAgent } = await import('@anthropic-ai/claude-agent-sdk')
+
+    const prompt = this.buildPrompt(stage, context)
+
+    const agent = await ClaudeAgent.create({
+      sessionId: stage.id,
+      workingDirectory: context.workspace.stageWorkDir,
+      systemPrompt: `You are ${stage.roleId}. Execute the following task.`
+    })
+
+    try {
+      const result = await agent.run(prompt)
+      await agent.destroy()
+      return result
+    } catch (error) {
+      await agent.destroy()
+      throw error
+    }
+  }
+
+  private buildPrompt(stage: TeamRunStage, context: ExecutionContext): string {
+    let prompt = `Task: ${stage.task}\n\n`
+
+    if (context.dependencies.length > 0) {
+      prompt += 'Dependencies:\n'
+      context.dependencies.forEach(dep => {
+        prompt += `- ${dep.stageId}: ${dep.output.slice(0, 200)}...\n`
+      })
+      prompt += '\n'
+    }
+
+    return prompt
   }
 
   async cancel(): Promise<void> {
