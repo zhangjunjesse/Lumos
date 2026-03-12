@@ -102,7 +102,7 @@ export const useMessagesStore = create<MessagesStore>(
           const session = state.sessions[sessionId];
           if (!session) return state;
 
-          const messageIndex = session.messages.findIndex((m) => m.id === messageId);
+          const messageIndex = session.messages.findIndex((m) => String(m.id) === String(messageId));
           if (messageIndex === -1) return state;
 
           const updatedMessages = [...session.messages];
