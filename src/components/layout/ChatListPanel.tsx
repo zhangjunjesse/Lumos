@@ -512,10 +512,33 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     }
   };
 
-  const handleCreateFolder = useCallback((workingDirectory: string) => {
-    setCreatingFolderForProject(workingDirectory);
-    setCreateFolderDialogOpen(true);
-  }, []);
+  const handleCreateFolder = useCallback(async (workingDirectory: string) => {
+    if (isElectron) {
+      const path = await openNativePicker({ defaultPath: workingDirectory, title: 'Select folder for new session' });
+      if (path) {
+        try {
+          const res = await fetch("/api/chat/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              working_directory: path,
+              model: localStorage.getItem('codepilot:last-model') || '',
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            window.dispatchEvent(new CustomEvent("session-created"));
+            router.push(`/chat/${data.session.id}`);
+          }
+        } catch {
+          // Silently fail
+        }
+      }
+    } else {
+      setCreatingFolderForProject(workingDirectory);
+      setCreateFolderDialogOpen(true);
+    }
+  }, [isElectron, openNativePicker, router]);
 
   const handleCreateFolderConfirm = useCallback(async (folderName: string) => {
     if (!creatingFolderForProject) return;
