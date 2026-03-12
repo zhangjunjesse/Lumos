@@ -230,7 +230,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [id, t, messagesStore]);
+  }, [id, t]);
 
   // Trigger implicit memory analysis when leaving the current session.
   useEffect(() => {
@@ -267,7 +267,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [id, messagesStore]);
+  }, [id]);
 
   // Listen for bridge messages from Electron IPC
   useEffect(() => {
@@ -293,7 +293,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
       };
     }
-  }, [id, messagesStore]);
+  }, [id]);
 
   // Listen for session updates from sidebar
   useEffect(() => {
