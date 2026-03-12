@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TeamWorkspacePanel } from '@/components/chat/TeamWorkspacePanel';
 import { cn } from '@/lib/utils';
+import { useTeamRunStream } from '@/hooks/useTeamRunStream';
 
 interface TeamRunDetailViewProps {
   team: TeamDirectoryItem;
@@ -75,6 +76,12 @@ export function TeamRunDetailView({ team, task }: TeamRunDetailViewProps) {
   const [taskState, setTaskState] = useState(task);
   const [showWorkspace, setShowWorkspace] = useState(false);
 
+  // 使用 SSE 实时更新（如果 team 有 runId）
+  const runId = (team as any).runId || team.id;
+  const { status: sseStatus, isConnected } = useTeamRunStream(
+    ['running', 'ready', 'pending'].includes(teamState.runStatus) ? runId : null
+  );
+
   useEffect(() => {
     setTeamState(team);
   }, [team]);
@@ -82,6 +89,13 @@ export function TeamRunDetailView({ team, task }: TeamRunDetailViewProps) {
   useEffect(() => {
     setTaskState(task);
   }, [task]);
+
+  // 当 SSE 推送新状态时更新
+  useEffect(() => {
+    if (sseStatus && sseStatus !== teamState.runStatus) {
+      setTeamState(prev => ({ ...prev, runStatus: sseStatus as TeamRunStatus }));
+    }
+  }, [sseStatus, teamState.runStatus]);
 
   const loadLatest = useCallback(async () => {
     const response = await fetch('/api/tasks/catalog', { cache: 'no-store' });
@@ -101,7 +115,8 @@ export function TeamRunDetailView({ team, task }: TeamRunDetailViewProps) {
     setTaskState(nextTask || null);
   }, [team.id, team.relatedTaskId]);
 
-  const shouldPoll = !['done', 'failed', 'blocked'].includes(teamState.runStatus);
+  // 降级方案：如果 SSE 未连接，使用轮询
+  const shouldPoll = !isConnected && !['done', 'failed', 'blocked'].includes(teamState.runStatus);
 
   useEffect(() => {
     if (!shouldPoll) return undefined;
