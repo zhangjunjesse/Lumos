@@ -237,11 +237,11 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
 
         return (
           <div key={ws.id} className="space-y-0.5">
-            <div className="group relative">
+            <div className="group flex items-center gap-1 px-1">
               <button
                 type="button"
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-1.5 pr-16 text-sm transition-colors hover:bg-accent cursor-pointer w-full min-w-0",
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer flex-1 min-w-0",
                   ws.is_active && "bg-accent font-medium"
                 )}
                 onClick={() => toggleWorkspace(ws.id)}
@@ -250,17 +250,17 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
                 <HugeiconsIcon icon={FolderOpen} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{ws.name}</span>
               </button>
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 w-[52px]">
                 <button
                   type="button"
-                  className="rounded p-0.5 hover:bg-accent cursor-pointer"
+                  className="rounded p-0.5 hover:bg-accent cursor-pointer shrink-0"
                   onClick={(e) => { e.stopPropagation(); renameWorkspace(ws); }}
                 >
                   <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
                 </button>
                 <button
                   type="button"
-                  className="rounded p-0.5 hover:bg-destructive/20 cursor-pointer"
+                  className="rounded p-0.5 hover:bg-destructive/20 cursor-pointer shrink-0"
                   onClick={(e) => { e.stopPropagation(); deleteWorkspace(ws.id); }}
                 >
                   <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
