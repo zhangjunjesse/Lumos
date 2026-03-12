@@ -159,22 +159,14 @@ export function ChatView({
     }, delay);
   }, [clearIdleMemoryTimer, memoryIdleConfig.enabled, memoryIdleConfig.timeoutMs, sessionId]);
 
-  // Abort active stream on unmount (e.g., session switch via key={id} remount).
-  // This triggers the existing server-side cleanup chain:
-  //   fetch abort → request.signal 'abort' → route abortController.abort()
-  //   → collectStreamResponse catch block saves partial message to DB
-  //   → permission-registry abort handler auto-denies pending permissions
+  // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
       clearIdleMemoryTimer();
-      setStreamingSessionId('');
-      setPendingApprovalSessionId('');
+      // Don't abort streaming - let it continue in background
+      // Don't clear streaming session ID - it's managed by the stream completion
     };
-  }, [clearIdleMemoryTimer, setStreamingSessionId, setPendingApprovalSessionId]);
+  }, [clearIdleMemoryTimer]);
 
   useEffect(() => {
     const controller = new AbortController();

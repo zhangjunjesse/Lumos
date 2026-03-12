@@ -50,6 +50,9 @@ export function migrateCoreTables(db: Database.Database): void {
   if (!colNames.includes('runtime_error')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN runtime_error TEXT NOT NULL DEFAULT ''");
   }
+  if (!colNames.includes('folder')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_runtime_status ON chat_sessions(runtime_status)");
 
   // Migrate is_active provider to default_provider_id setting

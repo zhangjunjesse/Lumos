@@ -27,9 +27,20 @@ let appOriginPrefix = '';
 const BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH = path.join('runtime', 'browser-bridge.json');
 const DEFAULT_PACKAGED_SERVER_PORT = 43127;
 
+function getConfiguredDataDir(): string {
+  return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+}
+
+function configureUserDataPath(): void {
+  const dataDir = getConfiguredDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+  app.setPath('userData', dataDir);
+}
+
+configureUserDataPath();
+
 function getBrowserBridgeRuntimeFilePath(): string {
-  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  return path.join(dataDir, BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
+  return path.join(getConfiguredDataDir(), BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
 }
 
 function persistBrowserBridgeRuntime(url: string, token: string): void {
@@ -315,6 +326,19 @@ function getPreferredServerPort(): number {
   return DEFAULT_PACKAGED_SERVER_PORT;
 }
 
+function getDevServerPort(): number {
+  const raw = process.env.LUMOS_DEV_SERVER_PORT?.trim() || process.env.PORT?.trim();
+  if (!raw) return 3000;
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+    return parsed;
+  }
+
+  console.warn(`[main] Invalid dev server port: ${raw}. Falling back to 3000.`);
+  return 3000;
+}
+
 async function getPort(preferredPort?: number): Promise<number> {
   if (preferredPort) {
     try {
@@ -387,7 +411,7 @@ function startServer(port: number): Electron.UtilityProcess {
     ...userShellEnv,
     PORT: String(port),
     HOSTNAME: '127.0.0.1',
-    LUMOS_DATA_DIR: path.join(home, '.lumos'),
+    LUMOS_DATA_DIR: getConfiguredDataDir(),
     HOME: home,
     USERPROFILE: home,
     PATH: constructedPath,
@@ -1106,7 +1130,7 @@ app.whenReady().then(async () => {
     let port: number;
 
     if (isDev) {
-      port = 3000;
+      port = getDevServerPort();
       console.log(`Dev mode: connecting to http://127.0.0.1:${port}`);
     } else {
       port = await getPort(getPreferredServerPort());

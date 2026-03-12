@@ -21,6 +21,7 @@ export interface ChatSession {
   runtime_status: string;
   runtime_updated_at: string;
   runtime_error: string;
+  folder: string;
 }
 
 // ==========================================
@@ -176,6 +177,7 @@ export interface CreateSessionRequest {
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
+  folder?: string;
 }
 
 export interface SendMessageRequest {

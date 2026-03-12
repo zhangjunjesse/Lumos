@@ -58,6 +58,7 @@ function formatRelativeTime(dateStr: string, t: (key: import('@/i18n').Translati
 }
 
 const COLLAPSED_PROJECTS_KEY = "codepilot:collapsed-projects";
+const COLLAPSED_FOLDERS_KEY = "codepilot:collapsed-folders";
 const COLLAPSED_INITIALIZED_KEY = "codepilot:collapsed-initialized";
 
 function loadCollapsedProjects(): Set<string> {
@@ -75,53 +76,96 @@ function saveCollapsedProjects(collapsed: Set<string>) {
   localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
 }
 
+function loadCollapsedFolders(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(COLLAPSED_FOLDERS_KEY);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function saveCollapsedFolders(collapsed: Set<string>) {
+  localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...collapsed]));
+}
+
+interface FolderGroup {
+  folder: string;
+  sessions: ChatSession[];
+  hasStreaming: boolean;
+}
+
 interface ProjectGroup {
   workingDirectory: string;
   displayName: string;
-  sessions: ChatSession[];
+  folders: FolderGroup[];
   createdAt: number;
-  hasStreaming: boolean;  // Added: whether any session in project is streaming
+  hasStreaming: boolean;
 }
 
 function groupSessionsByProject(sessions: ChatSession[], streamingStore: StreamingStore): ProjectGroup[] {
-  const map = new Map<string, ChatSession[]>();
+  const projectMap = new Map<string, Map<string, ChatSession[]>>();
+
   for (const session of sessions) {
-    const key = session.working_directory || "";
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(session);
+    const projectKey = session.working_directory || "";
+    const folderKey = session.folder || "";
+
+    if (!projectMap.has(projectKey)) {
+      projectMap.set(projectKey, new Map());
+    }
+    const folderMap = projectMap.get(projectKey)!;
+    if (!folderMap.has(folderKey)) {
+      folderMap.set(folderKey, []);
+    }
+    folderMap.get(folderKey)!.push(session);
   }
 
   const groups: ProjectGroup[] = [];
-  for (const [wd, groupSessions] of map) {
-    // Sort sessions within group by updated_at DESC
-    groupSessions.sort(
-      (a, b) =>
-        parseDBDate(b.updated_at).getTime() - parseDBDate(a.updated_at).getTime()
-    );
+  for (const [wd, folderMap] of projectMap) {
+    const folders: FolderGroup[] = [];
+    let projectHasStreaming = false;
+
+    for (const [folder, folderSessions] of folderMap) {
+      folderSessions.sort(
+        (a, b) => parseDBDate(b.updated_at).getTime() - parseDBDate(a.updated_at).getTime()
+      );
+
+      const folderHasStreaming = folderSessions.some((s) => {
+        const state = streamingStore.getSession(s.id);
+        return state?.status === 'streaming';
+      });
+
+      if (folderHasStreaming) projectHasStreaming = true;
+
+      folders.push({
+        folder,
+        sessions: folderSessions,
+        hasStreaming: folderHasStreaming,
+      });
+    }
+
+    folders.sort((a, b) => a.folder.localeCompare(b.folder));
+
+    const allSessions = Array.from(folderMap.values()).flat();
     const displayName =
       wd === ""
         ? "No Project"
-        : groupSessions[0]?.project_name || wd.split("/").pop() || wd;
+        : allSessions[0]?.project_name || wd.split("/").pop() || wd;
     const createdAt = Math.min(
-      ...groupSessions.map((s) => parseDBDate(s.created_at).getTime()),
+      ...allSessions.map((s) => parseDBDate(s.created_at).getTime()),
     );
-
-    // Check if any session in this project is streaming
-    const hasStreaming = groupSessions.some((s) => {
-      const state = streamingStore.getSession(s.id);
-      return state?.status === 'streaming';
-    });
 
     groups.push({
       workingDirectory: wd,
       displayName,
-      sessions: groupSessions,
+      folders,
       createdAt,
-      hasStreaming,
+      hasStreaming: projectHasStreaming,
     });
   }
 
-  // Sort groups by project creation time (newest first)
   groups.sort((a, b) => b.createdAt - a.createdAt);
   return groups;
 }
@@ -147,6 +191,9 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => loadCollapsedProjects()
+  );
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
+    () => loadCollapsedFolders()
   );
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
@@ -232,6 +279,16 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       if (next.has(wd)) next.delete(wd);
       else next.add(wd);
       saveCollapsedProjects(next);
+      return next;
+    });
+  }, []);
+
+  const toggleFolder = useCallback((key: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveCollapsedFolders(next);
       return next;
     });
   }, []);
@@ -448,6 +505,32 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       // Silently fail
     } finally {
       setCreatingSessionForProject(null);
+    }
+  };
+
+  const handleCreateSessionInFolder = async (
+    e: React.MouseEvent,
+    workingDirectory: string,
+    folder: string
+  ) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch("/api/chat/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          working_directory: workingDirectory,
+          folder: folder,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        window.dispatchEvent(new CustomEvent("session-created"));
+        router.push(`/chat/${data.session.id}`);
+      }
+    } catch {
+      // Silently fail
     }
   };
 
