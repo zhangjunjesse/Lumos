@@ -19,8 +19,10 @@ import { ArtifactReferencePreview } from './ArtifactReferencePreview';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
 import { buildReferenceImages } from '@/lib/image-ref-store';
 import { parseDBDate } from '@/lib/utils';
+import { parseTeamPlanBlock } from '@/types';
 import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
+import { TeamPlanCard } from './TeamPlanCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -526,6 +528,17 @@ export function MessageItem({ message }: MessageItemProps) {
               );
             }
 
+            const teamPlanResult = parseTeamPlanBlock(displayText);
+            if (teamPlanResult) {
+              return (
+                <>
+                  {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
+                  <TeamPlanCard plan={teamPlanResult.plan} compact />
+                  {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
+                </>
+              );
+            }
+
             // Try image-gen-result first (new direct-call format)
             const genResult = parseImageGenResult(displayText);
             if (genResult) {
@@ -600,6 +613,7 @@ export function MessageItem({ message }: MessageItemProps) {
               .replace(/```image-gen-request[\s\S]*?```/g, '')
               .replace(/```image-gen-result[\s\S]*?```/g, '')
               .replace(/```batch-plan[\s\S]*?```/g, '')
+              .replace(/```lumos-team-plan[\s\S]*?```/g, '')
               .replace(/```lumos-extension-plan[\s\S]*?```/g, '')
               .trim();
             return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;

@@ -1,9 +1,16 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
+import { getMainAgentTeamConfigurationPrompt, upsertTeamPlanTask } from '@/lib/db/tasks';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
-import { isImageFile } from '@/types';
-import { parseMessageContent } from '@/types';
+import {
+  createTeamRunSkeleton,
+  isImageFile,
+  parseMessageContent,
+  parseTeamPlanBlock,
+  TEAM_PLAN_BLOCK_KIND,
+  TEAM_PLAN_TASK_KIND,
+} from '@/types';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -14,6 +21,7 @@ import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/
 import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
+import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -50,6 +58,43 @@ Rules:
 - These tools target Feishu report app APIs (\`report/v1\`), not generic docs search.
 - If API reports missing scopes, tell user to enable app identity scopes: \`report:rule:readonly\` and \`report:task:readonly\`.
 - If auth/token is missing, ask user to login Feishu in Lumos first.`;
+const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
+Team Mode is session-scoped under the current Main Agent conversation, never a separate top-level agent.
+When the user explicitly asks for multi-role collaboration, or the task is clearly complex enough to benefit from coordinated roles, do not start execution immediately. First propose a structured Team Mode plan and wait for user confirmation.
+If Team Mode is not warranted, answer normally and keep the work in Main Agent mode.
+When you propose Team Mode, include a fenced \`${TEAM_PLAN_BLOCK_KIND}\` block with valid JSON using this exact schema:
+\`\`\`${TEAM_PLAN_BLOCK_KIND}
+{
+  "summary": "short why-this-team summary",
+  "activationReason": "user_requested" | "main_agent_suggested",
+  "userGoal": "the goal in user terms",
+  "roles": [
+    { "id": "main-agent", "name": "Main Agent", "kind": "main_agent", "responsibility": "user-facing owner" },
+    { "id": "orchestrator", "name": "Team Orchestrator", "kind": "orchestrator", "responsibility": "coordinate execution" }
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "clear task title",
+      "ownerRoleId": "orchestrator",
+      "summary": "what this task covers",
+      "dependsOn": [],
+      "expectedOutput": "specific output"
+    }
+  ],
+  "expectedOutcome": "what the full team should deliver",
+  "risks": ["optional risk"],
+  "confirmationPrompt": "short approval prompt"
+}
+\`\`\`
+Rules for Team Mode proposals:
+- Roles must stay within the MVP hierarchy: Main Agent -> Orchestrator -> Leads -> Workers.
+- Include explicit dependencies and expected outputs for each task.
+- Do not claim Team Run has started until the user confirms.
+- Keep the user-facing explanation concise and decision-oriented.`;
+const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main Agent space, not a project-specific thread.
+Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
+If no project is currently selected, say that clearly and stay general.`;
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -293,6 +338,38 @@ function stripMailDirectives(text: string): string {
 
 function stripFeishuDirectives(text: string): string {
   return stripMailDirectives(stripFileDirectives(text));
+}
+
+function extractAssistantTextContent(rawContent: string): string {
+  const blocks = parseMessageContent(rawContent);
+  return blocks
+    .filter((block): block is Extract<MessageContentBlock, { type: 'text' }> => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+}
+
+function persistTeamPlanFromAssistantContent(
+  sessionId: string,
+  rawContent: string,
+  sourceMessageId?: string,
+): void {
+  const textContent = extractAssistantTextContent(rawContent);
+  if (!textContent) return;
+
+  const parsed = parseTeamPlanBlock(textContent);
+  if (!parsed) return;
+
+  upsertTeamPlanTask(sessionId, {
+    kind: TEAM_PLAN_TASK_KIND,
+    plan: parsed.plan,
+    approvalStatus: 'pending',
+    run: createTeamRunSkeleton(parsed.plan),
+    sourceMessageId,
+    approvedAt: null,
+    rejectedAt: null,
+    lastActionAt: null,
+  });
 }
 
 function prependMemoryEvent(
@@ -746,6 +823,8 @@ export async function POST(request: NextRequest) {
       updateSessionProviderId(session_id, persistProviderId);
     }
 
+    const sessionSystemPrompt = stripMainAgentSessionMarker(session.system_prompt || '');
+
     // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools)
     const effectiveMode = mode || session.mode || 'code';
     let permissionMode: string;
@@ -756,8 +835,7 @@ export async function POST(request: NextRequest) {
         break;
       case 'ask':
         permissionMode = 'default';
-        systemPromptOverride = (session.system_prompt || '') +
-          '\n\nYou are in Ask mode. Answer questions and provide information only. Do not use any tools, do not read or write files, do not execute commands. Only respond with text.';
+        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not use any tools, do not read or write files, do not execute commands. Only respond with text.`;
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
@@ -790,21 +868,37 @@ export async function POST(request: NextRequest) {
 
     const feishuContext = await buildFeishuOnDemandContext(content, fileAttachments);
     const promptForModel = feishuContext ? `${content}\n\n${feishuContext}` : content;
+    const neutralMainAgentWorkingDirectory = process.env.LUMOS_DATA_DIR
+      || process.env.CLAUDE_GUI_DATA_DIR
+      || path.join(os.homedir(), '.lumos');
+    const resolvedSessionWorkingDirectory = session.sdk_cwd
+      || session.working_directory
+      || (isMainAgentSession(session) ? neutralMainAgentWorkingDirectory : undefined);
 
     console.time('[perf] MCP servers loading');
     const bridgeFromRequest = readChromeBridgeEnvFromRequest(request);
     const bridgeFromRuntime = readChromeBridgeEnvFromRuntimeFile();
     const loadedMcpServers = loadMcpServers(
-      session.sdk_cwd || session.working_directory || undefined,
+      resolvedSessionWorkingDirectory,
       bridgeFromRequest,
       bridgeFromRuntime,
     );
     console.timeEnd('[perf] MCP servers loading');
 
     // Append per-request system prompt (e.g. skill injection for image generation)
-    let finalSystemPrompt = systemPromptOverride || session.system_prompt || undefined;
+    let finalSystemPrompt = systemPromptOverride || sessionSystemPrompt || undefined;
     if (systemPromptAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + systemPromptAppend;
+    }
+    if (isMainAgentSession(session)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
+    }
+    finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
+    if (isMainAgentSession(session)) {
+      const teamConfigurationPrompt = getMainAgentTeamConfigurationPrompt();
+      if (teamConfigurationPrompt) {
+        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamConfigurationPrompt;
+      }
     }
     if (
       permissionMode !== 'default'
@@ -844,7 +938,7 @@ export async function POST(request: NextRequest) {
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
       systemPrompt: finalSystemPrompt,
-      workingDirectory: session.sdk_cwd || session.working_directory || undefined,
+      workingDirectory: resolvedSessionWorkingDirectory,
       mcpServers: loadedMcpServers,
       abortController,
       permissionMode,
@@ -1034,12 +1128,13 @@ async function collectStreamResponse(
       if (content) {
         const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
-          addMessage(
+          const storedMessage = addMessage(
             sessionId,
             'assistant',
             storedContent,
             tokenUsage ? JSON.stringify(tokenUsage) : null,
           );
+          persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),
@@ -1067,7 +1162,8 @@ async function collectStreamResponse(
       if (content) {
         const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
-          addMessage(sessionId, 'assistant', storedContent);
+          const storedMessage = addMessage(sessionId, 'assistant', storedContent);
+          persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),

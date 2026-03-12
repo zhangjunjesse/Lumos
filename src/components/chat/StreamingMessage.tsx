@@ -22,7 +22,9 @@ import { ImageGenConfirmation } from './ImageGenConfirmation';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
 import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
 import type { ToolUIPart } from 'ai';
+import { parseTeamPlanBlock } from '@/types';
 import type { PermissionRequestEvent, PlannerOutput } from '@/types';
+import { TeamPlanCard } from './TeamPlanCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -537,6 +539,17 @@ export function StreamingMessage({
             );
           }
 
+          const teamPlanResult = parseTeamPlanBlock(content);
+          if (teamPlanResult) {
+            return (
+              <>
+                {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
+                <TeamPlanCard plan={teamPlanResult.plan} compact />
+                {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
+              </>
+            );
+          }
+
           // Try image-gen-request
           const parsed = parseImageGenRequest(content);
           if (parsed) {
@@ -562,18 +575,21 @@ export function StreamingMessage({
           if (isStreaming) {
             const hasImageGenBlock = /```image-gen-request/.test(content);
             const hasBatchPlanBlock = /```batch-plan/.test(content);
+            const hasTeamPlanBlock = /```lumos-team-plan/.test(content);
             const stripped = content
               .replace(/```image-gen-request[\s\S]*$/, '')
               .replace(/```batch-plan[\s\S]*$/, '')
+              .replace(/```lumos-team-plan[\s\S]*$/, '')
               .trim();
             if (stripped) return <MessageResponse>{stripped}</MessageResponse>;
             // Show shimmer while the structured block is being streamed
-            if (hasImageGenBlock || hasBatchPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
+            if (hasImageGenBlock || hasBatchPlanBlock || hasTeamPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
             return null;
           }
           const stripped = content
             .replace(/```image-gen-request[\s\S]*?```/g, '')
             .replace(/```batch-plan[\s\S]*?```/g, '')
+            .replace(/```lumos-team-plan[\s\S]*?```/g, '')
             .trim();
           return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;
         })()}

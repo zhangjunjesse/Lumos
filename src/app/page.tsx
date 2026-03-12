@@ -14,5 +14,5 @@ export interface ContentItem {
 }
 
 export default function RootPage() {
-  redirect("/library");
+  redirect("/main-agent");
 }

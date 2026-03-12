@@ -89,19 +89,19 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       }
       // Navigate to the most recent session for this workspace, or new chat
       try {
-        const res = await fetch("/api/chat/sessions");
+        const res = await fetch("/api/chat/sessions?entry=main-agent");
         if (res.ok) {
           const { sessions } = await res.json();
           const match = sessions.find((s: { working_directory: string }) => s.working_directory === ws?.path);
           if (match) {
-            router.push(`/chat/${match.id}`);
+            router.push(`/main-agent/${match.id}`);
             return;
           }
         }
       } catch {
         // fall through to default
       }
-      router.push("/chat");
+      router.push("/main-agent");
     },
     [workspaces, router]
   );

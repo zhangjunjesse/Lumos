@@ -662,6 +662,7 @@ export function ChatView({
         abortControllerRef.current = null;
         // Notify file tree to refresh after AI finishes
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+        window.dispatchEvent(new CustomEvent('team-plan-refresh', { detail: { sessionId } }));
         if (shouldScheduleIdleTrigger) {
           scheduleIdleMemoryTrigger();
         }

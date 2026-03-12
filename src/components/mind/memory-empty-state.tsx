@@ -33,7 +33,7 @@ export function MemoryEmptyState() {
         </div>
       </div>
 
-      <Button onClick={() => router.push('/chat')}>
+      <Button onClick={() => router.push('/main-agent')}>
         开始第一次对话
       </Button>
     </div>

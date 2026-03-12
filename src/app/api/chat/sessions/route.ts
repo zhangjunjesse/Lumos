@@ -3,10 +3,17 @@ import fs from 'fs/promises';
 import { getAllSessions, createSession } from '@/lib/db';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
 import { isLibraryChatSession } from '@/lib/chat/library-session';
+import { isMainAgentSession, normalizeSessionEntry, withSessionEntryMarker } from '@/lib/chat/session-entry';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const sessions = getAllSessions().filter((session) => !isLibraryChatSession(session));
+    const entry = normalizeSessionEntry(request.nextUrl.searchParams.get('entry'));
+    const sessions = getAllSessions().filter((session) => {
+      if (isLibraryChatSession(session)) return false;
+      return entry === 'main-agent'
+        ? isMainAgentSession(session)
+        : !isMainAgentSession(session);
+    });
     const response: SessionsResponse = { sessions };
     return Response.json(response);
   } catch (error) {
@@ -19,30 +26,32 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body: CreateSessionRequest = await request.json();
+    const entry = normalizeSessionEntry(body.entry);
+    const workingDirectory = body.working_directory?.trim() || '';
 
-    // Validate working_directory is provided
-    if (!body.working_directory) {
+    if (entry !== 'main-agent' && !workingDirectory) {
       return Response.json(
         { error: 'Working directory is required', code: 'MISSING_DIRECTORY' },
         { status: 400 },
       );
     }
 
-    // Validate directory actually exists on disk
-    try {
-      await fs.access(body.working_directory);
-    } catch {
-      return Response.json(
-        { error: 'Directory does not exist', code: 'INVALID_DIRECTORY' },
-        { status: 400 },
-      );
+    if (workingDirectory) {
+      try {
+        await fs.access(workingDirectory);
+      } catch {
+        return Response.json(
+          { error: 'Directory does not exist', code: 'INVALID_DIRECTORY' },
+          { status: 400 },
+        );
+      }
     }
 
     const session = createSession(
       body.title,
       body.model,
-      body.system_prompt,
-      body.working_directory,
+      withSessionEntryMarker(body.system_prompt, entry),
+      workingDirectory,
       body.mode,
     );
     const response: SessionResponse = { session };

@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTasksBySession, createTask } from '@/lib/db';
+import { TEAM_PLAN_TASK_KIND } from '@/types';
+import { createTask, ensureSessionTeamRunsExecution, getTasksBySession } from '@/lib/db/tasks';
 import type { TasksResponse, TaskResponse, ErrorResponse, CreateTaskRequest } from '@/types';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const sessionId = searchParams.get('session_id');
+  const kind = searchParams.get('kind');
+  const includeSystem = searchParams.get('include_system') === '1';
 
   if (!sessionId) {
     return NextResponse.json<ErrorResponse>(
@@ -14,7 +17,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const tasks = getTasksBySession(sessionId);
+    ensureSessionTeamRunsExecution(sessionId);
+    const tasks = getTasksBySession(sessionId, {
+      ...(kind === TEAM_PLAN_TASK_KIND ? { kind: TEAM_PLAN_TASK_KIND } : {}),
+      includeSystem,
+    });
     return NextResponse.json<TasksResponse>({ tasks });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

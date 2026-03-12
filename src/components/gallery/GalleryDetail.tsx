@@ -271,7 +271,7 @@ export function GalleryDetail({
                   size="sm"
                   onClick={() => {
                     onOpenChange(false);
-                    router.push(`/chat/${item.session_id}`);
+                    router.push(`/main-agent/${item.session_id}`);
                   }}
                 >
                   <HugeiconsIcon icon={Message} className="h-3.5 w-3.5" />

@@ -1,0 +1,5 @@
+Read tasks/202-main-agent-team-foundation.md and tasks/discovery/main-agent-team-architecture.md.
+Start implementing the MVP foundation for Main Agent and Team Mode.
+Stay within allowed directories and do not touch forbidden files.
+First inspect the current chat/runtime/task code, map it against the task card, and start with step 1 of the suggested implementation order.
+Do not broaden into a full multi-agent platform or schema/migration work.
