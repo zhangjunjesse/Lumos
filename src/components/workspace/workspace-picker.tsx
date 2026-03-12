@@ -241,16 +241,16 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
               <button
                 type="button"
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer flex-1 min-w-0",
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer min-w-0",
                   ws.is_active && "bg-accent font-medium"
                 )}
                 onClick={() => toggleWorkspace(ws.id)}
               >
                 <HugeiconsIcon icon={isExpanded ? ArrowDown01 : ArrowRight} className="h-3 w-3 shrink-0" />
                 <HugeiconsIcon icon={FolderOpen} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{ws.name}</span>
+                <span className="truncate max-w-[140px]">{ws.name}</span>
               </button>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 w-[52px]">
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-auto">
                 <button
                   type="button"
                   className="rounded p-0.5 hover:bg-accent cursor-pointer shrink-0"
