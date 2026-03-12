@@ -101,6 +101,7 @@ export class StageWorker {
     } catch (error) {
       this.state = 'idle'
 
+      console.error('[StageWorker] Execution error:', error)
       const sanitized = ErrorSanitizer.sanitize(error instanceof Error ? error : new Error('Unknown error'))
 
       return {
