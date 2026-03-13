@@ -136,7 +136,19 @@ export async function GET(req: NextRequest) {
 
     const db = getDb();
     const bindings = db.prepare(
-      `SELECT id, platform_chat_id as chatId, status, created_at as createdAt
+      `SELECT
+         id,
+         lumos_session_id as session_id,
+         lumos_session_id as sessionId,
+         platform,
+         platform_chat_id,
+         platform_chat_id as chatId,
+         platform_chat_name,
+         share_link,
+         status,
+         created_at,
+         created_at as createdAt,
+         updated_at
        FROM session_bindings
        WHERE lumos_session_id = ?
          AND platform = 'feishu'

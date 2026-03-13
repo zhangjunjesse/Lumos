@@ -20,8 +20,8 @@ const badgeConfig = {
     className: "bg-[#F59E0B] text-white hover:bg-[#D97706] cursor-pointer",
   },
   expired: {
-    label: "已过期",
-    className: "bg-gray-400 text-white",
+    label: "登录失效",
+    className: "bg-[#EF4444] text-white hover:bg-[#DC2626] cursor-pointer",
   },
 };
 

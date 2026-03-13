@@ -19,6 +19,9 @@ export interface BindingStatusPopoverProps {
   stats: SyncStats | null;
   onToggleSync: (enabled: boolean) => Promise<void>;
   onUnbind: () => Promise<void>;
+  onRelogin?: () => Promise<void>;
+  reloginLoading?: boolean;
+  authExpiresAt?: number | null;
   children: React.ReactNode;
 }
 
@@ -27,6 +30,9 @@ export function BindingStatusPopover({
   stats,
   onToggleSync,
   onUnbind,
+  onRelogin,
+  reloginLoading = false,
+  authExpiresAt = null,
   children,
 }: BindingStatusPopoverProps) {
   const [open, setOpen] = useState(false);
@@ -35,6 +41,7 @@ export function BindingStatusPopover({
   const [isToggling, setIsToggling] = useState(false);
 
   const isActive = binding.status === "active";
+  const isExpired = binding.status === "expired";
 
   const handleToggleSync = async (checked: boolean) => {
     if (!checked) {
@@ -57,6 +64,11 @@ export function BindingStatusPopover({
   const handleUnbind = async () => {
     await onUnbind();
     setOpen(false);
+  };
+
+  const handleRelogin = async () => {
+    if (!onRelogin) return;
+    await onRelogin();
   };
 
   const formatDate = (timestamp: number) => {
@@ -108,13 +120,33 @@ export function BindingStatusPopover({
           {/* 同步统计 */}
           {stats && <SyncStatsPanel stats={stats} />}
 
+          {isExpired && (
+            <div className="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <p>飞书登录已失效，同步已暂停。</p>
+              {authExpiresAt ? (
+                <p className="mt-1">失效时间：{formatDate(authExpiresAt)}</p>
+              ) : null}
+              {onRelogin ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-7 border-red-300 text-red-700 hover:bg-red-100"
+                  onClick={handleRelogin}
+                  disabled={reloginLoading}
+                >
+                  {reloginLoading ? "重新登录中..." : "重新登录飞书"}
+                </Button>
+              ) : null}
+            </div>
+          )}
+
           {/* 同步开关 */}
           <div className="flex items-center justify-between p-4 border-t border-border">
             <span className="text-sm font-medium">同步开关</span>
             <Switch
-              checked={isActive}
+              checked={isActive && !isExpired}
               onCheckedChange={handleToggleSync}
-              disabled={isToggling}
+              disabled={isToggling || isExpired}
               aria-label="同步开关"
             />
           </div>

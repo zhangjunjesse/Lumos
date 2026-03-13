@@ -217,7 +217,7 @@ export function ConfigListCard() {
 
   const maskApiKey = (key: string) => {
     if (!key || key.length < 8) return '••••••••';
-    return `${key.slice(0, 4)}••••${key.slice(-4)}`;
+    return `${key.slice(0, 8)}••••••••`;
   };
 
   if (loading) {
@@ -308,32 +308,41 @@ export function ConfigListCard() {
                   <div className="flex items-center gap-1">
                     {isSwitching ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    ) : isActive ? (
-                      <Check className="h-4 w-4 text-primary" />
                     ) : (
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenEditDialog(config);
-                          }}
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </Button>
-                        {!isBuiltin && (
+                      <>
+                        {isActive && <Check className="h-4 w-4 text-primary mr-1" />}
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            className="h-7 w-7 p-0"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setDeleteTarget(config);
+                              handleOpenEditDialog(config);
                             }}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </Button>
+                          {!isBuiltin && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(config);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    {!isActive && !isSwitching && (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
                           </Button>
                         )}
                       </div>

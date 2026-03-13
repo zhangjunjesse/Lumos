@@ -10,7 +10,19 @@ export async function GET(
   try {
     const db = getDb();
     const binding = db.prepare(
-      `SELECT id, lumos_session_id as sessionId, platform_chat_id as chatId, status, created_at as createdAt
+      `SELECT
+         id,
+         lumos_session_id as session_id,
+         lumos_session_id as sessionId,
+         platform,
+         platform_chat_id,
+         platform_chat_id as chatId,
+         platform_chat_name,
+         share_link,
+         status,
+         created_at,
+         created_at as createdAt,
+         updated_at
        FROM session_bindings WHERE id = ?`
     ).get(binding_id);
 
@@ -32,14 +44,14 @@ export async function PATCH(
   try {
     const { status } = await req.json();
 
-    if (!['active', 'inactive'].includes(status)) {
+    if (!['active', 'inactive', 'expired'].includes(status)) {
       return NextResponse.json(
         { error: 'Invalid status', code: 'INVALID_PARAMETER' },
         { status: 400 }
       );
     }
 
-    updateSessionBindingStatus(parseInt(binding_id), status);
+    updateSessionBindingStatus(parseInt(binding_id), status as 'active' | 'inactive' | 'expired');
     const binding = getSessionBindingById(parseInt(binding_id));
 
     return NextResponse.json({

@@ -45,7 +45,7 @@ export function useBinding(sessionId: string) {
 
   const updateBinding = useCallback(async (
     bindingId: number,
-    updates: { status?: "active" | "inactive" }
+    updates: { status?: "active" | "inactive" | "expired" }
   ) => {
     try {
       const res = await fetch(`/api/bridge/bindings/${bindingId}`, {
