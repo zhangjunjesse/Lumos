@@ -969,9 +969,6 @@ export function TeamHubView() {
             <p className="text-sm text-muted-foreground">{t('teamHub.runsDescription')}</p>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" asChild>
-              <Link href="/team/test">{t('teamHub.createTeam')}</Link>
-            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link href="/team/settings">{t('teamHub.openSettings')}</Link>
             </Button>
