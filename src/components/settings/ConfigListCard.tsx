@@ -25,7 +25,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useTranslation } from '@/hooks/useTranslation';
 import {
   Plus,
   Check,
@@ -51,7 +50,6 @@ interface ApiConfig {
 }
 
 export function ConfigListCard() {
-  const { t } = useTranslation();
   const [configs, setConfigs] = useState<ApiConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState<number | null>(null);
@@ -160,7 +158,7 @@ export function ConfigListCard() {
       } else {
         setTestMessage({ type: 'error', text: data.error || '连接测试失败' });
       }
-    } catch (error) {
+    } catch {
       setTestMessage({ type: 'error', text: '连接测试失败' });
     } finally {
       setTesting(false);
@@ -338,14 +336,6 @@ export function ConfigListCard() {
                           )}
                         </div>
                       </>
-                    )}
-                    {!isActive && !isSwitching && (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                    )}
-                  </div>
-                          </Button>
-                        )}
-                      </div>
                     )}
                     {!isActive && !isSwitching && (
                       <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />

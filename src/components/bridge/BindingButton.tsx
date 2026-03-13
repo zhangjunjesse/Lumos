@@ -14,25 +14,87 @@ interface BindingButtonProps {
   sessionId: string;
 }
 
+interface FeishuAuthStatus {
+  authenticated: boolean;
+  reason?: "ok" | "missing" | "expired";
+  user?: { name?: string; avatarUrl?: string; userId?: string } | null;
+  expiresAt?: number | null;
+  refreshExpiresAt?: number | null;
+  remainingMs?: number | null;
+  refreshRemainingMs?: number | null;
+  willExpireSoon?: boolean;
+}
+
 export function BindingButton({ sessionId }: BindingButtonProps) {
   const { binding, stats, loading, updateBinding, deleteBinding, refetch } = useBinding(sessionId);
   const [configured, setConfigured] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [loginInFlight, setLoginInFlight] = useState(false);
+  const [authStatus, setAuthStatus] = useState<FeishuAuthStatus | null>(null);
   const [shareLink, setShareLink] = useState("");
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const pendingCreateRef = useRef(false);
+  const pendingEnableSyncRef = useRef<number | null>(null);
+  const authLostNotifiedRef = useRef(false);
   const createBindingRef = useRef<() => void>(() => {});
+
+  const fetchAuthStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/feishu/auth/status", { cache: "no-store" });
+      if (!res.ok) return null;
+      const data = await res.json() as FeishuAuthStatus;
+      setAuthStatus(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const handleAuthSuccess = useCallback(() => {
     setLoginInFlight(false);
+    authLostNotifiedRef.current = false;
+    setAuthStatus((prev) => ({
+      authenticated: true,
+      reason: "ok",
+      user: prev?.user ?? null,
+      expiresAt: prev?.expiresAt ?? null,
+      refreshExpiresAt: prev?.refreshExpiresAt ?? null,
+      remainingMs: prev?.remainingMs ?? null,
+      refreshRemainingMs: prev?.refreshRemainingMs ?? null,
+      willExpireSoon: false,
+    }));
+
+    if (binding?.id && binding.status === "expired") {
+      void (async () => {
+        const result = await updateBinding(binding.id, { status: "active" });
+        if (result.success) {
+          await refetch();
+          setToast({ type: "success", message: "飞书登录恢复，已自动恢复同步" });
+        }
+      })();
+    }
+
+    if (pendingEnableSyncRef.current) {
+      const nextBindingId = pendingEnableSyncRef.current;
+      pendingEnableSyncRef.current = null;
+      void (async () => {
+        const result = await updateBinding(nextBindingId, { status: "active" });
+        if (result.success) {
+          await refetch();
+          setToast({ type: "success", message: "已恢复同步" });
+        } else {
+          setToast({ type: "error", message: result.error || "恢复同步失败" });
+        }
+      })();
+    }
+
     if (pendingCreateRef.current) {
       pendingCreateRef.current = false;
       createBindingRef.current();
     }
-  }, []);
+  }, [binding?.id, binding?.status, refetch, updateBinding]);
 
   useEffect(() => {
     const checkConfig = async () => {
@@ -50,15 +112,93 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
   }, []);
 
   useEffect(() => {
+    void fetchAuthStatus();
+  }, [fetchAuthStatus]);
+
+  useEffect(() => {
     const onAuthSuccess = (event: MessageEvent) => {
       const data = event.data as { type?: string } | null;
       if (data?.type === "feishu-auth-success") {
         handleAuthSuccess();
+      } else if (data?.type === "feishu-auth-failed") {
+        setLoginInFlight(false);
+        pendingCreateRef.current = false;
+        pendingEnableSyncRef.current = null;
+        setToast({ type: "error", message: "飞书授权失败，请重试" });
       }
     };
     window.addEventListener("message", onAuthSuccess);
-    return () => window.removeEventListener("message", onAuthSuccess);
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== "lumos:feishu-auth-event" || !event.newValue) return;
+      try {
+        const data = JSON.parse(event.newValue) as { type?: string };
+        if (data?.type === "feishu-auth-success") {
+          handleAuthSuccess();
+        } else if (data?.type === "feishu-auth-failed") {
+          setLoginInFlight(false);
+          pendingCreateRef.current = false;
+          pendingEnableSyncRef.current = null;
+          setToast({ type: "error", message: "飞书授权失败，请重试" });
+        }
+      } catch {
+        // ignore invalid payload
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("message", onAuthSuccess);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [handleAuthSuccess]);
+
+  useEffect(() => {
+    const shouldPoll = Boolean(binding) || loginInFlight;
+    if (!shouldPoll) return;
+
+    let cancelled = false;
+    const checkAuthState = async () => {
+      const latest = await fetchAuthStatus();
+      if (!latest || cancelled) return;
+
+      if (latest.authenticated) {
+        authLostNotifiedRef.current = false;
+        return;
+      }
+
+      if (!binding) return;
+      if (binding.status !== "active" && binding.status !== "expired") return;
+
+      if (!authLostNotifiedRef.current) {
+        authLostNotifiedRef.current = true;
+        setToast({
+          type: "error",
+          message:
+            latest.reason === "expired"
+              ? "飞书登录已过期，同步已暂停，请重新登录飞书"
+              : "飞书当前未登录，同步已暂停，请重新登录飞书",
+        });
+      }
+
+      if (binding.status === "active") {
+        const result = await updateBinding(binding.id, { status: "expired" });
+        if (result.success) {
+          await refetch();
+        }
+      }
+    };
+
+    void checkAuthState();
+    const timer = window.setInterval(() => {
+      void checkAuthState();
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [binding, fetchAuthStatus, loginInFlight, refetch, updateBinding]);
 
   const openFeishuLogin = useCallback(async (retryAfterLogin: boolean) => {
     if (loginInFlight) return;
@@ -70,6 +210,8 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
       const data = await res.json();
       if (!data?.url) {
         setLoginInFlight(false);
+        pendingCreateRef.current = false;
+        pendingEnableSyncRef.current = null;
         setToast({ type: "error", message: "飞书登录入口获取失败，请稍后重试" });
         return;
       }
@@ -80,8 +222,7 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
       const timer = setInterval(async () => {
         count += 1;
         try {
-          const statusRes = await fetch("/api/feishu/auth/status");
-          const status = await statusRes.json();
+          const status = await fetchAuthStatus();
           if (status?.authenticated) {
             clearInterval(timer);
             handleAuthSuccess();
@@ -92,13 +233,18 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
         if (count >= 30) {
           clearInterval(timer);
           setLoginInFlight(false);
+          pendingCreateRef.current = false;
+          pendingEnableSyncRef.current = null;
+          setToast({ type: "error", message: "飞书登录超时，请重试" });
         }
       }, 2000);
     } catch {
       setLoginInFlight(false);
+      pendingCreateRef.current = false;
+      pendingEnableSyncRef.current = null;
       setToast({ type: "error", message: "飞书登录失败，请稍后重试" });
     }
-  }, [handleAuthSuccess, loginInFlight]);
+  }, [fetchAuthStatus, handleAuthSuccess, loginInFlight]);
 
   const handleCreate = useCallback(async () => {
     if (!configured) {
@@ -145,6 +291,12 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
   const handleToggleSync = async (enabled: boolean) => {
     if (!binding) return;
 
+    if (enabled && authStatus && !authStatus.authenticated) {
+      pendingEnableSyncRef.current = binding.id;
+      await openFeishuLogin(false);
+      return;
+    }
+
     const result = await updateBinding(binding.id, {
       status: enabled ? "active" : "inactive",
     });
@@ -174,6 +326,14 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
   if (configLoading || loading) return null;
 
   const showBindButton = !binding;
+  const shouldMarkExpired =
+    Boolean(binding) &&
+    Boolean(authStatus) &&
+    authStatus?.authenticated === false &&
+    binding?.status === "active";
+  const displayBinding = binding && shouldMarkExpired
+    ? { ...binding, status: "expired" as const }
+    : binding;
 
   return (
     <>
@@ -196,12 +356,18 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
         </Button>
       ) : (
         <BindingStatusPopover
-          binding={binding}
+          binding={displayBinding!}
           stats={stats}
           onToggleSync={handleToggleSync}
           onUnbind={handleUnbind}
+          onRelogin={async () => {
+            pendingEnableSyncRef.current = binding?.id ?? null;
+            await openFeishuLogin(false);
+          }}
+          reloginLoading={loginInFlight}
+          authExpiresAt={authStatus?.expiresAt ?? null}
         >
-          <BindingStatusBadge status={binding.status} onClick={handleCreate} />
+          <BindingStatusBadge status={displayBinding!.status} />
         </BindingStatusPopover>
       )}
 

@@ -9,7 +9,7 @@ import { ConversationEngine } from './conversation-engine';
 import { extractAssistantArtifactPaths } from './file-artifact-extractor';
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu } from './sync-helper';
 import { requireActiveFeishuUserAuth } from './feishu-auth-guard';
-import { loadToken } from '@/lib/feishu-auth';
+import { ensureActiveFeishuToken, loadToken } from '@/lib/feishu-auth';
 import { getFeishuCredentials } from '@/lib/feishu-config';
 import { feishuFetch } from '@/lib/feishu/doc-content';
 
@@ -175,6 +175,7 @@ async function resolveMentionEmails(
   names: Array<{ key?: string; name?: string }>;
   reason?: 'permission_denied' | 'missing_email' | 'unknown';
 }> {
+  await ensureActiveFeishuToken();
   const token = loadToken();
   if (!token?.userAccessToken) {
     return { resolved: [], names: [], reason: 'permission_denied' };
@@ -253,6 +254,7 @@ export async function handleFeishuMessage(message: FeishuWebhookMessage) {
   // Ignore messages sent by the app itself to avoid loops
   if (message.sender?.sender_type === 'app') return;
 
+  await ensureActiveFeishuToken();
   const auth = requireActiveFeishuUserAuth();
   if (!auth.ok) {
     console.warn('[Bridge] Ignore incoming Feishu message: user auth missing or expired', auth.code);

@@ -13,6 +13,7 @@ import {
 } from "@/lib/feishu-config";
 
 const FEISHU_BASE_URL = "https://open.feishu.cn/open-apis";
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1000;
 
 const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
 const TOKEN_FILE = path.join(dataDir, "auth", "feishu.json");
@@ -31,6 +32,8 @@ export interface FeishuTokenData {
   refreshExpiresAt: number;
   userInfo: FeishuUserInfo;
 }
+
+let tokenRefreshPromise: Promise<FeishuTokenData | null> | null = null;
 
 function getConfig() {
   const { appId, appSecret } = getFeishuCredentials();
@@ -94,6 +97,83 @@ export async function exchangeCodeForToken(
 
   saveToken(tokenData);
   return tokenData;
+}
+
+async function refreshUserToken(current: FeishuTokenData): Promise<FeishuTokenData> {
+  const { appId, appSecret } = getConfig();
+  const now = Date.now();
+
+  const res = await fetch(`${FEISHU_BASE_URL}/authen/v2/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "refresh_token",
+      client_id: appId,
+      client_secret: appSecret,
+      refresh_token: current.refreshToken,
+    }),
+  });
+
+  const data = await res.json();
+  if (data.code !== 0) {
+    throw new Error(data.msg || data.error_description || "刷新token失败");
+  }
+
+  const nextUserInfo =
+    current.userInfo?.open_id
+      ? current.userInfo
+      : await fetchUserInfo(data.access_token);
+
+  const refreshed: FeishuTokenData = {
+    userAccessToken: data.access_token,
+    refreshToken: data.refresh_token || current.refreshToken,
+    expiresAt: now + (data.expires_in || 7200) * 1000,
+    refreshExpiresAt:
+      typeof data.refresh_expires_in === "number"
+        ? now + data.refresh_expires_in * 1000
+        : current.refreshExpiresAt,
+    userInfo: nextUserInfo,
+  };
+
+  saveToken(refreshed);
+  return refreshed;
+}
+
+/**
+ * Ensure an active Feishu access token.
+ * - Returns the current token when still valid.
+ * - Attempts refresh when close to expiry and refresh token is valid.
+ * - Returns null when no usable token remains.
+ */
+export async function ensureActiveFeishuToken(): Promise<FeishuTokenData | null> {
+  const current = loadToken();
+  if (!current) return null;
+
+  const now = Date.now();
+  if (now < current.expiresAt - ACCESS_TOKEN_REFRESH_SKEW_MS) {
+    return current;
+  }
+
+  if (!current.refreshToken || now >= current.refreshExpiresAt) {
+    return now < current.expiresAt ? current : null;
+  }
+
+  if (!tokenRefreshPromise) {
+    tokenRefreshPromise = refreshUserToken(current)
+      .catch((error) => {
+        console.warn("[feishu-auth] token refresh failed:", error);
+        // Keep using the old token if it has not actually expired yet.
+        if (Date.now() < current.expiresAt) {
+          return current;
+        }
+        return null;
+      })
+      .finally(() => {
+        tokenRefreshPromise = null;
+      });
+  }
+
+  return tokenRefreshPromise;
 }
 
 /** 获取飞书用户信息 */

@@ -1,7 +1,7 @@
 import { getDb } from '@/lib/db';
 import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
 import { recordMessageSync, updateSessionBindingStatus } from '@/lib/db/feishu-bridge';
-import { loadToken } from '@/lib/feishu-auth';
+import { ensureActiveFeishuToken, loadToken } from '@/lib/feishu-auth';
 import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
 import { feishuFetch } from '@/lib/feishu/doc-content';
 import { parseMessageContent } from '@/types';
@@ -158,6 +158,7 @@ export async function syncMessageToFeishu(
   content: string,
 ): Promise<FeishuSendResult> {
   try {
+    await ensureActiveFeishuToken();
     const auth = requireActiveFeishuUserAuth();
     if (!auth.ok) {
       markSessionBindingExpiredIfNeeded(sessionId);
@@ -205,6 +206,7 @@ export async function feishuSend(params: {
 }): Promise<FeishuSendResult> {
   const { sessionId, mode, content, mediaIds } = params;
 
+  await ensureActiveFeishuToken();
   const auth = requireActiveFeishuUserAuth();
   if (!auth.ok) {
     markSessionBindingExpiredIfNeeded(sessionId);

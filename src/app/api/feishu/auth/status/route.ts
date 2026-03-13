@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
-import { loadToken } from "@/lib/feishu-auth";
+import { ensureActiveFeishuToken, loadToken } from "@/lib/feishu-auth";
 
 export async function GET() {
   try {
-    const token = loadToken();
+    const storedToken = loadToken();
+    const token = await ensureActiveFeishuToken();
     const now = Date.now();
 
     if (!token) {
       return NextResponse.json({
         authenticated: false,
-        reason: "missing",
-        expiresAt: null,
-        refreshExpiresAt: null,
-        remainingMs: null,
-        refreshRemainingMs: null,
+        reason: storedToken ? "expired" : "missing",
+        expiresAt: storedToken?.expiresAt ?? null,
+        refreshExpiresAt: storedToken?.refreshExpiresAt ?? null,
+        remainingMs: storedToken ? storedToken.expiresAt - now : null,
+        refreshRemainingMs: storedToken ? storedToken.refreshExpiresAt - now : null,
         willExpireSoon: false,
       });
     }

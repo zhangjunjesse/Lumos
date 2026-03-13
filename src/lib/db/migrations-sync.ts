@@ -44,4 +44,15 @@ export function migrateSyncTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_platform_users_platform ON platform_users(platform, platform_user_id);
   `);
+
+  const bindingColumns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;
+  const bindingColumnNames = new Set(bindingColumns.map((column) => column.name));
+
+  if (!bindingColumnNames.has('platform_chat_name')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN platform_chat_name TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!bindingColumnNames.has('share_link')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN share_link TEXT NOT NULL DEFAULT ''");
+  }
 }

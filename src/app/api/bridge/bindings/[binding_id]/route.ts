@@ -2,6 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { updateSessionBindingStatus, getSessionBindingById } from '@/lib/db/feishu-bridge';
 
+function toErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function ensureBindingMetadataColumns(db: ReturnType<typeof getDb>) {
+  const columns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;
+  const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has('platform_chat_name')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN platform_chat_name TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!names.has('share_link')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN share_link TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ binding_id: string }> }
@@ -9,6 +26,7 @@ export async function GET(
   const { binding_id } = await params;
   try {
     const db = getDb();
+    ensureBindingMetadataColumns(db);
     const binding = db.prepare(
       `SELECT
          id,
@@ -31,8 +49,8 @@ export async function GET(
     }
 
     return NextResponse.json(binding);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: toErrorMessage(error, 'Failed to load binding') }, { status: 500 });
   }
 }
 
@@ -58,7 +76,7 @@ export async function PATCH(
       success: true,
       binding,
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       { error: 'Failed to update binding', code: 'INTERNAL_ERROR' },
       { status: 500 }
@@ -78,7 +96,7 @@ export async function DELETE(
        WHERE id = ?`
     ).run(binding_id);
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: toErrorMessage(error, 'Failed to delete binding') }, { status: 500 });
   }
 }
