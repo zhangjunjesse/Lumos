@@ -77,7 +77,7 @@ export function ChatView({
   hideEmptyState = false,
 }: ChatViewProps) {
   const { t } = useTranslation();
-  const { setStreamingSessionId, workingDirectory, setContentPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
 
   // Streaming store
@@ -456,14 +456,6 @@ export function ChatView({
               });
               return next;
             });
-
-            const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
-            // Open the right-side browser tab as soon as the tool emits a URL.
-            // The Electron bridge can later attach a stable pageId for the same tab.
-            if (browserUrl) {
-              setContentPanelOpen(true);
-              openBrowserUrlInPanel(browserUrl);
-            }
           },
           onToolResult: (res) => {
             markActive();
@@ -716,7 +708,6 @@ export function ChatView({
       sessionId,
       isStreaming,
       setStreamingSessionId,
-      setContentPanelOpen,
       setPendingApprovalSessionId,
       mode,
       currentModel,

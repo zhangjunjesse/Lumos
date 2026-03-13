@@ -48,43 +48,33 @@ export const useContentPanelStore = create<ContentPanelStore>(
       activeTabId: null,
 
       addTab: (tab: Omit<Tab, 'order'> | Omit<Tab, 'id' | 'order'>) => {
-        console.log('[content-panel] addTab called:', tab);
         try {
           // 如果传入了 id，使用传入的 id；否则生成新的 id
           const id = ('id' in tab && tab.id) ? tab.id : crypto.randomUUID();
-          console.log('[content-panel] ID:', id);
 
           // 检查是否已存在相同 id 的标签
           const existingTab = get().tabs.find(t => t.id === id);
           if (existingTab) {
-            console.log('[content-panel] Tab already exists, activating:', id);
             set({ activeTabId: id });
             return;
           }
 
           const order = get().tabs.length;
-          console.log('[content-panel] Current tabs length:', order);
           const newTab: Tab = { ...tab, id, order } as Tab;
-          console.log('[content-panel] New tab object:', newTab);
 
           set((state) => {
-            console.log('[content-panel] Inside set, current state:', state);
             let tabs = state.tabs;
 
             // 如果添加临时标签，移除现有的临时标签
             if (newTab.isTemporary) {
-              console.log('[content-panel] Removing existing temporary tabs');
               tabs = tabs.filter(t => !t.isTemporary);
             }
-
-            console.log('[content-panel] New tabs:', [...tabs, newTab]);
 
             return {
               tabs: [...tabs, newTab],
               activeTabId: id,
             };
           });
-          console.log('[content-panel] addTab completed');
         } catch (error) {
           console.error('[content-panel] Error in addTab:', error);
         }

@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useCallback } from 'react';
+import type {
+  BrowserEventName,
+  BrowserOpenRequest,
+  BrowserPanelTabData,
+  BrowserTab as NativeBrowserTab,
+} from '@/types/browser';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { StructureFolderIcon } from '@hugeicons/core-free-icons';
 import { Button } from '@/components/ui/button';
@@ -20,12 +26,17 @@ interface ContentPanelProps {
 }
 
 const FILE_TREE_TAB_ID = 'fixed-file-tree';
-
-interface BrowserTabData {
-  url?: string;
-  fitWidth?: boolean;
-  pageId?: string;
-}
+const BROWSER_SYNC_EVENTS = new Set<BrowserEventName>([
+  'tab-created',
+  'tab-closed',
+  'tab-switched',
+  'tab-loaded',
+  'tab-loading',
+  'tab-error',
+  'tab-url-updated',
+  'tab-title-updated',
+  'tab-favicon-updated',
+]);
 
 function getBrowserTabTitle(url: string, fallback: string): string {
   try {
@@ -37,23 +48,32 @@ function getBrowserTabTitle(url: string, fallback: string): string {
   }
 }
 
+function getBrowserTabData(data: unknown): BrowserPanelTabData {
+  return (data as BrowserPanelTabData | undefined) || {};
+}
+
+function getBrowserPageId(data: unknown): string {
+  const pageId = getBrowserTabData(data).pageId;
+  return typeof pageId === 'string' ? pageId.trim() : '';
+}
+
+function getNativeBrowserTitle(tab: NativeBrowserTab, fallback: string): string {
+  const title = tab.title.trim();
+  return title || getBrowserTabTitle(tab.url, fallback);
+}
+
 export function ContentPanel({ width = 288 }: ContentPanelProps) {
   const { tabs, activeTabId, setActiveTab, removeTab, addTab, updateTab } = useContentPanelStore();
   const { contentPanelOpen, setContentPanelOpen } = usePanel();
   const { t } = useTranslation();
 
-  console.log('[ContentPanel] Render:', { tabsLength: tabs.length, activeTabId, width, contentPanelOpen });
-
   // 初始化固定的 FileTree 标签（只在挂载时运行一次）
   useEffect(() => {
-    console.log('[ContentPanel] Initializing, current tabs:', tabs);
-
     // 查找所有 file-tree 类型的标签
     const fileTreeTabs = tabs.filter(t => t.type === 'file-tree');
 
     if (fileTreeTabs.length > 1) {
       // 如果有多个 file-tree 标签，只保留第一个，删除其他的
-      console.log('[ContentPanel] Found multiple file-tree tabs, cleaning up');
       fileTreeTabs.slice(1).forEach(tab => {
         removeTab(tab.id);
       });
@@ -71,7 +91,6 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       }
     } else if (fileTreeTabs.length === 0) {
       // 如果没有 file-tree 标签，创建一个
-      console.log('[ContentPanel] No file-tree tab found, creating one');
       addTab({
         id: FILE_TREE_TAB_ID,
         type: 'file-tree',
@@ -82,7 +101,6 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       // 如果只有一个，确保它的 id 和 title 正确
       const tab = fileTreeTabs[0];
       if (tab.id !== FILE_TREE_TAB_ID || tab.title !== t('panel.files')) {
-        console.log('[ContentPanel] Updating existing file-tree tab');
         removeTab(tab.id);
         addTab({
           id: FILE_TREE_TAB_ID,
@@ -94,6 +112,26 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const closePanelTab = useCallback(async (tab: Tab) => {
+    if (tab.type === 'browser') {
+      const pageId = getBrowserPageId(tab.data);
+      if (pageId && window.electronAPI?.browser?.closeTab) {
+        try {
+          const closed = await window.electronAPI.browser.closeTab(pageId);
+          if (!closed.success) {
+            console.error('[ContentPanel] Failed to close native browser tab:', closed.error);
+            return;
+          }
+        } catch (error) {
+          console.error('[ContentPanel] Failed to close native browser tab:', error);
+          return;
+        }
+      }
+    }
+
+    removeTab(tab.id);
+  }, [removeTab]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -126,7 +164,7 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       if (activeTabId) {
         const tab = tabs.find((t: Tab) => t.id === activeTabId);
         if (tab?.closable) {
-          removeTab(activeTabId);
+          void closePanelTab(tab);
         }
       }
       return;
@@ -153,57 +191,125 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       }
       return;
     }
-  }, [tabs, activeTabId, setActiveTab, removeTab, addTab]);
+  }, [tabs, activeTabId, setActiveTab, addTab, closePanelTab]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  const handleOpenBrowserUrl = useCallback((url: string, pageId?: string) => {
+  const syncBrowserPanelTabs = useCallback(async () => {
+    const api = window.electronAPI?.browser;
+    if (!api?.getTabs) {
+      return;
+    }
+
+    try {
+      const result = await api.getTabs();
+      if (!result.success || !Array.isArray(result.tabs)) {
+        return;
+      }
+
+      const nativeTabs = new Map(result.tabs.map((tab) => [tab.id, tab]));
+
+      tabs.forEach((tab) => {
+        if (tab.type !== 'browser') {
+          return;
+        }
+
+        const data = getBrowserTabData(tab.data);
+        const pageId = getBrowserPageId(tab.data);
+        if (!pageId) {
+          return;
+        }
+
+        const nativeTab = nativeTabs.get(pageId);
+        if (!nativeTab) {
+          removeTab(tab.id);
+          return;
+        }
+
+        const nextUrl = nativeTab.url || data.url || '';
+        const nextTitle = getNativeBrowserTitle(nativeTab, t('tab.browser'));
+        if (
+          tab.title === nextTitle
+          && data.url === nextUrl
+          && data.isLoading === nativeTab.isLoading
+          && data.canGoBack === nativeTab.canGoBack
+          && data.canGoForward === nativeTab.canGoForward
+        ) {
+          return;
+        }
+
+        updateTab(tab.id, {
+          title: nextTitle,
+          data: {
+            ...data,
+            pageId,
+            url: nextUrl,
+            isLoading: nativeTab.isLoading,
+            canGoBack: nativeTab.canGoBack,
+            canGoForward: nativeTab.canGoForward,
+          },
+        });
+      });
+    } catch (error) {
+      console.error('[ContentPanel] Failed to sync browser tabs:', error);
+    }
+  }, [removeTab, t, tabs, updateTab]);
+
+  const handleOpenBrowserUrl = useCallback(async ({ url, pageId }: BrowserOpenRequest) => {
     const normalizedUrl = url.trim();
     if (!normalizedUrl) return;
 
     setContentPanelOpen(true);
 
-    const normalizedPageId = typeof pageId === 'string' ? pageId.trim() : '';
-    if (normalizedPageId) {
-      const existingByPage = tabs.find((tab) => {
-        if (tab.type !== 'browser') return false;
-        const tabData = (tab.data as BrowserTabData | undefined) || {};
-        return tabData.pageId === normalizedPageId;
-      });
+    let resolvedPageId = typeof pageId === 'string' ? pageId.trim() : '';
+    const api = window.electronAPI?.browser;
 
-      if (existingByPage) {
-        const currentData = (existingByPage.data as Record<string, unknown> | undefined) || {};
-        updateTab(existingByPage.id, {
-          title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
-          data: { ...currentData, url: normalizedUrl, pageId: normalizedPageId },
-        });
-        setActiveTab(existingByPage.id);
+    if (!resolvedPageId) {
+      if (!api?.createTab) {
+        console.error('[ContentPanel] Browser API is unavailable for native tab creation');
+        return;
+      }
+
+      try {
+        const created = await api.createTab(normalizedUrl);
+        if (!created.success || !created.tabId) {
+          console.error('[ContentPanel] Failed to create native browser tab:', created.error);
+          return;
+        }
+
+        resolvedPageId = created.tabId;
+        if (api.switchTab) {
+          const switched = await api.switchTab(resolvedPageId);
+          if (!switched.success) {
+            console.warn('[ContentPanel] Failed to activate native browser tab:', switched.error);
+          }
+        }
+      } catch (error) {
+        console.error('[ContentPanel] Failed to create native browser tab:', error);
         return;
       }
     }
 
-    const existingByUrl = tabs.find((tab) => {
+    const existingByPage = tabs.find((tab) => {
       if (tab.type !== 'browser') return false;
-      const browserUrl = (tab.data as BrowserTabData | undefined)?.url || '';
-      return browserUrl === normalizedUrl;
+      return getBrowserPageId(tab.data) === resolvedPageId;
     });
 
-    if (existingByUrl) {
-      if (normalizedPageId) {
-        const currentData = (existingByUrl.data as Record<string, unknown> | undefined) || {};
-        updateTab(existingByUrl.id, {
-          data: { ...currentData, pageId: normalizedPageId },
-        });
-      }
-      setActiveTab(existingByUrl.id);
+    if (existingByPage) {
+      const currentData = getBrowserTabData(existingByPage.data);
+      updateTab(existingByPage.id, {
+        title: getBrowserTabTitle(normalizedUrl, t('tab.browser')),
+        data: { ...currentData, url: normalizedUrl, pageId: resolvedPageId },
+      });
+      setActiveTab(existingByPage.id);
       return;
     }
 
     const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const fitWidth = (activeBrowserTab?.data as BrowserTabData | undefined)?.fitWidth ?? true;
+    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? true;
 
     addTab({
       type: 'browser',
@@ -212,7 +318,7 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       data: {
         url: normalizedUrl,
         fitWidth,
-        ...(normalizedPageId ? { pageId: normalizedPageId } : {}),
+        pageId: resolvedPageId,
       },
     });
   }, [activeTabId, addTab, setActiveTab, setContentPanelOpen, t, tabs, updateTab]);
@@ -224,17 +330,17 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
     }
 
     return api.onOpenInContentTab(({ url, pageId }) => {
-      handleOpenBrowserUrl(url, pageId);
+      void handleOpenBrowserUrl({ url, pageId });
     });
   }, [handleOpenBrowserUrl]);
 
   useEffect(() => {
     const onOpenFromMcp = (event: Event) => {
-      const detail = (event as CustomEvent<{ url?: string; pageId?: string } | undefined>).detail;
+      const detail = (event as CustomEvent<BrowserOpenRequest | undefined>).detail;
       const url = typeof detail?.url === 'string' ? detail.url : '';
       const pageId = typeof detail?.pageId === 'string' ? detail.pageId : undefined;
       if (!url) return;
-      handleOpenBrowserUrl(url, pageId);
+      void handleOpenBrowserUrl({ url, pageId });
     };
 
     window.addEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
@@ -242,6 +348,22 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
       window.removeEventListener('lumos:browser-open-url', onOpenFromMcp as EventListener);
     };
   }, [handleOpenBrowserUrl]);
+
+  useEffect(() => {
+    const api = window.electronAPI?.browser;
+    if (!api?.onEvent) {
+      return;
+    }
+
+    void syncBrowserPanelTabs();
+
+    return api.onEvent((event) => {
+      if (!BROWSER_SYNC_EVENTS.has(event)) {
+        return;
+      }
+      void syncBrowserPanelTabs();
+    });
+  }, [syncBrowserPanelTabs]);
 
   // 收缩状态下的窄条
   if (!contentPanelOpen) {

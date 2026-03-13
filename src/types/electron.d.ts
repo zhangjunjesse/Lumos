@@ -3,6 +3,8 @@
  * Exposed via contextBridge.exposeInMainWorld('electronAPI', ...) in electron/preload.ts.
  */
 
+import type { BrowserAPI as ElectronBrowserAPI } from './browser';
+
 interface ElectronInstallAPI {
   checkPrerequisites: () => Promise<{
     hasNode: boolean;
@@ -39,41 +41,6 @@ interface ElectronUpdaterAPI {
   downloadUpdate: () => Promise<unknown>;
   quitAndInstall: () => Promise<void>;
   onStatus: (callback: (data: UpdateStatusEvent) => void) => () => void;
-}
-
-interface BrowserTab {
-  id: string;
-  url: string;
-  title: string;
-  favicon?: string;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isPinned: boolean;
-  createdAt: number;
-  lastAccessedAt: number;
-}
-
-interface ElectronBrowserAPI {
-  createTab: (url?: string) => Promise<{ success: boolean; tabId?: string; error?: string }>;
-  closeTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  switchTab: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  getTabs: () => Promise<{ success: boolean; tabs?: BrowserTab[]; activeTabId?: string; error?: string }>;
-  navigate: (tabId: string, url: string, timeout?: number) => Promise<{ success: boolean; error?: string }>;
-  setZoomFactor: (tabId: string, zoomFactor: number) => Promise<{ success: boolean; error?: string }>;
-  getCookies: (filter?: Electron.CookiesGetFilter) => Promise<{ success: boolean; cookies?: Electron.Cookie[]; error?: string }>;
-  setCookie: (cookie: Electron.CookiesSetDetails) => Promise<{ success: boolean; error?: string }>;
-  connectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  disconnectCDP: (tabId: string) => Promise<{ success: boolean; error?: string }>;
-  sendCDPCommand: (tabId: string, method: string, params?: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>;
-  isCDPConnected: (tabId: string) => Promise<{ success: boolean; connected?: boolean; error?: string }>;
-  getBridgeConfig: () => Promise<{ success: boolean; url?: string; token?: string }>;
-  setDisplayTarget: (
-    target: 'default' | 'panel' | 'hidden',
-    bounds?: { x: number; y: number; width: number; height: number },
-  ) => Promise<{ success: boolean; error?: string }>;
-  onEvent: (callback: (event: string, data: unknown) => void) => () => void;
-  onOpenInContentTab: (callback: (payload: { url: string; pageId?: string }) => void) => () => void;
 }
 
 interface ElectronAPI {

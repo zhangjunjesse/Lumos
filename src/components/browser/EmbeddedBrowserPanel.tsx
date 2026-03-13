@@ -46,35 +46,53 @@ function normalizeBrowserInput(rawInput: string): string | null {
   return `${SEARCH_BASE_URL}${encodeURIComponent(input)}`;
 }
 
+function runBrowserAction(action: void | Promise<void>, onError: (error: unknown) => void) {
+  void Promise.resolve(action).catch(onError);
+}
+
 interface EmbeddedBrowserPanelProps {
   url?: string;
   fitWidth?: boolean;
-  onUrlChange: (url: string) => void;
-  onOpenInNewTab?: (url: string) => void;
+  onUrlChange: (url: string) => void | Promise<void>;
+  onReload?: () => void | Promise<void>;
+  onOpenInNewTab?: (url: string) => void | Promise<void>;
   onFitWidthChange?: (fitWidth: boolean) => void;
   onAddToLibrary?: (url: string) => void;
   nativeHost?: boolean;
+  isLoading?: boolean;
 }
 
 export function EmbeddedBrowserPanel({
   url,
   fitWidth,
   onUrlChange,
+  onReload,
   onOpenInNewTab,
   onFitWidthChange,
   onAddToLibrary,
   nativeHost = false,
+  isLoading: controlledLoading = false,
 }: EmbeddedBrowserPanelProps) {
   const { t } = useTranslation();
-  const resolvedUrl = url?.trim() || DEFAULT_HOME_URL;
+  const resolvedUrl = url?.trim() || (nativeHost ? "about:blank" : DEFAULT_HOME_URL);
   const toggleUrlFavorite = useFavoritesStore((state) => state.toggleUrl);
   const favorited = useFavoritesStore((state) => state.isUrlFavorited(resolvedUrl));
   const shouldFitWidth = fitWidth !== false;
   const viewportRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState(resolvedUrl);
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [pendingLoading, setPendingLoading] = useState(!nativeHost);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    setInputValue(resolvedUrl);
+  }, [resolvedUrl]);
+
+  useEffect(() => {
+    if (nativeHost && !controlledLoading) {
+      setPendingLoading(false);
+    }
+  }, [controlledLoading, nativeHost]);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -107,13 +125,29 @@ export function EmbeddedBrowserPanel({
     if (!viewportSize.height) return "100%";
     return `${Math.round(viewportSize.height / fitScale)}px`;
   }, [fitScale, shouldFitWidth, viewportSize.height]);
+  const effectiveLoading = nativeHost ? controlledLoading || pendingLoading : pendingLoading;
 
   const handleNavigateCurrent = useCallback(() => {
     const normalized = normalizeBrowserInput(inputValue);
     if (!normalized) return;
 
     setInputValue(normalized);
-    setIsLoading(true);
+    setPendingLoading(true);
+
+    if (nativeHost) {
+      if (normalized === resolvedUrl && onReload) {
+        runBrowserAction(onReload(), (error) => {
+          console.error("[EmbeddedBrowserPanel] Failed to reload native browser tab:", error);
+          setPendingLoading(false);
+        });
+        return;
+      }
+      runBrowserAction(onUrlChange(normalized), (error) => {
+        console.error("[EmbeddedBrowserPanel] Failed to navigate native browser tab:", error);
+        setPendingLoading(false);
+      });
+      return;
+    }
 
     if (normalized === resolvedUrl) {
       setReloadNonce((value) => value + 1);
@@ -121,37 +155,52 @@ export function EmbeddedBrowserPanel({
     }
 
     onUrlChange(normalized);
-  }, [inputValue, onUrlChange, resolvedUrl]);
+  }, [inputValue, nativeHost, onReload, onUrlChange, resolvedUrl]);
 
   const handleNavigate = useCallback(() => {
-    const normalized = normalizeBrowserInput(inputValue);
-    if (!normalized) return;
-
-    const hasInitializedUrl = Boolean(url?.trim());
-    if (!hasInitializedUrl || normalized === resolvedUrl) {
-      handleNavigateCurrent();
-      return;
-    }
-
-    onOpenInNewTab?.(normalized);
-  }, [handleNavigateCurrent, inputValue, onOpenInNewTab, resolvedUrl, url]);
+    handleNavigateCurrent();
+  }, [handleNavigateCurrent]);
 
   const handleOpenInNewTab = useCallback(() => {
     const normalized = normalizeBrowserInput(inputValue);
     if (!normalized) return;
-    onOpenInNewTab?.(normalized);
+    if (!onOpenInNewTab) return;
+    runBrowserAction(onOpenInNewTab(normalized), (error) => {
+      console.error("[EmbeddedBrowserPanel] Failed to open browser tab:", error);
+    });
   }, [inputValue, onOpenInNewTab]);
 
   const handleReload = useCallback(() => {
-    setIsLoading(true);
+    setPendingLoading(true);
+    if (nativeHost) {
+      if (onReload) {
+        runBrowserAction(onReload(), (error) => {
+          console.error("[EmbeddedBrowserPanel] Failed to reload native browser tab:", error);
+          setPendingLoading(false);
+        });
+        return;
+      }
+
+      const normalized = normalizeBrowserInput(inputValue);
+      if (normalized) {
+        runBrowserAction(onUrlChange(normalized), (error) => {
+          console.error("[EmbeddedBrowserPanel] Failed to navigate native browser tab:", error);
+          setPendingLoading(false);
+        });
+      }
+      return;
+    }
+
     setReloadNonce((value) => value + 1);
-  }, []);
+  }, [inputValue, nativeHost, onReload, onUrlChange]);
 
   const handleOpenExternal = useCallback(() => {
+    if (resolvedUrl === "about:blank") return;
     void openExternalUrl(resolvedUrl);
   }, [resolvedUrl]);
 
   const handleToggleFavorite = useCallback(() => {
+    if (resolvedUrl === "about:blank") return;
     let title = resolvedUrl;
     try {
       title = new URL(resolvedUrl).hostname.replace(/^www\./, "") || resolvedUrl;
@@ -166,7 +215,7 @@ export function EmbeddedBrowserPanel({
   }, [onFitWidthChange, shouldFitWidth]);
 
   const handleAddToLibrary = useCallback(() => {
-    if (!resolvedUrl) return;
+    if (!resolvedUrl || resolvedUrl === "about:blank") return;
     onAddToLibrary?.(resolvedUrl);
   }, [onAddToLibrary, resolvedUrl]);
 
@@ -217,7 +266,7 @@ export function EmbeddedBrowserPanel({
             onClick={handleReload}
             title={t("browser.reload")}
           >
-            <HugeiconsIcon icon={Refresh} className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+            <HugeiconsIcon icon={Refresh} className={cn("h-3.5 w-3.5", effectiveLoading && "animate-spin")} />
             <span className="sr-only">{t("browser.reload")}</span>
           </Button>
 
@@ -309,21 +358,31 @@ export function EmbeddedBrowserPanel({
                 }
           }
         >
-          <iframe
-            key={iframeKey}
-            title={t("tab.browser")}
-            src={resolvedUrl}
-            className="border-0 bg-background"
-            style={{
-              width: `${BROWSER_BASE_WIDTH}px`,
-              height: shouldFitWidth ? fittedHeight : "100%",
-            }}
-            onLoad={() => setIsLoading(false)}
-            referrerPolicy="no-referrer-when-downgrade"
-          />
+          {nativeHost ? (
+            <div
+              className="h-full w-full bg-background"
+              style={{
+                width: `${BROWSER_BASE_WIDTH}px`,
+                height: shouldFitWidth ? fittedHeight : "100%",
+              }}
+            />
+          ) : (
+            <iframe
+              key={iframeKey}
+              title={t("tab.browser")}
+              src={resolvedUrl}
+              className="border-0 bg-background"
+              style={{
+                width: `${BROWSER_BASE_WIDTH}px`,
+                height: shouldFitWidth ? fittedHeight : "100%",
+              }}
+              onLoad={() => setPendingLoading(false)}
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          )}
         </div>
 
-        {isLoading && (
+        {effectiveLoading && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
             <div className="flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
               <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
