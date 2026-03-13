@@ -853,6 +853,7 @@ export function ChatView({
         }
 
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+        window.dispatchEvent(new CustomEvent('team-plan-refresh', { detail: { sessionId } }));
         if (shouldScheduleIdleTrigger) {
           scheduleIdleMemoryTrigger();
         }

@@ -31,6 +31,9 @@ const routeKeys: Record<string, string> = {
   "/library-demo": "topbar.workspace",
   "/mind": "topbar.mind",
   "/settings": "topbar.settings",
+  "/main-agent": "topbar.mainAgent",
+  "/team": "topbar.team",
+  "/tasks": "topbar.tasks",
   "/chat": "topbar.chat",
 };
 
@@ -39,12 +42,15 @@ export function TopBar() {
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
   const { workingDirectory } = usePanel();
-  const isChatDetailRoute = /^\/chat\/[^/]+/.test(pathname);
-  const showWorkingDirectory = isChatDetailRoute && workingDirectory.trim().length > 0;
+  const isSessionDetailRoute = /^\/(chat|main-agent)\/[^/]+/.test(pathname);
+  const showWorkingDirectory = isSessionDetailRoute && workingDirectory.trim().length > 0;
 
   const routeKey = routeKeys[pathname]
     || (pathname.startsWith("/library") ? "topbar.workspace" : undefined)
     || (pathname.startsWith("/knowledge") ? "topbar.knowledge" : undefined)
+    || (pathname.startsWith("/main-agent/") ? "topbar.mainAgent" : undefined)
+    || (pathname.startsWith("/tasks/") ? "topbar.tasks" : undefined)
+    || (pathname.startsWith("/team/") ? "topbar.team" : undefined)
     || (pathname.startsWith("/chat/") ? "topbar.chat" : undefined);
   const breadcrumb = routeKey
     ? t(routeKey as Parameters<typeof t>[0])

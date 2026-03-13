@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useRef, useCallback, use } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
+import { TeamModeBanner } from '@/components/chat/TeamModeBanner';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading, PencilEdit01Icon, Delete } from "@hugeicons/core-free-icons";
+import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -22,6 +23,7 @@ import {
 import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getSessionEntry, getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { useMessagesStore } from '@/stores/messages-store';
 import { useStreamingStore } from '@/stores/streaming-store';
 
@@ -57,6 +59,7 @@ function triggerMemoryOnSessionSwitch(sessionId: string): void {
 
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { id } = use(params);
+  const pathname = usePathname();
   const router = useRouter();
   const sessionData = useMessagesStore((state) => state.sessions[id] ?? null);
   const updateSessionMessages = useMessagesStore((state) => state.updateSession);
@@ -65,7 +68,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const updateStreamingSession = useStreamingStore((state) => state.updateSession);
   const clearStreamingSession = useStreamingStore((state) => state.clearSession);
 
-  // Use messages from store
   const messages = sessionData?.messages || [];
   const hasMore = sessionData?.hasMore || false;
   const loading = sessionData?.loading ?? true;
@@ -85,6 +87,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
   const { t } = useTranslation();
+  const routeEntry = getSessionEntryFromPath(pathname);
+  const routeBasePath = getSessionEntryBasePath(routeEntry);
 
   const handleStartEditTitle = useCallback(() => {
     setEditTitle(sessionTitle || t('chat.newConversation'));
@@ -120,7 +124,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     try {
       let fallbackSessionId = '';
       try {
-        const sessionsRes = await fetch('/api/chat/sessions');
+        const sessionsRes = await fetch(`/api/chat/sessions?entry=${routeEntry}`);
         if (sessionsRes.ok) {
           const data: SessionsResponse = await sessionsRes.json();
           const sessions = Array.isArray(data.sessions) ? data.sessions : [];
@@ -148,7 +152,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         setSessionId('');
         setPanelSessionTitle('');
         window.dispatchEvent(new CustomEvent('session-deleted', { detail: { id } }));
-        router.push(fallbackSessionId ? `/chat/${fallbackSessionId}` : '/chat');
+        router.push(fallbackSessionId ? `${routeBasePath}/${fallbackSessionId}` : routeBasePath);
       }
     } catch {
       // silently fail
@@ -156,7 +160,17 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       setDeleting(false);
       setDeleteDialogOpen(false);
     }
-  }, [clearStreamingSession, deleting, id, removeCachedMessages, router, setPanelSessionTitle, setSessionId]);
+  }, [
+    clearStreamingSession,
+    deleting,
+    id,
+    removeCachedMessages,
+    routeBasePath,
+    routeEntry,
+    router,
+    setPanelSessionTitle,
+    setSessionId,
+  ]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -173,45 +187,51 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
   }, [isEditingTitle]);
 
-  // Load session info and set working directory
   useEffect(() => {
     async function loadSession() {
       try {
         const res = await fetch(`/api/chat/sessions/${id}`);
-        if (res.ok) {
-          const data: { session: ChatSession } = await res.json();
-          if (data.session.working_directory) {
-            setWorkingDirectory(data.session.working_directory);
-            setSessionWorkingDir(data.session.working_directory);
-            localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
-            window.dispatchEvent(new Event('refresh-file-tree'));
-          }
-          setSessionId(id);
-          setPanelOpen(true);
-          const title = data.session.title || t('chat.newConversation');
-          setSessionTitle(title);
-          setPanelSessionTitle(title);
-          setSessionModel(data.session.requested_model || data.session.model || '');
-          setResolvedModel(data.session.resolved_model || '');
-          setSessionProviderId(data.session.provider_id || '');
-          setSessionMode(data.session.mode || 'code');
-          setProjectName(data.session.project_name || '');
+        if (!res.ok) return;
+
+        const data: { session: ChatSession } = await res.json();
+        const actualEntry = getSessionEntry(data.session);
+        if (actualEntry !== routeEntry) {
+          router.replace(`${getSessionEntryBasePath(actualEntry)}/${id}`);
+          return;
         }
+
+        if (data.session.working_directory) {
+          setWorkingDirectory(data.session.working_directory);
+          setSessionWorkingDir(data.session.working_directory);
+          localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
+          window.dispatchEvent(new Event('refresh-file-tree'));
+        } else {
+          setWorkingDirectory('');
+          setSessionWorkingDir('');
+          window.dispatchEvent(new Event('refresh-file-tree'));
+        }
+
+        setSessionId(id);
+        setPanelOpen(true);
+        const title = data.session.title || t('chat.newConversation');
+        setSessionTitle(title);
+        setPanelSessionTitle(title);
+        setSessionModel(data.session.requested_model || data.session.model || '');
+        setResolvedModel(data.session.resolved_model || '');
+        setSessionProviderId(data.session.provider_id || '');
+        setSessionMode(data.session.mode || 'code');
+        setProjectName(data.session.project_name || '');
       } catch (err) {
         console.error('[ChatSessionPage] Failed to load session:', err);
-        // Session info load failed - panel will still work without directory
       }
     }
 
     loadSession();
-  }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen, t]);
+  }, [id, routeEntry, router, setPanelOpen, setPanelSessionTitle, setSessionId, setWorkingDirectory, t]);
 
   useEffect(() => {
     const shouldFetchMessages = !sessionData || (!!sessionData.error && !sessionData.loading);
-
-    if (!shouldFetchMessages) {
-      return;
-    }
+    if (!shouldFetchMessages) return;
 
     updateSessionMessages(id, { loading: true, error: null });
 
@@ -231,6 +251,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           }
           throw new Error(t('chat.failedLoadMessages'));
         }
+
         const data: MessagesResponse = await res.json();
         if (cancelled) return;
         updateSessionMessages(id, {
@@ -255,7 +276,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     };
   }, [id, sessionData, t, updateSessionMessages]);
 
-  // Opening the session marks "completed but unread" as read (idle).
   useEffect(() => {
     if (sessionStreamingState?.status !== 'completed') return;
     updateStreamingSession(id, {
@@ -270,7 +290,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     });
   }, [id, sessionStreamingState?.status, updateStreamingSession]);
 
-  // Trigger implicit memory analysis when leaving the current session.
   useEffect(() => {
     const current = id;
     return () => {
@@ -278,8 +297,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     };
   }, [id]);
 
-  // Periodically refresh messages so that Feishu-originated
-  // messages appear in the UI without manual reload.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
@@ -290,11 +307,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
 
       inFlight = true;
       fetch(`/api/chat/sessions/${id}/messages?limit=100`)
-        .then(res => {
+        .then((res) => {
           if (!res.ok) return null;
           return res.json() as Promise<MessagesResponse>;
         })
-        .then(data => {
+        .then((data) => {
           if (!data || cancelled) return;
           updateSessionMessages(id, {
             messages: data.messages,
@@ -303,7 +320,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
             error: null,
           });
         })
-        .catch(err => {
+        .catch((err) => {
           console.error('[ChatPage] Polling messages failed:', err);
         })
         .finally(() => {
@@ -311,10 +328,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         });
     };
 
-    const interval = setInterval(() => {
-      refreshMessages();
-    }, 4000);
-
+    const interval = setInterval(refreshMessages, 4000);
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         refreshMessages();
@@ -330,26 +344,25 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     };
   }, [id, updateSessionMessages]);
 
-  // Listen for bridge messages from Electron IPC
   useEffect(() => {
     const handleBridgeMessage = (_event: unknown, data: { sessionId: string }) => {
-      if (data.sessionId === id) {
-        fetch(`/api/chat/sessions/${id}/messages?limit=100`)
-          .then(res => {
-            if (!res.ok) return null;
-            return res.json() as Promise<MessagesResponse>;
-          })
-          .then((data: MessagesResponse | null) => {
-            if (!data) return;
-            updateSessionMessages(id, {
-              messages: data.messages,
-              hasMore: data.hasMore ?? false,
-              loading: false,
-              error: null,
-            });
-          })
-          .catch(err => console.error('[Bridge] Failed to refresh messages:', err));
-      }
+      if (data.sessionId !== id) return;
+
+      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
+        .then((res) => {
+          if (!res.ok) return null;
+          return res.json() as Promise<MessagesResponse>;
+        })
+        .then((data: MessagesResponse | null) => {
+          if (!data) return;
+          updateSessionMessages(id, {
+            messages: data.messages,
+            hasMore: data.hasMore ?? false,
+            loading: false,
+            error: null,
+          });
+        })
+        .catch((err) => console.error('[Bridge] Failed to refresh messages:', err));
     };
 
     const ipcRenderer = (window as WindowWithElectronIpc).electron?.ipcRenderer;
@@ -361,12 +374,36 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
   }, [id, updateSessionMessages]);
 
-  // Listen for session updates from sidebar
+  useEffect(() => {
+    const handleTeamMessage = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      if (!detail?.sessionId || detail.sessionId !== id) return;
+
+      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
+        .then((res) => res.ok ? res.json() as Promise<MessagesResponse> : null)
+        .then((data) => {
+          if (!data) return;
+          updateSessionMessages(id, {
+            messages: data.messages,
+            hasMore: data.hasMore ?? false,
+            loading: false,
+            error: null,
+          });
+        })
+        .catch(() => {
+          // Best effort only.
+        });
+    };
+
+    window.addEventListener('team-chat-message-created', handleTeamMessage);
+    return () => window.removeEventListener('team-chat-message-created', handleTeamMessage);
+  }, [id, updateSessionMessages]);
+
   useEffect(() => {
     const handleSessionUpdate = (event: Event) => {
       const customEvent = event as CustomEvent<{ id?: string; title?: string }>;
       const detail = customEvent.detail;
-      if (!detail || !detail.id) return;
+      if (!detail?.id) return;
       if (detail.id === id && detail.title) {
         setSessionTitle(detail.title);
         setEditTitle(detail.title);
@@ -389,9 +426,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   if (error) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="text-center space-y-2">
-          <p className="text-destructive font-medium">{error}</p>
-          <Link href="/chat" className="text-sm text-muted-foreground hover:underline">
+        <div className="space-y-2 text-center">
+          <p className="font-medium text-destructive">{error}</p>
+          <Link href={routeBasePath} className="text-sm text-muted-foreground hover:underline">
             {t('chat.startNewChat')}
           </Link>
         </div>
@@ -401,10 +438,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Chat title bar */}
       {sessionTitle && (
         <div
-          className="flex h-12 shrink-0 items-center justify-center px-4 gap-1"
+          className="flex h-12 shrink-0 items-center justify-center gap-1 px-4"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           {projectName && (
@@ -412,31 +448,30 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    className="text-xs text-muted-foreground shrink-0 hover:text-foreground transition-colors cursor-pointer"
+                    className="shrink-0 cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
                     style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                     onClick={() => {
-                      if (sessionWorkingDir) {
-                        if (window.electronAPI?.shell?.openPath) {
-                          window.electronAPI.shell.openPath(sessionWorkingDir);
-                        } else {
-                          fetch('/api/files/open', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ path: sessionWorkingDir }),
-                          }).catch(() => {});
-                        }
+                      if (!sessionWorkingDir) return;
+                      if (window.electronAPI?.shell?.openPath) {
+                        window.electronAPI.shell.openPath(sessionWorkingDir);
+                        return;
                       }
+                      fetch('/api/files/open', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: sessionWorkingDir }),
+                      }).catch(() => {});
                     }}
                   >
                     {projectName}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="text-xs break-all">{sessionWorkingDir || projectName}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{t('chat.openInFinder')}</p>
+                  <p className="break-all text-xs">{sessionWorkingDir || projectName}</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">{t('chat.openInFinder')}</p>
                 </TooltipContent>
               </Tooltip>
-              <span className="text-xs text-muted-foreground shrink-0">/</span>
+              <span className="shrink-0 text-xs text-muted-foreground">/</span>
             </>
           )}
           {isEditingTitle ? (
@@ -447,22 +482,22 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 onChange={(e) => setEditTitle(e.target.value)}
                 onKeyDown={handleTitleKeyDown}
                 onBlur={handleSaveTitle}
-                className="h-7 text-sm max-w-md text-center"
+                className="h-7 max-w-md text-center text-sm"
               />
             </div>
           ) : (
             <div
-              className="flex items-center gap-1 group cursor-default max-w-3xl"
+              className="group flex max-w-3xl cursor-default items-center gap-1"
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <div className="min-w-0">
-                <h2 className="text-sm font-medium text-foreground/80 truncate">
+                <h2 className="truncate text-sm font-medium text-foreground/80">
                   {sessionTitle}
                 </h2>
               </div>
               <button
                 onClick={handleStartEditTitle}
-                className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
+                className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
               >
                 <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
               </button>
@@ -471,7 +506,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => setDeleteDialogOpen(true)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
+                    className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
                   >
                     <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
                   </button>
@@ -482,6 +517,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           )}
         </div>
       )}
+
+      <TeamModeBanner sessionId={id} />
+
       <ChatView
         sessionId={id}
         initialMessages={messages}

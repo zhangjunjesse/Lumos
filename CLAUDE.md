@@ -2,7 +2,45 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
 # Lumos — 文档智能助手
+
+## 开发命令
+
+### 安装依赖
+```bash
+npm install
+```
+
+### 开发模式
+```bash
+# Web 开发（仅 Next.js，无 Electron）
+npm run dev
+
+# Electron 开发（完整桌面应用）
+npm run electron:dev
+```
+
+### 构建与打包
+```bash
+# 构建 Next.js
+npm run build
+
+# 构建并打包 Electron（所有平台）
+npm run electron:pack
+
+# 打包特定平台
+npm run electron:pack:mac     # macOS
+npm run electron:pack:win     # Windows
+npm run electron:pack:linux   # Linux
+```
+
+### 代码检查
+```bash
+npm run lint
+```
+
+---
 
 ## 项目概述
 

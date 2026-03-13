@@ -26,6 +26,9 @@ import {
   Moon,
   Sun,
   Brain,
+  Message,
+  UserGroupIcon,
+  Task01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -37,9 +40,12 @@ interface SidebarProps {
 }
 
 const mainNavItems = [
+  { href: "/main-agent", labelKey: "sidebar.mainAgent" as const, icon: Message },
+  { href: "/team", labelKey: "sidebar.team" as const, icon: UserGroupIcon },
+  { href: "/tasks", labelKey: "sidebar.tasks" as const, icon: Task01Icon },
   { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
   { href: "/browser", labelKey: "tab.browser" as const, icon: Globe },
-];
+] as const;
 
 const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];
 
@@ -92,6 +98,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/" || pathname === "/documents";
+    if (href === "/main-agent") {
+      return pathname === "/main-agent"
+        || pathname.startsWith("/main-agent/")
+        || pathname === "/chat"
+        || pathname.startsWith("/chat/");
+    }
     return pathname === href || pathname.startsWith(href + "/");
   };
 
@@ -110,7 +122,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
 
       {/* Logo */}
       <div className={cn("flex items-center px-3 py-2", expanded ? "gap-2" : "justify-center")}>
-        <Link href="/library" className="flex items-center gap-2">
+        <Link href="/main-agent" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold">
             L
           </div>

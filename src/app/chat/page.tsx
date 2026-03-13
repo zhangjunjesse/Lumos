@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
@@ -10,6 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useMemoryToast } from '@/components/memory/memory-toast-container';
 import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog';
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
+import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 interface ToolUseInfo {
@@ -42,6 +43,7 @@ async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
 }
 
 export default function NewChatPage() {
+  const pathname = usePathname();
   const router = useRouter();
   const { setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
   const { t } = useTranslation();
@@ -61,9 +63,18 @@ export default function NewChatPage() {
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const [conflictData, setConflictData] = useState<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sessionEntry = getSessionEntryFromPath(pathname);
+  const sessionBasePath = getSessionEntryBasePath(sessionEntry);
+  const isMainAgentEntry = sessionEntry === 'main-agent';
 
-  // Auto-populate workingDir from active workspace or localStorage
+  // Chat entry inherits workspace context; Main Agent stays neutral until user picks one.
   useEffect(() => {
+    if (isMainAgentEntry) {
+      setWorkingDir('');
+      setWorkingDirectory('');
+      return;
+    }
+
     const saved = localStorage.getItem('codepilot:last-working-directory');
     if (saved) {
       setWorkingDir(saved);
@@ -81,7 +92,7 @@ export default function NewChatPage() {
         }
       })
       .catch(() => {});
-  }, [setWorkingDirectory]);
+  }, [isMainAgentEntry, setWorkingDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -126,8 +137,8 @@ export default function NewChatPage() {
     async (content: string, files?: FileAttachment[], systemPromptAppend?: string) => {
       if (isStreaming) return;
 
-      // Require a project directory before sending
-      if (!workingDir.trim()) {
+      // Legacy /chat sessions remain project-scoped. Main Agent can start globally.
+      if (!isMainAgentEntry && !workingDir.trim()) {
         const hint: Message = {
           id: 'hint-' + Date.now(),
           session_id: '',
@@ -152,12 +163,14 @@ export default function NewChatPage() {
       let sessionId = '';
 
       try {
-        // Create a new session with working directory
         const createBody: Record<string, string> = {
           title: content.slice(0, 50),
           mode,
-          working_directory: workingDir.trim(),
+          entry: sessionEntry,
         };
+        if (workingDir.trim()) {
+          createBody.working_directory = workingDir.trim();
+        }
 
         const createRes = await fetch('/api/chat/sessions', {
           method: 'POST',
@@ -349,12 +362,12 @@ export default function NewChatPage() {
         }
 
         // Navigate to the session page after response is complete
-        router.push(`/chat/${session.id}`);
+        router.push(`${sessionBasePath}/${session.id}`);
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
           // User stopped - navigate to session if we have one
           if (sessionId) {
-            router.push(`/chat/${sessionId}`);
+            router.push(`${sessionBasePath}/${sessionId}`);
           }
         } else {
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -381,7 +394,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [isStreaming, router, workingDir, mode, currentModel, currentProviderId, setPendingApprovalSessionId]
+    [currentModel, currentProviderId, isMainAgentEntry, isStreaming, mode, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, workingDir]
   );
 
   const handleConflictResolve = useCallback(async (action: 'replace' | 'keep_both' | 'cancel') => {

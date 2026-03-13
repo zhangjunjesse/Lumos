@@ -129,6 +129,15 @@ const MODE_OPTIONS: ModeOption[] = [
   { value: 'plan', label: 'Plan' },
 ];
 
+const TEAM_PLAN_REQUEST_PROMPT = `Stay in Main Agent mode, but use this reply to handle Team Mode planning only.
+Do not execute the task yet.
+If the task should stay single-agent, explain that briefly.
+If Team Mode is warranted, produce a concise explanation plus one valid \`\`\`lumos-team-plan\`\`\` JSON block that matches Lumos' required schema, then wait for user confirmation.`;
+
+const TEAM_PLAN_REQUEST_PROMPT_ZH = `保持在主代理模式中，但这一轮回复只处理团队模式规划。
+先不要执行任务。
+如果任务应保持为单代理，请简短说明原因。
+如果适合使用团队模式，请给出简明说明，并提供一个符合 Lumos 要求 schema 的 \`\`\`lumos-team-plan\`\`\` JSON 代码块，然后等待用户确认。`;
 const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
 const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
 
@@ -347,7 +356,7 @@ export function MessageInput({
   onInputFocus,
   fullWidth = false,
 }: MessageInputProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -361,12 +370,14 @@ export function MessageInput({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [badge, setBadge] = useState<CommandBadge | null>(null);
+  const [teamPlanMode, setTeamPlanMode] = useState(false);
   const [providerGroups, setProviderGroups] = useState<ProviderModelGroup[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState<string>('');
   const [aiSuggestions, setAiSuggestions] = useState<PopoverItem[]>([]);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiSearchAbortRef = useRef<AbortController | null>(null);
   const aiSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const teamPlanRequestPrompt = locale === 'zh' ? TEAM_PLAN_REQUEST_PROMPT_ZH : TEAM_PLAN_REQUEST_PROMPT;
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
@@ -769,6 +780,7 @@ export function MessageInput({
 
       const files = await convertFiles();
       setBadge(null);
+      setTeamPlanMode(false);
       setInputValue('');
       onSend(finalPrompt, files.length > 0 ? files : undefined);
       return;
@@ -816,11 +828,22 @@ export function MessageInput({
     onSend(
       content || 'Please review the attached file(s).',
       hasFiles ? files : undefined,
-      undefined,
+      teamPlanMode ? teamPlanRequestPrompt : undefined,
       undefined,
     );
+    setTeamPlanMode(false);
     setInputValue('');
-  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover, badge, workingDirectory]);
+  }, [
+    badge,
+    closePopover,
+    disabled,
+    inputValue,
+    isStreaming,
+    onCommand,
+    onSend,
+    teamPlanMode,
+    teamPlanRequestPrompt,
+  ]);
 
   const filteredItems = popoverItems.filter((item) => {
     const q = popoverFilter.toLowerCase();
@@ -1195,6 +1218,13 @@ export function MessageInput({
                 </span>
               </div>
             )}
+            {teamPlanMode && (
+              <div className="flex w-full items-center gap-1.5 px-3 pt-2.5 pb-0 order-first">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                  {t('messageInput.teamPlanOnly')}
+                </span>
+              </div>
+            )}
             {/* File attachment capsules */}
             <FileAttachmentsCapsules />
             <PromptInputTextarea
@@ -1232,6 +1262,19 @@ export function MessageInput({
                     );
                   })}
                 </div>
+
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium transition-colors",
+                    teamPlanMode
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      : "border-border/60 text-muted-foreground hover:text-foreground"
+                  )}
+                  onClick={() => setTeamPlanMode((prev) => !prev)}
+                >
+                  {t('messageInput.teamPlanToggle')}
+                </button>
 
                 {/* Model selector */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>

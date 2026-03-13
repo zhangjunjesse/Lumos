@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { parseClaudeSession } from '@/lib/claude-session-parser';
 import { createSession, addMessage, updateSdkSessionId, getAllSessions } from '@/lib/db';
+import { withSessionEntryMarker } from '@/lib/chat/session-entry';
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
     const session = createSession(
       title,
       undefined, // model — will use default
-      undefined, // system prompt
+      withSessionEntryMarker(undefined, 'main-agent'),
       info.cwd || info.projectPath,
       'code',
     );

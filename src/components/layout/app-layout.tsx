@@ -33,8 +33,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
-  const isChatRoute = pathname.startsWith("/chat");
-  const isChatDetailRoute = /^\/chat\/[^/]+/.test(pathname);
+  const isChatRoute = pathname.startsWith("/chat") || pathname.startsWith("/main-agent");
 
   const [assistantOpen, setAssistantOpen] = useState(false);
 
@@ -141,7 +140,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   useEffect(() => {
     if (workingDirectory) {
       localStorage.setItem("lumos_working_directory", workingDirectory);
+      return;
     }
+    localStorage.removeItem("lumos_working_directory");
   }, [workingDirectory]);
 
   const openAssistant = useCallback(() => {

@@ -118,7 +118,7 @@ export function ImportSessionDialog({
       if (res.status === 409 && data.existingSessionId) {
         // Already imported — navigate to the existing session
         onOpenChange(false);
-        router.push(`/chat/${data.existingSessionId}`);
+        router.push(`/main-agent/${data.existingSessionId}`);
         return;
       }
 
@@ -129,7 +129,7 @@ export function ImportSessionDialog({
       // Navigate to the newly imported session
       onOpenChange(false);
       window.dispatchEvent(new CustomEvent("session-created"));
-      router.push(`/chat/${data.session.id}`);
+      router.push(`/main-agent/${data.session.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to import session");
     } finally {

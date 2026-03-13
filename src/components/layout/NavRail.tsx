@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
-import type { TranslationKey } from "@/i18n";
 
 
 interface NavRailProps {
@@ -36,13 +35,13 @@ interface NavRailProps {
 }
 
 const navItems = [
-  { href: "/documents", label: "Documents", icon: File },
-  { href: "/chat", label: "Chats", icon: Message },
-  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "/mind", label: "Mind", icon: Brain },
-  { href: "/extensions", label: "Extensions", icon: Grid },
-  { href: "/gallery", label: "Gallery", icon: Image },
-  { href: "/settings", label: "Settings", icon: Settings2 },
+  { href: "/documents", labelKey: "nav.documents" as const, icon: File },
+  { href: "/main-agent", labelKey: "nav.mainAgent" as const, icon: Message },
+  { href: "/knowledge", labelKey: "nav.knowledge" as const, icon: BookOpen },
+  { href: "/mind", labelKey: "nav.mind" as const, icon: Brain },
+  { href: "/extensions", labelKey: "nav.extensions" as const, icon: Grid },
+  { href: "/gallery", labelKey: "gallery.title" as const, icon: Image },
+  { href: "/settings", labelKey: "nav.settings" as const, icon: Settings2 },
 ] as const;
 
 export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermissionsActive }: NavRailProps) {
@@ -50,18 +49,9 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
   const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
-  const navLabelKeys: Record<string, TranslationKey> = {
-    'Documents': 'nav.documents',
-    'Chats': 'nav.chats',
-    'Knowledge': 'nav.knowledge',
-    'Mind': 'nav.mind',
-    'Extensions': 'nav.extensions',
-    'Gallery': 'gallery.title',
-    'Settings': 'nav.settings',
-  };
   const emptySubscribe = useCallback(() => () => {}, []);
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
-  const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
+  const isChatRoute = pathname === "/main-agent" || pathname.startsWith("/main-agent/") || pathname === "/chat" || pathname.startsWith("/chat/");
 
   return (
     <aside className="flex w-14 shrink-0 flex-col items-center bg-sidebar pb-3 pt-10">
@@ -69,14 +59,15 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
       <nav className="flex flex-1 flex-col items-center gap-1">
         {navItems.map((item) => {
           const isActive =
-            item.href === "/chat"
-              ? pathname === "/chat" || pathname.startsWith("/chat/")
+            item.href === "/main-agent"
+              ? pathname === "/main-agent" || pathname.startsWith("/main-agent/") || pathname === "/chat" || pathname.startsWith("/chat/")
               : pathname === item.href || pathname.startsWith(item.href + "/");
+          const itemLabel = t(item.labelKey);
 
           return (
             <Tooltip key={item.href}>
               <TooltipTrigger asChild>
-                {item.href === "/chat" ? (
+                {item.href === "/main-agent" ? (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -86,8 +77,8 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
                     )}
                     onClick={() => {
                       if (!isChatRoute) {
-                        // Navigate to chat page first, then open chat list
-                        router.push("/chat");
+                        // Navigate to Main Agent first, then open chat list
+                        router.push("/main-agent");
                         onToggleChatList();
                       } else {
                         onToggleChatList();
@@ -95,7 +86,7 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
                     }}
                   >
                     <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
-                    <span className="sr-only">{t(navLabelKeys[item.label] ?? item.label as TranslationKey)}</span>
+                    <span className="sr-only">{itemLabel}</span>
                   </Button>
                 ) : (
                   <div className="relative">
@@ -110,7 +101,7 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
                     >
                       <Link href={item.href}>
                         <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
-                        <span className="sr-only">{t(navLabelKeys[item.label] ?? item.label as TranslationKey)}</span>
+                        <span className="sr-only">{itemLabel}</span>
                       </Link>
                     </Button>
                     {item.href === "/settings" && hasUpdate && (
@@ -122,7 +113,7 @@ export function NavRail({ onToggleChatList, hasUpdate, readyToInstall, skipPermi
                   </div>
                 )}
               </TooltipTrigger>
-              <TooltipContent side="right">{t(navLabelKeys[item.label] ?? item.label as TranslationKey)}</TooltipContent>
+              <TooltipContent side="right">{itemLabel}</TooltipContent>
             </Tooltip>
           );
         })}
