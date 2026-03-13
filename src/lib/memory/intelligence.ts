@@ -13,6 +13,7 @@ import {
 } from '@/lib/db';
 import { generateTextFromProvider } from '@/lib/text-generator';
 import type { MemoryCategory, MemoryScope, MemoryRecord } from '@/lib/db/memories';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 export type MemoryTriggerReason =
   | 'idle'
@@ -195,12 +196,12 @@ function resolveRecommendedMemoryModel(): string {
     (getSetting('default_model') || '').trim(),
     (getSetting('memory_intelligence_extract_model') || '').trim(),
     (getSetting('memory_intelligence_should_model') || '').trim(),
-    'claude-sonnet-4-20250514',
+    BUILTIN_CLAUDE_MODEL_IDS.sonnet,
   ];
   for (const candidate of candidates) {
-    if (candidate) return candidate;
+    if (candidate) return resolveBuiltInClaudeModelId(candidate, 'sonnet');
   }
-  return 'claude-sonnet-4-20250514';
+  return BUILTIN_CLAUDE_MODEL_IDS.sonnet;
 }
 
 function normalizeLeadingComments(text: string): string {

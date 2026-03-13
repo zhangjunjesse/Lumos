@@ -17,6 +17,7 @@ import {
   clearChatStreamController,
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
+import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 interface ToolUseInfo {
   id: string;
@@ -35,6 +36,7 @@ interface ChatViewProps {
   initialMessages?: Message[];
   initialHasMore?: boolean;
   modelName?: string;
+  resolvedModelName?: string;
   initialMode?: string;
   providerId?: string;
   workingDirectoryOverride?: string;
@@ -42,6 +44,8 @@ interface ChatViewProps {
   onInputFocus?: () => void;
   fullWidth?: boolean;
   hideEmptyState?: boolean;
+  onRequestedModelChange?: (model: string) => void;
+  onResolvedModelChange?: (model: string) => void;
 }
 
 interface MemoryIdleTriggerConfig {
@@ -79,6 +83,7 @@ export function ChatView({
   initialMessages = [],
   initialHasMore = false,
   modelName,
+  resolvedModelName,
   initialMode,
   providerId,
   workingDirectoryOverride,
@@ -86,6 +91,8 @@ export function ChatView({
   onInputFocus,
   fullWidth = false,
   hideEmptyState = false,
+  onRequestedModelChange,
+  onResolvedModelChange,
 }: ChatViewProps) {
   const { t } = useTranslation();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
@@ -120,11 +127,9 @@ export function ChatView({
   const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
   const [mode, setMode] = useState(initialMode || 'code');
   const [currentModel, setCurrentModel] = useState(
-    modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || 'sonnet'
+    modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
   );
-  const [currentProviderId, setCurrentProviderId] = useState(
-    providerId || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-provider-id') : null) || ''
-  );
+  const [currentProviderId, setCurrentProviderId] = useState(providerId || '');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(
     () => cachedStreamingState?.pendingPermission || null
   );
@@ -239,7 +244,8 @@ export function ChatView({
   const handleProviderModelChange = useCallback((newProviderId: string, model: string) => {
     setCurrentProviderId(newProviderId);
     setCurrentModel(model);
-  }, []);
+    onRequestedModelChange?.(model);
+  }, [onRequestedModelChange]);
 
   // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
@@ -365,6 +371,49 @@ export function ChatView({
       setMode(initialMode);
     }
   }, [initialMode]);
+
+  useEffect(() => {
+    if (modelName) {
+      setCurrentModel(modelName);
+    }
+  }, [modelName]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncProviderFromDefault = async () => {
+      try {
+        const res = await fetch('/api/providers/models');
+        if (!res.ok) return;
+        const data = await res.json() as { default_provider_id?: string };
+        if (cancelled) return;
+
+        if (data.default_provider_id) {
+          setCurrentProviderId(data.default_provider_id);
+          return;
+        }
+
+        setCurrentProviderId(providerId || '');
+      } catch {
+        if (!cancelled && providerId) {
+          setCurrentProviderId(providerId);
+        }
+      }
+    };
+
+    void syncProviderFromDefault();
+    window.addEventListener('provider-changed', syncProviderFromDefault);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('provider-changed', syncProviderFromDefault);
+    };
+  }, [providerId]);
+
+  useEffect(() => {
+    if (resolvedModelName) {
+      onResolvedModelChange?.(resolvedModelName);
+    }
+  }, [onResolvedModelChange, resolvedModelName]);
 
   const loadEarlierMessages = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore || messages.length === 0) return;
@@ -628,8 +677,11 @@ export function ChatView({
               status: 'streaming',
             });
           },
-          onStatus: (text) => {
+          onStatus: (text, statusData) => {
             markActive();
+            if (statusData?.model && typeof statusData.model === 'string') {
+              onResolvedModelChange?.(statusData.model);
+            }
             if (text?.startsWith('Connected (')) {
               setStatusText(text);
               setTimeout(() => setStatusText(undefined), 2000);
@@ -822,6 +874,7 @@ export function ChatView({
       handleModeChange,
       isStreaming,
       mode,
+      onResolvedModelChange,
       resetStreamingUi,
       scheduleIdleMemoryTrigger,
       sessionId,
@@ -982,6 +1035,7 @@ export function ChatView({
         isStreaming={isStreaming}
         sessionId={sessionId}
         modelName={currentModel}
+        resolvedModelName={resolvedModelName}
         onModelChange={setCurrentModel}
         providerId={currentProviderId}
         onProviderModelChange={handleProviderModelChange}

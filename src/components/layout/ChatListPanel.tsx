@@ -311,9 +311,11 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     const handler = () => fetchSessions();
     window.addEventListener("session-created", handler);
     window.addEventListener("session-updated", handler);
+    window.addEventListener("session-deleted", handler);
     return () => {
       window.removeEventListener("session-created", handler);
       window.removeEventListener("session-updated", handler);
+      window.removeEventListener("session-deleted", handler);
     };
   }, [fetchSessions]);
 

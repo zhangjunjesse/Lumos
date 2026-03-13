@@ -4,6 +4,7 @@
  */
 import { getSetting } from '@/lib/db';
 import { callKnowledgeModel } from './llm';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 const SYSTEM = [
   '你是知识检索的查询改写器。',
@@ -22,7 +23,7 @@ const rewriteCache = new Map<string, { ts: number; value: string[] }>();
 
 async function callClaude(query: string): Promise<string> {
   return callKnowledgeModel({
-    model: getSetting('kb_query_rewrite_model') || 'claude-haiku-4-20250514',
+    model: resolveBuiltInClaudeModelId(getSetting('kb_query_rewrite_model') || BUILTIN_CLAUDE_MODEL_IDS.haiku, 'haiku'),
     maxTokens: 150,
     timeoutMs: 5000,
     system: SYSTEM,

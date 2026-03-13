@@ -8,6 +8,8 @@ export interface ChatSession {
   created_at: string;
   updated_at: string;
   model: string;
+  requested_model: string;
+  resolved_model: string;
   system_prompt: string;
   working_directory: string;
   sdk_session_id: string; // Claude Agent SDK session ID for resume
@@ -113,6 +115,9 @@ export interface ApiProvider {
   is_active: number; // SQLite boolean: 0 or 1
   sort_order: number;
   extra_env: string; // JSON string of Record<string, string>
+  model_catalog: string; // JSON string of ProviderModelOption[]
+  model_catalog_source: ProviderModelCatalogSource;
+  model_catalog_updated_at: string | null;
   notes: string;
   is_builtin: number; // SQLite boolean: 0 or 1, only one provider can be 1
   user_modified: number; // SQLite boolean: 0 or 1, tracks if builtin provider was modified
@@ -120,11 +125,21 @@ export interface ApiProvider {
   updated_at: string;
 }
 
+export type ProviderModelCatalogSource = 'default' | 'manual' | 'detected';
+
+export interface ProviderModelOption {
+  value: string;
+  label: string;
+}
+
 export interface ProviderModelGroup {
   provider_id: string;       // provider DB id, or 'env' for environment variables
   provider_name: string;
   provider_type: string;
-  models: Array<{ value: string; label: string }>;
+  models: ProviderModelOption[];
+  model_catalog_source: ProviderModelCatalogSource;
+  model_catalog_updated_at: string | null;
+  model_catalog_uses_default: boolean;
 }
 
 export interface CreateProviderRequest {
@@ -133,6 +148,9 @@ export interface CreateProviderRequest {
   base_url?: string;
   api_key?: string;
   extra_env?: string;
+  model_catalog?: string;
+  model_catalog_source?: ProviderModelCatalogSource;
+  model_catalog_updated_at?: string | null;
   notes?: string;
 }
 
@@ -142,6 +160,9 @@ export interface UpdateProviderRequest {
   base_url?: string;
   api_key?: string;
   extra_env?: string;
+  model_catalog?: string;
+  model_catalog_source?: ProviderModelCatalogSource;
+  model_catalog_updated_at?: string | null;
   notes?: string;
   sort_order?: number;
   is_active?: number;

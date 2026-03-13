@@ -32,8 +32,8 @@ export function createSession(
   const projectName = path.basename(wd);
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', wd, folder || '');
+    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, requested_model, resolved_model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title || 'New Chat', now, now, model || '', model || '', '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', wd, folder || '');
 
   return getSession(id)!;
 }
@@ -62,7 +62,12 @@ export function updateSdkSessionId(id: string, sdkSessionId: string): void {
 
 export function updateSessionModel(id: string, model: string): void {
   const db = getDb();
-  db.prepare('UPDATE chat_sessions SET model = ? WHERE id = ?').run(model, id);
+  db.prepare('UPDATE chat_sessions SET model = ?, requested_model = ? WHERE id = ?').run(model, model, id);
+}
+
+export function updateSessionResolvedModel(id: string, model: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET resolved_model = ? WHERE id = ?').run(model, id);
 }
 
 export function updateSessionProvider(id: string, providerName: string): void {

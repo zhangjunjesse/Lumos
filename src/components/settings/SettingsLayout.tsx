@@ -5,20 +5,18 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
   Settings2,
-  Code,
   BookOpen,
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { GeneralSection } from "./GeneralSection";
 import { ClaudeConfigSection } from "./ClaudeConfigSection";
-import { CliSettingsSection } from "./CliSettingsSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
-type Section = "general" | "knowledge" | "providers" | "cli" | "usage";
+type Section = "general" | "knowledge" | "providers" | "usage";
 
 interface SidebarItem {
   id: Section;
@@ -30,13 +28,15 @@ const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
-  { id: "cli", label: "Claude CLI", icon: Code },
   { id: "usage", label: "Usage", icon: Analytics },
 ];
 
 function getSectionFromHash(): Section {
   if (typeof window === "undefined") return "general";
   const hash = window.location.hash.replace("#", "");
+  if (hash === "cli") {
+    return "providers";
+  }
   if (sidebarItems.some((item) => item.id === hash)) {
     return hash as Section;
   }
@@ -63,7 +63,6 @@ export function SettingsLayout() {
     'General': 'settings.general',
     'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
-    'Claude CLI': 'settings.claudeCli',
     'Usage': 'settings.usage',
   };
 
@@ -108,7 +107,6 @@ export function SettingsLayout() {
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "knowledge" && <KnowledgeSection />}
           {activeSection === "providers" && <ClaudeConfigSection />}
-          {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "usage" && <UsageStatsSection />}
         </div>
       </div>

@@ -24,6 +24,10 @@ import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { TranslationKey } from '@/i18n';
 import {
+  DEFAULT_PROVIDER_MODEL_OPTIONS,
+  doesResolvedModelMatchRequested,
+} from '@/lib/model-metadata';
+import {
   PromptInput,
   PromptInputTextarea,
   PromptInputFooter,
@@ -62,6 +66,7 @@ interface MessageInputProps {
   isStreaming?: boolean;
   sessionId?: string;
   modelName?: string;
+  resolvedModelName?: string;
   onModelChange?: (model: string) => void;
   providerId?: string;
   onProviderModelChange?: (providerId: string, model: string) => void;
@@ -122,13 +127,6 @@ interface ModeOption {
 const MODE_OPTIONS: ModeOption[] = [
   { value: 'code', label: 'Code' },
   { value: 'plan', label: 'Plan' },
-];
-
-// Default Claude model options — used as fallback when API is unavailable
-const DEFAULT_MODEL_OPTIONS = [
-  { value: 'sonnet', label: 'Sonnet 4.6' },
-  { value: 'opus', label: 'Opus 4.6' },
-  { value: 'haiku', label: 'Haiku 4.5' },
 ];
 
 const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
@@ -339,6 +337,7 @@ export function MessageInput({
   isStreaming,
   sessionId,
   modelName,
+  resolvedModelName,
   onModelChange,
   providerId,
   onProviderModelChange,
@@ -381,7 +380,10 @@ export function MessageInput({
             provider_id: 'env',
             provider_name: 'Anthropic',
             provider_type: 'anthropic',
-            models: DEFAULT_MODEL_OPTIONS,
+            models: DEFAULT_PROVIDER_MODEL_OPTIONS,
+            model_catalog_source: 'default',
+            model_catalog_updated_at: null,
+            model_catalog_uses_default: true,
           }]);
         }
         setDefaultProviderId(data.default_provider_id || '');
@@ -391,7 +393,10 @@ export function MessageInput({
           provider_id: 'env',
           provider_name: 'Anthropic',
           provider_type: 'anthropic',
-          models: DEFAULT_MODEL_OPTIONS,
+          models: DEFAULT_PROVIDER_MODEL_OPTIONS,
+          model_catalog_source: 'default',
+          model_catalog_updated_at: null,
+          model_catalog_uses_default: true,
         }]);
         setDefaultProviderId('');
       });
@@ -406,9 +411,45 @@ export function MessageInput({
   }, [fetchProviderModels]);
 
   // Derive flat model list for current provider (used by currentModelOption lookup)
-  const currentProviderIdValue = providerId || defaultProviderId || (providerGroups[0]?.provider_id ?? '');
+  const hasExplicitProvider = !!providerId && providerGroups.some((group) => group.provider_id === providerId);
+  const hasDefaultProvider = !!defaultProviderId && providerGroups.some((group) => group.provider_id === defaultProviderId);
+  const currentProviderIdValue = hasExplicitProvider
+    ? (providerId as string)
+    : hasDefaultProvider
+      ? defaultProviderId
+      : (providerGroups[0]?.provider_id ?? '');
   const currentGroup = providerGroups.find(g => g.provider_id === currentProviderIdValue) || providerGroups[0];
-  const MODEL_OPTIONS = currentGroup?.models || DEFAULT_MODEL_OPTIONS;
+  const visibleProviderGroups = currentGroup ? [currentGroup] : [];
+  const MODEL_OPTIONS = currentGroup?.models || DEFAULT_PROVIDER_MODEL_OPTIONS;
+
+  useEffect(() => {
+    if (MODEL_OPTIONS.length === 0) return;
+
+    const nextProviderId = currentProviderIdValue;
+    const currentValue = modelName || '';
+    const hasSelectedModel = MODEL_OPTIONS.some((model) => model.value === currentValue);
+    const fallbackModel = hasSelectedModel ? currentValue : MODEL_OPTIONS[0].value;
+    const providerChanged = providerId !== nextProviderId;
+    const modelChanged = currentValue !== fallbackModel;
+
+    if (!providerChanged && !modelChanged) return;
+
+    if (nextProviderId && onProviderModelChange) {
+      onProviderModelChange(nextProviderId, fallbackModel);
+      return;
+    }
+
+    if (modelChanged) {
+      onModelChange?.(fallbackModel);
+    }
+  }, [
+    MODEL_OPTIONS,
+    currentProviderIdValue,
+    modelName,
+    onModelChange,
+    onProviderModelChange,
+    providerId,
+  ]);
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
@@ -956,8 +997,14 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
-  const currentModelValue = modelName || 'sonnet';
+  const currentModelValue = MODEL_OPTIONS.some((model) => model.value === (modelName || ''))
+    ? (modelName || '')
+    : (MODEL_OPTIONS[0]?.value || DEFAULT_PROVIDER_MODEL_OPTIONS[0].value);
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
+  const hasResolvedModel = Boolean(resolvedModelName?.trim());
+  const runtimeModelMismatch = hasResolvedModel
+    ? !doesResolvedModelMatchRequested(currentModelValue, resolvedModelName)
+    : false;
 
   // Map isStreaming to ChatStatus for PromptInputSubmit
   const chatStatus: ChatStatus = isStreaming ? 'streaming' : 'ready';
@@ -1187,26 +1234,45 @@ export function MessageInput({
                 </div>
 
                 {/* Model selector */}
-                <div className="relative" ref={modelMenuRef}>
+                <div className="relative flex items-center gap-1" ref={modelMenuRef}>
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
+                    className={cn(
+                      runtimeModelMismatch && "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+                    )}
+                    tooltip={runtimeModelMismatch ? `实际运行：${resolvedModelName}` : undefined}
                   >
+                    {runtimeModelMismatch && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                    )}
                     <span className="text-xs font-mono">{currentModelOption.label}</span>
                     <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
+                  {runtimeModelMismatch && (
+                    <div className="hidden h-7 max-w-52 items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300 sm:flex">
+                      <span className="shrink-0">实际</span>
+                      <span className="truncate font-mono">{resolvedModelName}</span>
+                    </div>
+                  )}
+
                   {modelMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-1.5 w-52 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto">
-                      {providerGroups.map((group, groupIdx) => (
+                      {visibleProviderGroups.map((group) => (
                         <div key={group.provider_id}>
-                          {/* Group header */}
-                          <div className={cn(
-                            "px-3 py-1.5 text-[10px] font-medium text-muted-foreground",
-                            groupIdx > 0 && "border-t"
-                          )}>
-                            {group.provider_name}
+                          <div className="border-b px-3 py-2">
+                            <div className="text-[10px] font-medium text-muted-foreground">
+                              当前配置
+                            </div>
+                            <div className="truncate text-xs font-medium">
+                              {group.provider_name}
+                            </div>
+                            {runtimeModelMismatch && (
+                              <div className="mt-1 rounded-md bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
+                                实际运行：<span className="font-mono">{resolvedModelName}</span>
+                              </div>
+                            )}
                           </div>
-                          {/* Models in group */}
                           <div className="py-0.5">
                             {group.models.map((opt) => {
                               const isActive = opt.value === currentModelValue && group.provider_id === currentProviderIdValue;
@@ -1221,7 +1287,6 @@ export function MessageInput({
                                     onModelChange?.(opt.value);
                                     onProviderModelChange?.(group.provider_id, opt.value);
                                     localStorage.setItem('codepilot:last-model', opt.value);
-                                    localStorage.setItem('codepilot:last-provider-id', group.provider_id);
                                     setModelMenuOpen(false);
                                   }}
                                 >

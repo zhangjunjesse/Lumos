@@ -11,6 +11,8 @@ export function initDb(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       model TEXT NOT NULL DEFAULT '',
+      requested_model TEXT NOT NULL DEFAULT '',
+      resolved_model TEXT NOT NULL DEFAULT '',
       system_prompt TEXT NOT NULL DEFAULT '',
       working_directory TEXT NOT NULL DEFAULT '',
       sdk_session_id TEXT NOT NULL DEFAULT ''
@@ -52,6 +54,9 @@ export function initDb(db: Database.Database): void {
       is_active INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
+      model_catalog TEXT NOT NULL DEFAULT '[]',
+      model_catalog_source TEXT NOT NULL DEFAULT 'default',
+      model_catalog_updated_at TEXT DEFAULT NULL,
       notes TEXT NOT NULL DEFAULT '',
       is_builtin INTEGER NOT NULL DEFAULT 0,
       user_modified INTEGER NOT NULL DEFAULT 0,

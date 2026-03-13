@@ -4,6 +4,7 @@ import { getDefaultMemoryIntelligencePrompts } from '@/lib/memory/intelligence';
 import { saveMindPersonaProfile } from '@/lib/mind/profile';
 import { saveMindRulesProfile } from '@/lib/mind/rules-profile';
 import { saveMindUserProfile } from '@/lib/mind/user-profile';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,12 +14,12 @@ function resolveRecommendedModel(): string {
     (getSetting('default_model') || '').trim(),
     (getSetting('memory_intelligence_extract_model') || '').trim(),
     (getSetting('memory_intelligence_should_model') || '').trim(),
-    'claude-sonnet-4-20250514',
+    BUILTIN_CLAUDE_MODEL_IDS.sonnet,
   ];
   for (const candidate of candidates) {
-    if (candidate) return candidate;
+    if (candidate) return resolveBuiltInClaudeModelId(candidate, 'sonnet');
   }
-  return 'claude-sonnet-4-20250514';
+  return BUILTIN_CLAUDE_MODEL_IDS.sonnet;
 }
 
 export async function POST() {

@@ -50,7 +50,7 @@ export function getTokenUsageStats(days: number = 30): {
       CASE
         WHEN COALESCE(NULLIF(s.provider_name, ''), '') != ''
         THEN s.provider_name
-        ELSE COALESCE(NULLIF(s.model, ''), 'unknown')
+        ELSE COALESCE(NULLIF(s.resolved_model, ''), NULLIF(s.model, ''), 'unknown')
       END AS model,
       COALESCE(SUM(json_extract(m.token_usage, '$.input_tokens')), 0) AS input_tokens,
       COALESCE(SUM(json_extract(m.token_usage, '$.output_tokens')), 0) AS output_tokens,
@@ -64,7 +64,7 @@ export function getTokenUsageStats(days: number = 30): {
       CASE
         WHEN COALESCE(NULLIF(s.provider_name, ''), '') != ''
         THEN s.provider_name
-        ELSE COALESCE(NULLIF(s.model, ''), 'unknown')
+        ELSE COALESCE(NULLIF(s.resolved_model, ''), NULLIF(s.model, ''), 'unknown')
       END
     ORDER BY date ASC
   `).all(days) as Array<{

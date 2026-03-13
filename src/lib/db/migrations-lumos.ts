@@ -369,6 +369,23 @@ export function migrateLumosTables(db: Database.Database): void {
   if (!providerColNames.includes('user_modified')) {
     db.exec("ALTER TABLE api_providers ADD COLUMN user_modified INTEGER NOT NULL DEFAULT 0");
   }
+  if (!providerColNames.includes('model_catalog')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN model_catalog TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!providerColNames.includes('model_catalog_source')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN model_catalog_source TEXT NOT NULL DEFAULT 'default'");
+  }
+  if (!providerColNames.includes('model_catalog_updated_at')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN model_catalog_updated_at TEXT DEFAULT NULL");
+  }
+  db.exec(`
+    UPDATE api_providers
+    SET model_catalog_source = CASE
+      WHEN TRIM(COALESCE(model_catalog, '')) = '' OR model_catalog = '[]' THEN 'default'
+      WHEN model_catalog_source NOT IN ('default', 'manual', 'detected') THEN 'manual'
+      ELSE model_catalog_source
+    END
+  `);
 
   // Create unique index on is_builtin (only one provider can have is_builtin=1)
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_providers_builtin ON api_providers(is_builtin) WHERE is_builtin = 1");
@@ -515,8 +532,8 @@ export function migrateLumosTables(db: Database.Database): void {
         const now = new Date().toISOString().replace('T', ' ').split('.')[0];
         const defaultBaseUrl = process.env.CODEPILOT_DEFAULT_BASE_URL || '';
         db.prepare(
-          'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, 'Built-in', 'anthropic', defaultBaseUrl, defaultKey, 1, 0, '{}', 'Auto-created from embedded key', 1, 0, now, now);
+          'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, 'Built-in', 'anthropic', defaultBaseUrl, defaultKey, 1, 0, '{}', '[]', 'default', null, 'Auto-created from embedded key', 1, 0, now, now);
       }
     }
   }

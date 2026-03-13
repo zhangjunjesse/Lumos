@@ -6,6 +6,7 @@ import {
   getSetting,
 } from '@/lib/db';
 import type { ApiProvider } from '@/types';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const UNSUPPORTED_PROVIDER_TYPES = new Set(['gemini-image', 'bedrock', 'vertex']);
@@ -239,14 +240,14 @@ function resolveModelCandidates(requestedModel: string, fallbackModels?: string[
     requestedModel,
     ...(fallbackModels || []),
     getSetting('default_model'),
-    'claude-sonnet-4-20250514',
-    'sonnet',
+    BUILTIN_CLAUDE_MODEL_IDS.sonnet,
+    BUILTIN_CLAUDE_MODEL_IDS.haiku,
   ];
 
   const unique: string[] = [];
   for (const model of candidates) {
     if (!model || !model.trim()) continue;
-    const normalized = model.trim();
+    const normalized = resolveBuiltInClaudeModelId(model.trim(), 'sonnet');
     if (unique.includes(normalized)) continue;
     unique.push(normalized);
   }

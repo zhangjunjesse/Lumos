@@ -7,6 +7,7 @@ import { genId } from '@/lib/stores/helpers';
 import { getEmbeddings, vectorToBuffer } from './embedder';
 import type { DocumentSummary } from './types';
 import { callKnowledgeModel } from './llm';
+import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 const MAX_SUMMARY_SOURCE_CHARS = 9000;
 const SUMMARY_SECTION_COUNT = 3;
@@ -63,7 +64,7 @@ function buildSummarySource(title: string, content: string): string {
 
 async function callHaiku(content: string): Promise<string> {
   return callKnowledgeModel({
-    model: 'claude-haiku-4-20250514',
+    model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
     maxTokens: 600,
     timeoutMs: 15000,
     prompt: SUMMARY_PROMPT + content,

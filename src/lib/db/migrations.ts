@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3';
-import crypto from 'crypto';
 
 export function migrateCoreTables(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
@@ -7,6 +6,12 @@ export function migrateCoreTables(db: Database.Database): void {
 
   if (!colNames.includes('model')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+  }
+  if (!colNames.includes('requested_model')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN requested_model TEXT NOT NULL DEFAULT ''");
+  }
+  if (!colNames.includes('resolved_model')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN resolved_model TEXT NOT NULL DEFAULT ''");
   }
   if (!colNames.includes('system_prompt')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''");
@@ -53,6 +58,27 @@ export function migrateCoreTables(db: Database.Database): void {
   if (!colNames.includes('folder')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
   }
+  db.exec(`
+    UPDATE chat_sessions
+    SET requested_model = CASE
+      WHEN requested_model != '' THEN requested_model
+      WHEN LOWER(model) = 'sonnet' OR LOWER(model) LIKE '%sonnet%' THEN 'sonnet'
+      WHEN LOWER(model) = 'opus' OR LOWER(model) LIKE '%opus%' THEN 'opus'
+      WHEN LOWER(model) = 'haiku' OR LOWER(model) LIKE '%haiku%' THEN 'haiku'
+      ELSE model
+    END
+    WHERE requested_model = ''
+      AND model != ''
+  `);
+  db.exec(`
+    UPDATE chat_sessions
+    SET resolved_model = CASE
+      WHEN resolved_model != '' THEN resolved_model
+      WHEN LOWER(model) LIKE 'claude-%' THEN model
+      ELSE ''
+    END
+    WHERE resolved_model = ''
+  `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_runtime_status ON chat_sessions(runtime_status)");
 
   // Migrate is_active provider to default_provider_id setting
@@ -99,6 +125,9 @@ export function migrateCoreTables(db: Database.Database): void {
       is_active INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
+      model_catalog TEXT NOT NULL DEFAULT '[]',
+      model_catalog_source TEXT NOT NULL DEFAULT 'default',
+      model_catalog_updated_at TEXT DEFAULT NULL,
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
