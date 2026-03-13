@@ -20,6 +20,7 @@ import {
   BookOpen,
   Puzzle,
   Settings2,
+  Globe,
   SidebarLeft01Icon,
   SidebarRight01Icon,
   Moon,
@@ -37,6 +38,7 @@ interface SidebarProps {
 
 const mainNavItems = [
   { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
+  { href: "/browser", labelKey: "tab.browser" as const, icon: Globe },
 ];
 
 const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];

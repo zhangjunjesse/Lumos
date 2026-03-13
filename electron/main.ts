@@ -315,6 +315,19 @@ function getPreferredServerPort(): number {
   return DEFAULT_PACKAGED_SERVER_PORT;
 }
 
+function getPreferredDevServerPort(): number {
+  const raw = process.env.LUMOS_DEV_SERVER_PORT?.trim();
+  if (!raw) return 3000;
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+    return parsed;
+  }
+
+  console.warn(`[main] Invalid LUMOS_DEV_SERVER_PORT: ${raw}. Falling back to 3000.`);
+  return 3000;
+}
+
 async function getPort(preferredPort?: number): Promise<number> {
   if (preferredPort) {
     try {
@@ -507,9 +520,16 @@ function createWindow(port: number) {
   mainWindow.maximize();
 
   mainWindow.on('closed', () => {
+    const managerToCleanup = browserManager;
     browserBridgeContext.browserManager = null;
     browserManager = null;
     mainWindow = null;
+
+    if (managerToCleanup) {
+      void managerToCleanup.cleanup().catch((error) => {
+        console.error('Failed to cleanup BrowserManager after window close:', error);
+      });
+    }
   });
 
   // 初始化 BrowserManager
@@ -1106,7 +1126,7 @@ app.whenReady().then(async () => {
     let port: number;
 
     if (isDev) {
-      port = 3000;
+      port = getPreferredDevServerPort();
       console.log(`Dev mode: connecting to http://127.0.0.1:${port}`);
     } else {
       port = await getPort(getPreferredServerPort());

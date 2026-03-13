@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useCallback, useEffect, type KeyboardEvent, type FormEvent } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, type KeyboardEvent, type FormEvent } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   At,
@@ -56,7 +56,6 @@ interface MessageInputProps {
     systemPromptAppend?: string,
     displayOverride?: string,
   ) => void;
-  onImageGenerate?: (prompt: string, files?: FileAttachment[]) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
   disabled?: boolean;
@@ -131,6 +130,14 @@ const DEFAULT_MODEL_OPTIONS = [
   { value: 'opus', label: 'Opus 4.6' },
   { value: 'haiku', label: 'Haiku 4.5' },
 ];
+
+const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
+const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
+
+interface ChatDraftPayload {
+  text: string;
+  mode?: 'replace' | 'append';
+}
 
 /**
  * Convert a data URL to a FileAttachment object.
@@ -326,7 +333,6 @@ function FileAttachmentsCapsules() {
 
 export function MessageInput({
   onSend,
-  onImageGenerate,
   onCommand,
   onStop,
   disabled,
@@ -484,6 +490,55 @@ export function MessageInput({
     setBadge(null);
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, []);
+
+  useEffect(() => {
+    const applyDraft = (payload: ChatDraftPayload) => {
+      if (!payload.text.trim()) {
+        return;
+      }
+
+      setBadge(null);
+      closePopover();
+      setInputValue((current) => {
+        if (payload.mode === 'append' && current.trim()) {
+          return `${current}\n\n${payload.text}`;
+        }
+        return payload.text;
+      });
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+
+    const consumeStoredDraft = () => {
+      const raw = sessionStorage.getItem(CHAT_DRAFT_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      sessionStorage.removeItem(CHAT_DRAFT_STORAGE_KEY);
+      try {
+        const parsed = JSON.parse(raw) as ChatDraftPayload;
+        if (typeof parsed?.text === 'string') {
+          applyDraft(parsed);
+        }
+      } catch {
+        // Ignore malformed draft payloads.
+      }
+    };
+
+    consumeStoredDraft();
+
+    const handleDraft = (event: Event) => {
+      const payload = (event as CustomEvent<ChatDraftPayload>).detail;
+      if (!payload || typeof payload.text !== 'string') {
+        return;
+      }
+      sessionStorage.removeItem(CHAT_DRAFT_STORAGE_KEY);
+      applyDraft(payload);
+    };
+
+    window.addEventListener(CHAT_DRAFT_EVENT, handleDraft);
+    return () => window.removeEventListener(CHAT_DRAFT_EVENT, handleDraft);
+  }, [closePopover]);
 
   // Insert selected item
   const insertItem = useCallback((item: PopoverItem) => {
@@ -724,7 +779,7 @@ export function MessageInput({
       undefined,
     );
     setInputValue('');
-  }, [inputValue, onSend, onImageGenerate, onCommand, disabled, isStreaming, closePopover, badge]);
+  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover, badge, workingDirectory]);
 
   const filteredItems = popoverItems.filter((item) => {
     const q = popoverFilter.toLowerCase();
@@ -827,12 +882,15 @@ export function MessageInput({
   }, [popoverFilter, popoverMode, nonBuiltInFilteredCount]);
 
   // Combined list for keyboard navigation
-  const allDisplayedItems = [...filteredItems, ...aiSuggestions];
+  const allDisplayedItems = useMemo(
+    () => [...filteredItems, ...aiSuggestions],
+    [filteredItems, aiSuggestions],
+  );
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       // Popover navigation
-      if (popoverMode && popoverItems.length > 0) {
+      if (popoverMode && allDisplayedItems.length > 0) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           setSelectedIndex((prev) => (prev + 1) % allDisplayedItems.length);
@@ -871,7 +929,7 @@ export function MessageInput({
         return;
       }
     },
-    [popoverMode, popoverItems, popoverFilter, selectedIndex, insertItem, closePopover, badge, inputValue, removeBadge, allDisplayedItems]
+    [popoverMode, selectedIndex, insertItem, closePopover, badge, inputValue, removeBadge, allDisplayedItems]
   );
 
   // Click outside to close popover

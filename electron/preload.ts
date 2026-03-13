@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTabs: () => ipcRenderer.invoke('browser:get-tabs'),
     navigate: (tabId: string, url: string, timeout?: number) =>
       ipcRenderer.invoke('browser:navigate', tabId, url, timeout),
+    goBack: (tabId: string) => ipcRenderer.invoke('browser:go-back', tabId),
+    goForward: (tabId: string) => ipcRenderer.invoke('browser:go-forward', tabId),
+    reload: (tabId: string) => ipcRenderer.invoke('browser:reload', tabId),
+    stop: (tabId: string) => ipcRenderer.invoke('browser:stop', tabId),
     setZoomFactor: (tabId: string, zoomFactor: number) =>
       ipcRenderer.invoke('browser:set-zoom-factor', tabId, zoomFactor),
     getCookies: (filter?: Electron.CookiesGetFilter) => ipcRenderer.invoke('browser:get-cookies', filter),
@@ -66,6 +70,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       target: 'default' | 'panel' | 'hidden',
       bounds?: { x: number; y: number; width: number; height: number },
     ) => ipcRenderer.invoke('browser:set-display-target', target, bounds),
+    getContextEvents: (options?: { limit?: number; tabId?: string }) =>
+      ipcRenderer.invoke('browser:get-context-events', options),
+    clearContextEvents: () => ipcRenderer.invoke('browser:clear-context-events'),
+    getCaptureSettings: () => ipcRenderer.invoke('browser:get-capture-settings'),
+    updateCaptureSettings: (settings: {
+      enabled?: boolean;
+      paused?: boolean;
+      retentionDays?: number;
+      maxEvents?: number;
+    }) => ipcRenderer.invoke('browser:update-capture-settings', settings),
+    startRecording: (options?: { tabId?: string; workflowName?: string }) =>
+      ipcRenderer.invoke('browser:start-recording', options),
+    stopRecording: (options?: { save?: boolean; workflowName?: string }) =>
+      ipcRenderer.invoke('browser:stop-recording', options),
+    cancelRecording: () => ipcRenderer.invoke('browser:cancel-recording'),
+    getRecordingState: () => ipcRenderer.invoke('browser:get-recording-state'),
+    getWorkflows: () => ipcRenderer.invoke('browser:get-workflows'),
+    saveWorkflow: (workflow: unknown) => ipcRenderer.invoke('browser:save-workflow', workflow),
+    deleteWorkflow: (workflowId: string) => ipcRenderer.invoke('browser:delete-workflow', workflowId),
+    replayWorkflow: (workflowId: string, options?: { tabId?: string; parameters?: Record<string, string> }) =>
+      ipcRenderer.invoke('browser:replay-workflow', workflowId, options),
     onEvent: (callback: (event: string, data: unknown) => void) => {
       const listener = (_event: unknown, eventName: string, data: unknown) =>
         callback(eventName, data);

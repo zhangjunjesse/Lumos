@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Lumos — 文档智能助手
 
 ## 项目概述
@@ -10,39 +14,104 @@
 1. 多模型 AI 对话（Claude、OpenAI、自定义 API）
 2. 飞书文档集成（读取、编辑、图片识别）
 3. MCP 插件系统（可扩展第三方服务）
-4. 会话管理与历史记录
-5. 文件附件支持（图片、文档）
-6. 知识库 RAG（规划中）
+4. 浏览器工作区（多 tab、AI 共享页面、workflow 录制回放）
+5. 会话管理与历史记录
+6. 文件附件支持（图片、文档）
+7. 知识库 RAG（规划中）
 
 ---
 
 ## 项目结构
 
 ```
-CodePilot/                    # 项目根目录（历史原因保留目录名）
+lumos/
 ├── src/                      # Next.js 应用源码
 │   ├── app/                  # App Router 页面
 │   │   ├── api/              # API 路由
 │   │   ├── chat/             # 对话页面
+│   │   ├── browser/          # 浏览器工作区页面
 │   │   ├── settings/         # 设置页面
 │   │   └── layout.tsx        # 全局布局
 │   ├── components/           # React 组件
 │   │   ├── chat/             # 对话相关组件
+│   │   ├── browser/          # 浏览器工作区组件
+│   │   ├── layout/           # 布局组件（侧边栏、内容面板）
 │   │   ├── settings/         # 设置相关组件
 │   │   └── ui/               # shadcn/ui 基础组件
 │   ├── lib/                  # 核心库
 │   │   ├── claude-client.ts  # Claude SDK 封装
+│   │   ├── chrome-mcp.ts     # Chrome DevTools MCP 集成
 │   │   ├── db/               # SQLite 数据库
 │   │   └── feishu/           # 飞书 API 集成
+│   ├── types/                # TypeScript 类型定义
+│   │   ├── browser.ts        # 浏览器 API 类型
+│   │   └── electron.d.ts     # Electron IPC 类型
 │   └── i18n/                 # 国际化（中英文）
 ├── electron/                 # Electron 主进程
-│   └── main.ts               # 应用入口
+│   ├── main.ts               # 应用入口
+│   ├── browser/              # 浏览器管理模块
+│   │   ├── browser-manager.ts      # 浏览器实例管理
+│   │   ├── browser-database.ts     # 浏览器数据持久化
+│   │   ├── bridge-server.ts        # WebSocket bridge 服务器
+│   │   ├── cdp-manager.ts          # Chrome DevTools Protocol
+│   │   ├── cookie-sync.ts          # Cookie 同步
+│   │   └── mcp-environment.ts      # MCP 环境隔离
+│   ├── ipc/                  # IPC 处理器
+│   │   └── browser-handlers.ts     # 浏览器 IPC 处理
+│   └── preload.ts            # 预加载脚本
 ├── public/                   # 静态资源
 │   ├── skills/               # 内置 Skills
 │   └── mcp-servers/          # 内置 MCP 服务器
 ├── scripts/                  # 构建脚本
 └── .github/workflows/        # CI/CD 配置
 ```
+
+---
+
+## 浏览器工作区架构
+
+### 核心设计原则
+- **人机共享页面**：用户手动浏览和 AI 代理操作必须使用同一个 `pageId`/tab/登录态
+- **统一实例管理**：所有浏览器操作通过 `BrowserManager` 统一管理，避免多路径冲突
+- **Bridge 通信**：chrome-devtools MCP 通过 WebSocket bridge 与浏览器实例通信
+
+### 关键模块
+
+**electron/browser/browser-manager.ts**
+- 管理所有浏览器 tab 的生命周期（创建、关闭、切换）
+- 维护 tab 状态（URL、标题、加载状态、导航历史）
+- 处理 tab 与 BrowserView 的映射关系
+
+**electron/browser/bridge-server.ts**
+- 提供 WebSocket 服务器供 MCP 连接
+- 转发 CDP (Chrome DevTools Protocol) 命令到目标 tab
+- 管理 MCP 会话的认证和权限
+
+**electron/browser/browser-database.ts**
+- 持久化浏览器上下文事件（导航、加载、错误、下载等）
+- 存储 workflow 定义和执行结果
+- 管理采集设置（保留周期、暂停状态）
+
+**electron/browser/cookie-sync.ts**
+- 同步 Electron session cookies 到 MCP 环境
+- 处理敏感 cookie 的加密和权限控制
+- 支持跨域 cookie 共享
+
+**src/lib/chrome-mcp.ts**
+- 封装 chrome-devtools MCP 客户端
+- 提供类型安全的 CDP 命令接口
+- 处理 MCP 连接状态和重连逻辑
+
+### Workflow 系统
+- **录制**：捕获用户操作（导航、点击、输入、截图）
+- **参数化**：支持将固定值替换为参数（如登录凭证）
+- **回放**：稳定执行 workflow，处理等待和错误重试
+- **输出**：返回 `status`、`final_url`、`downloaded_files`、`screenshots`、`extracted_data`
+
+### 上下文采集
+- 只采集内置浏览器的事件，不采集系统浏览器
+- 支持暂停采集、设置保留周期、清空历史
+- 敏感数据（密码、token）不采集、不持久化
 
 ---
 

@@ -9,7 +9,6 @@ import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
-import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
 
 interface ToolUseInfo {
   id: string;
@@ -76,7 +75,7 @@ export function ChatView({
   hideEmptyState = false,
 }: ChatViewProps) {
   const { t } = useTranslation();
-  const { setStreamingSessionId, workingDirectory, setContentPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -446,14 +445,6 @@ export function ChatView({
               toolUsesRef.current = next;
               return next;
             });
-
-            const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
-            // Open the right-side browser tab as soon as the tool emits a URL.
-            // The Electron bridge can later attach a stable pageId for the same tab.
-            if (browserUrl) {
-              setContentPanelOpen(true);
-              openBrowserUrlInPanel(browserUrl);
-            }
           },
           onToolResult: (res) => {
             markActive();
@@ -673,7 +664,6 @@ export function ChatView({
       sessionId,
       isStreaming,
       setStreamingSessionId,
-      setContentPanelOpen,
       setPendingApprovalSessionId,
       mode,
       currentModel,
