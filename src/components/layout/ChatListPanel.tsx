@@ -33,6 +33,8 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import { RenameDialog } from "@/components/ui/rename-dialog";
+import { useStreamingStore } from "@/stores/streaming-store";
+import type { StreamingStore } from "@/stores/streaming-store";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -56,6 +58,7 @@ function formatRelativeTime(dateStr: string, t: (key: import('@/i18n').Translati
 }
 
 const COLLAPSED_PROJECTS_KEY = "codepilot:collapsed-projects";
+const COLLAPSED_FOLDERS_KEY = "codepilot:collapsed-folders";
 const COLLAPSED_INITIALIZED_KEY = "codepilot:collapsed-initialized";
 
 function loadCollapsedProjects(): Set<string> {
@@ -73,44 +76,96 @@ function saveCollapsedProjects(collapsed: Set<string>) {
   localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
 }
 
+function loadCollapsedFolders(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(COLLAPSED_FOLDERS_KEY);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function saveCollapsedFolders(collapsed: Set<string>) {
+  localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...collapsed]));
+}
+
+interface FolderGroup {
+  folder: string;
+  sessions: ChatSession[];
+  hasStreaming: boolean;
+}
+
 interface ProjectGroup {
   workingDirectory: string;
   displayName: string;
-  sessions: ChatSession[];
+  folders: FolderGroup[];
   createdAt: number;
+  hasStreaming: boolean;
 }
 
-function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
-  const map = new Map<string, ChatSession[]>();
+function groupSessionsByProject(sessions: ChatSession[], streamingStore: StreamingStore): ProjectGroup[] {
+  const projectMap = new Map<string, Map<string, ChatSession[]>>();
+
   for (const session of sessions) {
-    const key = session.working_directory || "";
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(session);
+    const projectKey = session.working_directory || "";
+    const folderKey = session.folder || "";
+
+    if (!projectMap.has(projectKey)) {
+      projectMap.set(projectKey, new Map());
+    }
+    const folderMap = projectMap.get(projectKey)!;
+    if (!folderMap.has(folderKey)) {
+      folderMap.set(folderKey, []);
+    }
+    folderMap.get(folderKey)!.push(session);
   }
 
   const groups: ProjectGroup[] = [];
-  for (const [wd, groupSessions] of map) {
-    // Sort sessions within group by updated_at DESC
-    groupSessions.sort(
-      (a, b) =>
-        parseDBDate(b.updated_at).getTime() - parseDBDate(a.updated_at).getTime()
-    );
+  for (const [wd, folderMap] of projectMap) {
+    const folders: FolderGroup[] = [];
+    let projectHasStreaming = false;
+
+    for (const [folder, folderSessions] of folderMap) {
+      folderSessions.sort(
+        (a, b) => parseDBDate(b.updated_at).getTime() - parseDBDate(a.updated_at).getTime()
+      );
+
+      const folderHasStreaming = folderSessions.some((s) => {
+        const state = streamingStore.getSession(s.id);
+        return state?.status === 'streaming';
+      });
+
+      if (folderHasStreaming) projectHasStreaming = true;
+
+      folders.push({
+        folder,
+        sessions: folderSessions,
+        hasStreaming: folderHasStreaming,
+      });
+    }
+
+    folders.sort((a, b) => a.folder.localeCompare(b.folder));
+
+    const allSessions = Array.from(folderMap.values()).flat();
     const displayName =
       wd === ""
         ? "No Project"
-        : groupSessions[0]?.project_name || wd.split("/").pop() || wd;
+        : allSessions[0]?.project_name || wd.split("/").pop() || wd;
     const createdAt = Math.min(
-      ...groupSessions.map((s) => parseDBDate(s.created_at).getTime()),
+      ...allSessions.map((s) => parseDBDate(s.created_at).getTime()),
     );
+
     groups.push({
       workingDirectory: wd,
       displayName,
-      sessions: groupSessions,
+      folders,
       createdAt,
+      hasStreaming: projectHasStreaming,
     });
   }
 
-  // Sort groups by project creation time (newest first)
   groups.sort((a, b) => b.createdAt - a.createdAt);
   return groups;
 }
@@ -126,6 +181,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const { streamingSessionId, pendingApprovalSessionId, workingDirectory } = usePanel();
   const { t } = useTranslation();
   const { isElectron, openNativePicker } = useNativeFolderPicker();
+  const streamingStore = useStreamingStore();  // Added: streaming store
+
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
@@ -135,12 +192,17 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => loadCollapsedProjects()
   );
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
+    () => loadCollapsedFolders()
+  );
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
+  const [hoveredFolderItem, setHoveredFolderItem] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingSession, setRenamingSession] = useState<ChatSession | null>(null);
   const [renamingProject, setRenamingProject] = useState<{ workingDirectory: string; displayName: string } | null>(null);
   const [projectRenameDialogOpen, setProjectRenameDialogOpen] = useState(false);
+  const [creatingSessionForProject, setCreatingSessionForProject] = useState<string | null>(null);  // Added: track which project is creating new session
 
   const handleFolderSelect = useCallback(async (path: string) => {
     try {
@@ -222,6 +284,16 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     });
   }, []);
 
+  const toggleFolder = useCallback((key: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveCollapsedFolders(next);
+      return next;
+    });
+  }, []);
+
   const fetchSessions = useCallback(async () => {
     try {
       const res = await fetch("/api/chat/sessions");
@@ -253,6 +325,16 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
       window.removeEventListener("session-updated", handler);
     };
   }, [fetchSessions]);
+
+  // Force re-render when streaming state changes
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    // Subscribe to streaming store changes to trigger re-render
+    const unsubscribe = useStreamingStore.subscribe(() => {
+      forceUpdate(v => v + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   const handleDeleteSession = async (
     e: React.MouseEvent,
@@ -405,11 +487,43 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     workingDirectory: string
   ) => {
     e.stopPropagation();
+    setCreatingSessionForProject(workingDirectory);
     try {
       const res = await fetch("/api/chat/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ working_directory: workingDirectory }),
+        body: JSON.stringify({
+          working_directory: workingDirectory,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        window.dispatchEvent(new CustomEvent("session-created"));
+        router.push(`/chat/${data.session.id}`);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setCreatingSessionForProject(null);
+    }
+  };
+
+  const handleCreateSessionInFolder = async (
+    e: React.MouseEvent,
+    workingDirectory: string,
+    folder: string
+  ) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch("/api/chat/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          working_directory: workingDirectory,
+          folder: folder,
+          model: localStorage.getItem('codepilot:last-model') || '',
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -433,8 +547,8 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
     : sessions;
 
   const projectGroups = useMemo(
-    () => groupSessionsByProject(filteredSessions),
-    [filteredSessions]
+    () => groupSessionsByProject(filteredSessions, streamingStore),
+    [filteredSessions]  // streamingStore methods are stable, don't need as dependency
   );
 
   // On first use, auto-collapse all project groups except the most recent one
@@ -589,6 +703,13 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                       icon={isCollapsed ? Folder : FolderOpen}
                       className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
                     />
+                    {/* Project-level streaming indicator */}
+                    {group.hasStreaming && (
+                      <span className="relative flex h-2 w-2 shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                      </span>
+                    )}
                     <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                       {group.displayName}
                     </span>
@@ -633,15 +754,83 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                     </TooltipContent>
                   </Tooltip>
 
-                  {/* Session items */}
+                  {/* Folders and sessions */}
                   {!isCollapsed && (
                     <div className="mt-0.5 flex flex-col gap-0.5">
-                      {group.sessions.map((session) => {
+                      {group.folders.map((folderGroup) => {
+                        const folderKey = `${group.workingDirectory}:${folderGroup.folder}`;
+                        const isFolderCollapsed = !isSearching && collapsedFolders.has(folderKey);
+                        const isFolderHoveredNow = hoveredFolder === folderKey;
+
+                        return (
+                          <div key={folderKey}>
+                            {/* Folder header */}
+                            <div
+                              className={cn(
+                                "flex items-center gap-1 rounded-md pl-5 pr-2 py-1 cursor-pointer select-none transition-colors",
+                                "hover:bg-accent/50"
+                              )}
+                              onClick={() => toggleFolder(folderKey)}
+                              onMouseEnter={() => setHoveredFolderItem(folderKey)}
+                              onMouseLeave={() => setHoveredFolderItem(null)}
+                            >
+                              <HugeiconsIcon
+                                icon={isFolderCollapsed ? ArrowRight : ArrowDown01}
+                                className="h-3 w-3 shrink-0 text-muted-foreground"
+                              />
+                              <HugeiconsIcon
+                                icon={isFolderCollapsed ? Folder : FolderOpen}
+                                className="h-3 w-3 shrink-0 text-muted-foreground"
+                              />
+                              {folderGroup.hasStreaming && (
+                                <span className="relative flex h-2 w-2 shrink-0">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                                </span>
+                              )}
+                              <span className="flex-1 truncate text-[11px] text-sidebar-foreground">
+                                {folderGroup.folder || 'Default'}
+                              </span>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className={cn(
+                                      "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
+                                      hoveredFolderItem === folderKey ? "opacity-100" : "opacity-0"
+                                    )}
+                                    tabIndex={hoveredFolderItem === folderKey ? 0 : -1}
+                                    onClick={(e) =>
+                                      handleCreateSessionInFolder(
+                                        e,
+                                        group.workingDirectory,
+                                        folderGroup.folder
+                                      )
+                                    }
+                                  >
+                                    <HugeiconsIcon icon={Add} className="h-3 w-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="right">
+                                  New chat in {folderGroup.folder || 'Default'}
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+
+                            {/* Sessions in folder */}
+                            {!isFolderCollapsed && (
+                              <div className="flex flex-col gap-0.5">
+                                {folderGroup.sessions.map((session) => {
                         const isActive = pathname === `/chat/${session.id}`;
                         const isHovered = hoveredSession === session.id;
                         const isDeleting = deletingSession === session.id;
-                        const isSessionStreaming =
-                          streamingSessionId === session.id;
+
+                        // Get streaming state from store
+                        const streamingState = streamingStore.getSession(session.id);
+                        const isSessionStreaming = streamingState?.status === 'streaming';
+                        const isSessionCompleted = streamingState?.status === 'completed';
+
                         const needsApproval =
                           pendingApprovalSessionId === session.id;
                         const mode = session.mode || "code";
@@ -673,6 +862,18 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
                                 </span>
                               )}
+                              {/* Completed indicator */}
+                              {!isSessionStreaming && isSessionCompleted && streamingState && (
+                                <span className="flex h-2 w-2 shrink-0 items-center justify-center">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                </span>
+                              )}
+                              {/* Idle indicator */}
+                              {!isSessionStreaming && !isSessionCompleted && (
+                                <span className="flex h-2 w-2 shrink-0 items-center justify-center">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+                                </span>
+                              )}
                               {/* Approval indicator */}
                               {needsApproval && (
                                 <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
@@ -686,6 +887,12 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                 <span className="block truncate text-[12px] font-medium leading-tight">
                                   {session.title}
                                 </span>
+                                {/* Show streaming content preview */}
+                                {streamingState?.content && (
+                                  <span className="block truncate text-[10px] text-muted-foreground/60 mt-0.5">
+                                    {streamingState.content.slice(-80)}
+                                  </span>
+                                )}
                               </div>
                               {/* Hide badge and time when hovering to make room for action buttons */}
                               {!isHovered && (
@@ -754,6 +961,11 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                                     {t('chatList.delete')}
                                   </TooltipContent>
                                 </Tooltip>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                               </div>
                             )}
                           </div>

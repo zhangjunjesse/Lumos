@@ -35,6 +35,7 @@ export interface FeishuDocItem {
 interface FeishuPanelProps {
   onOpenDoc?: (doc: FeishuDocItem) => void;
   onAddToLibrary?: (doc: FeishuDocItem) => Promise<void> | void;
+  showConfigCard?: boolean;
 }
 
 const feishuDocsCache = new Map<string, FeishuDocItem[]>();
@@ -43,7 +44,11 @@ function cacheKeyFor(userId: string, query: string): string {
   return `${userId}:${query.trim().toLowerCase()}`;
 }
 
-export function FeishuPanel({ onOpenDoc, onAddToLibrary }: FeishuPanelProps) {
+export function FeishuPanel({
+  onOpenDoc,
+  onAddToLibrary,
+  showConfigCard = true,
+}: FeishuPanelProps) {
   const { t } = useTranslation();
   const { sessionId } = usePanel();
   const toggleFeishuDocFavorite = useFavoritesStore((state) => state.toggleFeishuDoc);
@@ -330,7 +335,7 @@ export function FeishuPanel({ onOpenDoc, onAddToLibrary }: FeishuPanelProps) {
         </div>
 
         <div className="p-3">
-          <FeishuConfigCard />
+          {showConfigCard ? <FeishuConfigCard /> : null}
 
           {auth.loading ? (
             <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
