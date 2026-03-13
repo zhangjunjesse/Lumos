@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
       withSessionEntryMarker(body.system_prompt, entry),
       workingDirectory,
       body.mode,
+      body.folder,
     );
     const response: SessionResponse = { session };
     return Response.json(response, { status: 201 });

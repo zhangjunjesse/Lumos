@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
+import { generateQrCodeDataUrl } from "@/lib/qr-code";
 
 interface QRBindingCardProps {
   sessionId: string;
@@ -8,12 +10,25 @@ interface QRBindingCardProps {
   onBind?: () => void;
 }
 
-export function QRBindingCard({ sessionId, sessionTitle, onBind }: QRBindingCardProps) {
-  const [qrImageUrl, setQrImageUrl] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+export function QRBindingCard({ sessionId, onBind }: QRBindingCardProps) {
+  const [bindingState, setBindingState] = useState({
+    source: "",
+    dataUrl: "",
+    error: "",
+  });
+  const onBindRef = useRef(onBind);
 
   useEffect(() => {
+    onBindRef.current = onBind;
+  }, [onBind]);
+
+  const loading = bindingState.source !== sessionId;
+  const qrImageUrl = bindingState.source === sessionId ? bindingState.dataUrl : "";
+  const error = bindingState.source === sessionId ? bindingState.error : "";
+
+  useEffect(() => {
+    let cancelled = false;
+
     const createBinding = async () => {
       try {
         const res = await fetch("/api/bridge/bindings", {
@@ -24,21 +39,42 @@ export function QRBindingCard({ sessionId, sessionTitle, onBind }: QRBindingCard
         const data = await res.json();
 
         if (!res.ok) {
-          setError(data.message || data.error || "创建失败");
+          if (!cancelled) {
+            setBindingState({
+              source: sessionId,
+              dataUrl: "",
+              error: data.message || data.error || "创建失败",
+            });
+          }
           return;
         }
 
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(data.shareLink)}&size=200x200`;
-        setQrImageUrl(qrImageUrl);
-        onBind?.();
-      } catch (err) {
-        setError("网络错误");
-      } finally {
-        setLoading(false);
+        const dataUrl = await generateQrCodeDataUrl(data.shareLink, 200);
+        if (!cancelled) {
+          setBindingState({
+            source: sessionId,
+            dataUrl,
+            error: "",
+          });
+          onBindRef.current?.();
+        }
+      } catch {
+        if (!cancelled) {
+          setBindingState({
+            source: sessionId,
+            dataUrl: "",
+            error: "网络错误",
+          });
+        }
       }
     };
+
     createBinding();
-  }, [sessionId, onBind]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   return (
     <div className="rounded-lg border p-4 space-y-3">
@@ -51,7 +87,7 @@ export function QRBindingCard({ sessionId, sessionTitle, onBind }: QRBindingCard
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
         ) : (
-          <img src={qrImageUrl} alt="QR Code" className="rounded" />
+          <Image src={qrImageUrl} alt="QR Code" width={200} height={200} unoptimized className="rounded" />
         )}
       </div>
       <p className="text-xs text-muted-foreground text-center">

@@ -27,9 +27,20 @@ let appOriginPrefix = '';
 const BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH = path.join('runtime', 'browser-bridge.json');
 const DEFAULT_PACKAGED_SERVER_PORT = 43127;
 
+function getConfiguredDataDir(): string {
+  return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+}
+
+function configureUserDataPath(): void {
+  const dataDir = getConfiguredDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+  app.setPath('userData', dataDir);
+}
+
+configureUserDataPath();
+
 function getBrowserBridgeRuntimeFilePath(): string {
-  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  return path.join(dataDir, BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
+  return path.join(getConfiguredDataDir(), BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
 }
 
 function persistBrowserBridgeRuntime(url: string, token: string): void {
@@ -315,6 +326,19 @@ function getPreferredServerPort(): number {
   return DEFAULT_PACKAGED_SERVER_PORT;
 }
 
+function getDevServerPort(): number {
+  const raw = process.env.LUMOS_DEV_SERVER_PORT?.trim() || process.env.PORT?.trim();
+  if (!raw) return 3000;
+
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
+    return parsed;
+  }
+
+  console.warn(`[main] Invalid dev server port: ${raw}. Falling back to 3000.`);
+  return 3000;
+}
+
 async function getPort(preferredPort?: number): Promise<number> {
   if (preferredPort) {
     try {
@@ -387,7 +411,7 @@ function startServer(port: number): Electron.UtilityProcess {
     ...userShellEnv,
     PORT: String(port),
     HOSTNAME: '127.0.0.1',
-    LUMOS_DATA_DIR: path.join(home, '.lumos'),
+    LUMOS_DATA_DIR: getConfiguredDataDir(),
     HOME: home,
     USERPROFILE: home,
     PATH: constructedPath,
@@ -526,19 +550,59 @@ function createWindow(port: number) {
 
 function openAuthWindow(targetUrl: string) {
   if (!targetUrl) return;
+
+  const normalizeCallbackUrl = (rawUrl: string): { origin: string; pathname: string } | null => {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+
+      const hostname = parsed.hostname === '127.0.0.1' || parsed.hostname === '::1'
+        ? 'localhost'
+        : parsed.hostname;
+      const origin = `${parsed.protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ''}`;
+      const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+      return { origin: origin.toLowerCase(), pathname };
+    } catch {
+      return null;
+    }
+  };
+
+  const callbackMatcher = (() => {
+    try {
+      const parsedTarget = new URL(targetUrl);
+      const redirectUri = parsedTarget.searchParams.get('redirect_uri');
+      if (!redirectUri) return null;
+      return normalizeCallbackUrl(redirectUri);
+    } catch {
+      return null;
+    }
+  })();
+
+  const isCallbackNavigation = (candidateUrl: string): boolean => {
+    if (!callbackMatcher) return false;
+    const parsedCandidate = normalizeCallbackUrl(candidateUrl);
+    return Boolean(
+      parsedCandidate &&
+      parsedCandidate.origin === callbackMatcher.origin &&
+      parsedCandidate.pathname === callbackMatcher.pathname,
+    );
+  };
+
   if (authWindow && !authWindow.isDestroyed()) {
-    authWindow.loadURL(targetUrl);
-    authWindow.focus();
-    return;
+    authWindow.close();
+    authWindow = null;
   }
 
-  authWindow = new BrowserWindow({
+  const windowRef = new BrowserWindow({
     width: 920,
     height: 760,
     minWidth: 720,
     minHeight: 560,
+    show: false,
     parent: mainWindow ?? undefined,
-    modal: true,
+    modal: false,
     center: true,
     title: 'Lumos Login',
     icon: getIconPath(),
@@ -549,10 +613,55 @@ function openAuthWindow(targetUrl: string) {
     },
   });
 
-  authWindow.setMenuBarVisibility(false);
-  authWindow.loadURL(targetUrl);
-  authWindow.on('closed', () => {
-    authWindow = null;
+  authWindow = windowRef;
+  windowRef.setMenuBarVisibility(false);
+
+  let closeScheduled = false;
+  const closeSoon = () => {
+    if (closeScheduled) return;
+    closeScheduled = true;
+    setTimeout(() => {
+      if (!windowRef.isDestroyed()) {
+        windowRef.close();
+      }
+    }, 280);
+  };
+
+  const maybeCloseOnCallback = (candidateUrl: string) => {
+    if (!isCallbackNavigation(candidateUrl)) return;
+    if (isDev) {
+      console.log('[auth-window] callback reached, closing auth window:', candidateUrl);
+    }
+    closeSoon();
+  };
+
+  windowRef.webContents.on('did-navigate', (_event, navigationUrl) => {
+    maybeCloseOnCallback(navigationUrl);
+  });
+
+  windowRef.webContents.on('did-redirect-navigation', (_event, navigationUrl) => {
+    maybeCloseOnCallback(navigationUrl);
+  });
+
+  windowRef.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    if (!validatedURL) return;
+    if (isCallbackNavigation(validatedURL)) {
+      console.warn('[auth-window] callback navigation failed:', { errorCode, errorDescription, validatedURL });
+      closeSoon();
+    }
+  });
+
+  windowRef.once('ready-to-show', () => {
+    if (!windowRef.isDestroyed()) {
+      windowRef.show();
+    }
+  });
+
+  windowRef.loadURL(targetUrl);
+  windowRef.on('closed', () => {
+    if (authWindow === windowRef) {
+      authWindow = null;
+    }
   });
 }
 
@@ -1106,7 +1215,7 @@ app.whenReady().then(async () => {
     let port: number;
 
     if (isDev) {
-      port = 3000;
+      port = getDevServerPort();
       console.log(`Dev mode: connecting to http://127.0.0.1:${port}`);
     } else {
       port = await getPort(getPreferredServerPort());

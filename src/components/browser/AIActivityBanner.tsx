@@ -1,81 +1,77 @@
-/**
- * AI Activity Banner Component
- * 显示 AI 正在对浏览器执行的操作
- */
-
 'use client';
 
-import React from 'react';
-import { Bot, X } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, X } from 'lucide-react';
+import type { BrowserAiActivity } from '@/types/browser';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { useTranslation } from '@/hooks/useTranslation';
 
-export interface AIActivity {
-  id: string;
-  action: string;
-  timestamp: number;
-  status: 'running' | 'success' | 'error';
-  details?: string;
-}
+export type AIActivity = BrowserAiActivity;
 
 export interface AIActivityBannerProps {
-  activity: AIActivity | null;
+  activity: BrowserAiActivity | null;
   onDismiss?: () => void;
 }
 
+function getTone(status: BrowserAiActivity['status']) {
+  switch (status) {
+    case 'success':
+      return {
+        container: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100',
+        icon: CheckCircle2,
+      };
+    case 'error':
+      return {
+        container: 'border-rose-400/40 bg-rose-500/10 text-rose-900 dark:text-rose-100',
+        icon: AlertTriangle,
+      };
+    default:
+      return {
+        container: 'border-sky-400/40 bg-sky-500/10 text-sky-900 dark:text-sky-100',
+        icon: Bot,
+      };
+  }
+}
+
 export function AIActivityBanner({ activity, onDismiss }: AIActivityBannerProps) {
+  const { t } = useTranslation();
+
   if (!activity) {
     return null;
   }
 
-  const getStatusColor = () => {
-    switch (activity.status) {
-      case 'running':
-        return 'bg-blue-100 border-blue-300 text-blue-800';
-      case 'success':
-        return 'bg-green-100 border-green-300 text-green-800';
-      case 'error':
-        return 'bg-red-100 border-red-300 text-red-800';
-      default:
-        return 'bg-gray-100 border-gray-300 text-gray-800';
-    }
-  };
+  const tone = getTone(activity.status);
+  const StatusIcon = tone.icon;
 
   return (
     <div
-      className={`
-        flex items-center gap-3 px-4 py-2 border-b
-        ${getStatusColor()}
-        animate-slide-down
-      `}
+      className={cn(
+        'flex items-start gap-3 border-b px-4 py-3 backdrop-blur-sm',
+        tone.container,
+      )}
     >
-      {/* AI Icon */}
-      <Bot size={20} className="flex-shrink-0" />
+      <div className="mt-0.5 rounded-full bg-background/60 p-2">
+        <StatusIcon className={cn('size-4', activity.status === 'running' && 'animate-pulse')} />
+      </div>
 
-      {/* Activity Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{activity.action}</span>
-          {activity.status === 'running' && (
-            <div className="flex gap-1">
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-            </div>
-          )}
-        </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold">{activity.action}</div>
         {activity.details && (
-          <p className="text-sm opacity-80 truncate">{activity.details}</p>
+          <div className="mt-0.5 text-sm opacity-80">{activity.details}</div>
         )}
       </div>
 
-      {/* Dismiss Button */}
       {onDismiss && activity.status !== 'running' && (
-        <button
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="rounded-full"
           onClick={onDismiss}
-          className="p-1 rounded hover:bg-black/10 transition-colors"
-          title="Dismiss"
+          title={t('browser.dismiss')}
         >
-          <X size={16} />
-        </button>
+          <X className="size-3.5" />
+        </Button>
       )}
     </div>
   );

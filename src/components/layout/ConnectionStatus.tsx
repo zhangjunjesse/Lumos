@@ -12,32 +12,27 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
-import { InstallWizard } from "@/components/layout/InstallWizard";
 
 interface ClaudeStatus {
   connected: boolean;
   version: string | null;
+  sdkVersion?: string | null;
+  runtimeSource?: "bundled" | "unavailable";
+  sandboxed?: boolean;
+  configDir?: string | null;
 }
 
-const BASE_INTERVAL = 30_000; // 30s
-const BACKED_OFF_INTERVAL = 60_000; // 60s after 3 consecutive stable results
+const BASE_INTERVAL = 30_000;
+const BACKED_OFF_INTERVAL = 60_000;
 const STABLE_THRESHOLD = 3;
 
 export function ConnectionStatus() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<ClaudeStatus | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
-
-  const isElectron =
-    typeof window !== "undefined" &&
-    !!window.electronAPI?.install;
   const stableCountRef = useRef(0);
   const lastConnectedRef = useRef<boolean | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoPromptedRef = useRef(false);
-
-  // Use a ref-based approach to avoid circular deps between check and schedule
   const checkRef = useRef<() => void>(() => {});
 
   const schedule = useCallback(() => {
@@ -68,7 +63,14 @@ export function ConnectionStatus() {
         stableCountRef.current = 0;
       }
       lastConnectedRef.current = false;
-      setStatus({ connected: false, version: null });
+      setStatus({
+        connected: false,
+        version: null,
+        sdkVersion: null,
+        runtimeSource: "unavailable",
+        sandboxed: true,
+        configDir: null,
+      });
     }
     schedule();
   }, [schedule]);
@@ -78,7 +80,7 @@ export function ConnectionStatus() {
   }, [checkStatus]);
 
   useEffect(() => {
-    checkStatus(); // eslint-disable-line react-hooks/set-state-in-effect -- setState is called asynchronously after fetch
+    checkStatus(); // eslint-disable-line react-hooks/set-state-in-effect
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
@@ -88,32 +90,6 @@ export function ConnectionStatus() {
     stableCountRef.current = 0;
     checkStatus();
   }, [checkStatus]);
-
-  // Auto-prompt install wizard on first disconnect detection (Electron only)
-  useEffect(() => {
-    if (
-      status !== null &&
-      !status.connected &&
-      isElectron &&
-      !autoPromptedRef.current &&
-      !dialogOpen &&
-      !wizardOpen
-    ) {
-      const dismissed = localStorage.getItem("codepilot:install-wizard-dismissed");
-      if (!dismissed) {
-        autoPromptedRef.current = true;
-        setWizardOpen(true); // eslint-disable-line react-hooks/set-state-in-effect -- intentional: auto-prompt on first disconnect
-      }
-    }
-  }, [status, isElectron, dialogOpen, wizardOpen]);
-
-  const handleWizardOpenChange = useCallback((open: boolean) => {
-    setWizardOpen(open);
-    if (!open) {
-      // Remember that user dismissed the wizard so we don't auto-prompt again
-      localStorage.setItem("codepilot:install-wizard-dismissed", "1");
-    }
-  }, []);
 
   const connected = status?.connected ?? false;
 
@@ -151,12 +127,12 @@ export function ConnectionStatus() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {connected ? t('connection.installed') : t('connection.notInstalled')}
+              {connected ? "Lumos Claude 运行环境已就绪" : "Lumos Claude 运行环境不可用"}
             </DialogTitle>
             <DialogDescription>
               {connected
-                ? `Claude Code CLI v${status?.version} is running and ready.`
-                : "Claude Code CLI is required to use this application."}
+                ? "Lumos 正在使用自己的内置 Claude 沙箱运行环境。"
+                : "Lumos 只使用自己的内置 Claude 沙箱运行环境，不依赖本机 Claude CLI。"}
             </DialogDescription>
           </DialogHeader>
 
@@ -169,48 +145,30 @@ export function ConnectionStatus() {
                   <p className="text-xs text-muted-foreground">{t('connection.version', { version: status?.version ?? '' })}</p>
                 </div>
               </div>
+              <div className="rounded-lg border border-border/50 px-4 py-3 space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  运行来源：{status?.runtimeSource === "bundled" ? "Lumos 内置运行时" : "未知"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  沙箱隔离：{status?.sandboxed ? "已启用" : "未启用"}
+                </p>
+                {status?.sdkVersion && (
+                  <p className="text-xs text-muted-foreground">SDK 版本：{status.sdkVersion}</p>
+                )}
+                {status?.configDir && (
+                  <p className="text-xs text-muted-foreground break-all">配置目录：{status.configDir}</p>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-4 text-sm">
               <div className="flex items-center gap-3 rounded-lg bg-red-500/10 px-4 py-3">
                 <span className="block h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
-                <p className="font-medium text-red-700 dark:text-red-400">{t('common.notDetected')}</p>
+                <p className="font-medium text-red-700 dark:text-red-400">沙箱运行环境未就绪</p>
               </div>
-
-              <div>
-                <h4 className="font-medium mb-1.5">1. {t('connection.installClaude')}</h4>
-                <code className="block rounded-md bg-muted px-3 py-2 text-xs">
-                  npm install -g @anthropic-ai/claude-code
-                </code>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-1.5">2. Authenticate</h4>
-                <code className="block rounded-md bg-muted px-3 py-2 text-xs">
-                  claude login
-                </code>
-              </div>
-
-              <div>
-                <h4 className="font-medium mb-1.5">3. Verify Installation</h4>
-                <code className="block rounded-md bg-muted px-3 py-2 text-xs">
-                  claude --version
-                </code>
-              </div>
-
-              {isElectron && (
-                <div className="pt-2 border-t">
-                  <Button
-                    onClick={() => {
-                      setDialogOpen(false);
-                      setWizardOpen(true);
-                    }}
-                    className="w-full"
-                  >
-                    {t('connection.installAuto')}
-                  </Button>
-                </div>
-              )}
+              <p className="text-sm text-muted-foreground">
+                请先点击刷新。如果问题持续存在，需要修复当前 Lumos 安装或重新安装应用。
+              </p>
             </div>
           )}
 
@@ -224,12 +182,6 @@ export function ConnectionStatus() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <InstallWizard
-        open={wizardOpen}
-        onOpenChange={handleWizardOpenChange}
-        onInstallComplete={handleManualRefresh}
-      />
     </>
   );
 }

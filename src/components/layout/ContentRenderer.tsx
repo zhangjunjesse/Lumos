@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from 'react';
+import type { BrowserPanelTabData } from '@/types/browser';
 import { useContentPanelStore, type Tab } from '@/stores/content-panel';
 import { FileTree } from '@/components/project/FileTree';
 import { EmbeddedBrowserPanel } from '@/components/browser/EmbeddedBrowserPanel';
@@ -34,10 +35,8 @@ function getBrowserTabTitle(url: string, fallback: string): string {
   }
 }
 
-interface BrowserTabData {
-  url?: string;
-  fitWidth?: boolean;
-  pageId?: string;
+function getBrowserTabData(data: unknown): BrowserPanelTabData {
+  return (data as BrowserPanelTabData | undefined) || {};
 }
 
 export function ContentRenderer() {
@@ -134,18 +133,106 @@ export function ContentRenderer() {
     }
   }, [sessionId]);
 
-  const handleBrowserUrlChange = useCallback((tabId: string, url: string) => {
+  const createNativeBrowserTab = useCallback(async (url?: string) => {
+    const api = window.electronAPI?.browser;
+    if (!api?.createTab) {
+      throw new Error('Browser API is unavailable');
+    }
+
+    const created = await api.createTab(url);
+    if (!created.success || !created.tabId) {
+      throw new Error(created.error || 'Failed to create browser tab');
+    }
+
+    if (api.switchTab) {
+      const switched = await api.switchTab(created.tabId);
+      if (!switched.success) {
+        console.warn('[ContentRenderer] Failed to activate created browser tab:', switched.error);
+      }
+    }
+
+    return created.tabId;
+  }, []);
+
+  const handleBrowserUrlChange = useCallback(async (tabId: string, url: string) => {
     const currentTab = tabs.find((tab) => tab.id === tabId);
-    const currentData = (currentTab?.data as Record<string, unknown> | undefined) || {};
-    updateTab(tabId, {
-      title: getBrowserTabTitle(url, t('tab.browser')),
-      data: { ...currentData, url },
-    });
-  }, [tabs, t, updateTab]);
+    const currentData = getBrowserTabData(currentTab?.data);
+    const pageId = typeof currentData.pageId === 'string' ? currentData.pageId : '';
+    const api = window.electronAPI?.browser;
+
+    try {
+      if (pageId && api?.navigate) {
+        if (api.switchTab) {
+          const switched = await api.switchTab(pageId);
+          if (!switched.success) {
+            console.warn('[ContentRenderer] Failed to focus browser tab before navigate:', switched.error);
+          }
+        }
+
+        const navigated = await api.navigate(pageId, url);
+        if (!navigated.success) {
+          throw new Error(navigated.error || 'Failed to navigate browser tab');
+        }
+      } else {
+        const nextPageId = await createNativeBrowserTab(url);
+        updateTab(tabId, {
+          title: getBrowserTabTitle(url, t('tab.browser')),
+          data: { ...currentData, pageId: nextPageId, url },
+        });
+        return;
+      }
+
+      updateTab(tabId, {
+        title: getBrowserTabTitle(url, t('tab.browser')),
+        data: { ...currentData, url },
+      });
+    } catch (error) {
+      console.error('[ContentRenderer] Failed to navigate browser tab:', error);
+    }
+  }, [createNativeBrowserTab, tabs, t, updateTab]);
+
+  const handleBrowserReload = useCallback(async (tabId: string) => {
+    const api = window.electronAPI?.browser;
+    const currentTab = tabs.find((tab) => tab.id === tabId);
+    const currentData = getBrowserTabData(currentTab?.data);
+    const pageId = typeof currentData.pageId === 'string' ? currentData.pageId : '';
+    const url = typeof currentData.url === 'string' ? currentData.url : '';
+
+    if (!pageId || !api?.navigate) {
+      if (url) {
+        await handleBrowserUrlChange(tabId, url);
+      }
+      return;
+    }
+
+    try {
+      if (api.switchTab) {
+        const switched = await api.switchTab(pageId);
+        if (!switched.success) {
+          console.warn('[ContentRenderer] Failed to focus browser tab before reload:', switched.error);
+        }
+      }
+
+      if (api.sendCDPCommand) {
+        const reloaded = await api.sendCDPCommand(pageId, 'Page.reload', {});
+        if (!reloaded.success) {
+          throw new Error(reloaded.error || 'Failed to reload browser tab');
+        }
+        return;
+      }
+
+      const navigated = await api.navigate(pageId, url, 30_000);
+      if (!navigated.success) {
+        throw new Error(navigated.error || 'Failed to reload browser tab');
+      }
+    } catch (error) {
+      console.error('[ContentRenderer] Failed to reload browser tab:', error);
+    }
+  }, [handleBrowserUrlChange, tabs]);
 
   const handleBrowserFitWidthChange = useCallback((tabId: string, fitWidth: boolean) => {
     const currentTab = tabs.find((tab) => tab.id === tabId);
-    const currentData = (currentTab?.data as Record<string, unknown> | undefined) || {};
+    const currentData = getBrowserTabData(currentTab?.data);
     updateTab(tabId, {
       data: { ...currentData, fitWidth },
     });
@@ -159,46 +246,59 @@ export function ContentRenderer() {
     }
   }, []);
 
-  const handleCreateBrowserTab = useCallback((fromTabId: string, url: string) => {
+  const handleCreateBrowserTab = useCallback(async (fromTabId: string, url: string) => {
     const fromTab = tabs.find((tab) => tab.id === fromTabId);
-    const fromData = (fromTab?.data as { fitWidth?: boolean } | undefined) || {};
-    addTab({
-      type: 'browser',
-      title: getBrowserTabTitle(url, t('tab.browser')),
-      closable: true,
-      data: {
-        url,
-        fitWidth: fromData.fitWidth,
-      },
-    });
-  }, [addTab, t, tabs]);
+    const fromData = getBrowserTabData(fromTab?.data);
 
-  const handleOpenFavoriteUrl = useCallback((url: string) => {
+    try {
+      const pageId = await createNativeBrowserTab(url);
+      addTab({
+        type: 'browser',
+        title: getBrowserTabTitle(url, t('tab.browser')),
+        closable: true,
+        data: {
+          pageId,
+          url,
+          fitWidth: fromData.fitWidth,
+        },
+      });
+    } catch (error) {
+      console.error('[ContentRenderer] Failed to open browser tab:', error);
+    }
+  }, [addTab, createNativeBrowserTab, t, tabs]);
+
+  const handleOpenFavoriteUrl = useCallback(async (url: string) => {
     const normalized = url.trim();
     if (!normalized) return;
 
-    const existingBrowserTab = tabs.find((tab) => {
-      if (tab.type !== 'browser') return false;
-      return ((tab.data as { url?: string } | undefined)?.url || '') === normalized;
-    });
-    if (existingBrowserTab) {
-      setActiveTab(existingBrowserTab.id);
-      return;
-    }
-
     const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const fitWidth = (activeBrowserTab?.data as { fitWidth?: boolean } | undefined)?.fitWidth ?? true;
-    addTab({
-      type: 'browser',
-      title: getBrowserTabTitle(normalized, t('tab.browser')),
-      closable: true,
-      data: { url: normalized, fitWidth },
-    });
-  }, [activeTabId, addTab, setActiveTab, t, tabs]);
+    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? true;
+
+    try {
+      const pageId = await createNativeBrowserTab(normalized);
+      addTab({
+        type: 'browser',
+        title: getBrowserTabTitle(normalized, t('tab.browser')),
+        closable: true,
+        data: { pageId, url: normalized, fitWidth },
+      });
+    } catch (error) {
+      console.error('[ContentRenderer] Failed to open favorite URL in browser:', error);
+    }
+  }, [activeTabId, addTab, createNativeBrowserTab, t, tabs]);
 
   const activeTab = tabs.find((t: Tab) => t.id === activeTabId);
   const browserTabs = tabs.filter((tab) => tab.type === 'browser');
   const activeTabType = activeTab?.type || null;
+  const activeBrowserTab = activeTabType === 'browser'
+    ? tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser') || null
+    : null;
+  const activeBrowserData = getBrowserTabData(activeBrowserTab?.data);
+  const hasActiveBrowserTab = Boolean(activeBrowserTab);
+  const activeBrowserPageId = typeof activeBrowserData.pageId === 'string' ? activeBrowserData.pageId : '';
+  const activeBrowserUrl = typeof activeBrowserData.url === 'string' ? activeBrowserData.url : '';
+  const activeBrowserFitWidth = activeBrowserData.fitWidth !== false;
+  const activeBrowserFitWidthValue = activeBrowserData.fitWidth;
 
   useEffect(() => {
     const api = window.electronAPI?.browser;
@@ -206,15 +306,11 @@ export function ContentRenderer() {
       return;
     }
 
-    if (!contentPanelOpen || activeTabType !== 'browser' || !activeTabId) {
+    if (!contentPanelOpen || activeTabType !== 'browser' || !activeTabId || !hasActiveBrowserTab) {
       return;
     }
-
-    const currentTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    if (!currentTab) return;
-    const tabData = (currentTab.data as BrowserTabData | undefined) || {};
-    const pageId = typeof tabData.pageId === 'string' ? tabData.pageId : '';
-    const targetUrl = typeof tabData.url === 'string' ? tabData.url : '';
+    const pageId = activeBrowserPageId;
+    const targetUrl = activeBrowserUrl;
 
     let cancelled = false;
 
@@ -228,15 +324,18 @@ export function ContentRenderer() {
         console.warn('[ContentRenderer] Failed to switch browser tab, recreating binding:', switched?.error);
       }
 
-      if (!targetUrl) {
-        return;
-      }
-
-      const created = await api.createTab(targetUrl);
+      const created = await api.createTab(targetUrl || undefined);
       if (cancelled || !created.success || !created.tabId) return;
-      const currentData = (currentTab.data as Record<string, unknown> | undefined) || {};
-      updateTab(currentTab.id, {
-        data: { ...currentData, pageId: created.tabId },
+      if (api.switchTab) {
+        const switched = await api.switchTab(created.tabId);
+        if (cancelled || !switched.success) return;
+      }
+      updateTab(activeTabId, {
+        data: {
+          pageId: created.tabId,
+          url: targetUrl || activeBrowserUrl || 'about:blank',
+          fitWidth: activeBrowserFitWidthValue,
+        },
       });
     })().catch((error) => {
       console.error('[ContentRenderer] Failed to create browser tab for panel binding:', error);
@@ -245,7 +344,16 @@ export function ContentRenderer() {
     return () => {
       cancelled = true;
     };
-  }, [activeTabId, activeTabType, contentPanelOpen, tabs, updateTab]);
+  }, [
+    activeBrowserFitWidthValue,
+    activeBrowserPageId,
+    activeBrowserUrl,
+    activeTabId,
+    activeTabType,
+    contentPanelOpen,
+    hasActiveBrowserTab,
+    updateTab,
+  ]);
 
   useEffect(() => {
     const api = window.electronAPI?.browser;
@@ -260,10 +368,8 @@ export function ContentRenderer() {
       return;
     }
 
-    const currentTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const currentData = (currentTab?.data as BrowserTabData | undefined) || {};
-    const pageId = typeof currentData.pageId === 'string' ? currentData.pageId : '';
-    const shouldFitWidth = currentData.fitWidth !== false;
+    const pageId = activeBrowserPageId;
+    const shouldFitWidth = activeBrowserFitWidth;
     let cancelled = false;
 
     const findBoundsTarget = () => {
@@ -359,7 +465,7 @@ export function ContentRenderer() {
       }
       void api.setDisplayTarget('hidden');
     };
-  }, [activeTabId, activeTabType, contentPanelOpen, tabs]);
+  }, [activeBrowserFitWidth, activeBrowserPageId, activeTabId, activeTabType, contentPanelOpen]);
 
   if (!activeTab) {
     return null;
@@ -374,10 +480,12 @@ export function ContentRenderer() {
           className={cn('absolute inset-0', tab.id === activeTabId ? 'block' : 'hidden')}
         >
           <EmbeddedBrowserPanel
-            url={(tab.data as { url?: string } | undefined)?.url}
-            fitWidth={(tab.data as { fitWidth?: boolean } | undefined)?.fitWidth}
-            onUrlChange={(url) => handleBrowserUrlChange(tab.id, url)}
-            onOpenInNewTab={(url) => handleCreateBrowserTab(tab.id, url)}
+            url={getBrowserTabData(tab.data).url}
+            fitWidth={getBrowserTabData(tab.data).fitWidth}
+            isLoading={getBrowserTabData(tab.data).isLoading}
+            onUrlChange={(url) => void handleBrowserUrlChange(tab.id, url)}
+            onReload={() => void handleBrowserReload(tab.id)}
+            onOpenInNewTab={(url) => void handleCreateBrowserTab(tab.id, url)}
             onFitWidthChange={(fitWidth) => handleBrowserFitWidthChange(tab.id, fitWidth)}
             onAddToLibrary={handleAddBrowserUrlToLibrary}
             nativeHost
@@ -431,7 +539,13 @@ function renderContent(
       );
 
     case 'feishu-doc':
-      return <FeishuPanel onOpenDoc={handleOpenFeishuDoc} onAddToLibrary={handleImportFeishuDoc} />;
+      return (
+        <FeishuPanel
+          onOpenDoc={handleOpenFeishuDoc}
+          onAddToLibrary={handleImportFeishuDoc}
+          showConfigCard={false}
+        />
+      );
 
     case 'favorites':
       return (

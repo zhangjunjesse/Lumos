@@ -63,6 +63,28 @@ function unauthorized(res: http.ServerResponse): void {
   sendJson(res, 401, { ok: false, error: 'UNAUTHORIZED' });
 }
 
+async function withAiActivity<T>(
+  manager: BrowserManager,
+  activity: { action: string; pageId?: string; details?: string; successDetails?: string },
+  task: () => Promise<T>,
+): Promise<T> {
+  const entry = manager.emitAiActivity({
+    action: activity.action,
+    pageId: activity.pageId,
+    details: activity.details,
+  });
+
+  try {
+    const result = await task();
+    manager.finishAiActivity(entry, 'success', activity.successDetails || activity.details);
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    manager.finishAiActivity(entry, 'error', message);
+    throw error;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -185,6 +207,11 @@ function buildSnapshotScript(): string {
     return rect.width > 0 && rect.height > 0;
   };
   const normalize = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
+  document.querySelectorAll('[data-lumos-uid]').forEach((el) => {
+    if (el instanceof Element) {
+      el.removeAttribute('data-lumos-uid');
+    }
+  });
   const candidates = Array.from(
     document.querySelectorAll('a,button,input,textarea,select,[role="button"],[onclick],h1,h2,h3,h4,h5,h6,p,li,label,summary')
   );
@@ -223,7 +250,14 @@ function clickByUidScript(uid: string): string {
   return `(() => {
     const el = document.querySelector('[data-lumos-uid="${uid}"]');
     if (!el) return { ok: false, error: 'UID_NOT_FOUND' };
-    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+    if (el instanceof HTMLElement) {
+      el.focus({ preventScroll: true });
+    }
+    if (typeof el.click === 'function') {
+      el.click();
+      return { ok: true };
+    }
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
     el.dispatchEvent(ev);
     return { ok: true };
@@ -404,12 +438,22 @@ export class BrowserBridgeServer {
 
     if (method === 'POST' && pathname === '/v1/pages/new') {
       const body = (await parseJsonBody(req)) as { url?: string };
-      const pageId = await manager.createTab(body?.url);
-      await manager.switchTab(pageId);
-      if (typeof body?.url === 'string') {
-        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
-        forwardUrlToContentTabs(body.url, pageId);
-      }
+      const pageId = await withAiActivity(
+        manager,
+        {
+          action: 'AI opened a browser tab',
+          details: body?.url || 'about:blank',
+        },
+        async () => {
+          const createdPageId = await manager.createTab(body?.url);
+          await manager.switchTab(createdPageId);
+          if (typeof body?.url === 'string') {
+            await waitForPageStable(manager, createdPageId, { timeoutMs: 12_000 });
+            forwardUrlToContentTabs(body.url, createdPageId);
+          }
+          return createdPageId;
+        },
+      );
       sendJson(res, 200, { ok: true, pageId });
       return;
     }
@@ -421,7 +465,17 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await manager.switchTab(pageId);
+      await withAiActivity(
+        manager,
+        {
+          action: 'AI focused a browser tab',
+          pageId,
+          details: body.pageId,
+        },
+        async () => {
+          await manager.switchTab(pageId);
+        },
+      );
       const selectedTab = manager.getTabs().find((tab) => tab.id === pageId);
       if (selectedTab?.url) {
         forwardUrlToContentTabs(selectedTab.url, pageId);
@@ -441,7 +495,17 @@ export class BrowserBridgeServer {
         sendJson(res, 200, { ok: true, closed: false, pageId: body.pageId });
         return;
       }
-      await manager.closeTab(body.pageId);
+      await withAiActivity(
+        manager,
+        {
+          action: 'AI closed a browser tab',
+          pageId: body.pageId,
+          details: body.pageId,
+        },
+        async () => {
+          await manager.closeTab(body.pageId!);
+        },
+      );
       sendJson(res, 200, { ok: true, closed: true, pageId: body.pageId });
       return;
     }
@@ -453,28 +517,39 @@ export class BrowserBridgeServer {
         url?: string;
       };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await manager.switchTab(pageId);
-
       const navType = body?.type || 'url';
-      if (navType === 'url') {
-        if (!body?.url) {
-          sendJson(res, 400, { ok: false, error: 'MISSING_URL' });
-          return;
-        }
-        await manager.navigate(pageId, { url: body.url });
-        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
-        forwardUrlToContentTabs(body.url, pageId);
-      } else {
-        await ensureTabReady(manager, pageId);
-        if (navType === 'reload') {
-          await manager.sendCDPCommand(pageId, 'Page.reload', {});
-        } else if (navType === 'back') {
-          await evalInTab(manager, pageId, 'history.back(); true', false);
-        } else if (navType === 'forward') {
-          await evalInTab(manager, pageId, 'history.forward(); true', false);
-        }
-        await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
+      if (navType === 'url' && !body?.url) {
+        sendJson(res, 400, { ok: false, error: 'MISSING_URL' });
+        return;
       }
+      await withAiActivity(
+        manager,
+        {
+          action: 'AI navigated the browser',
+          pageId,
+          details: navType === 'url' ? body.url : navType,
+        },
+        async () => {
+          await manager.switchTab(pageId);
+
+          if (navType === 'url') {
+            await manager.navigate(pageId, { url: body.url! });
+            await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
+            forwardUrlToContentTabs(body.url!, pageId);
+            return;
+          }
+
+          await ensureTabReady(manager, pageId);
+          if (navType === 'reload') {
+            await manager.sendCDPCommand(pageId, 'Page.reload', {});
+          } else if (navType === 'back') {
+            await evalInTab(manager, pageId, 'history.back(); true', false);
+          } else if (navType === 'forward') {
+            await evalInTab(manager, pageId, 'history.forward(); true', false);
+          }
+          await waitForPageStable(manager, pageId, { timeoutMs: 12_000 });
+        },
+      );
 
       sendJson(res, 200, { ok: true, pageId });
       return;
@@ -483,16 +558,27 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/snapshot') {
       const body = (await parseJsonBody(req)) as { pageId?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 12_000, requireText: true, stableMs: 700 });
-      let result = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
-        | { url?: string; title?: string; lines?: string[] }
-        | undefined;
-      if (!Array.isArray(result?.lines) || result.lines.length < 3) {
-        await waitForPageStable(manager, pageId, { timeoutMs: 4_000, requireText: true, stableMs: 500 });
-        result = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
-          | { url?: string; title?: string; lines?: string[] }
-          | undefined;
-      }
+      const result = await withAiActivity(
+        manager,
+        {
+          action: 'AI captured a page snapshot',
+          pageId,
+          details: pageId,
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 12_000, requireText: true, stableMs: 700 });
+          let snapshot = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
+            | { url?: string; title?: string; lines?: string[] }
+            | undefined;
+          if (!Array.isArray(snapshot?.lines) || snapshot.lines.length < 3) {
+            await waitForPageStable(manager, pageId, { timeoutMs: 4_000, requireText: true, stableMs: 500 });
+            snapshot = (await evalInTab(manager, pageId, buildSnapshotScript(), true)) as
+              | { url?: string; title?: string; lines?: string[] }
+              | undefined;
+          }
+          return snapshot;
+        },
+      );
       sendJson(res, 200, {
         ok: true,
         pageId,
@@ -510,8 +596,18 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
-      const result = await evalInTab(manager, pageId, clickByUidScript(body.uid), true);
+      const result = await withAiActivity(
+        manager,
+        {
+          action: 'AI clicked a page element',
+          pageId,
+          details: body.uid,
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
+          return evalInTab(manager, pageId, clickByUidScript(body.uid!), true);
+        },
+      );
       sendJson(res, 200, { ok: true, pageId, result });
       return;
     }
@@ -523,8 +619,18 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
-      const result = await evalInTab(manager, pageId, fillByUidScript(body.uid, body.value || ''), true);
+      const result = await withAiActivity(
+        manager,
+        {
+          action: 'AI filled a page field',
+          pageId,
+          details: body.uid,
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
+          return evalInTab(manager, pageId, fillByUidScript(body.uid!, body.value || ''), true);
+        },
+      );
       sendJson(res, 200, { ok: true, pageId, result });
       return;
     }
@@ -532,8 +638,18 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/type') {
       const body = (await parseJsonBody(req)) as { pageId?: string; text?: string; submitKey?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
-      const result = await evalInTab(manager, pageId, typeTextScript(body?.text || '', body?.submitKey), true);
+      const result = await withAiActivity(
+        manager,
+        {
+          action: 'AI typed into the page',
+          pageId,
+          details: body?.submitKey ? `submit with ${body.submitKey}` : 'typing',
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
+          return evalInTab(manager, pageId, typeTextScript(body?.text || '', body?.submitKey), true);
+        },
+      );
       sendJson(res, 200, { ok: true, pageId, result });
       return;
     }
@@ -541,8 +657,18 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/press') {
       const body = (await parseJsonBody(req)) as { pageId?: string; key?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
-      const result = await evalInTab(manager, pageId, pressKeyScript(body?.key || 'Enter'), true);
+      const result = await withAiActivity(
+        manager,
+        {
+          action: 'AI pressed a key in the page',
+          pageId,
+          details: body?.key || 'Enter',
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 8_000, stableMs: 400 });
+          return evalInTab(manager, pageId, pressKeyScript(body?.key || 'Enter'), true);
+        },
+      );
       sendJson(res, 200, { ok: true, pageId, result });
       return;
     }
@@ -555,19 +681,38 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await ensureTabReady(manager, pageId);
-
       const timeoutMs = Math.max(500, Math.min(body?.timeoutMs || 10_000, 120_000));
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        const result = (await evalInTab(manager, pageId, waitForTextScript(targets), true)) as
-          | { found?: boolean; text?: string }
-          | undefined;
-        if (result?.found) {
-          sendJson(res, 200, { ok: true, pageId, found: true, text: result.text || '' });
-          return;
+      const matchedText = await withAiActivity(
+        manager,
+        {
+          action: 'AI waited for page content',
+          pageId,
+          details: targets.join(', '),
+        },
+        async () => {
+          await ensureTabReady(manager, pageId);
+          const start = Date.now();
+          while (Date.now() - start < timeoutMs) {
+            const result = (await evalInTab(manager, pageId, waitForTextScript(targets), true)) as
+              | { found?: boolean; text?: string }
+              | undefined;
+            if (result?.found) {
+              return result.text || '';
+            }
+            await new Promise((resolve) => setTimeout(resolve, 350));
+          }
+          throw new Error('WAIT_FOR_TIMEOUT');
+        },
+      ).catch((error) => {
+        if (error instanceof Error && error.message === 'WAIT_FOR_TIMEOUT') {
+          return null;
         }
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        throw error;
+      });
+
+      if (matchedText !== null) {
+        sendJson(res, 200, { ok: true, pageId, found: true, text: matchedText });
+        return;
       }
       sendJson(res, 408, { ok: false, error: 'WAIT_FOR_TIMEOUT' });
       return;
@@ -581,8 +726,18 @@ export class BrowserBridgeServer {
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
-      await ensureTabReady(manager, pageId);
-      const value = await evalInTab(manager, pageId, expression, true);
+      const value = await withAiActivity(
+        manager,
+        {
+          action: 'AI evaluated page JavaScript',
+          pageId,
+          details: expression.slice(0, 120),
+        },
+        async () => {
+          await ensureTabReady(manager, pageId);
+          return evalInTab(manager, pageId, expression, true);
+        },
+      );
       sendJson(res, 200, { ok: true, pageId, value });
       return;
     }
@@ -590,20 +745,40 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/screenshot') {
       const body = (await parseJsonBody(req)) as { pageId?: string; filePath?: string };
       const pageId = await resolveTargetTabId(manager, body?.pageId);
-      await waitForPageStable(manager, pageId, { timeoutMs: 12_000, stableMs: 700 });
-      const result = await manager.sendCDPCommand(pageId, 'Page.captureScreenshot', {
-        format: 'png',
-        captureBeyondViewport: true,
+      const targetPath = await withAiActivity(
+        manager,
+        {
+          action: 'AI captured a screenshot',
+          pageId,
+          details: body?.filePath || pageId,
+        },
+        async () => {
+          await waitForPageStable(manager, pageId, { timeoutMs: 12_000, stableMs: 700 });
+          const result = await manager.sendCDPCommand(pageId, 'Page.captureScreenshot', {
+            format: 'png',
+            captureBeyondViewport: true,
+          }) as { data?: string };
+          const base64 = result?.data;
+          if (typeof base64 !== 'string' || !base64) {
+            throw new Error('CAPTURE_SCREENSHOT_FAILED');
+          }
+          const resolvedPath = body?.filePath
+            ? path.resolve(body.filePath)
+            : path.join(os.tmpdir(), `lumos-chrome-${Date.now()}.png`);
+          await fs.writeFile(resolvedPath, Buffer.from(base64, 'base64'));
+          return resolvedPath;
+        },
+      ).catch((error) => {
+        if (error instanceof Error && error.message === 'CAPTURE_SCREENSHOT_FAILED') {
+          return null;
+        }
+        throw error;
       });
-      const base64 = result?.data;
-      if (typeof base64 !== 'string' || !base64) {
+
+      if (!targetPath) {
         sendJson(res, 500, { ok: false, error: 'CAPTURE_SCREENSHOT_FAILED' });
         return;
       }
-      const targetPath = body?.filePath
-        ? path.resolve(body.filePath)
-        : path.join(os.tmpdir(), `lumos-chrome-${Date.now()}.png`);
-      await fs.writeFile(targetPath, Buffer.from(base64, 'base64'));
       sendJson(res, 200, { ok: true, pageId, filePath: targetPath });
       return;
     }

@@ -3,6 +3,7 @@ import { streamTextFromProvider } from '@/lib/text-generator';
 import { getDb } from '@/lib/db';
 import fs from 'fs';
 import type { PlanMediaJobRequest } from '@/types';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
     }
     if (!modelId) {
       const defaultModel = db.prepare("SELECT value FROM settings WHERE key = 'default_model'").get() as { value: string } | undefined;
-      modelId = defaultModel?.value || 'claude-sonnet-4-20250514';
+      modelId = resolveBuiltInClaudeModelId(defaultModel?.value || BUILTIN_CLAUDE_MODEL_IDS.sonnet, 'sonnet');
     }
 
     // Read document content

@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallback } from 'react';
+import type { BrowserPanelTabData } from '@/types/browser';
 import { useContentPanelStore, type Tab, type TabType } from '@/stores/content-panel';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -66,6 +68,11 @@ const ADDABLE_TAB_TYPES: TabType[] = ['feishu-doc', 'browser', 'favorites'];
 // Pixels to move before drag starts (prevents accidental drags)
 const DRAG_ACTIVATION_DISTANCE = 8;
 
+function getBrowserPageId(data: unknown): string {
+  const pageId = (data as BrowserPanelTabData | undefined)?.pageId;
+  return typeof pageId === 'string' ? pageId.trim() : '';
+}
+
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, removeTab, addTab, reorderTabs, pinTab } = useContentPanelStore();
   const { setContentPanelOpen } = usePanel();
@@ -117,6 +124,17 @@ export function TabBar() {
     });
   };
 
+  const handleCloseTab = useCallback((tab: Tab) => {
+    const pageId = tab.type === 'browser' ? getBrowserPageId(tab.data) : '';
+    if (pageId && window.electronAPI?.browser?.closeTab) {
+      void window.electronAPI.browser.closeTab(pageId).catch((error) => {
+        console.error('[TabBar] Failed to close native browser tab:', error);
+      });
+    }
+
+    removeTab(tab.id);
+  }, [removeTab]);
+
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
       {/* Tab list */}
@@ -136,7 +154,7 @@ export function TabBar() {
                 tab={tab}
                 active={tab.id === activeTabId}
                 onSelect={() => setActiveTab(tab.id)}
-                onClose={() => removeTab(tab.id)}
+                onClose={() => handleCloseTab(tab)}
                 onPin={() => pinTab(tab.id)}
               />
             ))}

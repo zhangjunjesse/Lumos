@@ -1,143 +1,112 @@
-/**
- * Browser Toolbar Component
- * 浏览器工具栏（地址栏、前进后退按钮等）
- */
-
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { BrowserTab } from '@/types/browser';
-import { ArrowLeft, ArrowRight, RotateCw, Home, Share } from 'lucide-react';
-import { URLAutocomplete } from './URLAutocomplete';
+import { ArrowLeft, ArrowRight, Globe2, Plus, RotateCw, Square } from 'lucide-react';
+import type { BrowserTab } from '@/types/browser';
+import { Button } from '@/components/ui/button';
+import { URLAutocomplete, type URLSuggestion } from './URLAutocomplete';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export interface BrowserToolbarProps {
   activeTab?: BrowserTab;
+  urlValue: string;
   isLoading: boolean;
-  onNavigate: (url: string) => void;
-  onCreateTab: (url?: string) => void;
-  onShareToAI?: () => void;
+  suggestions?: URLSuggestion[];
+  onUrlChange: (value: string) => void;
+  onNavigate: (value: string) => void;
+  onCreateTab: () => void;
+  onBack: () => void;
+  onForward: () => void;
+  onReload: () => void;
+  onStop: () => void;
 }
 
 export function BrowserToolbar({
   activeTab,
+  urlValue,
   isLoading,
+  suggestions = [],
+  onUrlChange,
   onNavigate,
   onCreateTab,
-  onShareToAI,
+  onBack,
+  onForward,
+  onReload,
+  onStop,
 }: BrowserToolbarProps) {
-  const [urlInput, setUrlInput] = useState('');
-
-  useEffect(() => {
-    if (activeTab) {
-      setUrlInput(activeTab.url);
-    }
-  }, [activeTab]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    processURL(urlInput);
-  };
-
-  const processURL = (input: string) => {
-    let url = input.trim();
-
-    if (!url) return;
-
-    // 简单的 URL 补全
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      if (url.includes('.') && !url.includes(' ')) {
-        url = `https://${url}`;
-      } else {
-        url = `https://www.google.com/search?q=${encodeURIComponent(url)}`;
-      }
-    }
-
-    onNavigate(url);
-  };
-
-  const handleGoBack = async () => {
-    if (activeTab?.canGoBack) {
-      // TODO: 实现后退功能
-      console.log('Go back');
-    }
-  };
-
-  const handleGoForward = async () => {
-    if (activeTab?.canGoForward) {
-      // TODO: 实现前进功能
-      console.log('Go forward');
-    }
-  };
-
-  const handleReload = async () => {
-    if (activeTab) {
-      onNavigate(activeTab.url);
-    }
-  };
-
-  const handleGoHome = () => {
-    onCreateTab('https://www.google.com');
-  };
+  const { t } = useTranslation();
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 border-b border-gray-300">
-      {/* 导航按钮 */}
-      <button
-        onClick={handleGoBack}
-        disabled={!activeTab?.canGoBack}
-        className="p-2 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        title="Go back"
-      >
-        <ArrowLeft size={18} />
-      </button>
+    <div className="border-b border-border/60 bg-background/95 px-4 pb-3 pt-4 backdrop-blur">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 p-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="rounded-full"
+            disabled={!activeTab?.canGoBack}
+            onClick={onBack}
+            title={t('browser.back')}
+          >
+            <ArrowLeft className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="rounded-full"
+            disabled={!activeTab?.canGoForward}
+            onClick={onForward}
+            title={t('browser.forward')}
+          >
+            <ArrowRight className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="rounded-full"
+            disabled={!activeTab}
+            onClick={isLoading ? onStop : onReload}
+            title={isLoading ? t('browser.stopLoading') : t('browser.reload')}
+          >
+            {isLoading ? <Square className="size-3.5 fill-current" /> : <RotateCw className="size-4" />}
+          </Button>
+        </div>
 
-      <button
-        onClick={handleGoForward}
-        disabled={!activeTab?.canGoForward}
-        className="p-2 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        title="Go forward"
-      >
-        <ArrowRight size={18} />
-      </button>
+        <div className="relative min-w-[280px] flex-1">
+          <div className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-muted-foreground">
+            <Globe2 className="size-4" />
+          </div>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onNavigate(urlValue);
+            }}
+          >
+            <URLAutocomplete
+              value={urlValue}
+              suggestions={suggestions}
+              placeholder={t('browser.urlPlaceholder')}
+              className="w-full"
+              onChange={onUrlChange}
+              onSubmit={onNavigate}
+              inputClassName="pl-10"
+            />
+          </form>
+        </div>
 
-      <button
-        onClick={handleReload}
-        disabled={!activeTab || isLoading}
-        className="p-2 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-        title="Reload"
-      >
-        <RotateCw size={18} className={isLoading ? 'animate-spin' : ''} />
-      </button>
-
-      <button
-        onClick={handleGoHome}
-        className="p-2 rounded hover:bg-gray-200"
-        title="Home"
-      >
-        <Home size={18} />
-      </button>
-
-      {/* 地址栏 */}
-      <form onSubmit={handleSubmit} className="flex-1">
-        <URLAutocomplete
-          value={urlInput}
-          onChange={setUrlInput}
-          onSelect={processURL}
-          placeholder="Enter URL or search..."
-        />
-      </form>
-
-      {/* 分享到 AI 按钮 */}
-      {onShareToAI && (
-        <button
-          onClick={onShareToAI}
-          disabled={!activeTab}
-          className="p-2 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Share page to AI"
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="rounded-full"
+          onClick={onCreateTab}
         >
-          <Share size={18} />
-        </button>
-      )}
+          <Plus className="size-4" />
+          {t('browser.newTab')}
+        </Button>
+      </div>
     </div>
   );
 }

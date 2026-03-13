@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
 import { getMainAgentTeamConfigurationPrompt, upsertTeamPlanTask } from '@/lib/db/tasks';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
 import {
@@ -785,31 +785,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine model: request override > session model > default setting
-    const effectiveModel = model || session.model || getSetting('default_model') || undefined;
+    const effectiveModel = model || session.requested_model || session.model || getSetting('default_model') || undefined;
 
     // Persist model and provider to session so usage stats can group by model+provider.
     // This runs on every message but the DB writes are cheap (single UPDATE by PK).
-    if (effectiveModel && effectiveModel !== session.model) {
+    if (effectiveModel && effectiveModel !== (session.requested_model || session.model)) {
       updateSessionModel(session_id, effectiveModel);
     }
 
-    // Resolve provider: explicit provider_id > default_provider_id > environment variables
+    // Resolve provider: explicit provider_id > default_provider_id > session provider_id > environment variables
     let resolvedProvider: import('@/types').ApiProvider | undefined;
-    const effectiveProviderId = provider_id || session.provider_id || '';
+    const defaultProviderId = getDefaultProviderId() || '';
+    const effectiveProviderId = provider_id || defaultProviderId || session.provider_id || '';
     if (effectiveProviderId && effectiveProviderId !== 'env') {
       resolvedProvider = getProvider(effectiveProviderId);
       if (!resolvedProvider) {
         // Requested provider not found, try default
-        const defaultId = getDefaultProviderId();
-        if (defaultId) {
-          resolvedProvider = getProvider(defaultId);
+        if (defaultProviderId) {
+          resolvedProvider = getProvider(defaultProviderId);
         }
-      }
-    } else if (!effectiveProviderId) {
-      // No provider specified, try default
-      const defaultId = getDefaultProviderId();
-      if (defaultId) {
-        resolvedProvider = getProvider(defaultId);
       }
     }
     // effectiveProviderId === 'env' → resolvedProvider stays undefined → uses env vars
@@ -1078,7 +1072,7 @@ async function collectStreamResponse(
                   updateSdkSessionId(sessionId, statusData.session_id);
                 }
                 if (statusData.model) {
-                  updateSessionModel(sessionId, statusData.model);
+                  updateSessionResolvedModel(sessionId, statusData.model);
                 }
               } catch {
                 // skip malformed status data

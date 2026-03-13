@@ -18,7 +18,7 @@ export interface SSECallbacks {
   onToolResult: (result: ToolResultInfo) => void;
   onToolOutput: (data: string) => void;
   onToolProgress: (toolName: string, elapsedSeconds: number) => void;
-  onStatus: (text: string | undefined) => void;
+  onStatus: (text: string | undefined, statusData?: Record<string, unknown> | null) => void;
   onResult: (usage: TokenUsage | null) => void;
   onPermissionRequest: (data: PermissionRequestEvent) => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
@@ -87,14 +87,14 @@ function handleSSEEvent(
       try {
         const statusData = JSON.parse(event.data);
         if (statusData.session_id) {
-          callbacks.onStatus(`Connected (${statusData.model || 'claude'})`);
+          callbacks.onStatus(`Connected (${statusData.model || 'claude'})`, statusData);
         } else if (statusData.notification) {
-          callbacks.onStatus(statusData.message || statusData.title || undefined);
+          callbacks.onStatus(statusData.message || statusData.title || undefined, statusData);
         } else {
-          callbacks.onStatus(typeof event.data === 'string' ? event.data : undefined);
+          callbacks.onStatus(typeof event.data === 'string' ? event.data : undefined, statusData);
         }
       } catch {
-        callbacks.onStatus(event.data || undefined);
+        callbacks.onStatus(event.data || undefined, null);
       }
       return accumulated;
     }
@@ -215,7 +215,7 @@ export function useSSEStream() {
         onToolResult: (r) => callbacksRef.current?.onToolResult(r),
         onToolOutput: (d) => callbacksRef.current?.onToolOutput(d),
         onToolProgress: (n, s) => callbacksRef.current?.onToolProgress(n, s),
-        onStatus: (t) => callbacksRef.current?.onStatus(t),
+        onStatus: (t, data) => callbacksRef.current?.onStatus(t, data),
         onResult: (u) => callbacksRef.current?.onResult(u),
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),

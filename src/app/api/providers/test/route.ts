@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
       }),

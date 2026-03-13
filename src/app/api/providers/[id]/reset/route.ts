@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProvider, resetBuiltinProvider } from '@/lib/db';
-import type { ProviderResponse, ErrorResponse } from '@/types';
+import type { ProviderResponse, ErrorResponse, ApiProvider } from '@/types';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-function maskApiKey(provider: { id: string; name: string; provider_type: string; base_url: string; api_key: string; is_active: number; sort_order: number; extra_env: string; notes: string; is_builtin: number; user_modified: number; created_at: string; updated_at: string }) {
+function maskApiKey(provider: ApiProvider): ApiProvider {
   let maskedKey = provider.api_key;
   if (maskedKey && maskedKey.length > 8) {
     maskedKey = '***' + maskedKey.slice(-8);

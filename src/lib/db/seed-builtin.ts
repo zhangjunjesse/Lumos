@@ -25,6 +25,9 @@ export function seedBuiltinProviders(db: Database.Database): void {
       is_active: 0,
       sort_order: 0,
       extra_env: '{}',
+      model_catalog: '[]',
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
       notes: 'Official Anthropic API',
       is_builtin: 1,
       user_modified: 0,
@@ -32,11 +35,11 @@ export function seedBuiltinProviders(db: Database.Database): void {
   ];
 
   const stmt = db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
 
   for (const p of providers) {
-    stmt.run(p.id, p.name, p.provider_type, p.base_url, p.api_key, p.is_active, p.sort_order, p.extra_env, p.notes, p.is_builtin, p.user_modified, now, now);
+    stmt.run(p.id, p.name, p.provider_type, p.base_url, p.api_key, p.is_active, p.sort_order, p.extra_env, p.model_catalog, p.model_catalog_source, p.model_catalog_updated_at, p.notes, p.is_builtin, p.user_modified, now, now);
   }
 
   console.log(`[seed] Created ${providers.length} built-in providers`);

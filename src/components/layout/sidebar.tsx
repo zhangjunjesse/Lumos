@@ -20,6 +20,7 @@ import {
   BookOpen,
   Puzzle,
   Settings2,
+  Globe,
   SidebarLeft01Icon,
   SidebarRight01Icon,
   Moon,
@@ -43,6 +44,7 @@ const mainNavItems = [
   { href: "/team", labelKey: "sidebar.team" as const, icon: UserGroupIcon },
   { href: "/tasks", labelKey: "sidebar.tasks" as const, icon: Task01Icon },
   { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
+  { href: "/browser", labelKey: "tab.browser" as const, icon: Globe },
 ] as const;
 
 const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];
@@ -130,7 +132,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         </Link>
       </div>
 
-      <ScrollArea className="flex-1 px-2 py-1">
+      <ScrollArea className="sidebar-scroll-area flex-1 px-2 py-1">
         {/* Main nav */}
         <nav className="space-y-0.5">
           {mainNavItems.map((item) => (

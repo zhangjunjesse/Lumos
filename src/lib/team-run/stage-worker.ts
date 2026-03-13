@@ -128,7 +128,7 @@ export class StageWorker {
       const queryResult = query({
         prompt,
         options: {
-          workingDirectory: context.workspace.stageWorkDir
+          cwd: context.workspace.stageWorkDir
         }
       })
 

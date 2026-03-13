@@ -1,5 +1,5 @@
 import type { TeamPlanRole, TeamRunStage, TeamPlan } from '@/types';
-import { createClaudeClient } from '@/lib/claude-client';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 export interface PhaseContext {
   phase: TeamRunStage;
@@ -33,20 +33,28 @@ export class AgentExecutor {
       const userMessage = this.buildUserMessage(context);
 
       // 3. 创建 Claude client
-      const client = await createClaudeClient({
-        workingDirectory: context.workingDirectory,
-        systemPrompt,
+      let response = '';
+      const result = query({
+        prompt: userMessage,
+        options: {
+          cwd: context.workingDirectory,
+          systemPrompt,
+        },
       });
 
-      // 4. 执行 agent
-      const response = await client.sendMessage(userMessage);
+      for await (const message of result) {
+        const assistantMessage = message as unknown as { type?: string; text?: string };
+        if (assistantMessage.type === 'assistant' && typeof assistantMessage.text === 'string') {
+          response += assistantMessage.text;
+        }
+      }
 
       // 5. 提取结果
-      const result = this.extractResult(response);
+      const finalResult = this.extractResult(response);
 
       return {
         success: true,
-        result,
+        result: finalResult,
       };
     } catch (error) {
       return {

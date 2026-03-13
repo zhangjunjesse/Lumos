@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API 配置管理 - 方案 A Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 680px;
+      width: 100%;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 32px 32px 24px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: #666;
+    }
+
+    .config-list {
+      padding: 16px;
+    }
+
+    .config-item {
+      display: flex;
+      align-items: center;
+      padding: 16px;
+      margin-bottom: 8px;
+      border-radius: 12px;
+      border: 2px solid transparent;
+      background: #fafafa;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .config-item:hover {
+      background: #f5f5f5;
+      border-color: #e0e0e0;
+    }
+
+    .config-item.active {
+      background: linear-gradient(135deg, #667eea15, #764ba215);
+      border-color: #667eea;
+    }
+
+    .config-item.active:hover {
+      background: linear-gradient(135deg, #667eea25, #764ba225);
+    }
+
+    .config-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+      margin-right: 14px;
+    }
+
+    .config-item.active .config-icon {
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .config-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .config-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .config-description {
+      font-size: 13px;
+      color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .config-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #667eea;
+      background: #667eea20;
+      border-radius: 4px;
+    }
+
+    .config-actions {
+      display: flex;
+      gap: 6px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      margin-left: 12px;
+    }
+
+    .config-item:hover .config-actions {
+      opacity: 1;
+    }
+
+    .config-item.active .config-actions {
+      opacity: 0;
+    }
+
+    .action-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: none;
+      background: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      color: #666;
+      font-size: 16px;
+    }
+
+    .action-btn:hover {
+      background: #667eea;
+      color: #fff;
+      transform: scale(1.05);
+    }
+
+    .action-btn.delete:hover {
+      background: #ef4444;
+    }
+
+    .add-button {
+      width: 100%;
+      padding: 16px;
+      margin-top: 8px;
+      border: 2px dashed #d0d0d0;
+      background: transparent;
+      border-radius: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #666;
+      transition: all 0.2s ease;
+    }
+
+    .add-button:hover {
+      border-color: #667eea;
+      color: #667eea;
+      background: #667eea08;
+    }
+
+    .add-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #667eea;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 300;
+    }
+
+    /* 弹窗样式 */
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .modal.show {
+      display: flex;
+    }
+
+    .modal-content {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 480px;
+      width: 90%;
+      animation: slideUp 0.3s ease;
+    }
+
+    .modal-header {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 8px;
+    }
+
+    .form-input,
+    .form-select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+
+    .form-input:focus,
+    .form-select:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #667eea08;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-secondary {
+      background: #f5f5f5;
+      color: #666;
+    }
+
+    .btn-secondary:hover {
+      background: #e8e8e8;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .checkmark {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #10b981;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      margin-left: auto;
+    }
+
+    .builtin-tag {
+      font-size: 11px;
+      color: #888;
+      background: #f0f0f0;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <h1>API 配置</h1>
+        <p>管理和切换不同的 Claude API 配置</p>
+      </div>
+
+      <div class="config-list">
+        <!-- 配置项 1: Claude Official (当前使用) -->
+        <div class="config-item active" data-id="1">
+          <div class="config-icon">🤖</div>
+          <div class="config-content">
+            <div class="config-title">
+              Claude Official
+              <span class="builtin-tag">内置</span>
+            </div>
+            <div class="config-description">api.anthropic.com • sk-ant-***xyz</div>
+          </div>
+          <div class="checkmark">✓</div>
+        </div>
+
+        <!-- 配置项 2: OpenRouter -->
+        <div class="config-item" data-id="2">
+          <div class="config-icon" style="background: linear-gradient(135deg, #f59e0b, #ef4444);">🌐</div>
+          <div class="config-content">
+            <div class="config-title">我的 OpenRouter</div>
+            <div class="config-description">openrouter.ai • sk-or-***abc</div>
+          </div>
+          <div class="config-actions">
+            <button class="action-btn edit" title="编辑">✏️</button>
+            <button class="action-btn delete" title="删除">🗑️</button>
+          </div>
+        </div>
+
+        <!-- 配置项 3: 代理服务器 -->
+        <div class="config-item" data-id="3">
+          <div class="config-icon" style="background: linear-gradient(135deg, #06b6d4, #3b82f6);">🔐</div>
+          <div class="config-content">
+            <div class="config-title">公司代理</div>
+            <div class="config-description">proxy.company.com • sk-***def</div>
+          </div>
+          <div class="config-actions">
+            <button class="action-btn edit" title="编辑">✏️</button>
+            <button class="action-btn delete" title="删除">🗑️</button>
+          </div>
+        </div>
+
+        <!-- 配置项 4: Vertex AI -->
+        <div class="config-item" data-id="4">
+          <div class="config-icon" style="background: linear-gradient(135deg, #8b5cf6, #ec4899);">☁️</div>
+          <div class="config-content">
+            <div class="config-title">Google Vertex AI</div>
+            <div class="config-description">vertex-ai.googleapis.com • project-***</div>
+          </div>
+          <div class="config-actions">
+            <button class="action-btn edit" title="编辑">✏️</button>
+            <button class="action-btn delete" title="删除">🗑️</button>
+          </div>
+        </div>
+
+        <!-- 添加按钮 -->
+        <button class="add-button" id="addBtn">
+          <div class="add-icon">+</div>
+          添加新配置
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加/编辑弹窗 -->
+  <div class="modal" id="configModal">
+    <div class="modal-content">
+      <div class="modal-header">添加新配置</div>
+
+      <form id="configForm">
+        <div class="form-group">
+          <label class="form-label">配置名称</label>
+          <input type="text" class="form-input" placeholder="例如：我的测试账号" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">服务商</label>
+          <select class="form-select" required>
+            <option value="">选择服务商...</option>
+            <option value="claude">Claude Official</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="vertex">Google Vertex AI</option>
+            <option value="custom">自定义服务商</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <input type="password" class="form-input" placeholder="sk-ant-..." required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Base URL（可选）</label>
+          <input type="url" class="form-input" placeholder="https://api.anthropic.com">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Model（可选）</label>
+          <input type="text" class="form-input" placeholder="claude-sonnet-4.5">
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelBtn">取消</button>
+          <button type="submit" class="btn btn-primary">保存配置</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // 切换配置
+    document.querySelectorAll('.config-item').forEach(item => {
+      item.addEventListener('click', function(e) {
+        // 忽略按钮点击
+        if (e.target.closest('.action-btn')) return;
+
+        // 移除所有 active
+        document.querySelectorAll('.config-item').forEach(i => i.classList.remove('active'));
+
+        // 添加 active
+        this.classList.add('active');
+
+        // 模拟切换动画
+        this.style.transform = 'scale(0.98)';
+        setTimeout(() => {
+          this.style.transform = '';
+        }, 100);
+      });
+    });
+
+    // 打开添加弹窗
+    document.getElementById('addBtn').addEventListener('click', () => {
+      document.getElementById('configModal').classList.add('show');
+    });
+
+    // 关闭弹窗
+    document.getElementById('cancelBtn').addEventListener('click', () => {
+      document.getElementById('configModal').classList.remove('show');
+    });
+
+    // 点击背景关闭
+    document.getElementById('configModal').addEventListener('click', (e) => {
+      if (e.target.id === 'configModal') {
+        e.target.classList.remove('show');
+      }
+    });
+
+    // 表单提交
+    document.getElementById('configForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      alert('配置保存成功！（这是演示，实际会调用 API）');
+      document.getElementById('configModal').classList.remove('show');
+    });
+
+    // 删除按钮
+    document.querySelectorAll('.delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm('确定删除这个配置吗？')) {
+          btn.closest('.config-item').style.opacity = '0';
+          setTimeout(() => {
+            btn.closest('.config-item').remove();
+          }, 200);
+        }
+      });
+    });
+
+    // 编辑按钮
+    document.querySelectorAll('.edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.getElementById('configModal').classList.add('show');
+        // 这里可以填充表单数据
+      });
+    });
+  </script>
+</body>
+</html>

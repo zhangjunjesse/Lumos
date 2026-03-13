@@ -1,13 +1,10 @@
-/**
- * Browser Tab Bar Component
- * 浏览器标签栏
- */
-
 'use client';
 
-import React from 'react';
-import { BrowserTab } from '@/types/browser';
-import { X, Plus } from 'lucide-react';
+import { Loader2, Plus, X } from 'lucide-react';
+import type { BrowserTab } from '@/types/browser';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export interface BrowserTabBarProps {
   tabs: BrowserTab[];
@@ -17,6 +14,20 @@ export interface BrowserTabBarProps {
   onCreateTab: () => void;
 }
 
+function getTabLabel(tab: BrowserTab, newTabText: string): string {
+  const title = tab.title.trim();
+  if (title) {
+    return title;
+  }
+
+  try {
+    const parsed = new URL(tab.url);
+    return parsed.hostname.replace(/^www\./, '') || newTabText;
+  } catch {
+    return newTabText;
+  }
+}
+
 export function BrowserTabBar({
   tabs,
   activeTabId,
@@ -24,56 +35,71 @@ export function BrowserTabBar({
   onCloseTab,
   onCreateTab,
 }: BrowserTabBarProps) {
+  const { t } = useTranslation();
+
   return (
-    <div className="flex items-center gap-1 px-2 py-1 bg-gray-200 border-b border-gray-300 overflow-x-auto">
-      {tabs.map((tab) => (
-        <div
-          key={tab.id}
-          className={`
-            flex items-center gap-2 px-3 py-2 rounded-t-lg cursor-pointer
-            min-w-[120px] max-w-[200px] group
-            ${
-              tab.id === activeTabId
-                ? 'bg-white border-t border-l border-r border-gray-300'
-                : 'bg-gray-100 hover:bg-gray-50'
-            }
-          `}
-          onClick={() => onSwitchTab(tab.id)}
-        >
-          {/* Favicon */}
-          {tab.favicon ? (
-            <img src={tab.favicon} alt="" className="w-4 h-4 flex-shrink-0" />
-          ) : (
-            <div className="w-4 h-4 flex-shrink-0 bg-gray-300 rounded" />
-          )}
-
-          {/* Title */}
-          <span className="flex-1 truncate text-sm">
-            {tab.title || 'New Tab'}
-          </span>
-
-          {/* Close button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onCloseTab(tab.id);
+    <div className="border-b border-border/60 bg-muted/35 px-3 py-2">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            onClick={() => onSwitchTab(tab.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSwitchTab(tab.id);
+              }
             }}
-            className="p-1 rounded hover:bg-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
-            title="Close tab"
+            role="button"
+            tabIndex={0}
+            className={cn(
+              'group flex min-w-[180px] max-w-[240px] items-center gap-2 rounded-2xl border px-3 py-2 text-left transition-colors',
+              tab.id === activeTabId
+                ? 'border-border bg-background text-foreground shadow-sm'
+                : 'border-transparent bg-background/55 text-muted-foreground hover:border-border/60 hover:bg-background/90',
+            )}
           >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
+            <div className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+              {tab.isLoading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : tab.favicon ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={tab.favicon} alt="" className="size-4 rounded-sm object-cover" />
+              ) : (
+                <span className="text-[11px] font-semibold uppercase">
+                  {getTabLabel(tab, t('browser.newTab')).slice(0, 1)}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{getTabLabel(tab, t('browser.newTab'))}</div>
+              <div className="truncate text-xs text-muted-foreground">{tab.url || 'about:blank'}</div>
+            </div>
+            <button
+              type="button"
+              className="rounded-full p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCloseTab(tab.id);
+              }}
+              title={t('browser.closeTab')}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        ))}
 
-      {/* New tab button */}
-      <button
-        onClick={onCreateTab}
-        className="p-2 rounded hover:bg-gray-300"
-        title="New tab"
-      >
-        <Plus size={18} />
-      </button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          className="shrink-0 rounded-full"
+          onClick={onCreateTab}
+          title={t('browser.newTab')}
+        >
+          <Plus className="size-4" />
+        </Button>
+      </div>
     </div>
   );
 }

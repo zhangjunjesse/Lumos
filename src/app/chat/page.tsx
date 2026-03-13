@@ -11,6 +11,7 @@ import { useMemoryToast } from '@/components/memory/memory-toast-container';
 import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog';
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
 import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
+import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 interface ToolUseInfo {
   id: string;
@@ -55,7 +56,7 @@ export default function NewChatPage() {
   const [statusText, setStatusText] = useState<string | undefined>();
   const [workingDir, setWorkingDir] = useState('');
   const [mode, setMode] = useState('code');
-  const [currentModel, setCurrentModel] = useState('sonnet');
+  const [currentModel, setCurrentModel] = useState<string>(BUILTIN_CLAUDE_MODEL_IDS.sonnet);
   const [currentProviderId, setCurrentProviderId] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);

@@ -4,6 +4,7 @@
  */
 import type { TagResult, CategorizedTagResult, CategorizedTag, TagCategory } from './types';
 import { callKnowledgeModel } from './llm';
+import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 const VALID_CATEGORIES: TagCategory[] = ['domain', 'tech', 'doctype', 'project', 'custom'];
 
@@ -31,7 +32,7 @@ ${existing}标签分类：
 
 async function callHaiku(content: string, existingTags: string[]): Promise<string> {
   return callKnowledgeModel({
-    model: 'claude-haiku-4-20250514',
+    model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
     maxTokens: 400,
     timeoutMs: 8000,
     prompt: buildCategorizedPrompt(existingTags) + content.slice(0, 3000),

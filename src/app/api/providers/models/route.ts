@@ -1,16 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getAllProviders, getDefaultProviderId } from '@/lib/db';
-import type { ApiProvider, ErrorResponse, ProviderModelGroup } from '@/types';
+import { DEFAULT_PROVIDER_MODEL_OPTIONS, getProviderModelCatalogMeta } from '@/lib/model-metadata';
+import type { ApiProvider, ErrorResponse, ProviderModelGroup, ProviderModelOption } from '@/types';
 
-// Default Claude model options
-const DEFAULT_MODELS = [
-  { value: 'sonnet', label: 'Sonnet 4.6' },
-  { value: 'opus', label: 'Opus 4.6' },
-  { value: 'haiku', label: 'Haiku 4.5' },
-];
-
-// Provider-specific model label mappings (base_url -> alias -> display name)
-const PROVIDER_MODEL_LABELS: Record<string, { value: string; label: string }[]> = {
+const PROVIDER_MODEL_LABELS: Record<string, ProviderModelOption[]> = {
   'https://api.z.ai/api/anthropic': [
     { value: 'sonnet', label: 'GLM-4.7' },
     { value: 'opus', label: 'GLM-5' },
@@ -46,18 +39,14 @@ const PROVIDER_MODEL_LABELS: Record<string, { value: string; label: string }[]> 
     { value: 'opus', label: 'MiniMax-M2.5' },
     { value: 'haiku', label: 'MiniMax-M2.5' },
   ],
-  'https://openrouter.ai/api': [
-    { value: 'sonnet', label: 'Sonnet 4.6' },
-    { value: 'opus', label: 'Opus 4.6' },
-    { value: 'haiku', label: 'Haiku 4.5' },
-  ],
+  'https://openrouter.ai/api': DEFAULT_PROVIDER_MODEL_OPTIONS,
 };
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().toLowerCase().replace(/\/+$/, '');
 }
 
-const NORMALIZED_PROVIDER_MODEL_LABELS = new Map<string, { value: string; label: string }[]>(
+const NORMALIZED_PROVIDER_MODEL_LABELS = new Map<string, ProviderModelOption[]>(
   Object.entries(PROVIDER_MODEL_LABELS).map(([baseUrl, labels]) => [normalizeBaseUrl(baseUrl), labels]),
 );
 
@@ -76,47 +65,31 @@ function providerPriority(provider: ApiProvider, defaultProviderId: string): num
   return 0;
 }
 
-/**
- * Deduplicate models: if multiple aliases map to the same label, keep only the first one.
- */
-function deduplicateModels(models: { value: string; label: string }[]): { value: string; label: string }[] {
+function deduplicateModels(models: ProviderModelOption[]): ProviderModelOption[] {
   const seen = new Set<string>();
-  const result: { value: string; label: string }[] = [];
-  for (const m of models) {
-    if (!seen.has(m.label)) {
-      seen.add(m.label);
-      result.push(m);
-    }
+  const result: ProviderModelOption[] = [];
+
+  for (const model of models) {
+    const key = `${model.value}::${model.label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(model);
   }
+
   return result;
 }
 
 export async function GET() {
   try {
     const providers = getAllProviders();
-    const groups: ProviderModelGroup[] = [];
     const defaultProviderId = getDefaultProviderId() || '';
-
-    // Check for environment variables
-    const hasEnvKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-    if (hasEnvKey) {
-      groups.push({
-        provider_id: 'env',
-        provider_name: 'Environment',
-        provider_type: 'anthropic',
-        models: DEFAULT_MODELS,
-      });
-    }
-
-    // Provider types that are not LLMs (e.g. image generation) — skip in chat model selector
-    const MEDIA_PROVIDER_TYPES = new Set(['gemini-image']);
-
-    // Collapse providers that point to the same upstream to avoid duplicate model groups.
+    const groups: ProviderModelGroup[] = [];
     const dedupedProviders = new Map<string, ApiProvider>();
     const providerKeyById = new Map<string, string>();
+    const hasEnvKey = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
     for (const provider of providers) {
-      if (MEDIA_PROVIDER_TYPES.has(provider.provider_type)) continue;
+      if (provider.provider_type === 'gemini-image') continue;
       const key = getProviderGroupKey(provider);
       providerKeyById.set(provider.id, key);
 
@@ -133,33 +106,50 @@ export async function GET() {
       }
     }
 
-    // Build a group for each configured provider
     for (const provider of dedupedProviders.values()) {
-      const matched = NORMALIZED_PROVIDER_MODEL_LABELS.get(normalizeBaseUrl(provider.base_url || ''));
-      const rawModels = matched || DEFAULT_MODELS;
-      const models = deduplicateModels(rawModels);
+      const catalog = getProviderModelCatalogMeta(provider);
+      const serviceSpecificDefaults = catalog.usesDefault
+        ? NORMALIZED_PROVIDER_MODEL_LABELS.get(normalizeBaseUrl(provider.base_url || ''))
+        : undefined;
+      const models = deduplicateModels(serviceSpecificDefaults || catalog.models);
 
       groups.push({
         provider_id: provider.id,
         provider_name: provider.name,
         provider_type: provider.provider_type,
         models,
+        model_catalog_source: catalog.source,
+        model_catalog_updated_at: catalog.updatedAt,
+        model_catalog_uses_default: catalog.usesDefault,
       });
     }
 
-    // If no groups at all (no env, no providers), show default Anthropic group
+    if (groups.length === 0 && hasEnvKey) {
+      groups.push({
+        provider_id: 'env',
+        provider_name: 'Environment',
+        provider_type: 'anthropic',
+        models: DEFAULT_PROVIDER_MODEL_OPTIONS,
+        model_catalog_source: 'default',
+        model_catalog_updated_at: null,
+        model_catalog_uses_default: true,
+      });
+    }
+
     if (groups.length === 0) {
       groups.push({
         provider_id: 'env',
         provider_name: 'Anthropic',
         provider_type: 'anthropic',
-        models: DEFAULT_MODELS,
+        models: DEFAULT_PROVIDER_MODEL_OPTIONS,
+        model_catalog_source: 'default',
+        model_catalog_updated_at: null,
+        model_catalog_uses_default: true,
       });
     }
 
-    // Resolve default provider after deduplication.
+    const groupIds = new Set(groups.map((group) => group.provider_id));
     let resolvedDefaultProviderId = defaultProviderId;
-    const groupIds = new Set(groups.map((g) => g.provider_id));
 
     if (!resolvedDefaultProviderId || !groupIds.has(resolvedDefaultProviderId)) {
       const key = resolvedDefaultProviderId ? providerKeyById.get(resolvedDefaultProviderId) : undefined;
@@ -170,8 +160,10 @@ export async function GET() {
         }
       }
     }
+
     if (!resolvedDefaultProviderId || !groupIds.has(resolvedDefaultProviderId)) {
-      resolvedDefaultProviderId = groups[0].provider_id;
+      const firstConfiguredGroup = groups.find((group) => group.provider_id !== 'env');
+      resolvedDefaultProviderId = firstConfiguredGroup?.provider_id || groups[0].provider_id;
     }
 
     return NextResponse.json({
@@ -181,7 +173,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to get models' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

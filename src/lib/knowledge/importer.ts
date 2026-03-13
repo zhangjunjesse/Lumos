@@ -10,6 +10,12 @@ import { autoTagCategorized } from './tagger';
 import { summarizeAndEmbed } from './summarizer';
 import type { KbStageStatus, KbProcessingStatus, CategorizedTag } from './types';
 import { buildTagCandidates, syncItemTagSystem } from './tag-system';
+import {
+  createDetail,
+  detailToJson,
+  resolveStatus,
+  stageFailed,
+} from './processing-status';
 
 interface ImportData {
   title: string;
@@ -24,53 +30,14 @@ interface ImportPipelineOptions {
   parseError?: string;
 }
 
-interface ProcessingDetail {
-  mode: 'full' | 'reference';
-  parse: KbStageStatus;
-  chunk: KbStageStatus;
-  bm25: KbStageStatus;
-  embedding: KbStageStatus;
-  summary: KbStageStatus;
-}
-
-function detailToJson(detail: ProcessingDetail): string {
-  return JSON.stringify(detail);
-}
-
-function createDetail(mode: 'full' | 'reference', parseStatus: KbStageStatus): ProcessingDetail {
-  const isReference = mode === 'reference';
-  return {
-    mode,
-    parse: parseStatus,
-    chunk: 'pending',
-    bm25: 'pending',
-    embedding: isReference ? 'skipped' : 'pending',
-    summary: isReference ? 'skipped' : 'pending',
-  };
-}
-
-function resolveStatus(detail: ProcessingDetail, hasError: boolean): KbProcessingStatus {
-  if (detail.mode === 'reference') {
-    if (detail.chunk === 'failed' || detail.bm25 === 'failed') return 'partial';
-    return 'reference_only';
+function formatStageError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
   }
-  const hardFailed = detail.parse === 'failed' || detail.chunk === 'failed' || detail.bm25 === 'failed';
-  if (hardFailed) return 'failed';
-  if (detail.summary === 'running') return 'summarizing';
-  if (detail.embedding === 'running') return 'embedding';
-  if (detail.bm25 === 'running') return 'indexing';
-  if (detail.chunk === 'running') return 'chunking';
-  if (detail.parse === 'running') return 'parsing';
-  const stageValues = [detail.parse, detail.chunk, detail.bm25, detail.embedding, detail.summary];
-  if (stageValues.every((value) => value === 'done' || value === 'skipped')) return 'ready';
-  if (detail.embedding === 'failed') return 'partial';
-  if (detail.summary === 'failed') return 'ready';
-  if (hasError) return 'partial';
-  return 'pending';
-}
-
-function stageFailed(detail: ProcessingDetail): boolean {
-  return [detail.parse, detail.chunk, detail.bm25, detail.embedding, detail.summary].includes('failed');
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
 }
 
 /** Core import flow: store item → chunk → BM25 → embed → tag */
@@ -85,6 +52,7 @@ export async function processImport(
   const parseStatus: KbStageStatus = parseError ? 'failed' : 'done';
   const detail = createDetail(mode, parseStatus);
   const hasParseError = Boolean(parseError);
+  let processingError = parseError;
 
   // 1. Auto-tag
   let categorizedTags: CategorizedTag[] = [];
@@ -130,7 +98,7 @@ export async function processImport(
     store.updateItemProcessing(item.id, {
       status: finalStatus,
       detail: detailToJson(detail),
-      error: patch.error,
+      error: patch.error ?? processingError,
       chunkCount: patch.chunkCount,
     });
   };
@@ -148,14 +116,15 @@ export async function processImport(
     try {
       indexItemChunks(item.id, [fallbackText], data.title);
       detail.bm25 = 'done';
-    } catch {
+    } catch (error) {
       detail.bm25 = 'failed';
+      processingError = formatStageError(error, 'bm25_index_failed');
     }
 
     persist({
       status: resolveStatus(detail, stageFailed(detail)),
       chunkCount: 1,
-      error: parseError,
+      error: processingError,
     });
     return { item: store.getItem(item.id) || item, chunkCount: 1 };
   }
@@ -181,8 +150,9 @@ export async function processImport(
   try {
     indexItemChunks(item.id, chunks, data.title);
     detail.bm25 = 'done';
-  } catch {
+  } catch (error) {
     detail.bm25 = 'failed';
+    processingError = formatStageError(error, 'bm25_index_failed');
   }
   persist({});
 
@@ -195,6 +165,7 @@ export async function processImport(
   } catch (err) {
     console.error(`[kb] Embedding failed for ${item.id}:`, (err as Error).message);
     detail.embedding = 'failed';
+    processingError = formatStageError(err, 'embedding_failed');
   }
   persist({});
 
@@ -210,7 +181,7 @@ export async function processImport(
   }
   persist({
     status: resolveStatus(detail, stageFailed(detail)),
-    error: parseError,
+    error: processingError,
     chunkCount: chunks.length,
   });
 

@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useEffect, useState } from "react";
+import Image from "next/image";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { generateQrCodeDataUrl } from "@/lib/qr-code";
 
 export interface ShareLinkDialogProps {
   open: boolean;
@@ -11,9 +13,32 @@ export interface ShareLinkDialogProps {
 }
 
 export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDialogProps) {
-  const qrImageUrl = useMemo(() => {
-    if (!shareLink) return "";
-    return `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(shareLink)}&size=240x240`;
+  const [qrState, setQrState] = useState({ source: "", dataUrl: "" });
+  const qrImageUrl = qrState.source === shareLink ? qrState.dataUrl : "";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!shareLink) {
+      return;
+    }
+
+    generateQrCodeDataUrl(shareLink, 240)
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setQrState({ source: shareLink, dataUrl });
+        }
+      })
+      .catch((error) => {
+        console.error("[ShareLinkDialog] Failed to generate QR code:", error);
+        if (!cancelled) {
+          setQrState((current) => (current.source === shareLink ? { source: shareLink, dataUrl: "" } : current));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [shareLink]);
 
   return (
@@ -21,6 +46,9 @@ export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDial
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold">同步到飞书</DialogTitle>
+          <DialogDescription>
+            使用飞书扫描二维码，加入群组后消息将实时同步。
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           <p className="text-sm text-muted-foreground text-center">
@@ -29,9 +57,12 @@ export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDial
           <div className="flex justify-center">
             {qrImageUrl ? (
               <div className="p-4 bg-white rounded-lg">
-                <img
+                <Image
                   src={qrImageUrl}
                   alt="飞书群组二维码"
+                  width={240}
+                  height={240}
+                  unoptimized
                   className="w-[240px] h-[240px]"
                 />
               </div>

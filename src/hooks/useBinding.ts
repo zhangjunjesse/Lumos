@@ -31,7 +31,7 @@ export function useBinding(sessionId: string) {
     }
   }, [sessionId]);
 
-  const fetchStats = useCallback(async (_bindingId: number) => {
+  const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`/api/bridge/stats?sessionId=${encodeURIComponent(sessionId)}`);
       if (res.ok) {
@@ -45,7 +45,7 @@ export function useBinding(sessionId: string) {
 
   const updateBinding = useCallback(async (
     bindingId: number,
-    updates: { status?: "active" | "inactive" }
+    updates: { status?: "active" | "inactive" | "expired" }
   ) => {
     try {
       const res = await fetch(`/api/bridge/bindings/${bindingId}`, {
@@ -95,7 +95,7 @@ export function useBinding(sessionId: string) {
 
   useEffect(() => {
     if (binding?.id) {
-      fetchStats(binding.id);
+      fetchStats();
     }
   }, [binding?.id, fetchStats]);
 

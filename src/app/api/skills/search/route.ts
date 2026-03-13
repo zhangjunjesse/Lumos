@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getActiveProvider, getSetting } from '@/lib/db';
+import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
 
 interface SkillInfo {
   name: string;
@@ -14,9 +15,9 @@ interface SearchRequest {
 
 // Model alias -> full model ID
 const MODEL_MAP: Record<string, string> = {
-  sonnet: 'claude-sonnet-4-20250514',
-  opus: 'claude-opus-4-20250514',
-  haiku: 'claude-haiku-4-20250414',
+  sonnet: BUILTIN_CLAUDE_MODEL_IDS.sonnet,
+  opus: BUILTIN_CLAUDE_MODEL_IDS.opus,
+  haiku: BUILTIN_CLAUDE_MODEL_IDS.haiku,
 };
 
 interface ApiConfig {
@@ -75,7 +76,7 @@ function resolveApiConfig(model?: string): ApiConfig {
 
   // Resolve model
   const modelAlias = model || 'haiku';
-  const modelId = MODEL_MAP[modelAlias] || MODEL_MAP.haiku;
+  const modelId = MODEL_MAP[modelAlias] || resolveBuiltInClaudeModelId(modelAlias, 'haiku');
 
   // Build headers: OpenRouter uses Bearer auth, others use x-api-key
   const isOpenRouter = baseUrl.includes('openrouter.ai');

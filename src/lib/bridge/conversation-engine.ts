@@ -5,7 +5,7 @@ import {
   getEnabledMcpServersAsConfig,
   getSession,
   updateSdkSessionId,
-  updateSessionModel,
+  updateSessionResolvedModel,
 } from '@/lib/db';
 import { streamClaude } from '@/lib/claude-client';
 import { getFeishuCredentials } from '@/lib/feishu-config';
@@ -262,7 +262,7 @@ export class ConversationEngine {
       prompt: text,
       sessionId,
       sdkSessionId: session.sdk_session_id || undefined,
-      model: session.model || undefined,
+      model: session.requested_model || session.model || undefined,
       workingDirectory: session.working_directory || undefined,
       permissionMode: 'acceptEdits',
       files,
@@ -323,7 +323,7 @@ export class ConversationEngine {
                     updateSdkSessionId(sessionId, statusData.session_id);
                   }
                   if (statusData.model) {
-                    updateSessionModel(sessionId, statusData.model);
+                    updateSessionResolvedModel(sessionId, statusData.model);
                   }
                 } catch {
                   // ignore malformed status

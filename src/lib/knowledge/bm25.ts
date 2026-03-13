@@ -28,9 +28,17 @@ let _statsCache: {
   dlMap: Record<string, number>;
 } | null = null;
 
+function resolveJiebaDir(): string {
+  try {
+    return path.dirname(require.resolve('@node-rs/jieba/package.json'));
+  } catch {
+    return path.join(process.cwd(), 'node_modules', '@node-rs', 'jieba');
+  }
+}
+
 function getJieba() {
   if (!_jieba) {
-    const jiebaDir = path.join(process.cwd(), 'node_modules', '@node-rs', 'jieba');
+    const jiebaDir = resolveJiebaDir();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Jieba } = require('@node-rs/jieba');
     _jieba = Jieba.withDict(fs.readFileSync(path.join(jiebaDir, 'dict.txt')));

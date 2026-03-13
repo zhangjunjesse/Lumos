@@ -145,7 +145,7 @@ export function FeishuConfigCard() {
                 value={redirectUri}
                 onChange={(event) => setRedirectUri(event.target.value)}
                 className="h-9 text-sm"
-                placeholder="http://localhost:43127/api/feishu/auth/callback"
+                placeholder={effectiveRedirectUri || t("feishu.configRedirectAutoPlaceholder")}
               />
               <p className="text-[11px] text-muted-foreground">
                 {t("feishu.configRedirectHint")}

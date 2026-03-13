@@ -4,6 +4,7 @@ import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
 import Database from 'better-sqlite3';
 import { requireActiveFeishuUserAuth } from '@/lib/bridge/feishu-auth-guard';
 import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
+import { ensureActiveFeishuToken } from '@/lib/feishu-auth';
 
 interface StoredMessageRow {
   role: string;
@@ -12,10 +13,25 @@ interface StoredMessageRow {
 
 interface ActiveBindingRow {
   platform_chat_id: string;
+  platform_chat_name?: string;
+  share_link?: string;
 }
 
 interface ChatSessionRow {
   title?: string;
+}
+
+function ensureBindingMetadataColumns(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;
+  const names = new Set(columns.map((column) => column.name));
+
+  if (!names.has('platform_chat_name')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN platform_chat_name TEXT NOT NULL DEFAULT ''");
+  }
+
+  if (!names.has('share_link')) {
+    db.exec("ALTER TABLE session_bindings ADD COLUMN share_link TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 async function syncHistoryMessages(
@@ -81,6 +97,7 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
+    await ensureActiveFeishuToken();
     const auth = requireActiveFeishuUserAuth();
     if (!auth.ok) {
       return NextResponse.json(
@@ -94,6 +111,7 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
+    ensureBindingMetadataColumns(db);
     const { appId, appSecret } = getFeishuCredentials();
     const feishuApi = new FeishuAPI(appId, appSecret);
 
@@ -104,18 +122,31 @@ export async function POST(req: NextRequest) {
 
     if (existing?.platform_chat_id) {
       const link = await feishuApi.createChatLink(existing.platform_chat_id);
+      db.prepare(
+        'UPDATE session_bindings SET share_link = ?, updated_at = ? WHERE lumos_session_id = ? AND platform = ? AND status = ?',
+      ).run(link.share_link, Date.now(), sessionId, 'feishu', 'active');
       return NextResponse.json({ chatId: existing.platform_chat_id, shareLink: link.share_link });
     }
 
     const session = db.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as ChatSessionRow | undefined;
-    const chat = await feishuApi.createChat(`Lumos - ${session?.title || 'Chat'}`, 'Lumos AI助手');
+    const chatName = `Lumos - ${session?.title || 'Chat'}`;
+    const chat = await feishuApi.createChat(chatName, 'Lumos AI助手');
     const link = await feishuApi.createChatLink(chat.chat_id);
 
     const now = Date.now();
     db.prepare(
-      `INSERT INTO session_bindings (lumos_session_id, platform, platform_chat_id, status, created_at, updated_at)
-       VALUES (?, 'feishu', ?, 'active', ?, ?)`
-    ).run(sessionId, chat.chat_id, now, now);
+      `INSERT INTO session_bindings (
+         lumos_session_id,
+         platform,
+         platform_chat_id,
+         platform_chat_name,
+         share_link,
+         status,
+         created_at,
+         updated_at
+       )
+       VALUES (?, 'feishu', ?, ?, ?, 'active', ?, ?)`
+    ).run(sessionId, chat.chat_id, chatName, link.share_link, now, now);
 
     // 同步历史消息
     await syncHistoryMessages(db, feishuApi, sessionId, chat.chat_id);
@@ -135,8 +166,21 @@ export async function GET(req: NextRequest) {
     }
 
     const db = getDb();
+    ensureBindingMetadataColumns(db);
     const bindings = db.prepare(
-      `SELECT id, platform_chat_id as chatId, status, created_at as createdAt
+      `SELECT
+         id,
+         lumos_session_id as session_id,
+         lumos_session_id as sessionId,
+         platform,
+         platform_chat_id,
+         platform_chat_id as chatId,
+         platform_chat_name,
+         share_link,
+         status,
+         created_at,
+         created_at as createdAt,
+         updated_at
        FROM session_bindings
        WHERE lumos_session_id = ?
          AND platform = 'feishu'

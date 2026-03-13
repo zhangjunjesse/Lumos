@@ -1,7 +1,7 @@
 import { getDb } from '@/lib/db';
 import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
-import { recordMessageSync } from '@/lib/db/feishu-bridge';
-import { loadToken } from '@/lib/feishu-auth';
+import { recordMessageSync, updateSessionBindingStatus } from '@/lib/db/feishu-bridge';
+import { ensureActiveFeishuToken, loadToken } from '@/lib/feishu-auth';
 import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
 import { feishuFetch } from '@/lib/feishu/doc-content';
 import { parseMessageContent } from '@/types';
@@ -35,6 +35,22 @@ const IMAGE_EXTS = new Set([
 function isImageFilePath(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return IMAGE_EXTS.has(ext);
+}
+
+function markSessionBindingExpiredIfNeeded(sessionId: string): void {
+  try {
+    const db = getDb();
+    const binding = db
+      .prepare(
+        'SELECT id, status FROM session_bindings WHERE lumos_session_id = ? AND platform = ? LIMIT 1',
+      )
+      .get(sessionId, 'feishu') as { id: number; status: string } | undefined;
+    if (!binding) return;
+    if (binding.status === 'expired') return;
+    updateSessionBindingStatus(binding.id, 'expired');
+  } catch (error) {
+    console.warn('[FeishuSync] Failed to mark binding as expired:', error);
+  }
 }
 
 export interface FeishuMailDraft {
@@ -142,8 +158,10 @@ export async function syncMessageToFeishu(
   content: string,
 ): Promise<FeishuSendResult> {
   try {
+    await ensureActiveFeishuToken();
     const auth = requireActiveFeishuUserAuth();
     if (!auth.ok) {
+      markSessionBindingExpiredIfNeeded(sessionId);
       return { ok: false, error: auth.code };
     }
 
@@ -188,8 +206,10 @@ export async function feishuSend(params: {
 }): Promise<FeishuSendResult> {
   const { sessionId, mode, content, mediaIds } = params;
 
+  await ensureActiveFeishuToken();
   const auth = requireActiveFeishuUserAuth();
   if (!auth.ok) {
+    markSessionBindingExpiredIfNeeded(sessionId);
     return { ok: false, error: auth.code };
   }
 
