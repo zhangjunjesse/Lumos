@@ -11,6 +11,12 @@ import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
 import { useStreamingStore } from '@/stores/streaming-store';
+import { useMessagesStore } from '@/stores/messages-store';
+import {
+  abortChatStream,
+  clearChatStreamController,
+  registerChatStreamController,
+} from '@/lib/chat-stream-controller-registry';
 
 interface ToolUseInfo {
   id: string;
@@ -21,6 +27,7 @@ interface ToolUseInfo {
 interface ToolResultInfo {
   tool_use_id: string;
   content: string;
+  is_error?: boolean;
 }
 
 interface ChatViewProps {
@@ -63,6 +70,10 @@ async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
   }
 }
 
+function isTempMessageId(id: string): boolean {
+  return id.startsWith('temp-');
+}
+
 export function ChatView({
   sessionId,
   initialMessages = [],
@@ -77,61 +88,87 @@ export function ChatView({
   hideEmptyState = false,
 }: ChatViewProps) {
   const { t } = useTranslation();
-  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
 
-  // Streaming store
-  const streamingStore = useStreamingStore();
+  const cachedMessagesSession = useMessagesStore((state) => state.sessions[sessionId] ?? null);
+  const updateMessagesSession = useMessagesStore((state) => state.updateSession);
 
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
-  const [hasMore, setHasMore] = useState(initialHasMore);
+  const cachedStreamingState = useStreamingStore((state) => state.sessions[sessionId] ?? null);
+  const startStreamingSession = useStreamingStore((state) => state.startStreaming);
+  const updateStreamingSession = useStreamingStore((state) => state.updateSession);
+  const completeStreamingSession = useStreamingStore((state) => state.completeStreaming);
+  const errorStreamingSession = useStreamingStore((state) => state.errorStreaming);
+  const clearStreamingSession = useStreamingStore((state) => state.clearSession);
+
+  const sourceMessages = cachedMessagesSession?.messages ?? initialMessages;
+  const sourceHasMore = cachedMessagesSession?.hasMore ?? initialHasMore;
+  const initialStreamingToolResults: ToolResultInfo[] = (cachedStreamingState?.toolResults || []).map((result) => ({
+    tool_use_id: result.tool_use_id,
+    content: result.content ?? '',
+    is_error: result.is_error,
+  }));
+
+  const [messages, setMessages] = useState<Message[]>(() => sourceMessages);
+  const [hasMore, setHasMore] = useState(sourceHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
-  const [streamingContent, setStreamingContent] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
-  const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
-  const [statusText, setStatusText] = useState<string | undefined>();
+  const [streamingContent, setStreamingContent] = useState(() => cachedStreamingState?.content || '');
+  const [isStreaming, setIsStreaming] = useState(() => cachedStreamingState?.status === 'streaming');
+  const [toolUses, setToolUses] = useState<ToolUseInfo[]>(() => cachedStreamingState?.toolUses || []);
+  const [toolResults, setToolResults] = useState<ToolResultInfo[]>(() => initialStreamingToolResults);
+  const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
   const [mode, setMode] = useState(initialMode || 'code');
-  const [currentModel, setCurrentModel] = useState(modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || 'sonnet');
-  const [currentProviderId, setCurrentProviderId] = useState(providerId || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-provider-id') : null) || '');
-  const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
-  const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
-  const [streamingToolOutput, setStreamingToolOutput] = useState('');
+  const [currentModel, setCurrentModel] = useState(
+    modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || 'sonnet'
+  );
+  const [currentProviderId, setCurrentProviderId] = useState(
+    providerId || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-provider-id') : null) || ''
+  );
+  const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(
+    () => cachedStreamingState?.pendingPermission || null
+  );
+  const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(
+    () => cachedStreamingState?.permissionResolved || null
+  );
+  const [streamingToolOutput, setStreamingToolOutput] = useState(() => cachedStreamingState?.streamingToolOutput || '');
   const [memoryIdleConfig, setMemoryIdleConfig] = useState<MemoryIdleTriggerConfig>({
     enabled: true,
     timeoutMs: DEFAULT_MEMORY_IDLE_TIMEOUT_MS,
   });
+
+  const messagesRef = useRef<Message[]>(sourceMessages);
+  const hasMoreRef = useRef(sourceHasMore);
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
   const idleMemoryTimerRef = useRef<number | null>(null);
-
-  const handleModeChange = useCallback((newMode: string) => {
-    setMode(newMode);
-    // Persist mode to database and notify chat list
-    if (sessionId) {
-      fetch(`/api/chat/sessions/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: newMode }),
-      }).then(() => {
-        window.dispatchEvent(new CustomEvent('session-updated', { detail: { id: sessionId } }));
-      }).catch(() => { /* silent */ });
-
-      // Try to switch SDK permission mode in real-time (works if streaming)
-      fetch('/api/chat/mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, mode: newMode }),
-      }).catch(() => { /* silent — will apply on next message */ });
-    }
-  }, [sessionId]);
-
-  const handleProviderModelChange = useCallback((newProviderId: string, model: string) => {
-    setCurrentProviderId(newProviderId);
-    setCurrentModel(model);
-  }, []);
-
   const abortControllerRef = useRef<AbortController | null>(null);
+  const accumulatedRef = useRef(cachedStreamingState?.content || '');
+  const toolUsesRef = useRef<ToolUseInfo[]>(cachedStreamingState?.toolUses || []);
+  const toolResultsRef = useRef<ToolResultInfo[]>(initialStreamingToolResults);
+  const sendMessageRef = useRef<
+    ((content: string, files?: FileAttachment[], systemPromptAppend?: string, displayOverride?: string) => Promise<void>) | null
+  >(null);
+  const pendingImageNoticesRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+
+  const appendMessage = useCallback((message: Message) => {
+    const next = [...messagesRef.current, message];
+    messagesRef.current = next;
+    setMessages(next);
+    updateMessagesSession(sessionId, {
+      messages: next,
+      hasMore: hasMoreRef.current,
+      loading: false,
+      error: null,
+    });
+  }, [sessionId, updateMessagesSession]);
 
   const clearIdleMemoryTimer = useCallback(() => {
     if (idleMemoryTimerRef.current) {
@@ -159,12 +196,55 @@ export function ChatView({
     }, delay);
   }, [clearIdleMemoryTimer, memoryIdleConfig.enabled, memoryIdleConfig.timeoutMs, sessionId]);
 
+  const resetStreamingUi = useCallback((controller?: AbortController | null) => {
+    toolTimeoutRef.current = null;
+    setIsStreaming(false);
+    setStreamingSessionId('');
+    setStreamingContent('');
+    accumulatedRef.current = '';
+    toolUsesRef.current = [];
+    toolResultsRef.current = [];
+    setToolUses([]);
+    setToolResults([]);
+    setStreamingToolOutput('');
+    setStatusText(undefined);
+    setPendingPermission(null);
+    setPermissionResolved(null);
+    setPendingApprovalSessionId('');
+    clearChatStreamController(sessionId, controller);
+    if (!controller || abortControllerRef.current === controller) {
+      abortControllerRef.current = null;
+    }
+  }, [sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
+
+  const handleModeChange = useCallback((newMode: string) => {
+    setMode(newMode);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode }),
+      }).then(() => {
+        window.dispatchEvent(new CustomEvent('session-updated', { detail: { id: sessionId } }));
+      }).catch(() => { /* silent */ });
+
+      fetch('/api/chat/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, mode: newMode }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
+  const handleProviderModelChange = useCallback((newProviderId: string, model: string) => {
+    setCurrentProviderId(newProviderId);
+    setCurrentModel(model);
+  }, []);
+
   // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
     return () => {
       clearIdleMemoryTimer();
-      // Don't abort streaming - let it continue in background
-      // Don't clear streaming session ID - it's managed by the stream completion
     };
   }, [clearIdleMemoryTimer]);
 
@@ -200,16 +280,6 @@ export function ChatView({
     return () => window.removeEventListener('beforeunload', handler);
   }, [isStreaming]);
 
-  // Ref to keep accumulated streaming content in sync regardless of React batching
-  const accumulatedRef = useRef('');
-  // Refs to track tool data reliably across closures (state reads can be stale)
-  const toolUsesRef = useRef<ToolUseInfo[]>([]);
-  const toolResultsRef = useRef<ToolResultInfo[]>([]);
-  // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
-  const sendMessageRef = useRef<(content: string, files?: FileAttachment[]) => Promise<void>>(undefined);
-  // Pending image generation notices — flushed into the next user message so the LLM knows about generated images
-  const pendingImageNoticesRef = useRef<string[]>([]);
-
   // Re-sync streaming content when the window regains visibility (Electron/browser tab switch)
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -218,7 +288,6 @@ export function ChatView({
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    // Also handle Electron-specific focus events
     window.addEventListener('focus', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -226,27 +295,69 @@ export function ChatView({
     };
   }, []);
 
-  function isTempMessageId(id: string): boolean {
-    return id.startsWith('temp-');
-  }
+  // Seed message cache from page-provided initial payload when cache is empty.
+  useEffect(() => {
+    if (cachedMessagesSession) return;
+    if (initialMessages.length === 0 && !initialHasMore) return;
+    updateMessagesSession(sessionId, {
+      messages: initialMessages,
+      hasMore: initialHasMore,
+      loading: false,
+      error: null,
+    });
+  }, [cachedMessagesSession, initialHasMore, initialMessages, sessionId, updateMessagesSession]);
 
-  // Keep local messages in sync with server-provided messages
-  // when not actively streaming. This allows external updates
-  // (e.g. Feishu-originated messages written to DB) to appear
-  // in the UI without manual reload.
-  // Guard: if local list contains optimistic temp messages and parent data
-  // is clearly behind (fewer rows), do not overwrite to avoid "disappear then reappear".
+  // Keep local messages in sync with global cache / initial payload when not actively streaming.
   useEffect(() => {
     if (isStreaming) return;
 
     setMessages((prev) => {
       const localHasTemp = prev.some((msg) => isTempMessageId(msg.id));
-      if (localHasTemp && initialMessages.length < prev.length) {
+      if (localHasTemp && sourceMessages.length < prev.length) {
         return prev;
       }
-      return initialMessages;
+      messagesRef.current = sourceMessages;
+      return sourceMessages;
     });
-  }, [initialMessages, isStreaming]);
+  }, [isStreaming, sourceMessages]);
+
+  useEffect(() => {
+    hasMoreRef.current = sourceHasMore;
+    setHasMore(sourceHasMore);
+  }, [sourceHasMore]);
+
+  // Restore in-flight streaming UI from store when switching sessions.
+  useEffect(() => {
+    if (!cachedStreamingState) return;
+
+    const streaming = cachedStreamingState.status === 'streaming';
+    const cachedContent = cachedStreamingState.content || '';
+    const cachedToolUses = cachedStreamingState.toolUses || [];
+    const cachedToolResults: ToolResultInfo[] = (cachedStreamingState.toolResults || []).map((result) => ({
+      tool_use_id: result.tool_use_id,
+      content: result.content ?? '',
+      is_error: result.is_error,
+    }));
+
+    setIsStreaming(streaming);
+    setStreamingContent(cachedContent);
+    accumulatedRef.current = cachedContent;
+    setToolUses(cachedToolUses);
+    toolUsesRef.current = cachedToolUses;
+    setToolResults(cachedToolResults);
+    toolResultsRef.current = cachedToolResults;
+    setStreamingToolOutput(cachedStreamingState.streamingToolOutput || '');
+    setStatusText(cachedStreamingState.statusText || undefined);
+    setPendingPermission(cachedStreamingState.pendingPermission || null);
+    setPermissionResolved(cachedStreamingState.permissionResolved || null);
+
+    if (streaming) {
+      setStreamingSessionId(sessionId);
+      if (cachedStreamingState.pendingPermission) {
+        setPendingApprovalSessionId(sessionId);
+      }
+    }
+  }, [cachedStreamingState, sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
 
   // Sync mode when session data loads
   useEffect(() => {
@@ -255,43 +366,53 @@ export function ChatView({
     }
   }, [initialMode]);
 
-  // Sync hasMore when initial data loads
-  useEffect(() => {
-    setHasMore(initialHasMore);
-  }, [initialHasMore]);
-
   const loadEarlierMessages = useCallback(async () => {
-    // Use ref as atomic lock to prevent double-fetch from rapid clicks
     if (loadingMoreRef.current || !hasMore || messages.length === 0) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      // Use _rowid of the earliest message as cursor
       const earliest = messages[0];
       const earliestRowId = (earliest as Message & { _rowid?: number })._rowid;
       if (!earliestRowId) return;
       const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100&before=${earliestRowId}`);
       if (!res.ok) return;
       const data: MessagesResponse = await res.json();
-      setHasMore(data.hasMore ?? false);
+      const nextHasMore = data.hasMore ?? false;
+      hasMoreRef.current = nextHasMore;
+      setHasMore(nextHasMore);
       if (data.messages.length > 0) {
-        setMessages(prev => [...data.messages, ...prev]);
+        const next = [...data.messages, ...messagesRef.current];
+        messagesRef.current = next;
+        setMessages(next);
+        updateMessagesSession(sessionId, {
+          messages: next,
+          hasMore: nextHasMore,
+          loading: false,
+          error: null,
+        });
       }
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [sessionId, messages, hasMore]);
+  }, [hasMore, messages, sessionId, updateMessagesSession]);
 
   const stopStreaming = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-  }, []);
+    const aborted = abortChatStream(sessionId);
+    if (!aborted) {
+      abortControllerRef.current?.abort();
+    }
+  }, [sessionId]);
 
   const handlePermissionResponse = useCallback(async (decision: 'allow' | 'allow_session' | 'deny', updatedInput?: Record<string, unknown>) => {
     if (!pendingPermission) return;
 
-    const body: { permissionRequestId: string; decision: { behavior: 'allow'; updatedPermissions?: unknown[]; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message?: string } } = {
+    const body: {
+      permissionRequestId: string;
+      decision:
+        | { behavior: 'allow'; updatedPermissions?: unknown[]; updatedInput?: Record<string, unknown> }
+        | { behavior: 'deny'; message?: string }
+    } = {
       permissionRequestId: pendingPermission.permissionRequestId,
       decision: decision === 'deny'
         ? { behavior: 'deny', message: 'User denied permission' }
@@ -304,8 +425,14 @@ export function ChatView({
           },
     };
 
-    setPermissionResolved(decision === 'deny' ? 'deny' : 'allow');
+    const resolved: 'allow' | 'deny' = decision === 'deny' ? 'deny' : 'allow';
+    setPermissionResolved(resolved);
     setPendingApprovalSessionId('');
+    updateStreamingSession(sessionId, {
+      pendingPermission,
+      permissionResolved: resolved,
+      status: 'streaming',
+    });
 
     try {
       await fetch('/api/chat/permission', {
@@ -317,20 +444,22 @@ export function ChatView({
       // Best effort - the stream will handle timeout
     }
 
-    // Clear permission state after a short delay so user sees the feedback.
-    // Only clear if no new permission request has arrived in the meantime.
     const answeredId = pendingPermission.permissionRequestId;
     setTimeout(() => {
       setPendingPermission((current) => {
         if (current?.permissionRequestId === answeredId) {
-          // Same request — safe to clear both
           setPermissionResolved(null);
+          updateStreamingSession(sessionId, {
+            pendingPermission: null,
+            permissionResolved: null,
+            status: 'streaming',
+          });
           return null;
         }
-        return current; // A new request arrived — keep it
+        return current;
       });
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId]);
+  }, [pendingPermission, sessionId, setPendingApprovalSessionId, updateStreamingSession]);
 
   const sendMessage = useCallback(
     async (
@@ -342,17 +471,14 @@ export function ChatView({
       if (isStreaming) return;
       clearIdleMemoryTimer();
 
-      // Use displayOverride for UI if provided (e.g. image-gen skill injection hides the skill prompt)
       const displayUserContent = displayOverride || content;
 
-      // Build display content: embed file metadata as HTML comment for MessageItem to parse
       let displayContent = displayUserContent;
       if (files && files.length > 0) {
-        const fileMeta = files.map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, data: f.data }));
+        const fileMeta = files.map((f) => ({ id: f.id, name: f.name, type: f.type, size: f.size, data: f.data }));
         displayContent = `<!--files:${JSON.stringify(fileMeta)}-->${displayUserContent}`;
       }
 
-      // Optimistic: add user message to UI immediately
       const userMessage: Message = {
         id: 'temp-' + Date.now(),
         session_id: sessionId,
@@ -361,26 +487,32 @@ export function ChatView({
         created_at: new Date().toISOString(),
         token_usage: null,
       };
-      setMessages((prev) => [...prev, userMessage]);
+      appendMessage(userMessage);
       setIsStreaming(true);
       setStreamingSessionId(sessionId);
       setStreamingContent('');
       accumulatedRef.current = '';
+      toolUsesRef.current = [];
+      toolResultsRef.current = [];
       setToolUses([]);
       setToolResults([]);
       setStatusText(undefined);
+      setStreamingToolOutput('');
+      setPendingPermission(null);
+      setPermissionResolved(null);
+      setPendingApprovalSessionId('');
 
-      // Start streaming in store
-      streamingStore.startStreaming(sessionId);
+      startStreamingSession(sessionId);
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      registerChatStreamController(sessionId, controller);
 
       let accumulated = '';
       let shouldScheduleIdleTrigger = false;
+      let shouldMarkStreamError = false;
+      let autoRetryPrompt: string | null = null;
 
-      // Stream idle timeout: abort if no SSE events arrive for this duration.
-      // Set slightly above the 5-minute permission timeout (300s) to avoid races.
       const STREAM_IDLE_TIMEOUT_MS = 330_000;
       let lastEventTime = Date.now();
       let isIdleTimeout = false;
@@ -393,8 +525,6 @@ export function ChatView({
       }, 10_000);
       const markActive = () => { lastEventTime = Date.now(); };
 
-      // Flush any pending image generation notices into the prompt so
-      // the LLM (especially in SDK resume mode) knows about previously generated images.
       let effectiveContent = content;
       if (pendingImageNoticesRef.current.length > 0) {
         const notices = pendingImageNoticesRef.current.join('\n\n');
@@ -436,8 +566,7 @@ export function ChatView({
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
-            // Save to streaming store
-            streamingStore.updateSession(sessionId, {
+            updateStreamingSession(sessionId, {
               content: acc,
               status: 'streaming',
             });
@@ -449,13 +578,19 @@ export function ChatView({
               if (prev.some((t) => t.id === tool.id)) return prev;
               const next = [...prev, tool];
               toolUsesRef.current = next;
-              // Save to streaming store
-              streamingStore.updateSession(sessionId, {
+              updateStreamingSession(sessionId, {
                 toolUses: next,
+                streamingToolOutput: '',
                 status: 'streaming',
               });
               return next;
             });
+
+            const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
+            if (browserUrl) {
+              setContentPanelOpen(true);
+              openBrowserUrlInPanel(browserUrl);
+            }
           },
           onToolResult: (res) => {
             markActive();
@@ -463,15 +598,13 @@ export function ChatView({
             setToolResults((prev) => {
               const next = [...prev, res];
               toolResultsRef.current = next;
-              // Save to streaming store
-              streamingStore.updateSession(sessionId, {
+              updateStreamingSession(sessionId, {
                 toolResults: next,
+                streamingToolOutput: '',
                 status: 'streaming',
               });
               return next;
             });
-            // Refresh file tree after each tool completes — file writes,
-            // deletions, and other FS operations are done via tools.
             window.dispatchEvent(new Event('refresh-file-tree'));
           },
           onToolOutput: (data) => {
@@ -479,8 +612,7 @@ export function ChatView({
             setStreamingToolOutput((prev) => {
               const next = prev + (prev ? '\n' : '') + data;
               const truncated = next.length > 5000 ? next.slice(-5000) : next;
-              // Save to streaming store
-              streamingStore.updateSession(sessionId, {
+              updateStreamingSession(sessionId, {
                 streamingToolOutput: truncated,
                 status: 'streaming',
               });
@@ -491,8 +623,7 @@ export function ChatView({
             markActive();
             const text = `Running ${toolName}... (${elapsed}s)`;
             setStatusText(text);
-            // Save to streaming store
-            streamingStore.updateSession(sessionId, {
+            updateStreamingSession(sessionId, {
               statusText: text,
               status: 'streaming',
             });
@@ -505,13 +636,10 @@ export function ChatView({
             } else {
               setStatusText(text);
             }
-            // Save to streaming store
-            if (text) {
-              streamingStore.updateSession(sessionId, {
-                statusText: text,
-                status: 'streaming',
-              });
-            }
+            updateStreamingSession(sessionId, {
+              statusText: text || '',
+              status: 'streaming',
+            });
           },
           onResult: () => {
             markActive();
@@ -522,6 +650,11 @@ export function ChatView({
             setPendingPermission(permData);
             setPermissionResolved(null);
             setPendingApprovalSessionId(sessionId);
+            updateStreamingSession(sessionId, {
+              pendingPermission: permData,
+              permissionResolved: null,
+              status: 'streaming',
+            });
           },
           onToolTimeout: (toolName, elapsedSeconds) => {
             markActive();
@@ -529,17 +662,16 @@ export function ChatView({
           },
           onModeChanged: (sdkMode) => {
             markActive();
-            // Map SDK permissionMode to UI mode
             const uiMode = sdkMode === 'plan' ? 'plan' : 'code';
             handleModeChange(uiMode);
           },
           onError: (acc) => {
             markActive();
+            shouldMarkStreamError = true;
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
-            // Save error to streaming store
-            streamingStore.updateSession(sessionId, {
+            updateStreamingSession(sessionId, {
               content: acc,
               status: 'error',
             });
@@ -548,10 +680,6 @@ export function ChatView({
 
         accumulated = result.accumulated;
 
-        // Build the assistant message content.
-        // When tools were used, serialize as a JSON content-blocks array
-        // (same format the backend API route stores), so MessageItem's
-        // parseToolBlocks() can render tool UI from history.
         const finalToolUses = toolUsesRef.current;
         const finalToolResults = toolResultsRef.current;
         const hasTools = finalToolUses.length > 0 || finalToolResults.length > 0;
@@ -564,7 +692,7 @@ export function ChatView({
           }
           for (const tu of finalToolUses) {
             contentBlocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
-            const tr = finalToolResults.find(r => r.tool_use_id === tu.id);
+            const tr = finalToolResults.find((r) => r.tool_use_id === tu.id);
             if (tr) {
               contentBlocks.push({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content });
             }
@@ -572,7 +700,6 @@ export function ChatView({
           messageContent = JSON.stringify(contentBlocks);
         }
 
-        // Add the assistant message to the list
         if (messageContent) {
           const assistantMessage: Message = {
             id: 'temp-assistant-' + Date.now(),
@@ -582,20 +709,16 @@ export function ChatView({
             created_at: new Date().toISOString(),
             token_usage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
           };
-          // Transfer pending reference images to this message ID so MessageItem can
-          // retrieve them. StreamingMessage uses __pending__ directly, but once the
-          // message transitions to MessageItem, it's keyed by message.id.
           transferPendingToMessage(assistantMessage.id);
-
-          setMessages((prev) => [...prev, assistantMessage]);
+          appendMessage(assistantMessage);
           shouldScheduleIdleTrigger = true;
         }
       } catch (error) {
         clearInterval(idleCheckTimer);
 
         if (error instanceof DOMException && error.name === 'AbortError') {
-          // Stream idle timeout — no SSE events for too long
           if (isIdleTimeout) {
+            shouldMarkStreamError = true;
             const idleSecs = Math.round(STREAM_IDLE_TIMEOUT_MS / 1000);
             const idleMsg = t('chat.streamIdleTimeout').replace('{n}', String(idleSecs));
             const errContent = accumulated.trim()
@@ -609,11 +732,10 @@ export function ChatView({
               created_at: new Date().toISOString(),
               token_usage: null,
             };
-            setMessages((prev) => [...prev, errMessage]);
+            appendMessage(errMessage);
           } else {
             const timeoutInfo = toolTimeoutRef.current;
             if (timeoutInfo) {
-              // Tool execution timed out — save partial content and auto-retry
               if (accumulated.trim()) {
                 const partialMessage: Message = {
                   id: 'temp-assistant-' + Date.now(),
@@ -623,34 +745,10 @@ export function ChatView({
                   created_at: new Date().toISOString(),
                   token_usage: null,
                 };
-                setMessages((prev) => [...prev, partialMessage]);
+                appendMessage(partialMessage);
               }
-              // Clean up before auto-retry
-              toolTimeoutRef.current = null;
-              setIsStreaming(false);
-              setStreamingSessionId('');
-              setStreamingContent('');
-              accumulatedRef.current = '';
-              toolUsesRef.current = [];
-              toolResultsRef.current = [];
-              setToolUses([]);
-              setToolResults([]);
-              setStreamingToolOutput('');
-              setStatusText(undefined);
-              setPendingPermission(null);
-              setPermissionResolved(null);
-              setPendingApprovalSessionId('');
-              abortControllerRef.current = null;
-              // Auto-retry: send a follow-up message telling the model to adjust strategy
-              setTimeout(() => {
-                sendMessageRef.current?.(
-                  `The previous tool "${timeoutInfo.toolName}" timed out after ${timeoutInfo.elapsedSeconds} seconds. Please try a different approach to accomplish the task. Avoid repeating the same operation that got stuck.`
-                );
-              }, 500);
-              return; // Skip the normal finally cleanup since we did it above
-            }
-            // User manually stopped generation — add partial content
-            if (accumulated.trim()) {
+              autoRetryPrompt = `The previous tool "${timeoutInfo.toolName}" timed out after ${timeoutInfo.elapsedSeconds} seconds. Please try a different approach to accomplish the task. Avoid repeating the same operation that got stuck.`;
+            } else if (accumulated.trim()) {
               const partialMessage: Message = {
                 id: 'temp-assistant-' + Date.now(),
                 session_id: sessionId,
@@ -659,10 +757,11 @@ export function ChatView({
                 created_at: new Date().toISOString(),
                 token_usage: null,
               };
-              setMessages((prev) => [...prev, partialMessage]);
+              appendMessage(partialMessage);
             }
           }
         } else {
+          shouldMarkStreamError = true;
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
           const errorMessage: Message = {
             id: 'temp-error-' + Date.now(),
@@ -672,53 +771,69 @@ export function ChatView({
             created_at: new Date().toISOString(),
             token_usage: null,
           };
-          setMessages((prev) => [...prev, errorMessage]);
+          appendMessage(errorMessage);
         }
       } finally {
         clearInterval(idleCheckTimer);
-        toolTimeoutRef.current = null;
-        setIsStreaming(false);
-        setStreamingSessionId('');
-        setStreamingContent('');
-        accumulatedRef.current = '';
-        toolUsesRef.current = [];
-        toolResultsRef.current = [];
-        setToolUses([]);
-        setToolResults([]);
-        setStreamingToolOutput('');
-        setStatusText(undefined);
-        setPendingPermission(null);
-        setPermissionResolved(null);
-        setPendingApprovalSessionId('');
-        abortControllerRef.current = null;
+        resetStreamingUi(controller);
 
-        // Complete streaming in store
-        streamingStore.completeStreaming(sessionId);
+        if (shouldMarkStreamError) {
+          errorStreamingSession(sessionId);
+        } else {
+          const isSessionActiveNow =
+            typeof window !== 'undefined' && window.location.pathname === `/chat/${sessionId}`;
+          if (isSessionActiveNow) {
+            // Active session completion is immediately "read", so reset to idle.
+            updateStreamingSession(sessionId, {
+              status: 'idle',
+              content: '',
+              toolUses: [],
+              toolResults: [],
+              streamingToolOutput: '',
+              statusText: '',
+              pendingPermission: null,
+              permissionResolved: null,
+            });
+          } else {
+            // Inactive session completion means "completed but unread".
+            completeStreamingSession(sessionId);
+          }
+        }
 
-        // Notify file tree to refresh after AI finishes
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
         if (shouldScheduleIdleTrigger) {
           scheduleIdleMemoryTrigger();
         }
+        if (autoRetryPrompt) {
+          const retryPrompt = autoRetryPrompt;
+          setTimeout(() => {
+            sendMessageRef.current?.(retryPrompt);
+          }, 500);
+        }
       }
     },
     [
+      appendMessage,
       clearIdleMemoryTimer,
-      handleModeChange,
-      sessionId,
-      isStreaming,
-      setStreamingSessionId,
-      setPendingApprovalSessionId,
-      mode,
+      completeStreamingSession,
       currentModel,
       currentProviderId,
+      errorStreamingSession,
+      handleModeChange,
+      isStreaming,
+      mode,
+      resetStreamingUi,
       scheduleIdleMemoryTrigger,
-      streamingStore,
+      sessionId,
+      setContentPanelOpen,
+      setPendingApprovalSessionId,
+      setStreamingSessionId,
+      startStreamingSession,
       t,
+      updateStreamingSession,
     ]
   );
 
-  // Keep sendMessageRef in sync so timeout auto-retry can call it
   sendMessageRef.current = sendMessage;
 
   const handleCommand = useCallback((command: string) => {
@@ -732,12 +847,21 @@ export function ChatView({
           created_at: new Date().toISOString(),
           token_usage: null,
         };
-        setMessages(prev => [...prev, helpMessage]);
+        appendMessage(helpMessage);
         break;
       }
       case '/clear':
+        messagesRef.current = [];
+        hasMoreRef.current = false;
         setMessages([]);
-        // Also clear database messages and reset SDK session
+        setHasMore(false);
+        updateMessagesSession(sessionId, {
+          messages: [],
+          hasMore: false,
+          loading: false,
+          error: null,
+        });
+        clearStreamingSession(sessionId);
         if (sessionId) {
           fetch(`/api/chat/sessions/${sessionId}`, {
             method: 'PATCH',
@@ -747,7 +871,6 @@ export function ChatView({
         }
         break;
       case '/cost': {
-        // Aggregate token usage from all messages in this session
         let totalInput = 0;
         let totalOutput = 0;
         let totalCacheRead = 0;
@@ -786,19 +909,15 @@ export function ChatView({
           created_at: new Date().toISOString(),
           token_usage: null,
         };
-        setMessages(prev => [...prev, costMessage]);
+        appendMessage(costMessage);
         break;
       }
       default:
-        // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [messages, sessionId, sendMessage, t]);
+  }, [appendMessage, clearStreamingSession, messages, sendMessage, sessionId, t, updateMessagesSession]);
 
   // Listen for image generation completion — persist notice to DB and queue for next user message.
-  // The notice is NOT sent as a separate LLM turn (avoids permission popups).
-  // Instead it's flushed into the next user message via pendingImageNoticesRef.
-  // MessageItem hides messages matching this prefix so the user doesn't see them.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -809,15 +928,12 @@ export function ChatView({
       const pathInfo = paths.length > 0 ? `\nGenerated image file paths:\n${paths.map((p: string) => `- ${p}`).join('\n')}` : '';
       const notice = `[Image generation completed]\n- Prompt: "${detail.prompt}"\n- Aspect ratio: ${detail.aspectRatio}\n- Resolution: ${detail.resolution}${pathInfo}`;
 
-      // Store generated image paths so subsequent edits can use them as reference
       if (paths.length > 0) {
         setLastGeneratedImages(paths);
       }
 
-      // Queue for next user message so the LLM gets the context
       pendingImageNoticesRef.current.push(notice);
 
-      // Also persist to DB for history reload
       const dbNotice = `[__IMAGE_GEN_NOTICE__ prompt: "${detail.prompt}", aspect ratio: ${detail.aspectRatio}, resolution: ${detail.resolution}${paths.length > 0 ? `, file path: ${paths.join(', ')}` : ''}]`;
       fetch('/api/chat/messages', {
         method: 'POST',
@@ -831,30 +947,29 @@ export function ChatView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className={compactInputOnly ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
+      <div className={compactInputOnly ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
         {!compactInputOnly ? (
           <>
-          <MessageList
-            messages={messages}
-            streamingContent={streamingContent}
-            isStreaming={isStreaming}
-            toolUses={toolUses}
-            toolResults={toolResults}
-            streamingToolOutput={streamingToolOutput}
-            statusText={statusText}
-            pendingPermission={pendingPermission}
-            onPermissionResponse={handlePermissionResponse}
-            permissionResolved={permissionResolved}
-            onForceStop={stopStreaming}
-            hasMore={hasMore}
-            loadingMore={loadingMore}
-            onLoadMore={loadEarlierMessages}
-            fullWidth={fullWidth}
-            hideEmptyState={hideEmptyState}
-          />
-          {/* Batch image generation panels — shown above the input area */}
-          <BatchExecutionDashboard />
-          <BatchContextSync />
+            <MessageList
+              messages={messages}
+              streamingContent={streamingContent}
+              isStreaming={isStreaming}
+              toolUses={toolUses}
+              toolResults={toolResults}
+              streamingToolOutput={streamingToolOutput}
+              statusText={statusText}
+              pendingPermission={pendingPermission}
+              onPermissionResponse={handlePermissionResponse}
+              permissionResolved={permissionResolved}
+              onForceStop={stopStreaming}
+              hasMore={hasMore}
+              loadingMore={loadingMore}
+              onLoadMore={loadEarlierMessages}
+              fullWidth={fullWidth}
+              hideEmptyState={hideEmptyState}
+            />
+            <BatchExecutionDashboard />
+            <BatchContextSync />
           </>
         ) : null}
       </div>

@@ -1,5 +1,6 @@
 import create from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { PermissionRequestEvent } from '@/types';
 
 export interface ToolUseInfo {
   id: string;
@@ -21,6 +22,8 @@ export interface StreamingState {
   toolResults: ToolResultInfo[];
   streamingToolOutput: string;
   statusText: string;
+  pendingPermission: PermissionRequestEvent | null;
+  permissionResolved: 'allow' | 'deny' | null;
   updatedAt: number;
   startedAt: number;
 }
@@ -87,6 +90,8 @@ export const useStreamingStore = create<StreamingStore>(
                   toolResults: [],
                   streamingToolOutput: '',
                   statusText: '',
+                  pendingPermission: null,
+                  permissionResolved: null,
                   startedAt: Date.now(),
                   ...updates,
                   updatedAt: Date.now(),
@@ -109,6 +114,8 @@ export const useStreamingStore = create<StreamingStore>(
               toolResults: [],
               streamingToolOutput: '',
               statusText: '',
+              pendingPermission: null,
+              permissionResolved: null,
               startedAt: Date.now(),
               updatedAt: Date.now(),
             },
@@ -127,6 +134,8 @@ export const useStreamingStore = create<StreamingStore>(
               [sessionId]: {
                 ...existing,
                 status: 'completed',
+                pendingPermission: null,
+                permissionResolved: null,
                 updatedAt: Date.now(),
               },
             },
@@ -145,6 +154,8 @@ export const useStreamingStore = create<StreamingStore>(
               [sessionId]: {
                 ...existing,
                 status: 'error',
+                pendingPermission: null,
+                permissionResolved: null,
                 updatedAt: Date.now(),
               },
             },

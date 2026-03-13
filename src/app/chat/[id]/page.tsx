@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from 'react';
 import Link from 'next/link';
-import type { Message, MessagesResponse, ChatSession } from '@/types';
+import type { MessagesResponse, ChatSession } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading, PencilEdit01Icon, Delete } from "@hugeicons/core-free-icons";
@@ -22,6 +22,7 @@ import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMessagesStore } from '@/stores/messages-store';
+import { useStreamingStore } from '@/stores/streaming-store';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -55,10 +56,13 @@ function triggerMemoryOnSessionSwitch(sessionId: string): void {
 
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { id } = use(params);
-  const messagesStore = useMessagesStore();
+  const sessionData = useMessagesStore((state) => state.sessions[id] ?? null);
+  const updateSessionMessages = useMessagesStore((state) => state.updateSession);
+  const clearSessionMessages = useMessagesStore((state) => state.clearSession);
+  const sessionStreamingState = useStreamingStore((state) => state.sessions[id] ?? null);
+  const updateStreamingSession = useStreamingStore((state) => state.updateSession);
 
   // Use messages from store
-  const sessionData = messagesStore.getSession(id);
   const messages = sessionData?.messages || [];
   const hasMore = sessionData?.hasMore || false;
   const loading = sessionData?.loading ?? true;
@@ -78,8 +82,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
   const { t } = useTranslation();
-
-  console.log('[ChatPage] Render with sessionTitle:', sessionTitle);
 
   const handleStartEditTitle = useCallback(() => {
     setEditTitle(sessionTitle || t('chat.newConversation'));
@@ -119,7 +121,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         body: JSON.stringify({ clear_messages: true }),
       });
       if (res.ok) {
-        messagesStore.clearSession(id);
+        clearSessionMessages(id);
         setViewNonce((v) => v + 1);
         window.dispatchEvent(new CustomEvent('session-updated', { detail: { id } }));
       }
@@ -129,7 +131,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       setClearing(false);
       setClearDialogOpen(false);
     }
-  }, [clearing, id, messagesStore]);
+  }, [clearSessionMessages, clearing, id]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -153,9 +155,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         const res = await fetch(`/api/chat/sessions/${id}`);
         if (res.ok) {
           const data: { session: ChatSession } = await res.json();
-          console.log('[ChatSessionPage] Session loaded:', data.session);
           if (data.session.working_directory) {
-            console.log('[ChatSessionPage] Setting working directory:', data.session.working_directory);
             setWorkingDirectory(data.session.working_directory);
             setSessionWorkingDir(data.session.working_directory);
             localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
@@ -182,15 +182,13 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
 
   useEffect(() => {
     // Check if we have cached messages
-    const cached = messagesStore.getSession(id);
-    if (cached && cached.messages.length > 0) {
+    if (sessionData && sessionData.messages.length > 0) {
       // Use cached messages, no loading needed
-      console.log('[ChatSessionPage] Using cached messages for session:', id);
       return;
     }
 
     // No cache, load from server
-    messagesStore.updateSession(id, { loading: true, error: null });
+    updateSessionMessages(id, { loading: true, error: null });
 
     let cancelled = false;
 
@@ -200,7 +198,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         if (cancelled) return;
         if (!res.ok) {
           if (res.status === 404) {
-            messagesStore.updateSession(id, {
+            updateSessionMessages(id, {
               loading: false,
               error: t('chat.sessionNotFound'),
             });
@@ -210,7 +208,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         }
         const data: MessagesResponse = await res.json();
         if (cancelled) return;
-        messagesStore.updateSession(id, {
+        updateSessionMessages(id, {
           messages: data.messages,
           hasMore: data.hasMore ?? false,
           loading: false,
@@ -218,7 +216,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         });
       } catch (err) {
         if (cancelled) return;
-        messagesStore.updateSession(id, {
+        updateSessionMessages(id, {
           loading: false,
           error: err instanceof Error ? err.message : 'Failed to load messages',
         });
@@ -230,7 +228,22 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [id, t]);
+  }, [id, sessionData, t, updateSessionMessages]);
+
+  // Opening the session marks "completed but unread" as read (idle).
+  useEffect(() => {
+    if (sessionStreamingState?.status !== 'completed') return;
+    updateStreamingSession(id, {
+      status: 'idle',
+      content: '',
+      toolUses: [],
+      toolResults: [],
+      streamingToolOutput: '',
+      statusText: '',
+      pendingPermission: null,
+      permissionResolved: null,
+    });
+  }, [id, sessionStreamingState?.status, updateStreamingSession]);
 
   // Trigger implicit memory analysis when leaving the current session.
   useEffect(() => {
@@ -252,7 +265,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         })
         .then(data => {
           if (!data || cancelled) return;
-          messagesStore.updateSession(id, {
+          updateSessionMessages(id, {
             messages: data.messages,
             hasMore: data.hasMore ?? false,
             loading: false,
@@ -267,7 +280,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [id]);
+  }, [id, updateSessionMessages]);
 
   // Listen for bridge messages from Electron IPC
   useEffect(() => {
@@ -276,7 +289,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         fetch(`/api/chat/sessions/${id}/messages?limit=100`)
           .then(res => res.json())
           .then((data: MessagesResponse) => {
-            messagesStore.updateSession(id, {
+            updateSessionMessages(id, {
               messages: data.messages,
               hasMore: data.hasMore ?? false,
               loading: false,
@@ -293,7 +306,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
       };
     }
-  }, [id]);
+  }, [id, updateSessionMessages]);
 
   // Listen for session updates from sidebar
   useEffect(() => {
@@ -301,9 +314,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       const customEvent = event as CustomEvent<{ id?: string; title?: string }>;
       const detail = customEvent.detail;
       if (!detail || !detail.id) return;
-      console.log('[ChatPage] Received session-updated event:', detail, 'current id:', id);
       if (detail.id === id && detail.title) {
-        console.log('[ChatPage] Updating title to:', detail.title);
         setSessionTitle(detail.title);
         setEditTitle(detail.title);
         setPanelSessionTitle(detail.title);

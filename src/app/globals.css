@@ -220,3 +220,10 @@ svg.hugeicons polyline,
 svg.hugeicons rect {
   stroke-width: 2;
 }
+
+.sidebar-scroll-area [data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+  width: 100%;
+  min-width: 0 !important;
+  max-width: 100%;
+}

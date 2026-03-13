@@ -25,6 +25,9 @@ const zh: Record<TranslationKey, string> = {
   'chatList.importFromCli': '从 Claude CLI 导入',
   'chatList.addProjectFolder': '添加项目文件夹',
   'chatList.sessionName': '会话名称',
+  'chatList.statusIdle': '空闲',
+  'chatList.statusReplying': '回复中',
+  'chatList.statusUnreadCompleted': '未读',
 
   // ── Message list ────────────────────────────────────────────
   'messageList.claudeChat': 'Claude 对话',
@@ -297,7 +300,6 @@ const zh: Record<TranslationKey, string> = {
   'browser.replayParameters': '回放参数',
   'browser.replayWorkflow': '回放工作流',
   'browser.steps': '步骤',
-  'browser.open': '打开',
   'browser.recentDownloadsDesc': '工作流回放和手动浏览共享相同的下载管道。',
   'browser.noDownloads': '暂无浏览器下载。',
   'browser.tab': '个标签页',
@@ -441,6 +443,7 @@ const zh: Record<TranslationKey, string> = {
   'feishu.configAppId': 'App ID',
   'feishu.configAppSecret': 'App Secret',
   'feishu.configRedirectUri': 'OAuth 回调地址',
+  'feishu.configRedirectAutoPlaceholder': '留空会自动使用当前运行地址',
   'feishu.configRedirectHint': '留空时会跟随当前运行中的本地地址自动生成回调地址。',
   'feishu.configEffectiveRedirect': '当前生效回调：',
   'feishu.configScopes': 'OAuth Scopes',

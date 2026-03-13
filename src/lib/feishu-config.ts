@@ -44,6 +44,22 @@ function normalizeLoopbackOrigin(origin?: string): string {
   }
 }
 
+function normalizeRedirectUri(uri?: string): string {
+  if (!uri) return '';
+
+  try {
+    const url = new URL(uri);
+    if (url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === '[::1]') {
+      url.hostname = 'localhost';
+    }
+    url.hash = '';
+    url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+    return url.toString();
+  } catch {
+    return uri.trim().replace(/\/+$/, '');
+  }
+}
+
 export function getStoredFeishuSettings(): FeishuStoredSettings {
   return {
     appId: pickNonEmpty(getSetting('feishu_app_id')),
@@ -72,12 +88,27 @@ export function getFeishuOAuthScopes(): string {
 
 export function resolveFeishuRedirectUri(requestOrigin?: string): string {
   const stored = getStoredFeishuSettings();
-  const configuredRedirectUri = pickNonEmpty(
-    stored.redirectUri,
-    process.env.FEISHU_REDIRECT_URI,
-  );
+  const storedRedirectUri = pickNonEmpty(stored.redirectUri);
+  const envRedirectUri = pickNonEmpty(process.env.FEISHU_REDIRECT_URI);
+  const configuredRedirectUri = pickNonEmpty(storedRedirectUri, envRedirectUri);
 
   if (configuredRedirectUri) {
+    const normalizedOrigin = normalizeLoopbackOrigin(requestOrigin);
+    if (normalizedOrigin && storedRedirectUri && !envRedirectUri) {
+      const originRedirectUri = `${normalizedOrigin}/api/feishu/auth/callback`;
+      const normalizedConfigured = normalizeRedirectUri(storedRedirectUri);
+      const normalizedLegacyDefault = normalizeRedirectUri(DEFAULT_FEISHU_REDIRECT_URI);
+      const normalizedOriginRedirect = normalizeRedirectUri(originRedirectUri);
+
+      // Treat the historical default as a placeholder so dev-origin callbacks work without manual rewrites.
+      if (
+        normalizedConfigured === normalizedLegacyDefault &&
+        normalizedConfigured !== normalizedOriginRedirect
+      ) {
+        return originRedirectUri;
+      }
+    }
+
     return configuredRedirectUri;
   }
 

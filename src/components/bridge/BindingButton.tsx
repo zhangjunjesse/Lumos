@@ -94,13 +94,18 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
           setLoginInFlight(false);
         }
       }, 2000);
-    } catch (err) {
+    } catch {
       setLoginInFlight(false);
       setToast({ type: "error", message: "飞书登录失败，请稍后重试" });
     }
   }, [handleAuthSuccess, loginInFlight]);
 
   const handleCreate = useCallback(async () => {
+    if (!configured) {
+      setToast({ type: "error", message: "请先在设置中完成飞书配置" });
+      return;
+    }
+
     setCreating(true);
     try {
       const res = await fetch("/api/bridge/bindings", {
@@ -126,12 +131,12 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
           setToast({ type: "error", message: errorData.message || errorData.error || "创建绑定失败" });
         }
       }
-    } catch (err) {
+    } catch {
       setToast({ type: "error", message: "网络连接失败，请检查网络后重试" });
     } finally {
       setCreating(false);
     }
-  }, [openFeishuLogin, refetch]);
+  }, [configured, openFeishuLogin, refetch, sessionId]);
 
   useEffect(() => {
     createBindingRef.current = () => handleCreate();
@@ -166,7 +171,7 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
     }
   };
 
-  if (configLoading || loading || !configured) return null;
+  if (configLoading || loading) return null;
 
   const showBindButton = !binding;
 
@@ -187,7 +192,7 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
             </svg>
           )}
-          <span className="text-xs">同步到飞书</span>
+          <span className="text-xs">{configured ? "同步到飞书" : "配置飞书同步"}</span>
         </Button>
       ) : (
         <BindingStatusPopover

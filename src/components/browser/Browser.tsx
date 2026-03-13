@@ -325,12 +325,13 @@ export function Browser({ className }: BrowserProps) {
 
     const result = await api.getWorkflows();
     if (result.success && Array.isArray(result.workflows)) {
-      setWorkflows(result.workflows);
+      const workflows = result.workflows;
+      setWorkflows(workflows);
       setSelectedWorkflowId((current) => {
-        if (current && result.workflows.some((workflow) => workflow.id === current)) {
+        if (current && workflows.some((workflow) => workflow.id === current)) {
           return current;
         }
-        return result.workflows[0]?.id || null;
+        return workflows[0]?.id || null;
       });
     }
   }, []);

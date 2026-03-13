@@ -550,19 +550,59 @@ function createWindow(port: number) {
 
 function openAuthWindow(targetUrl: string) {
   if (!targetUrl) return;
+
+  const normalizeCallbackUrl = (rawUrl: string): { origin: string; pathname: string } | null => {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+
+      const hostname = parsed.hostname === '127.0.0.1' || parsed.hostname === '::1'
+        ? 'localhost'
+        : parsed.hostname;
+      const origin = `${parsed.protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ''}`;
+      const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+      return { origin: origin.toLowerCase(), pathname };
+    } catch {
+      return null;
+    }
+  };
+
+  const callbackMatcher = (() => {
+    try {
+      const parsedTarget = new URL(targetUrl);
+      const redirectUri = parsedTarget.searchParams.get('redirect_uri');
+      if (!redirectUri) return null;
+      return normalizeCallbackUrl(redirectUri);
+    } catch {
+      return null;
+    }
+  })();
+
+  const isCallbackNavigation = (candidateUrl: string): boolean => {
+    if (!callbackMatcher) return false;
+    const parsedCandidate = normalizeCallbackUrl(candidateUrl);
+    return Boolean(
+      parsedCandidate &&
+      parsedCandidate.origin === callbackMatcher.origin &&
+      parsedCandidate.pathname === callbackMatcher.pathname,
+    );
+  };
+
   if (authWindow && !authWindow.isDestroyed()) {
-    authWindow.loadURL(targetUrl);
-    authWindow.focus();
-    return;
+    authWindow.close();
+    authWindow = null;
   }
 
-  authWindow = new BrowserWindow({
+  const windowRef = new BrowserWindow({
     width: 920,
     height: 760,
     minWidth: 720,
     minHeight: 560,
+    show: false,
     parent: mainWindow ?? undefined,
-    modal: true,
+    modal: false,
     center: true,
     title: 'Lumos Login',
     icon: getIconPath(),
@@ -573,10 +613,55 @@ function openAuthWindow(targetUrl: string) {
     },
   });
 
-  authWindow.setMenuBarVisibility(false);
-  authWindow.loadURL(targetUrl);
-  authWindow.on('closed', () => {
-    authWindow = null;
+  authWindow = windowRef;
+  windowRef.setMenuBarVisibility(false);
+
+  let closeScheduled = false;
+  const closeSoon = () => {
+    if (closeScheduled) return;
+    closeScheduled = true;
+    setTimeout(() => {
+      if (!windowRef.isDestroyed()) {
+        windowRef.close();
+      }
+    }, 280);
+  };
+
+  const maybeCloseOnCallback = (candidateUrl: string) => {
+    if (!isCallbackNavigation(candidateUrl)) return;
+    if (isDev) {
+      console.log('[auth-window] callback reached, closing auth window:', candidateUrl);
+    }
+    closeSoon();
+  };
+
+  windowRef.webContents.on('did-navigate', (_event, navigationUrl) => {
+    maybeCloseOnCallback(navigationUrl);
+  });
+
+  windowRef.webContents.on('did-redirect-navigation', (_event, navigationUrl) => {
+    maybeCloseOnCallback(navigationUrl);
+  });
+
+  windowRef.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    if (!validatedURL) return;
+    if (isCallbackNavigation(validatedURL)) {
+      console.warn('[auth-window] callback navigation failed:', { errorCode, errorDescription, validatedURL });
+      closeSoon();
+    }
+  });
+
+  windowRef.once('ready-to-show', () => {
+    if (!windowRef.isDestroyed()) {
+      windowRef.show();
+    }
+  });
+
+  windowRef.loadURL(targetUrl);
+  windowRef.on('closed', () => {
+    if (authWindow === windowRef) {
+      authWindow = null;
+    }
   });
 }
 

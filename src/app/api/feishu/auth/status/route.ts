@@ -4,20 +4,39 @@ import { loadToken } from "@/lib/feishu-auth";
 export async function GET() {
   try {
     const token = loadToken();
+    const now = Date.now();
 
     if (!token) {
-      return NextResponse.json({ authenticated: false });
+      return NextResponse.json({
+        authenticated: false,
+        reason: "missing",
+        expiresAt: null,
+        refreshExpiresAt: null,
+        remainingMs: null,
+        refreshRemainingMs: null,
+        willExpireSoon: false,
+      });
     }
 
-    const expired = Date.now() > token.expiresAt;
+    const expired = now > token.expiresAt;
+    const remainingMs = token.expiresAt - now;
+    const refreshExpiresAt =
+      typeof token.refreshExpiresAt === "number" ? token.refreshExpiresAt : null;
+    const refreshRemainingMs =
+      typeof refreshExpiresAt === "number" ? refreshExpiresAt - now : null;
     const info = token.userInfo;
 
     return NextResponse.json({
       authenticated: !expired,
+      reason: expired ? "expired" : "ok",
       user: info
         ? { name: info.name, avatarUrl: info.avatar_url, userId: info.open_id }
         : null,
       expiresAt: token.expiresAt,
+      refreshExpiresAt,
+      remainingMs,
+      refreshRemainingMs,
+      willExpireSoon: !expired && remainingMs <= 5 * 60 * 1000,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";

@@ -1,18 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   FolderOpen,
   FolderAddIcon,
   PencilEdit01Icon,
   Delete,
-  ArrowRight,
-  ArrowDown01,
-  Folder,
   Add,
 } from "@hugeicons/core-free-icons";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +21,7 @@ import {
 import { useTranslation } from "@/hooks/useTranslation";
 import { RenameDialog } from "@/components/ui/rename-dialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
+import { useStreamingStore } from "@/stores/streaming-store";
 
 interface Workspace {
   id: string;
@@ -46,15 +45,24 @@ interface WorkspacePickerProps {
 }
 
 export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
+  const pathname = usePathname();
+  const streamingSessions = useStreamingStore((state) => state.sessions);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(new Set());
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const { t } = useTranslation();
   const router = useRouter();
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const activeSessionId = pathname.match(/^\/chat\/([^/]+)$/)?.[1] || null;
+  const activeWorkspaceId = useMemo(() => {
+    if (!activeSessionId) return null;
+    const activeSession = sessions.find((s) => s.id === activeSessionId);
+    if (!activeSession) return null;
+    const activeWorkspace = workspaces.find((w) => w.path === activeSession.working_directory);
+    return activeWorkspace?.id || null;
+  }, [activeSessionId, sessions, workspaces]);
 
   const fetchWorkspaces = useCallback(async () => {
     try {
@@ -78,8 +86,10 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   }, []);
 
   useEffect(() => {
-    fetchWorkspaces();
-    fetchSessions();
+    const load = async () => {
+      await Promise.all([fetchWorkspaces(), fetchSessions()]);
+    };
+    void load();
   }, [fetchWorkspaces, fetchSessions]);
 
   const toggleWorkspace = useCallback((id: string) => {
@@ -87,15 +97,6 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const toggleFolder = useCallback((key: string) => {
-    setExpandedFolders(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
       return next;
     });
   }, []);
@@ -124,33 +125,6 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       // silently ignore
     }
   }, [addWorkspace]);
-
-  const activate = useCallback(
-    async (id: string) => {
-      await fetch(`/api/workspaces/${id}/activate`, { method: "POST" });
-      setWorkspaces(prev => prev.map(ws => ({ ...ws, is_active: ws.id === id ? 1 : 0 })));
-      const ws = workspaces.find(w => w.id === id);
-      if (ws?.path) {
-        localStorage.setItem('codepilot:last-working-directory', ws.path);
-      }
-      // Navigate to the most recent session for this workspace, or new chat
-      try {
-        const res = await fetch("/api/chat/sessions");
-        if (res.ok) {
-          const { sessions } = await res.json();
-          const match = sessions.find((s: { working_directory: string }) => s.working_directory === ws?.path);
-          if (match) {
-            router.push(`/chat/${match.id}`);
-            return;
-          }
-        }
-      } catch {
-        // fall through to default
-      }
-      router.push("/chat");
-    },
-    [workspaces, router]
-  );
 
   const renameWorkspace = useCallback(async (ws: Workspace) => {
     setRenamingWorkspace(ws);
@@ -216,7 +190,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   }
 
   return (
-    <div className="space-y-1">
+    <div className="w-full min-w-0 space-y-1">
       <div className="flex items-center justify-between px-3">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {t('sidebar.workspaces')}
@@ -232,25 +206,29 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
       </div>
 
       {workspaces.map((ws) => {
-        const isExpanded = expandedWorkspaces.has(ws.id);
+        const isExpanded = expandedWorkspaces.has(ws.id) || activeWorkspaceId === ws.id;
         const wsSessions = sessions.filter(s => s.working_directory === ws.path);
 
         return (
-          <div key={ws.id} className="space-y-0.5">
-            <div className="group flex items-center gap-1">
+          <div key={ws.id} className="w-full min-w-0 space-y-0.5">
+            <div className="group flex w-full min-w-0 items-center gap-1">
               <button
                 type="button"
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer min-w-0",
-                  ws.is_active && "bg-accent font-medium"
+                  "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent cursor-pointer",
+                  "text-sidebar-foreground"
                 )}
                 onClick={() => toggleWorkspace(ws.id)}
               >
-                <HugeiconsIcon icon={isExpanded ? ArrowDown01 : ArrowRight} className="h-3 w-3 shrink-0" />
+                {isExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
                 <HugeiconsIcon icon={FolderOpen} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="truncate max-w-[140px]">{ws.name}</span>
+                <span className="min-w-0 flex-1 truncate text-left">{ws.name}</span>
               </button>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-auto">
+              <div className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
                   type="button"
                   className="rounded p-0.5 hover:bg-accent cursor-pointer shrink-0"
@@ -269,20 +247,65 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
             </div>
 
             {isExpanded && (
-              <div className="ml-4 space-y-0.5">
+              <div className="ml-4 w-[calc(100%-1rem)] min-w-0 space-y-0.5">
                 {wsSessions.map(session => (
-                  <button
-                    key={session.id}
-                    type="button"
-                    className="flex items-center gap-2 rounded-md px-3 py-1 text-xs hover:bg-accent cursor-pointer w-full truncate"
-                    onClick={() => router.push(`/chat/${session.id}`)}
-                  >
-                    <span className="truncate">{session.title}</span>
-                  </button>
+                  (() => {
+                    const streamingState = streamingSessions[session.id];
+                    const isStreaming = streamingState?.status === "streaming";
+                    const isUnreadCompleted = streamingState?.status === "completed";
+                    const isError = streamingState?.status === "error";
+                    const statusLabel = isStreaming
+                      ? t('chatList.statusReplying')
+                      : isUnreadCompleted
+                        ? t('chatList.statusUnreadCompleted')
+                        : t('chatList.statusIdle');
+
+                    return (
+                      <button
+                        key={session.id}
+                        type="button"
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1 text-left text-xs cursor-pointer",
+                          activeSessionId === session.id
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                            : "text-sidebar-foreground hover:bg-accent"
+                        )}
+                        onClick={() => router.push(`/chat/${session.id}`)}
+                      >
+                        <span
+                          className={cn(
+                            "h-1.5 w-1.5 shrink-0 rounded-full",
+                            isStreaming
+                              ? "bg-green-500 animate-pulse"
+                              : isUnreadCompleted
+                                ? "bg-blue-500"
+                                : isError
+                                  ? "bg-red-500"
+                                  : "bg-muted-foreground/40"
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                        <span
+                          className={cn(
+                            "shrink-0 text-[10px]",
+                            isStreaming
+                              ? "text-green-500"
+                              : isUnreadCompleted
+                                ? "text-blue-500"
+                                : isError
+                                  ? "text-red-500"
+                                  : "text-muted-foreground/60"
+                          )}
+                        >
+                          {statusLabel}
+                        </span>
+                      </button>
+                    );
+                  })()
                 ))}
                 <button
                   type="button"
-                  className="flex items-center gap-2 rounded-md px-3 py-1 text-xs hover:bg-accent cursor-pointer w-full text-muted-foreground"
+                  className="flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1 text-left text-xs hover:bg-accent cursor-pointer text-muted-foreground"
                   onClick={() => createSession(ws.path)}
                 >
                   <HugeiconsIcon icon={Add} className="h-3 w-3" />

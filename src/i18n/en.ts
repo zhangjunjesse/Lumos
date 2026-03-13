@@ -28,6 +28,9 @@ const en = {
   'chatList.importFromCli': 'Import from Claude CLI',
   'chatList.addProjectFolder': 'Add project folder',
   'chatList.sessionName': 'Session Name',
+  'chatList.statusIdle': 'Idle',
+  'chatList.statusReplying': 'Replying',
+  'chatList.statusUnreadCompleted': 'Unread',
 
   // ── Message list ────────────────────────────────────────────
   'messageList.claudeChat': 'Claude Chat',
@@ -300,7 +303,6 @@ const en = {
   'browser.replayParameters': 'Replay parameters',
   'browser.replayWorkflow': 'Replay workflow',
   'browser.steps': 'Steps',
-  'browser.open': 'Open',
   'browser.recentDownloadsDesc': 'Workflow replay and manual browsing share the same download pipeline.',
   'browser.noDownloads': 'No browser downloads yet.',
   'browser.tab': 'tab',
@@ -444,6 +446,7 @@ const en = {
   'feishu.configAppId': 'App ID',
   'feishu.configAppSecret': 'App Secret',
   'feishu.configRedirectUri': 'OAuth Redirect URI',
+  'feishu.configRedirectAutoPlaceholder': 'Leave blank to auto-use current app address',
   'feishu.configRedirectHint': 'Leave blank to use the current local app address as the callback URI.',
   'feishu.configEffectiveRedirect': 'Effective redirect:',
   'feishu.configScopes': 'OAuth Scopes',

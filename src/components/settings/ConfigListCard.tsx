@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Dialog,
   DialogContent,
@@ -66,6 +67,8 @@ export function ConfigListCard() {
   });
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<ApiConfig | null>(null);
@@ -114,6 +117,7 @@ export function ConfigListCard() {
     setEditingConfig(null);
     setFormData({ name: '', base_url: '', api_key: '', model_name: '' });
     setShowApiKey(false);
+    setTestMessage(null);
     setDialogOpen(true);
   };
 
@@ -126,7 +130,41 @@ export function ConfigListCard() {
       model_name: config.model_name || '',
     });
     setShowApiKey(false);
+    setTestMessage(null);
     setDialogOpen(true);
+  };
+
+  const handleTest = async () => {
+    if (!formData.api_key) {
+      setTestMessage({ type: 'error', text: 'API Key 不能为空' });
+      return;
+    }
+
+    setTesting(true);
+    setTestMessage(null);
+
+    try {
+      const res = await fetch('/api/providers/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: formData.api_key,
+          baseUrl: formData.base_url || 'https://api.anthropic.com',
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setTestMessage({ type: 'success', text: '连接测试成功' });
+      } else {
+        setTestMessage({ type: 'error', text: data.error || '连接测试失败' });
+      }
+    } catch (error) {
+      setTestMessage({ type: 'error', text: '连接测试失败' });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const handleSave = async () => {
@@ -376,12 +414,32 @@ export function ConfigListCard() {
                 onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
               />
             </div>
+            {testMessage && (
+              <Alert variant={testMessage.type === 'error' ? 'destructive' : 'default'}>
+                <AlertDescription>{testMessage.text}</AlertDescription>
+              </Alert>
+            )}
           </div>
           <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={handleTest}
+              disabled={testing || saving || !formData.api_key}
+            >
+              {testing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  测试中...
+                </>
+              ) : (
+                '测试连接'
+              )}
+            </Button>
+            <div className="flex-1" />
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               取消
             </Button>
-            <Button onClick={handleSave} disabled={saving || !formData.name || !formData.api_key}>
+            <Button onClick={handleSave} disabled={saving || testing || !formData.name || !formData.api_key}>
               {saving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

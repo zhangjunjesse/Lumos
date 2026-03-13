@@ -120,7 +120,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         </Link>
       </div>
 
-      <ScrollArea className="flex-1 px-2 py-1">
+      <ScrollArea className="sidebar-scroll-area flex-1 px-2 py-1">
         {/* Main nav */}
         <nav className="space-y-0.5">
           {mainNavItems.map((item) => (
