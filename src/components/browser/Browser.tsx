@@ -364,7 +364,6 @@ export function Browser({ className }: BrowserProps) {
       if (
         eventName === 'tab-created'
         || eventName === 'tab-closed'
-        || eventName === 'tab-switched'
         || eventName === 'tab-loaded'
         || eventName === 'tab-loading'
         || eventName === 'tab-url-updated'
@@ -373,6 +372,11 @@ export function Browser({ className }: BrowserProps) {
         || eventName === 'tab-error'
       ) {
         void loadTabs();
+      }
+
+      // tab-switched 事件单独处理，避免覆盖前端立即设置的状态
+      if (eventName === 'tab-switched' && isTabPayload(payload)) {
+        setActiveTabId(payload.tabId);
       }
 
       if ((eventName === 'tab-loading' || eventName === 'tab-loaded' || eventName === 'tab-closed') && isTabPayload(payload)) {

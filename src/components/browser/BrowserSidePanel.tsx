@@ -37,14 +37,14 @@ export function BrowserSidePanel({
         showOverlay={false}
         onPointerDownOutside={(e) => e.preventDefault()}
       >
-        <SheetHeader className="relative border-b px-6 py-4">
+        <SheetHeader className="relative z-20 border-b px-6 py-4">
           <div className="flex items-center justify-between">
             <SheetTitle>{open && titles[open]}</SheetTitle>
             <Button
               variant="ghost"
               size="icon"
               onClick={() => onOpenChange(null)}
-              className="relative z-10 h-8 w-8 hover:bg-accent"
+              className="relative z-30 h-8 w-8 hover:bg-accent"
             >
               <X className="h-4 w-4" />
             </Button>
