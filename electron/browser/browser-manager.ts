@@ -1097,14 +1097,7 @@ export class BrowserManager extends EventEmitter {
       void (async () => {
         try {
           const createdTabId = await this.createTab(targetUrl);
-          await this.switchTab(createdTabId);
-          const hostWindow = this.mainWindow as BrowserWindow;
-          if (!hostWindow.webContents.isDestroyed()) {
-            hostWindow.webContents.send('content-browser:open-url-in-tab', {
-              url: targetUrl,
-              pageId: createdTabId,
-            });
-          }
+          this.switchTab(createdTabId).catch(console.error);
         } catch (error) {
           console.error('[browser] Failed to open target=_blank URL in new tab:', error);
         }

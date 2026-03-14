@@ -32,13 +32,13 @@ export function BrowserSidePanel({
 
   return (
     <div className="fixed right-0 top-0 bottom-0 w-[420px] bg-background border-l flex flex-col z-50">
-      <div className="border-b px-6 py-4 flex items-center justify-between">
+      <div className="relative border-b px-6 py-4 flex items-center justify-between">
         <h2 className="font-semibold">{titles[open]}</h2>
         <Button
           variant="ghost"
           size="icon"
           onClick={() => onOpenChange(null)}
-          className="h-8 w-8 hover:bg-accent"
+          className="relative z-10 h-8 w-8 hover:bg-accent"
         >
           <X className="h-4 w-4" />
         </Button>
