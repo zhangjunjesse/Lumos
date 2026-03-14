@@ -822,7 +822,7 @@ export function Browser({ className }: BrowserProps) {
         onOpenPanel={setOpenPanel}
       />
 
-      <div className={cn("min-h-0 flex-1 transition-all duration-300", openPanel && "pr-[420px]")}>
+      <div className="min-h-0 flex-1">
         <section className="relative h-full overflow-hidden bg-card">
             <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.02),rgba(15,23,42,0.04))]" />
             <div className="pointer-events-none absolute left-4 right-4 top-4 z-10 flex flex-wrap items-center gap-2">
