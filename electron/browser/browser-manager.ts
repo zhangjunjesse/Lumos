@@ -548,21 +548,30 @@ export class BrowserManager extends EventEmitter {
       throw new Error(`Tab ${tabId} not found`);
     }
 
+    // 立即隐藏当前 tab
+    if (this.activeTabId) {
+      const currentView = this.tabs.get(this.activeTabId);
+      if (currentView) {
+        currentView.setVisible(false);
+      }
+    }
+
+    // 立即更新状态，让 UI 先响应
+    this.activeTabId = tabId;
+    metadata.lastAccessedAt = Date.now();
+    this.emit('tab-switched', { tabId });
+
+    // 异步加载 view（如果不存在）
     let view = this.tabs.get(tabId);
     if (!view) {
       view = await this.restoreTab(tabId);
     }
 
-    if (this.activeTabId) {
-      const currentView = this.tabs.get(this.activeTabId);
-      currentView?.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    }
-
+    // 显示并聚焦
+    view.setVisible(true);
     view.setBounds(this.calculateBounds());
     view.webContents.focus();
-    this.activeTabId = tabId;
-    metadata.lastAccessedAt = Date.now();
-    void this.persistTabState(tabId);
+    // 移除立即持久化，依赖 debounce 机制
 
     this.recordContextEvent({
       tabId,
@@ -718,7 +727,7 @@ export class BrowserManager extends EventEmitter {
   }
 
   getTabs(): BrowserTab[] {
-    return Array.from(this.tabMetadata.values()).sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+    return Array.from(this.tabMetadata.values());
   }
 
   getActiveTabId(): string | null {
