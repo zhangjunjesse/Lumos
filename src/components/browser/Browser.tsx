@@ -361,7 +361,7 @@ export function Browser({ className }: BrowserProps) {
     ]);
 
     const unsubscribe = window.electronAPI?.browser?.onEvent?.((eventName, payload) => {
-      // tab-created 事件：立即添加新标签页到列表
+      // tab-created 事件：立即添加新标签页到列表并切换
       if (eventName === 'tab-created' && isTabPayload(payload)) {
         const newTab: BrowserTab = {
           id: payload.tabId,
@@ -375,30 +375,24 @@ export function Browser({ className }: BrowserProps) {
           lastAccessedAt: Date.now(),
         };
         setTabs((current) => [...current, newTab]);
-        // 立即选中新标签页
         setActiveTabId(payload.tabId);
+        // 立即通知后端切换到新标签
+        void window.electronAPI?.browser?.switchTab?.(payload.tabId);
         return;
       }
 
-      // tab-switched 事件：立即更新选中状态
+      // tab-switched 事件：立即更新选中状态，不重新加载标签列表
       if (eventName === 'tab-switched' && isTabPayload(payload)) {
         setActiveTabId(payload.tabId);
         return;
       }
 
-      // 其他事件：重新加载标签页列表
-      if (
-        eventName === 'tab-closed'
-        || eventName === 'tab-loaded'
-        || eventName === 'tab-loading'
-        || eventName === 'tab-url-updated'
-        || eventName === 'tab-title-updated'
-        || eventName === 'tab-favicon-updated'
-        || eventName === 'tab-error'
-      ) {
+      // 只在标签关闭时重新加载列表，其他事件不改变标签顺序
+      if (eventName === 'tab-closed') {
         void loadTabs();
       }
 
+      // 标签加载状态变化时，只更新错误状态，不重新加载列表
       if ((eventName === 'tab-loading' || eventName === 'tab-loaded' || eventName === 'tab-closed') && isTabPayload(payload)) {
         setTabErrors((current) => {
           if (!current[payload.tabId]) {

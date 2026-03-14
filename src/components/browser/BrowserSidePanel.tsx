@@ -31,7 +31,7 @@ export function BrowserSidePanel({
   if (!open) return null;
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-[420px] bg-background border-l flex flex-col z-50">
+    <div className="fixed right-0 top-0 bottom-0 w-[420px] bg-background border-l flex flex-col z-[9999]">
       <div className="relative border-b px-6 py-4 flex items-center justify-between">
         <h2 className="font-semibold">{titles[open]}</h2>
         <Button
