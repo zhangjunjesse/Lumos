@@ -77,14 +77,14 @@ export function BrowserTabBar({
             </div>
             <button
               type="button"
-              className="rounded-full p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+              className="shrink-0 rounded-full p-1.5 text-muted-foreground transition-all hover:bg-accent hover:text-foreground"
               onClick={(event) => {
                 event.stopPropagation();
                 onCloseTab(tab.id);
               }}
               title={t('browser.closeTab')}
             >
-              <X className="size-3.5" />
+              <X className="size-4" />
             </button>
           </div>
         ))}
