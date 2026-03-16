@@ -197,36 +197,37 @@ export function submitTask(request: SubmitTaskRequest): SubmitTaskResponse {
 
 // 通知Main Agent任务完成
 export function notifyTaskCompletion(request: NotifyTaskCompletionRequest): NotifyTaskCompletionResponse {
-  try {
-    // 动态导入 addMessage 避免循环依赖
-    const { addMessage } = require('@/lib/db');
+  const { taskId, status, result, errors } = request.notification;
 
-    const { taskId, status, result, errors } = request.notification;
-
-    // 构造通知消息
-    let message = `📋 **任务状态更新**\n\n`;
-    message += `任务ID: \`${taskId}\`\n`;
-    message += `状态: ${status === 'completed' ? '✅ 已完成' : '❌ 失败'}\n\n`;
-
-    if (result) {
-      message += `**执行结果:**\n${JSON.stringify(result, null, 2)}\n\n`;
-    }
-
-    if (errors && errors.length > 0) {
-      message += `**错误信息:**\n`;
-      errors.forEach((err, i) => {
-        message += `${i + 1}. ${err}\n`;
-      });
-    }
-
-    // 插入系统消息到会话
-    addMessage(request.sessionId, 'user', `<!--source:task-management-->${message}`);
-
-    console.log('[TaskManagement] Task completion notification sent to session:', request.sessionId);
-
-    return { success: true };
-  } catch (error) {
-    console.error('[TaskManagement] Failed to notify task completion:', error);
-    return { success: false };
+  // 构造通知提示词
+  let prompt = `[系统通知] 任务 ${taskId} 状态更新为 ${status}。`;
+  if (result) {
+    prompt += `\n执行结果: ${JSON.stringify(result)}`;
   }
+  if (errors && errors.length > 0) {
+    prompt += `\n错误: ${errors.join(', ')}`;
+  }
+  prompt += '\n\n请主动通知用户任务完成情况。';
+
+  // 异步调用 chat API，不阻塞当前流程
+  fetch(`http://localhost:${process.env.PORT || 3000}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: request.sessionId,
+      content: prompt,
+    }),
+  }).then(response => {
+    if (response.ok) {
+      console.log('[TaskManagement] AI notification triggered for session:', request.sessionId);
+      // 消费响应流但不等待完成
+      response.body?.cancel();
+    } else {
+      console.error('[TaskManagement] Chat API failed:', response.status);
+    }
+  }).catch(error => {
+    console.error('[TaskManagement] Failed to trigger AI notification:', error);
+  });
+
+  return { success: true };
 }
