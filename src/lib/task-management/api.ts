@@ -195,15 +195,38 @@ export function submitTask(request: SubmitTaskRequest): SubmitTaskResponse {
   };
 }
 
-// 通知Main Agent任务完成（Mock实现）
+// 通知Main Agent任务完成
 export function notifyTaskCompletion(request: NotifyTaskCompletionRequest): NotifyTaskCompletionResponse {
-  // Mock: 实际应该调用Main Agent API，传入task_completed事件
-  console.log('[TaskManagement] Notifying Main Agent of task completion (mock):', {
-    sessionId: request.sessionId,
-    taskId: request.notification.taskId,
-    status: request.notification.status,
-  });
+  try {
+    // 动态导入 addMessage 避免循环依赖
+    const { addMessage } = require('@/lib/db');
 
-  // Mock: 假设通知总是成功
-  return { success: true };
+    const { taskId, status, result, errors } = request.notification;
+
+    // 构造通知消息
+    let message = `📋 **任务状态更新**\n\n`;
+    message += `任务ID: \`${taskId}\`\n`;
+    message += `状态: ${status === 'completed' ? '✅ 已完成' : '❌ 失败'}\n\n`;
+
+    if (result) {
+      message += `**执行结果:**\n${JSON.stringify(result, null, 2)}\n\n`;
+    }
+
+    if (errors && errors.length > 0) {
+      message += `**错误信息:**\n`;
+      errors.forEach((err, i) => {
+        message += `${i + 1}. ${err}\n`;
+      });
+    }
+
+    // 插入系统消息到会话
+    addMessage(request.sessionId, 'user', `<!--source:task-management-->${message}`);
+
+    console.log('[TaskManagement] Task completion notification sent to session:', request.sessionId);
+
+    return { success: true };
+  } catch (error) {
+    console.error('[TaskManagement] Failed to notify task completion:', error);
+    return { success: false };
+  }
 }
