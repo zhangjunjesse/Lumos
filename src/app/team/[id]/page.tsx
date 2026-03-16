@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { TeamRunDetailView } from '@/components/conversations/team-run-detail-view';
-import { getMainAgentTaskDirectoryItem, getMainAgentTeamDirectoryItem } from '@/lib/db/tasks';
+import { getTaskViewProjection, getTeamRunDetailProjection } from '@/lib/team-run/projections';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,13 +10,22 @@ interface TeamDetailPageProps {
 
 export default async function TeamDetailPage({ params }: TeamDetailPageProps) {
   const { id } = await params;
-  const team = getMainAgentTeamDirectoryItem(id);
+  const taskView = getTaskViewProjection(id);
 
-  if (!team) {
+  if (!taskView || taskView.task.source !== 'team' || !taskView.workspace) {
     notFound();
   }
 
-  const task = getMainAgentTaskDirectoryItem(team.relatedTaskId) || null;
+  const teamView = taskView.workspace.runId
+    ? getTeamRunDetailProjection(taskView.workspace.runId) || null
+    : null;
 
-  return <TeamRunDetailView team={team} task={task} />;
+  return (
+    <TeamRunDetailView
+      taskId={id}
+      initialTask={taskView.task}
+      initialWorkspace={taskView.workspace}
+      initialTeam={teamView}
+    />
+  );
 }

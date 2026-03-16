@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { ensureMainAgentTeamRunsExecution, getMainAgentCatalog } from '@/lib/db/tasks';
+import { ensureMainAgentTeamRunsExecution } from '@/lib/db/tasks';
+import { getMainAgentCatalogProjection } from '@/lib/team-run/projections';
 import type { ErrorResponse, MainAgentCatalogResponse } from '@/types';
 
 export async function GET() {
   try {
     ensureMainAgentTeamRunsExecution();
-    const catalog = getMainAgentCatalog();
+    const catalog = getMainAgentCatalogProjection();
     return NextResponse.json<MainAgentCatalogResponse>(catalog);
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

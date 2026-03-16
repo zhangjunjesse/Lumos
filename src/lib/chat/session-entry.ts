@@ -21,6 +21,17 @@ export function getSessionEntryBasePath(entry: SessionEntry): string {
   return entry === 'main-agent' ? '/main-agent' : '/chat';
 }
 
+export function getPostDeleteRedirectPath(
+  entry: SessionEntry,
+  fallbackSessionId?: string | null,
+): string {
+  const basePath = getSessionEntryBasePath(entry);
+  if (entry === 'main-agent') {
+    return basePath;
+  }
+  return fallbackSessionId ? `${basePath}/${fallbackSessionId}` : basePath;
+}
+
 export function isMainAgentSession(session?: SessionPromptCarrier): boolean {
   return String(session?.system_prompt || '').includes(MAIN_AGENT_SESSION_MARKER);
 }

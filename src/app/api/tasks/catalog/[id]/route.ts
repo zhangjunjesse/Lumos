@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { ensureTeamRunExecution, getMainAgentTaskDirectoryItem } from '@/lib/db/tasks';
+import { ensureTeamRunExecution } from '@/lib/db/tasks';
+import { getTaskCatalogItemProjection } from '@/lib/team-run/projections';
 import type { ErrorResponse, TaskDirectoryItem } from '@/types';
 
 interface RouteContext {
@@ -11,7 +12,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   try {
     ensureTeamRunExecution(id);
-    const task = getMainAgentTaskDirectoryItem(id);
+    const task = getTaskCatalogItemProjection(id);
     if (!task) {
       return NextResponse.json<ErrorResponse>(
         { error: 'Task not found' },

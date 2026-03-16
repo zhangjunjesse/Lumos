@@ -6,6 +6,7 @@ export interface CommandPolicy {
 }
 
 export class CommandGuard {
+  static readonly ALLOW_ANY = '*'
   static readonly DEFAULT_ALLOWED = [
     'git', 'npm', 'node', 'cat', 'ls', 'grep', 'find', 'echo', 'pwd'
   ]
@@ -32,8 +33,9 @@ export class CommandGuard {
     }
 
     const binary = trimmed.split(/\s+/)[0]
+    const allowAny = this.policy.allowedCommands.includes(CommandGuard.ALLOW_ANY)
 
-    if (!this.policy.allowedCommands.includes(binary)) {
+    if (!allowAny && !this.policy.allowedCommands.includes(binary)) {
       throw new SecurityError(
         `Command not allowed: ${binary}`,
         'COMMAND_NOT_ALLOWED'

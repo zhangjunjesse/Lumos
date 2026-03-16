@@ -21,8 +21,14 @@ interface ArtifactInput {
   runId: string
   stageId: string
   type: 'output' | 'file' | 'log' | 'metadata'
+  title?: string
+  sourcePath?: string
   content: Buffer | string
   contentType: string
+}
+
+interface StageResultRef {
+  artifactId?: string
 }
 
 export class StateManager {
@@ -41,7 +47,7 @@ export class StateManager {
     `).run(status, Date.now(), stageId)
   }
 
-  async updateStageResult(stageId: string, result: string): Promise<void> {
+  async updateStageResult(stageId: string, result: string): Promise<StageResultRef> {
     SQLValidator.validateId(stageId, 'stageId')
 
     const size = Buffer.byteLength(result, 'utf8')
@@ -50,9 +56,10 @@ export class StateManager {
       // 小数据：直接存储
       this.db.prepare(`
         UPDATE team_run_stages
-        SET latest_result = ?, updated_at = ?
+        SET latest_result = ?, latest_result_ref = NULL, updated_at = ?
         WHERE id = ?
       `).run(result, Date.now(), stageId)
+      return {}
     } else {
       // 大数据：存储到artifacts表
       const stage = this.db.prepare('SELECT run_id FROM team_run_stages WHERE id = ?').get(stageId) as any
@@ -68,9 +75,10 @@ export class StateManager {
       const reference = JSON.stringify({ type: 'artifact', artifactId, size })
       this.db.prepare(`
         UPDATE team_run_stages
-        SET latest_result = ?, updated_at = ?
+        SET latest_result = ?, latest_result_ref = ?, updated_at = ?
         WHERE id = ?
-      `).run(reference, Date.now(), stageId)
+      `).run(reference, artifactId, Date.now(), stageId)
+      return { artifactId }
     }
   }
 
@@ -79,9 +87,9 @@ export class StateManager {
 
     this.db.prepare(`
       UPDATE team_run_stages
-      SET error = ?, updated_at = ?
+      SET error = ?, last_error = ?, updated_at = ?
       WHERE id = ?
-    `).run(error, Date.now(), stageId)
+    `).run(error, error, Date.now(), stageId)
   }
 
   async getStageOutput(stageId: string): Promise<string> {
@@ -112,11 +120,33 @@ export class StateManager {
     const content = Buffer.isBuffer(input.content) ? input.content : Buffer.from(input.content, 'utf8')
 
     this.db.prepare(`
-      INSERT INTO team_run_artifacts (id, run_id, stage_id, type, content, content_type, size, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.runId, input.stageId, input.type, content, input.contentType, content.length, Date.now())
+      INSERT INTO team_run_artifacts (id, run_id, stage_id, type, title, source_path, content, content_type, size, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      input.runId,
+      input.stageId,
+      input.type,
+      input.title || '',
+      input.sourcePath || null,
+      content,
+      input.contentType,
+      content.length,
+      Date.now(),
+    )
 
     return id
+  }
+
+  async attachStageResultRef(stageId: string, artifactId: string): Promise<void> {
+    SQLValidator.validateId(stageId, 'stageId')
+    SQLValidator.validateId(artifactId, 'artifactId')
+
+    this.db.prepare(`
+      UPDATE team_run_stages
+      SET latest_result_ref = COALESCE(latest_result_ref, ?), updated_at = ?
+      WHERE id = ?
+    `).run(artifactId, Date.now(), stageId)
   }
 
   async batchUpdateStages(updates: StageUpdate[]): Promise<void> {

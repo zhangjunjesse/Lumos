@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/connection'
 import { TeamRunOrchestrator } from '@/lib/team-run/orchestrator'
+import { ensureRunScheduled } from '@/lib/team-run/runtime-manager'
 
 export async function GET(
   request: NextRequest,
@@ -8,6 +9,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params
+    ensureRunScheduled(id)
     const db = getDb()
     const orchestrator = new TeamRunOrchestrator(db)
 

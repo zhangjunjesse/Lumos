@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db/connection'
-import { TeamRunOrchestrator } from '@/lib/team-run/orchestrator'
+import { ensureRunScheduled } from '@/lib/team-run/runtime-manager'
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
-    const db = getDb()
-    const orchestrator = new TeamRunOrchestrator(db)
-
-    await orchestrator.startRun(id)
+    ensureRunScheduled(id)
 
     return NextResponse.json({ success: true, runId: id })
   } catch (error) {

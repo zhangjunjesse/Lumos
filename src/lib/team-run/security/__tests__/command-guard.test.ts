@@ -37,6 +37,15 @@ describe('CommandGuard', () => {
         expect(() => guard.validateCommand(`${cmd} arg`)).not.toThrow()
       })
     })
+
+    test('允许通配白名单但仍保留危险模式拦截', () => {
+      const guard = new CommandGuard({
+        allowedCommands: [CommandGuard.ALLOW_ANY]
+      })
+
+      expect(() => guard.validateCommand('pytest -q')).not.toThrow()
+      expect(() => guard.validateCommand('cargo test')).not.toThrow()
+    })
   })
 
   describe('边界条件', () => {

@@ -47,6 +47,10 @@ const TEAM_RUN_STATUS_CLASSNAME: Record<TeamRunStatus, string> = {
   running: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300',
   waiting: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   blocked: 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+  paused: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  cancelling: 'border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300',
+  cancelled: 'border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300',
+  summarizing: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
   done: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   failed: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
 };
@@ -163,7 +167,10 @@ function useMainAgentCatalog() {
     void load();
   }, [load]);
 
-  const shouldPoll = catalog.tasks.some((task) => task.source === 'team' && !['done', 'failed', 'blocked'].includes(task.status));
+  const shouldPoll = catalog.tasks.some((task) => (
+    task.source === 'team'
+    && ['pending', 'ready', 'running', 'waiting', 'cancelling', 'summarizing'].includes(task.status)
+  ));
 
   useEffect(() => {
     if (!shouldPoll) return undefined;
@@ -201,6 +208,10 @@ function TeamRunStatusBadge({ status }: { status: TeamRunStatus }) {
     running: 'team.status.running',
     waiting: 'team.status.waiting',
     blocked: 'team.status.blocked',
+    paused: 'team.status.paused',
+    cancelling: 'team.status.cancelling',
+    cancelled: 'team.status.cancelled',
+    summarizing: 'team.status.summarizing',
     done: 'team.status.done',
     failed: 'team.status.failed',
   } as const;

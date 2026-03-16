@@ -1,0 +1,9 @@
+{
+  "name": "task-management",
+  "description": "Create and manage complex tasks through Task Management system",
+  "command": "node",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/task-management/task_management_mcp.mjs"
+  ],
+  "env": {}
+}

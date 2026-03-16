@@ -29,19 +29,63 @@ let _statsCache: {
 } | null = null;
 
 function resolveJiebaDir(): string {
+  const candidates: string[] = [];
+
   try {
-    return path.dirname(require.resolve('@node-rs/jieba/package.json'));
+    const packageJsonPath = require.resolve('@node-rs/jieba/package.json');
+    if (!packageJsonPath.includes('[externals]')) {
+      candidates.push(path.dirname(packageJsonPath));
+    }
   } catch {
-    return path.join(process.cwd(), 'node_modules', '@node-rs', 'jieba');
+    // ignore and fall back to concrete filesystem candidates below
   }
+
+  try {
+    const entryPath = require.resolve('@node-rs/jieba');
+    if (!entryPath.includes('[externals]')) {
+      candidates.push(path.dirname(entryPath));
+    }
+  } catch {
+    // ignore and fall back to concrete filesystem candidates below
+  }
+
+  candidates.push(
+    path.join(process.cwd(), 'node_modules', '@node-rs', 'jieba'),
+    path.join(process.cwd(), '..', 'node_modules', '@node-rs', 'jieba'),
+  );
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(path.join(candidate, 'dict.txt'))) {
+      return candidate;
+    }
+  }
+
+  return path.join(process.cwd(), 'node_modules', '@node-rs', 'jieba');
 }
 
 function getJieba() {
   if (!_jieba) {
-    const jiebaDir = resolveJiebaDir();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Jieba } = require('@node-rs/jieba');
-    _jieba = Jieba.withDict(fs.readFileSync(path.join(jiebaDir, 'dict.txt')));
+    let dictBuffer: Buffer | null = null;
+
+    try {
+      // Prefer the package's own dict loader so bundlers resolve relative assets correctly.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const dictModule = require('@node-rs/jieba/dict.js') as { dict?: Buffer };
+      if (Buffer.isBuffer(dictModule.dict)) {
+        dictBuffer = dictModule.dict;
+      }
+    } catch {
+      // fall back to filesystem lookup below
+    }
+
+    if (!dictBuffer) {
+      const jiebaDir = resolveJiebaDir();
+      dictBuffer = fs.readFileSync(path.join(jiebaDir, 'dict.txt'));
+    }
+
+    _jieba = Jieba.withDict(dictBuffer);
   }
   return _jieba!;
 }

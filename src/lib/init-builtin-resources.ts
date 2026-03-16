@@ -181,6 +181,8 @@ function importMcpServers(): number {
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
       }
     } else {
+      // task-management is enabled by default for testing
+      const isEnabled = config.name === 'task-management';
       createMcpServer({
         name: config.name,
         scope: 'builtin',
@@ -188,7 +190,7 @@ function importMcpServers(): number {
         command: config.command,
         args,
         env: config.env,
-        is_enabled: false,
+        is_enabled: isEnabled,
         source: 'builtin',
         content_hash: contentHash,
       });

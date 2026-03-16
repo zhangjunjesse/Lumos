@@ -107,12 +107,56 @@ export function migrateCoreTables(db: Database.Database): void {
       title TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')),
       description TEXT,
+      task_kind TEXT NOT NULL DEFAULT 'manual' CHECK(task_kind IN ('manual', 'team_plan')),
+      team_plan_json TEXT,
+      team_approval_status TEXT CHECK(team_approval_status IN ('pending', 'approved', 'rejected')),
+      current_run_id TEXT,
+      final_result_summary TEXT NOT NULL DEFAULT '',
+      source_message_id TEXT,
+      approved_at TEXT,
+      rejected_at TEXT,
+      last_action_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
   `);
+
+  const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+  const taskColNames = taskColumns.map((column) => column.name);
+
+  if (!taskColNames.includes('task_kind')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'manual' CHECK(task_kind IN ('manual', 'team_plan'))");
+  }
+  if (!taskColNames.includes('team_plan_json')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN team_plan_json TEXT');
+  }
+  if (!taskColNames.includes('team_approval_status')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN team_approval_status TEXT CHECK(team_approval_status IN ('pending', 'approved', 'rejected'))");
+  }
+  if (!taskColNames.includes('current_run_id')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN current_run_id TEXT');
+  }
+  if (!taskColNames.includes('final_result_summary')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN final_result_summary TEXT NOT NULL DEFAULT ''");
+  }
+  if (!taskColNames.includes('source_message_id')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN source_message_id TEXT');
+  }
+  if (!taskColNames.includes('approved_at')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN approved_at TEXT');
+  }
+  if (!taskColNames.includes('rejected_at')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN rejected_at TEXT');
+  }
+  if (!taskColNames.includes('last_action_at')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN last_action_at TEXT');
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_task_kind ON tasks(task_kind)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_current_run_id ON tasks(current_run_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_team_approval_status ON tasks(team_approval_status)");
 
   // Ensure api_providers table exists for databases created before this migration
   db.exec(`

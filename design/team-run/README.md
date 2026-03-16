@@ -78,10 +78,112 @@
 
 ---
 
+### 5. [Main Agent / Team Runtime 基础架构方案](./07-main-agent-team-foundation.md)
+**负责人**: codex
+**状态**: 当前主链路改造基线
+
+**内容**:
+- Main Agent、任务管理层、调度层、子 Agent 层、记忆层的职责边界
+- 单一真相源定义（Task vs TaskRun/Stage）
+- 数据模型、状态机、时序图
+- 工作区模型、记忆模型、调度策略
+- 后续分阶段实施顺序
+
+**适用场景**:
+- 需要把当前简化链路切到真实 Team Run runtime
+- 需要明确后续开发应以哪份架构文档为准
+- 需要统一主聊天、任务页、团队页和 runtime 的状态来源
+
+**关键决策**:
+- 移除 `tasks.ts` 中的自动 tick 模拟执行
+- Task 只保留业务态，TaskRun/Stage 成为运行真相源
+- 子 Agent 之间不直接通信，只与主调度层通信
+- 子 Agent 使用独立记忆区，UI 只读取投影层
+
+---
+
+### 6. [Team Runtime 开发合同](./08-runtime-contracts.md)
+**负责人**: codex
+**状态**: Phase 1 / Phase 2 结构化合同
+
+**内容**:
+- Main Agent Team Plan 到 PlannerDraftPlan 的标准化
+- CompiledRunPlan、Stage payload/result、Final summary 的精确 schema
+- 运行时版本约定和编译规则
+
+**作用**:
+- 让执行器改造不再依赖“口头理解”
+- 让 Planner、Orchestrator、StageWorker 之间有稳定接口
+
+---
+
+### 7. [Team Runtime 存储与迁移方案](./09-storage-and-migration.md)
+**负责人**: codex
+**状态**: Phase 1 真相源切换合同
+
+**内容**:
+- `tasks` 扩列方案
+- `team_runs / team_run_stages` 扩展方案
+- attempts / memories / events 新表
+- 从 `tasks.description` 旧记录回填到新字段的迁移策略
+
+**作用**:
+- 解决当前“业务态和运行态混在 description 里”的问题
+- 支撑平滑迁移而不是清库重来
+
+---
+
+### 8. [Team Runtime 查询投影与 API 合同](./10-query-projection-api.md)
+**负责人**: codex
+**状态**: Phase 3 读链路切换合同
+
+**内容**:
+- Task/Team/Banner/Detail projection DTO
+- canonical read API
+- SSE 事件格式
+- projection service 的内部职责
+
+**作用**:
+- 让 `/tasks`、`/team`、banner、workspace 都读取同一真相源投影
+
+---
+
+### 9. [Team Runtime 控制语义合同](./11-runtime-control-semantics.md)
+**负责人**: codex
+**状态**: Phase 2 / Phase 5 运行控制合同
+
+**内容**:
+- approve/start/pause/cancel/resume/retry/blocked/publish 的精确定义
+- 幂等性、drain 语义、失败收敛规则
+
+**作用**:
+- 避免“状态改了，但实际运行语义没定义”的实现偏差
+
+---
+
 ## 执行摘要
 
 ### 目标
 实现完整的 Team Run 执行引擎，替换当前的模拟执行骨架，支持真实的多Agent协作。
+
+### 当前实施基线
+
+如果后续开发目标是把 Main Agent 团队模式正式接到真实 runtime，上述旧文档仍可作为参考，但应以 [`07-main-agent-team-foundation.md`](./07-main-agent-team-foundation.md) 作为主链路改造基线，原因如下：
+
+- 它明确区分了 `Task` 业务态与 `TaskRun` 运行态
+- 它定义了 Main Agent 到 SubAgent 的唯一主链路
+- 它补上了投影层、记忆分区和真实工作区模型
+- 它明确要求移除当前 `tasks.ts` 中的自动 tick 模拟执行
+
+### 可开发文档集合
+
+如果目标是“按文档直接进入开发”，应将以下 5 份文档一起视为当前有效合同：
+
+1. [`07-main-agent-team-foundation.md`](./07-main-agent-team-foundation.md)
+2. [`08-runtime-contracts.md`](./08-runtime-contracts.md)
+3. [`09-storage-and-migration.md`](./09-storage-and-migration.md)
+4. [`10-query-projection-api.md`](./10-query-projection-api.md)
+5. [`11-runtime-control-semantics.md`](./11-runtime-control-semantics.md)
 
 ### 核心架构
 ```

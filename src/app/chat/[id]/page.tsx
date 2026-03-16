@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
-import { TeamModeBanner } from '@/components/chat/TeamModeBanner';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
@@ -23,7 +22,12 @@ import {
 import { BindingButton } from '@/components/bridge/BindingButton';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
-import { getSessionEntry, getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
+import {
+  getPostDeleteRedirectPath,
+  getSessionEntry,
+  getSessionEntryBasePath,
+  getSessionEntryFromPath,
+} from '@/lib/chat/session-entry';
 import { useMessagesStore } from '@/stores/messages-store';
 import { useStreamingStore } from '@/stores/streaming-store';
 
@@ -123,24 +127,26 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     setDeleting(true);
     try {
       let fallbackSessionId = '';
-      try {
-        const sessionsRes = await fetch(`/api/chat/sessions?entry=${routeEntry}`);
-        if (sessionsRes.ok) {
-          const data: SessionsResponse = await sessionsRes.json();
-          const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-          const currentIndex = sessions.findIndex((session) => session.id === id);
+      if (routeEntry !== 'main-agent') {
+        try {
+          const sessionsRes = await fetch(`/api/chat/sessions?entry=${routeEntry}`);
+          if (sessionsRes.ok) {
+            const data: SessionsResponse = await sessionsRes.json();
+            const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+            const currentIndex = sessions.findIndex((session) => session.id === id);
 
-          if (currentIndex >= 0) {
-            fallbackSessionId = sessions[currentIndex + 1]?.id
-              || sessions[currentIndex - 1]?.id
-              || sessions.find((session) => session.id !== id)?.id
-              || '';
-          } else {
-            fallbackSessionId = sessions[0]?.id || '';
+            if (currentIndex >= 0) {
+              fallbackSessionId = sessions[currentIndex + 1]?.id
+                || sessions[currentIndex - 1]?.id
+                || sessions.find((session) => session.id !== id)?.id
+                || '';
+            } else {
+              fallbackSessionId = sessions[0]?.id || '';
+            }
           }
+        } catch {
+          // fallback navigation handled below
         }
-      } catch {
-        // fallback navigation handled below
       }
 
       const res = await fetch(`/api/chat/sessions/${id}`, {
@@ -152,7 +158,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         setSessionId('');
         setPanelSessionTitle('');
         window.dispatchEvent(new CustomEvent('session-deleted', { detail: { id } }));
-        router.push(fallbackSessionId ? `${routeBasePath}/${fallbackSessionId}` : routeBasePath);
+        router.push(getPostDeleteRedirectPath(routeEntry, fallbackSessionId));
       }
     } catch {
       // silently fail
@@ -517,8 +523,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           )}
         </div>
       )}
-
-      <TeamModeBanner sessionId={id} />
 
       <ChatView
         sessionId={id}

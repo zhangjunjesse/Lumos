@@ -9,8 +9,8 @@ export class SafeError extends Error {
 }
 
 export class ErrorSanitizer {
-  static sanitize(error: Error): SafeError {
-    let message = error.message
+  static sanitizeText(value: string): string {
+    let message = value
 
     // Sanitize user paths
     message = message.replace(/\/Users\/[^/\s]+/g, '/Users/***')
@@ -24,6 +24,11 @@ export class ErrorSanitizer {
     // Sanitize database paths
     message = message.replace(/\.lumos\/lumos\.db/g, '.lumos/***.db')
 
+    return message
+  }
+
+  static sanitize(error: Error): SafeError {
+    const message = this.sanitizeText(error.message)
     const userMessage = this.getUserFriendlyMessage(error)
 
     return new SafeError(userMessage, message, error.name || 'UNKNOWN_ERROR')

@@ -22,7 +22,7 @@ import { parseDBDate } from '@/lib/utils';
 import { parseTeamPlanBlock } from '@/types';
 import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
-import { TeamPlanCard } from './TeamPlanCard';
+import { TeamPlanMessageCard } from './TeamPlanMessageCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -533,7 +533,12 @@ export function MessageItem({ message }: MessageItemProps) {
               return (
                 <>
                   {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
-                  <TeamPlanCard plan={teamPlanResult.plan} compact />
+                  <TeamPlanMessageCard
+                    messageId={message.id}
+                    sessionId={message.session_id}
+                    plan={teamPlanResult.plan}
+                    compact
+                  />
                   {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
                 </>
               );

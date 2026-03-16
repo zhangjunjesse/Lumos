@@ -1,56 +1,35 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db/connection'
-import { TeamRunOrchestrator } from '@/lib/team-run/orchestrator'
-import { migrateTeamRunTables } from '@/lib/db/migrations-team-run'
+import { NextRequest, NextResponse } from 'next/server';
+import { getTask } from '@/lib/db/tasks';
+import { ensureRunScheduled } from '@/lib/team-run/runtime-manager';
+
+interface StartExistingRunRequest {
+  taskId?: string;
+  runId?: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { planId, stages } = body
+    const body = await request.json() as StartExistingRunRequest;
+    const requestedRunId = body.runId?.trim()
+      || getTask(body.taskId?.trim() || '')?.current_run_id?.trim()
+      || '';
 
-    if (!planId || !stages || !Array.isArray(stages)) {
+    if (!requestedRunId) {
       return NextResponse.json(
-        { error: 'Missing required fields: planId, stages' },
-        { status: 400 }
-      )
+        {
+          error: 'Creating ad-hoc team runs is no longer supported. Approve a team task or provide an existing runId.',
+        },
+        { status: 400 },
+      );
     }
 
-    const db = getDb()
-    migrateTeamRunTables(db)
-
-    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-    const now = Date.now()
-
-    // 创建 run
-    db.prepare(`
-      INSERT INTO team_runs (id, plan_id, status, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(runId, planId, 'pending', now)
-
-    // 创建 stages
-    for (const stage of stages) {
-      db.prepare(`
-        INSERT INTO team_run_stages (id, run_id, name, role_id, task, status, dependencies, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        stage.id || `stage-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        runId,
-        stage.name,
-        stage.roleId,
-        stage.task,
-        'pending',
-        JSON.stringify(stage.dependencies || []),
-        now,
-        now
-      )
-    }
-
-    return NextResponse.json({ runId, status: 'pending' })
+    ensureRunScheduled(requestedRunId);
+    return NextResponse.json({ success: true, runId: requestedRunId });
   } catch (error) {
-    console.error('Create team run error:', error)
+    console.error('Start existing team run error:', error);
     return NextResponse.json(
-      { error: 'Failed to create team run' },
-      { status: 500 }
-    )
+      { error: 'Failed to start team run' },
+      { status: 500 },
+    );
   }
 }

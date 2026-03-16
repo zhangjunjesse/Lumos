@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -60,11 +60,17 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(() => {
-    if (typeof window === "undefined") return true;
-    if (window.matchMedia("(max-width: 1279px)").matches) return false;
-    return localStorage.getItem(SIDEBAR_EXPANDED_KEY) !== "false";
-  });
+  const emptySubscribe = useCallback(() => () => {}, []);
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
+  const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    const isCompactViewport = window.matchMedia("(max-width: 1279px)").matches;
+    const nextExpanded = isCompactViewport
+      ? false
+      : localStorage.getItem(SIDEBAR_EXPANDED_KEY) !== "false";
+    setExpanded(nextExpanded);
+  }, []);
 
   const toggle = useCallback(() => {
     setExpanded((prev) => {
@@ -106,6 +112,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
     }
     return pathname === href || pathname.startsWith(href + "/");
   };
+
+  const isDarkTheme = mounted && theme === "dark";
+  const themeIcon = mounted && isDarkTheme ? Sun : Moon;
+  const themeToggleLabel = mounted
+    ? (isDarkTheme ? t('sidebar.lightMode') : t('sidebar.darkMode'))
+    : t('nav.toggleTheme');
 
   return (
     <aside
@@ -206,16 +218,17 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                onClick={() => setTheme(isDarkTheme ? "light" : "dark")}
               >
                 <HugeiconsIcon
-                  icon={theme === "dark" ? Sun : Moon}
+                  icon={themeIcon}
                   className="h-4 w-4"
                 />
+                <span className="sr-only">{themeToggleLabel}</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              {theme === "dark" ? t('sidebar.lightMode') : t('sidebar.darkMode')}
+              {themeToggleLabel}
             </TooltipContent>
           </Tooltip>
 

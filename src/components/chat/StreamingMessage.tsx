@@ -22,9 +22,7 @@ import { ImageGenConfirmation } from './ImageGenConfirmation';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
 import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
 import type { ToolUIPart } from 'ai';
-import { parseTeamPlanBlock } from '@/types';
 import type { PermissionRequestEvent, PlannerOutput } from '@/types';
-import { TeamPlanCard } from './TeamPlanCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -535,17 +533,6 @@ export function StreamingMessage({
                 {batchPlanResult.beforeText && <MessageResponse>{batchPlanResult.beforeText}</MessageResponse>}
                 <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId={`streaming-${Date.now()}`} />
                 {batchPlanResult.afterText && <MessageResponse>{batchPlanResult.afterText}</MessageResponse>}
-              </>
-            );
-          }
-
-          const teamPlanResult = parseTeamPlanBlock(content);
-          if (teamPlanResult) {
-            return (
-              <>
-                {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
-                <TeamPlanCard plan={teamPlanResult.plan} compact />
-                {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
               </>
             );
           }
