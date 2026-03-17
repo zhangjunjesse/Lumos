@@ -7,7 +7,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { TeamWorkspacePanel } from '@/components/chat/TeamWorkspacePanel';
 import { RuntimeArtifactActions } from '@/components/conversations/runtime-artifact-actions';
 import { cn } from '@/lib/utils';
 
@@ -360,7 +359,7 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
           </CardHeader>
           {showWorkspace ? (
             <CardContent>
-              <TeamWorkspacePanel taskId={task.taskId} standalone />
+              {/* TeamWorkspacePanel removed */}
             </CardContent>
           ) : null}
         </Card>
