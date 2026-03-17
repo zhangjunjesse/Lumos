@@ -23,6 +23,7 @@ import { parseTeamPlanBlock } from '@/types';
 import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
 import { TeamPlanMessageCard } from './TeamPlanMessageCard';
+import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 
 interface ImageGenRequest {
   prompt: string;
@@ -385,7 +386,9 @@ export function MessageItem({ message }: MessageItemProps) {
   const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  const { text, tools } = parseToolBlocks(message.content);
+  // 过滤系统提示（用于任务管理通知）
+  const filteredContent = isUser ? filterSystemPrompt(message.content) : message.content;
+  const { text, tools } = parseToolBlocks(filteredContent);
   const pairedTools = pairTools(tools);
 
   // Parse file attachments from user messages

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
 import type {
   Message,
   MessagesResponse,
@@ -13,6 +14,7 @@ import { parseTeamPlanBlock } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { usePanel } from '@/hooks/usePanel';
+import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
@@ -101,6 +103,7 @@ export function ChatView({
   onResolvedModelChange,
 }: ChatViewProps) {
   const { t } = useTranslation();
+  const pathname = usePathname();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
 
@@ -923,7 +926,7 @@ export function ChatView({
           errorStreamingSession(sessionId);
         } else {
           const isSessionActiveNow =
-            typeof window !== 'undefined' && window.location.pathname === `/chat/${sessionId}`;
+            pathname === `/chat/${sessionId}` || pathname === `/main-agent/${sessionId}`;
           if (isSessionActiveNow) {
             // Active session completion is immediately "read", so reset to idle.
             updateStreamingSession(sessionId, {
@@ -966,6 +969,7 @@ export function ChatView({
       isStreaming,
       mode,
       onResolvedModelChange,
+      pathname,
       resetStreamingUi,
       scheduleIdleMemoryTrigger,
       sessionId,
@@ -979,6 +983,20 @@ export function ChatView({
   );
 
   sendMessageRef.current = sendMessage;
+
+  useEffect(() => {
+    const pendingBootstrap = consumePendingChatBootstrap(sessionId);
+    if (!pendingBootstrap) {
+      return;
+    }
+
+    void sendMessage(
+      pendingBootstrap.content,
+      pendingBootstrap.files,
+      pendingBootstrap.systemPromptAppend,
+      pendingBootstrap.displayOverride,
+    );
+  }, [sendMessage, sessionId]);
 
   const handleCommand = useCallback((command: string) => {
     switch (command) {

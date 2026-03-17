@@ -26,6 +26,54 @@ import {
   updateMockTask,
 } from './mock-data';
 
+// 尝试向最新会话发送通知
+async function tryNotifyLatestSession(prompt: string, originalSessionId: string) {
+  try {
+    const { getAllSessions } = require('@/lib/db');
+    const sessions = getAllSessions();
+
+    if (sessions.length === 0) {
+      console.error('[TaskManagement] No sessions found');
+      return;
+    }
+
+    // 按时间排序，获取最新会话
+    const latestSession = sessions.sort((a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    )[0];
+
+    console.log('[TaskManagement] Trying latest session:', latestSession.id);
+
+    const apiUrl = `http://127.0.0.1:${process.env.PORT || 3000}/api/chat`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({
+        session_id: latestSession.id,
+        content: prompt,
+      }),
+    });
+
+    if (response.ok) {
+      console.log('[TaskManagement] AI notification sent to latest session');
+      const reader = response.body?.getReader();
+      if (reader) {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      }
+    } else {
+      console.error('[TaskManagement] Failed to notify latest session:', response.status);
+    }
+  } catch (error) {
+    console.error('[TaskManagement] Error notifying latest session:', error);
+  }
+}
+
 // 验证任务描述格式
 function validateTaskSummary(summary: string): { valid: boolean; error?: string } {
   if (summary.includes('帮我') || summary.includes('我想')) {
@@ -199,31 +247,54 @@ export function submitTask(request: SubmitTaskRequest): SubmitTaskResponse {
 export function notifyTaskCompletion(request: NotifyTaskCompletionRequest): NotifyTaskCompletionResponse {
   const { taskId, status, result, errors } = request.notification;
 
-  // 构造通知提示词
-  let prompt = `[系统通知] 任务 ${taskId} 状态更新为 ${status}。`;
+  // 构造通知提示词（包裹在注释中，前端会过滤）
+  let prompt = `<!--system-prompt-->\n[系统通知] 任务 ${taskId} 状态更新为 ${status}。`;
   if (result) {
     prompt += `\n执行结果: ${JSON.stringify(result)}`;
   }
   if (errors && errors.length > 0) {
     prompt += `\n错误: ${errors.join(', ')}`;
   }
-  prompt += '\n\n请主动通知用户任务完成情况。';
+  prompt += '\n\n请主动通知用户任务完成情况。\n<!--/system-prompt-->';
 
-  // 异步调用 chat API，不阻塞当前流程
-  fetch(`http://localhost:${process.env.PORT || 3000}/api/chat`, {
+  const apiUrl = `http://127.0.0.1:${process.env.PORT || 3000}/api/chat`;
+
+  // 尝试向原会话发送通知
+  fetch(apiUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
     body: JSON.stringify({
       session_id: request.sessionId,
       content: prompt,
     }),
-  }).then(response => {
+  }).then(async response => {
+    console.log('[TaskManagement] Chat API response status:', response.status);
     if (response.ok) {
       console.log('[TaskManagement] AI notification triggered for session:', request.sessionId);
-      // 消费响应流但不等待完成
-      response.body?.cancel();
+      const reader = response.body?.getReader();
+      if (reader) {
+        try {
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+          console.log('[TaskManagement] AI notification completed');
+        } catch (err) {
+          console.error('[TaskManagement] Error reading response stream:', err);
+        }
+      }
     } else {
-      console.error('[TaskManagement] Chat API failed:', response.status);
+      const errorText = await response.text();
+      console.error('[TaskManagement] Chat API failed:', response.status, errorText);
+
+      // 如果原会话不存在，尝试向最新会话发送通知
+      if (response.status === 404) {
+        console.log('[TaskManagement] Original session not found, trying latest session...');
+        tryNotifyLatestSession(prompt, request.sessionId);
+      }
     }
   }).catch(error => {
     console.error('[TaskManagement] Failed to trigger AI notification:', error);
