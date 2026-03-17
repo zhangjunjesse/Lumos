@@ -3,11 +3,12 @@ import { cancelTask } from '@/lib/task-management';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
-    const result = cancelTask({ taskId: params.id, reason: body.reason });
+    const result = cancelTask({ taskId: id, reason: body.reason });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

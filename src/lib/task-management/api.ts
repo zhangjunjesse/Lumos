@@ -1,5 +1,6 @@
 // Task Management API 实现（使用Mock数据）
 
+import type { ChatSession } from '@/types';
 import {
   Task,
   TaskStatus,
@@ -30,7 +31,7 @@ import {
 async function tryNotifyLatestSession(prompt: string, originalSessionId: string) {
   try {
     const { getAllSessions } = require('@/lib/db');
-    const sessions = getAllSessions();
+    const sessions = getAllSessions() as ChatSession[];
 
     if (sessions.length === 0) {
       console.error('[TaskManagement] No sessions found');
@@ -38,7 +39,7 @@ async function tryNotifyLatestSession(prompt: string, originalSessionId: string)
     }
 
     // 按时间排序，获取最新会话
-    const latestSession = sessions.sort((a, b) =>
+    const latestSession = sessions.sort((a: ChatSession, b: ChatSession) =>
       new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     )[0];
 
