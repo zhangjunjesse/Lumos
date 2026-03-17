@@ -50,10 +50,11 @@ describe('StateManager', () => {
       const result = 'x'.repeat(15 * 1024) // 15KB
       await manager.updateStageResult('stage-test-001', result)
 
-      const stage = db.prepare('SELECT latest_result FROM team_run_stages WHERE id = ?').get('stage-test-001') as any
+      const stage = db.prepare('SELECT latest_result, latest_result_ref FROM team_run_stages WHERE id = ?').get('stage-test-001') as any
       const ref = JSON.parse(stage.latest_result)
       expect(ref.type).toBe('artifact')
       expect(ref.artifactId).toBeDefined()
+      expect(stage.latest_result_ref).toBe(ref.artifactId)
     })
   })
 
@@ -69,6 +70,15 @@ describe('StateManager', () => {
       await manager.updateStageResult('stage-test-001', largeData)
       const output = await manager.getStageOutput('stage-test-001')
       expect(output).toBe(largeData)
+    })
+  })
+
+  describe('updateStageError', () => {
+    test('同时写入 error 和 last_error', async () => {
+      await manager.updateStageError('stage-test-001', 'boom')
+      const stage = db.prepare('SELECT error, last_error FROM team_run_stages WHERE id = ?').get('stage-test-001') as any
+      expect(stage.error).toBe('boom')
+      expect(stage.last_error).toBe('boom')
     })
   })
 

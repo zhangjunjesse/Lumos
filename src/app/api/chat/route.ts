@@ -1,7 +1,12 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
-import { getMainAgentTeamConfigurationPrompt, upsertTeamPlanTask } from '@/lib/db/tasks';
+import {
+  getMainAgentSessionTeamRuntimePrompt,
+  getMainAgentSessionTeamRuntimeState,
+  getMainAgentTeamConfigurationPrompt,
+  upsertTeamPlanTask,
+} from '@/lib/db/tasks';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
 import {
   createTeamRunSkeleton,
@@ -22,6 +27,7 @@ import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
+import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -95,6 +101,28 @@ Rules for Team Mode proposals:
 const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main Agent space, not a project-specific thread.
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
+
+const TASK_MANAGEMENT_HINT = `# Task Management - CRITICAL
+
+You have access to task-management MCP tools. For ANY complex implementation request, you MUST call createTask FIRST before attempting direct implementation.
+
+**MANDATORY: Call createTask for:**
+- System/feature implementation (e.g., "实现用户管理系统", "开发XX功能")
+- Multi-file modifications
+- Tasks requiring >2 minutes
+
+**How to use:**
+1. Recognize complex task → Call createTask tool immediately
+2. Do NOT start implementation yourself
+3. After createTask succeeds, inform user the task is delegated
+
+**Available tools:**
+- createTask(taskSummary, requirements, sessionId)
+- listTasks(sessionId, status)
+- getTaskDetail(taskId)
+- cancelTask(taskId)
+
+**Example:** User says "实现用户管理系统" → You MUST call createTask, NOT implement directly.`;
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -879,6 +907,8 @@ export async function POST(request: NextRequest) {
     );
     console.timeEnd('[perf] MCP servers loading');
 
+    let teamRuntimeState: ReturnType<typeof getMainAgentSessionTeamRuntimeState> = null;
+
     // Append per-request system prompt (e.g. skill injection for image generation)
     let finalSystemPrompt = systemPromptOverride || sessionSystemPrompt || undefined;
     if (systemPromptAppend) {
@@ -886,12 +916,18 @@ export async function POST(request: NextRequest) {
     }
     if (isMainAgentSession(session)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + TASK_MANAGEMENT_HINT;
     }
     finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
     if (isMainAgentSession(session)) {
       const teamConfigurationPrompt = getMainAgentTeamConfigurationPrompt();
       if (teamConfigurationPrompt) {
         finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamConfigurationPrompt;
+      }
+      teamRuntimeState = getMainAgentSessionTeamRuntimeState(session_id);
+      const teamRuntimePrompt = getMainAgentSessionTeamRuntimePrompt(session_id);
+      if (teamRuntimePrompt) {
+        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamRuntimePrompt;
       }
     }
     if (
@@ -910,10 +946,13 @@ export async function POST(request: NextRequest) {
     // so the model still has conversation context.
     const { messages: recentMsgs } = getMessages(session_id, { limit: 50 });
     // Exclude the user message we just saved (last in the list) — it's already the prompt
-    const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
+    let historyMsgs = recentMsgs.slice(0, -1).map(m => ({
       role: m.role as 'user' | 'assistant',
       content: stripFeishuDirectives(m.content),
     }));
+    if (isMainAgentSession(session)) {
+      historyMsgs = normalizeMainAgentConversationHistoryForTeamRuntime(historyMsgs, teamRuntimeState);
+    }
 
     // Stream Claude response, using SDK session ID for resume if available
     console.log('[chat API] streamClaude params:', {
@@ -924,6 +963,11 @@ export async function POST(request: NextRequest) {
       systemPromptFirst200: finalSystemPrompt?.slice(0, 200) || 'none',
       mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
+
+    // Debug: Print full system prompt
+    console.log('[chat API] ========== FULL SYSTEM PROMPT ==========');
+    console.log(finalSystemPrompt || '(empty)');
+    console.log('[chat API] ========== END SYSTEM PROMPT ==========');
 
     const claudeStream = streamClaude({
       prompt: promptForModel,

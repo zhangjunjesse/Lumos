@@ -58,6 +58,7 @@ export interface FilePreview {
 // ==========================================
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+export type TaskKind = 'manual' | 'team_plan';
 
 export interface TaskItem {
   id: string;
@@ -65,6 +66,15 @@ export interface TaskItem {
   title: string;
   status: TaskStatus;
   description: string | null;
+  task_kind?: TaskKind;
+  team_plan_json?: string | null;
+  team_approval_status?: TeamPlanApprovalStatus | null;
+  current_run_id?: string | null;
+  final_result_summary?: string;
+  source_message_id?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+  last_action_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -94,7 +104,18 @@ export interface TeamPlanStep {
   expectedOutput: string;
 }
 
-export type TeamRunStatus = 'pending' | 'ready' | 'running' | 'waiting' | 'blocked' | 'done' | 'failed';
+export type TeamRunStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'waiting'
+  | 'blocked'
+  | 'paused'
+  | 'cancelling'
+  | 'cancelled'
+  | 'summarizing'
+  | 'done'
+  | 'failed';
 
 export interface TeamRunStage {
   id: string;
@@ -135,6 +156,8 @@ export interface TeamRun {
   context: TeamRunContext;
   resumeCount: number;
   phases: TeamRunStage[];
+  pauseRequestedAt?: string | null;
+  cancelRequestedAt?: string | null;
   createdAt?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -166,6 +189,7 @@ export interface TeamPlanTaskRecord {
 
 export interface TeamDirectoryItem {
   id: string;
+  runId?: string;
   sessionId: string;
   sessionTitle: string;
   workingDirectory: string;
@@ -276,8 +300,24 @@ export interface TaskArtifactItem {
   dependsOn: string[];
 }
 
+export type RuntimeArtifactPreviewKind = 'markdown' | 'json' | 'text' | 'csv' | 'image' | 'pdf';
+
+export interface StageArtifactProjectionV1 {
+  artifactId: string;
+  title: string;
+  type: 'output' | 'file' | 'log' | 'metadata';
+  contentType: string;
+  size: number;
+  previewable: boolean;
+  previewKind?: RuntimeArtifactPreviewKind;
+  stageId?: string;
+  stageTitle?: string;
+  sourcePath?: string;
+}
+
 export interface TaskDirectoryItem {
   id: string;
+  runId?: string;
   source: TaskDirectorySource;
   sessionId: string;
   sessionTitle: string;
@@ -305,6 +345,147 @@ export interface TaskDirectoryItem {
   dependsOn: string[];
   teamId?: string;
   teamTitle?: string;
+}
+
+export interface TeamWorkspaceProjectionV1 {
+  projectionVersion: 1;
+  taskId: string;
+  runId?: string;
+  approvalStatus: TeamPlanApprovalStatus;
+  plan: TeamPlan;
+  run: TeamRun;
+}
+
+export interface TeamBannerHistoryItemV1 {
+  taskId: string;
+  runId?: string;
+  title: string;
+  approvalStatus: TeamPlanApprovalStatus;
+  runStatus: TeamRunStatus;
+  currentStageTitle?: string;
+  currentExecutorName?: string;
+  taskPath: string;
+  teamPath: string;
+}
+
+export interface TeamBannerProjectionV1 {
+  projectionVersion: number;
+  sessionId: string;
+  taskId: string;
+  runId?: string;
+  approvalStatus: TeamPlanApprovalStatus;
+  runStatus: TeamRunStatus;
+  title: string;
+  summary: string;
+  completedStageCount: number;
+  totalStageCount: number;
+  currentStageTitle?: string;
+  currentExecutorName?: string;
+  taskPath: string;
+  teamPath: string;
+  historyCount: number;
+  recent: TeamBannerHistoryItemV1[];
+  workspace?: TeamWorkspaceProjectionV1;
+}
+
+export interface TaskDetailProjectionV1 {
+  projectionVersion: 1;
+  taskId: string;
+  runId?: string;
+  source: TaskDirectorySource;
+  sessionId: string;
+  sessionTitle: string;
+  workingDirectory: string;
+  projectName: string;
+  title: string;
+  summary: string;
+  businessStatus: TaskStatus;
+  runStatus?: TeamRunStatus;
+  executionMode: TaskExecutionMode;
+  createdScenario: string;
+  executorLabel: string;
+  progressCompleted: number;
+  progressTotal: number;
+  outputs: string[];
+  artifacts: TaskArtifactItem[];
+  runtimeArtifacts: StageArtifactProjectionV1[];
+  taskPath: string;
+  teamPath?: string;
+  currentStage?: string;
+  currentExecutorName?: string;
+  latestOutput?: string;
+  userGoal?: string;
+  approvalStatus?: TeamPlanApprovalStatus;
+  expectedOutcome?: string;
+  finalSummary?: string;
+  updatedAt: string;
+}
+
+export interface TeamRoleProjectionV1 {
+  roleId: string;
+  externalRoleId: string;
+  name: string;
+  roleKind: TeamPlanRoleKind;
+  responsibility: string;
+  parentRoleId?: string;
+}
+
+export interface TeamStageProjectionV1 {
+  stageId: string;
+  planTaskId: string;
+  title: string;
+  status: TeamRunStatus;
+  ownerRoleId: string;
+  ownerAgentType: string;
+  expectedOutput: string;
+  dependsOnStageIds: string[];
+  latestResultSummary?: string;
+  latestResultRef?: string;
+  artifacts: StageArtifactProjectionV1[];
+  retryCount: number;
+  updatedAt?: string;
+}
+
+export interface TeamRunDetailProjectionV1 {
+  projectionVersion: number;
+  taskId: string;
+  runId: string;
+  title: string;
+  summary: string;
+  userGoal: string;
+  expectedOutcome: string;
+  approvalStatus: TeamPlanApprovalStatus;
+  runStatus: TeamRunStatus;
+  budget: TeamRunBudget;
+  lifecycle: {
+    createdAt?: string;
+    startedAt?: string;
+    completedAt?: string;
+    publishedAt?: string;
+  };
+  guardrails: {
+    hierarchy: TeamPlanRoleKind[];
+    maxDepth: number;
+    lockScope: 'session_runtime';
+    resumeCount: number;
+  };
+  roles: TeamRoleProjectionV1[];
+  stages: TeamStageProjectionV1[];
+  context: {
+    summary: string;
+    finalSummary: string;
+    summarySource: TeamRunContextSource;
+    finalSummarySource: TeamRunContextSource;
+    blockedReason?: string;
+    lastError?: string;
+  };
+  outputs: string[];
+  artifacts: TaskArtifactItem[];
+  runtimeArtifacts: StageArtifactProjectionV1[];
+  taskPath: string;
+  teamPath: string;
+  currentStage?: string;
+  currentExecutorName?: string;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -411,7 +592,19 @@ export function parseTeamPlan(value: unknown): TeamPlan | null {
 }
 
 function isTeamRunStatus(value: unknown): value is TeamRunStatus {
-  return typeof value === 'string' && ['pending', 'ready', 'running', 'waiting', 'blocked', 'done', 'failed'].includes(value);
+  return typeof value === 'string' && [
+    'pending',
+    'ready',
+    'running',
+    'waiting',
+    'blocked',
+    'paused',
+    'cancelling',
+    'cancelled',
+    'summarizing',
+    'done',
+    'failed',
+  ].includes(value);
 }
 
 function isTeamAgentPresetRoleKind(value: unknown): value is TeamAgentPresetRoleKind {
@@ -525,6 +718,8 @@ function parseTeamRun(value: unknown, plan: TeamPlan): TeamRun {
     context,
     resumeCount: typeof value.resumeCount === 'number' ? value.resumeCount : 0,
     phases: phases.length > 0 ? phases : base.phases,
+    pauseRequestedAt: isNonEmptyString(value.pauseRequestedAt) ? value.pauseRequestedAt.trim() : null,
+    cancelRequestedAt: isNonEmptyString(value.cancelRequestedAt) ? value.cancelRequestedAt.trim() : null,
     createdAt: isNonEmptyString(value.createdAt) ? value.createdAt.trim() : null,
     startedAt: isNonEmptyString(value.startedAt) ? value.startedAt.trim() : null,
     completedAt: isNonEmptyString(value.completedAt) ? value.completedAt.trim() : null,
@@ -952,6 +1147,19 @@ export interface MainAgentCatalogResponse {
   tasks: TaskDirectoryItem[];
   agentPresets: AgentPresetDirectoryItem[];
   teamTemplates: TeamTemplateDirectoryItem[];
+}
+
+export interface TeamBannerProjectionResponseV1 {
+  banner: TeamBannerProjectionV1 | null;
+}
+
+export interface TaskDetailProjectionResponseV1 {
+  task: TaskDetailProjectionV1;
+  workspace?: TeamWorkspaceProjectionV1;
+}
+
+export interface TeamRunDetailProjectionResponseV1 {
+  team: TeamRunDetailProjectionV1;
 }
 
 export interface AgentPresetResponse {

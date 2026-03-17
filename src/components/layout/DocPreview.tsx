@@ -10,12 +10,12 @@ import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { Streamdown } from "streamdown";
 import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { usePanel } from "@/hooks/usePanel";
 import { useTranslation } from "@/hooks/useTranslation";
 import { getFileCategory } from "@/lib/file-categories";
+import { streamdownCode } from "@/lib/streamdown-code";
 import { ImagePreview } from "@/components/preview/ImagePreview";
 import { VideoPreview } from "@/components/preview/VideoPreview";
 import { AudioPreview } from "@/components/preview/AudioPreview";
@@ -25,7 +25,7 @@ import { ExcelPreview } from "@/components/preview/ExcelPreview";
 import { PowerPointPreview } from "@/components/preview/PowerPointPreview";
 import type { FilePreview as FilePreviewType } from "@/types";
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+const streamdownPlugins = { cjk, code: streamdownCode, math, mermaid };
 
 type ViewMode = "source" | "rendered";
 

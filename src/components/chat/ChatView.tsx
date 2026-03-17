@@ -1,11 +1,20 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Message, MessagesResponse, PermissionRequestEvent, FileAttachment } from '@/types';
+import { usePathname } from 'next/navigation';
+import type {
+  Message,
+  MessagesResponse,
+  PermissionRequestEvent,
+  FileAttachment,
+  TeamBannerProjectionResponseV1,
+} from '@/types';
 import { useTranslation } from '@/hooks/useTranslation';
+import { parseTeamPlanBlock } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { usePanel } from '@/hooks/usePanel';
+import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
@@ -55,7 +64,6 @@ interface MemoryIdleTriggerConfig {
 
 const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
 const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
-
 async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
   if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
     return {};
@@ -95,6 +103,7 @@ export function ChatView({
   onResolvedModelChange,
 }: ChatViewProps) {
   const { t } = useTranslation();
+  const pathname = usePathname();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
 
@@ -154,6 +163,45 @@ export function ChatView({
     ((content: string, files?: FileAttachment[], systemPromptAppend?: string, displayOverride?: string) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
+  const teamProjectionVersionRef = useRef<number | null>(null);
+
+  const syncMessagesFromServer = useCallback(async () => {
+    if (messagesRef.current.some((message) => isTempMessageId(message.id))) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json() as MessagesResponse;
+      const nextMessages = data.messages || [];
+      const currentMessages = messagesRef.current;
+      const sameLength = currentMessages.length === nextMessages.length;
+      const sameLastId = sameLength
+        && currentMessages[currentMessages.length - 1]?.id === nextMessages[nextMessages.length - 1]?.id;
+      if (sameLength && sameLastId) {
+        return;
+      }
+
+      messagesRef.current = nextMessages;
+      hasMoreRef.current = data.hasMore ?? false;
+      setMessages(nextMessages);
+      setHasMore(data.hasMore ?? false);
+      updateMessagesSession(sessionId, {
+        messages: nextMessages,
+        hasMore: data.hasMore ?? false,
+        loading: false,
+        error: null,
+      });
+    } catch {
+      // Best effort only.
+    }
+  }, [sessionId, updateMessagesSession]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -162,6 +210,48 @@ export function ChatView({
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const pollTeamConversation = async () => {
+      if (cancelled || isStreaming) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/team-banner`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json() as TeamBannerProjectionResponseV1;
+        const banner = data.banner;
+        const nextProjectionVersion = banner?.projectionVersion ?? null;
+        const hasChanged = teamProjectionVersionRef.current !== null
+          && nextProjectionVersion !== teamProjectionVersionRef.current;
+        teamProjectionVersionRef.current = nextProjectionVersion;
+
+        if (hasChanged) {
+          await syncMessagesFromServer();
+        }
+      } catch {
+        // Best effort only.
+      }
+    };
+
+    void pollTeamConversation();
+    const interval = window.setInterval(() => {
+      void pollTeamConversation();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isStreaming, sessionId, syncMessagesFromServer]);
 
   const appendMessage = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -763,6 +853,9 @@ export function ChatView({
           };
           transferPendingToMessage(assistantMessage.id);
           appendMessage(assistantMessage);
+          if (parseTeamPlanBlock(accumulated.trim())) {
+            window.dispatchEvent(new CustomEvent('team-chat-message-created', { detail: { sessionId } }));
+          }
           shouldScheduleIdleTrigger = true;
         }
       } catch (error) {
@@ -833,7 +926,7 @@ export function ChatView({
           errorStreamingSession(sessionId);
         } else {
           const isSessionActiveNow =
-            typeof window !== 'undefined' && window.location.pathname === `/chat/${sessionId}`;
+            pathname === `/chat/${sessionId}` || pathname === `/main-agent/${sessionId}`;
           if (isSessionActiveNow) {
             // Active session completion is immediately "read", so reset to idle.
             updateStreamingSession(sessionId, {
@@ -876,6 +969,7 @@ export function ChatView({
       isStreaming,
       mode,
       onResolvedModelChange,
+      pathname,
       resetStreamingUi,
       scheduleIdleMemoryTrigger,
       sessionId,
@@ -889,6 +983,20 @@ export function ChatView({
   );
 
   sendMessageRef.current = sendMessage;
+
+  useEffect(() => {
+    const pendingBootstrap = consumePendingChatBootstrap(sessionId);
+    if (!pendingBootstrap) {
+      return;
+    }
+
+    void sendMessage(
+      pendingBootstrap.content,
+      pendingBootstrap.files,
+      pendingBootstrap.systemPromptAppend,
+      pendingBootstrap.displayOverride,
+    );
+  }, [sendMessage, sessionId]);
 
   const handleCommand = useCallback((command: string) => {
     switch (command) {

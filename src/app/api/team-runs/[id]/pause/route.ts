@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db/connection'
 import { TeamRunOrchestrator } from '@/lib/team-run/orchestrator'
+import { getTeamRunDetailProjection } from '@/lib/team-run/projections'
+import type { ErrorResponse, TeamRunDetailProjectionResponseV1 } from '@/types'
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -13,7 +15,15 @@ export async function POST(
 
     await orchestrator.pauseRun(id)
 
-    return NextResponse.json({ success: true, runId: id })
+    const team = getTeamRunDetailProjection(id)
+    if (!team) {
+      return NextResponse.json<ErrorResponse>(
+        { error: 'Run not found' },
+        { status: 404 },
+      )
+    }
+
+    return NextResponse.json<TeamRunDetailProjectionResponseV1>({ team })
   } catch (error) {
     console.error('Pause team run error:', error)
     return NextResponse.json(

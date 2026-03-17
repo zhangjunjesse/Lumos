@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { TaskDirectoryItem, TaskStatus, TeamRunStatus } from '@/types';
+import type { TaskDetailProjectionResponseV1, TaskDetailProjectionV1, TaskStatus, TeamRunStatus } from '@/types';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { TeamWorkspacePanel } from '@/components/chat/TeamWorkspacePanel';
+import { RuntimeArtifactActions } from '@/components/conversations/runtime-artifact-actions';
 import { cn } from '@/lib/utils';
 
 interface TaskDetailViewProps {
@@ -20,6 +21,10 @@ const TEAM_RUN_STATUS_CLASSNAME: Record<TeamRunStatus, string> = {
   running: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300',
   waiting: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
   blocked: 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+  paused: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  cancelling: 'border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300',
+  cancelled: 'border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300',
+  summarizing: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
   done: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   failed: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
 };
@@ -37,6 +42,10 @@ const TEAM_RUN_STATUS_LABEL_KEY = {
   running: 'team.status.running',
   waiting: 'team.status.waiting',
   blocked: 'team.status.blocked',
+  paused: 'team.status.paused',
+  cancelling: 'team.status.cancelling',
+  cancelled: 'team.status.cancelled',
+  summarizing: 'team.status.summarizing',
   done: 'team.status.done',
   failed: 'team.status.failed',
 } as const;
@@ -48,15 +57,24 @@ const MANUAL_TASK_STATUS_LABEL_KEY = {
   failed: 'taskHub.status.failed',
 } as const;
 
+const ACTIVE_RUN_STATUSES: TeamRunStatus[] = ['pending', 'ready', 'running', 'waiting', 'cancelling', 'summarizing'];
+
 function formatTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
 
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function TaskDetailView({ taskId }: TaskDetailViewProps) {
   const { t } = useTranslation();
-  const [task, setTask] = useState<TaskDirectoryItem | null>(null);
+  const [task, setTask] = useState<TaskDetailProjectionV1 | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showWorkspace, setShowWorkspace] = useState(false);
@@ -68,8 +86,8 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
       setError('');
     }
 
-    const response = await fetch(`/api/tasks/catalog/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
-    const data = await response.json().catch(() => ({}));
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/view`, { cache: 'no-store' });
+    const data: Partial<TaskDetailProjectionResponseV1> & { error?: string } = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data?.error || 'Failed to load task');
     }
@@ -97,7 +115,9 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
     };
   }, [loadTask]);
 
-  const shouldPoll = task?.source === 'team' && !['done', 'failed', 'blocked'].includes(task.status);
+  const teamRunStatus = task?.source === 'team' ? task.runStatus || null : null;
+  const shouldPoll = Boolean(teamRunStatus)
+    && ACTIVE_RUN_STATUSES.includes(teamRunStatus as TeamRunStatus);
 
   useEffect(() => {
     if (!shouldPoll) return undefined;
@@ -114,10 +134,10 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
   const statusLabel = useMemo(() => {
     if (!task) return '';
     if (task.source === 'team') {
-      return t(TEAM_RUN_STATUS_LABEL_KEY[task.status as TeamRunStatus]);
+      return t(TEAM_RUN_STATUS_LABEL_KEY[(task.runStatus || 'pending') as TeamRunStatus]);
     }
 
-    return t(MANUAL_TASK_STATUS_LABEL_KEY[task.status as TaskStatus]);
+    return t(MANUAL_TASK_STATUS_LABEL_KEY[task.businessStatus as TaskStatus]);
   }, [task, t]);
 
   if (loading) {
@@ -142,8 +162,9 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
   }
 
   const badgeClassName = task.source === 'team'
-    ? TEAM_RUN_STATUS_CLASSNAME[task.status as TeamRunStatus]
-    : MANUAL_TASK_STATUS_CLASSNAME[task.status as TaskStatus];
+    ? TEAM_RUN_STATUS_CLASSNAME[(task.runStatus || 'pending') as TeamRunStatus]
+    : MANUAL_TASK_STATUS_CLASSNAME[task.businessStatus as TaskStatus];
+  const activeRunId = task.runId || null;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-8">
@@ -168,9 +189,9 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
           <Button variant="outline" asChild>
             <Link href="/tasks">{t('taskDetail.backToTasks')}</Link>
           </Button>
-          {task.teamId ? (
+          {task.teamPath ? (
             <Button variant="outline" asChild>
-              <Link href={`/team/${task.teamId}`}>{t('taskDetail.openTeamTab')}</Link>
+              <Link href={task.teamPath}>{t('taskDetail.openTeamTab')}</Link>
             </Button>
           ) : null}
           <Button asChild>
@@ -191,7 +212,7 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
             <p>{t('taskDetail.progress')}: {task.progressCompleted}/{task.progressTotal}</p>
             <p>{t('taskDetail.currentStage')}: {task.currentStage || t('taskHub.currentStageNone')}</p>
             <p>{t('taskDetail.updatedAt')}: {formatTimestamp(task.updatedAt)}</p>
-            {task.teamTitle ? <p>{t('taskDetail.linkedTeam')}: {task.teamTitle}</p> : null}
+            {task.teamPath ? <p>{t('taskDetail.linkedTeam')}: {task.title}</p> : null}
           </div>
 
           {task.userGoal ? (
@@ -206,10 +227,10 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
             <p className="whitespace-pre-wrap text-sm text-foreground">{task.summary}</p>
           </div>
 
-          {task.expectedOutput ? (
+          {task.expectedOutcome ? (
             <div className="space-y-1">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t('taskHub.expectedOutput')}</p>
-              <p className="whitespace-pre-wrap text-sm text-foreground">{task.expectedOutput}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{task.expectedOutcome}</p>
             </div>
           ) : null}
         </CardContent>
@@ -280,15 +301,47 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
 
       <Card>
         <CardHeader>
+          <CardTitle>{t('taskDetail.runtimeArtifacts')}</CardTitle>
+          <CardDescription>{t('taskDetail.runtimeArtifactsHint')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {task.runtimeArtifacts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t('taskDetail.noRuntimeArtifacts')}</p>
+          ) : (
+            task.runtimeArtifacts.map((artifact) => (
+              <div key={artifact.artifactId} className="rounded-2xl border border-border/60 bg-muted/10 px-4 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">{artifact.title}</span>
+                  <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-[0.14em]">
+                    {artifact.type}
+                  </Badge>
+                  {artifact.stageTitle ? <Badge variant="outline">{artifact.stageTitle}</Badge> : null}
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  {artifact.sourcePath ? <p>{t('taskDetail.artifactPath')}: {artifact.sourcePath}</p> : null}
+                  <p>{t('taskDetail.artifactSize')}: {formatBytes(artifact.size)}</p>
+                  <p>{t('taskDetail.artifactContentType')}: {artifact.contentType}</p>
+                </div>
+                {activeRunId ? (
+                  <RuntimeArtifactActions runId={activeRunId} artifact={artifact} />
+                ) : null}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>{t('taskDetail.links')}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           <Button variant="outline" asChild>
             <Link href={`/main-agent/${task.sessionId}`}>{t('taskHub.openSession')}</Link>
           </Button>
-          {task.teamId ? (
+          {task.teamPath ? (
             <Button variant="outline" asChild>
-              <Link href={`/team/${task.teamId}`}>{t('taskDetail.openTeamTab')}</Link>
+              <Link href={task.teamPath}>{t('taskDetail.openTeamTab')}</Link>
             </Button>
           ) : null}
         </CardContent>
@@ -307,7 +360,7 @@ export function TaskDetailView({ taskId }: TaskDetailViewProps) {
           </CardHeader>
           {showWorkspace ? (
             <CardContent>
-              <TeamWorkspacePanel taskId={task.id} standalone />
+              <TeamWorkspacePanel taskId={task.taskId} standalone />
             </CardContent>
           ) : null}
         </Card>

@@ -5,6 +5,7 @@ import {
   MAIN_AGENT_TEAM_TEMPLATE_KIND,
   TEAM_PLAN_TASK_KIND,
   parseAgentPresetRecord,
+  parseTeamPlan,
   parseTeamPlanTaskRecord,
   parseTeamTemplateRecord,
   serializeAgentPresetRecord,
@@ -38,9 +39,10 @@ import type {
   UpdateTeamTemplateRequest,
 } from '@/types';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
+import { compileTeamPlanToRunPlan, parseCompiledRunPlan } from '@/lib/team-run/compiler';
+import { ensureTaskRunScheduled } from '@/lib/team-run/runtime-manager';
 import { getDb } from './connection';
-import { addMessage } from './sessions';
-import { getAllSessions } from './sessions';
+import { getAllSessions, getSession } from './sessions';
 
 // ==========================================
 // Task Operations
@@ -67,55 +69,382 @@ interface TemplateRow {
   updated_at: string;
 }
 
-interface TeamRunAutomationState {
-  timer: ReturnType<typeof setTimeout> | null;
-  phaseStartedAt: Record<string, number>;
-  isTicking: boolean;
+type TaskRow = TaskItem;
+
+export interface MainAgentSessionTeamRuntimeTaskView {
+  taskId: string;
+  title: string;
+  userGoal: string;
+  approvalStatus: TeamPlanApprovalStatus;
+  runStatus: TeamRunStatus | 'not_started';
+  publishedToChat: boolean;
+  currentStage?: string;
+  finalSummary?: string;
+  latestOutput?: string;
+  runId?: string;
+  deliverablePaths: string[];
+  updatedAt: string;
 }
 
-type TeamRunAutomationStore = Map<string, TeamRunAutomationState>;
+export interface MainAgentSessionTeamRuntimeState {
+  preferredTask: MainAgentSessionTeamRuntimeTaskView | null;
+  pendingTasks: MainAgentSessionTeamRuntimeTaskView[];
+  additionalTasks: MainAgentSessionTeamRuntimeTaskView[];
+}
 
-type GlobalWithTeamRunAutomationStore = typeof globalThis & {
-  __lumosTeamRunAutomationStore?: TeamRunAutomationStore;
-};
+interface TeamRunRow {
+  id: string;
+  plan_id: string;
+  task_id: string | null;
+  session_id: string | null;
+  status: string;
+  planner_version: string;
+  planning_input_json: string;
+  compiled_plan_json: string;
+  workspace_root: string;
+  summary: string;
+  final_summary: string;
+  pause_requested_at: number | null;
+  cancel_requested_at: number | null;
+  published_at: string | null;
+  projection_version: number;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  error: string | null;
+}
 
-const AUTO_TEAM_RUN_BOOT_DELAY_MS = 80;
-const AUTO_TEAM_RUN_TICK_MS = 1200;
-const AUTO_TEAM_RUN_PHASE_DURATION_MS = 3200;
+interface TeamRunStageRow {
+  id: string;
+  run_id: string;
+  name: string;
+  role_id: string;
+  task: string;
+  plan_task_id: string;
+  description: string;
+  owner_agent_type: string;
+  status: string;
+  dependencies: string;
+  input_contract_json: string;
+  output_contract_json: string;
+  latest_result: string | null;
+  latest_result_ref: string | null;
+  error: string | null;
+  last_error: string | null;
+  retry_count: number;
+  agent_definition_id: string | null;
+  workspace_dir: string | null;
+  version: number;
+  last_attempt_id: string | null;
+  started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface StoredTeamRunMeta {
+  version: 1;
+  hierarchy?: TeamRun['hierarchy'];
+  maxDepth?: TeamRun['maxDepth'];
+  lockScope?: TeamRun['lockScope'];
+  budget?: TeamRun['budget'];
+  resumeCount?: number;
+  summarySource?: TeamRunContext['summarySource'];
+  finalSummarySource?: TeamRunContext['finalSummarySource'];
+  blockedReason?: string;
+  lastError?: string;
+}
+
+const MANUAL_TASK_DB_KIND = 'manual';
+const TEAM_PLAN_TASK_DB_KIND = 'team_plan';
+const TEAM_RUN_PLANNER_VERSION = 'compiled-run-plan/v1';
+const TEAM_RUN_META_VERSION = 1;
 
 function normalizeTimestamp(): string {
   return new Date().toISOString().replace('T', ' ').split('.')[0];
 }
 
-function getTeamRunAutomationStore(): TeamRunAutomationStore {
-  const runtime = globalThis as GlobalWithTeamRunAutomationStore;
-  if (!runtime.__lumosTeamRunAutomationStore) {
-    runtime.__lumosTeamRunAutomationStore = new Map<string, TeamRunAutomationState>();
-  }
-  return runtime.__lumosTeamRunAutomationStore;
+function isPersistedTeamTask(task: TaskRow): boolean {
+  return task.task_kind === TEAM_PLAN_TASK_DB_KIND;
 }
 
-function getTeamRunAutomationState(taskId: string): TeamRunAutomationState {
-  const store = getTeamRunAutomationStore();
-  const existing = store.get(taskId);
-  if (existing) return existing;
+function isTeamApprovalStatus(value: unknown): value is TeamPlanApprovalStatus {
+  return typeof value === 'string' && ['pending', 'approved', 'rejected'].includes(value);
+}
 
-  const created: TeamRunAutomationState = {
-    timer: null,
-    phaseStartedAt: {},
-    isTicking: false,
+function isProjectedRunStatus(value: unknown): value is TeamRunStatus {
+  return typeof value === 'string' && [
+    'pending',
+    'ready',
+    'running',
+    'waiting',
+    'blocked',
+    'paused',
+    'cancelling',
+    'cancelled',
+    'summarizing',
+    'done',
+    'failed',
+  ].includes(value);
+}
+
+function parseJsonValue<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredTeamRunMeta(raw: string | null | undefined): StoredTeamRunMeta {
+  const parsed = parseJsonValue<Record<string, unknown>>(raw);
+  if (!parsed || typeof parsed !== 'object') {
+    return { version: TEAM_RUN_META_VERSION };
+  }
+
+  const candidate = typeof parsed.runtimeMeta === 'object' && parsed.runtimeMeta !== null
+    ? parsed.runtimeMeta as Record<string, unknown>
+    : parsed;
+
+  return {
+    version: TEAM_RUN_META_VERSION,
+    ...(Array.isArray(candidate.hierarchy) ? { hierarchy: candidate.hierarchy as TeamRun['hierarchy'] } : {}),
+    ...(typeof candidate.maxDepth === 'number' ? { maxDepth: candidate.maxDepth as TeamRun['maxDepth'] } : {}),
+    ...(candidate.lockScope === 'session_runtime' ? { lockScope: 'session_runtime' as const } : {}),
+    ...(candidate.budget && typeof candidate.budget === 'object'
+      ? { budget: candidate.budget as TeamRun['budget'] }
+      : {}),
+    ...(typeof candidate.resumeCount === 'number' ? { resumeCount: candidate.resumeCount } : {}),
+    ...(candidate.summarySource === 'manual' ? { summarySource: 'manual' as const } : {}),
+    ...(candidate.finalSummarySource === 'manual' ? { finalSummarySource: 'manual' as const } : {}),
+    ...(typeof candidate.blockedReason === 'string' && candidate.blockedReason.trim()
+      ? { blockedReason: candidate.blockedReason.trim() }
+      : {}),
+    ...(typeof candidate.lastError === 'string' && candidate.lastError.trim()
+      ? { lastError: candidate.lastError.trim() }
+      : {}),
   };
-  store.set(taskId, created);
-  return created;
 }
 
-function clearTeamRunAutomation(taskId: string): void {
-  const store = getTeamRunAutomationStore();
-  const state = store.get(taskId);
-  if (state?.timer) {
-    clearTimeout(state.timer);
+function serializeStoredTeamRunMeta(record: TeamPlanTaskRecord): string {
+  const payload: StoredTeamRunMeta = {
+    version: TEAM_RUN_META_VERSION,
+    hierarchy: record.run.hierarchy,
+    maxDepth: record.run.maxDepth,
+    lockScope: record.run.lockScope,
+    budget: record.run.budget,
+    resumeCount: record.run.resumeCount,
+    summarySource: record.run.context.summarySource === 'manual' ? 'manual' : 'auto',
+    finalSummarySource: record.run.context.finalSummarySource === 'manual' ? 'manual' : 'auto',
+    ...(record.run.context.blockedReason ? { blockedReason: record.run.context.blockedReason } : {}),
+    ...(record.run.context.lastError ? { lastError: record.run.context.lastError } : {}),
+  };
+
+  return JSON.stringify(payload);
+}
+
+function toEpochMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function toIsoFromEpoch(value: number | null | undefined): string | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? new Date(value).toISOString()
+    : null;
+}
+
+function normalizeProjectedRunStatus(status: string | null | undefined, phases: TeamRunStage[]): TeamRunStatus {
+  if (status === 'failed' && !phases.some((phase) => phase.status === 'failed') && phases.some((phase) => phase.status === 'blocked')) {
+    return 'blocked';
   }
-  store.delete(taskId);
+  if (status && isProjectedRunStatus(status)) return status;
+  return deriveRunStatus(phases);
+}
+
+function buildPendingRunSnapshot(
+  task: TaskRow,
+  plan: TeamPlan,
+  approvalStatus: TeamPlanApprovalStatus,
+): TeamRun {
+  const base = createTeamRunSkeleton(plan);
+  if (approvalStatus === 'approved') {
+    const phases = unlockReadyPhases(base.phases);
+    return {
+      ...base,
+      phases,
+      status: deriveRunStatus(phases),
+      createdAt: task.approved_at || null,
+      lastUpdatedAt: task.last_action_at || task.updated_at,
+    };
+  }
+  if (approvalStatus === 'rejected') {
+    return {
+      ...base,
+      status: 'blocked',
+      lastUpdatedAt: task.last_action_at || task.updated_at,
+      context: {
+        ...base.context,
+        blockedReason: 'Team plan rejected by user.',
+      },
+    };
+  }
+  return {
+    ...base,
+    lastUpdatedAt: task.last_action_at || task.updated_at,
+  };
+}
+
+function getRawTask(id: string): TaskRow | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
+}
+
+function getRawTasksBySession(sessionId: string): TaskRow[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as TaskRow[];
+}
+
+function getTeamRunRow(runId: string): TeamRunRow | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM team_runs WHERE id = ?').get(runId) as TeamRunRow | undefined;
+}
+
+function getTeamRunStageRows(runId: string): TeamRunStageRow[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM team_run_stages WHERE run_id = ? ORDER BY created_at ASC, id ASC').all(runId) as TeamRunStageRow[];
+}
+
+function buildTeamRunFromRuntime(task: TaskRow, plan: TeamPlan, runId: string): TeamRun {
+  const run = getTeamRunRow(runId);
+  if (!run) {
+    return buildPendingRunSnapshot(task, plan, 'approved');
+  }
+
+  const meta = parseStoredTeamRunMeta(run.compiled_plan_json);
+  const compiledPlan = parseCompiledRunPlan(run.compiled_plan_json);
+  const base = createTeamRunSkeleton(plan);
+  const stageRows = getTeamRunStageRows(runId);
+  const compiledStageById = new Map(compiledPlan?.stages.map((stage) => [stage.stageId, stage]) || []);
+  const compiledRoleById = new Map(compiledPlan?.roles.map((role) => [role.roleId, role]) || []);
+  const stageIdToPlanTaskId = new Map(stageRows.map((stage) => {
+    const compiledStage = compiledStageById.get(stage.id);
+    return [stage.id, stage.plan_task_id || compiledStage?.externalTaskId || stage.id.replace(/^phase-/, '')];
+  }));
+  const phaseByPlanTaskId = new Map(base.phases.map((phase) => [phase.planTaskId, phase]));
+  const phases: TeamRunStage[] = stageRows.length > 0
+    ? stageRows.map((stage) => {
+        const compiledStage = compiledStageById.get(stage.id);
+        const basePhase = phaseByPlanTaskId.get(stage.plan_task_id || compiledStage?.externalTaskId || '')
+          || base.phases.find((item) => item.id === stage.id);
+        const dependencyIds = parseJsonValue<string[]>(stage.dependencies) || [];
+        const ownerRole = compiledRoleById.get(stage.role_id);
+        return {
+          id: stage.id,
+          planTaskId: stage.plan_task_id || compiledStage?.externalTaskId || basePhase?.planTaskId || stage.id.replace(/^phase-/, ''),
+          title: stage.name || compiledStage?.title || basePhase?.title || stage.description || stage.task,
+          ownerRoleId: ownerRole?.externalRoleId || compiledStage?.ownerExternalRoleId || basePhase?.ownerRoleId || stage.role_id || '',
+          dependsOn: dependencyIds.map((dependencyId) => stageIdToPlanTaskId.get(dependencyId) || dependencyId.replace(/^phase-/, '')),
+          expectedOutput: compiledStage?.expectedOutput || basePhase?.expectedOutput || '',
+          status: isProjectedRunStatus(stage.status) ? stage.status : 'pending',
+          ...(stage.latest_result?.trim() ? { latestResult: stage.latest_result.trim() } : {}),
+          updatedAt: toIsoFromEpoch(stage.updated_at),
+        };
+      })
+    : base.phases;
+
+  const projectedRun = applyAutomaticContextBackfill({
+    kind: TEAM_PLAN_TASK_KIND,
+    plan,
+    approvalStatus: 'approved',
+    run: base,
+  }, {
+    status: normalizeProjectedRunStatus(run.status, phases),
+    hierarchy: meta.hierarchy || base.hierarchy,
+    maxDepth: meta.maxDepth || base.maxDepth,
+    lockScope: meta.lockScope || base.lockScope,
+    budget: meta.budget || base.budget,
+    resumeCount: meta.resumeCount ?? 0,
+    phases,
+    pauseRequestedAt: toIsoFromEpoch(run.pause_requested_at),
+    cancelRequestedAt: toIsoFromEpoch(run.cancel_requested_at),
+    createdAt: toIsoFromEpoch(run.created_at),
+    startedAt: toIsoFromEpoch(run.started_at),
+    completedAt: toIsoFromEpoch(run.completed_at),
+    lastUpdatedAt: toIsoFromEpoch(run.completed_at || run.started_at || run.created_at) || task.updated_at,
+    context: {
+      summary: run.summary || '',
+      finalSummary: run.final_summary.trim() || (task.final_result_summary || '').trim(),
+      summarySource: meta.summarySource || 'auto',
+      finalSummarySource: meta.finalSummarySource || 'auto',
+      ...(meta.blockedReason ? { blockedReason: meta.blockedReason } : {}),
+      ...(meta.lastError || run.error ? { lastError: meta.lastError || run.error || '' } : {}),
+      publishedAt: run.published_at,
+    },
+  });
+
+  return projectedRun;
+}
+
+function buildTeamPlanTaskRecord(task: TaskRow): TeamPlanTaskRecord | null {
+  if (isPersistedTeamTask(task)) {
+    const plan = parseTeamPlan(parseJsonValue<unknown>(task.team_plan_json));
+    if (!plan) return parseTeamPlanTaskRecord(task.description);
+
+    const approvalStatus = isTeamApprovalStatus(task.team_approval_status)
+      ? task.team_approval_status
+      : 'pending';
+    const run = approvalStatus === 'approved' && task.current_run_id
+      ? buildTeamRunFromRuntime(task, plan, task.current_run_id)
+      : buildPendingRunSnapshot(task, plan, approvalStatus);
+
+    if (task.final_result_summary?.trim() && !run.context.finalSummary.trim()) {
+      run.context.finalSummary = task.final_result_summary.trim();
+    }
+
+    return {
+      kind: TEAM_PLAN_TASK_KIND,
+      plan,
+      approvalStatus,
+      run,
+      ...(task.source_message_id ? { sourceMessageId: task.source_message_id } : {}),
+      approvedAt: task.approved_at || null,
+      rejectedAt: task.rejected_at || null,
+      lastActionAt: task.last_action_at || null,
+    };
+  }
+
+  return parseTeamPlanTaskRecord(task.description);
+}
+
+function materializeTask(task: TaskRow): TaskItem {
+  const record = buildTeamPlanTaskRecord(task);
+  if (!record) return task;
+
+  if (!isPersistedTeamTask(task)) {
+    return {
+      ...task,
+      status: toTaskStatus(record),
+      description: serializeTeamPlanTaskRecord(record),
+    };
+  }
+
+  return {
+    ...task,
+    task_kind: TEAM_PLAN_TASK_DB_KIND,
+    team_plan_json: JSON.stringify(record.plan),
+    team_approval_status: record.approvalStatus,
+    current_run_id: task.current_run_id || null,
+    final_result_summary: record.run.context.finalSummary || task.final_result_summary || '',
+    source_message_id: record.sourceMessageId || task.source_message_id || null,
+    approved_at: record.approvedAt || null,
+    rejected_at: record.rejectedAt || null,
+    last_action_at: record.lastActionAt || null,
+    status: toTaskStatus(record),
+    description: serializeTeamPlanTaskRecord(record),
+  };
 }
 
 function hasTemplatesTable(): boolean {
@@ -186,7 +515,7 @@ function validateAgentRoleKind(roleKind: string | undefined): TeamAgentPresetRol
 }
 
 function isSystemTask(task: TaskItem): boolean {
-  return parseTeamPlanTaskRecord(task.description) !== null;
+  return buildTeamPlanTaskRecord(task) !== null;
 }
 
 function toTaskStatus(record: TeamPlanTaskRecord): TaskStatus {
@@ -199,7 +528,7 @@ function toTaskStatus(record: TeamPlanTaskRecord): TaskStatus {
   if (record.run.status === 'done') {
     return 'completed';
   }
-  if (record.run.status === 'failed' || record.run.status === 'blocked') {
+  if (record.run.status === 'failed' || record.run.status === 'blocked' || record.run.status === 'cancelled') {
     return 'failed';
   }
   return 'in_progress';
@@ -252,7 +581,7 @@ function shouldMarkRunStarted(status: TeamRunStatus): boolean {
 }
 
 function isTerminalTeamRunStatus(status: TeamRunStatus): boolean {
-  return ['done', 'failed', 'blocked'].includes(status);
+  return ['done', 'failed', 'blocked', 'cancelled'].includes(status);
 }
 
 function describePhaseWithoutResult(phase: TeamRunStage): string | null {
@@ -291,47 +620,6 @@ function formatTeamRunStatusLabel(status: TeamRunStatus): string {
     default:
       return status;
   }
-}
-
-function buildAutoPhaseResult(
-  record: TeamPlanTaskRecord,
-  phase: TeamRunStage,
-  phases: TeamRunStage[],
-): string {
-  const owner = record.plan.roles.find((role) => role.id === phase.ownerRoleId);
-  const planTask = record.plan.tasks.find((task) => task.id === phase.planTaskId);
-  const dependencyHighlights = phases
-    .filter((candidate) => phase.dependsOn.includes(candidate.planTaskId))
-    .map((candidate) => `- ${candidate.title}: ${(candidate.latestResult || candidate.expectedOutput).trim()}`)
-    .slice(0, 3);
-
-  return [
-    `${owner?.name || '团队成员'}已完成「${phase.title}」阶段交付。`,
-    planTask?.summary ? `阶段目标：${planTask.summary}` : null,
-    dependencyHighlights.length > 0 ? '上游输入：' : null,
-    ...dependencyHighlights,
-    `当前产出：${phase.expectedOutput}`,
-    '执行说明：当前为 Main Agent / Team Mode MVP 的自动执行骨架结果，用于验证任务自动启动、状态推进与结果回填链路。',
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join('\n')
-    .trim();
-}
-
-function buildMainAgentCompletionMessage(taskId: string, record: TeamPlanTaskRecord, run: TeamRun): string {
-  const summary = run.context.finalSummary.trim()
-    || run.context.summary.trim()
-    || record.plan.expectedOutcome.trim()
-    || '团队已完成本次任务，请打开任务页查看阶段结果与最终汇总。';
-
-  return [
-    '主代理团队任务已完成。',
-    `任务：${record.plan.summary}`,
-    `任务页：/tasks/${taskId}`,
-    `团队页：/team/${taskId}`,
-    '',
-    summary,
-  ].join('\n').trim();
 }
 
 function buildPhaseContextLine(plan: TeamPlan, phase: TeamRunStage): string | null {
@@ -409,151 +697,234 @@ function applyAutomaticContextBackfill(record: TeamPlanTaskRecord, run: TeamRun)
   };
 }
 
-function persistTeamPlanRecord(taskId: string, record: TeamPlanTaskRecord): TaskItem | undefined {
-  const normalized = normalizeTeamPlanRecord(record);
-  return updateTask(taskId, {
-    title: formatTeamPlanTaskTitle(normalized),
-    description: serializeTeamPlanTaskRecord(normalized),
-    status: toTaskStatus(normalized),
+function buildCompiledRunPayload(task: TaskRow, record: TeamPlanTaskRecord, runId: string, workspaceRoot: string): string {
+  const compiledPlan = compileTeamPlanToRunPlan({
+    taskId: task.id,
+    sessionId: task.session_id,
+    runId,
+    workspaceRoot,
+    plan: record.plan,
+    run: record.run,
+    agentPresets: listMainAgentAgentPresets(),
+  });
+
+  return JSON.stringify({
+    ...compiledPlan,
+    runtimeMeta: JSON.parse(serializeStoredTeamRunMeta(record)) as StoredTeamRunMeta,
   });
 }
 
-function scheduleTeamRunTick(taskId: string, delayMs = AUTO_TEAM_RUN_BOOT_DELAY_MS): void {
-  const state = getTeamRunAutomationState(taskId);
-  if (state.timer) return;
+function syncTeamRunRuntime(task: TaskRow, record: TeamPlanTaskRecord): string | null {
+  if (record.approvalStatus !== 'approved') {
+    return null;
+  }
 
-  state.timer = setTimeout(() => {
-    const current = getTeamRunAutomationState(taskId);
-    current.timer = null;
-    runAutomatedTeamRunTick(taskId);
-  }, Math.max(AUTO_TEAM_RUN_BOOT_DELAY_MS, delayMs));
+  const db = getDb();
+  const existingRunId = task.current_run_id || null;
+  const runId = existingRunId || crypto.randomBytes(16).toString('hex');
+  const run = getTeamRunRow(runId);
+  const session = getSession(task.session_id);
+  const createdAtMs = toEpochMs(record.run.createdAt)
+    || run?.created_at
+    || toEpochMs(task.approved_at)
+    || Date.now();
+  const startedAtMs = toEpochMs(record.run.startedAt) || run?.started_at || null;
+  const completedAtMs = toEpochMs(record.run.completedAt) || run?.completed_at || null;
+  const projectedRun = applyAutomaticContextBackfill(record, record.run);
+  record.run = projectedRun;
+  const summary = projectedRun.context.summary.trim();
+  const finalSummary = projectedRun.context.finalSummary.trim();
+  const workspaceRoot = run?.workspace_root || session?.working_directory || '';
+  const compiledPlanPayload = buildCompiledRunPayload(task, record, runId, workspaceRoot);
+  const compiledPlan = parseCompiledRunPlan(compiledPlanPayload);
+  if (!compiledPlan) {
+    throw new Error('Failed to compile team run plan');
+  }
+  const phaseStateByPlanTaskId = new Map(projectedRun.phases.map((phase) => [phase.planTaskId, phase]));
+
+  if (!run) {
+    db.prepare(`
+      INSERT INTO team_runs (
+        id, plan_id, task_id, session_id, status, planner_version, planning_input_json, compiled_plan_json,
+        workspace_root, summary, final_summary, published_at, projection_version, created_at, started_at, completed_at, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      runId,
+      task.id,
+      task.id,
+      task.session_id,
+      projectedRun.status,
+      TEAM_RUN_PLANNER_VERSION,
+      JSON.stringify({
+        summary: record.plan.summary,
+        userGoal: record.plan.userGoal,
+        expectedOutcome: record.plan.expectedOutcome,
+        plan: record.plan,
+      }),
+      compiledPlanPayload,
+      workspaceRoot,
+      summary,
+      finalSummary,
+      projectedRun.context.publishedAt || null,
+      1,
+      createdAtMs,
+      startedAtMs,
+      completedAtMs,
+      projectedRun.context.lastError || null,
+    );
+  } else {
+    db.prepare(`
+      UPDATE team_runs
+      SET plan_id = ?, task_id = ?, session_id = ?, status = ?, planner_version = ?, planning_input_json = ?,
+          compiled_plan_json = ?, workspace_root = ?, summary = ?, final_summary = ?, published_at = ?,
+          projection_version = ?, created_at = ?, started_at = ?, completed_at = ?, error = ?
+      WHERE id = ?
+    `).run(
+      task.id,
+      task.id,
+      task.session_id,
+      projectedRun.status,
+      TEAM_RUN_PLANNER_VERSION,
+      JSON.stringify({
+        summary: record.plan.summary,
+        userGoal: record.plan.userGoal,
+        expectedOutcome: record.plan.expectedOutcome,
+        plan: record.plan,
+      }),
+      compiledPlanPayload,
+      workspaceRoot,
+      summary,
+      finalSummary,
+      projectedRun.context.publishedAt || null,
+      1,
+      createdAtMs,
+      startedAtMs,
+      completedAtMs,
+      projectedRun.context.lastError || null,
+      runId,
+    );
+  }
+
+  const existingStages = new Map(getTeamRunStageRows(runId).map((stage) => [stage.id, stage]));
+  const currentPhaseIds = new Set<string>();
+
+  for (const compiledStage of compiledPlan.stages) {
+    const phase = phaseStateByPlanTaskId.get(compiledStage.externalTaskId);
+    const stageId = compiledStage.stageId;
+    currentPhaseIds.add(stageId);
+    const existingStage = existingStages.get(stageId);
+    const updatedAtMs = toEpochMs(phase?.updatedAt)
+      || existingStage?.updated_at
+      || toEpochMs(projectedRun.lastUpdatedAt)
+      || Date.now();
+    const startedAtStageMs = existingStage?.started_at
+      || (phase && (phase.status === 'running' || phase.status === 'done' || phase.status === 'failed' || phase.status === 'blocked')
+        ? updatedAtMs
+        : null);
+    const completedAtStageMs = existingStage?.completed_at
+      || (phase && (phase.status === 'done' || phase.status === 'failed' || phase.status === 'blocked') ? updatedAtMs : null);
+
+    if (!existingStage) {
+      db.prepare(`
+        INSERT INTO team_run_stages (
+          id, run_id, name, role_id, task, plan_task_id, description, owner_agent_type, status, dependencies,
+          input_contract_json, output_contract_json, latest_result, latest_result_ref, error, last_error, retry_count,
+          agent_definition_id, workspace_dir, version, last_attempt_id, started_at, completed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        stageId,
+        runId,
+        compiledStage.title,
+        compiledStage.ownerRoleId,
+        compiledStage.description,
+        compiledStage.externalTaskId,
+        compiledStage.description,
+        compiledStage.ownerAgentType,
+        phase?.status || (compiledStage.dependsOnStageIds.length > 0 ? 'pending' : 'ready'),
+        JSON.stringify(compiledStage.dependsOnStageIds),
+        JSON.stringify(compiledStage.inputContract),
+        JSON.stringify(compiledStage.outputContract),
+        phase?.latestResult || null,
+        null,
+        phase?.status === 'failed' ? (record.run.context.lastError || null) : null,
+        phase?.status === 'failed' ? (record.run.context.lastError || null) : null,
+        0,
+        compiledStage.ownerAgentDefinitionId || null,
+        null,
+        1,
+        null,
+        startedAtStageMs,
+        completedAtStageMs,
+        createdAtMs,
+        updatedAtMs,
+      );
+    } else {
+      db.prepare(`
+        UPDATE team_run_stages
+        SET name = ?, role_id = ?, task = ?, plan_task_id = ?, description = ?, owner_agent_type = ?, status = ?,
+            dependencies = ?, input_contract_json = ?, output_contract_json = ?, latest_result = ?, error = ?, last_error = ?, agent_definition_id = ?, started_at = ?, completed_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(
+        compiledStage.title,
+        compiledStage.ownerRoleId,
+        compiledStage.description,
+        compiledStage.externalTaskId,
+        compiledStage.description,
+        compiledStage.ownerAgentType,
+        phase?.status || existingStage.status,
+        JSON.stringify(compiledStage.dependsOnStageIds),
+        JSON.stringify(compiledStage.inputContract),
+        JSON.stringify(compiledStage.outputContract),
+        phase?.latestResult || existingStage.latest_result || null,
+        phase?.status === 'failed' ? (record.run.context.lastError || existingStage.error || null) : null,
+        phase?.status === 'failed' ? (record.run.context.lastError || existingStage.last_error || null) : null,
+        compiledStage.ownerAgentDefinitionId || existingStage.agent_definition_id || null,
+        startedAtStageMs,
+        completedAtStageMs,
+        updatedAtMs,
+        stageId,
+      );
+    }
+  }
+
+  const staleStageIds = Array.from(existingStages.keys()).filter((stageId) => !currentPhaseIds.has(stageId));
+  for (const staleStageId of staleStageIds) {
+    db.prepare('DELETE FROM team_run_stages WHERE id = ?').run(staleStageId);
+  }
+
+  return runId;
 }
 
-function runAutomatedTeamRunTick(taskId: string): void {
-  const state = getTeamRunAutomationState(taskId);
-  if (state.isTicking) return;
+function persistTeamPlanRecord(taskId: string, record: TeamPlanTaskRecord): TaskItem | undefined {
+  const normalized = normalizeTeamPlanRecord(record);
+  const existing = getRawTask(taskId);
+  if (!existing) return undefined;
 
-  state.isTicking = true;
+  const currentRunId = syncTeamRunRuntime(existing, normalized);
+  const db = getDb();
+  db.prepare(`
+    UPDATE tasks
+    SET title = ?, status = ?, task_kind = ?, team_plan_json = ?, team_approval_status = ?, current_run_id = ?,
+        final_result_summary = ?, source_message_id = ?, approved_at = ?, rejected_at = ?, last_action_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    formatTeamPlanTaskTitle(normalized),
+    toTaskStatus(normalized),
+    TEAM_PLAN_TASK_DB_KIND,
+    JSON.stringify(normalized.plan),
+    normalized.approvalStatus,
+    currentRunId,
+    normalized.run.context.finalSummary || '',
+    normalized.sourceMessageId || null,
+    normalized.approvedAt || null,
+    normalized.rejectedAt || null,
+    normalized.lastActionAt || nowIso(),
+    normalizeTimestamp(),
+    taskId,
+  );
 
-  try {
-    const task = getTask(taskId);
-    if (!task) {
-      clearTeamRunAutomation(taskId);
-      return;
-    }
-
-    const record = parseTeamPlanTaskRecord(task.description);
-    if (!record || record.approvalStatus !== 'approved') {
-      clearTeamRunAutomation(taskId);
-      return;
-    }
-
-    if (isTerminalTeamRunStatus(record.run.status)) {
-      clearTeamRunAutomation(taskId);
-      return;
-    }
-
-    const now = nowIso();
-    const runtimeNow = Date.now();
-    let phases = unlockReadyPhases(record.run.phases);
-    let changed = JSON.stringify(phases) !== JSON.stringify(record.run.phases);
-
-    const completedRunningIds = phases
-      .filter((phase) => phase.status === 'running')
-      .filter((phase) => {
-        if (!state.phaseStartedAt[phase.id]) {
-          state.phaseStartedAt[phase.id] = runtimeNow;
-        }
-        return runtimeNow - state.phaseStartedAt[phase.id] >= AUTO_TEAM_RUN_PHASE_DURATION_MS;
-      })
-      .map((phase) => phase.id);
-
-    if (completedRunningIds.length > 0) {
-      phases = unlockReadyPhases(phases.map((phase) => {
-        if (!completedRunningIds.includes(phase.id)) return phase;
-        delete state.phaseStartedAt[phase.id];
-        return {
-          ...phase,
-          status: 'done',
-          latestResult: buildAutoPhaseResult(record, phase, phases),
-          updatedAt: now,
-        };
-      }));
-      changed = true;
-    }
-
-    const maxParallelWorkers = Math.max(1, record.run.budget.maxParallelWorkers || 1);
-    const runningCount = phases.filter((phase) => phase.status === 'running').length;
-    const phaseIdsToStart = phases
-      .filter((phase) => phase.status === 'ready')
-      .slice(0, Math.max(0, maxParallelWorkers - runningCount))
-      .map((phase) => phase.id);
-
-    if (phaseIdsToStart.length > 0) {
-      phases = phases.map((phase) => {
-        if (!phaseIdsToStart.includes(phase.id)) return phase;
-        state.phaseStartedAt[phase.id] = runtimeNow;
-        return {
-          ...phase,
-          status: 'running',
-          updatedAt: now,
-        };
-      });
-      changed = true;
-    }
-
-    for (const phaseId of Object.keys(state.phaseStartedAt)) {
-      const phase = phases.find((candidate) => candidate.id === phaseId);
-      if (!phase || phase.status !== 'running') {
-        delete state.phaseStartedAt[phaseId];
-      }
-    }
-
-    const status = deriveRunStatus(phases);
-    const shouldPublishToMainChat = status === 'done' && !record.run.context.publishedAt;
-
-    if (changed || status !== record.run.status || shouldPublishToMainChat) {
-      const nextRun = applyAutomaticContextBackfill(record, {
-        ...record.run,
-        phases,
-        status,
-        startedAt: record.run.startedAt || (shouldMarkRunStarted(status) ? now : record.run.startedAt),
-        completedAt: status === 'done' ? now : null,
-        lastUpdatedAt: now,
-        context: {
-          ...record.run.context,
-          blockedReason: status === 'blocked' ? record.run.context.blockedReason : undefined,
-          lastError: status === 'failed' ? record.run.context.lastError : undefined,
-          ...(shouldPublishToMainChat ? { publishedAt: now } : {}),
-        },
-      });
-
-      const nextRecord: TeamPlanTaskRecord = {
-        ...record,
-        run: nextRun,
-        lastActionAt: now,
-      };
-
-      persistTeamPlanRecord(taskId, nextRecord);
-
-      if (shouldPublishToMainChat) {
-        try {
-          addMessage(task.session_id, 'assistant', buildMainAgentCompletionMessage(taskId, nextRecord, nextRun));
-        } catch {
-          // Best effort only.
-        }
-      }
-
-      if (isTerminalTeamRunStatus(status)) {
-        clearTeamRunAutomation(taskId);
-        return;
-      }
-    }
-
-    scheduleTeamRunTick(taskId, AUTO_TEAM_RUN_TICK_MS);
-  } finally {
-    state.isTicking = false;
-  }
+  return getTask(taskId);
 }
 
 function buildTaskPath(taskId: string): string {
@@ -655,6 +1026,7 @@ function toTeamDirectoryItem(
     : undefined;
   return {
     id: task.id,
+    ...(task.current_run_id ? { runId: task.current_run_id } : {}),
     sessionId: session.id,
     sessionTitle: session.title,
     workingDirectory: session.working_directory,
@@ -782,6 +1154,7 @@ function buildTeamTaskDirectoryItem(
     : undefined;
 
   return toTaskDirectoryItem(session, task, 'team', {
+    ...(task.current_run_id ? { runId: task.current_run_id } : {}),
     title: record.plan.summary,
     summary: record.plan.expectedOutcome,
     status: record.run.status,
@@ -811,7 +1184,6 @@ export function getMainAgentCatalog(): {
   agentPresets: AgentPresetDirectoryItem[];
   teamTemplates: TeamTemplateDirectoryItem[];
 } {
-  ensureMainAgentTeamRunsExecution();
   const sessions = getAllSessions().filter((session) => isMainAgentSession(session));
   const teams: TeamDirectoryItem[] = [];
   const tasks: TaskDirectoryItem[] = [];
@@ -854,12 +1226,10 @@ export function getMainAgentCatalog(): {
 }
 
 export function getMainAgentTaskDirectoryItem(taskId: string): TaskDirectoryItem | undefined {
-  ensureTeamRunExecution(taskId);
   return getMainAgentCatalog().tasks.find((task) => task.id === taskId);
 }
 
 export function getMainAgentTeamDirectoryItem(teamId: string): TeamDirectoryItem | undefined {
-  ensureTeamRunExecution(teamId);
   return getMainAgentCatalog().teams.find((team) => team.id === teamId);
 }
 
@@ -1132,15 +1502,251 @@ export function getMainAgentTeamConfigurationPrompt(): string {
   return lines.join('\n');
 }
 
+function getMainAgentSessionRuntimeTaskCandidates(
+  sessionId: string,
+): Array<{ task: TaskItem; record: TeamPlanTaskRecord }> {
+  const teamTasks = getTasksBySession(sessionId, { kind: TEAM_PLAN_TASK_KIND });
+  if (teamTasks.length === 0) {
+    return [];
+  }
+
+  return teamTasks
+    .map((task, index) => ({
+      task,
+      record: parseTeamPlanTaskRecord(task.description),
+      sourceIndex: index,
+    }))
+    .filter((item): item is { task: TaskItem; record: TeamPlanTaskRecord; sourceIndex: number } => Boolean(item.record))
+    .sort((left, right) => {
+      const updatedOrder = right.task.updated_at.localeCompare(left.task.updated_at);
+      if (updatedOrder !== 0) {
+        return updatedOrder;
+      }
+      const createdOrder = right.task.created_at.localeCompare(left.task.created_at);
+      if (createdOrder !== 0) {
+        return createdOrder;
+      }
+      return right.sourceIndex - left.sourceIndex;
+    })
+    .map(({ task, record }) => ({ task, record }));
+}
+
+function getMainAgentRuntimeDeliverablePaths(runId: string | undefined): string[] {
+  if (!runId) {
+    return [];
+  }
+
+  const db = getDb();
+  const existingFinalSummaryArtifact = db.prepare(`
+    SELECT id
+    FROM team_run_artifacts
+    WHERE run_id = ? AND source_path = 'final-summary.md'
+    LIMIT 1
+  `).get(runId) as { id: string } | undefined;
+
+  if (!existingFinalSummaryArtifact) {
+    const run = db.prepare(`
+      SELECT final_summary
+      FROM team_runs
+      WHERE id = ?
+      LIMIT 1
+    `).get(runId) as { final_summary: string } | undefined;
+    const stage = db.prepare(`
+      SELECT id
+      FROM team_run_stages
+      WHERE run_id = ?
+      ORDER BY completed_at DESC, created_at DESC, id DESC
+      LIMIT 1
+    `).get(runId) as { id: string } | undefined;
+
+    if (run?.final_summary?.trim() && stage?.id) {
+      const content = Buffer.from(run.final_summary.trim(), 'utf8');
+      db.prepare(`
+        INSERT INTO team_run_artifacts (id, run_id, stage_id, type, title, source_path, content, content_type, size, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomBytes(16).toString('hex'),
+        runId,
+        stage.id,
+        'output',
+        'Final summary',
+        'final-summary.md',
+        content,
+        'text/markdown',
+        content.length,
+        Date.now(),
+      );
+    }
+  }
+
+  const rows = db.prepare(`
+    SELECT id, title, source_path, content_type
+    FROM team_run_artifacts
+    WHERE run_id = ?
+    ORDER BY
+      CASE
+        WHEN source_path = 'final-summary.md' THEN 0
+        WHEN content_type = 'text/markdown' THEN 1
+        WHEN source_path LIKE '%.md' THEN 2
+        WHEN title LIKE '%report%' OR title LIKE '%summary%' THEN 3
+        ELSE 9
+      END,
+      created_at ASC,
+      id ASC
+  `).all(runId) as Array<{
+    id: string;
+    title: string;
+    source_path: string | null;
+    content_type: string;
+  }>;
+
+  return rows
+    .slice(0, 4)
+    .map((row) => {
+      const label = row.source_path?.trim() || row.title.trim();
+      const path = `/api/team-runs/${runId}/artifacts/${row.id}`;
+      return label ? `${label} -> ${path}` : path;
+    });
+}
+
+function toMainAgentSessionRuntimeTaskView(
+  item: { task: TaskItem; record: TeamPlanTaskRecord },
+): MainAgentSessionTeamRuntimeTaskView {
+  const currentPhase = getCurrentTeamPhase(item.record);
+  const outputs = buildTeamOutputs(item.record);
+
+  return {
+    taskId: item.task.id,
+    title: item.record.plan.summary,
+    userGoal: item.record.plan.userGoal,
+    approvalStatus: item.record.approvalStatus,
+    runStatus: item.record.approvalStatus === 'approved' ? item.record.run.status : 'not_started',
+    publishedToChat: Boolean(item.record.run.context.publishedAt),
+    ...(currentPhase && !['done', 'failed', 'blocked', 'cancelled'].includes(item.record.run.status)
+      ? { currentStage: currentPhase.title }
+      : {}),
+    ...(item.record.run.context.finalSummary.trim()
+      ? { finalSummary: item.record.run.context.finalSummary.trim() }
+      : {}),
+    ...(outputs[0] ? { latestOutput: outputs[0] } : {}),
+    ...(item.task.current_run_id ? { runId: item.task.current_run_id } : {}),
+    deliverablePaths: getMainAgentRuntimeDeliverablePaths(item.task.current_run_id || undefined),
+    updatedAt: item.task.updated_at,
+  };
+}
+
+export function getMainAgentSessionTeamRuntimeState(
+  sessionId: string,
+): MainAgentSessionTeamRuntimeState | null {
+  const runtimeTasks = getMainAgentSessionRuntimeTaskCandidates(sessionId);
+  if (runtimeTasks.length === 0) {
+    return null;
+  }
+
+  const activeApprovedTask = runtimeTasks.find(({ record }) => (
+    record.approvalStatus === 'approved'
+    && !['done', 'failed', 'blocked', 'cancelled'].includes(record.run.status)
+  ));
+  const latestApprovedTask = runtimeTasks.find(({ record }) => record.approvalStatus === 'approved');
+  const latestApprovedIndex = latestApprovedTask
+    ? runtimeTasks.findIndex(({ task }) => task.id === latestApprovedTask.task.id)
+    : -1;
+  const relevantPendingTasks = runtimeTasks.filter(({ record }, index) => (
+    record.approvalStatus === 'pending'
+    && (latestApprovedIndex === -1 || index < latestApprovedIndex)
+  ));
+  const preferredTask = activeApprovedTask || latestApprovedTask || null;
+  const additionalTasks = runtimeTasks.filter(({ task }) => (
+    (!preferredTask || task.id !== preferredTask.task.id)
+    && !relevantPendingTasks.some((item) => item.task.id === task.id)
+  ));
+
+  return {
+    preferredTask: preferredTask ? toMainAgentSessionRuntimeTaskView(preferredTask) : null,
+    pendingTasks: relevantPendingTasks.slice(0, 2).map(toMainAgentSessionRuntimeTaskView),
+    additionalTasks: additionalTasks.slice(0, 3).map(toMainAgentSessionRuntimeTaskView),
+  };
+}
+
+function appendMainAgentRuntimeTaskPrompt(
+  lines: string[],
+  header: string,
+  task: MainAgentSessionTeamRuntimeTaskView,
+): void {
+  const finalSummary = truncateForPrompt(task.finalSummary, 1600);
+  const latestOutput = truncateForPrompt(task.latestOutput, 700);
+
+  lines.push('');
+  lines.push(header);
+  lines.push(`- Task: ${task.title}`);
+  lines.push(`  Goal: ${truncateForPrompt(task.userGoal, 220)}`);
+  lines.push(`  Approval: ${task.approvalStatus}`);
+  lines.push(`  Run status: ${task.runStatus}`);
+  lines.push(`  Published to chat: ${task.publishedToChat ? 'yes' : 'no'}`);
+  if (task.currentStage) {
+    lines.push(`  Current stage: ${task.currentStage}`);
+  }
+  if (finalSummary) {
+    lines.push(`  Final summary: ${finalSummary}`);
+  } else if (latestOutput) {
+    lines.push(`  Latest output: ${latestOutput}`);
+  }
+  if (task.deliverablePaths.length > 0) {
+    lines.push('  Deliverable paths:');
+    for (const item of task.deliverablePaths) {
+      lines.push(`  - ${item}`);
+    }
+  } else if (task.finalSummary) {
+    lines.push('  Deliverable note: no separate runtime artifact path was persisted; use the published chat summary as the canonical report.');
+  }
+  if (task.runId) {
+    lines.push(`  Run ID: ${task.runId}`);
+  }
+}
+
+export function getMainAgentSessionTeamRuntimePrompt(sessionId: string): string {
+  const runtimeState = getMainAgentSessionTeamRuntimeState(sessionId);
+  if (!runtimeState) {
+    return '';
+  }
+
+  const lines = [
+    'Team task runtime state is available for this Main Agent session.',
+    'Treat this runtime state as the source of truth over stale chat history about whether the team only planned or actually executed.',
+    'If the user asks for a report, output, result, or deliverable from an existing team task, use the completed task state below instead of saying execution has not happened.',
+    'If a task is already approved, running, or done, do not ask the user to approve or confirm it again.',
+    'For unrelated requests such as time, casual chat, or simple Q&A, answer directly and do not volunteer team approval reminders.',
+    'If the user asks where the report is, return the deliverable path or artifact URL directly when one is available.',
+  ];
+
+  if (runtimeState.preferredTask) {
+    appendMainAgentRuntimeTaskPrompt(lines, 'Primary team task to use as current truth:', runtimeState.preferredTask);
+  }
+
+  if (runtimeState.pendingTasks.length > 0) {
+    lines.push('');
+    lines.push('Pending team plans that still require approval:');
+    lines.push('Only mention these if the user explicitly asks what still needs approval or wants to start a new team plan.');
+    for (const pendingTask of runtimeState.pendingTasks) {
+      appendMainAgentRuntimeTaskPrompt(lines, 'Pending team task:', pendingTask);
+    }
+  }
+
+  for (const task of runtimeState.additionalTasks) {
+    appendMainAgentRuntimeTaskPrompt(lines, 'Additional recent team task:', task);
+  }
+
+  return lines.join('\n');
+}
+
 export function getTasksBySession(
   sessionId: string,
   options: GetTasksBySessionOptions = {},
 ): TaskItem[] {
-  const db = getDb();
-  const rows = db.prepare('SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as TaskItem[];
+  const rows = getRawTasksBySession(sessionId).map(materializeTask);
 
   if (options.kind === TEAM_PLAN_TASK_KIND) {
-    return rows.filter((task) => parseTeamPlanTaskRecord(task.description) !== null);
+    return rows.filter((task) => buildTeamPlanTaskRecord(task) !== null);
   }
   if (options.includeSystem) {
     return rows;
@@ -1149,30 +1755,18 @@ export function getTasksBySession(
 }
 
 export function getTask(id: string): TaskItem | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskItem | undefined;
+  const row = getRawTask(id);
+  return row ? materializeTask(row) : undefined;
 }
 
 export function ensureTeamRunExecution(taskId: string): void {
-  const task = getTask(taskId);
-  if (!task) {
-    clearTeamRunAutomation(taskId);
-    return;
-  }
-
-  const record = parseTeamPlanTaskRecord(task.description);
-  if (!record || record.approvalStatus !== 'approved' || isTerminalTeamRunStatus(record.run.status)) {
-    clearTeamRunAutomation(taskId);
-    return;
-  }
-
-  scheduleTeamRunTick(taskId);
+  ensureTaskRunScheduled(taskId);
 }
 
 export function ensureSessionTeamRunsExecution(sessionId: string): void {
-  const teamTasks = getTasksBySession(sessionId, { kind: TEAM_PLAN_TASK_KIND });
+  const teamTasks = getRawTasksBySession(sessionId).filter((task) => task.current_run_id);
   for (const task of teamTasks) {
-    ensureTeamRunExecution(task.id);
+    ensureTaskRunScheduled(task.id);
   }
 }
 
@@ -1198,7 +1792,7 @@ export function createTask(sessionId: string, title: string, description?: strin
 export function updateTask(id: string, updates: { title?: string; status?: TaskStatus; description?: string }): TaskItem | undefined {
   const db = getDb();
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
-  const existing = getTask(id);
+  const existing = getRawTask(id);
   if (!existing) return undefined;
 
   const title = updates.title ?? existing.title;
@@ -1223,6 +1817,17 @@ export function getLatestTeamPlanTask(sessionId: string): TaskItem | undefined {
   return teamTasks[teamTasks.length - 1];
 }
 
+export function getTeamPlanTaskBySourceMessageId(
+  sessionId: string,
+  sourceMessageId: string,
+): TaskItem | undefined {
+  const normalizedMessageId = sourceMessageId.trim();
+  if (!normalizedMessageId) return undefined;
+
+  const teamTasks = getTasksBySession(sessionId, { kind: TEAM_PLAN_TASK_KIND });
+  return teamTasks.find((task) => task.source_message_id === normalizedMessageId);
+}
+
 export function upsertTeamPlanTask(
   sessionId: string,
   record: TeamPlanTaskRecord,
@@ -1236,7 +1841,7 @@ export function upsertTeamPlanTask(
     const created = createTask(
       sessionId,
       formatTeamPlanTaskTitle(normalized),
-      serializeTeamPlanTaskRecord(normalized),
+      undefined,
     );
     return persistTeamPlanRecord(created.id, normalized) || created;
   }
