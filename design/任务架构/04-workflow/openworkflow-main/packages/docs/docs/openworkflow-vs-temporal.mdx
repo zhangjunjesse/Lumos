@@ -1,0 +1,74 @@
+---
+title: OpenWorkflow vs Temporal
+description: A comparison of OpenWorkflow and Temporal for durable workflow orchestration
+---
+
+import ComparisonDurableWorkflow from "/snippets/comparison-durable-workflow.mdx";
+
+## TL;DR
+
+Temporal is a distributed workflow platform with mature multi-language SDKs.
+Running it yourself means operating Temporal Server and its persistence backend.
+
+OpenWorkflow gives you durable workflows without a separate orchestration
+service. Workers coordinate directly through PostgreSQL or SQLite.
+
+## What This Looks Like in Practice
+
+In Temporal, a multi-step process requires a workflow definition, separate
+Activity implementations, and a running Temporal Server connected to a
+persistence backend.
+
+With OpenWorkflow, you write one function:
+
+<ComparisonDurableWorkflow />
+
+## When OpenWorkflow is the Better Fit
+
+### No separate orchestration service
+
+Self-hosted Temporal typically requires running multiple services and a
+persistence backend:
+
+- **Frontend Service** - gRPC gateway
+- **History Service** - workflow state and event history
+- **Matching Service** - task routing
+- **Worker Service** - internal Temporal system workflows
+- **Persistence** - MySQL or PostgreSQL with Temporal schema
+- **Optional visibility store** - Elasticsearch or similar for advanced queries
+
+Operating those pieces adds monitoring, capacity, upgrade, and incident
+response work.
+
+OpenWorkflow uses your existing PostgreSQL or SQLite. Your workers talk directly
+to your database. There are no intermediary services to scale, monitor, or
+debug.
+
+### Smaller API surface for common TypeScript use cases
+
+Temporal exposes multiple timeout classes and retry options per workflow and
+activity. That flexibility is useful when you need it.
+
+OpenWorkflow keeps the default surface smaller (`step.run`, `step.sleep`,
+retries with backoff, optional `deadlineAt`) and is often faster to adopt for
+TypeScript teams that want fewer moving parts.
+
+### Tradeoff: happy-path overhead vs resume-path replay CPU
+
+OpenWorkflow optimizes for lower orchestration overhead on the common path, and
+accepts higher replay CPU cost on resumptions (retries, crashes, sleeps, deploy
+handoff).
+
+We made this design choice to keep OpenWorkflow fast: execution of most
+workflows is quicker with fewer hops, at the cost of more replay work when runs
+resume.
+
+## When Temporal is the Right Call
+
+- **Polyglot platform**: You need one orchestration platform across multiple
+  languages.
+- **Advanced runtime interaction**: You need Signals, Queries, Updates, or
+  Activity heartbeats. These are coming to OpenWorkflow but are available right
+  now in Temporal.
+- **Dedicated platform ownership**: Your team can operate Temporal Server as
+  shared infrastructure.

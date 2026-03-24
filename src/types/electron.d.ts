@@ -43,6 +43,10 @@ interface ElectronUpdaterAPI {
   onStatus: (callback: (data: UpdateStatusEvent) => void) => () => void;
 }
 
+interface ElectronBridgeAPI {
+  onEvent: (callback: (event: string, data: unknown) => void) => () => void;
+}
+
 interface ElectronAPI {
   versions: {
     electron: string;
@@ -73,6 +77,7 @@ interface ElectronAPI {
   };
   install: ElectronInstallAPI;
   updater: ElectronUpdaterAPI;
+  bridge: ElectronBridgeAPI;
   browser: ElectronBrowserAPI;
 }
 

@@ -1,0 +1,24 @@
+{
+  // https://www.typescriptlang.org/docs/handbook/project-references.html#overall-structure
+  "files": [],
+  "references": [
+    { "path": "./benchmarks/basic" },
+    { "path": "./examples/basic" },
+    { "path": "./examples/declare-workflow" },
+    { "path": "./examples/with-schema-validation" },
+    { "path": "./examples/workflow-discovery" },
+    { "path": "./packages/openworkflow" },
+    { "path": "./packages/backend-postgres" },
+    { "path": "./packages/backend-sqlite" },
+    { "path": "./packages/cli" },
+    { "path": "./packages/dashboard" }
+  ],
+
+  // project-wide settings for configs, workflows, etc.
+  "extends": ["./tsconfig.base.json"],
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["openworkflow/**/*.ts", "*.config.ts"],
+  "exclude": ["dist"]
+}

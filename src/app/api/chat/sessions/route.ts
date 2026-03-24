@@ -5,6 +5,9 @@ import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/
 import { isLibraryChatSession } from '@/lib/chat/library-session';
 import { isMainAgentSession, normalizeSessionEntry, withSessionEntryMarker } from '@/lib/chat/session-entry';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const entry = normalizeSessionEntry(request.nextUrl.searchParams.get('entry'));

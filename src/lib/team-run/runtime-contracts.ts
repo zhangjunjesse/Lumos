@@ -32,6 +32,7 @@ export interface StageExecutionPayloadV1 {
   contractVersion: 'stage-execution-payload/v1'
   taskId: string
   sessionId: string
+  requestedModel?: string
   runId: string
   stageId: string
   attempt: number
@@ -46,6 +47,7 @@ export interface StageExecutionPayloadV1 {
     title: string
     description: string
     acceptanceCriteria: string[]
+    responseMode?: 'structured' | 'plain-text'
     inputContract: CompiledStageV1['inputContract']
     outputContract: CompiledStageV1['outputContract']
   }

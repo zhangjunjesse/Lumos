@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$SKIP_GIT_HOOKS" = "1" ]; then
+  echo "[hooks] Skipping pre-push because SKIP_GIT_HOOKS=1"
+  exit 0
+fi
+
+echo "[hooks] Running repository verification before push"
+npm run ci:verify

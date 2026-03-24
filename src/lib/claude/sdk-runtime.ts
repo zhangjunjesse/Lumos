@@ -1,11 +1,11 @@
-import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ApiProvider } from '@/types'
-import { getActiveProvider } from '@/lib/db/providers'
-import { getSetting } from '@/lib/db/sessions'
+import { getActiveProvider, getProvider } from '@/lib/db/providers'
+import { getDefaultProviderId, getSession, getSetting } from '@/lib/db/sessions'
 import { findClaudeBinary, findGitBash, getExpandedPath } from '@/lib/platform'
+import { findBundledClaudeSdkCliPath } from './sdk-paths'
 import { resolveScriptFromCmd, sanitizeEnv } from './utils'
 
 export interface ClaudeSdkRuntimeBootstrap {
@@ -15,35 +15,48 @@ export interface ClaudeSdkRuntimeBootstrap {
   pathToClaudeCodeExecutable?: string
 }
 
-function findBundledCliPath(): string | undefined {
-  const cwdCandidate = path.join(
-    process.cwd(),
-    'node_modules',
-    '@anthropic-ai',
-    'claude-agent-sdk',
-    'cli.js',
-  )
-  if (fs.existsSync(cwdCandidate)) {
-    return cwdCandidate
-  }
-
-  try {
-    const sdkPkg = require.resolve('@anthropic-ai/claude-agent-sdk/package.json')
-    if (typeof sdkPkg === 'string' && sdkPkg.includes('claude-agent-sdk')) {
-      const cliPath = path.join(path.dirname(sdkPkg), 'cli.js')
-      if (fs.existsSync(cliPath)) {
-        return cliPath
-      }
-    }
-  } catch {
-    // Fall back to the system CLI below.
-  }
-
-  return undefined
+export interface ClaudeSdkRuntimeBootstrapOptions {
+  provider?: ApiProvider
+  sessionId?: string
 }
 
-function injectProviderEnv(sdkEnv: Record<string, string>, provider?: ApiProvider): ApiProvider | undefined {
-  const activeProvider = provider ?? getActiveProvider()
+function findBundledCliPath(): string | undefined {
+  return findBundledClaudeSdkCliPath()
+}
+
+function resolveRuntimeProvider(options?: ClaudeSdkRuntimeBootstrapOptions): ApiProvider | undefined {
+  if (options?.provider) {
+    return options.provider
+  }
+
+  const sessionId = options?.sessionId?.trim() || ''
+  if (sessionId) {
+    const session = getSession(sessionId)
+    const sessionProviderId = session?.provider_id?.trim() || ''
+    if (sessionProviderId) {
+      const sessionProvider = getProvider(sessionProviderId)
+      if (sessionProvider) {
+        return sessionProvider
+      }
+    }
+  }
+
+  const defaultProviderId = getDefaultProviderId()?.trim() || ''
+  if (defaultProviderId) {
+    const defaultProvider = getProvider(defaultProviderId)
+    if (defaultProvider) {
+      return defaultProvider
+    }
+  }
+
+  return getActiveProvider()
+}
+
+function injectProviderEnv(
+  sdkEnv: Record<string, string>,
+  options?: ClaudeSdkRuntimeBootstrapOptions,
+): ApiProvider | undefined {
+  const activeProvider = resolveRuntimeProvider(options)
 
   if (activeProvider?.api_key) {
     sdkEnv.ANTHROPIC_AUTH_TOKEN = activeProvider.api_key
@@ -103,7 +116,7 @@ function resolveClaudeCliPath(): string | undefined {
   return claudePath
 }
 
-export function buildClaudeSdkRuntimeBootstrap(provider?: ApiProvider): ClaudeSdkRuntimeBootstrap {
+export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstrapOptions): ClaudeSdkRuntimeBootstrap {
   const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> }
 
   if (!sdkEnv.HOME) {
@@ -133,7 +146,7 @@ export function buildClaudeSdkRuntimeBootstrap(provider?: ApiProvider): ClaudeSd
     sdkEnv.CLAUDE_CONFIG_DIR = claudeConfigDir
   }
 
-  const activeProvider = injectProviderEnv(sdkEnv, provider)
+  const activeProvider = injectProviderEnv(sdkEnv, options)
 
   return {
     activeProvider,

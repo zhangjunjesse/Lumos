@@ -1,0 +1,129 @@
+---
+title: Quick Start
+description: Get up and running with OpenWorkflow in 5 minutes
+---
+
+This guide walks you through installing OpenWorkflow, running your first
+workflow, and viewing it in the dashboard. By the end, you'll have a working
+durable workflow running locally.
+
+## Prerequisites
+
+- **Node.js** (v22.5+) or **Bun**
+- **A database** — SQLite (no setup required) or PostgreSQL
+
+## 1. Install
+
+Run the interactive setup command:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli init
+```
+
+```bash pnpm
+pnpx @openworkflow/cli init
+```
+
+```bash bun
+bunx @openworkflow/cli init
+```
+
+</CodeGroup>
+
+## 2. Start a worker
+
+A worker is a process that watches for new workflow runs and executes them.
+Start one with:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli worker start
+```
+
+```bash pnpm
+pnpx @openworkflow/cli worker start
+```
+
+```bash bun
+bunx @openworkflow/cli worker start
+```
+
+</CodeGroup>
+
+The worker reads your `openworkflow.config.ts`, connects to the database, loads
+the workflows from your `openworkflow/` directory, and begins polling for work.
+Leave this running in its own terminal.
+
+## 3. Run your first workflow
+
+Open a second terminal and trigger the example workflow:
+
+<CodeGroup>
+```bash npm
+npx tsx openworkflow/hello-world.run.ts
+```
+
+```bash pnpm
+pnpx tsx openworkflow/hello-world.run.ts
+```
+
+```bash bun
+bun openworkflow/hello-world.run.ts
+```
+
+</CodeGroup>
+
+This script calls `ow.runWorkflow(helloWorld.spec, {})` to create a new workflow
+run in the database. The worker in your first terminal picks it up, executes
+each step, and marks it complete.
+
+<Note>
+  The `hello-world.run.ts` file is a temporary helper for testing. In a real
+  app, you'd call `ow.runWorkflow(workflow.spec, input)` from your API routes,
+  scripts, or other application code.
+</Note>
+
+## 4. View workflows in the dashboard
+
+OpenWorkflow includes a built-in web dashboard. Start it with:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli dashboard
+```
+
+```bash pnpm
+pnpx @openworkflow/cli dashboard
+```
+
+```bash bun
+bunx @openworkflow/cli dashboard
+```
+
+</CodeGroup>
+
+Open [http://localhost:3000](http://localhost:3000) to see your workflow run,
+its steps, and their results.
+
+## What you just built
+
+Here's what's happening under the hood:
+
+1. **`openworkflow.config.ts`** — Tells OpenWorkflow which database to use and
+   where to find your workflow files.
+2. **`openworkflow/hello-world.ts`** — Defines a workflow with one or more
+   steps. Each step is a checkpoint: if anything crashes, the workflow
+   resumes from the last completed step instead of starting over.
+3. **`openworkflow/hello-world.run.ts`** — A script that enqueues a workflow
+   run. In production, this would be your API handler or a cron job.
+4. **The worker** — A long-running process that executes workflow runs. It polls
+   the database, claims available work, and persists results.
+
+## Next steps
+
+- [Overview](/docs/overview) — Understand how workflows, steps, and workers fit
+  together
+- [Workflows](/docs/workflows) — Learn how to define and configure workflows
+- [Steps](/docs/steps) — See how steps protect your operations from crashes
+- [Production](/docs/production) — Deploy OpenWorkflow to your infrastructure

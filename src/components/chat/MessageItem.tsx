@@ -7,6 +7,11 @@ import {
   MessageContent,
   MessageResponse,
 } from '@/components/ai-elements/message';
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from '@/components/ai-elements/reasoning';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Copy, Tick, ArrowDown01, ArrowUp01 } from "@hugeicons/core-free-icons";
@@ -19,10 +24,8 @@ import { ArtifactReferencePreview } from './ArtifactReferencePreview';
 import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
 import { buildReferenceImages } from '@/lib/image-ref-store';
 import { parseDBDate } from '@/lib/utils';
-import { parseTeamPlanBlock } from '@/types';
 import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
-import { TeamPlanMessageCard } from './TeamPlanMessageCard';
 import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 
 interface ImageGenRequest {
@@ -180,8 +183,9 @@ interface ToolBlock {
   is_error?: boolean;
 }
 
-function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } {
+function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; reasoning: string[] } {
   const tools: ToolBlock[] = [];
+  const reasoning: string[] = [];
   let text = '';
 
   // Try to parse as JSON array (new format from chat API)
@@ -190,6 +194,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
       const blocks = JSON.parse(content) as Array<{
         type: string;
         text?: string;
+        summary?: string;
         id?: string;
         name?: string;
         input?: unknown;
@@ -201,6 +206,8 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
       for (const block of blocks) {
         if (block.type === 'text' && block.text) {
           text += block.text;
+        } else if (block.type === 'reasoning' && typeof block.summary === 'string' && block.summary.trim()) {
+          reasoning.push(block.summary.trim());
         } else if (block.type === 'tool_use') {
           tools.push({
             type: 'tool_use',
@@ -218,7 +225,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
         }
       }
       
-      return { text: text.trim(), tools };
+      return { text: text.trim(), tools, reasoning };
     } catch {
       // Not valid JSON, fall through to legacy parsing
     }
@@ -249,7 +256,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
     text = text.replace(match[0], '');
   }
 
-  return { text: text.trim(), tools };
+  return { text: text.trim(), tools, reasoning };
 }
 
 function pairTools(tools: ToolBlock[]): Array<{
@@ -388,8 +395,9 @@ export function MessageItem({ message }: MessageItemProps) {
 
   // 过滤系统提示（用于任务管理通知）
   const filteredContent = isUser ? filterSystemPrompt(message.content) : message.content;
-  const { text, tools } = parseToolBlocks(filteredContent);
+  const { text, tools, reasoning } = parseToolBlocks(filteredContent);
   const pairedTools = pairTools(tools);
+  const reasoningContent = reasoning.map((summary) => `- ${summary}`).join('\n');
 
   // Parse file attachments from user messages
   const { files, source, text: textWithoutMeta } = isUser
@@ -441,6 +449,13 @@ export function MessageItem({ message }: MessageItemProps) {
         )}
 
         {/* Tool calls for assistant messages — compact collapsible group */}
+        {!isUser && reasoning.length > 0 && (
+          <Reasoning className="mb-3" defaultOpen={false}>
+            <ReasoningTrigger />
+            <ReasoningContent>{reasoningContent}</ReasoningContent>
+          </Reasoning>
+        )}
+
         {!isUser && pairedTools.length > 0 && (
           <ToolActionsGroup
             tools={pairedTools.map((tool, i) => ({
@@ -531,22 +546,6 @@ export function MessageItem({ message }: MessageItemProps) {
               );
             }
 
-            const teamPlanResult = parseTeamPlanBlock(displayText);
-            if (teamPlanResult) {
-              return (
-                <>
-                  {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
-                  <TeamPlanMessageCard
-                    messageId={message.id}
-                    sessionId={message.session_id}
-                    plan={teamPlanResult.plan}
-                    compact
-                  />
-                  {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
-                </>
-              );
-            }
-
             // Try image-gen-result first (new direct-call format)
             const genResult = parseImageGenResult(displayText);
             if (genResult) {
@@ -621,7 +620,6 @@ export function MessageItem({ message }: MessageItemProps) {
               .replace(/```image-gen-request[\s\S]*?```/g, '')
               .replace(/```image-gen-result[\s\S]*?```/g, '')
               .replace(/```batch-plan[\s\S]*?```/g, '')
-              .replace(/```lumos-team-plan[\s\S]*?```/g, '')
               .replace(/```lumos-extension-plan[\s\S]*?```/g, '')
               .trim();
             return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;

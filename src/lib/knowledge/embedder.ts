@@ -2,23 +2,86 @@
  * Local embedding — bge-small-zh-v1.5 via @huggingface/transformers
  * Ported from demo/local-server/services/knowledge/embedder.js
  */
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import * as portableTransformersRuntime from './transformers-web-runtime';
 import { getDb } from '@/lib/db';
 
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
+const nodeRequire = createRequire(import.meta.url);
+
+interface OnnxruntimeWebModule {
+  env: {
+    wasm: {
+      wasmPaths?: string | { mjs?: string; wasm?: string };
+      proxy?: boolean;
+    };
+  };
+}
+
+const onnxruntimeWeb = nodeRequire('onnxruntime-web') as OnnxruntimeWebModule;
 
 let _pipelinePromise: Promise<unknown> | null = null;
+
+function shouldUsePortableEmbeddingRuntime(): boolean {
+  return Boolean(process.versions.electron) || process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
+}
+
+function resolvePackageDir(specifier: string): string {
+  const entry = nodeRequire.resolve(specifier);
+  return path.resolve(path.dirname(entry), '..');
+}
+
+async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
+  const onnxruntimeWebDir = resolvePackageDir('onnxruntime-web');
+
+  onnxruntimeWeb.env.wasm.wasmPaths = {
+    mjs: pathToFileURL(path.join(onnxruntimeWebDir, 'dist', 'ort-wasm-simd-threaded.mjs')).href,
+    wasm: pathToFileURL(path.join(onnxruntimeWebDir, 'dist', 'ort-wasm-simd-threaded.wasm')).href,
+  };
+  onnxruntimeWeb.env.wasm.proxy = false;
+
+  return portableTransformersRuntime as typeof import('@huggingface/transformers');
+}
 
 function getExtractor(): Promise<unknown> {
   if (!_pipelinePromise) {
     _pipelinePromise = (async () => {
-      const transformers = await import('@huggingface/transformers');
+      const usePortableRuntime = shouldUsePortableEmbeddingRuntime();
+      const transformers = usePortableRuntime
+        ? await loadPortableTransformers()
+        : nodeRequire('@huggingface/transformers') as typeof import('@huggingface/transformers');
+
       (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
-      console.log('[embedding] Loading model:', MODEL_NAME);
-      const p = await transformers.pipeline('feature-extraction', MODEL_NAME, { dtype: 'fp16' } as Record<string, unknown>);
+      const pipelineOptions: Record<string, unknown> = usePortableRuntime
+        ? { device: 'wasm', dtype: 'q8' }
+        : { dtype: 'fp16' };
+
+      console.log('[embedding] Loading model:', MODEL_NAME, {
+        portableRuntime: usePortableRuntime,
+        platform: process.platform,
+        arch: process.arch,
+        electron: process.versions.electron || null,
+        runtime: usePortableRuntime ? 'transformers.web.js + onnxruntime-web' : '@huggingface/transformers',
+      });
+      const p = await transformers.pipeline('feature-extraction', MODEL_NAME, pipelineOptions);
       console.log('[embedding] Model loaded');
       return p;
-    })();
+    })().catch((error) => {
+      _pipelinePromise = null;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[embedding] Failed to initialize embedding runtime:', {
+        model: MODEL_NAME,
+        platform: process.platform,
+        arch: process.arch,
+        electron: process.versions.electron || null,
+        portableRuntime: shouldUsePortableEmbeddingRuntime(),
+        message,
+      });
+      throw error;
+    });
   }
   return _pipelinePromise;
 }

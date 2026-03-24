@@ -15,6 +15,7 @@ import {
   getBuiltinProvider,
 } from './db';
 import { getDb } from './db';
+import { initializeCapabilities } from './capability/init';
 
 // ==========================================
 // Types
@@ -181,8 +182,8 @@ function importMcpServers(): number {
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
       }
     } else {
-      // task-management is enabled by default for testing
-      const isEnabled = config.name === 'task-management';
+      // task-management and workflow are enabled by default for orchestration flows
+      const isEnabled = config.name === 'task-management' || config.name === 'workflow';
       createMcpServer({
         name: config.name,
         scope: 'builtin',
@@ -238,6 +239,8 @@ export async function initBuiltinResources(): Promise<void> {
     console.log(`[init-builtin-resources] MCP servers: ${mcpImported} new`);
 
     importProviders();
+
+    await initializeCapabilities();
 
     setSetting('builtin_resources_imported', 'true');
     console.log('[init-builtin-resources] Done');

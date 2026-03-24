@@ -1,4 +1,4 @@
-import type { FileAttachment } from '@/types';
+import type { ChatKnowledgeOptions, FileAttachment } from '@/types';
 
 const STORAGE_KEY = 'lumos:chat-session-bootstrap:v1';
 const MAX_AGE_MS = 10 * 60 * 1000;
@@ -9,6 +9,7 @@ export interface PendingChatBootstrap {
   files?: FileAttachment[];
   systemPromptAppend?: string;
   displayOverride?: string;
+  knowledgeOptions?: ChatKnowledgeOptions;
   createdAt: number;
 }
 

@@ -29,6 +29,8 @@ import {
   Message,
   UserGroupIcon,
   Task01Icon,
+  NodeEditIcon,
+  WorkflowSquare01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -41,6 +43,9 @@ interface SidebarProps {
 
 const mainNavItems = [
   { href: "/main-agent", labelKey: "sidebar.mainAgent" as const, icon: Message },
+  { href: "/workflow", labelKey: "sidebar.workflow" as const, icon: WorkflowSquare01Icon },
+  { href: "/workflow/nodes", labelKey: "sidebar.workflowNodes" as const, icon: NodeEditIcon },
+  { href: "/capabilities", labelKey: "sidebar.capabilities" as const, icon: Puzzle },
   { href: "/team", labelKey: "sidebar.team" as const, icon: UserGroupIcon },
   { href: "/tasks", labelKey: "sidebar.tasks" as const, icon: Task01Icon },
   { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
@@ -69,7 +74,10 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
     const nextExpanded = isCompactViewport
       ? false
       : localStorage.getItem(SIDEBAR_EXPANDED_KEY) !== "false";
-    setExpanded(nextExpanded);
+    const frame = window.requestAnimationFrame(() => {
+      setExpanded(nextExpanded);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const toggle = useCallback(() => {
@@ -110,6 +118,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         || pathname === "/chat"
         || pathname.startsWith("/chat/");
     }
+    if (href === "/workflow") {
+      return pathname === "/workflow" || pathname.startsWith("/workflow/agents");
+    }
+    if (href === "/workflow/nodes") {
+      return pathname === "/workflow/nodes" || pathname.startsWith("/workflow/nodes/");
+    }
     return pathname === href || pathname.startsWith(href + "/");
   };
 
@@ -118,7 +132,6 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
   const themeToggleLabel = mounted
     ? (isDarkTheme ? t('sidebar.lightMode') : t('sidebar.darkMode'))
     : t('nav.toggleTheme');
-
   return (
     <aside
       className={cn(

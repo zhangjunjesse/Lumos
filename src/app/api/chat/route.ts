@@ -26,8 +26,13 @@ import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/
 import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
+import {
+  buildMainAgentTaskDispatchHint,
+  planMainAgentTaskDispatch,
+} from '@/lib/chat/main-agent-task-dispatch';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
+import { dispatchMainAgentTask, finalizeMainAgentTaskDispatch } from '@/lib/task-management';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -131,6 +136,30 @@ function pickNonEmpty(...values: Array<string | undefined>): string {
     }
   }
   return '';
+}
+
+function buildSseEvent(event: SSEEvent): string {
+  return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+function createSyntheticAssistantResponse(message: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(buildSseEvent({ type: 'text', data: message })));
+      controller.enqueue(encoder.encode(buildSseEvent({ type: 'result', data: JSON.stringify({ usage: null }) })));
+      controller.enqueue(encoder.encode(buildSseEvent({ type: 'done', data: '' })));
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
 
 function parseExtraEnv(raw: string | undefined): Record<string, string> {
@@ -691,11 +720,31 @@ export async function POST(request: NextRequest) {
   let activeLockId: string | undefined;
 
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; provider_id?: string; systemPromptAppend?: string } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout, provider_id, systemPromptAppend } = body;
+    const body: SendMessageRequest & {
+      files?: FileAttachment[];
+      toolTimeout?: number;
+      provider_id?: string;
+      systemPromptAppend?: string;
+    } = await request.json();
+    const {
+      session_id,
+      content,
+      model,
+      mode,
+      files,
+      toolTimeout,
+      provider_id,
+      systemPromptAppend,
+      knowledge_enabled,
+      knowledge_tag_ids,
+    } = body;
 
     console.log('[chat API] content length:', content.length, 'first 200 chars:', content.slice(0, 200));
     console.log('[chat API] systemPromptAppend:', systemPromptAppend ? `${systemPromptAppend.length} chars` : 'none');
+    console.log('[chat API] knowledge:', {
+      enabled: knowledge_enabled === true,
+      tagCount: Array.isArray(knowledge_tag_ids) ? knowledge_tag_ids.length : 0,
+    });
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -812,6 +861,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (isMainAgentSession(session)) {
+      const dispatchPlan = planMainAgentTaskDispatch({
+        sessionId: session_id,
+        userInput: content,
+        hasFiles: Array.isArray(files) && files.length > 0,
+      });
+      if (dispatchPlan) {
+        const dispatched = dispatchMainAgentTask({
+          sessionId: session_id,
+          sourceMessageId: userMessageId,
+          taskSummary: dispatchPlan.taskSummary,
+          requirements: dispatchPlan.requirements,
+          relevantMessages: [content],
+        });
+
+        releaseSessionLock(session_id, lockId);
+        setSessionRuntimeStatus(session_id, 'idle');
+        activeSessionId = undefined;
+        activeLockId = undefined;
+
+        return createSyntheticAssistantResponse(dispatched.assistantMessage);
+      }
+    }
+
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.requested_model || session.model || getSetting('default_model') || undefined;
 
@@ -917,6 +990,10 @@ export async function POST(request: NextRequest) {
     if (isMainAgentSession(session)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + TASK_MANAGEMENT_HINT;
+      const taskDispatchHint = buildMainAgentTaskDispatchHint(content);
+      if (taskDispatchHint) {
+        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + taskDispatchHint;
+      }
     }
     finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
     if (isMainAgentSession(session)) {
@@ -983,6 +1060,12 @@ export async function POST(request: NextRequest) {
       files: fileAttachments,
       toolTimeoutSeconds: toolTimeout || 300,
       provider: resolvedProvider,
+      knowledgeOptions: {
+        enabled: knowledge_enabled === true,
+        tagIds: Array.isArray(knowledge_tag_ids)
+          ? knowledge_tag_ids.map((tagId) => String(tagId).trim()).filter(Boolean)
+          : [],
+      },
       conversationHistory: historyMsgs,
       onRuntimeStatusChange: (status: string) => {
         try { setSessionRuntimeStatus(session_id, status); } catch { /* best effort */ }
@@ -1002,6 +1085,7 @@ export async function POST(request: NextRequest) {
     // Save assistant message in background, with cleanup callback to release lock
     collectStreamResponse(streamForCollect, {
       sessionId: session_id,
+      sourceUserMessageId: userMessageId,
       weakSignalDetected: weakSignal.matched,
       onComplete: () => {
         releaseSessionLock(session_id, lockId);
@@ -1037,6 +1121,7 @@ async function collectStreamResponse(
   stream: ReadableStream<string>,
   options: {
     sessionId: string;
+    sourceUserMessageId?: string;
     weakSignalDetected?: boolean;
     onComplete?: () => void;
   },
@@ -1079,6 +1164,23 @@ async function collectStreamResponse(
               // Skip permission_request and tool_output events - not saved as message content
             } else if (event.type === 'text') {
               currentText += event.data;
+            } else if (event.type === 'tool_use_summary') {
+              if (currentText.trim()) {
+                contentBlocks.push({ type: 'text', text: currentText });
+                currentText = '';
+              }
+              try {
+                const summaryData = JSON.parse(event.data);
+                const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
+                if (summary) {
+                  contentBlocks.push({ type: 'reasoning', summary });
+                }
+              } catch {
+                const summary = event.data.trim();
+                if (summary) {
+                  contentBlocks.push({ type: 'reasoning', summary });
+                }
+              }
             } else if (event.type === 'tool_use') {
               // Flush any accumulated text before the tool use block
               if (currentText.trim()) {
@@ -1151,11 +1253,9 @@ async function collectStreamResponse(
       // If the message is text-only (no tool calls), store as plain text
       // for backward compatibility with existing message rendering.
       // If it contains tool calls, store as structured JSON.
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
-      );
+      const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
 
-      const content = hasToolBlocks
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
@@ -1164,7 +1264,7 @@ async function collectStreamResponse(
             .trim();
 
       if (content) {
-        const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
+        const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
           const storedMessage = addMessage(
             sessionId,
@@ -1172,6 +1272,14 @@ async function collectStreamResponse(
             storedContent,
             tokenUsage ? JSON.stringify(tokenUsage) : null,
           );
+          if (options.sourceUserMessageId) {
+            finalizeMainAgentTaskDispatch({
+              sessionId,
+              sourceMessageId: options.sourceUserMessageId,
+              assistantMessageId: storedMessage.id,
+              assistantContent: storedContent,
+            });
+          }
           persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
@@ -1187,10 +1295,8 @@ async function collectStreamResponse(
       contentBlocks.push({ type: 'text', text: currentText });
     }
     if (contentBlocks.length > 0) {
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
-      );
-      const content = hasToolBlocks
+      const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
@@ -1198,9 +1304,17 @@ async function collectStreamResponse(
             .join('')
             .trim();
       if (content) {
-        const storedContent = hasToolBlocks ? content : stripFeishuDirectives(content);
+        const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
           const storedMessage = addMessage(sessionId, 'assistant', storedContent);
+          if (options.sourceUserMessageId) {
+            finalizeMainAgentTaskDispatch({
+              sessionId,
+              sourceMessageId: options.sourceUserMessageId,
+              assistantMessageId: storedMessage.id,
+              assistantContent: storedContent,
+            });
+          }
           persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>

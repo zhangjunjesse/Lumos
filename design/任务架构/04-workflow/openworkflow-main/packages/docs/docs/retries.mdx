@@ -1,0 +1,197 @@
+---
+title: Retries
+description: Automatic retry behavior for failed steps and workflows
+---
+
+In any app, things fail sometimes - a third-party API returns a 500, a database
+connection times out, or a network blip drops a request. These are transient
+failures that go away if you try again.
+
+OpenWorkflow handles this automatically by retrying failed steps. When a step
+throws, the workflow is rescheduled with an exponential backoff. Previously
+completed steps aren't re-run, only the failed step re-executes.
+
+## How Retries Work
+
+When a step throws an error:
+
+1. The step attempt is marked as `failed` and the error is recorded
+2. The workflow run is rescheduled with exponential backoff
+3. When the workflow resumes, it replays to the failed step
+4. The step function executes again
+
+Steps are attempted up to 10 times by default (one initial attempt plus up to
+nine retries). If the step still fails after all attempts, the workflow is
+permanently marked as `failed`.
+
+To prevent runaway executions, each workflow run also has a hard cap of 1000
+total step attempts. If the run reaches that cap, it fails immediately and is
+not retried.
+
+## Step Retries
+
+Steps that throw are retried automatically:
+
+```ts
+await step.run({ name: "call-api" }, async () => {
+  const response = await fetch("https://api.example.com/data");
+
+  if (!response.ok) {
+    // Throwing here triggers a retry
+    throw new Error(`API error: ${response.status}`);
+  }
+
+  return await response.json();
+});
+```
+
+### Step Retry Policy
+
+Each step can define its own retry policy. If omitted, steps use these defaults:
+
+| Field                | Default  | Description                                                |
+| -------------------- | -------- | ---------------------------------------------------------- |
+| `initialInterval`    | `"1s"`   | Delay before the first retry                               |
+| `backoffCoefficient` | `2`      | Multiplier applied to each subsequent retry delay          |
+| `maximumInterval`    | `"100s"` | Upper bound for retry delay                                |
+| `maximumAttempts`    | `10`     | Total attempts including the initial one (`0` = unlimited) |
+
+With these defaults, retry delays look like this:
+
+| Attempt | Delay     |
+| ------- | --------- |
+| 1       | Immediate |
+| 2       | ~1s       |
+| 3       | ~2s       |
+| 4       | ~4s       |
+| 5       | ~8s       |
+| ...     | ...       |
+
+Override the defaults per step:
+
+```ts
+await step.run(
+  {
+    name: "call-api",
+    retryPolicy: {
+      initialInterval: "500ms",
+      backoffCoefficient: 2,
+      maximumInterval: "30s",
+      maximumAttempts: 5,
+    },
+  },
+  async () => {
+    // step logic
+  },
+);
+```
+
+Retries also stop early if the workflow has a `deadlineAt` and the next retry
+would exceed it.
+
+## Workflow Retries
+
+Errors thrown outside of `step.run(...)` are workflow-level failures.
+**Workflow-level failures are not retried by default** — the workflow is
+marked as `failed`.
+
+To enable workflow-level retries, set a `retryPolicy` on the workflow spec:
+
+```ts
+import { defineWorkflow } from "openworkflow";
+
+defineWorkflow(
+  {
+    name: "charge-customer",
+    retryPolicy: {
+      initialInterval: "500ms",
+      backoffCoefficient: 2,
+      maximumInterval: "30s",
+      maximumAttempts: 5,
+    },
+  },
+  async ({ step }) => {
+    // workflow implementation
+  },
+);
+```
+
+<Note>
+  Step retries and workflow retries are independent. Step failures use the
+  step's own retry policy. The workflow retry policy only applies to errors
+  thrown outside steps.
+</Note>
+
+## Missing Workflow Definitions
+
+If a worker claims a run but doesn't have the matching workflow registered, it
+reschedules the run with exponential backoff (starting at 5s, capped at 5min).
+This keeps the run alive during rolling deploys or multi-worker setups where the
+right worker hasn't started yet.
+
+Once a worker with the correct definition comes online, it claims the run and
+executes normally.
+
+## What Triggers a Retry
+
+Retries happen when:
+
+- A step function throws an error or returns a rejected promise
+- A worker crashes during step execution (the step is re-executed on recovery)
+
+Retries do **not** happen for:
+
+- Completed steps (cached results are returned)
+- Explicitly canceled workflows
+- Workflow-level errors (unless a workflow `retryPolicy` is configured)
+
+## Error Handling
+
+You can catch step errors inside a workflow to run fallback logic:
+
+```ts
+defineWorkflow({ name: "with-error-handling" }, async ({ input, step }) => {
+  try {
+    await step.run({ name: "risky-operation" }, async () => {
+      await externalApi.call();
+    });
+  } catch (error) {
+    await step.run({ name: "fallback" }, async () => {
+      await fallbackApi.call();
+    });
+  }
+});
+```
+
+<Note>
+  When you catch an error the workflow continues normally. The step is still
+  recorded as failed, but no retry is triggered.
+</Note>
+
+## Terminal Failures
+
+A workflow is permanently marked `failed` when step retries are exhausted
+(`maximumAttempts` reached), `deadlineAt` expires, or the run exceeds the step
+attempt cap.
+
+Once terminal, no more automatic retries occur. You can inspect and manually
+retry failed workflows from the [dashboard](/docs/dashboard).
+
+## Monitoring
+
+Use the [dashboard](/docs/dashboard) to monitor retry health:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli dashboard
+```
+
+```bash pnpm
+pnpx @openworkflow/cli dashboard
+```
+
+```bash bun
+bunx @openworkflow/cli dashboard
+```
+
+</CodeGroup>

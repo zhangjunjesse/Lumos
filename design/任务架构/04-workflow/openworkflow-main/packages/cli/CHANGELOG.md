@@ -1,0 +1,58 @@
+# @openworkflow/cli
+
+## 0.4.3
+
+- Add a `--port` option to run the dashboard server on a custom port (#357)
+
+## 0.4.2
+
+- Stop the backend at the end of the default `hello-world.run` script template
+- Add `openworkflow/backend.db*` to generated `.gitignore` entries for SQLite
+
+## 0.4.1
+
+- Add support for `openworkflow` v0.7.0
+- Add `--config <path>` flag to specify a config file (#295)
+- Improve database connection and loading error messages (#256)
+
+## 0.4.0
+
+- Remove `ow` alias in favor of `openworkflow`
+  - This massively improves the `pnpx` DX (fixes `ERR_PNPM_DLX_MULTIPLE_BINS`)
+
+## 0.3.1
+
+- Exclude test and build files from published package
+
+## 0.3.0
+
+- Update `init` templates to use `openworkflow/postgres` and
+  `openworkflow/sqlite`. The CLI no longer installs the legacy backend
+  packages.
+
+## 0.2.3
+
+- Ignore `*.run.*` in default generated config
+- Add support for ignorePatterns
+
+## 0.2.2
+
+- Generate example run script on `ow init`
+
+## 0.2.1
+
+- `ow init`: Generate a client file to DRY up the client
+
+## 0.2.0
+
+- Add `openworkflow dashboard` command to launch the dashboard
+
+## 0.1.0
+
+- Initial release of the `openworkflow` CLI (alias `ow`).
+  - `ow init`: Interactively initializes new projects, configuring the backend
+    (SQLite/Postgres) and generating necessary boilerplate.
+  - `ow worker start`: Starts a worker process with automatic workflow discovery
+    based on `openworkflow.config.ts`.
+  - `ow doctor`: Verifies environment configuration, dependencies, and lists
+    discovered workflows.

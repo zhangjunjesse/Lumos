@@ -40,6 +40,12 @@ export function createSession(
 
 export function deleteSession(id: string): boolean {
   const db = getDb();
+  const now = Date.now();
+  db.prepare(
+    `UPDATE session_bindings
+       SET status = 'deleted', updated_at = ?
+     WHERE lumos_session_id = ? AND status != 'deleted'`
+  ).run(now, id);
   const result = db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
   return result.changes > 0;
 }

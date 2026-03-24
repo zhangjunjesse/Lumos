@@ -1,0 +1,269 @@
+---
+title: CLI Reference
+description: Command-line interface for OpenWorkflow
+---
+
+The OpenWorkflow CLI is the primary way to set up your project, run workers, and
+launch the dashboard. CLI commands read your `openworkflow.config.ts`
+automatically, or you can override the path with `--config`.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install -D @openworkflow/cli
+```
+
+```bash pnpm
+pnpm add -D @openworkflow/cli
+```
+
+```bash bun
+bun add -D @openworkflow/cli
+```
+
+</CodeGroup>
+
+## Commands
+
+### `init`
+
+Initialize OpenWorkflow in your project:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli init
+```
+
+```bash pnpm
+pnpx @openworkflow/cli init
+```
+
+```bash bun
+bunx @openworkflow/cli init
+```
+
+</CodeGroup>
+
+This interactive command:
+
+1. Asks which backend to use (SQLite, PostgreSQL, or both)
+2. Installs required dependencies
+3. Creates `openworkflow.config.ts`
+4. Creates an example workflow in `./openworkflow/`
+5. Adds a `worker` script to `package.json`
+6. Updates `.gitignore` for SQLite (if selected)
+7. Adds `OPENWORKFLOW_POSTGRES_URL` to `.env` for PostgreSQL (if selected)
+
+### `worker start`
+
+Start a worker to process workflows:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli worker start
+```
+
+```bash pnpm
+pnpx @openworkflow/cli worker start
+```
+
+```bash bun
+bunx @openworkflow/cli worker start
+```
+
+</CodeGroup>
+
+Options:
+
+- `--concurrency <n>` - Number of concurrent workflow executions (overrides
+  config)
+
+<CodeGroup>
+```bash npm
+# Run with 4 concurrent workflows
+npx @openworkflow/cli worker start --concurrency 4
+```
+
+```bash pnpm
+# Run with 4 concurrent workflows
+pnpx @openworkflow/cli worker start --concurrency 4
+```
+
+```bash bun
+# Run with 4 concurrent workflows
+bunx @openworkflow/cli worker start --concurrency 4
+```
+
+</CodeGroup>
+
+The worker:
+
+1. Loads your config file
+2. Discovers workflows in the configured directories
+3. Registers all workflows
+4. Starts polling for work
+5. Handles graceful shutdown on SIGINT/SIGTERM
+
+### `dashboard`
+
+Start the web dashboard:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli dashboard
+```
+
+```bash pnpm
+pnpx @openworkflow/cli dashboard
+```
+
+```bash bun
+bunx @openworkflow/cli dashboard
+```
+
+</CodeGroup>
+
+The dashboard starts on `http://localhost:3000` by default.
+
+To use a custom port:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli dashboard --port 4000
+```
+
+```bash pnpm
+pnpx @openworkflow/cli dashboard --port 4000
+```
+
+```bash bun
+bunx @openworkflow/cli dashboard --port 4000
+```
+
+</CodeGroup>
+
+See [Dashboard](/docs/dashboard) for details.
+
+### `doctor`
+
+Diagnose your OpenWorkflow setup:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli doctor
+```
+
+```bash pnpm
+pnpx @openworkflow/cli doctor
+```
+
+```bash bun
+bunx @openworkflow/cli doctor
+```
+
+</CodeGroup>
+
+This command checks:
+
+- Config file exists and loads correctly
+- Backend connection works
+- Workflow directories exist
+- Workflow files are discoverable
+- Workflows export valid definitions
+- No duplicate workflow names
+
+Example output:
+
+```
+ℹ Config file: /project/openworkflow.config.ts
+  • Backend: Postgres
+  • Workflow directories: ./openworkflow
+
+ℹ Found 3 workflow file(s):
+  • /project/openworkflow/orders.ts
+  • /project/openworkflow/notifications.ts
+  • /project/openworkflow/reports.ts
+
+ℹ Discovered 5 workflow(s):
+  • process-order
+  • send-notification (version: 2.0.0)
+  • send-notification (version: 1.0.0)
+  • generate-report
+  • cleanup
+
+✔ Configuration looks good!
+```
+
+### `--version`
+
+Show the CLI version:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli --version
+```
+
+```bash pnpm
+pnpx @openworkflow/cli --version
+```
+
+```bash bun
+bunx @openworkflow/cli --version
+```
+
+</CodeGroup>
+
+### `--help`
+
+Show help for any command:
+
+<CodeGroup>
+```bash npm
+npx @openworkflow/cli --help
+npx @openworkflow/cli worker --help
+npx @openworkflow/cli worker start --help
+```
+
+```bash pnpm
+pnpx @openworkflow/cli --help
+pnpx @openworkflow/cli worker --help
+pnpx @openworkflow/cli worker start --help
+```
+
+```bash bun
+bunx @openworkflow/cli --help
+bunx @openworkflow/cli worker --help
+bunx @openworkflow/cli worker start --help
+```
+
+</CodeGroup>
+
+## Environment Variables
+
+The CLI loads `.env` files automatically before reading the config.
+
+```bash
+# .env
+OPENWORKFLOW_POSTGRES_URL=postgresql://user:pass@localhost:5432/openworkflow
+```
+
+## Exit Codes
+
+| Code | Meaning                                           |
+| ---- | ------------------------------------------------- |
+| 0    | Success                                           |
+| 1    | Error (config not found, connection failed, etc.) |
+
+## Graceful Shutdown
+
+When running `worker start`, the CLI handles shutdown signals:
+
+- **SIGINT** (Ctrl+C) - Graceful shutdown
+- **SIGTERM** - Graceful shutdown
+
+On shutdown, the worker:
+
+1. Stops accepting new work
+2. Waits for active workflows to complete
+3. Closes the backend connection

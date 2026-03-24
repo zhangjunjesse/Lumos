@@ -14,6 +14,7 @@ interface ToolResultInfo {
 
 export interface SSECallbacks {
   onText: (accumulated: string) => void;
+  onToolUseSummary: (summary: string) => void;
   onToolUse: (tool: ToolUseInfo) => void;
   onToolResult: (result: ToolResultInfo) => void;
   onToolOutput: (data: string) => void;
@@ -40,6 +41,21 @@ function handleSSEEvent(
       const next = accumulated + event.data;
       callbacks.onText(next);
       return next;
+    }
+
+    case 'tool_use_summary': {
+      try {
+        const summaryData = JSON.parse(event.data);
+        const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
+        if (summary) {
+          callbacks.onToolUseSummary(summary);
+        }
+      } catch {
+        if (event.data.trim()) {
+          callbacks.onToolUseSummary(event.data.trim());
+        }
+      }
+      return accumulated;
     }
 
     case 'tool_use': {
@@ -87,7 +103,7 @@ function handleSSEEvent(
       try {
         const statusData = JSON.parse(event.data);
         if (statusData.session_id) {
-          callbacks.onStatus(`Connected (${statusData.model || 'claude'})`, statusData);
+          callbacks.onStatus(undefined, statusData);
         } else if (statusData.notification) {
           callbacks.onStatus(statusData.message || statusData.title || undefined, statusData);
         } else {
@@ -211,6 +227,7 @@ export function useSSEStream() {
       // Proxy through ref so callers always hit the latest callbacks
       const proxied: SSECallbacks = {
         onText: (a) => callbacksRef.current?.onText(a),
+        onToolUseSummary: (s) => callbacksRef.current?.onToolUseSummary(s),
         onToolUse: (t) => callbacksRef.current?.onToolUse(t),
         onToolResult: (r) => callbacksRef.current?.onToolResult(r),
         onToolOutput: (d) => callbacksRef.current?.onToolOutput(d),

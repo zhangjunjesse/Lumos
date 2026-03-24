@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
 import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, clearSessionMessages } from '@/lib/db';
-import { syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
+import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   _request: NextRequest,
@@ -68,8 +71,12 @@ export async function DELETE(
       return Response.json({ error: 'Session not found' }, { status: 404 });
     }
 
+    const feishuCleanup = await cleanupSessionFeishuChat(id);
     deleteSession(id);
-    return Response.json({ success: true });
+    return Response.json({
+      success: true,
+      feishu_cleanup: feishuCleanup,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete session';
     return Response.json({ error: message }, { status: 500 });

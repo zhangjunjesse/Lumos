@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
+import { ChatTaskRail } from '@/components/chat/chat-task-rail';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
@@ -35,16 +36,11 @@ interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
 }
 
-interface ElectronIpcRendererLike {
-  on: (channel: string, listener: (event: unknown, payload: { sessionId: string }) => void) => void;
-  removeListener: (channel: string, listener: (event: unknown, payload: { sessionId: string }) => void) => void;
+interface BridgeInboundEventPayload {
+  sessionId?: string;
+  messageId?: string;
+  previewText?: string;
 }
-
-type WindowWithElectronIpc = Window & {
-  electron?: {
-    ipcRenderer?: ElectronIpcRendererLike;
-  };
-};
 
 function triggerMemoryOnSessionSwitch(sessionId: string): void {
   if (!sessionId) return;
@@ -66,6 +62,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const pathname = usePathname();
   const router = useRouter();
   const sessionData = useMessagesStore((state) => state.sessions[id] ?? null);
+  const getMessagesSession = useMessagesStore((state) => state.getSession);
   const updateSessionMessages = useMessagesStore((state) => state.updateSession);
   const removeCachedMessages = useMessagesStore((state) => state.clearSession);
   const sessionStreamingState = useStreamingStore((state) => state.sessions[id] ?? null);
@@ -81,7 +78,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionModel, setSessionModel] = useState<string>('');
   const [resolvedModel, setResolvedModel] = useState<string>('');
   const [sessionProviderId, setSessionProviderId] = useState<string>('');
-  const [sessionMode, setSessionMode] = useState<string>('');
   const [projectName, setProjectName] = useState<string>('');
   const [sessionWorkingDir, setSessionWorkingDir] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -89,6 +85,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const bridgePendingMessageIdsRef = useRef<Set<string>>(new Set());
   const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
   const { t } = useTranslation();
   const routeEntry = getSessionEntryFromPath(pathname);
@@ -129,7 +126,9 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       let fallbackSessionId = '';
       if (routeEntry !== 'main-agent') {
         try {
-          const sessionsRes = await fetch(`/api/chat/sessions?entry=${routeEntry}`);
+          const sessionsRes = await fetch(`/api/chat/sessions?entry=${routeEntry}`, {
+            cache: 'no-store',
+          });
           if (sessionsRes.ok) {
             const data: SessionsResponse = await sessionsRes.json();
             const sessions = Array.isArray(data.sessions) ? data.sessions : [];
@@ -171,7 +170,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     deleting,
     id,
     removeCachedMessages,
-    routeBasePath,
     routeEntry,
     router,
     setPanelSessionTitle,
@@ -193,10 +191,100 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
   }, [isEditingTitle]);
 
+  const refreshLatestMessages = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/chat/sessions/${id}/messages?limit=100`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        if (res.status === 404) {
+          updateSessionMessages(id, {
+            loading: false,
+            error: t('chat.sessionNotFound'),
+          });
+        }
+        return;
+      }
+
+      const data: MessagesResponse = await res.json();
+      updateSessionMessages(id, {
+        messages: data.messages,
+        hasMore: data.hasMore ?? false,
+        loading: false,
+        error: null,
+      });
+    } catch (err) {
+      updateSessionMessages(id, {
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load messages',
+      });
+    }
+  }, [id, t, updateSessionMessages]);
+
+  const injectInboundPreviewMessage = useCallback((payload: BridgeInboundEventPayload) => {
+    if (!payload.messageId || !payload.previewText) {
+      return;
+    }
+
+    const tempId = `temp-feishu-${payload.messageId}`;
+    const currentMessages = getMessagesSession(id)?.messages || [];
+    if (currentMessages.some((message) => message.id === tempId)) {
+      return;
+    }
+
+    updateSessionMessages(id, {
+      messages: [
+        ...currentMessages,
+        {
+          id: tempId,
+          session_id: id,
+          role: 'user',
+          content: `<!--source:feishu-->${payload.previewText}`,
+          created_at: new Date().toISOString(),
+          token_usage: null,
+        },
+      ],
+      hasMore: getMessagesSession(id)?.hasMore ?? false,
+      loading: false,
+      error: null,
+    });
+  }, [getMessagesSession, id, updateSessionMessages]);
+
+  const updateBridgeStreamingState = useCallback(() => {
+    const pendingCount = bridgePendingMessageIdsRef.current.size;
+    if (pendingCount <= 0) {
+      updateStreamingSession(id, {
+        status: 'idle',
+        content: '',
+        toolUses: [],
+        toolResults: [],
+        streamingToolOutput: '',
+        statusText: '',
+        pendingPermission: null,
+        permissionResolved: null,
+      });
+      return;
+    }
+
+    const queuedCount = Math.max(0, pendingCount - 1);
+    updateStreamingSession(id, {
+      status: 'streaming',
+      content: '',
+      toolUses: [],
+      toolResults: [],
+      streamingToolOutput: '',
+      statusText: queuedCount > 0
+        ? `飞书消息处理中，队列中还有 ${queuedCount} 条`
+        : '飞书消息处理中...',
+      pendingPermission: null,
+      permissionResolved: null,
+    });
+  }, [id, updateStreamingSession]);
+
   useEffect(() => {
     async function loadSession() {
       try {
-        const res = await fetch(`/api/chat/sessions/${id}`);
+        const res = await fetch(`/api/chat/sessions/${id}`, { cache: 'no-store' });
         if (!res.ok) return;
 
         const data: { session: ChatSession } = await res.json();
@@ -225,7 +313,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         setSessionModel(data.session.requested_model || data.session.model || '');
         setResolvedModel(data.session.resolved_model || '');
         setSessionProviderId(data.session.provider_id || '');
-        setSessionMode(data.session.mode || 'code');
         setProjectName(data.session.project_name || '');
       } catch (err) {
         console.error('[ChatSessionPage] Failed to load session:', err);
@@ -244,35 +331,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     let cancelled = false;
 
     async function loadMessages() {
-      try {
-        const res = await fetch(`/api/chat/sessions/${id}/messages?limit=100`);
-        if (cancelled) return;
-        if (!res.ok) {
-          if (res.status === 404) {
-            updateSessionMessages(id, {
-              loading: false,
-              error: t('chat.sessionNotFound'),
-            });
-            return;
-          }
-          throw new Error(t('chat.failedLoadMessages'));
-        }
-
-        const data: MessagesResponse = await res.json();
-        if (cancelled) return;
-        updateSessionMessages(id, {
-          messages: data.messages,
-          hasMore: data.hasMore ?? false,
-          loading: false,
-          error: null,
-        });
-      } catch (err) {
-        if (cancelled) return;
-        updateSessionMessages(id, {
-          loading: false,
-          error: err instanceof Error ? err.message : 'Failed to load messages',
-        });
-      }
+      await refreshLatestMessages();
+      if (cancelled) return;
     }
 
     loadMessages();
@@ -280,7 +340,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [id, sessionData, t, updateSessionMessages]);
+  }, [id, refreshLatestMessages, sessionData, updateSessionMessages]);
 
   useEffect(() => {
     if (sessionStreamingState?.status !== 'completed') return;
@@ -312,20 +372,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
 
       inFlight = true;
-      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
-        .then((res) => {
-          if (!res.ok) return null;
-          return res.json() as Promise<MessagesResponse>;
-        })
-        .then((data) => {
-          if (!data || cancelled) return;
-          updateSessionMessages(id, {
-            messages: data.messages,
-            hasMore: data.hasMore ?? false,
-            loading: false,
-            error: null,
-          });
-        })
+      refreshLatestMessages()
         .catch((err) => {
           console.error('[ChatPage] Polling messages failed:', err);
         })
@@ -348,44 +395,54 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [id, updateSessionMessages]);
+  }, [id, refreshLatestMessages]);
 
   useEffect(() => {
-    const handleBridgeMessage = (_event: unknown, data: { sessionId: string }) => {
-      if (data.sessionId !== id) return;
+    const handleBridgeEvent = (eventName: string, payload: unknown) => {
+      const detail = payload as BridgeInboundEventPayload | null;
+      if (!detail?.sessionId || detail.sessionId !== id) return;
 
-      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
-        .then((res) => {
-          if (!res.ok) return null;
-          return res.json() as Promise<MessagesResponse>;
-        })
-        .then((data: MessagesResponse | null) => {
-          if (!data) return;
-          updateSessionMessages(id, {
-            messages: data.messages,
-            hasMore: data.hasMore ?? false,
-            loading: false,
-            error: null,
-          });
-        })
-        .catch((err) => console.error('[Bridge] Failed to refresh messages:', err));
+      if (eventName === 'inbound-processing') {
+        if (detail.messageId) {
+          bridgePendingMessageIdsRef.current.add(detail.messageId);
+        }
+        injectInboundPreviewMessage(detail);
+        updateBridgeStreamingState();
+
+        void refreshLatestMessages();
+        window.setTimeout(() => {
+          void refreshLatestMessages();
+        }, 300);
+        window.setTimeout(() => {
+          void refreshLatestMessages();
+        }, 1200);
+        return;
+      }
+
+      if (eventName === 'inbound-completed' || eventName === 'inbound-failed') {
+        if (detail.messageId) {
+          bridgePendingMessageIdsRef.current.delete(detail.messageId);
+        } else {
+          bridgePendingMessageIdsRef.current.clear();
+        }
+        void refreshLatestMessages().finally(() => {
+          updateBridgeStreamingState();
+        });
+      }
     };
 
-    const ipcRenderer = (window as WindowWithElectronIpc).electron?.ipcRenderer;
-    if (typeof window !== 'undefined' && ipcRenderer) {
-      ipcRenderer.on('bridge:message-received', handleBridgeMessage);
-      return () => {
-        ipcRenderer.removeListener('bridge:message-received', handleBridgeMessage);
-      };
+    const unsubscribe = window.electronAPI?.bridge?.onEvent?.(handleBridgeEvent);
+    if (unsubscribe) {
+      return unsubscribe;
     }
-  }, [id, updateSessionMessages]);
+  }, [id, injectInboundPreviewMessage, refreshLatestMessages, updateBridgeStreamingState]);
 
   useEffect(() => {
     const handleTeamMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
       if (!detail?.sessionId || detail.sessionId !== id) return;
 
-      fetch(`/api/chat/sessions/${id}/messages?limit=100`)
+      fetch(`/api/chat/sessions/${id}/messages?limit=100`, { cache: 'no-store' })
         .then((res) => res.ok ? res.json() as Promise<MessagesResponse> : null)
         .then((data) => {
           if (!data) return;
@@ -443,117 +500,120 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {sessionTitle && (
-        <div
-          className="flex h-12 shrink-0 items-center justify-center gap-1 px-4"
-          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-        >
-          {projectName && (
-            <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="shrink-0 cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-                    onClick={() => {
-                      if (!sessionWorkingDir) return;
-                      if (window.electronAPI?.shell?.openPath) {
-                        window.electronAPI.shell.openPath(sessionWorkingDir);
-                        return;
-                      }
-                      fetch('/api/files/open', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ path: sessionWorkingDir }),
-                      }).catch(() => {});
-                    }}
-                  >
-                    {projectName}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="break-all text-xs">{sessionWorkingDir || projectName}</p>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">{t('chat.openInFinder')}</p>
-                </TooltipContent>
-              </Tooltip>
-              <span className="shrink-0 text-xs text-muted-foreground">/</span>
-            </>
-          )}
-          {isEditingTitle ? (
-            <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              <Input
-                ref={titleInputRef}
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onKeyDown={handleTitleKeyDown}
-                onBlur={handleSaveTitle}
-                className="h-7 max-w-md text-center text-sm"
-              />
-            </div>
-          ) : (
-            <div
-              className="group flex max-w-3xl cursor-default items-center gap-1"
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-            >
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-medium text-foreground/80">
-                  {sessionTitle}
-                </h2>
+    <div className="flex h-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {sessionTitle && (
+          <div
+            className="flex h-12 shrink-0 items-center justify-center gap-1 px-4"
+            style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+          >
+            {projectName && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className="shrink-0 cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                      onClick={() => {
+                        if (!sessionWorkingDir) return;
+                        if (window.electronAPI?.shell?.openPath) {
+                          window.electronAPI.shell.openPath(sessionWorkingDir);
+                          return;
+                        }
+                        fetch('/api/files/open', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ path: sessionWorkingDir }),
+                        }).catch(() => {});
+                      }}
+                    >
+                      {projectName}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="break-all text-xs">{sessionWorkingDir || projectName}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{t('chat.openInFinder')}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <span className="shrink-0 text-xs text-muted-foreground">/</span>
+              </>
+            )}
+            {isEditingTitle ? (
+              <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                <Input
+                  ref={titleInputRef}
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyDown}
+                  onBlur={handleSaveTitle}
+                  className="h-7 max-w-md text-center text-sm"
+                />
               </div>
-              <button
-                onClick={handleStartEditTitle}
-                className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
+            ) : (
+              <div
+                className="group flex max-w-3xl cursor-default items-center gap-1"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               >
-                <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
-              </button>
-              <BindingButton sessionId={id} />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setDeleteDialogOpen(true)}
-                    className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
-                  >
-                    <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{t('chat.deleteConversation')}</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
-        </div>
-      )}
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-medium text-foreground/80">
+                    {sessionTitle}
+                  </h2>
+                </div>
+                <button
+                  onClick={handleStartEditTitle}
+                  className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
+                >
+                  <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
+                </button>
+                <BindingButton sessionId={id} />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setDeleteDialogOpen(true)}
+                      className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
+                    >
+                      <HugeiconsIcon icon={Delete} className="h-3 w-3 text-muted-foreground" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('chat.deleteConversation')}</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+          </div>
+        )}
 
-      <ChatView
-        sessionId={id}
-        initialMessages={messages}
-        initialHasMore={hasMore}
-        modelName={sessionModel}
-        resolvedModelName={resolvedModel}
-        initialMode={sessionMode}
-        providerId={sessionProviderId}
-        onRequestedModelChange={setSessionModel}
-        onResolvedModelChange={setResolvedModel}
-      />
+        <ChatView
+          sessionId={id}
+          initialMessages={messages}
+          initialHasMore={hasMore}
+          modelName={sessionModel}
+          resolvedModelName={resolvedModel}
+          providerId={sessionProviderId}
+          onRequestedModelChange={setSessionModel}
+          onResolvedModelChange={setResolvedModel}
+        />
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('chat.deleteSessionTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('chat.deleteSessionDesc')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteSession}
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleting ? t('common.loading') : t('chat.deleteSessionConfirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('chat.deleteSessionTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>{t('chat.deleteSessionDesc')}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteSession}
+                disabled={deleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting ? t('common.loading') : t('chat.deleteSessionConfirm')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+
+      <ChatTaskRail sessionId={id} />
     </div>
   );
 }

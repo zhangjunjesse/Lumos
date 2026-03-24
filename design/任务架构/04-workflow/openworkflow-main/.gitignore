@@ -1,0 +1,6 @@
+.output
+.turbo
+coverage
+dist
+node_modules
+openworkflow/backend.db*

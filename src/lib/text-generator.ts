@@ -1,9 +1,10 @@
-import { streamText } from 'ai';
+import { generateObject, streamText } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { getDb } from '@/lib/db';
 import type { ApiProvider } from '@/types';
+import type { ZodType } from 'zod';
 
 export interface StreamTextParams {
   providerId: string;
@@ -12,6 +13,29 @@ export interface StreamTextParams {
   prompt: string;
   maxTokens?: number;
   abortSignal?: AbortSignal;
+}
+
+export interface GenerateObjectParams<T> {
+  providerId: string;
+  model: string;
+  system: string;
+  prompt: string;
+  schema: ZodType<T>;
+  abortSignal?: AbortSignal;
+}
+
+function getObjectGenerationProviderOptions(provider: ApiProvider): Record<string, unknown> | undefined {
+  if (provider.provider_type === 'anthropic') {
+    return {
+      anthropic: {
+        // Custom Anthropic-compatible gateways in this repo are more stable with tool-based
+        // structured output than with the newer native json_schema payload.
+        structuredOutputMode: 'jsonTool',
+      },
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -116,4 +140,23 @@ export async function generateTextFromProvider(params: StreamTextParams): Promis
     chunks.push(chunk);
   }
   return chunks.join('');
+}
+
+export async function generateObjectFromProvider<T>(params: GenerateObjectParams<T>): Promise<T> {
+  const provider = resolveProvider(params.providerId);
+  if (!provider) {
+    throw new Error('No text generation provider available. Please configure a provider in Settings.');
+  }
+
+  const model = createLanguageModel(provider, params.model);
+  const result = await generateObject({
+    model,
+    system: params.system,
+    prompt: params.prompt,
+    schema: params.schema,
+    providerOptions: getObjectGenerationProviderOptions(provider),
+    abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+  });
+
+  return result.object;
 }

@@ -5,6 +5,46 @@ import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from '
 export function migrateLumosTables(db: Database.Database): void {
   // Knowledge base tables
   db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_definitions (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      version TEXT NOT NULL,
+      code TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'llm',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_task_mapping (
+      workflow_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      execution_id TEXT,
+      PRIMARY KEY (workflow_id, task_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_executions (
+      workflow_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      workflow_name TEXT NOT NULL DEFAULT '',
+      workflow_version TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+      progress INTEGER NOT NULL DEFAULT 0,
+      current_step TEXT,
+      completed_steps_json TEXT NOT NULL DEFAULT '[]',
+      running_steps_json TEXT NOT NULL DEFAULT '[]',
+      skipped_steps_json TEXT NOT NULL DEFAULT '[]',
+      step_ids_json TEXT NOT NULL DEFAULT '[]',
+      result_json TEXT,
+      error_json TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_defs_name_version ON workflow_definitions(name, version);
+    CREATE INDEX IF NOT EXISTS idx_workflow_task_mapping_task ON workflow_task_mapping(task_id);
+    CREATE INDEX IF NOT EXISTS idx_workflow_exec_task ON workflow_executions(task_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_workflow_exec_status ON workflow_executions(status, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS kb_collections (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -629,6 +669,50 @@ export function migrateLumosTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_mem_usage_memory ON memory_usage_log(memory_id);
     CREATE INDEX IF NOT EXISTS idx_mem_usage_session ON memory_usage_log(session_id);
+  `);
+
+  // Capability tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS capability_drafts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      input_schema TEXT NOT NULL DEFAULT '{}',
+      output_schema TEXT NOT NULL DEFAULT '{}',
+      permissions TEXT NOT NULL DEFAULT '{}',
+      implementation TEXT NOT NULL DEFAULT '{}',
+      validation_errors TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS capability_packages (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      version TEXT NOT NULL,
+      digest TEXT,
+      status TEXT NOT NULL,
+      category TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT '{}',
+      input_schema TEXT NOT NULL DEFAULT '{}',
+      output_schema TEXT NOT NULL DEFAULT '{}',
+      permissions TEXT NOT NULL DEFAULT '{}',
+      runtime_policy TEXT NOT NULL DEFAULT '{}',
+      approval_policy TEXT NOT NULL DEFAULT '{}',
+      implementation TEXT NOT NULL DEFAULT '{}',
+      tests TEXT NOT NULL DEFAULT '[]',
+      docs TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_capability_drafts_created ON capability_drafts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_capability_packages_status ON capability_packages(status);
+    CREATE INDEX IF NOT EXISTS idx_capability_packages_category ON capability_packages(category);
   `);
 
   // Seed built-in data on first run

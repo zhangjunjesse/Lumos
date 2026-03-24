@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
+import { WorkflowAgentSettingsSection } from './workflow-agent-settings';
 
 const TEAM_RUN_STATUS_CLASSNAME: Record<TeamRunStatus, string> = {
   pending: 'border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300',
@@ -1046,12 +1047,28 @@ export function TaskHubView() {
 export function TeamSettingsView() {
   const { t } = useTranslation();
   const { catalog, loading, error, refresh } = useMainAgentCatalog();
+  const [activeTab, setActiveTab] = useState<'agents' | 'templates' | 'workflow-agents'>('agents');
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentPresetDirectoryItem | null>(null);
   const [editingTemplate, setEditingTemplate] = useState<TeamTemplateDirectoryItem | null>(null);
   const [busyKey, setBusyKey] = useState('');
   const [actionError, setActionError] = useState('');
+
+  useEffect(() => {
+    const syncTabFromHash = () => {
+      const hash = window.location.hash.replace('#', '');
+      if (hash === 'templates' || hash === 'workflow-agents' || hash === 'agents') {
+        setActiveTab(hash);
+        return;
+      }
+      setActiveTab('agents');
+    };
+
+    syncTabFromHash();
+    window.addEventListener('hashchange', syncTabFromHash);
+    return () => window.removeEventListener('hashchange', syncTabFromHash);
+  }, []);
 
   const saveAgentPreset = useCallback(async (value: CreateAgentPresetRequest) => {
     setActionError('');
@@ -1172,10 +1189,19 @@ export function TeamSettingsView() {
           </Button>
         </div>
 
-        <Tabs defaultValue="agents">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            if (value === 'agents' || value === 'templates' || value === 'workflow-agents') {
+              setActiveTab(value);
+              window.history.replaceState(null, '', `/team/settings#${value}`);
+            }
+          }}
+        >
           <TabsList variant="line" className="w-full justify-start">
             <TabsTrigger value="agents">{t('teamHub.tabs.agents')}</TabsTrigger>
             <TabsTrigger value="templates">{t('teamHub.tabs.templates')}</TabsTrigger>
+            <TabsTrigger value="workflow-agents">{t('teamHub.tabs.workflowAgents')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="agents" className="space-y-4">
@@ -1258,6 +1284,10 @@ export function TeamSettingsView() {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="workflow-agents" className="space-y-4">
+            <WorkflowAgentSettingsSection />
           </TabsContent>
         </Tabs>
       </TeamHubShell>

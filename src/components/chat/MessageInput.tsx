@@ -37,7 +37,7 @@ import {
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input';
 import type { ChatStatus } from 'ai';
-import type { FileAttachment, ProviderModelGroup } from '@/types';
+import type { ChatKnowledgeOptions, FileAttachment, ProviderModelGroup } from '@/types';
 import { nanoid } from 'nanoid';
 
 // Accepted file types for upload
@@ -59,6 +59,7 @@ interface MessageInputProps {
     files?: FileAttachment[],
     systemPromptAppend?: string,
     displayOverride?: string,
+    knowledgeOptions?: ChatKnowledgeOptions,
   ) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
@@ -71,8 +72,7 @@ interface MessageInputProps {
   providerId?: string;
   onProviderModelChange?: (providerId: string, model: string) => void;
   workingDirectory?: string;
-  mode?: string;
-  onModeChange?: (mode: string) => void;
+  initialKnowledgeEnabled?: boolean;
   onInputFocus?: () => void;
   fullWidth?: boolean;
 }
@@ -97,6 +97,14 @@ interface CommandBadge {
   installedSource?: "agents" | "claude";
 }
 
+interface KnowledgeTag {
+  id: string;
+  name: string;
+  category: string;
+  color: string;
+  usage_count?: number;
+}
+
 type PopoverMode = 'file' | 'skill' | null;
 
 // Expansion prompts for CLI-only commands (not natively supported by SDK).
@@ -119,25 +127,6 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'memory', value: '/memory', description: 'Edit project memory file', descriptionKey: 'messageInput.memoryDesc', builtIn: true, icon: Brain },
 ];
 
-interface ModeOption {
-  value: string;
-  label: string;
-}
-
-const MODE_OPTIONS: ModeOption[] = [
-  { value: 'code', label: 'Code' },
-  { value: 'plan', label: 'Plan' },
-];
-
-const TEAM_PLAN_REQUEST_PROMPT = `Stay in Main Agent mode, but use this reply to handle Team Mode planning only.
-Do not execute the task yet.
-If the task should stay single-agent, explain that briefly.
-If Team Mode is warranted, produce a concise explanation plus one valid \`\`\`lumos-team-plan\`\`\` JSON block that matches Lumos' required schema, then wait for user confirmation.`;
-
-const TEAM_PLAN_REQUEST_PROMPT_ZH = `保持在主代理模式中，但这一轮回复只处理团队模式规划。
-先不要执行任务。
-如果任务应保持为单代理，请简短说明原因。
-如果适合使用团队模式，请给出简明说明，并提供一个符合 Lumos 要求 schema 的 \`\`\`lumos-team-plan\`\`\` JSON 代码块，然后等待用户确认。`;
 const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
 const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
 
@@ -351,16 +340,16 @@ export function MessageInput({
   providerId,
   onProviderModelChange,
   workingDirectory,
-  mode = 'code',
-  onModeChange,
+  initialKnowledgeEnabled = false,
   onInputFocus,
   fullWidth = false,
 }: MessageInputProps) {
-  const { t, locale } = useTranslation();
+  const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const knowledgeMenuRef = useRef<HTMLDivElement>(null);
 
   const [popoverMode, setPopoverMode] = useState<PopoverMode>(null);
   const [popoverItems, setPopoverItems] = useState<PopoverItem[]>([]);
@@ -370,14 +359,23 @@ export function MessageInput({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [badge, setBadge] = useState<CommandBadge | null>(null);
-  const [teamPlanMode, setTeamPlanMode] = useState(false);
   const [providerGroups, setProviderGroups] = useState<ProviderModelGroup[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState<string>('');
   const [aiSuggestions, setAiSuggestions] = useState<PopoverItem[]>([]);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
+  const [knowledgeEnabled, setKnowledgeEnabled] = useState(initialKnowledgeEnabled);
+  const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
+  const [knowledgeTags, setKnowledgeTags] = useState<KnowledgeTag[]>([]);
+  const [knowledgeTagsLoading, setKnowledgeTagsLoading] = useState(false);
+  const [knowledgeTagsError, setKnowledgeTagsError] = useState<string | null>(null);
+  const [knowledgeTagFilter, setKnowledgeTagFilter] = useState('');
+  const [selectedKnowledgeTagIds, setSelectedKnowledgeTagIds] = useState<string[]>([]);
   const aiSearchAbortRef = useRef<AbortController | null>(null);
   const aiSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const teamPlanRequestPrompt = locale === 'zh' ? TEAM_PLAN_REQUEST_PROMPT_ZH : TEAM_PLAN_REQUEST_PROMPT;
+
+  useEffect(() => {
+    setKnowledgeEnabled(initialKnowledgeEnabled);
+  }, [initialKnowledgeEnabled]);
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
@@ -413,6 +411,44 @@ export function MessageInput({
       });
   }, []);
 
+  const fetchKnowledgeTags = useCallback(async () => {
+    setKnowledgeTagsLoading(true);
+    setKnowledgeTagsError(null);
+
+    try {
+      const response = await fetch('/api/knowledge/tags');
+      if (!response.ok) {
+        throw new Error('Failed to load knowledge tags');
+      }
+
+      const data = await response.json();
+      const tags = Array.isArray(data)
+        ? data
+            .map((tag): KnowledgeTag | null => {
+              if (!tag || typeof tag !== 'object') return null;
+              const record = tag as Record<string, unknown>;
+              const id = typeof record.id === 'string' ? record.id.trim() : '';
+              const name = typeof record.name === 'string' ? record.name.trim() : '';
+              if (!id || !name) return null;
+              return {
+                id,
+                name,
+                category: typeof record.category === 'string' ? record.category : 'custom',
+                color: typeof record.color === 'string' && record.color.trim() ? record.color : '#6B7280',
+                usage_count: typeof record.usage_count === 'number' ? record.usage_count : 0,
+              };
+            })
+            .filter((tag): tag is KnowledgeTag => tag !== null)
+        : [];
+
+      setKnowledgeTags(tags);
+    } catch (error) {
+      setKnowledgeTagsError(error instanceof Error ? error.message : 'Failed to load knowledge tags');
+    } finally {
+      setKnowledgeTagsLoading(false);
+    }
+  }, []);
+
   // Load models on mount and listen for provider changes
   useEffect(() => {
     fetchProviderModels();
@@ -420,6 +456,12 @@ export function MessageInput({
     window.addEventListener('provider-changed', handler);
     return () => window.removeEventListener('provider-changed', handler);
   }, [fetchProviderModels]);
+
+  useEffect(() => {
+    if (!knowledgeMenuOpen) return;
+    if (knowledgeTagsLoading || knowledgeTags.length > 0 || knowledgeTagsError) return;
+    void fetchKnowledgeTags();
+  }, [fetchKnowledgeTags, knowledgeMenuOpen, knowledgeTags.length, knowledgeTagsError, knowledgeTagsLoading]);
 
   // Derive flat model list for current provider (used by currentModelOption lookup)
   const hasExplicitProvider = !!providerId && providerGroups.some((group) => group.provider_id === providerId);
@@ -464,8 +506,10 @@ export function MessageInput({
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
+    if (!workingDirectory) return [];
     try {
       const params = new URLSearchParams();
+      params.set('dir', workingDirectory);
       if (sessionId) params.set('session_id', sessionId);
       if (filter) params.set('q', filter);
       const res = await fetch(`/api/files?${params.toString()}`);
@@ -484,7 +528,7 @@ export function MessageInput({
     } catch {
       return [];
     }
-  }, [sessionId]);
+  }, [sessionId, workingDirectory]);
 
   // Fetch skills for / command (built-in + API)
   // Returns all items unfiltered — filtering is done by filteredItems
@@ -779,10 +823,13 @@ export function MessageInput({
         : expandedPrompt || badge.command;
 
       const files = await convertFiles();
+      const knowledgeOptions: ChatKnowledgeOptions = {
+        enabled: knowledgeEnabled,
+        tagIds: selectedKnowledgeTagIds,
+      };
       setBadge(null);
-      setTeamPlanMode(false);
       setInputValue('');
-      onSend(finalPrompt, files.length > 0 ? files : undefined);
+      onSend(finalPrompt, files.length > 0 ? files : undefined, undefined, undefined, knowledgeOptions);
       return;
     }
 
@@ -828,10 +875,13 @@ export function MessageInput({
     onSend(
       content || 'Please review the attached file(s).',
       hasFiles ? files : undefined,
-      teamPlanMode ? teamPlanRequestPrompt : undefined,
       undefined,
+      undefined,
+      {
+        enabled: knowledgeEnabled,
+        tagIds: selectedKnowledgeTagIds,
+      },
     );
-    setTeamPlanMode(false);
     setInputValue('');
   }, [
     badge,
@@ -839,10 +889,11 @@ export function MessageInput({
     disabled,
     inputValue,
     isStreaming,
+    knowledgeEnabled,
     onCommand,
     onSend,
-    teamPlanMode,
-    teamPlanRequestPrompt,
+    selectedKnowledgeTagIds,
+    workingDirectory,
   ]);
 
   const filteredItems = popoverItems.filter((item) => {
@@ -1020,6 +1071,17 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
+  useEffect(() => {
+    if (!knowledgeMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (knowledgeMenuRef.current && !knowledgeMenuRef.current.contains(e.target as Node)) {
+        setKnowledgeMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [knowledgeMenuOpen]);
+
   const currentModelValue = MODEL_OPTIONS.some((model) => model.value === (modelName || ''))
     ? (modelName || '')
     : (MODEL_OPTIONS[0]?.value || DEFAULT_PROVIDER_MODEL_OPTIONS[0].value);
@@ -1028,6 +1090,13 @@ export function MessageInput({
   const runtimeModelMismatch = hasResolvedModel
     ? !doesResolvedModelMatchRequested(currentModelValue, resolvedModelName)
     : false;
+  const knowledgeTagQuery = knowledgeTagFilter.trim().toLowerCase();
+  const filteredKnowledgeTags = knowledgeTags.filter((tag) => {
+    if (!knowledgeTagQuery) return true;
+    return tag.name.toLowerCase().includes(knowledgeTagQuery)
+      || tag.category.toLowerCase().includes(knowledgeTagQuery);
+  });
+  const selectedKnowledgeTags = knowledgeTags.filter((tag) => selectedKnowledgeTagIds.includes(tag.id));
 
   // Map isStreaming to ChatStatus for PromptInputSubmit
   const chatStatus: ChatStatus = isStreaming ? 'streaming' : 'ready';
@@ -1189,6 +1258,156 @@ export function MessageInput({
             );
           })()}
 
+          {knowledgeMenuOpen && (
+            <div
+              ref={knowledgeMenuRef}
+              className="absolute bottom-full left-0 mb-2 w-full max-w-sm rounded-xl border bg-popover shadow-lg overflow-hidden z-40"
+            >
+              <div className="flex items-start justify-between gap-3 border-b px-3 py-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium">{t('messageInput.knowledgeBase')}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {knowledgeEnabled
+                      ? t('messageInput.knowledgeEnabledHint')
+                      : t('messageInput.knowledgeDisabledHint')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setKnowledgeEnabled((prev) => !prev)}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors",
+                    knowledgeEnabled
+                      ? "border-emerald-500/40 bg-emerald-500/20"
+                      : "border-border bg-muted"
+                  )}
+                  aria-pressed={knowledgeEnabled}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform",
+                      knowledgeEnabled ? "translate-x-6" : "translate-x-1"
+                    )}
+                  />
+                </button>
+              </div>
+
+              {knowledgeEnabled && (
+                <>
+                  <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+                    <div>
+                      <div className="text-xs font-medium text-foreground">{t('messageInput.knowledgeTags')}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {selectedKnowledgeTagIds.length > 0
+                          ? t('messageInput.knowledgeTagsSelected').replace('{n}', String(selectedKnowledgeTagIds.length))
+                          : t('messageInput.knowledgeAllTags')}
+                      </div>
+                    </div>
+                    {selectedKnowledgeTagIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                        onClick={() => setSelectedKnowledgeTagIds([])}
+                      >
+                        {t('messageInput.knowledgeClearTags')}
+                      </button>
+                    )}
+                  </div>
+
+                  {selectedKnowledgeTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 border-b px-3 py-2">
+                      {selectedKnowledgeTags.map((tag) => (
+                        <button
+                          key={`selected-${tag.id}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedKnowledgeTagIds((prev) => prev.filter((id) => id !== tag.id));
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-300"
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="max-w-[140px] truncate">{tag.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="border-b px-3 py-2">
+                    <input
+                      type="text"
+                      value={knowledgeTagFilter}
+                      onChange={(e) => setKnowledgeTagFilter(e.target.value)}
+                      placeholder={t('messageInput.knowledgeFilterPlaceholder')}
+                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none transition-colors focus:border-ring"
+                    />
+                  </div>
+
+                  <div className="max-h-52 overflow-y-auto p-2">
+                    {knowledgeTagsLoading ? (
+                      <div className="px-2 py-3 text-xs text-muted-foreground">
+                        {t('messageInput.knowledgeLoadingTags')}
+                      </div>
+                    ) : knowledgeTagsError ? (
+                      <div className="space-y-2 px-2 py-3">
+                        <div className="text-xs text-destructive">{t('messageInput.knowledgeLoadTagsFailed')}</div>
+                        <button
+                          type="button"
+                          className="text-xs text-foreground underline underline-offset-2"
+                          onClick={() => void fetchKnowledgeTags()}
+                        >
+                          {t('install.retry')}
+                        </button>
+                      </div>
+                    ) : filteredKnowledgeTags.length === 0 ? (
+                      <div className="px-2 py-3 text-xs text-muted-foreground">
+                        {knowledgeTags.length === 0
+                          ? t('messageInput.knowledgeNoTags')
+                          : t('messageInput.knowledgeNoFilteredTags')}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {filteredKnowledgeTags.map((tag) => {
+                          const isSelected = selectedKnowledgeTagIds.includes(tag.id);
+                          return (
+                            <button
+                              key={tag.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedKnowledgeTagIds((prev) => (
+                                  prev.includes(tag.id)
+                                    ? prev.filter((id) => id !== tag.id)
+                                    : [...prev, tag.id]
+                                ));
+                              }}
+                              className={cn(
+                                "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors",
+                                isSelected
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0"
+                                style={{ backgroundColor: tag.color }}
+                              />
+                              <span className="truncate">{tag.name}</span>
+                              {typeof tag.usage_count === 'number' && tag.usage_count > 0 && (
+                                <span className="text-[10px] opacity-70">{tag.usage_count}</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* PromptInput replaces the old input area */}
           <PromptInput
             onSubmit={handleSubmit}
@@ -1218,13 +1437,6 @@ export function MessageInput({
                 </span>
               </div>
             )}
-            {teamPlanMode && (
-              <div className="flex w-full items-center gap-1.5 px-3 pt-2.5 pb-0 order-first">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-                  {t('messageInput.teamPlanOnly')}
-                </span>
-              </div>
-            )}
             {/* File attachment capsules */}
             <FileAttachmentsCapsules />
             <PromptInputTextarea
@@ -1242,39 +1454,26 @@ export function MessageInput({
                 {/* Attach file button */}
                 <AttachFileButton />
 
-                {/* Mode capsule toggle */}
-                <div className="flex items-center rounded-full border border-border/60 overflow-hidden h-7">
-                  {MODE_OPTIONS.map((opt) => {
-                    const isActive = opt.value === mode;
-                    return (
-                      <button
-                        key={opt.value}
-                        className={cn(
-                          "px-2.5 py-1 text-xs font-medium transition-colors",
-                          isActive
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        )}
-                        onClick={() => onModeChange?.(opt.value)}
-                      >
-                        {opt.value === 'code' ? t('messageInput.modeCode') : opt.value === 'plan' ? t('messageInput.modePlan') : opt.label}
-                      </button>
-                    );
-                  })}
+                <div className="relative">
+                  <PromptInputButton
+                    onClick={() => setKnowledgeMenuOpen((prev) => !prev)}
+                    className={cn(
+                      knowledgeEnabled && "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                    )}
+                  >
+                    <HugeiconsIcon icon={Brain} className="h-3.5 w-3.5" />
+                    <span className="text-xs">{t('messageInput.knowledgeBase')}</span>
+                    {knowledgeEnabled && selectedKnowledgeTagIds.length > 0 && (
+                      <span className="rounded-full bg-current/10 px-1.5 py-0.5 text-[10px] leading-none">
+                        {selectedKnowledgeTagIds.length}
+                      </span>
+                    )}
+                    <HugeiconsIcon
+                      icon={ArrowDown01}
+                      className={cn("h-2.5 w-2.5 transition-transform duration-200", knowledgeMenuOpen && "rotate-180")}
+                    />
+                  </PromptInputButton>
                 </div>
-
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-medium transition-colors",
-                    teamPlanMode
-                      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                      : "border-border/60 text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => setTeamPlanMode((prev) => !prev)}
-                >
-                  {t('messageInput.teamPlanToggle')}
-                </button>
 
                 {/* Model selector */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>

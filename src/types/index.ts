@@ -861,6 +861,7 @@ export interface Message {
 // Structured message content blocks (stored as JSON in messages.content)
 export type MessageContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'reasoning'; summary: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
   | { type: 'code'; language: string; code: string };
@@ -982,12 +983,19 @@ export interface CreateSessionRequest {
   folder?: string;
 }
 
+export interface ChatKnowledgeOptions {
+  enabled: boolean;
+  tagIds: string[];
+}
+
 export interface SendMessageRequest {
   session_id: string;
   content: string;
   model?: string;
   mode?: string;
   provider_id?: string;
+  knowledge_enabled?: boolean;
+  knowledge_tag_ids?: string[];
 }
 
 export interface UpdateMCPConfigRequest {
@@ -1186,6 +1194,7 @@ export interface SkillResponse {
 
 export type SSEEventType =
   | 'text'               // text content delta
+  | 'tool_use_summary'   // summarized reasoning/tool-use progress
   | 'tool_use'           // tool invocation info
   | 'tool_result'        // tool execution result
   | 'tool_output'        // streaming tool output (stderr from SDK process)
@@ -1475,6 +1484,7 @@ export interface ClaudeStreamOptions {
   files?: FileAttachment[];
   toolTimeoutSeconds?: number;
   provider?: ApiProvider;
+  knowledgeOptions?: ChatKnowledgeOptions;
   /** Recent conversation history from DB — used as fallback context when SDK resume is unavailable or fails */
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   onRuntimeStatusChange?: (status: string) => void;

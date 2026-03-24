@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -55,6 +55,8 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingWorkspace, setRenamingWorkspace] = useState<Workspace | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const fetchSessionsRequestIdRef = useRef(0);
+  const optimisticDeletedSessionIdsRef = useRef<Set<string>>(new Set());
   const activeSessionId = pathname.match(/^\/chat\/([^/]+)$/)?.[1] || null;
   const activeWorkspaceId = useMemo(() => {
     if (!activeSessionId) return null;
@@ -74,11 +76,22 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   }, []);
 
   const fetchSessions = useCallback(async () => {
+    const requestId = ++fetchSessionsRequestIdRef.current;
     try {
-      const res = await fetch("/api/chat/sessions");
+      const res = await fetch("/api/chat/sessions", {
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
-        setSessions(data.sessions || []);
+        if (requestId !== fetchSessionsRequestIdRef.current) {
+          return;
+        }
+        const optimisticDeletedSessionIds = optimisticDeletedSessionIdsRef.current;
+        setSessions(
+          (data.sessions || []).filter(
+            (session: ChatSession) => !optimisticDeletedSessionIds.has(session.id),
+          ),
+        );
       }
     } catch {
       // silently ignore
@@ -91,6 +104,53 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
     };
     void load();
   }, [fetchWorkspaces, fetchSessions]);
+
+  useEffect(() => {
+    const handleSessionCreated = () => {
+      void fetchSessions();
+    };
+
+    const handleSessionUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; title?: string }>).detail;
+      if (detail?.id) {
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === detail.id
+              ? {
+                  ...session,
+                  ...(detail.title ? { title: detail.title } : {}),
+                  updated_at: new Date().toISOString(),
+                }
+              : session,
+          ),
+        );
+      }
+      void fetchSessions();
+    };
+
+    const handleSessionDeleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string }>).detail;
+      if (detail?.id) {
+        optimisticDeletedSessionIdsRef.current.add(detail.id);
+        setSessions((prev) => prev.filter((session) => session.id !== detail.id));
+      } else {
+        void fetchSessions();
+      }
+    };
+
+    window.addEventListener("session-created", handleSessionCreated);
+    window.addEventListener("session-updated", handleSessionUpdated);
+    window.addEventListener("session-deleted", handleSessionDeleted);
+    return () => {
+      window.removeEventListener("session-created", handleSessionCreated);
+      window.removeEventListener("session-updated", handleSessionUpdated);
+      window.removeEventListener("session-deleted", handleSessionDeleted);
+    };
+  }, [fetchSessions]);
+
+  useEffect(() => {
+    void fetchSessions();
+  }, [pathname, fetchSessions]);
 
   const toggleWorkspace = useCallback((id: string) => {
     setExpandedWorkspaces(prev => {

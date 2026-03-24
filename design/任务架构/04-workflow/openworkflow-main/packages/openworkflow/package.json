@@ -1,0 +1,76 @@
+{
+  "name": "openworkflow",
+  "version": "0.8.1",
+  "description": "Open-source TypeScript framework for building durable, resumable workflows",
+  "keywords": [
+    "durable execution",
+    "durable function",
+    "durable workflow",
+    "job processing",
+    "postgresql",
+    "resumable",
+    "task orchestration",
+    "task scheduler",
+    "typescript",
+    "workflow",
+    "workflow orchestration"
+  ],
+  "homepage": "https://openworkflow.dev",
+  "bugs": "https://github.com/openworkflowdev/openworkflow/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openworkflowdev/openworkflow.git",
+    "directory": "packages/openworkflow"
+  },
+  "license": "Apache-2.0",
+  "author": "OpenWorkflow",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "default": "./dist/postgres.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "default": "./dist/sqlite.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!*.test.*",
+    "!*.testsuite.*",
+    "!*.tsbuildinfo",
+    "!vitest.global-setup.*"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "arktype": "^2.2.0",
+    "valibot": "^1.2.0",
+    "vitest": "^4.0.18",
+    "yup": "^1.7.1",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "postgres": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "postgres": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

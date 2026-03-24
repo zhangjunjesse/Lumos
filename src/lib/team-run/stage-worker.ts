@@ -14,6 +14,10 @@ interface WorkerStatus {
   progress?: number
 }
 
+interface StageWorkerExecuteOptions {
+  abortController?: AbortController
+}
+
 type StageWorkerDiagnosticError = Error & {
   code?: string
   stderr?: string
@@ -42,37 +46,113 @@ function stringifyDiagnosticValue(value: unknown): string | undefined {
   }
 }
 
+function buildAbortError(message: string = 'Task execution cancelled'): StageWorkerDiagnosticError {
+  const error = new Error(message) as StageWorkerDiagnosticError
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  return error
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown }
+  return (
+    candidate.name === 'AbortError'
+    || candidate.code === 'ABORT_ERR'
+    || candidate.code === 'ERR_CANCELED'
+  )
+}
+
+function isStructuredOutputRetryFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /Failed to provide valid structured output after \d+ attempts/i.test(error.message)
+}
+
+function isTextOnlyStageContract(payload: StageExecutionPayloadV1): boolean {
+  return !payload.stage.outputContract.mayProduceArtifacts
+    && payload.stage.outputContract.artifactKinds.length === 0
+}
+
+function prefersPlainTextStageResult(payload: StageExecutionPayloadV1): boolean {
+  return payload.stage.responseMode === 'plain-text' && isTextOnlyStageContract(payload)
+}
+
 export class StageWorker {
   private currentStageId: string = ''
   private state: WorkerStatus['state'] = 'idle'
   private useRealAgent: boolean
+  private abortController: AbortController | null = null
 
   constructor(useRealAgent: boolean = false) {
     this.useRealAgent = useRealAgent
   }
 
-  async execute(payload: StageExecutionPayloadV1): Promise<StageExecutionResultV1> {
+  private isCancelled(): boolean {
+    return this.state === 'cancelled' || Boolean(this.abortController?.signal.aborted)
+  }
+
+  async execute(
+    payload: StageExecutionPayloadV1,
+    options: StageWorkerExecuteOptions = {},
+  ): Promise<StageExecutionResultV1> {
     this.currentStageId = payload.stageId
     this.state = 'running'
+    this.abortController = options.abortController ?? new AbortController()
 
     const startTime = Date.now()
     const startedAt = new Date(startTime).toISOString()
 
     try {
+      if (this.abortController.signal.aborted) {
+        throw buildAbortError()
+      }
+
       if (this.useRealAgent) {
         const result = await this.executeWithClaudeSDK(payload, startTime, startedAt)
-        this.state = 'idle'
+        if (!this.isCancelled()) {
+          this.state = 'idle'
+        }
         return result
       }
 
       const output = `Executed task: ${payload.stage.description || payload.stage.title}`
       const result = this.buildSyntheticSuccessResult(payload, output, startedAt, startTime)
-      this.state = 'idle'
+      if (!this.isCancelled()) {
+        this.state = 'idle'
+      }
       return result
     } catch (error) {
-      this.state = 'idle'
+      const cancelled = this.isCancelled() || isAbortError(error)
+
+      if (!cancelled) {
+        this.state = 'idle'
+      }
 
       const diagnostics = this.buildDiagnostics(payload, error)
+      if (cancelled) {
+        return {
+          contractVersion: 'stage-execution-result/v1',
+          runId: payload.runId,
+          stageId: payload.stageId,
+          attempt: payload.attempt,
+          outcome: 'failed',
+          summary: '',
+          artifacts: [],
+          error: {
+            code: 'execution_cancelled',
+            message: 'Task execution cancelled',
+            retryable: false,
+          },
+          diagnostics,
+          memoryAppend: [],
+          metrics: {
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            durationMs: Date.now() - startTime,
+          },
+        }
+      }
+
       console.error(`[StageWorker] Execution error ${payload.stageId}: ${JSON.stringify(diagnostics)}`)
       const sanitized = ErrorSanitizer.sanitize(error instanceof Error ? error : new Error('Unknown error'))
 
@@ -100,6 +180,8 @@ export class StageWorker {
           durationMs: Date.now() - startTime,
         },
       }
+    } finally {
+      this.abortController = null
     }
   }
 
@@ -167,29 +249,57 @@ export class StageWorker {
 
     const prompt = this.buildPrompt(payload)
     const runtimePolicy = buildStageRuntimeToolPolicy(payload.agent)
-    const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap()
+    const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
+      sessionId: payload.sessionId,
+    })
+    const requestedModel = payload.requestedModel?.trim() || undefined
     let stderrOutput = ''
     let output = ''
     let structuredOutput: unknown
+    const baseQueryOptions = {
+      abortController: this.abortController ?? new AbortController(),
+      cwd: getStageExecutionCwd(payload),
+      systemPrompt: payload.agent.systemPrompt,
+      tools: runtimePolicy.sdkTools,
+      allowedTools: runtimePolicy.allowedTools,
+      canUseTool: createStageCanUseTool(payload),
+      permissionMode: 'dontAsk' as const,
+      env: runtimeBootstrap.env,
+      settingSources: runtimeBootstrap.settingSources,
+      ...(requestedModel ? { model: requestedModel } : {}),
+      stderr: (data: string) => {
+        stderrOutput += data
+      },
+      ...(runtimeBootstrap.pathToClaudeCodeExecutable
+        ? { pathToClaudeCodeExecutable: runtimeBootstrap.pathToClaudeCodeExecutable }
+        : {}),
+    }
 
     try {
+      if (prefersPlainTextStageResult(payload)) {
+        const plainTextResult = await this.executePlainTextMode({
+          query,
+          payload,
+          prompt,
+          baseQueryOptions,
+          startedAt,
+          startTime,
+          mode: 'preferred',
+        })
+
+        if (!plainTextResult) {
+          const missingOutputError = new Error('Claude SDK did not return plain-text stage output') as StageWorkerDiagnosticError
+          missingOutputError.outputPreview = truncateDiagnostic(output)
+          throw missingOutputError
+        }
+
+        return plainTextResult
+      }
+
       const queryResult = query({
         prompt,
         options: {
-          cwd: getStageExecutionCwd(payload),
-          systemPrompt: payload.agent.systemPrompt,
-          tools: runtimePolicy.sdkTools,
-          allowedTools: runtimePolicy.allowedTools,
-          canUseTool: createStageCanUseTool(payload),
-          permissionMode: 'dontAsk',
-          env: runtimeBootstrap.env,
-          settingSources: runtimeBootstrap.settingSources,
-          stderr: (data) => {
-            stderrOutput += data
-          },
-          ...(runtimeBootstrap.pathToClaudeCodeExecutable
-            ? { pathToClaudeCodeExecutable: runtimeBootstrap.pathToClaudeCodeExecutable }
-            : {}),
+          ...baseQueryOptions,
           outputFormat: {
             type: 'json_schema',
             schema: buildStageExecutionOutputSchema(),
@@ -200,6 +310,9 @@ export class StageWorker {
       for await (const message of queryResult) {
         if ((message as any).text) {
           output += (message as any).text
+        }
+        if ((message as any).type === 'result' && typeof (message as any).result === 'string' && !(message as any).structured_output) {
+          output += (message as any).result
         }
         if ((message as any).type === 'result' && (message as any).structured_output) {
           structuredOutput = (message as any).structured_output
@@ -242,6 +355,22 @@ export class StageWorker {
         }],
       }
     } catch (error) {
+      if (isStructuredOutputRetryFailure(error) && isTextOnlyStageContract(payload)) {
+        const fallbackResult = await this.executePlainTextMode({
+          query,
+          payload,
+          prompt,
+          baseQueryOptions,
+          startedAt,
+          startTime,
+          mode: 'fallback',
+        })
+
+        if (fallbackResult) {
+          return fallbackResult
+        }
+      }
+
       if (error instanceof Error) {
         const diagnosticError = error as StageWorkerDiagnosticError
         if (stderrOutput.trim()) {
@@ -253,6 +382,135 @@ export class StageWorker {
         if (structuredOutput !== undefined && !diagnosticError.structuredOutputPreview) {
           diagnosticError.structuredOutputPreview = stringifyDiagnosticValue(structuredOutput)
         }
+      }
+      throw error
+    }
+  }
+
+  private async executePlainTextMode(input: {
+    query: (params: { prompt: string; options: Record<string, unknown> }) => AsyncIterable<unknown>
+    payload: StageExecutionPayloadV1
+    prompt: string
+    baseQueryOptions: Record<string, unknown>
+    startedAt: string
+    startTime: number
+    mode: 'preferred' | 'fallback'
+  }): Promise<StageExecutionResultV1 | null> {
+    const {
+      query,
+      payload,
+      prompt,
+      baseQueryOptions,
+      startedAt,
+      startTime,
+      mode,
+    } = input
+
+    let output = ''
+    let stderrOutput = ''
+    const plainTextPrompt = mode === 'fallback'
+      ? [
+          prompt,
+          '# Fallback Delivery Mode',
+          'The previous structured-output attempt failed.',
+          'Return only the final deliverable text for this stage.',
+          'Do not return JSON.',
+          'Do not mention the schema, the retry, or the formatting failure.',
+          'Do not create or declare any artifacts. The artifacts array will be forced to empty by runtime.',
+        ].join('\n\n')
+      : [
+          prompt,
+          '# Plain-Text Delivery Mode',
+          'Return only the final deliverable text for this stage.',
+          'Do not return JSON.',
+          'Do not mention any schema or formatting rules.',
+          'Do not create or declare any artifacts. The artifacts array will be forced to empty by runtime.',
+        ].join('\n\n')
+
+    try {
+      const queryResult = query({
+        prompt: plainTextPrompt,
+        options: {
+          ...baseQueryOptions,
+          stderr: (data: string) => {
+            stderrOutput += data
+          },
+        },
+      })
+
+      for await (const message of queryResult as AsyncIterable<any>) {
+        if ((message as any).text) {
+          output += (message as any).text
+        }
+        if ((message as any).type === 'result' && typeof (message as any).result === 'string') {
+          output += (message as any).result
+        }
+      }
+
+      const summary = output.trim()
+      if (!summary) {
+        return null
+      }
+
+      return {
+        contractVersion: 'stage-execution-result/v1',
+        runId: payload.runId,
+        stageId: payload.stageId,
+        attempt: payload.attempt,
+        outcome: 'done',
+        summary,
+        artifacts: [],
+        ...(mode === 'fallback'
+          ? {
+              diagnostics: {
+                errorName: 'StructuredOutputFallback',
+                sanitizedMessage: 'Structured output fallback used',
+                rawMessage: 'Claude structured output failed; runtime accepted plain-text fallback',
+                ...(stderrOutput.trim() ? { stderr: ErrorSanitizer.sanitizeText(stderrOutput.trim()) } : {}),
+                executionCwd: getStageExecutionCwd(payload),
+                roleName: payload.agent.roleName,
+                agentType: payload.agent.agentType,
+                allowedRuntimeTools: [...payload.agent.allowedTools],
+                allowedClaudeTools: [...buildStageRuntimeToolPolicy(payload.agent).sdkTools],
+                dependencyCount: payload.dependencies.length,
+              },
+            }
+          : {
+              diagnostics: {
+                errorName: 'PlainTextDeliveryMode',
+                sanitizedMessage: 'Plain-text delivery mode used',
+                rawMessage: 'Runtime requested plain-text stage delivery',
+                ...(stderrOutput.trim() ? { stderr: ErrorSanitizer.sanitizeText(stderrOutput.trim()) } : {}),
+                executionCwd: getStageExecutionCwd(payload),
+                roleName: payload.agent.roleName,
+                agentType: payload.agent.agentType,
+                allowedRuntimeTools: [...payload.agent.allowedTools],
+                allowedClaudeTools: [...buildStageRuntimeToolPolicy(payload.agent).sdkTools],
+                dependencyCount: payload.dependencies.length,
+              },
+            }),
+        memoryAppend: [{
+          scope: 'agent',
+          content: `Completed ${payload.stage.title}\n${summary}`,
+        }],
+        metrics: {
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTime,
+        },
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        const diagnosticError = error as StageWorkerDiagnosticError
+        if (stderrOutput.trim()) {
+          diagnosticError.stderr = ErrorSanitizer.sanitizeText(stderrOutput.trim())
+        }
+        if (output.trim() && !diagnosticError.outputPreview) {
+          diagnosticError.outputPreview = truncateDiagnostic(output)
+        }
+      }
+      if (mode === 'fallback') {
+        return null
       }
       throw error
     }
@@ -293,7 +551,12 @@ export class StageWorker {
       `Output Schema: ${payload.agent.outputSchema}`,
       `Memory Policy: ${payload.agent.memoryPolicy}`,
       `Concurrency Limit: ${payload.agent.concurrencyLimit}`,
-      'Return the final stage result as structured JSON matching stage-execution-result/v1.',
+      ...(prefersPlainTextStageResult(payload)
+        ? [
+            'Return only the final deliverable text for this stage.',
+            'Do not return JSON.',
+          ]
+        : ['Return the final stage result as structured JSON matching stage-execution-result/v1.']),
       ...(payload.agent.presetId ? [`Preset: ${payload.agent.presetId}`] : []),
       ...(runtimePolicy.unmappedCapabilities.length > 0
         ? [`Unmapped Capabilities: ${runtimePolicy.unmappedCapabilities.join(', ')}`]
@@ -324,7 +587,9 @@ export class StageWorker {
       `Execution CWD: ${getStageExecutionCwd(payload)}`,
       `Shared Read Dir: ${payload.workspace.sharedReadDir}`,
       `Artifact Output Dir: ${payload.workspace.artifactOutputDir}`,
-      'Write any stage artifacts under Artifact Output Dir and reference them by relative path only.',
+      payload.stage.outputContract.mayProduceArtifacts
+        ? 'Write any stage artifacts under Artifact Output Dir and reference them by relative path only.'
+        : 'Do not create or declare any artifacts for this stage. Return an empty artifacts array.',
     ]
 
     return [
@@ -340,6 +605,7 @@ export class StageWorker {
 
   async cancel(): Promise<void> {
     this.state = 'cancelled'
+    this.abortController?.abort()
   }
 
   getStatus(): WorkerStatus {

@@ -6,6 +6,7 @@ import type {
   SDKPartialAssistantMessage,
   SDKSystemMessage,
   SDKToolProgressMessage,
+  SDKToolUseSummaryMessage,
   Options,
   McpStdioServerConfig,
   McpSSEServerConfig,
@@ -19,14 +20,16 @@ import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, Permis
 import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
-import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest } from './db';
+import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest, setSetting } from './db';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { searchWithMeta, buildContext } from '@/lib/knowledge/searcher';
 import { sanitizeEnv, resolveScriptFromCmd } from './claude/utils';
+import { findBundledClaudeSdkCliPath } from './claude/sdk-paths';
 import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
 
 /**
@@ -177,28 +180,7 @@ function findSystemNode(): string | undefined {
  * The SDK package includes a complete Claude Code CLI at its root as cli.js.
  */
 function findBundledCliPath(): string | undefined {
-  // 1. process.cwd() — most reliable in packaged Electron app where
-  //    cwd is set to standalone/ by the main process.
-  //    Also works in dev mode where cwd is the project root.
-  const cwdCandidate = path.join(
-    process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'
-  );
-  if (fs.existsSync(cwdCandidate)) return cwdCandidate;
-
-  // 2. require.resolve — works in dev mode with normal Node.js resolution.
-  //    NOTE: webpack compiles this to a numeric module ID in production,
-  //    so it will fail in the packaged app (caught by try/catch).
-  try {
-    const sdkPkg = require.resolve('@anthropic-ai/claude-agent-sdk/package.json');
-    if (typeof sdkPkg === 'string' && sdkPkg.includes('claude-agent-sdk')) {
-      const cliPath = path.join(path.dirname(sdkPkg), 'cli.js');
-      if (fs.existsSync(cliPath)) return cliPath;
-    }
-  } catch {
-    // SDK not resolvable via require.resolve (e.g. in standalone build)
-  }
-
-  return undefined;
+  return findBundledClaudeSdkCliPath();
 }
 
 /**
@@ -269,6 +251,44 @@ function toSdkMcpConfig(
  */
 function formatSSE(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+function emitStatus(
+  controller: ReadableStreamDefaultController<string>,
+  message: string,
+  extra: Record<string, unknown> = {},
+) {
+  controller.enqueue(formatSSE({
+    type: 'status',
+    data: JSON.stringify({
+      notification: true,
+      message,
+      ...extra,
+    }),
+  }));
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableSerialize(entryValue)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function getSessionMcpSignatureKey(sessionId: string): string {
+  return `session_mcp_signature:${sessionId}`;
+}
+
+function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): string {
+  if (!mcpServers || Object.keys(mcpServers).length === 0) return '';
+  return createHash('sha256').update(stableSerialize(mcpServers)).digest('hex');
 }
 
 /**
@@ -393,6 +413,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     async start(controller) {
       const perfStart = Date.now();
       console.log('[perf] streamClaude start');
+      emitStatus(controller, 'Preparing Claude runtime...', { phase: 'preparing' });
 
       // Hoist activeProvider so it's accessible in the catch block for error messages
       const activeProvider: ApiProvider | undefined = options.provider ?? getActiveProvider();
@@ -565,8 +586,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Knowledge base context injection (only if enabled)
         let kbContext = '';
-        const kbEnabled = getSetting('kb_context_enabled') !== 'false';
+        const kbEnabled = options.knowledgeOptions?.enabled === true
+          && getSetting('kb_context_enabled') !== 'false';
         if (kbEnabled) {
+          emitStatus(controller, 'Searching knowledge context...', { phase: 'knowledge' });
           try {
             console.time('[perf] KB search');
             const kbTopK = Math.max(1, Math.min(Number(getSetting('kb_context_top_k') || '4') || 4, 10));
@@ -578,6 +601,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               topK: kbTopK,
               retrievalMode: kbMode,
               disableRewrite: rewriteDisabled,
+              tagIds: options.knowledgeOptions?.tagIds,
             });
             kbContext = buildContext(kbRun.results, {
               retrievalMode: kbRun.meta.retrievalMode,
@@ -622,24 +646,49 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // isolated. Project-level MCP may load only when project settings
         // loading is explicitly enabled.
         const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
+        const currentMcpSignature = computeMcpSignature(mcpServers);
+        const storedMcpSignature = sessionId ? (getSetting(getSessionMcpSignatureKey(sessionId)) || '') : '';
         if (hasMcpServers) {
           const serverNames = Object.keys(mcpServers!);
-          const hasGeminiImageServer = serverNames.includes('gemini-image') || serverNames.includes('gemini_image');
-          const hasChromeDevtoolsServer = serverNames.includes('chrome-devtools') || serverNames.includes('chrome_devtools');
           const forceReloadOnResume = shouldResume
-            && (hasGeminiImageServer || hasChromeDevtoolsServer || getSetting('mcp_reload_on_resume') === 'true');
+            && (
+              getSetting('mcp_reload_on_resume') === 'true'
+              || currentMcpSignature !== storedMcpSignature
+            );
+
+          emitStatus(
+            controller,
+            !shouldResume
+              ? 'Loading tool connections...'
+              : forceReloadOnResume
+                ? 'Refreshing tool connections...'
+                : 'Reusing tool connections...',
+            { phase: 'tools' },
+          );
 
           if (!shouldResume || forceReloadOnResume) {
             queryOptions.mcpServers = toSdkMcpConfig(mcpServers!);
             console.log('[claude-client] Loading MCP servers:', {
               names: serverNames,
-              reason: shouldResume ? 'resume-reload' : 'initial',
+              reason: shouldResume
+                ? currentMcpSignature !== storedMcpSignature
+                  ? 'resume-config-changed'
+                  : 'resume-reload'
+                : 'initial',
             });
           } else if (shouldResume) {
             console.log('[claude-client] Resuming session, reusing existing MCP connections');
           }
         } else if (shouldResume) {
           console.log('[claude-client] Resuming session without MCP servers');
+        }
+
+        if (sessionId) {
+          try {
+            setSetting(getSessionMcpSignatureKey(sessionId), currentMcpSignature);
+          } catch (error) {
+            console.warn('[claude-client] Failed to persist MCP signature:', error);
+          }
         }
 
         // === ISOLATION: Skills ===
@@ -661,9 +710,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
         console.timeEnd('[perf] Skills loading');
 
-        // Resume session configuration (shouldResume already defined above)
         if (shouldResume) {
-          queryOptions.resume = sdkSessionId;
           console.log('[claude-client] Attempting to resume session:', sdkSessionId);
         }
 
@@ -904,211 +951,214 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Try to start the conversation. If resuming a previous session fails
         // (e.g. stale/corrupt session file, CLI version mismatch), automatically
         // fall back to starting a fresh conversation without resume.
-        let conversation = query({
-          prompt: finalPrompt,
-          options: queryOptions,
-        });
-
-        // Wrap the iterator so we can detect resume failures on the first message
-        if (shouldResume) {
-          try {
-            // Peek at the first message to verify resume works
-            const iter = conversation[Symbol.asyncIterator]();
-            const first = await iter.next();
-
-            // Re-wrap into an async iterable that yields the first message then the rest
-            conversation = (async function* () {
-              if (!first.done) yield first.value;
-              while (true) {
-                const next = await iter.next();
-                if (next.done) break;
-                yield next.value;
-              }
-            })() as ReturnType<typeof query>;
-          } catch (resumeError) {
-            const errMsg = resumeError instanceof Error ? resumeError.message : String(resumeError);
-            console.warn('[claude-client] Resume failed, retrying without resume:', errMsg);
-            // Clear stale sdk_session_id so future messages don't retry this broken resume
-            if (sessionId) {
-              try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
-            }
-            // Notify frontend about the fallback
-            controller.enqueue(formatSSE({
-              type: 'status',
-              data: JSON.stringify({
-                notification: true,
-                title: 'Session fallback',
-                message: 'Previous session could not be resumed. Starting fresh conversation.',
-              }),
-            }));
-            // Remove resume and try again as a fresh conversation with history context
+        const startConversation = (resumeSession: boolean): ReturnType<typeof query> => {
+          if (resumeSession && sdkSessionId) {
+            queryOptions.resume = sdkSessionId;
+            emitStatus(controller, 'Restoring conversation context...', { phase: 'resuming' });
+          } else {
             delete queryOptions.resume;
-            conversation = query({
-              prompt: buildFinalPrompt(true),
-              options: queryOptions,
-            });
           }
-        }
 
-        registerConversation(sessionId, conversation);
+          const nextConversation = query({
+            prompt: resumeSession ? finalPrompt : buildFinalPrompt(true),
+            options: queryOptions,
+          });
+          emitStatus(controller, 'Waiting for model response...', { phase: 'model' });
+          registerConversation(sessionId, nextConversation);
+          return nextConversation;
+        };
 
         let tokenUsage: TokenUsage | null = null;
         let firstMessageReceived = false;
+        const consumeConversation = async (conversation: ReturnType<typeof query>) => {
+          for await (const message of conversation) {
+            if (!firstMessageReceived) {
+              console.timeEnd('[perf] SDK query call');
+              console.log(`[perf] First message received after ${Date.now() - perfStart}ms total`);
+              firstMessageReceived = true;
+            }
 
-        for await (const message of conversation) {
-          if (!firstMessageReceived) {
-            console.timeEnd('[perf] SDK query call');
-            console.log(`[perf] First message received after ${Date.now() - perfStart}ms total`);
-            firstMessageReceived = true;
-          }
-
-          if (abortController?.signal.aborted) {
-            break;
-          }
-
-          switch (message.type) {
-            case 'assistant': {
-              const assistantMsg = message as SDKAssistantMessage;
-              // Text deltas are handled by stream_event for real-time streaming.
-              const text = extractTextFromMessage(assistantMsg);
-              if (text) { /* noop: text already streamed via stream_event */ }
-
-              // Check for tool use blocks
-              for (const block of assistantMsg.message.content) {
-                if (block.type === 'tool_use') {
-                  controller.enqueue(formatSSE({
-                    type: 'tool_use',
-                    data: JSON.stringify({
-                      id: block.id,
-                      name: block.name,
-                      input: block.input,
-                    }),
-                  }));
-                }
-              }
+            if (abortController?.signal.aborted) {
               break;
             }
 
-            case 'user': {
-              // Tool execution results come back as user messages with tool_result blocks
-              const userMsg = message as SDKUserMessage;
-              const content = userMsg.message.content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (block.type === 'tool_result') {
-                    const resultContent = typeof block.content === 'string'
-                      ? block.content
-                      : Array.isArray(block.content)
-                        ? block.content
-                            .filter((c: { type: string }) => c.type === 'text')
-                            .map((c: { text: string }) => c.text)
-                            .join('\n')
-                        : String(block.content ?? '');
+            switch (message.type) {
+              case 'assistant': {
+                const assistantMsg = message as SDKAssistantMessage;
+                // Text deltas are handled by stream_event for real-time streaming.
+                const text = extractTextFromMessage(assistantMsg);
+                if (text) { /* noop: text already streamed via stream_event */ }
+
+                // Check for tool use blocks
+                for (const block of assistantMsg.message.content) {
+                  if (block.type === 'tool_use') {
                     controller.enqueue(formatSSE({
-                      type: 'tool_result',
+                      type: 'tool_use',
                       data: JSON.stringify({
-                        tool_use_id: block.tool_use_id,
-                        content: resultContent,
-                        is_error: block.is_error || false,
+                        id: block.id,
+                        name: block.name,
+                        input: block.input,
                       }),
                     }));
                   }
                 }
+                break;
               }
-              break;
-            }
 
-            case 'stream_event': {
-              const streamEvent = message as SDKPartialAssistantMessage;
-              const evt = streamEvent.event;
-              if (evt.type === 'content_block_delta' && 'delta' in evt) {
-                const delta = evt.delta;
-                if ('text' in delta && delta.text) {
-                  controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
-                }
-              }
-              break;
-            }
-
-            case 'system': {
-              const sysMsg = message as SDKSystemMessage;
-              if ('subtype' in sysMsg) {
-                if (sysMsg.subtype === 'init') {
-                  controller.enqueue(formatSSE({
-                    type: 'status',
-                    data: JSON.stringify({
-                      session_id: sysMsg.session_id,
-                      model: sysMsg.model,
-                      tools: sysMsg.tools,
-                    }),
-                  }));
-                } else if (sysMsg.subtype === 'status') {
-                  // SDK sends status messages when permission mode changes (e.g. ExitPlanMode)
-                  const statusMsg = sysMsg as SDKSystemMessage & { permissionMode?: string };
-                  if (statusMsg.permissionMode) {
-                    controller.enqueue(formatSSE({
-                      type: 'mode_changed',
-                      data: statusMsg.permissionMode,
-                    }));
+              case 'user': {
+                // Tool execution results come back as user messages with tool_result blocks
+                const userMsg = message as SDKUserMessage;
+                const content = userMsg.message.content;
+                if (Array.isArray(content)) {
+                  for (const block of content) {
+                    if (block.type === 'tool_result') {
+                      const resultContent = typeof block.content === 'string'
+                        ? block.content
+                        : Array.isArray(block.content)
+                          ? block.content
+                              .filter((c: { type: string }) => c.type === 'text')
+                              .map((c: { text: string }) => c.text)
+                              .join('\n')
+                          : String(block.content ?? '');
+                      controller.enqueue(formatSSE({
+                        type: 'tool_result',
+                        data: JSON.stringify({
+                          tool_use_id: block.tool_use_id,
+                          content: resultContent,
+                          is_error: block.is_error || false,
+                        }),
+                      }));
+                    }
                   }
                 }
+                break;
               }
-              break;
-            }
 
-            case 'tool_progress': {
-              const progressMsg = message as SDKToolProgressMessage;
-              controller.enqueue(formatSSE({
-                type: 'tool_output',
-                data: JSON.stringify({
-                  _progress: true,
-                  tool_use_id: progressMsg.tool_use_id,
-                  tool_name: progressMsg.tool_name,
-                  elapsed_time_seconds: progressMsg.elapsed_time_seconds,
-                }),
-              }));
-              // Auto-timeout: abort if tool runs longer than configured threshold
-              if (toolTimeoutSeconds > 0 && progressMsg.elapsed_time_seconds >= toolTimeoutSeconds) {
+              case 'stream_event': {
+                const streamEvent = message as SDKPartialAssistantMessage;
+                const evt = streamEvent.event;
+                if (evt.type === 'content_block_delta' && 'delta' in evt) {
+                  const delta = evt.delta;
+                  if ('text' in delta && delta.text) {
+                    controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
+                  }
+                }
+                break;
+              }
+
+              case 'system': {
+                const sysMsg = message as SDKSystemMessage;
+                if ('subtype' in sysMsg) {
+                  if (sysMsg.subtype === 'init') {
+                    controller.enqueue(formatSSE({
+                      type: 'status',
+                      data: JSON.stringify({
+                        session_id: sysMsg.session_id,
+                        model: sysMsg.model,
+                        tools: sysMsg.tools,
+                      }),
+                    }));
+                  } else if (sysMsg.subtype === 'status') {
+                    // SDK sends status messages when permission mode changes (e.g. ExitPlanMode)
+                    const statusMsg = sysMsg as SDKSystemMessage & { permissionMode?: string };
+                    if (statusMsg.permissionMode) {
+                      controller.enqueue(formatSSE({
+                        type: 'mode_changed',
+                        data: statusMsg.permissionMode,
+                      }));
+                    }
+                  }
+                }
+                break;
+              }
+
+              case 'tool_progress': {
+                const progressMsg = message as SDKToolProgressMessage;
                 controller.enqueue(formatSSE({
-                  type: 'tool_timeout',
+                  type: 'tool_output',
                   data: JSON.stringify({
+                    _progress: true,
+                    tool_use_id: progressMsg.tool_use_id,
                     tool_name: progressMsg.tool_name,
-                    elapsed_seconds: Math.round(progressMsg.elapsed_time_seconds),
+                    elapsed_time_seconds: progressMsg.elapsed_time_seconds,
                   }),
                 }));
-                abortController?.abort();
-              }
-              break;
-            }
-
-            case 'result': {
-              const resultMsg = message as SDKResultMessage;
-              tokenUsage = extractTokenUsage(resultMsg);
-
-              // Save SDK session ID to database for future resume
-              if (resultMsg.session_id && sessionId) {
-                try {
-                  updateSdkSessionId(sessionId, resultMsg.session_id);
-                  console.log('[claude-client] Saved SDK session ID:', resultMsg.session_id);
-                } catch (err) {
-                  console.warn('[claude-client] Failed to save SDK session ID:', err);
+                // Auto-timeout: abort if tool runs longer than configured threshold
+                if (toolTimeoutSeconds > 0 && progressMsg.elapsed_time_seconds >= toolTimeoutSeconds) {
+                  controller.enqueue(formatSSE({
+                    type: 'tool_timeout',
+                    data: JSON.stringify({
+                      tool_name: progressMsg.tool_name,
+                      elapsed_seconds: Math.round(progressMsg.elapsed_time_seconds),
+                    }),
+                  }));
+                  abortController?.abort();
                 }
+                break;
               }
 
-              controller.enqueue(formatSSE({
-                type: 'result',
-                data: JSON.stringify({
-                  subtype: resultMsg.subtype,
-                  is_error: resultMsg.is_error,
-                  num_turns: resultMsg.num_turns,
-                  duration_ms: resultMsg.duration_ms,
-                  usage: tokenUsage,
-                  session_id: resultMsg.session_id,
-                }),
-              }));
-              break;
+              case 'tool_use_summary': {
+                const summaryMsg = message as SDKToolUseSummaryMessage;
+                controller.enqueue(formatSSE({
+                  type: 'tool_use_summary',
+                  data: JSON.stringify({
+                    summary: summaryMsg.summary,
+                    preceding_tool_use_ids: summaryMsg.preceding_tool_use_ids,
+                  }),
+                }));
+                break;
+              }
+
+              case 'result': {
+                const resultMsg = message as SDKResultMessage;
+                tokenUsage = extractTokenUsage(resultMsg);
+
+                // Save SDK session ID to database for future resume
+                if (resultMsg.session_id && sessionId) {
+                  try {
+                    updateSdkSessionId(sessionId, resultMsg.session_id);
+                    console.log('[claude-client] Saved SDK session ID:', resultMsg.session_id);
+                  } catch (err) {
+                    console.warn('[claude-client] Failed to save SDK session ID:', err);
+                  }
+                }
+
+                controller.enqueue(formatSSE({
+                  type: 'result',
+                  data: JSON.stringify({
+                    subtype: resultMsg.subtype,
+                    is_error: resultMsg.is_error,
+                    num_turns: resultMsg.num_turns,
+                    duration_ms: resultMsg.duration_ms,
+                    usage: tokenUsage,
+                    session_id: resultMsg.session_id,
+                  }),
+                }));
+                break;
+              }
             }
           }
+        };
+
+        let conversation = startConversation(shouldResume);
+        try {
+          await consumeConversation(conversation);
+        } catch (resumeError) {
+          if (!shouldResume || firstMessageReceived) {
+            throw resumeError;
+          }
+
+          const errMsg = resumeError instanceof Error ? resumeError.message : String(resumeError);
+          console.warn('[claude-client] Resume failed, retrying without resume:', errMsg);
+          if (sessionId) {
+            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+          }
+          emitStatus(controller, 'Previous session could not be resumed. Starting fresh conversation.', {
+            title: 'Session fallback',
+            phase: 'fallback',
+          });
+          conversation = startConversation(false);
+          await consumeConversation(conversation);
         }
 
         controller.enqueue(formatSSE({ type: 'done', data: '' }));

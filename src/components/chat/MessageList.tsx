@@ -30,6 +30,7 @@ interface MessageListProps {
   messages: Message[];
   streamingContent: string;
   isStreaming: boolean;
+  reasoningSummaries?: string[];
   toolUses?: ToolUseInfo[];
   toolResults?: ToolResultInfo[];
   streamingToolOutput?: string;
@@ -49,6 +50,7 @@ export function MessageList({
   messages,
   streamingContent,
   isStreaming,
+  reasoningSummaries = [],
   toolUses = [],
   toolResults = [],
   streamingToolOutput,
@@ -128,6 +130,7 @@ export function MessageList({
           <StreamingMessage
             content={streamingContent}
             isStreaming={isStreaming}
+            reasoningSummaries={reasoningSummaries}
             toolUses={toolUses}
             toolResults={toolResults}
             streamingToolOutput={streamingToolOutput}

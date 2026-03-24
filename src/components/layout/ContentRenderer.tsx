@@ -370,6 +370,11 @@ export function ContentRenderer() {
 
     const pageId = activeBrowserPageId;
     const shouldFitWidth = activeBrowserFitWidth;
+    const canUseViewportCdp = Boolean(
+      pageId
+      && activeBrowserUrl
+      && activeBrowserUrl !== 'about:blank',
+    );
     let cancelled = false;
 
     const findBoundsTarget = () => {
@@ -379,12 +384,29 @@ export function ContentRenderer() {
     };
 
     const syncViewportMode = async (rect: DOMRect) => {
-      if (!pageId || !api.connectCDP || !api.sendCDPCommand) {
+      if (!pageId || !api.sendCDPCommand) {
+        return;
+      }
+
+      if (!canUseViewportCdp) {
+        if (api.setZoomFactor) {
+          await api.setZoomFactor(pageId, 1);
+        }
         return;
       }
 
       try {
-        await api.connectCDP(pageId);
+        if (api.isCDPConnected) {
+          const status = await api.isCDPConnected(pageId);
+          if (!status.success) {
+            throw new Error(status.error || 'Failed to check CDP connection state');
+          }
+          if (!status.connected && api.connectCDP) {
+            await api.connectCDP(pageId);
+          }
+        } else if (api.connectCDP) {
+          await api.connectCDP(pageId);
+        }
         if (cancelled) return;
 
         if (shouldFitWidth) {
@@ -451,8 +473,24 @@ export function ContentRenderer() {
       observer.disconnect();
       window.removeEventListener('resize', syncBounds);
 
-      if (pageId && api.connectCDP && api.sendCDPCommand) {
-        void api.connectCDP(pageId)
+      if (canUseViewportCdp && pageId && api.sendCDPCommand) {
+        void Promise.resolve()
+          .then(async () => {
+            if (!api.isCDPConnected) {
+              if (api.connectCDP) {
+                await api.connectCDP(pageId);
+              }
+              return;
+            }
+
+            const status = await api.isCDPConnected(pageId);
+            if (!status.success) {
+              throw new Error(status.error || 'Failed to check CDP connection state');
+            }
+            if (!status.connected && api.connectCDP) {
+              await api.connectCDP(pageId);
+            }
+          })
           .then(() => (api.setZoomFactor ? api.setZoomFactor(pageId, 1) : undefined))
           .then(() => api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {}))
           .then(() => api.sendCDPCommand(pageId, 'Runtime.evaluate', {
@@ -465,7 +503,7 @@ export function ContentRenderer() {
       }
       void api.setDisplayTarget('hidden');
     };
-  }, [activeBrowserFitWidth, activeBrowserPageId, activeTabId, activeTabType, contentPanelOpen]);
+  }, [activeBrowserFitWidth, activeBrowserPageId, activeBrowserUrl, activeTabId, activeTabType, contentPanelOpen]);
 
   if (!activeTab) {
     return null;

@@ -1,25 +1,11 @@
 import { NextResponse } from 'next/server';
+import { findBundledClaudeSdkCliPath } from '@/lib/claude/sdk-paths';
 import { getClaudeConfigDir } from '@/lib/platform';
 import fs from 'fs';
 import path from 'path';
 
 function findBundledCliPath(): string | undefined {
-  const cwdCandidate = path.join(
-    process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'
-  );
-  if (fs.existsSync(cwdCandidate)) return cwdCandidate;
-
-  try {
-    const sdkPkg = require.resolve('@anthropic-ai/claude-agent-sdk/package.json');
-    if (typeof sdkPkg === 'string' && sdkPkg.includes('claude-agent-sdk')) {
-      const cliPath = path.join(path.dirname(sdkPkg), 'cli.js');
-      if (fs.existsSync(cliPath)) return cliPath;
-    }
-  } catch {
-    // SDK not resolvable in current runtime
-  }
-
-  return undefined;
+  return findBundledClaudeSdkCliPath();
 }
 
 export async function GET() {

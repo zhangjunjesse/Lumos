@@ -23,6 +23,15 @@ export interface CDPResponse {
 
 export class CDPManager extends EventEmitter {
   private connections: Map<string, WebContents>;
+  private attachInFlight: Map<string, Promise<void>>;
+  private debuggerListeners: Map<
+    number,
+    {
+      tabId: string;
+      detachListener: (_event: Electron.Event, reason: string) => void;
+      messageListener: (_event: Electron.Event, method: string, params: any) => void;
+    }
+  >;
   private reconnectAttempts: Map<string, number>;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly PROTOCOL_VERSION = '1.3';
@@ -30,6 +39,8 @@ export class CDPManager extends EventEmitter {
   constructor() {
     super();
     this.connections = new Map();
+    this.attachInFlight = new Map();
+    this.debuggerListeners = new Map();
     this.reconnectAttempts = new Map();
   }
 
@@ -37,36 +48,16 @@ export class CDPManager extends EventEmitter {
    * 连接到 WebContents 的调试器
    */
   async attach(tabId: string, webContents: WebContents): Promise<void> {
-    try {
-      // 检查是否已经连接
-      if (webContents.debugger.isAttached()) {
-        console.warn(`Debugger already attached to tab ${tabId}`);
-        return;
-      }
-
-      // 附加调试器
-      webContents.debugger.attach(this.PROTOCOL_VERSION);
-
-      // 存储连接
-      this.connections.set(tabId, webContents);
-      this.reconnectAttempts.set(tabId, 0);
-
-      // 监听断开事件
-      webContents.debugger.on('detach', (_event, reason) => {
-        this.handleDetach(tabId, webContents, reason);
-      });
-
-      // 监听消息事件
-      webContents.debugger.on('message', (_event, method, params) => {
-        this.emit('message', { tabId, method, params });
-      });
-
-      this.emit('attached', { tabId });
-      console.log(`CDP attached to tab ${tabId}`);
-    } catch (error) {
-      console.error(`Failed to attach CDP to tab ${tabId}:`, error);
-      throw new Error(`CDP attach failed: ${error.message}`);
+    const inFlight = this.attachInFlight.get(tabId);
+    if (inFlight) {
+      return inFlight;
     }
+
+    const attachPromise = this.attachInternal(tabId, webContents).finally(() => {
+      this.attachInFlight.delete(tabId);
+    });
+    this.attachInFlight.set(tabId, attachPromise);
+    return attachPromise;
   }
 
   /**
@@ -81,12 +72,13 @@ export class CDPManager extends EventEmitter {
     }
 
     try {
+      this.unregisterDebuggerListeners(webContents);
+      this.connections.delete(tabId);
+      this.reconnectAttempts.delete(tabId);
+
       if (webContents.debugger.isAttached()) {
         webContents.debugger.detach();
       }
-
-      this.connections.delete(tabId);
-      this.reconnectAttempts.delete(tabId);
 
       this.emit('detached', { tabId });
       console.log(`CDP detached from tab ${tabId}`);
@@ -136,6 +128,38 @@ export class CDPManager extends EventEmitter {
     return webContents ? webContents.debugger.isAttached() : false;
   }
 
+  private async attachInternal(tabId: string, webContents: WebContents): Promise<void> {
+    try {
+      if (webContents.isDestroyed()) {
+        throw new Error('WebContents is already destroyed');
+      }
+
+      const currentTabId = this.findTabIdByWebContents(webContents);
+      if (currentTabId && currentTabId !== tabId) {
+        this.connections.delete(currentTabId);
+      }
+
+      const wasAttached = webContents.debugger.isAttached();
+      if (!wasAttached) {
+        webContents.debugger.attach(this.PROTOCOL_VERSION);
+      }
+
+      this.registerDebuggerListeners(tabId, webContents);
+      this.connections.set(tabId, webContents);
+      this.reconnectAttempts.set(tabId, 0);
+
+      if (wasAttached) {
+        console.warn(`Debugger already attached to tab ${tabId}, reusing existing session`);
+      } else {
+        console.log(`CDP attached to tab ${tabId}`);
+      }
+      this.emit('attached', { tabId, reused: wasAttached });
+    } catch (error) {
+      console.error(`Failed to attach CDP to tab ${tabId}:`, error);
+      throw new Error(`CDP attach failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /**
    * 处理调试器断开
    */
@@ -146,11 +170,17 @@ export class CDPManager extends EventEmitter {
   ): void {
     console.warn(`CDP detached from tab ${tabId}, reason: ${reason}`);
 
+    this.unregisterDebuggerListeners(webContents);
     this.connections.delete(tabId);
+    this.reconnectAttempts.delete(tabId);
     this.emit('detached', { tabId, reason });
 
     // 如果不是主动断开，尝试重连
-    if (reason !== 'target closed' && reason !== 'canceled by user') {
+    if (
+      !webContents.isDestroyed()
+      && reason !== 'target closed'
+      && reason !== 'canceled by user'
+    ) {
       this.attemptReconnect(tabId, webContents);
     }
   }
@@ -178,6 +208,11 @@ export class CDPManager extends EventEmitter {
 
     setTimeout(async () => {
       try {
+        if (webContents.isDestroyed()) {
+          this.reconnectAttempts.delete(tabId);
+          return;
+        }
+
         console.log(
           `Attempting to reconnect CDP for tab ${tabId} (attempt ${attempts + 1})`
         );
@@ -194,6 +229,54 @@ export class CDPManager extends EventEmitter {
     }, delay);
   }
 
+  private registerDebuggerListeners(tabId: string, webContents: WebContents): void {
+    const existing = this.debuggerListeners.get(webContents.id);
+    if (existing?.tabId === tabId) {
+      return;
+    }
+
+    if (existing) {
+      webContents.debugger.removeListener('detach', existing.detachListener);
+      webContents.debugger.removeListener('message', existing.messageListener);
+    }
+
+    const detachListener = (_event: Electron.Event, reason: string) => {
+      this.handleDetach(tabId, webContents, reason);
+    };
+    const messageListener = (_event: Electron.Event, method: string, params: any) => {
+      this.emit('message', { tabId, method, params });
+    };
+
+    webContents.debugger.on('detach', detachListener);
+    webContents.debugger.on('message', messageListener);
+    this.debuggerListeners.set(webContents.id, {
+      tabId,
+      detachListener,
+      messageListener,
+    });
+  }
+
+  private unregisterDebuggerListeners(webContents: WebContents): void {
+    const existing = this.debuggerListeners.get(webContents.id);
+    if (!existing) {
+      return;
+    }
+
+    webContents.debugger.removeListener('detach', existing.detachListener);
+    webContents.debugger.removeListener('message', existing.messageListener);
+    this.debuggerListeners.delete(webContents.id);
+  }
+
+  private findTabIdByWebContents(webContents: WebContents): string | null {
+    for (const [tabId, current] of this.connections.entries()) {
+      if (current.id === webContents.id) {
+        return tabId;
+      }
+    }
+
+    return null;
+  }
+
   /**
    * 清理所有连接
    */
@@ -207,5 +290,8 @@ export class CDPManager extends EventEmitter {
         console.error(`Failed to cleanup CDP for tab ${tabId}:`, error);
       }
     }
+
+    this.attachInFlight.clear();
+    this.debuggerListeners.clear();
   }
 }

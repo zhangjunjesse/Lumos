@@ -2,7 +2,13 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import type { Message, SessionResponse, PermissionRequestEvent, FileAttachment } from '@/types';
+import type {
+  ChatKnowledgeOptions,
+  Message,
+  SessionResponse,
+  PermissionRequestEvent,
+  FileAttachment,
+} from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
 import { usePanel } from '@/hooks/usePanel';
@@ -46,7 +52,6 @@ export default function NewChatPage() {
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [workingDir, setWorkingDir] = useState('');
-  const [mode, setMode] = useState('code');
   const [currentModel, setCurrentModel] = useState<string>(BUILTIN_CLAUDE_MODEL_IDS.sonnet);
   const [currentProviderId, setCurrentProviderId] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
@@ -125,7 +130,13 @@ export default function NewChatPage() {
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendFirstMessage = useCallback(
-    async (content: string, files?: FileAttachment[], systemPromptAppend?: string) => {
+    async (
+      content: string,
+      files?: FileAttachment[],
+      systemPromptAppend?: string,
+      _displayOverride?: string,
+      knowledgeOptions?: ChatKnowledgeOptions,
+    ) => {
       if (isStreaming) return;
 
       // Legacy /chat sessions remain project-scoped. Main Agent can start globally.
@@ -156,7 +167,7 @@ export default function NewChatPage() {
       try {
         const createBody: Record<string, string> = {
           title: content.slice(0, 50),
-          mode,
+          mode: 'code',
           entry: sessionEntry,
         };
         if (workingDir.trim()) {
@@ -177,13 +188,14 @@ export default function NewChatPage() {
         const { session }: SessionResponse = await createRes.json();
         sessionId = session.id;
 
-        // Notify ChatListPanel to refresh immediately
+        // Notify any session list listeners to refresh immediately
         window.dispatchEvent(new CustomEvent('session-created'));
         stashPendingChatBootstrap({
           sessionId: session.id,
           content,
           ...(files && files.length > 0 ? { files } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
+          ...(knowledgeOptions ? { knowledgeOptions } : {}),
         });
 
         router.push(`${sessionBasePath}/${session.id}`);
@@ -219,7 +231,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [isMainAgentEntry, isStreaming, mode, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
+    [isMainAgentEntry, isStreaming, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
   );
 
   const handleConflictResolve = useCallback(async (action: 'replace' | 'keep_both' | 'cancel') => {
@@ -316,8 +328,6 @@ export default function NewChatPage() {
           setCurrentModel(model);
         }}
         workingDirectory={workingDir}
-        mode={mode}
-        onModeChange={setMode}
       />
       <MemoryConflictDialog
         isOpen={!!conflictData}

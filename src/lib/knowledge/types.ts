@@ -147,4 +147,5 @@ export interface SearchOptions {
   useSummarySearch?: boolean;
   retrievalMode?: 'reference' | 'enhanced';
   disableRewrite?: boolean;
+  tagIds?: string[];
 }

@@ -27,7 +27,6 @@ export function LibraryChatPanel({
   const [sessionId, setSessionId] = useState("");
   const [sessionModel, setSessionModel] = useState("");
   const [sessionProviderId, setSessionProviderId] = useState("");
-  const [sessionMode, setSessionMode] = useState("code");
   const [sessionWorkingDirectory, setSessionWorkingDirectory] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -102,7 +101,6 @@ export function LibraryChatPanel({
       setSessionId(nextSession.id);
       setSessionModel(nextSession.model || "");
       setSessionProviderId(nextSession.provider_id || "");
-      setSessionMode(nextSession.mode || "code");
       setSessionWorkingDirectory(nextSession.working_directory || "");
       await loadMessages(nextSession.id);
 
@@ -156,7 +154,7 @@ export function LibraryChatPanel({
           initialMessages={messages}
           initialHasMore={hasMore}
           modelName={sessionModel}
-          initialMode={sessionMode}
+          initialKnowledgeEnabled
           providerId={sessionProviderId}
           workingDirectoryOverride={sessionWorkingDirectory}
           compactInputOnly={compactInputOnly}

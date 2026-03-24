@@ -44,11 +44,13 @@ export function getDb(): Database.Database {
 /**
  * Close the database connection gracefully
  */
-export function closeDb(): void {
+export function closeDb(options?: { silent?: boolean }): void {
   if (db) {
     try {
       db.close();
-      console.log('[db] Database closed gracefully');
+      if (!options?.silent) {
+        console.log('[db] Database closed gracefully');
+      }
     } catch (err) {
       console.warn('[db] Error closing database:', err);
     }
@@ -65,8 +67,11 @@ export function registerDbShutdownHandlers(): void {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[db] Received ${signal}, closing database...`);
-    closeDb();
+    const silent = signal === 'exit';
+    if (!silent) {
+      console.log(`[db] Received ${signal}, closing database...`);
+    }
+    closeDb({ silent });
   };
 
   app.on('before-quit', () => shutdown('before-quit'));

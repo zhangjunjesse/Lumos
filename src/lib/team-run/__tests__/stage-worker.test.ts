@@ -20,7 +20,7 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }))
 
 jest.mock('@/lib/claude/sdk-runtime', () => ({
-  buildClaudeSdkRuntimeBootstrap: () => mockBuildClaudeSdkRuntimeBootstrap(),
+  buildClaudeSdkRuntimeBootstrap: (...args: unknown[]) => mockBuildClaudeSdkRuntimeBootstrap(...args),
 }))
 
 function buildPayload(tempDir: string): StageExecutionPayloadV1 {
@@ -38,6 +38,7 @@ function buildPayload(tempDir: string): StageExecutionPayloadV1 {
     contractVersion: 'stage-execution-payload/v1',
     taskId: 'task-test-001',
     sessionId: 'session-test-001',
+    requestedModel: 'claude-sonnet-4-6',
     runId: 'run-test-001',
     stageId: 'stage-test-001',
     attempt: 1,
@@ -194,6 +195,7 @@ describe('StageWorker', () => {
           tools: ['Read', 'Glob', 'Grep'],
           allowedTools: ['Read', 'Glob', 'Grep'],
           permissionMode: 'dontAsk',
+          model: 'claude-sonnet-4-6',
           env: {
             ANTHROPIC_AUTH_TOKEN: 'runtime-secret',
           },
@@ -205,6 +207,9 @@ describe('StageWorker', () => {
         },
       })
       expect(mockBuildClaudeSdkRuntimeBootstrap).toHaveBeenCalledTimes(1)
+      expect(mockBuildClaudeSdkRuntimeBootstrap).toHaveBeenCalledWith({
+        sessionId: 'session-test-001',
+      })
     })
 
     test('真实执行分支缺少 structured_output 时返回 failed 结果', async () => {
@@ -233,6 +238,136 @@ describe('StageWorker', () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining('[StageWorker] Execution error stage-test-001:'),
       )
+    })
+
+    test('文本型阶段在 structured_output 多次失败后会回退到纯文本交付', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+      payload.stage.outputContract = {
+        primaryFormat: 'markdown',
+        mustProduceSummary: true,
+        mayProduceArtifacts: false,
+        artifactKinds: [],
+      }
+
+      mockQuery
+        .mockReturnValueOnce({
+          async *[Symbol.asyncIterator]() {
+            throw new Error('Claude Code returned an error result: Failed to provide valid structured output after 5 attempts')
+          },
+        })
+        .mockReturnValueOnce(streamMessages([
+          {
+            type: 'result',
+            text: '## 交付清单\n\n1. 目标\n2. 风险\n3. 计划',
+          },
+        ]))
+
+      const result = await realWorker.execute(payload)
+
+      expect(result).toMatchObject({
+        outcome: 'done',
+        summary: '## 交付清单\n\n1. 目标\n2. 风险\n3. 计划',
+        artifacts: [],
+        diagnostics: {
+          errorName: 'StructuredOutputFallback',
+          rawMessage: 'Claude structured output failed; runtime accepted plain-text fallback',
+        },
+      })
+      expect(mockQuery).toHaveBeenCalledTimes(2)
+      expect(mockQuery.mock.calls[0][0]).toMatchObject({
+        options: {
+          outputFormat: {
+            type: 'json_schema',
+          },
+        },
+      })
+      expect(mockQuery.mock.calls[1][0].prompt).toContain('Fallback Delivery Mode')
+      expect(mockQuery.mock.calls[1][0].options.outputFormat).toBeUndefined()
+    })
+
+    test('纯文本交付模式会直接请求正文文本而不要求 structured_output', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+      payload.stage.responseMode = 'plain-text'
+      payload.stage.outputContract = {
+        primaryFormat: 'markdown',
+        mustProduceSummary: true,
+        mayProduceArtifacts: false,
+        artifactKinds: [],
+      }
+
+      mockQuery.mockReturnValue(streamMessages([
+        {
+          type: 'result',
+          result: '# Claude 使用技巧报告\n\n- 先写清目标\n- 控制上下文\n- 善用迭代',
+        },
+      ]))
+
+      const result = await realWorker.execute(payload)
+
+      expect(result).toMatchObject({
+        outcome: 'done',
+        summary: '# Claude 使用技巧报告\n\n- 先写清目标\n- 控制上下文\n- 善用迭代',
+        artifacts: [],
+        diagnostics: {
+          errorName: 'PlainTextDeliveryMode',
+          rawMessage: 'Runtime requested plain-text stage delivery',
+        },
+      })
+      expect(mockQuery).toHaveBeenCalledTimes(1)
+      expect(mockQuery.mock.calls[0][0].prompt).toContain('Plain-Text Delivery Mode')
+      expect(mockQuery.mock.calls[0][0].options.outputFormat).toBeUndefined()
+    })
+
+    test('cancel 会中断真实执行分支并返回 cancelled 结果', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+      let observedAbortController: AbortController | undefined
+
+      mockQuery.mockImplementation(({ options }: { options: { abortController?: AbortController } }) => {
+        observedAbortController = options.abortController
+
+        return (async function* () {
+          await new Promise<never>((_, reject) => {
+            const abortWithError = () => {
+              const error = new Error('Operation aborted') as Error & { code?: string }
+              error.name = 'AbortError'
+              error.code = 'ABORT_ERR'
+              reject(error)
+            }
+
+            if (!options.abortController) {
+              reject(new Error('abortController was not provided to Claude SDK'))
+              return
+            }
+
+            if (options.abortController.signal.aborted) {
+              abortWithError()
+              return
+            }
+
+            options.abortController.signal.addEventListener('abort', abortWithError, { once: true })
+          })
+        })()
+      })
+
+      const resultPromise = realWorker.execute(payload)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await realWorker.cancel()
+      const result = await resultPromise
+
+      expect(observedAbortController?.signal.aborted).toBe(true)
+      expect(result).toMatchObject({
+        outcome: 'failed',
+        error: {
+          code: 'execution_cancelled',
+          message: 'Task execution cancelled',
+          retryable: false,
+        },
+      })
+      expect(consoleErrorSpy).not.toHaveBeenCalled()
+      expect(realWorker.getStatus().state).toBe('cancelled')
     })
   })
 

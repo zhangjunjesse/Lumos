@@ -206,6 +206,10 @@ interface ConversationResponse {
   rawContent: string;
 }
 
+interface ConversationStreamingCallbacks {
+  onVisibleText?: (text: string) => void;
+}
+
 export class ConversationEngine {
   private sessions = new Map<string, { id: string; createdAt: string }>();
 
@@ -214,6 +218,7 @@ export class ConversationEngine {
     text: string,
     files?: FileAttachment[],
     meta?: { source?: 'feishu' | 'lumos' },
+    callbacks?: ConversationStreamingCallbacks,
   ): Promise<ConversationResponse> {
     const session = getSession(sessionId);
     if (!session) throw new Error('Session not found');
@@ -275,6 +280,20 @@ export class ConversationEngine {
     let tokenUsage: TokenUsage | null = null;
     let visibleText = '';
     let rawAssistantContent = '';
+    const emitVisibleText = () => {
+      const committedText = contentBlocks
+        .filter(
+          (b): b is Extract<MessageContentBlock, { type: 'text' }> =>
+            b.type === 'text',
+        )
+        .map((b) => b.text)
+        .join('\n\n')
+        .trim();
+      const nextVisible = [committedText, currentText.trim()].filter(Boolean).join('\n\n').trim();
+      if (nextVisible) {
+        callbacks?.onVisibleText?.(nextVisible);
+      }
+    };
 
     const reader = stream.getReader();
     try {
@@ -288,10 +307,30 @@ export class ConversationEngine {
               const event = JSON.parse(line.slice(6));
               if (event.type === 'text') {
                 currentText += event.data;
+                emitVisibleText();
+              } else if (event.type === 'tool_use_summary') {
+                if (currentText.trim()) {
+                  contentBlocks.push({ type: 'text', text: currentText });
+                  currentText = '';
+                  emitVisibleText();
+                }
+                try {
+                  const summaryData = JSON.parse(event.data);
+                  const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
+                  if (summary) {
+                    contentBlocks.push({ type: 'reasoning', summary });
+                  }
+                } catch {
+                  const summary = typeof event.data === 'string' ? event.data.trim() : '';
+                  if (summary) {
+                    contentBlocks.push({ type: 'reasoning', summary });
+                  }
+                }
               } else if (event.type === 'tool_use') {
                 if (currentText.trim()) {
                   contentBlocks.push({ type: 'text', text: currentText });
                   currentText = '';
+                  emitVisibleText();
                 }
                 try {
                   const toolData = JSON.parse(event.data);
@@ -351,14 +390,14 @@ export class ConversationEngine {
 
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
+      currentText = '';
+      emitVisibleText();
     }
 
     if (contentBlocks.length > 0) {
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result',
-      );
+      const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
 
-      const content = hasToolBlocks
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter(

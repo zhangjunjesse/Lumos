@@ -1,0 +1,107 @@
+---
+title: Versioning
+description: Version workflows for backwards compatibility
+---
+
+Workflow versioning lets you update a workflow's logic without breaking runs
+that are already in progress.
+
+## Why Version Workflows?
+
+Imagine you have a "process-order" workflow and you want to change how it
+validates orders. But there are already 50 order workflows running with the old
+logic. If you just swap in the new code, those in-flight runs might fail because
+their saved step history doesn't match the new code path.
+
+Versioning solves this by letting you run both versions side by side:
+
+- Existing runs continue with the old logic
+- New runs use the updated version
+- Once all old runs finish, you remove the old version
+
+## Specifying a Version
+
+Add a `version` to your workflow spec:
+
+```ts
+import { defineWorkflow } from "openworkflow";
+
+export const orderWorkflow = defineWorkflow(
+  {
+    name: "process-order",
+    version: "2.0.0",
+  },
+  async ({ input, step }) => {
+    // New v2 logic
+    await step.run({ name: "validate-v2" }, async () => {
+      return validateOrderV2(input);
+    });
+
+    await step.run({ name: "process-v2" }, async () => {
+      return processWithNewLogic(input);
+    });
+  },
+);
+```
+
+## Running Multiple Versions
+
+Register multiple versions of the same workflow with different implementations:
+
+```ts
+import { OpenWorkflow } from "openworkflow";
+import { BackendPostgres } from "openworkflow/postgres";
+
+const backend = await BackendPostgres.connect(
+  process.env.OPENWORKFLOW_POSTGRES_URL,
+);
+const ow = new OpenWorkflow({ backend });
+
+// Version 1 - for existing runs
+ow.implementWorkflow(
+  { name: "process-order", version: "1.0.0" },
+  async ({ input, step }) => {
+    await step.run({ name: "validate" }, () => validateOrderV1(input));
+    await step.run({ name: "process" }, () => processV1(input));
+  },
+);
+
+// Version 2 - for new runs
+ow.implementWorkflow(
+  { name: "process-order", version: "2.0.0" },
+  async ({ input, step }) => {
+    await step.run({ name: "validate-v2" }, () => validateOrderV2(input));
+    await step.run({ name: "process-v2" }, () => processWithNewLogic(input));
+  },
+);
+
+const worker = ow.newWorker();
+await worker.start();
+```
+
+## Migration Strategy
+
+A typical version migration:
+
+1. **Deploy new version alongside old** - Register both versions in your worker
+2. **Start new runs on new version** - Update your client code to use the new
+   version
+3. **Wait for old runs to complete** - Monitor the dashboard for remaining v1
+   runs
+4. **Remove old version** - Once all v1 runs are finished, remove the old
+   implementation
+
+## Version Matching
+
+The worker matches workflow runs to implementations by name and version:
+
+| Run Version | Registered Versions | Matched          |
+| ----------- | ------------------- | ---------------- |
+| `1.0.0`     | `1.0.0`, `2.0.0`    | `1.0.0`          |
+| `2.0.0`     | `1.0.0`, `2.0.0`    | `2.0.0`          |
+| `null`      | `null`, `1.0.0`     | `null`           |
+| `3.0.0`     | `1.0.0`, `2.0.0`    | No match (retry) |
+
+If no matching version is found, the worker records an error and reschedules the
+run as `pending` with retry backoff so a worker that has the matching version
+can pick it up later.

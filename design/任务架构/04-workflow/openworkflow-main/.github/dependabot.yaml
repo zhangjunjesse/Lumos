@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: chore(deps)
+  - package-ecosystem: npm
+    versioning-strategy: increase
+    directory: /
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      commitlint:
+        patterns:
+          - "*commitlint*"
+      eslint:
+        patterns:
+          - "*eslint*"
+      tanstack:
+        patterns:
+          - "*tanstack*"
+      tailwind:
+        patterns:
+          - "*tailwind*"

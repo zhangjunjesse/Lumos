@@ -1,54 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
-import { updateSessionBindingStatus, getSessionBindingById } from '@/lib/db/feishu-bridge';
+import { getBridgeService } from '@/lib/bridge/app/bridge-service';
+import type { BridgeBindingRecord } from '@/lib/bridge/core/binding-service';
+
+function toBindingPayload(binding: BridgeBindingRecord | null) {
+  if (!binding) return null;
+  return {
+    id: binding.id,
+    session_id: binding.sessionId,
+    sessionId: binding.sessionId,
+    platform: binding.platform,
+    platform_chat_id: binding.channelId,
+    chatId: binding.channelId,
+    platform_chat_name: binding.channelName,
+    share_link: binding.shareLink,
+    status: binding.status,
+    created_at: binding.createdAt,
+    createdAt: binding.createdAt,
+    updated_at: binding.updatedAt,
+  };
+}
 
 function toErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function ensureBindingMetadataColumns(db: ReturnType<typeof getDb>) {
-  const columns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;
-  const names = new Set(columns.map((column) => column.name));
-
-  if (!names.has('platform_chat_name')) {
-    db.exec("ALTER TABLE session_bindings ADD COLUMN platform_chat_name TEXT NOT NULL DEFAULT ''");
-  }
-
-  if (!names.has('share_link')) {
-    db.exec("ALTER TABLE session_bindings ADD COLUMN share_link TEXT NOT NULL DEFAULT ''");
-  }
-}
-
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ binding_id: string }> }
 ) {
   const { binding_id } = await params;
   try {
-    const db = getDb();
-    ensureBindingMetadataColumns(db);
-    const binding = db.prepare(
-      `SELECT
-         id,
-         lumos_session_id as session_id,
-         lumos_session_id as sessionId,
-         platform,
-         platform_chat_id,
-         platform_chat_id as chatId,
-         platform_chat_name,
-         share_link,
-         status,
-         created_at,
-         created_at as createdAt,
-         updated_at
-       FROM session_bindings WHERE id = ?`
-    ).get(binding_id);
-
+    const bridgeService = getBridgeService();
+    const binding = bridgeService.getBinding(parseInt(binding_id, 10));
     if (!binding) {
       return NextResponse.json({ error: 'Binding not found' }, { status: 404 });
     }
-
-    return NextResponse.json(binding);
+    return NextResponse.json(toBindingPayload(binding));
   } catch (error: unknown) {
     return NextResponse.json({ error: toErrorMessage(error, 'Failed to load binding') }, { status: 500 });
   }
@@ -69,12 +56,15 @@ export async function PATCH(
       );
     }
 
-    updateSessionBindingStatus(parseInt(binding_id), status as 'active' | 'inactive' | 'expired');
-    const binding = getSessionBindingById(parseInt(binding_id));
+    const bridgeService = getBridgeService();
+    const binding = bridgeService.updateBindingStatus(
+      parseInt(binding_id, 10),
+      status as 'active' | 'inactive' | 'expired',
+    );
 
     return NextResponse.json({
       success: true,
-      binding,
+      binding: toBindingPayload(binding),
     });
   } catch {
     return NextResponse.json(
@@ -85,16 +75,13 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ binding_id: string }> }
 ) {
   const { binding_id } = await params;
   try {
-    const db = getDb();
-    db.prepare(
-      `UPDATE session_bindings SET status = 'deleted', updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(binding_id);
+    const bridgeService = getBridgeService();
+    bridgeService.deleteBinding(parseInt(binding_id, 10));
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     return NextResponse.json({ error: toErrorMessage(error, 'Failed to delete binding') }, { status: 500 });

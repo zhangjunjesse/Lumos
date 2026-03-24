@@ -276,7 +276,11 @@ export function normalizeStageExecutionResult(input: {
   }
 
   if (modelOutput.outcome !== 'done' && !modelOutput.error) {
-    throw new Error(`A ${modelOutput.outcome} stage result must include an error payload`)
+    modelOutput.error = {
+      code: modelOutput.outcome === 'blocked' ? 'stage_blocked' : 'stage_failed',
+      message: modelOutput.summary.trim() || `Stage ${modelOutput.outcome}`,
+      retryable: modelOutput.outcome !== 'blocked',
+    }
   }
 
   if (!payload.stage.outputContract.mayProduceArtifacts && artifacts.length > 0) {

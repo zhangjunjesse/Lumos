@@ -1,85 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
-import { FeishuAPI } from '@/lib/bridge/adapters/feishu-api';
-import Database from 'better-sqlite3';
-import { requireActiveFeishuUserAuth } from '@/lib/bridge/feishu-auth-guard';
-import { getFeishuCredentials, isFeishuConfigured } from '@/lib/feishu-config';
-import { ensureActiveFeishuToken } from '@/lib/feishu-auth';
+import { getBridgeService } from '@/lib/bridge/app/bridge-service';
 
-interface StoredMessageRow {
-  role: string;
-  content: string;
-}
-
-interface ActiveBindingRow {
-  platform_chat_id: string;
-  platform_chat_name?: string;
-  share_link?: string;
-}
-
-interface ChatSessionRow {
-  title?: string;
-}
-
-function ensureBindingMetadataColumns(db: Database.Database) {
-  const columns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;
-  const names = new Set(columns.map((column) => column.name));
-
-  if (!names.has('platform_chat_name')) {
-    db.exec("ALTER TABLE session_bindings ADD COLUMN platform_chat_name TEXT NOT NULL DEFAULT ''");
+function toErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Failed to create binding';
+  if (message === 'FEISHU_NOT_CONFIGURED') {
+    return NextResponse.json({
+      error: 'FEISHU_NOT_CONFIGURED',
+      message: '请先配置飞书应用',
+      action: 'goto_settings',
+    }, { status: 400 });
   }
-
-  if (!names.has('share_link')) {
-    db.exec("ALTER TABLE session_bindings ADD COLUMN share_link TEXT NOT NULL DEFAULT ''");
+  if (
+    message === 'FEISHU_AUTH_REQUIRED' ||
+    message === 'FEISHU_AUTH_EXPIRED' ||
+    message === 'FEISHU_USER_INFO_MISSING'
+  ) {
+    return NextResponse.json({
+      error: message,
+      message:
+        message === 'FEISHU_AUTH_EXPIRED'
+          ? '飞书登录已过期，请重新登录后再同步'
+          : message === 'FEISHU_USER_INFO_MISSING'
+            ? '飞书账号信息不完整，请退出后重新登录'
+            : '请先在设置中登录飞书账号后再同步',
+      action: 'goto_feishu_login',
+    }, { status: 401 });
   }
-}
-
-async function syncHistoryMessages(
-  db: Database.Database,
-  feishuApi: FeishuAPI,
-  sessionId: string,
-  chatId: string
-) {
-  const messages = db.prepare(
-    'SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC'
-  ).all(sessionId) as StoredMessageRow[];
-
-  for (const msg of messages) {
-    const cardContent = {
-      config: { wide_screen_mode: true },
-      header: {
-        title: {
-          tag: 'plain_text',
-          content: msg.role === 'user' ? '👤 用户' : '🤖 AI',
-        },
-        template: msg.role === 'user' ? 'blue' : 'green',
-      },
-      elements: [
-        { tag: 'div', text: { tag: 'lark_md', content: msg.content } },
-      ],
-    };
-
-    try {
-      const token = await feishuApi.getToken();
-      await fetch(
-        'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            receive_id: chatId,
-            msg_type: 'interactive',
-            content: JSON.stringify(cardContent),
-          }),
-        },
-      );
-    } catch (err) {
-      console.error('[Sync] Failed to sync message:', err);
-    }
+  if (message === 'SESSION_NOT_FOUND') {
+    return NextResponse.json({
+      error: 'SESSION_NOT_FOUND',
+      message: '当前会话不存在或已被删除，请刷新会话列表后重试',
+      action: 'refresh_sessions',
+    }, { status: 404 });
   }
+  return NextResponse.json({ error: message }, { status: 500 });
 }
 
 export async function POST(req: NextRequest) {
@@ -89,72 +43,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
     }
 
-    if (!isFeishuConfigured()) {
-      return NextResponse.json({
-        error: 'FEISHU_NOT_CONFIGURED',
-        message: '请先配置飞书应用',
-        action: 'goto_settings'
-      }, { status: 400 });
-    }
-
-    await ensureActiveFeishuToken();
-    const auth = requireActiveFeishuUserAuth();
-    if (!auth.ok) {
-      return NextResponse.json(
-        {
-          error: auth.code,
-          message: auth.message,
-          action: 'goto_feishu_login',
-        },
-        { status: 401 },
-      );
-    }
-
-    const db = getDb();
-    ensureBindingMetadataColumns(db);
-    const { appId, appSecret } = getFeishuCredentials();
-    const feishuApi = new FeishuAPI(appId, appSecret);
-
-    // 检查是否已有绑定
-    const existing = db.prepare(
-      'SELECT platform_chat_id FROM session_bindings WHERE lumos_session_id = ? AND platform = ? AND status = ?'
-    ).get(sessionId, 'feishu', 'active') as ActiveBindingRow | undefined;
-
-    if (existing?.platform_chat_id) {
-      const link = await feishuApi.createChatLink(existing.platform_chat_id);
-      db.prepare(
-        'UPDATE session_bindings SET share_link = ?, updated_at = ? WHERE lumos_session_id = ? AND platform = ? AND status = ?',
-      ).run(link.share_link, Date.now(), sessionId, 'feishu', 'active');
-      return NextResponse.json({ chatId: existing.platform_chat_id, shareLink: link.share_link });
-    }
-
-    const session = db.prepare('SELECT title FROM chat_sessions WHERE id = ?').get(sessionId) as ChatSessionRow | undefined;
-    const chatName = `Lumos - ${session?.title || 'Chat'}`;
-    const chat = await feishuApi.createChat(chatName, 'Lumos AI助手');
-    const link = await feishuApi.createChatLink(chat.chat_id);
-
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO session_bindings (
-         lumos_session_id,
-         platform,
-         platform_chat_id,
-         platform_chat_name,
-         share_link,
-         status,
-         created_at,
-         updated_at
-       )
-       VALUES (?, 'feishu', ?, ?, ?, 'active', ?, ?)`
-    ).run(sessionId, chat.chat_id, chatName, link.share_link, now, now);
-
-    // 同步历史消息
-    await syncHistoryMessages(db, feishuApi, sessionId, chat.chat_id);
-
-    return NextResponse.json({ chatId: chat.chat_id, shareLink: link.share_link });
+    const bridgeService = getBridgeService();
+    const result = await bridgeService.bindChannel({ sessionId, platform: 'feishu' });
+    return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to create binding';
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error('[Bindings POST] Failed to create binding:', error);
+    return toErrorResponse(error);
   }
 }
 
@@ -165,27 +59,22 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
     }
 
-    const db = getDb();
-    ensureBindingMetadataColumns(db);
-    const bindings = db.prepare(
-      `SELECT
-         id,
-         lumos_session_id as session_id,
-         lumos_session_id as sessionId,
-         platform,
-         platform_chat_id,
-         platform_chat_id as chatId,
-         platform_chat_name,
-         share_link,
-         status,
-         created_at,
-         created_at as createdAt,
-         updated_at
-       FROM session_bindings
-       WHERE lumos_session_id = ?
-         AND platform = 'feishu'
-         AND status != 'deleted'`
-    ).all(sessionId);
+    const bridgeService = getBridgeService();
+    const sessionBindings = bridgeService.getSessionBindings(sessionId, 'feishu');
+    const bindings = sessionBindings.map((binding) => ({
+      id: binding.id,
+      session_id: binding.sessionId,
+      sessionId: binding.sessionId,
+      platform: binding.platform,
+      platform_chat_id: binding.channelId,
+      chatId: binding.channelId,
+      platform_chat_name: binding.channelName,
+      share_link: binding.shareLink,
+      status: binding.status,
+      created_at: binding.createdAt,
+      createdAt: binding.createdAt,
+      updated_at: binding.updatedAt,
+    }));
 
     return NextResponse.json({ bindings });
   } catch (error) {

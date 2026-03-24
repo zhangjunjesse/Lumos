@@ -8,7 +8,7 @@ export async function POST(
   try {
     const { id } = await params;
     const body = await request.json();
-    const result = cancelTask({ taskId: id, reason: body.reason });
+    const result = await cancelTask({ taskId: id, reason: body.reason });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

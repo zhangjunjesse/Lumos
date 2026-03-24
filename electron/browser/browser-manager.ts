@@ -138,6 +138,14 @@ function normalizeUrl(rawUrl: string): string {
   }
 }
 
+function getCanGoBack(webContents: WebContents): boolean {
+  return webContents.navigationHistory.canGoBack();
+}
+
+function getCanGoForward(webContents: WebContents): boolean {
+  return webContents.navigationHistory.canGoForward();
+}
+
 function sanitizeUrl(rawUrl?: string): string | undefined {
   if (!rawUrl) return undefined;
 
@@ -645,7 +653,7 @@ export class BrowserManager extends EventEmitter {
 
   async goBack(tabId: string): Promise<void> {
     const view = await this.requireView(tabId);
-    if (!view.webContents.canGoBack()) {
+    if (!getCanGoBack(view.webContents)) {
       return;
     }
     view.webContents.goBack();
@@ -654,7 +662,7 @@ export class BrowserManager extends EventEmitter {
 
   async goForward(tabId: string): Promise<void> {
     const view = await this.requireView(tabId);
-    if (!view.webContents.canGoForward()) {
+    if (!getCanGoForward(view.webContents)) {
       return;
     }
     view.webContents.goForward();
@@ -1135,8 +1143,8 @@ export class BrowserManager extends EventEmitter {
 
     view.webContents.on('did-navigate', (_event, url) => {
       metadata.url = url;
-      metadata.canGoBack = view.webContents.canGoBack();
-      metadata.canGoForward = view.webContents.canGoForward();
+      metadata.canGoBack = getCanGoBack(view.webContents);
+      metadata.canGoForward = getCanGoForward(view.webContents);
       void this.persistTabState(tabId);
       this.recordContextEvent({
         tabId,
@@ -1152,8 +1160,8 @@ export class BrowserManager extends EventEmitter {
 
     view.webContents.on('did-navigate-in-page', (_event, url) => {
       metadata.url = url;
-      metadata.canGoBack = view.webContents.canGoBack();
-      metadata.canGoForward = view.webContents.canGoForward();
+      metadata.canGoBack = getCanGoBack(view.webContents);
+      metadata.canGoForward = getCanGoForward(view.webContents);
       void this.persistTabState(tabId);
       this.recordContextEvent({
         tabId,
@@ -1199,7 +1207,8 @@ export class BrowserManager extends EventEmitter {
       this.emit('tab-favicon-updated', { tabId, favicon: favicons[0] });
     });
 
-    view.webContents.on('console-message', (_event, _level, message) => {
+    view.webContents.on('console-message', (event) => {
+      const message = typeof event.message === 'string' ? event.message : '';
       if (!message.startsWith(RECORDER_CONSOLE_PREFIX)) {
         return;
       }
@@ -1401,8 +1410,8 @@ export class BrowserManager extends EventEmitter {
     metadata.isLoading = false;
     metadata.url = view.webContents.getURL() || metadata.url;
     metadata.title = view.webContents.getTitle() || metadata.title;
-    metadata.canGoBack = view.webContents.canGoBack();
-    metadata.canGoForward = view.webContents.canGoForward();
+    metadata.canGoBack = getCanGoBack(view.webContents);
+    metadata.canGoForward = getCanGoForward(view.webContents);
     metadata.lastAccessedAt = Date.now();
     void this.persistTabState(tabId);
     this.emit('tab-loading', { tabId, isLoading: false });

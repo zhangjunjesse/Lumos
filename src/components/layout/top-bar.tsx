@@ -32,6 +32,7 @@ const routeKeys: Record<string, string> = {
   "/mind": "topbar.mind",
   "/settings": "topbar.settings",
   "/main-agent": "topbar.mainAgent",
+  "/workflow": "topbar.workflow",
   "/team": "topbar.team",
   "/tasks": "topbar.tasks",
   "/chat": "topbar.chat",
@@ -49,6 +50,7 @@ export function TopBar() {
     || (pathname.startsWith("/library") ? "topbar.workspace" : undefined)
     || (pathname.startsWith("/knowledge") ? "topbar.knowledge" : undefined)
     || (pathname.startsWith("/main-agent/") ? "topbar.mainAgent" : undefined)
+    || (pathname.startsWith("/workflow/") ? "topbar.workflow" : undefined)
     || (pathname.startsWith("/tasks/") ? "topbar.tasks" : undefined)
     || (pathname.startsWith("/team/") ? "topbar.team" : undefined)
     || (pathname.startsWith("/chat/") ? "topbar.chat" : undefined);

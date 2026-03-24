@@ -7,6 +7,13 @@ interface TokenCache {
   expiresAt: number;
 }
 
+export interface FeishuInteractiveCardContent {
+  config?: Record<string, unknown>;
+  header?: Record<string, unknown>;
+  elements?: unknown[];
+  [key: string]: unknown;
+}
+
 export class FeishuAPI {
   private cache: TokenCache | null = null;
 
@@ -171,6 +178,53 @@ export class FeishuAPI {
     return data.data;
   }
 
+  async sendInteractiveMessage(
+    chatId: string,
+    cardContent: FeishuInteractiveCardContent,
+  ): Promise<{ message_id: string }> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify(cardContent),
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.code !== 0) {
+      throw new Error(`Send interactive message failed: ${data?.msg || res.status}`);
+    }
+    return data.data;
+  }
+
+  async updateInteractiveMessage(
+    messageId: string,
+    cardContent: FeishuInteractiveCardContent,
+  ): Promise<void> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/messages/${messageId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: JSON.stringify(cardContent),
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok || (data && typeof data.code === 'number' && data.code !== 0)) {
+      throw new Error(`Update interactive message failed: ${data?.msg || res.status}`);
+    }
+  }
+
   /**
    * Update chat info (e.g., name/description).
    * Uses PUT /open-apis/im/v1/chats/:chat_id
@@ -189,5 +243,21 @@ export class FeishuAPI {
     const result = await res.json();
     if (result.code !== 0) throw new Error(`Update chat failed: ${result.msg}`);
     return result.data;
+  }
+
+  async deleteChat(chatId: string): Promise<void> {
+    const token = await this.getToken();
+    const res = await fetch(`${this.baseUrl}/open-apis/im/v1/chats/${chatId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const result = await res.json().catch(() => null);
+    if (!res.ok || (result && typeof result.code === 'number' && result.code !== 0)) {
+      throw new Error(`Delete chat failed: ${result?.msg || res.status}`);
+    }
   }
 }

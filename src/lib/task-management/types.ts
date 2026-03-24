@@ -1,4 +1,5 @@
 // Task Management 类型定义
+import type { WorkflowDSL } from '@/lib/workflow/types';
 
 export enum TaskStatus {
   PENDING = 'pending',
@@ -11,12 +12,14 @@ export enum TaskStatus {
 export interface TaskError {
   code: string;
   message: string;
-  details?: any;
+  details?: unknown;
 }
 
 export interface Task {
   id: string;
   sessionId: string;
+  sourceMessageId?: string;
+  sourceAssistantMessageId?: string;
   summary: string;
   requirements: string[];
   status: TaskStatus;
@@ -25,9 +28,9 @@ export interface Task {
   startedAt?: Date;
   completedAt?: Date;
   estimatedDuration?: number;
-  result?: any;
+  result?: unknown;
   errors?: TaskError[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TaskSummary {
@@ -35,6 +38,8 @@ export interface TaskSummary {
   summary: string;
   status: TaskStatus;
   progress?: number;
+  estimatedDuration?: number;
+  strategy?: 'simple' | 'workflow';
   createdAt: string;
 }
 
@@ -45,17 +50,24 @@ export interface CreateTaskRequest {
   context: {
     sessionId: string;
     relevantMessages?: string[];
+    sourceMessageId?: string;
+    sourceAssistantMessageId?: string;
+    dispatchSource?: string;
   };
 }
 
 export interface CreateTaskResponse {
   taskId: string;
   status: 'pending';
+  sessionId: string;
+  strategy?: 'simple' | 'workflow';
+  estimatedDuration?: number;
   createdAt: string;
 }
 
 export interface ListTasksRequest {
   sessionId?: string;
+  sourceMessageId?: string;
   status?: TaskStatus[];
   limit?: number;
   offset?: number;
@@ -88,9 +100,9 @@ export interface UpdateTaskStatusRequest {
   taskId: string;
   status: TaskStatus;
   progress?: number;
-  result?: any;
+  result?: unknown;
   errors?: TaskError[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateTaskStatusResponse {
@@ -105,6 +117,32 @@ export interface SubmitTaskRequest {
 
 export interface SubmitTaskResponse {
   accepted: boolean;
+  strategy?: 'simple' | 'workflow';
+  estimatedDuration?: number;
+  planning?: {
+    source: 'heuristic' | 'llm';
+    reason: string;
+    analysis: {
+      complexity: 'simple' | 'moderate' | 'complex';
+      needsBrowser: boolean;
+      needsNotification: boolean;
+      needsMultipleSteps: boolean;
+      needsParallel: boolean;
+      detectedUrl?: string;
+      detectedUrls?: string[];
+    };
+    model?: string;
+    diagnostics?: {
+      llmAttempted: boolean;
+      llmAttempts: number;
+      llmErrors: string[];
+      llmTimeoutMs?: number;
+      llmSkippedReason?: string;
+      fallbackUsed?: 'heuristic-preview';
+      fallbackReason?: string;
+    };
+    workflowDsl?: WorkflowDSL;
+  };
   message?: string;
 }
 
@@ -112,7 +150,7 @@ export interface SubmitTaskResponse {
 export interface TaskCompletionNotification {
   taskId: string;
   status: TaskStatus.COMPLETED | TaskStatus.FAILED;
-  result?: any;
+  result?: unknown;
   errors?: TaskError[];
 }
 

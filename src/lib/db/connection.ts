@@ -179,11 +179,13 @@ export function getDb(): Database.Database {
  * In WAL mode, this ensures the WAL is checkpointed and the
  * -wal/-shm files are cleaned up properly.
  */
-export function closeDb(): void {
+export function closeDb(options?: { silent?: boolean }): void {
   if (db) {
     try {
       db.close();
-      console.log('[db] Database closed gracefully');
+      if (!options?.silent) {
+        console.log('[db] Database closed gracefully');
+      }
     } catch (err) {
       console.warn('[db] Error closing database:', err);
     }
@@ -197,8 +199,11 @@ function registerShutdownHandlers(): void {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[db] Received ${signal}, closing database...`);
-    closeDb();
+    const silent = signal === 'exit';
+    if (!silent) {
+      console.log(`[db] Received ${signal}, closing database...`);
+    }
+    closeDb({ silent });
   };
 
   process.on('exit', () => shutdown('exit'));

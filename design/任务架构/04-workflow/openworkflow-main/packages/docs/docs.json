@@ -1,0 +1,106 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "linden",
+  "name": "OpenWorkflow",
+  "colors": {
+    "primary": "#000000"
+  },
+  "favicon": "./favicon.ico",
+  "navigation": {
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Star on GitHub",
+          "icon": "star",
+          "href": "https://github.com/openworkflowdev/openworkflow"
+        },
+        {
+          "anchor": "Join Discord 🆕",
+          "icon": "discord",
+          "href": "https://discord.openworkflow.dev"
+        }
+      ]
+    },
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": ["index", "docs/quickstart"]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "docs/overview",
+          "docs/workflows",
+          "docs/steps",
+          "docs/workers"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "docs/sleeping",
+          "docs/parallel-steps",
+          "docs/dynamic-steps",
+          "docs/child-workflows",
+          "docs/retries",
+          "docs/type-safety",
+          "docs/versioning",
+          "docs/canceling",
+          "docs/production",
+          "docs/prometheus"
+        ]
+      },
+      {
+        "group": "Backends",
+        "pages": ["docs/postgres", "docs/sqlite", "docs/namespaces"]
+      },
+      {
+        "group": "Reference",
+        "pages": ["docs/configuration", "docs/cli", "docs/dashboard"]
+      },
+      {
+        "group": "Integrations",
+        "pages": ["docs/standard-schema"]
+      },
+      {
+        "group": "Comparisons",
+        "pages": [
+          "docs/openworkflow-vs-temporal",
+          "docs/openworkflow-vs-bullmq"
+        ]
+      },
+      {
+        "group": "Resources",
+        "pages": [
+          "docs/migration-v6",
+          "docs/roadmap",
+          "docs/llms",
+          "npm",
+          "github"
+        ]
+      }
+    ]
+  },
+  "redirects": [
+    {
+      "source": "/docs",
+      "destination": "/"
+    },
+    {
+      "source": "/docs/core-concepts",
+      "destination": "/docs/overview"
+    },
+    {
+      "source": "/docs/advanced-patterns",
+      "destination": "/docs/parallel-steps"
+    }
+  ],
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-MJ06221ME3"
+    },
+    "posthog": {
+      "apiKey": "phc_C1Cm1NAKHDFA3eKLVqcYzR5wUk8WhSbMMXltk5Qj1Ye"
+    }
+  }
+}

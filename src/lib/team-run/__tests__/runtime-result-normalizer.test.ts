@@ -161,4 +161,26 @@ describe('runtime-result-normalizer', () => {
       durationMs: 1000,
     })).toThrow('non-empty summary')
   })
+
+  test('fills a default error payload for failed results when the model omitted one', () => {
+    const payload = buildPayload(tempDir)
+
+    const result = normalizeStageExecutionResult({
+      payload,
+      modelOutput: parseStageExecutionModelOutput({
+        outcome: 'failed',
+        summary: '导出失败：缺少 PDF 引擎',
+        artifacts: [],
+      }),
+      startedAt: '2026-03-14T00:00:00.000Z',
+      finishedAt: '2026-03-14T00:00:01.000Z',
+      durationMs: 1000,
+    })
+
+    expect(result.error).toEqual({
+      code: 'stage_failed',
+      message: '导出失败：缺少 PDF 引擎',
+      retryable: true,
+    })
+  })
 })

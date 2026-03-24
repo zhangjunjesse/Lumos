@@ -43,6 +43,50 @@ export function migrateSyncTables(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_platform_users_platform ON platform_users(platform, platform_user_id);
+
+    CREATE TABLE IF NOT EXISTS bridge_events (
+      id TEXT PRIMARY KEY,
+      binding_id INTEGER NOT NULL,
+      platform TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      transport_kind TEXT NOT NULL,
+      channel_id TEXT NOT NULL DEFAULT '',
+      platform_account_id TEXT NOT NULL DEFAULT 'default',
+      platform_message_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      error_code TEXT,
+      error_message TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (binding_id) REFERENCES session_bindings(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bridge_events_binding_created
+      ON bridge_events(binding_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bridge_events_status_updated
+      ON bridge_events(status, updated_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bridge_events_platform_message
+      ON bridge_events(platform, direction, channel_id, platform_message_id)
+      WHERE platform_message_id != '';
+
+    CREATE TABLE IF NOT EXISTS bridge_connections (
+      platform TEXT NOT NULL,
+      account_id TEXT NOT NULL DEFAULT 'default',
+      transport_kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      last_connected_at INTEGER,
+      last_disconnected_at INTEGER,
+      last_event_at INTEGER,
+      last_error_at INTEGER,
+      last_error_message TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (platform, account_id, transport_kind)
+    );
   `);
 
   const bindingColumns = db.prepare('PRAGMA table_info(session_bindings)').all() as Array<{ name: string }>;

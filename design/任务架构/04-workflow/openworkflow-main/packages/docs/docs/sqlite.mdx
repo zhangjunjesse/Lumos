@@ -1,0 +1,135 @@
+---
+title: SQLite Backend
+description: Lightweight SQLite storage for development and testing
+---
+
+The SQLite backend is the easiest way to get started without running an external
+database. It's ideal for local development, testing, and single-server
+deployments. When you're ready for production with multiple workers, switch to
+[PostgreSQL](/docs/postgres).
+
+Uses `bun:sqlite` for Bun and `node:sqlite` for Node.js (requires Node.js
+22.5+).
+
+## Setup
+
+```ts
+import { OpenWorkflow } from "openworkflow";
+import { BackendSqlite } from "openworkflow/sqlite";
+
+const backend = BackendSqlite.connect("./openworkflow/backend.db");
+const ow = new OpenWorkflow({ backend });
+```
+
+Note: `BackendSqlite.connect()` is synchronous (no `await` needed).
+
+## File Path
+
+The database file is created if it doesn't exist:
+
+```ts
+// Relative path (recommended for projects)
+const backend = BackendSqlite.connect("./openworkflow/backend.db");
+
+// Absolute path
+const backend = BackendSqlite.connect("/var/lib/openworkflow/data.db");
+
+// In-memory database (data lost on restart)
+const backend = BackendSqlite.connect(":memory:");
+```
+
+## Configuration Options
+
+```ts
+const backend = BackendSqlite.connect(path, {
+  // Namespace for multi-tenant isolation (default: "default")
+  namespaceId: "development",
+
+  // Whether to run migrations on connect (default: true)
+  runMigrations: true,
+});
+```
+
+## Git Ignore
+
+Add the database file and SQLite sidecar files to `.gitignore`:
+
+```gitignore
+openworkflow/backend.db*
+```
+
+The CLI's `init` command does this automatically when you choose SQLite.
+
+## When to Use SQLite
+
+**Good for:**
+
+- Local development
+- Testing and CI
+- Single-server deployments
+- Prototyping
+- Small-scale production with low throughput
+
+**Consider PostgreSQL for:**
+
+- Multi-server deployments
+- High concurrency requirements
+- Production workloads with many workers
+- Environments requiring database-level backups
+
+## Concurrency
+
+SQLite supports concurrent reads but uses locking for writes. The backend
+handles this with `BEGIN IMMEDIATE` transactions. For single-worker setups, this
+works well. For multiple workers, PostgreSQL is recommended.
+
+## Namespaces
+
+Use `namespaceId` to isolate environments:
+
+```ts
+const devBackend = BackendSqlite.connect("./backend.db", {
+  namespaceId: "development",
+});
+
+const testBackend = BackendSqlite.connect("./backend.db", {
+  namespaceId: "test",
+});
+```
+
+See [Namespaces](/docs/namespaces) for more details.
+
+## Config File Example
+
+For use with the CLI, create `openworkflow.config.ts`:
+
+```ts
+import { defineConfig } from "@openworkflow/cli";
+import { BackendSqlite } from "openworkflow/sqlite";
+
+export default defineConfig({
+  backend: BackendSqlite.connect("./openworkflow/backend.db"),
+  dirs: ["./openworkflow"],
+});
+```
+
+## Development + Production Setup
+
+A common pattern uses SQLite for development and PostgreSQL for production:
+
+```ts
+import { defineConfig } from "@openworkflow/cli";
+import { BackendPostgres } from "openworkflow/postgres";
+import { BackendSqlite } from "openworkflow/sqlite";
+
+const isDev = process.env.NODE_ENV !== "production";
+
+const backend = isDev
+  ? BackendSqlite.connect("./openworkflow/backend.db")
+  : await BackendPostgres.connect(process.env.OPENWORKFLOW_POSTGRES_URL!);
+
+export default defineConfig({
+  backend,
+  dirs: ["./openworkflow"],
+});
+```

@@ -11,6 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import type { TooltipContentProps, TooltipValueType } from "recharts";
 import { useTranslation } from "@/hooks/useTranslation";
 
 // ---------------------------------------------------------------------------
@@ -33,16 +34,6 @@ interface UsageStatsResponse {
     output_tokens: number;
     cost: number;
   }>;
-}
-
-// Recharts v3 Payload — only the fields we actually read
-interface RechartsPayloadItem {
-  name?: string | number;
-  dataKey?: string | number;
-  value?: number;
-  color?: string;
-  fill?: string;
-  payload?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,23 +121,33 @@ function getModelColor(_model: string, idx: number): string {
 // Chart tooltip (recharts v3 compatible)
 // ---------------------------------------------------------------------------
 
-function ChartTooltip({ active, payload, label }: {
-  active?: boolean;
-  payload?: ReadonlyArray<RechartsPayloadItem>;
-  label?: string | number;
-}) {
+function ChartTooltip({ active, payload, label }: TooltipContentProps<TooltipValueType, string | number>) {
   if (!active || !payload?.length) return null;
 
-  // Filter out entries with zero or missing values
-  const items = payload.filter((p) => typeof p.value === "number" && p.value > 0);
+  const items = payload.flatMap((entry) => {
+    const rawValue = Array.isArray(entry.value) ? entry.value[0] : entry.value;
+    const numericValue =
+      typeof rawValue === "number"
+        ? rawValue
+        : typeof rawValue === "string"
+          ? Number(rawValue)
+          : NaN;
+
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return [];
+    }
+
+    return [{ entry, numericValue }];
+  });
+
   if (items.length === 0) return null;
 
   return (
     <div className="rounded-lg border border-border/50 bg-popover px-3 py-2 text-xs shadow-md">
       <p className="mb-1 font-medium text-popover-foreground">{label}</p>
-      {items.map((p, i) => {
-        const displayName = String(p.name ?? p.dataKey ?? "unknown");
-        const displayColor = p.color || p.fill || "var(--color-chart-1)";
+      {items.map(({ entry, numericValue }, i) => {
+        const displayName = String(entry.name ?? entry.dataKey ?? "unknown");
+        const displayColor = entry.color || entry.fill || "var(--color-chart-1)";
         return (
           <div key={displayName + i} className="flex items-center gap-2 text-popover-foreground/80">
             <span
@@ -154,7 +155,7 @@ function ChartTooltip({ active, payload, label }: {
               style={{ backgroundColor: displayColor }}
             />
             <span>{displayName}</span>
-            <span className="ml-auto font-mono">{formatTokens(p.value ?? 0)}</span>
+            <span className="ml-auto font-mono">{formatTokens(numericValue)}</span>
           </div>
         );
       })}

@@ -200,6 +200,43 @@ function getTimeFilteredItemIds(tf: TimeFilter): Set<string> {
   return new Set(rows.map((row) => row.id));
 }
 
+function getTagFilteredItemIds(tagIds: string[]): Set<string> {
+  const normalized = Array.from(new Set(
+    tagIds
+      .map((tagId) => tagId.trim())
+      .filter(Boolean),
+  ));
+  if (!normalized.length) {
+    return new Set();
+  }
+
+  const db = getDb();
+  const placeholders = normalized.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT DISTINCT item_id
+     FROM kb_item_tags
+     WHERE tag_id IN (${placeholders})`
+  ).all(...normalized) as { item_id: string }[];
+
+  return new Set(rows.map((row) => row.item_id));
+}
+
+function intersectItemIds(...sets: Array<Set<string> | undefined>): Set<string> | undefined {
+  const available = sets.filter((value): value is Set<string> => value instanceof Set);
+  if (!available.length) {
+    return undefined;
+  }
+
+  const [first, ...rest] = available;
+  const result = new Set<string>();
+  for (const value of first) {
+    if (rest.every((set) => set.has(value))) {
+      result.add(value);
+    }
+  }
+  return result;
+}
+
 function getDefaultRetrievalMode(): 'reference' | 'enhanced' {
   return (getSetting('kb_retrieval_mode') || '').trim().toLowerCase() === 'enhanced'
     ? 'enhanced'
@@ -591,7 +628,11 @@ export async function searchWithMeta(
   const useSummarySearch = opts.useSummarySearch !== false;
 
   const timeFilter = opts.timeFilter ?? parseTimeFilter(query);
-  const allowedIds = timeFilter ? getTimeFilteredItemIds(timeFilter) : undefined;
+  const tagFilterIds = opts.tagIds?.length ? getTagFilteredItemIds(opts.tagIds) : undefined;
+  const allowedIds = intersectItemIds(
+    timeFilter ? getTimeFilteredItemIds(timeFilter) : undefined,
+    tagFilterIds,
+  );
 
   let queryVariants: string[];
   if (opts.disableRewrite) {

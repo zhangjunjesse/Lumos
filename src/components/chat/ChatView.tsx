@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import type {
+  ChatKnowledgeOptions,
   Message,
   MessagesResponse,
   PermissionRequestEvent,
@@ -10,7 +11,6 @@ import type {
   TeamBannerProjectionResponseV1,
 } from '@/types';
 import { useTranslation } from '@/hooks/useTranslation';
-import { parseTeamPlanBlock } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { usePanel } from '@/hooks/usePanel';
@@ -24,6 +24,7 @@ import { useMessagesStore } from '@/stores/messages-store';
 import {
   abortChatStream,
   clearChatStreamController,
+  getChatStreamController,
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
@@ -46,7 +47,7 @@ interface ChatViewProps {
   initialHasMore?: boolean;
   modelName?: string;
   resolvedModelName?: string;
-  initialMode?: string;
+  initialKnowledgeEnabled?: boolean;
   providerId?: string;
   workingDirectoryOverride?: string;
   compactInputOnly?: boolean;
@@ -64,6 +65,8 @@ interface MemoryIdleTriggerConfig {
 
 const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
 const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
+const EMPTY_MESSAGES: Message[] = [];
+
 async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
   if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
     return {};
@@ -86,13 +89,30 @@ function isTempMessageId(id: string): boolean {
   return id.startsWith('temp-');
 }
 
+function haveSameMessageSequence(a: Message[], b: Message[]): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index]?.id !== b[index]?.id) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function ChatView({
   sessionId,
-  initialMessages = [],
+  initialMessages = EMPTY_MESSAGES,
   initialHasMore = false,
   modelName,
   resolvedModelName,
-  initialMode,
+  initialKnowledgeEnabled = false,
   providerId,
   workingDirectoryOverride,
   compactInputOnly = false,
@@ -105,7 +125,10 @@ export function ChatView({
   const { t } = useTranslation();
   const pathname = usePathname();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
-  const effectiveWorkingDirectory = workingDirectoryOverride || workingDirectory;
+  const effectiveWorkingDirectory = useMemo(
+    () => workingDirectoryOverride || workingDirectory,
+    [workingDirectoryOverride, workingDirectory]
+  );
 
   const cachedMessagesSession = useMessagesStore((state) => state.sessions[sessionId] ?? null);
   const updateMessagesSession = useMessagesStore((state) => state.updateSession);
@@ -124,6 +147,7 @@ export function ChatView({
     content: result.content ?? '',
     is_error: result.is_error,
   }));
+  const initialReasoningSummaries = cachedStreamingState?.reasoningSummaries || [];
 
   const [messages, setMessages] = useState<Message[]>(() => sourceMessages);
   const [hasMore, setHasMore] = useState(sourceHasMore);
@@ -131,10 +155,10 @@ export function ChatView({
   const loadingMoreRef = useRef(false);
   const [streamingContent, setStreamingContent] = useState(() => cachedStreamingState?.content || '');
   const [isStreaming, setIsStreaming] = useState(() => cachedStreamingState?.status === 'streaming');
+  const [reasoningSummaries, setReasoningSummaries] = useState<string[]>(() => initialReasoningSummaries);
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>(() => cachedStreamingState?.toolUses || []);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>(() => initialStreamingToolResults);
   const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
-  const [mode, setMode] = useState(initialMode || 'code');
   const [currentModel, setCurrentModel] = useState(
     modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
   );
@@ -150,6 +174,7 @@ export function ChatView({
     enabled: true,
     timeoutMs: DEFAULT_MEMORY_IDLE_TIMEOUT_MS,
   });
+  const mode = 'code';
 
   const messagesRef = useRef<Message[]>(sourceMessages);
   const hasMoreRef = useRef(sourceHasMore);
@@ -157,10 +182,17 @@ export function ChatView({
   const idleMemoryTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const accumulatedRef = useRef(cachedStreamingState?.content || '');
+  const reasoningSummariesRef = useRef<string[]>(initialReasoningSummaries);
   const toolUsesRef = useRef<ToolUseInfo[]>(cachedStreamingState?.toolUses || []);
   const toolResultsRef = useRef<ToolResultInfo[]>(initialStreamingToolResults);
   const sendMessageRef = useRef<
-    ((content: string, files?: FileAttachment[], systemPromptAppend?: string, displayOverride?: string) => Promise<void>) | null
+    ((
+      content: string,
+      files?: FileAttachment[],
+      systemPromptAppend?: string,
+      displayOverride?: string,
+      knowledgeOptions?: ChatKnowledgeOptions,
+    ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
   const teamProjectionVersionRef = useRef<number | null>(null);
@@ -202,6 +234,27 @@ export function ChatView({
       // Best effort only.
     }
   }, [sessionId, updateMessagesSession]);
+
+  const refreshSessionMetadata = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json() as { session?: { title?: string } };
+      const title = data.session?.title?.trim();
+      if (title) {
+        window.dispatchEvent(new CustomEvent('session-updated', {
+          detail: { id: sessionId, title },
+        }));
+      }
+    } catch {
+      // Best effort only.
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -297,6 +350,8 @@ export function ChatView({
     setStreamingSessionId('');
     setStreamingContent('');
     accumulatedRef.current = '';
+    reasoningSummariesRef.current = [];
+    setReasoningSummaries([]);
     toolUsesRef.current = [];
     toolResultsRef.current = [];
     setToolUses([]);
@@ -311,25 +366,6 @@ export function ChatView({
       abortControllerRef.current = null;
     }
   }, [sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
-
-  const handleModeChange = useCallback((newMode: string) => {
-    setMode(newMode);
-    if (sessionId) {
-      fetch(`/api/chat/sessions/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: newMode }),
-      }).then(() => {
-        window.dispatchEvent(new CustomEvent('session-updated', { detail: { id: sessionId } }));
-      }).catch(() => { /* silent */ });
-
-      fetch('/api/chat/mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, mode: newMode }),
-      }).catch(() => { /* silent */ });
-    }
-  }, [sessionId]);
 
   const handleProviderModelChange = useCallback((newProviderId: string, model: string) => {
     setCurrentProviderId(newProviderId);
@@ -405,11 +441,28 @@ export function ChatView({
 
   // Keep local messages in sync with global cache / initial payload when not actively streaming.
   useEffect(() => {
-    if (isStreaming) return;
-
     setMessages((prev) => {
       const localHasTemp = prev.some((msg) => isTempMessageId(msg.id));
+      const sourceHasTemp = sourceMessages.some((msg) => isTempMessageId(msg.id));
+      const prevLastId = prev[prev.length - 1]?.id;
+      const sourceLastId = sourceMessages[sourceMessages.length - 1]?.id;
+      const sameSequence = haveSameMessageSequence(prev, sourceMessages);
+
+      if (isStreaming) {
+        const shouldAcceptExternalUpdate = sourceHasTemp
+          || (!localHasTemp && (prev.length !== sourceMessages.length || prevLastId !== sourceLastId));
+        if (!shouldAcceptExternalUpdate) {
+          return prev;
+        }
+
+        messagesRef.current = sourceMessages;
+        return sourceMessages;
+      }
+
       if (localHasTemp && sourceMessages.length < prev.length) {
+        return prev;
+      }
+      if (sameSequence) {
         return prev;
       }
       messagesRef.current = sourceMessages;
@@ -427,6 +480,32 @@ export function ChatView({
     if (!cachedStreamingState) return;
 
     const streaming = cachedStreamingState.status === 'streaming';
+    const hasLiveController = Boolean(
+      getChatStreamController(sessionId)
+      || abortControllerRef.current
+    );
+    const isStaleStreamingState = streaming && !hasLiveController;
+
+    if (isStaleStreamingState) {
+      clearStreamingSession(sessionId);
+      setIsStreaming(false);
+      setStreamingContent('');
+      accumulatedRef.current = '';
+      setReasoningSummaries([]);
+      reasoningSummariesRef.current = [];
+      setToolUses([]);
+      toolUsesRef.current = [];
+      setToolResults([]);
+      toolResultsRef.current = [];
+      setStreamingToolOutput('');
+      setStatusText(undefined);
+      setPendingPermission(null);
+      setPermissionResolved(null);
+      setStreamingSessionId('');
+      setPendingApprovalSessionId('');
+      return;
+    }
+
     const cachedContent = cachedStreamingState.content || '';
     const cachedToolUses = cachedStreamingState.toolUses || [];
     const cachedToolResults: ToolResultInfo[] = (cachedStreamingState.toolResults || []).map((result) => ({
@@ -438,6 +517,8 @@ export function ChatView({
     setIsStreaming(streaming);
     setStreamingContent(cachedContent);
     accumulatedRef.current = cachedContent;
+    setReasoningSummaries(cachedStreamingState.reasoningSummaries || []);
+    reasoningSummariesRef.current = cachedStreamingState.reasoningSummaries || [];
     setToolUses(cachedToolUses);
     toolUsesRef.current = cachedToolUses;
     setToolResults(cachedToolResults);
@@ -453,14 +534,13 @@ export function ChatView({
         setPendingApprovalSessionId(sessionId);
       }
     }
-  }, [cachedStreamingState, sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
-
-  // Sync mode when session data loads
-  useEffect(() => {
-    if (initialMode) {
-      setMode(initialMode);
-    }
-  }, [initialMode]);
+  }, [
+    cachedStreamingState,
+    clearStreamingSession,
+    sessionId,
+    setPendingApprovalSessionId,
+    setStreamingSessionId,
+  ]);
 
   useEffect(() => {
     if (modelName) {
@@ -539,9 +619,17 @@ export function ChatView({
   const stopStreaming = useCallback(() => {
     const aborted = abortChatStream(sessionId);
     if (!aborted) {
-      abortControllerRef.current?.abort();
+      const localController = abortControllerRef.current;
+      if (localController) {
+        localController.abort();
+        return;
+      }
+
+      // Fallback for stale persisted UI state with no active controller.
+      clearStreamingSession(sessionId);
+      resetStreamingUi(null);
     }
-  }, [sessionId]);
+  }, [clearStreamingSession, resetStreamingUi, sessionId]);
 
   const handlePermissionResponse = useCallback(async (decision: 'allow' | 'allow_session' | 'deny', updatedInput?: Record<string, unknown>) => {
     if (!pendingPermission) return;
@@ -606,6 +694,7 @@ export function ChatView({
       files?: FileAttachment[],
       systemPromptAppend?: string,
       displayOverride?: string,
+      knowledgeOptions?: ChatKnowledgeOptions,
     ) => {
       if (isStreaming) return;
       clearIdleMemoryTimer();
@@ -631,6 +720,8 @@ export function ChatView({
       setStreamingSessionId(sessionId);
       setStreamingContent('');
       accumulatedRef.current = '';
+      reasoningSummariesRef.current = [];
+      setReasoningSummaries([]);
       toolUsesRef.current = [];
       toolResultsRef.current = [];
       setToolUses([]);
@@ -673,21 +764,37 @@ export function ChatView({
 
       try {
         const bridgeHeaders = await getBrowserBridgeHeaders();
-        const response = await fetch('/api/chat', {
+        const apiEndpoint = sessionId === 'capability-authoring' ? '/api/capabilities/chat' : '/api/chat';
+
+        // 为 capability-authoring 构建消息历史
+        const requestBody: Record<string, unknown> = {
+          session_id: sessionId,
+          content: effectiveContent,
+          mode,
+          model: currentModel,
+          provider_id: currentProviderId,
+          knowledge_enabled: knowledgeOptions?.enabled === true,
+          knowledge_tag_ids: knowledgeOptions?.tagIds ?? [],
+          ...(files && files.length > 0 ? { files } : {}),
+          ...(systemPromptAppend ? { systemPromptAppend } : {}),
+        };
+
+        if (sessionId === 'capability-authoring') {
+          requestBody.messages = messagesRef.current
+            .filter((message) => message.id !== userMessage.id)
+            .map((message) => ({
+              role: message.role,
+              content: message.content,
+            }));
+        }
+
+        const response = await fetch(apiEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...bridgeHeaders,
           },
-          body: JSON.stringify({
-            session_id: sessionId,
-            content: effectiveContent,
-            mode,
-            model: currentModel,
-            provider_id: currentProviderId,
-            ...(files && files.length > 0 ? { files } : {}),
-            ...(systemPromptAppend ? { systemPromptAppend } : {}),
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         });
 
@@ -702,16 +809,44 @@ export function ChatView({
         const result = await consumeSSEStream(reader, {
           onText: (acc) => {
             markActive();
+            const isFirstVisibleContent = accumulated.length === 0;
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
-            updateStreamingSession(sessionId, {
+            if (isFirstVisibleContent) {
+              setStatusText(undefined);
+            }
+            const nextStreamingState: {
+              content: string;
+              status: 'streaming';
+              statusText?: string;
+            } = {
               content: acc,
               status: 'streaming',
+            };
+            if (isFirstVisibleContent) {
+              nextStreamingState.statusText = '';
+            }
+            updateStreamingSession(sessionId, nextStreamingState);
+          },
+          onToolUseSummary: (summary) => {
+            markActive();
+            setReasoningSummaries((prev) => {
+              if (prev[prev.length - 1] === summary) {
+                return prev;
+              }
+              const next = [...prev, summary];
+              reasoningSummariesRef.current = next;
+              updateStreamingSession(sessionId, {
+                reasoningSummaries: next,
+                status: 'streaming',
+              });
+              return next;
             });
           },
           onToolUse: (tool) => {
             markActive();
+            setStatusText(undefined);
             setStreamingToolOutput('');
             setToolUses((prev) => {
               if (prev.some((t) => t.id === tool.id)) return prev;
@@ -720,6 +855,7 @@ export function ChatView({
               updateStreamingSession(sessionId, {
                 toolUses: next,
                 streamingToolOutput: '',
+                statusText: '',
                 status: 'streaming',
               });
               return next;
@@ -733,6 +869,7 @@ export function ChatView({
           },
           onToolResult: (res) => {
             markActive();
+            setStatusText(undefined);
             setStreamingToolOutput('');
             setToolResults((prev) => {
               const next = [...prev, res];
@@ -740,6 +877,7 @@ export function ChatView({
               updateStreamingSession(sessionId, {
                 toolResults: next,
                 streamingToolOutput: '',
+                statusText: '',
                 status: 'streaming',
               });
               return next;
@@ -772,12 +910,10 @@ export function ChatView({
             if (statusData?.model && typeof statusData.model === 'string') {
               onResolvedModelChange?.(statusData.model);
             }
-            if (text?.startsWith('Connected (')) {
-              setStatusText(text);
-              setTimeout(() => setStatusText(undefined), 2000);
-            } else {
-              setStatusText(text);
+            if (statusData?.session_id) {
+              return;
             }
+            setStatusText(text);
             updateStreamingSession(sessionId, {
               statusText: text || '',
               status: 'streaming',
@@ -804,8 +940,9 @@ export function ChatView({
           },
           onModeChanged: (sdkMode) => {
             markActive();
-            const uiMode = sdkMode === 'plan' ? 'plan' : 'code';
-            handleModeChange(uiMode);
+            if (sdkMode === 'plan') {
+              console.log('[chat] Ignoring SDK mode change because input mode toggle is hidden');
+            }
           },
           onError: (acc) => {
             markActive();
@@ -822,15 +959,16 @@ export function ChatView({
 
         accumulated = result.accumulated;
 
+        const finalReasoningSummaries = reasoningSummariesRef.current;
         const finalToolUses = toolUsesRef.current;
         const finalToolResults = toolResultsRef.current;
-        const hasTools = finalToolUses.length > 0 || finalToolResults.length > 0;
+        const hasStructuredBlocks = finalReasoningSummaries.length > 0 || finalToolUses.length > 0 || finalToolResults.length > 0;
 
         let messageContent = accumulated.trim();
-        if (hasTools && messageContent) {
+        if (hasStructuredBlocks) {
           const contentBlocks: Array<Record<string, unknown>> = [];
-          if (accumulated.trim()) {
-            contentBlocks.push({ type: 'text', text: accumulated.trim() });
+          for (const summary of finalReasoningSummaries) {
+            contentBlocks.push({ type: 'reasoning', summary });
           }
           for (const tu of finalToolUses) {
             contentBlocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
@@ -838,6 +976,9 @@ export function ChatView({
             if (tr) {
               contentBlocks.push({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content });
             }
+          }
+          if (accumulated.trim()) {
+            contentBlocks.push({ type: 'text', text: accumulated.trim() });
           }
           messageContent = JSON.stringify(contentBlocks);
         }
@@ -853,9 +994,6 @@ export function ChatView({
           };
           transferPendingToMessage(assistantMessage.id);
           appendMessage(assistantMessage);
-          if (parseTeamPlanBlock(accumulated.trim())) {
-            window.dispatchEvent(new CustomEvent('team-chat-message-created', { detail: { sessionId } }));
-          }
           shouldScheduleIdleTrigger = true;
         }
       } catch (error) {
@@ -947,6 +1085,7 @@ export function ChatView({
 
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
         window.dispatchEvent(new CustomEvent('team-plan-refresh', { detail: { sessionId } }));
+        void refreshSessionMetadata();
         if (shouldScheduleIdleTrigger) {
           scheduleIdleMemoryTrigger();
         }
@@ -965,13 +1104,13 @@ export function ChatView({
       currentModel,
       currentProviderId,
       errorStreamingSession,
-      handleModeChange,
       isStreaming,
       mode,
       onResolvedModelChange,
       pathname,
       resetStreamingUi,
       scheduleIdleMemoryTrigger,
+      refreshSessionMetadata,
       sessionId,
       setContentPanelOpen,
       setPendingApprovalSessionId,
@@ -995,6 +1134,7 @@ export function ChatView({
       pendingBootstrap.files,
       pendingBootstrap.systemPromptAppend,
       pendingBootstrap.displayOverride,
+      pendingBootstrap.knowledgeOptions,
     );
   }, [sendMessage, sessionId]);
 
@@ -1118,6 +1258,7 @@ export function ChatView({
               isStreaming={isStreaming}
               toolUses={toolUses}
               toolResults={toolResults}
+              reasoningSummaries={reasoningSummaries}
               streamingToolOutput={streamingToolOutput}
               statusText={statusText}
               pendingPermission={pendingPermission}
@@ -1149,8 +1290,7 @@ export function ChatView({
         providerId={currentProviderId}
         onProviderModelChange={handleProviderModelChange}
         workingDirectory={effectiveWorkingDirectory}
-        mode={mode}
-        onModeChange={handleModeChange}
+        initialKnowledgeEnabled={initialKnowledgeEnabled}
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
       />

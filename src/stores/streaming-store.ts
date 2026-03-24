@@ -18,6 +18,7 @@ export interface StreamingState {
   sessionId: string;
   status: 'idle' | 'streaming' | 'completed' | 'error';
   content: string;
+  reasoningSummaries: string[];
   toolUses: ToolUseInfo[];
   toolResults: ToolResultInfo[];
   streamingToolOutput: string;
@@ -86,6 +87,7 @@ export const useStreamingStore = create<StreamingStore>(
                   sessionId,
                   status: 'streaming',
                   content: '',
+                  reasoningSummaries: [],
                   toolUses: [],
                   toolResults: [],
                   streamingToolOutput: '',
@@ -110,6 +112,7 @@ export const useStreamingStore = create<StreamingStore>(
               sessionId,
               status: 'streaming',
               content: '',
+              reasoningSummaries: [],
               toolUses: [],
               toolResults: [],
               streamingToolOutput: '',

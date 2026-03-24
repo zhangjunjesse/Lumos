@@ -7,6 +7,11 @@ import {
   MessageContent,
   MessageResponse,
 } from '@/components/ai-elements/message';
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from '@/components/ai-elements/reasoning';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import {
   Confirmation,
@@ -109,6 +114,7 @@ interface ToolResultInfo {
 interface StreamingMessageProps {
   content: string;
   isStreaming: boolean;
+  reasoningSummaries?: string[];
   toolUses?: ToolUseInfo[];
   toolResults?: ToolResultInfo[];
   streamingToolOutput?: string;
@@ -362,6 +368,7 @@ function StreamingStatusBar({ statusText, onForceStop }: { statusText?: string; 
 export function StreamingMessage({
   content,
   isStreaming,
+  reasoningSummaries = [],
   toolUses = [],
   toolResults = [],
   streamingToolOutput,
@@ -375,6 +382,9 @@ export function StreamingMessage({
   const runningTools = toolUses.filter(
     (tool) => !toolResults.some((r) => r.tool_use_id === tool.id)
   );
+  const reasoningContent = reasoningSummaries
+    .map((summary) => `- ${summary}`)
+    .join('\n');
 
   // Determine confirmation state for the AI Elements component
   const getConfirmationState = (): ToolUIPart['state'] => {
@@ -423,6 +433,13 @@ export function StreamingMessage({
   return (
     <AIMessage from="assistant">
       <MessageContent>
+        {reasoningSummaries.length > 0 && (
+          <Reasoning className="mb-3" defaultOpen={isStreaming} isStreaming={isStreaming}>
+            <ReasoningTrigger />
+            <ReasoningContent>{reasoningContent}</ReasoningContent>
+          </Reasoning>
+        )}
+
         {/* Tool calls — compact collapsible group */}
         {toolUses.length > 0 && (
           <ToolActionsGroup
@@ -562,21 +579,18 @@ export function StreamingMessage({
           if (isStreaming) {
             const hasImageGenBlock = /```image-gen-request/.test(content);
             const hasBatchPlanBlock = /```batch-plan/.test(content);
-            const hasTeamPlanBlock = /```lumos-team-plan/.test(content);
             const stripped = content
               .replace(/```image-gen-request[\s\S]*$/, '')
               .replace(/```batch-plan[\s\S]*$/, '')
-              .replace(/```lumos-team-plan[\s\S]*$/, '')
               .trim();
             if (stripped) return <MessageResponse>{stripped}</MessageResponse>;
             // Show shimmer while the structured block is being streamed
-            if (hasImageGenBlock || hasBatchPlanBlock || hasTeamPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
+            if (hasImageGenBlock || hasBatchPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
             return null;
           }
           const stripped = content
             .replace(/```image-gen-request[\s\S]*?```/g, '')
             .replace(/```batch-plan[\s\S]*?```/g, '')
-            .replace(/```lumos-team-plan[\s\S]*?```/g, '')
             .trim();
           return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;
         })()}

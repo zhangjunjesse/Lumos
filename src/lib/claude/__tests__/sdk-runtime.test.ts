@@ -3,7 +3,10 @@ import path from 'path'
 import { buildClaudeSdkRuntimeBootstrap } from '../sdk-runtime'
 
 const mockGetActiveProvider = jest.fn()
+const mockGetProvider = jest.fn()
 const mockGetSetting = jest.fn()
+const mockGetDefaultProviderId = jest.fn()
+const mockGetSession = jest.fn()
 const mockFindClaudeBinary = jest.fn()
 const mockFindGitBash = jest.fn()
 const mockGetExpandedPath = jest.fn()
@@ -11,10 +14,13 @@ const existsSyncSpy = jest.spyOn(fs, 'existsSync')
 
 jest.mock('@/lib/db/providers', () => ({
   getActiveProvider: () => mockGetActiveProvider(),
+  getProvider: (...args: unknown[]) => mockGetProvider(...args),
 }))
 
 jest.mock('@/lib/db/sessions', () => ({
   getSetting: (...args: unknown[]) => mockGetSetting(...args),
+  getDefaultProviderId: () => mockGetDefaultProviderId(),
+  getSession: (...args: unknown[]) => mockGetSession(...args),
 }))
 
 jest.mock('@/lib/platform', () => ({
@@ -35,13 +41,19 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     }
 
     mockGetActiveProvider.mockReset()
+    mockGetProvider.mockReset()
     mockGetSetting.mockReset()
+    mockGetDefaultProviderId.mockReset()
+    mockGetSession.mockReset()
     mockFindClaudeBinary.mockReset()
     mockFindGitBash.mockReset()
     mockGetExpandedPath.mockReset()
 
     mockGetExpandedPath.mockReturnValue('/tmp/expanded-path')
     mockFindGitBash.mockReturnValue(null)
+    mockGetDefaultProviderId.mockReturnValue(undefined)
+    mockGetSession.mockReturnValue(undefined)
+    mockGetProvider.mockReturnValue(undefined)
     existsSyncSpy.mockImplementation((value: fs.PathLike) => {
       const target = String(value)
       return target === path.join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
@@ -117,5 +129,48 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.env.ANTHROPIC_BASE_URL).toBe('https://legacy.example.com')
     expect(runtime.settingSources).toEqual([])
     expect(runtime.pathToClaudeCodeExecutable).toBe('/usr/local/bin/claude')
+  })
+
+  test('prefers the session provider before the default or active provider when sessionId is provided', () => {
+    mockGetSession.mockReturnValue({
+      id: 'session-001',
+      provider_id: 'provider-session-001',
+    })
+    mockGetProvider.mockImplementation((id: string) => {
+      if (id !== 'provider-session-001') {
+        return undefined
+      }
+      return {
+        id: 'provider-session-001',
+        name: 'Session Provider',
+        provider_type: 'anthropic',
+        base_url: 'https://session-provider.example.com/claude',
+        api_key: 'session-provider-secret',
+        is_active: 0,
+        sort_order: 0,
+        extra_env: '{}',
+        model_catalog: '[]',
+        model_catalog_source: 'default',
+        model_catalog_updated_at: null,
+        notes: '',
+        is_builtin: 0,
+        user_modified: 0,
+        created_at: '2026-03-15 00:00:00',
+        updated_at: '2026-03-15 00:00:00',
+      }
+    })
+    mockGetActiveProvider.mockReturnValue({
+      id: 'provider-active',
+      api_key: 'active-secret',
+      base_url: 'https://active-provider.example.com/claude',
+    })
+
+    const runtime = buildClaudeSdkRuntimeBootstrap({
+      sessionId: 'session-001',
+    })
+
+    expect(runtime.activeProvider?.id).toBe('provider-session-001')
+    expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBe('session-provider-secret')
+    expect(runtime.env.ANTHROPIC_BASE_URL).toBe('https://session-provider.example.com/claude')
   })
 })

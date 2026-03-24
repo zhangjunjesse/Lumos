@@ -1,0 +1,109 @@
+import { BackendPostgres } from "@openworkflow/backend-postgres";
+import { randomUUID } from "node:crypto";
+import { OpenWorkflow } from "openworkflow";
+
+const WORKFLOW_RUN_COUNT = 1000;
+const WORKER_CONCURRENCY = 100;
+
+async function main() {
+  const databaseUrl = "postgresql://postgres:postgres@localhost:5432/postgres";
+  const backend = await BackendPostgres.connect(databaseUrl, {
+    namespaceId: randomUUID(),
+  });
+  const client = new OpenWorkflow({
+    backend,
+  });
+
+  const workflow = client.defineWorkflow(
+    { name: "benchmark-workflow" },
+    async ({ step }) => {
+      await step.run({ name: "step-1" }, () => {
+        return;
+      });
+      await step.run({ name: "step-2" }, () => {
+        return;
+      });
+      await step.run({ name: "step-3" }, () => {
+        return;
+      });
+      await step.run({ name: "step-4" }, () => {
+        return;
+      });
+      return { completed: true };
+    },
+  );
+
+  const worker = client.newWorker({ concurrency: WORKER_CONCURRENCY });
+
+  console.log("Starting benchmark...");
+  console.log("Configuration:");
+  console.log(`  - Workflow count: ${WORKFLOW_RUN_COUNT.toString()}`);
+  console.log(`  - Concurrency: ${WORKER_CONCURRENCY.toString()}`);
+  console.log("  - Steps per workflow: 4");
+  console.log("");
+
+  console.log("Phase 1: Enqueuing workflows...");
+  const enqueueStart = Date.now();
+
+  const handles = await Promise.all(
+    Array.from({ length: WORKFLOW_RUN_COUNT }, () => workflow.run()),
+  );
+
+  const enqueueTime = Date.now() - enqueueStart;
+  const enqueuePerSec = (WORKFLOW_RUN_COUNT / (enqueueTime / 1000)).toFixed(2);
+
+  console.log(
+    `Enqueued ${WORKFLOW_RUN_COUNT.toString()} workflows in ${enqueueTime.toString()}ms`,
+  );
+  console.log(`   (${enqueuePerSec} workflows/sec)`);
+  console.log("");
+
+  console.log("Phase 2: Processing workflows...");
+  const processStart = Date.now();
+
+  await worker.start();
+
+  // wait for all workflows to complete
+  await Promise.all(handles.map((h) => h.result()));
+
+  const processTime = Date.now() - processStart;
+  const totalTime = enqueueTime + processTime;
+
+  await worker.stop();
+
+  const workflowsPerSecond = (
+    WORKFLOW_RUN_COUNT /
+    (processTime / 1000)
+  ).toFixed(2);
+  const stepsPerSecond = (
+    (WORKFLOW_RUN_COUNT * 4) /
+    (processTime / 1000)
+  ).toFixed(2);
+  const avgLatencyMs = (processTime / WORKFLOW_RUN_COUNT).toFixed(2);
+
+  console.log(
+    `Processed ${WORKFLOW_RUN_COUNT.toString()} workflows in ${processTime.toString()}ms`,
+  );
+  console.log("");
+  console.log("Results:");
+  console.log("");
+  console.log(`Enqueue Time:            ${enqueueTime.toString()}ms`);
+  console.log(`Process Time:            ${processTime.toString()}ms`);
+  console.log(`Total Time:              ${totalTime.toString()}ms`);
+  console.log("");
+  console.log(`Workflows Completed:     ${WORKFLOW_RUN_COUNT.toString()}`);
+  console.log(
+    `Steps Executed:          ${(WORKFLOW_RUN_COUNT * 4).toString()}`,
+  );
+  console.log("");
+  console.log(`Workflows/sec:           ${workflowsPerSecond}`);
+  console.log(`Steps/sec:               ${stepsPerSecond}`);
+  console.log(`Avg Latency:             ${avgLatencyMs}ms`);
+
+  await backend.stop();
+}
+
+await main().catch((error: unknown) => {
+  console.error("Benchmark failed:", error);
+  throw error;
+});

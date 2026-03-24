@@ -45,6 +45,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => { ipcRenderer.removeListener('updater:status', listener); };
     },
   },
+  bridge: {
+    onEvent: (callback: (event: string, data: unknown) => void) => {
+      const listener = (_event: unknown, eventName: string, data: unknown) => callback(eventName, data);
+      ipcRenderer.on('bridge:event', listener);
+      return () => { ipcRenderer.removeListener('bridge:event', listener); };
+    },
+  },
   browser: {
     createTab: (url?: string) => ipcRenderer.invoke('browser:create-tab', url),
     closeTab: (tabId: string) => ipcRenderer.invoke('browser:close-tab', tabId),

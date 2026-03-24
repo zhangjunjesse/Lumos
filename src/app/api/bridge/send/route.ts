@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { feishuSend } from '@/lib/bridge/sync-helper';
+import { getBridgeService } from '@/lib/bridge/app/bridge-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +16,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await feishuSend({
+    const bridgeService = getBridgeService();
+    const result = await bridgeService.sendMessage({
       sessionId,
+      platform: 'feishu',
       mode,
       content,
       mediaIds,
@@ -40,10 +42,12 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ ok: true, messageId: result.messageId });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Internal error';
     return NextResponse.json(
-      { error: error?.message || 'Internal error', code: 'INTERNAL_ERROR' },
+      { error: message, code: 'INTERNAL_ERROR' },
       { status: 500 },
     );
   }
 }
+

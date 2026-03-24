@@ -2,15 +2,19 @@
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { BindingStatus } from "./types";
+import type { BindingBadgeStatus } from "./types";
 
 export interface BindingStatusBadgeProps {
-  status: BindingStatus;
+  status: BindingBadgeStatus;
   onClick?: () => void;
   className?: string;
 }
 
 const badgeConfig = {
+  pending: {
+    label: "待完成",
+    className: "bg-slate-500 text-white hover:bg-slate-600 cursor-pointer",
+  },
   active: {
     label: "已绑定",
     className: "bg-[#10B981] text-white hover:bg-[#059669] cursor-pointer",
@@ -22,6 +26,14 @@ const badgeConfig = {
   expired: {
     label: "登录失效",
     className: "bg-[#EF4444] text-white hover:bg-[#DC2626] cursor-pointer",
+  },
+  degraded: {
+    label: "同步异常",
+    className: "bg-[#F59E0B] text-white hover:bg-[#D97706] cursor-pointer",
+  },
+  failing: {
+    label: "连接异常",
+    className: "bg-[#DC2626] text-white hover:bg-[#B91C1C] cursor-pointer",
   },
 };
 

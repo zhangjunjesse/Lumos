@@ -10,9 +10,17 @@ export interface ShareLinkDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   shareLink: string;
+  onConfirm?: () => Promise<void> | void;
+  confirmLoading?: boolean;
 }
 
-export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDialogProps) {
+export function ShareLinkDialog({
+  open,
+  onOpenChange,
+  shareLink,
+  onConfirm,
+  confirmLoading = false,
+}: ShareLinkDialogProps) {
   const [qrState, setQrState] = useState({ source: "", dataUrl: "" });
   const qrImageUrl = qrState.source === shareLink ? qrState.dataUrl : "";
 
@@ -52,7 +60,7 @@ export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDial
         </DialogHeader>
         <div className="space-y-4 py-4">
           <p className="text-sm text-muted-foreground text-center">
-            使用飞书扫描二维码，加入群组后消息将实时同步
+            扫码加入群组后，点击“开始同步”才会正式激活这条绑定。
           </p>
           <div className="flex justify-center">
             {qrImageUrl ? (
@@ -70,12 +78,18 @@ export function ShareLinkDialog({ open, onOpenChange, shareLink }: ShareLinkDial
               <div className="w-[240px] h-[240px] bg-muted animate-pulse rounded-lg" />
             )}
           </div>
-          <div className="flex justify-center">
+          <div className="flex justify-center gap-2">
             <Button
               variant="ghost"
               onClick={() => onOpenChange(false)}
             >
-              关闭
+              稍后继续
+            </Button>
+            <Button
+              onClick={() => void onConfirm?.()}
+              disabled={!onConfirm || confirmLoading}
+            >
+              {confirmLoading ? "激活中..." : "开始同步"}
             </Button>
           </div>
         </div>

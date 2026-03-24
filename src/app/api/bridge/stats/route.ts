@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionBinding, getSyncStats } from '@/lib/db/feishu-bridge';
+import { getBridgeService } from '@/lib/bridge/app/bridge-service';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -12,15 +12,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const binding = getSessionBinding(sessionId, 'feishu');
-  if (!binding) {
+  const bridgeService = getBridgeService();
+  const stats = bridgeService.getSyncStats(sessionId, 'feishu');
+
+  if (!stats) {
     return NextResponse.json(
       { error: 'Binding not found', code: 'NOT_FOUND' },
       { status: 404 }
     );
   }
 
-  const stats = getSyncStats(binding.id);
-
   return NextResponse.json({ stats });
 }
+

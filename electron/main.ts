@@ -1,6 +1,7 @@
 import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain, shell, safeStorage } from 'electron';
 import path from 'path';
 import { execFileSync, spawn, ChildProcess } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
@@ -8,6 +9,11 @@ import { initAutoUpdater, setUpdaterWindow, registerUpdaterHandlers } from './up
 import { BrowserManager } from './browser/browser-manager';
 import { setupBrowserIPC } from './ipc/browser-handlers';
 import { BrowserBridgeServer } from './browser/bridge-server';
+import { FeishuBridgeRuntimeManager } from './bridge/runtime-manager';
+import {
+  clearBridgeRuntimeConfig,
+  initializeBridgeRuntimeConfig,
+} from '../src/lib/bridge/runtime-config';
 
 let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;
@@ -16,6 +22,8 @@ const browserBridgeContext: { browserManager: BrowserManager | null } = { browse
 let browserBridgeServer: BrowserBridgeServer | null = null;
 let browserBridgeUrl = '';
 let browserBridgeToken = '';
+let bridgeRuntimeManager: FeishuBridgeRuntimeManager | null = null;
+let bridgeRuntimeToken = '';
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
 let serverErrors: string[] = [];
@@ -74,6 +82,52 @@ function clearBrowserBridgeRuntime(): void {
     }
   } catch (error) {
     console.warn('[browser-bridge] failed to clear runtime config:', error);
+  }
+}
+
+function initializeBridgeRuntime(): void {
+  bridgeRuntimeToken = crypto.randomBytes(32).toString('hex');
+  initializeBridgeRuntimeConfig(bridgeRuntimeToken);
+}
+
+function broadcastBridgeEvent(eventName: string, payload: unknown): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send('bridge:event', eventName, payload);
+}
+
+async function startBridgeRuntime(port: number): Promise<void> {
+  if (!bridgeRuntimeToken) {
+    initializeBridgeRuntime();
+  }
+
+  const baseUrl = `http://127.0.0.1:${port}`;
+  if (!bridgeRuntimeManager) {
+    bridgeRuntimeManager = new FeishuBridgeRuntimeManager({
+      baseUrl,
+      token: bridgeRuntimeToken,
+      onUiEvent: (eventName, payload) => {
+        broadcastBridgeEvent(eventName, payload);
+      },
+    });
+  } else {
+    bridgeRuntimeManager.setBaseUrl(baseUrl);
+  }
+
+  await bridgeRuntimeManager.start();
+}
+
+async function stopBridgeRuntime(): Promise<void> {
+  if (!bridgeRuntimeManager) return;
+
+  try {
+    await bridgeRuntimeManager.stop();
+  } catch (error) {
+    console.error('[Bridge Runtime] Failed to stop:', error);
+  } finally {
+    bridgeRuntimeManager = null;
   }
 }
 
@@ -419,6 +473,7 @@ function startServer(port: number): Electron.UtilityProcess {
     LUMOS_CLAUDE_CONFIG_DIR: claudeConfigDir,
     ...(browserBridgeUrl ? { LUMOS_BROWSER_BRIDGE_URL: browserBridgeUrl } : {}),
     ...(browserBridgeToken ? { LUMOS_BROWSER_BRIDGE_TOKEN: browserBridgeToken } : {}),
+    ...(bridgeRuntimeToken ? { LUMOS_BRIDGE_RUNTIME_TOKEN: bridgeRuntimeToken } : {}),
     ...(defaultKey ? { LUMOS_DEFAULT_API_KEY: defaultKey } : {}),
     ...(process.env.CODEPILOT_DEFAULT_BASE_URL
       ? { CODEPILOT_DEFAULT_BASE_URL: process.env.CODEPILOT_DEFAULT_BASE_URL }
@@ -665,9 +720,15 @@ function openAuthWindow(targetUrl: string) {
   });
 }
 
+async function ensureBridgeRuntimeReady(port: number): Promise<void> {
+  await startBridgeRuntime(port);
+}
+
 app.whenReady().then(async () => {
   // Clear stale bridge runtime file from previous crashes/restarts.
   clearBrowserBridgeRuntime();
+  clearBridgeRuntimeConfig();
+  initializeBridgeRuntime();
 
   app.on('web-contents-created', (_event, contents) => {
     contents.setWindowOpenHandler((details) => {
@@ -1228,15 +1289,7 @@ app.whenReady().then(async () => {
     serverPort = port;
     createWindow(port);
 
-    // Start WebSocket listener via API
-    try {
-      const res = await fetch(`http://localhost:${port}/api/bridge/websocket`, { method: 'POST' });
-      if (res.ok) {
-        console.log('[Bridge] WebSocket listener started via API');
-      }
-    } catch (err) {
-      console.error('[Bridge] Failed to start WebSocket listener:', err);
-    }
+    await ensureBridgeRuntimeReady(port);
 
     // Sync skills via API
     try {
@@ -1265,10 +1318,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', async () => {
-  if (feishuListener) {
-    await feishuListener.stop();
-    feishuListener = null;
-  }
+  await stopBridgeRuntime();
   await killServer();
   if (process.platform !== 'darwin') {
     app.quit();
@@ -1285,6 +1335,9 @@ app.on('activate', async () => {
         serverPort = port;
       }
       createWindow(serverPort || getPreferredServerPort());
+      if (serverPort) {
+        await startBridgeRuntime(serverPort);
+      }
 
       // Re-attach updater to the new window
       if (!isDev && mainWindow) {
@@ -1334,26 +1387,8 @@ app.on('before-quit', async (e) => {
     browserBridgeToken = '';
   }
   clearBrowserBridgeRuntime();
-
-  // Stop WebSocket listener
-  if (serverPort) {
-    try {
-      await fetch(`http://localhost:${serverPort}/api/bridge/websocket`, { method: 'DELETE' });
-      console.log('[Bridge] WebSocket listener stopped');
-    } catch {
-      // Server might already be down
-    }
-  }
-
-  // 清理 BridgeManager
-  if (bridgeManager) {
-    try {
-      await bridgeManager.stop();
-      console.log('[main] Bridge system stopped');
-    } catch (error) {
-      console.error('[main] Failed to stop Bridge system:', error);
-    }
-  }
+  await stopBridgeRuntime();
+  clearBridgeRuntimeConfig();
   if (serverProcess && !isQuitting) {
     isQuitting = true;
     e.preventDefault();

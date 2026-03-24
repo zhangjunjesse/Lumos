@@ -1,0 +1,282 @@
+---
+title: Workflows
+description: Durable functions that survive crashes and resume where they left off
+---
+
+A workflow is a function that describes a multi-step process — like processing
+an order, onboarding a new user, or syncing data with an external service. What
+makes it special is that it's durable: OpenWorkflow saves the progress of each
+step to the database. If the process crashes or the server restarts, the
+workflow picks up right where it left off instead of starting over.
+
+## Defining a Workflow
+
+Define a workflow with `defineWorkflow`:
+
+```ts
+import { defineWorkflow } from "openworkflow";
+
+export const sendWelcomeEmail = defineWorkflow(
+  { name: "send-welcome-email" },
+  async ({ input, step }) => {
+    const user = await step.run({ name: "fetch-user" }, async () => {
+      return await db.users.findOne({ id: input.userId });
+    });
+
+    await step.run({ name: "send-email" }, async () => {
+      await emailService.send({
+        to: user.email,
+        subject: "Welcome!",
+        body: "Thanks for signing up.",
+      });
+    });
+
+    return { sent: true };
+  },
+);
+```
+
+A workflow consists of:
+
+1. **A spec** - Configuration including the workflow name and optional version
+2. **A function** - The async function that contains your workflow logic
+
+## Running a Workflow
+
+Start a workflow by calling `ow.runWorkflow()` with the workflow's `spec`:
+
+```ts
+import { ow } from "./openworkflow/client";
+import { sendWelcomeEmail } from "./workflows/send-welcome-email";
+
+const handle = await ow.runWorkflow(sendWelcomeEmail.spec, {
+  userId: "user_123",
+});
+```
+
+`ow.runWorkflow()` returns a handle immediately. The actual workflow execution
+happens in a worker process. This lets your application continue without waiting
+for the workflow to complete.
+
+<Note>
+  If you define a workflow with `ow.defineWorkflow(...)` instead, it returns a
+  runnable workflow that supports `.run(...)` directly.
+</Note>
+
+### Scheduling a Workflow Run
+
+You can schedule a workflow run for a specific time by passing `availableAt`:
+
+```ts
+const runAt = new Date("2026-02-05T15:00:00.000Z");
+const handle = await ow.runWorkflow(
+  sendWelcomeEmail.spec,
+  { userId: "user_123" },
+  { availableAt: runAt },
+);
+```
+
+You can also pass a duration string using the same [duration
+format](/docs/sleeping#duration-formats) as `step.sleep`:
+
+```ts
+const handle = await ow.runWorkflow(
+  sendWelcomeEmail.spec,
+  { userId: "user_123" },
+  { availableAt: "5m" },
+);
+```
+
+The run stays `pending` until `availableAt` is reached, then workers can claim
+it. If `availableAt` is in the past, the run is immediately available.
+
+## Waiting for Results
+
+If you need to wait for a workflow to complete, use `.result()` on the handle:
+
+```ts
+const handle = await ow.runWorkflow(sendWelcomeEmail.spec, {
+  userId: "user_123",
+});
+
+// Wait for completion (polls the database)
+const result = await handle.result();
+console.log(result); // { sent: true }
+```
+
+<Note>
+  `result()` polls the database periodically. Use this for workflows that
+  complete quickly (seconds to minutes). For long-running workflows, consider
+  using events or callbacks instead.
+</Note>
+
+You can also configure a custom timeout:
+
+```ts
+const result = await handle.result({ timeoutMs: 60000 }); // 1 minute timeout
+```
+
+## Workflow Options
+
+### Name (Required)
+
+Every workflow needs a unique name. This name is used to identify the workflow
+in the database and must match when workers execute the workflow.
+
+```ts
+defineWorkflow({ name: "process-order" }, async ({ input, step }) => {
+  // ...
+});
+```
+
+### Version (Optional)
+
+Use versioning when you need to support multiple implementations of the same
+workflow simultaneously. See [Versioning](/docs/versioning) for details.
+
+```ts
+defineWorkflow(
+  { name: "process-order", version: "v2" },
+  async ({ input, step, version }) => {
+    // version === "v2"
+  },
+);
+```
+
+### Schema (Optional)
+
+Validate inputs before the workflow is enqueued using any Standard Schema
+compatible validator. See [Standard Schema](/docs/standard-schema) for details.
+
+```ts
+import { z } from "zod";
+
+defineWorkflow(
+  {
+    name: "send-email",
+    schema: z.object({
+      to: z.string().email(),
+      subject: z.string().min(1),
+    }),
+  },
+  async ({ input, step }) => {
+    // input is typed and validated
+  },
+);
+```
+
+### Retry Policy (Optional)
+
+Control backoff and retry limits for this workflow:
+
+```ts
+defineWorkflow(
+  {
+    name: "process-order",
+    retryPolicy: {
+      initialInterval: "1s",
+      backoffCoefficient: 2,
+      maximumInterval: "30s",
+      maximumAttempts: 5,
+    },
+  },
+  async ({ input, step }) => {
+    // ...
+  },
+);
+```
+
+Any `retryPolicy` fields you omit fall back to defaults. See
+[Retries](/docs/retries) for the full behavior and defaults.
+
+### Idempotency Key (Optional)
+
+You can prevent duplicate run creation by providing an idempotency key, though
+there is a performance cost to checking for duplicates, so use this only when
+necessary:
+
+```ts
+const handle = await ow.runWorkflow(
+  sendWelcomeEmail.spec,
+  { userId: "user_123" },
+  { idempotencyKey: "welcome-email:user_123" },
+);
+```
+
+Within a given namespace, when an existing run matches the same
+`workflowName` + `idempotencyKey`, OpenWorkflow returns that existing run
+immediately. This dedupe window is built-in and lasts 24 hours from the original
+run creation time. The same `idempotencyKey` used in a different namespace will
+create a separate run.
+
+## Workflow Function Parameters
+
+The workflow function receives an object with four properties:
+
+| Parameter | Type                  | Description                                                           |
+| --------- | --------------------- | --------------------------------------------------------------------- |
+| `input`   | Generic               | The input data passed when starting the workflow                      |
+| `step`    | `StepApi`             | API for defining steps (`step.run`, `step.sleep`, `step.runWorkflow`) |
+| `version` | `string \| null`      | The workflow version, if specified                                    |
+| `run`     | `WorkflowRunMetadata` | Read-only run metadata snapshot (`run.id`, etc.)                      |
+
+```ts
+defineWorkflow({ name: "example" }, async ({ input, step, version, run }) => {
+  console.log("Input:", input);
+  console.log("Version:", version);
+  console.log("Run ID:", run.id);
+
+  await step.run({ name: "my-step" }, async () => {
+    // step logic
+  });
+});
+```
+
+## Workflow Run States
+
+A workflow run progresses through these states:
+
+| Status      | Description                                                                      |
+| ----------- | -------------------------------------------------------------------------------- |
+| `pending`   | Created and waiting for a worker to claim it                                     |
+| `running`   | Actively executing, or durably parked with `workerId = null` until `availableAt` |
+| `completed` | Finished successfully                                                            |
+| `failed`    | Failed after exhausting retries, hitting deadline, or step cap                   |
+| `canceled`  | Explicitly canceled and will not continue                                        |
+
+## Determinism
+
+<Info>
+  **New to workflow engines?** This is the most important rule to understand.
+  It's simple once you know *why* it exists.
+</Info>
+
+When a workflow resumes after a crash, OpenWorkflow replays it from the
+beginning. Completed steps return their saved results instantly, so no work is
+repeated. But for this to work, the workflow must take the same path every time
+it runs with the same inputs — it must be **deterministic**.
+
+This means you should avoid putting non-deterministic operations (like API
+calls, random numbers, or the current time) directly in the workflow body.
+Instead, wrap them in steps so their results are saved and replayed
+consistently.
+
+<Warning>
+  Avoid calling `Math.random()`, `Date.now()`, or making API calls directly in
+  the workflow function, since those change on each run, meaning they are
+  non-deterministic. Wrap them in steps instead.
+</Warning>
+
+```ts
+// Bad - non-deterministic
+defineWorkflow({ name: "bad" }, async ({ step }) => {
+  const random = Math.random(); // Different on replay!
+  // ...
+});
+
+// Good - deterministic
+defineWorkflow({ name: "good" }, async ({ step }) => {
+  const random = await step.run({ name: "get-random" }, () => Math.random());
+  // ...
+});
+```

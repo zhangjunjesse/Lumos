@@ -2,7 +2,8 @@
  * 飞书同步功能类型定义
  */
 
-export type BindingStatus = 'active' | 'inactive' | 'expired';
+export type BindingStatus = 'pending' | 'active' | 'inactive' | 'expired';
+export type BindingBadgeStatus = BindingStatus | 'degraded' | 'failing';
 
 export interface Binding {
   id: number;
@@ -21,6 +22,32 @@ export interface SyncStats {
   successCount: number;
   failedCount: number;
   lastSyncAt: number | null;
+}
+
+export interface BridgeHealthBinding {
+  bindingId: number;
+  platform: string;
+  channelId: string;
+  channelName?: string;
+  bindingStatus: 'pending' | 'active' | 'paused' | 'expired' | 'deleted';
+  authStatus: 'ok' | 'missing' | 'expired' | 'revoked';
+  transportStatus: 'starting' | 'connected' | 'reconnecting' | 'disconnected' | 'stale';
+  pipelineStatus: 'healthy' | 'degraded' | 'failing';
+  lastInboundEventAt: number | null;
+  lastInboundSuccessAt: number | null;
+  lastInboundFailureAt: number | null;
+  lastOutboundSuccessAt: number | null;
+  lastOutboundFailureAt: number | null;
+  consecutiveInboundFailures: number;
+  consecutiveOutboundFailures: number;
+  latestRetryableInboundEventId: string | null;
+  latestRetryableInboundError: string | null;
+  summary: string;
+}
+
+export interface BridgeHealthView {
+  sessionId: string;
+  bindings: BridgeHealthBinding[];
 }
 
 export interface CreateBindingResponse {

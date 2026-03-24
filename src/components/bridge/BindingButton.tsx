@@ -9,6 +9,11 @@ import { BindingStatusPopover } from "./BindingStatusPopover";
 import { ShareLinkDialog } from "./ShareLinkDialog";
 import { Toast } from "@/components/ui/toast";
 import { openAuthUrl } from "@/lib/open-auth";
+import type {
+  Binding,
+  BindingBadgeStatus,
+  BridgeHealthBinding,
+} from "./types";
 
 interface BindingButtonProps {
   sessionId: string;
@@ -25,12 +30,80 @@ interface FeishuAuthStatus {
   willExpireSoon?: boolean;
 }
 
+function getDisplayBinding(
+  binding: Binding,
+  health: BridgeHealthBinding | null,
+  authStatus: FeishuAuthStatus | null,
+): Binding {
+  if (binding.status === "pending") {
+    return binding;
+  }
+
+  if (binding.status === "inactive") {
+    return binding;
+  }
+
+  if (health?.bindingStatus === "paused") {
+    return { ...binding, status: "inactive" };
+  }
+
+  if (
+    binding.status === "expired" ||
+    health?.bindingStatus === "expired" ||
+    health?.authStatus === "expired" ||
+    (authStatus?.authenticated === false && binding.status === "active")
+  ) {
+    return { ...binding, status: "expired" };
+  }
+
+  return binding;
+}
+
+function getBadgeStatus(binding: Binding, health: BridgeHealthBinding | null): BindingBadgeStatus {
+  if (binding.status === "pending") return "pending";
+  if (binding.status === "expired") return "expired";
+  if (binding.status === "inactive") return "inactive";
+
+  if (!health) {
+    return binding.status;
+  }
+
+  if (
+    health.transportStatus === "disconnected" ||
+    health.transportStatus === "stale" ||
+    health.pipelineStatus === "failing"
+  ) {
+    return "failing";
+  }
+
+  if (
+    health.transportStatus === "starting" ||
+    health.transportStatus === "reconnecting" ||
+    health.pipelineStatus === "degraded"
+  ) {
+    return "degraded";
+  }
+
+  return "active";
+}
+
 export function BindingButton({ sessionId }: BindingButtonProps) {
-  const { binding, stats, loading, updateBinding, deleteBinding, refetch } = useBinding(sessionId);
+  const {
+    binding,
+    health,
+    stats,
+    loading,
+    updateBinding,
+    deleteBinding,
+    refetch,
+    retryLatestFailedInbound,
+  } = useBinding(sessionId);
   const [configured, setConfigured] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [activatingPending, setActivatingPending] = useState(false);
   const [loginInFlight, setLoginInFlight] = useState(false);
+  const [retryingLatestFailedInbound, setRetryingLatestFailedInbound] = useState(false);
   const [authStatus, setAuthStatus] = useState<FeishuAuthStatus | null>(null);
   const [shareLink, setShareLink] = useState("");
   const [showShareDialog, setShowShareDialog] = useState(false);
@@ -164,6 +237,13 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
 
       if (latest.authenticated) {
         authLostNotifiedRef.current = false;
+        if (binding?.status === "expired") {
+          const result = await updateBinding(binding.id, { status: "active" });
+          if (!cancelled && result.success) {
+            await refetch();
+            setToast({ type: "success", message: "飞书授权已恢复，已自动恢复同步" });
+          }
+        }
         return;
       }
 
@@ -323,17 +403,29 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
     }
   };
 
+  const handleActivatePending = useCallback(async () => {
+    if (!binding || binding.status !== "pending") return;
+
+    setActivatingPending(true);
+    try {
+      const result = await updateBinding(binding.id, { status: "active" });
+      if (result.success) {
+        await refetch();
+        setShowShareDialog(false);
+        setToast({ type: "success", message: "飞书同步已激活" });
+      } else {
+        setToast({ type: "error", message: result.error || "激活同步失败" });
+      }
+    } finally {
+      setActivatingPending(false);
+    }
+  }, [binding, refetch, updateBinding]);
+
   if (configLoading || loading) return null;
 
   const showBindButton = !binding;
-  const shouldMarkExpired =
-    Boolean(binding) &&
-    Boolean(authStatus) &&
-    authStatus?.authenticated === false &&
-    binding?.status === "active";
-  const displayBinding = binding && shouldMarkExpired
-    ? { ...binding, status: "expired" as const }
-    : binding;
+  const displayBinding = binding ? getDisplayBinding(binding, health, authStatus) : null;
+  const badgeStatus = displayBinding ? getBadgeStatus(displayBinding, health) : null;
 
   return (
     <>
@@ -357,17 +449,38 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
       ) : (
         <BindingStatusPopover
           binding={displayBinding!}
+          health={health}
           stats={stats}
           onToggleSync={handleToggleSync}
           onUnbind={handleUnbind}
+          onOpenInvite={() => {
+            setShareLink(binding?.share_link || "");
+            setShowShareDialog(true);
+          }}
+          onActivatePending={handleActivatePending}
           onRelogin={async () => {
             pendingEnableSyncRef.current = binding?.id ?? null;
             await openFeishuLogin(false);
           }}
+          onRetryLatestFailedInbound={async () => {
+            setRetryingLatestFailedInbound(true);
+            try {
+              const result = await retryLatestFailedInbound();
+              if (result.success) {
+                setToast({ type: "success", message: "已触发最近失败消息的重试" });
+              } else {
+                setToast({ type: "error", message: result.error || "重试失败" });
+              }
+            } finally {
+              setRetryingLatestFailedInbound(false);
+            }
+          }}
+          activatePendingLoading={activatingPending}
           reloginLoading={loginInFlight}
+          retryLatestFailedInboundLoading={retryingLatestFailedInbound}
           authExpiresAt={authStatus?.expiresAt ?? null}
         >
-          <BindingStatusBadge status={displayBinding!.status} />
+          <BindingStatusBadge status={badgeStatus!} />
         </BindingStatusPopover>
       )}
 
@@ -375,6 +488,8 @@ export function BindingButton({ sessionId }: BindingButtonProps) {
         open={showShareDialog}
         onOpenChange={setShowShareDialog}
         shareLink={shareLink}
+        onConfirm={handleActivatePending}
+        confirmLoading={activatingPending}
       />
 
       {toast && (

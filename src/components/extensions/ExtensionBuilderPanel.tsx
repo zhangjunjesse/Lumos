@@ -14,7 +14,6 @@ export function ExtensionBuilderPanel() {
   const [sessionId, setSessionId] = useState('');
   const [sessionModel, setSessionModel] = useState('');
   const [sessionProviderId, setSessionProviderId] = useState('');
-  const [sessionMode, setSessionMode] = useState('code');
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -45,7 +44,6 @@ export function ExtensionBuilderPanel() {
             id = data.session.id;
             setSessionModel(data.session.model || '');
             setSessionProviderId(data.session.provider_id || '');
-            setSessionMode(data.session.mode || 'code');
           } else {
             localStorage.removeItem(STORAGE_KEY);
           }
@@ -66,7 +64,6 @@ export function ExtensionBuilderPanel() {
           localStorage.setItem(STORAGE_KEY, id);
           setSessionModel(data.session.model || '');
           setSessionProviderId(data.session.provider_id || '');
-          setSessionMode(data.session.mode || 'code');
         } catch (err) {
           if (!cancelled) {
             setError(err instanceof Error ? err.message : 'Failed to initialize builder');
@@ -142,7 +139,6 @@ export function ExtensionBuilderPanel() {
           initialMessages={messages}
           initialHasMore={hasMore}
           modelName={sessionModel}
-          initialMode={sessionMode}
           providerId={sessionProviderId}
         />
       </div>
