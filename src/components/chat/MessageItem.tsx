@@ -26,7 +26,9 @@ import { buildReferenceImages } from '@/lib/image-ref-store';
 import { parseDBDate } from '@/lib/utils';
 import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
+import { TaskCard, parseTeamPlanBlock } from './TaskCard';
 import { filterSystemPrompt } from '@/lib/filter-system-prompt';
+import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -468,6 +470,11 @@ export function MessageItem({ message }: MessageItemProps) {
           />
         )}
 
+        {!isUser && (() => {
+          const ds = extractDeepSearchSources(pairedTools);
+          return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} /> : null;
+        })()}
+
         {!isUser && (
           <ArtifactReferencePreview
             text={displayText}
@@ -542,6 +549,18 @@ export function MessageItem({ message }: MessageItemProps) {
                   {extensionPlanResult.beforeText && <MessageResponse>{extensionPlanResult.beforeText}</MessageResponse>}
                   <ExtensionPlanCard plan={extensionPlanResult.plan} />
                   {extensionPlanResult.afterText && <MessageResponse>{extensionPlanResult.afterText}</MessageResponse>}
+                </>
+              );
+            }
+
+            // Team plan → inline TaskCard
+            const teamPlanResult = parseTeamPlanBlock(displayText);
+            if (teamPlanResult) {
+              return (
+                <>
+                  {teamPlanResult.beforeText && <MessageResponse>{teamPlanResult.beforeText}</MessageResponse>}
+                  <TaskCard content={teamPlanResult.planContent} sessionId="" />
+                  {teamPlanResult.afterText && <MessageResponse>{teamPlanResult.afterText}</MessageResponse>}
                 </>
               );
             }
@@ -621,6 +640,7 @@ export function MessageItem({ message }: MessageItemProps) {
               .replace(/```image-gen-result[\s\S]*?```/g, '')
               .replace(/```batch-plan[\s\S]*?```/g, '')
               .replace(/```lumos-extension-plan[\s\S]*?```/g, '')
+              .replace(/```lumos-team-plan[\s\S]*?```/g, '')
               .trim();
             return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;
           })()

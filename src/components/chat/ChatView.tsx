@@ -1,24 +1,27 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type {
   ChatKnowledgeOptions,
   Message,
   MessagesResponse,
   PermissionRequestEvent,
   FileAttachment,
-  TeamBannerProjectionResponseV1,
+  TeamBannerProjectionV1,
 } from '@/types';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useTaskEvents } from '@/hooks/useTaskEvents';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
+import { TaskStatusBar } from './TaskStatusBar';
 import { usePanel } from '@/hooks/usePanel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
+import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { useStreamingStore } from '@/stores/streaming-store';
 import { useMessagesStore } from '@/stores/messages-store';
 import {
@@ -28,6 +31,7 @@ import {
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
+import { ProviderSwitchDialog } from './ProviderSwitchDialog';
 
 interface ToolUseInfo {
   id: string;
@@ -124,6 +128,7 @@ export function ChatView({
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
+  const router = useRouter();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = useMemo(
     () => workingDirectoryOverride || workingDirectory,
@@ -160,9 +165,12 @@ export function ChatView({
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>(() => initialStreamingToolResults);
   const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
   const [currentModel, setCurrentModel] = useState(
-    modelName || (typeof window !== 'undefined' ? localStorage.getItem('codepilot:last-model') : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
+    modelName || (typeof window !== 'undefined' ? (localStorage.getItem('lumos:last-model') || localStorage.getItem('codepilot:last-model')) : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
   );
   const [currentProviderId, setCurrentProviderId] = useState(providerId || '');
+  const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
+  const [switchDialogPayload, setSwitchDialogPayload] = useState<{ providerId: string; model: string; providerName?: string } | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(
     () => cachedStreamingState?.pendingPermission || null
   );
@@ -195,7 +203,7 @@ export function ChatView({
     ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
-  const teamProjectionVersionRef = useRef<number | null>(null);
+  const [taskBanner, setTaskBanner] = useState<TeamBannerProjectionV1 | null>(null);
 
   const syncMessagesFromServer = useCallback(async () => {
     if (messagesRef.current.some((message) => isTempMessageId(message.id))) {
@@ -264,47 +272,17 @@ export function ChatView({
     hasMoreRef.current = hasMore;
   }, [hasMore]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const pollTeamConversation = async () => {
-      if (cancelled || isStreaming) {
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/team-banner`, {
-          cache: 'no-store',
-        });
-        if (!response.ok) {
-          return;
-        }
-
-        const data = await response.json() as TeamBannerProjectionResponseV1;
-        const banner = data.banner;
-        const nextProjectionVersion = banner?.projectionVersion ?? null;
-        const hasChanged = teamProjectionVersionRef.current !== null
-          && nextProjectionVersion !== teamProjectionVersionRef.current;
-        teamProjectionVersionRef.current = nextProjectionVersion;
-
-        if (hasChanged) {
-          await syncMessagesFromServer();
-        }
-      } catch {
-        // Best effort only.
-      }
-    };
-
-    void pollTeamConversation();
-    const interval = window.setInterval(() => {
-      void pollTeamConversation();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [isStreaming, sessionId, syncMessagesFromServer]);
+  // SSE-based task events — replaces 2-second team-banner polling
+  useTaskEvents({
+    sessionId,
+    enabled: !isStreaming,
+    onEvent: useCallback(() => {
+      void syncMessagesFromServer();
+    }, [syncMessagesFromServer]),
+    onSnapshot: useCallback((banner: unknown) => {
+      setTaskBanner(banner as TeamBannerProjectionV1 | null);
+    }, []),
+  });
 
   const appendMessage = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -367,11 +345,60 @@ export function ChatView({
     }
   }, [sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
 
-  const handleProviderModelChange = useCallback((newProviderId: string, model: string) => {
-    setCurrentProviderId(newProviderId);
+  const executeSwitchProvider = useCallback(async (nextProviderId: string, model: string) => {
+    setSwitchError(null);
+    try {
+      const entry = getSessionEntryFromPath(pathname);
+      const createBody: Record<string, string> = {
+        entry,
+        mode,
+        model,
+        provider_id: nextProviderId,
+      };
+
+      const nextWorkingDirectory = effectiveWorkingDirectory.trim();
+      if (entry !== 'main-agent' && nextWorkingDirectory) {
+        createBody.working_directory = nextWorkingDirectory;
+      }
+
+      const response = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createBody),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string; session?: { id?: string } };
+      if (!response.ok || !data.session?.id) {
+        throw new Error(data.error || '创建新会话失败');
+      }
+
+      window.dispatchEvent(new CustomEvent('session-created'));
+      router.push(`${getSessionEntryBasePath(entry)}/${data.session.id}`);
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '切换失败');
+    }
+  }, [effectiveWorkingDirectory, mode, pathname, router]);
+
+  const handleProviderModelChange = useCallback(async (newProviderId: string, model: string) => {
+    const nextProviderId = newProviderId.trim();
+    const currentProvider = currentProviderId.trim();
+    const providerChanged = Boolean(nextProviderId && currentProvider && nextProviderId !== currentProvider);
+    const canForkSession = pathname === `/chat/${sessionId}` || pathname === `/main-agent/${sessionId}`;
+
+    if (providerChanged && canForkSession) {
+      if (isStreaming) {
+        setSwitchError('AI 回复中，暂时不能切换');
+        return;
+      }
+
+      setSwitchDialogPayload({ providerId: nextProviderId, model });
+      setSwitchDialogOpen(true);
+      return;
+    }
+
+    setCurrentProviderId(nextProviderId);
     setCurrentModel(model);
     onRequestedModelChange?.(model);
-  }, [onRequestedModelChange]);
+  }, [currentProviderId, isStreaming, onRequestedModelChange, pathname, sessionId]);
 
   // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
@@ -549,34 +576,7 @@ export function ChatView({
   }, [modelName]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const syncProviderFromDefault = async () => {
-      try {
-        const res = await fetch('/api/providers/models');
-        if (!res.ok) return;
-        const data = await res.json() as { default_provider_id?: string };
-        if (cancelled) return;
-
-        if (data.default_provider_id) {
-          setCurrentProviderId(data.default_provider_id);
-          return;
-        }
-
-        setCurrentProviderId(providerId || '');
-      } catch {
-        if (!cancelled && providerId) {
-          setCurrentProviderId(providerId);
-        }
-      }
-    };
-
-    void syncProviderFromDefault();
-    window.addEventListener('provider-changed', syncProviderFromDefault);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('provider-changed', syncProviderFromDefault);
-    };
+    setCurrentProviderId(providerId || '');
   }, [providerId]);
 
   useEffect(() => {
@@ -1277,6 +1277,8 @@ export function ChatView({
         ) : null}
       </div>
 
+      <TaskStatusBar banner={taskBanner} />
+
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}
@@ -1294,6 +1296,39 @@ export function ChatView({
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
       />
+
+      <ProviderSwitchDialog
+        open={switchDialogOpen}
+        onOpenChange={(open) => {
+          setSwitchDialogOpen(open);
+          if (!open) setSwitchDialogPayload(null);
+        }}
+        onConfirm={() => {
+          if (switchDialogPayload) {
+            void executeSwitchProvider(switchDialogPayload.providerId, switchDialogPayload.model);
+          }
+          setSwitchDialogOpen(false);
+          setSwitchDialogPayload(null);
+        }}
+        targetProviderName={switchDialogPayload?.providerName}
+      />
+
+      {switchError && (
+        <div className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 animate-in fade-in slide-in-from-bottom-2">
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive shadow-lg backdrop-blur-sm">
+            <span>{switchError}</span>
+            <button
+              type="button"
+              className="ml-1 rounded p-0.5 hover:bg-destructive/20"
+              onClick={() => setSwitchError(null)}
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3l6 6M9 3l-6 6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

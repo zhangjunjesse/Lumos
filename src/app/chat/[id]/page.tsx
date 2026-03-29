@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
-import { ChatTaskRail } from '@/components/chat/chat-task-rail';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
@@ -207,8 +206,21 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       }
 
       const data: MessagesResponse = await res.json();
+      const nextMessages = data.messages || [];
+      const current = getMessagesSession(id);
+      const currentMessages = current?.messages || [];
+
+      const sameLength = currentMessages.length === nextMessages.length;
+      const sameLastId = sameLength
+        && currentMessages.length > 0
+        && currentMessages[currentMessages.length - 1]?.id === nextMessages[nextMessages.length - 1]?.id;
+
+      if (sameLength && sameLastId && !current?.loading && !current?.error) {
+        return;
+      }
+
       updateSessionMessages(id, {
-        messages: data.messages,
+        messages: nextMessages,
         hasMore: data.hasMore ?? false,
         loading: false,
         error: null,
@@ -219,7 +231,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         error: err instanceof Error ? err.message : 'Failed to load messages',
       });
     }
-  }, [id, t, updateSessionMessages]);
+  }, [id, t, getMessagesSession, updateSessionMessages]);
 
   const injectInboundPreviewMessage = useCallback((payload: BridgeInboundEventPayload) => {
     if (!payload.messageId || !payload.previewText) {
@@ -297,7 +309,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         if (data.session.working_directory) {
           setWorkingDirectory(data.session.working_directory);
           setSessionWorkingDir(data.session.working_directory);
-          localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
+          localStorage.setItem("lumos:last-working-directory", data.session.working_directory);
           window.dispatchEvent(new Event('refresh-file-tree'));
         } else {
           setWorkingDirectory('');
@@ -363,39 +375,17 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     };
   }, [id]);
 
+  // Refresh messages when tab becomes visible (SSE handles real-time updates)
   useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-
-    const refreshMessages = () => {
-      if (cancelled || inFlight) return;
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-
-      inFlight = true;
-      refreshLatestMessages()
-        .catch((err) => {
-          console.error('[ChatPage] Polling messages failed:', err);
-        })
-        .finally(() => {
-          inFlight = false;
-        });
-    };
-
-    const interval = setInterval(refreshMessages, 4000);
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshMessages();
+        refreshLatestMessages().catch(() => {});
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [id, refreshLatestMessages]);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refreshLatestMessages]);
 
   useEffect(() => {
     const handleBridgeEvent = (eventName: string, payload: unknown) => {
@@ -612,8 +602,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           </AlertDialogContent>
         </AlertDialog>
       </div>
-
-      <ChatTaskRail sessionId={id} />
     </div>
   );
 }

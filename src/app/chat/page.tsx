@@ -71,7 +71,7 @@ export default function NewChatPage() {
       return;
     }
 
-    const saved = localStorage.getItem('codepilot:last-working-directory');
+    const saved = localStorage.getItem('lumos:last-working-directory');
     if (saved) {
       setWorkingDir(saved);
       setWorkingDirectory(saved);
@@ -84,7 +84,7 @@ export default function NewChatPage() {
         if (active?.path) {
           setWorkingDir(active.path);
           setWorkingDirectory(active.path);
-          localStorage.setItem('codepilot:last-working-directory', active.path);
+          localStorage.setItem('lumos:last-working-directory', active.path);
         }
       })
       .catch(() => {});
@@ -166,12 +166,15 @@ export default function NewChatPage() {
 
       try {
         const createBody: Record<string, string> = {
-          title: content.slice(0, 50),
           mode: 'code',
           entry: sessionEntry,
+          model: currentModel,
         };
         if (workingDir.trim()) {
           createBody.working_directory = workingDir.trim();
+        }
+        if (currentProviderId.trim()) {
+          createBody.provider_id = currentProviderId.trim();
         }
 
         const createRes = await fetch('/api/chat/sessions', {
@@ -231,7 +234,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [isMainAgentEntry, isStreaming, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
+    [currentModel, currentProviderId, isMainAgentEntry, isStreaming, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
   );
 
   const handleConflictResolve = useCallback(async (action: 'replace' | 'keep_both' | 'cancel') => {

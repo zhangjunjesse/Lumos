@@ -1,5 +1,5 @@
-import { WorkflowCenterView } from '@/components/workflow/workflow-center-view';
+import { redirect } from 'next/navigation';
 
 export default function WorkflowPage() {
-  return <WorkflowCenterView />;
+  redirect('/main-agent');
 }

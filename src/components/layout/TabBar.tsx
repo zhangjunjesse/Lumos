@@ -60,6 +60,7 @@ const TAB_TYPE_CONFIG: Record<
   settings: { i18nKey: 'tab.settings', icon: Settings2, closable: true },
   knowledge: { i18nKey: 'tab.knowledge', icon: BookOpen, closable: true },
   plugins: { i18nKey: 'tab.plugins', icon: Puzzle, closable: true },
+  'task-activity': { i18nKey: 'tab.taskActivity', icon: File, closable: true },
 };
 
 // "Files" tab is fixed by ContentPanel, and preview tabs are created by user actions.
@@ -121,6 +122,7 @@ export function TabBar() {
       type,
       title: t(config.i18nKey),
       closable: config.closable,
+      ...(type === 'browser' ? { data: { fitWidth: false } } : {}),
     });
   };
 

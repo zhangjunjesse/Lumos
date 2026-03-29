@@ -10,7 +10,8 @@ export type TabType =
   | 'settings'
   | 'knowledge'
   | 'plugins'
-  | 'file-preview';
+  | 'file-preview'
+  | 'task-activity';
 
 export interface Tab {
   id: string; // UUID

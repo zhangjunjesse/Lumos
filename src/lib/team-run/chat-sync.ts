@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { randomBytes } from 'crypto';
 import { parseCompiledRunPlan } from './compiler';
+import { taskEventBus, type TaskEventType } from '@/lib/task-event-bus';
 
 type TeamRunChatEventType =
   | 'run.started'
@@ -125,6 +126,20 @@ function buildProgressMessage(
   }
 }
 
+const CHAT_TO_TASK_EVENT_MAP: Partial<Record<TeamRunChatEventType, TaskEventType>> = {
+  'run.started': 'run:started',
+  'stage.started': 'stage:started',
+  'stage.completed': 'stage:completed',
+  'stage.failed': 'stage:failed',
+  'stage.blocked': 'stage:failed',
+  'run.cancelled': 'run:cancelled',
+  'summary.generated': 'run:completed',
+};
+
+function mapChatEventToTaskEvent(eventType: TeamRunChatEventType): TaskEventType | undefined {
+  return CHAT_TO_TASK_EVENT_MAP[eventType];
+}
+
 export function publishTeamRunChatUpdate(params: {
   db: Database.Database;
   runId: string;
@@ -174,6 +189,23 @@ export function publishTeamRunChatUpdate(params: {
   }
   if (!content) {
     return null;
+  }
+
+  // Emit SSE event
+  const sseType = mapChatEventToTaskEvent(params.eventType);
+  if (sseType) {
+    const taskRow = run.session_id
+      ? db.prepare('SELECT id FROM tasks WHERE session_id = ? AND current_run_id = ?').get(run.session_id, params.runId) as { id: string } | undefined
+      : undefined;
+    taskEventBus.emitTaskEvent({
+      type: sseType,
+      sessionId: run.session_id,
+      taskId: taskRow?.id || '',
+      runId: params.runId,
+      stageId: params.stageId,
+      timestamp: Date.now(),
+      data: { eventType: params.eventType, stageStatus: stage?.status },
+    });
   }
 
   const message = addChatMessage(db, run.session_id, content);

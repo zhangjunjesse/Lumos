@@ -2,10 +2,11 @@ import { TaskStatus, type Task } from '@/lib/task-management/types';
 
 const mockGetSession = jest.fn();
 const mockGetSetting = jest.fn();
-const mockGenerateObjectWithClaudeSdk = jest.fn();
+const mockGenerateObjectFromProvider = jest.fn();
 const mockListPublishedPromptCapabilities = jest.fn();
 const mockListPublishedCodeCapabilities = jest.fn();
 const mockGetProvider = jest.fn();
+const mockGetDefaultProvider = jest.fn();
 const mockGetAllProviders = jest.fn();
 
 jest.mock('@/lib/db/sessions', () => ({
@@ -15,11 +16,12 @@ jest.mock('@/lib/db/sessions', () => ({
 
 jest.mock('@/lib/db/providers', () => ({
   getProvider: (...args: unknown[]) => mockGetProvider(...args),
+  getDefaultProvider: () => mockGetDefaultProvider(),
   getAllProviders: (...args: unknown[]) => mockGetAllProviders(...args),
 }));
 
-jest.mock('@/lib/claude/structured-output', () => ({
-  generateObjectWithClaudeSdk: (...args: unknown[]) => mockGenerateObjectWithClaudeSdk(...args),
+jest.mock('@/lib/text-generator', () => ({
+  generateObjectFromProvider: (...args: unknown[]) => mockGenerateObjectFromProvider(...args),
 }));
 
 jest.mock('@/lib/db/capabilities', () => ({
@@ -40,21 +42,40 @@ function buildTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+function buildProvider(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name: `Provider ${id}`,
+    provider_type: 'anthropic',
+    capabilities: '["agent-chat"]',
+    api_key: 'sk-test',
+    auth_mode: 'api_key',
+    model_catalog: '[]',
+    model_catalog_source: 'default',
+    model_catalog_updated_at: null,
+    ...overrides,
+  };
+}
+
 describe('scheduling planner', () => {
   beforeEach(() => {
     jest.resetModules();
     mockGetSession.mockReset();
     mockGetSetting.mockReset();
-    mockGenerateObjectWithClaudeSdk.mockReset();
+    mockGenerateObjectFromProvider.mockReset();
     mockListPublishedPromptCapabilities.mockReset();
     mockListPublishedCodeCapabilities.mockReset();
     mockGetProvider.mockReset();
+    mockGetDefaultProvider.mockReset();
     mockGetAllProviders.mockReset();
     mockGetSession.mockReturnValue(undefined);
     mockGetSetting.mockReturnValue('');
     mockListPublishedPromptCapabilities.mockReturnValue([]);
     mockListPublishedCodeCapabilities.mockReturnValue([]);
-    mockGetProvider.mockReturnValue(undefined);
+    mockGetProvider.mockImplementation((id: string) => (
+      id ? buildProvider(id) : undefined
+    ));
+    mockGetDefaultProvider.mockReturnValue(undefined);
     mockGetAllProviders.mockReturnValue([]);
   });
 
@@ -674,7 +695,7 @@ describe('scheduling planner', () => {
       requested_model: 'claude-sonnet-4-6',
       model: 'claude-sonnet-4-6',
     });
-    mockGenerateObjectWithClaudeSdk.mockResolvedValue({
+    mockGenerateObjectFromProvider.mockResolvedValue({
       strategy: 'workflow',
       reason: 'The task needs staged execution and a visible completion notification.',
       analysis: {
@@ -724,10 +745,10 @@ describe('scheduling planner', () => {
     const previewPlan = buildPreviewSchedulingPlan(task);
     const plan = await resolveSchedulingPlan(task, previewPlan);
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(1);
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledWith(expect.objectContaining({
       model: 'claude-sonnet-4-6',
-      sessionId: task.sessionId,
+      providerId: 'provider-test-001',
     }));
     expect(plan).toMatchObject({
       strategy: 'workflow',
@@ -754,26 +775,8 @@ describe('scheduling planner', () => {
       requested_model: '',
       model: '',
     });
-    mockGetSetting.mockImplementation((key: string) => {
-      if (key === 'default_provider_id') {
-        return 'provider-default-001';
-      }
-      return '';
-    });
-    mockGetProvider.mockImplementation((id: string) => {
-      if (id !== 'provider-default-001') {
-        return undefined;
-      }
-      return {
-        id: 'provider-default-001',
-        provider_type: 'anthropic',
-        api_key: 'sk-test',
-        model_catalog: '[]',
-        model_catalog_source: 'default',
-        model_catalog_updated_at: null,
-      };
-    });
-    mockGenerateObjectWithClaudeSdk.mockResolvedValue({
+    mockGetDefaultProvider.mockReturnValue(buildProvider('provider-default-001'));
+    mockGenerateObjectFromProvider.mockResolvedValue({
       strategy: 'simple',
       reason: 'The task can be completed directly.',
       analysis: {
@@ -789,9 +792,8 @@ describe('scheduling planner', () => {
     const previewPlan = buildPreviewSchedulingPlan(task);
     const plan = await resolveSchedulingPlan(task, previewPlan);
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'claude-sonnet-4-6',
-      sessionId: task.sessionId,
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: 'provider-default-001',
     }));
     expect(plan).toMatchObject({
       strategy: 'simple',
@@ -813,7 +815,7 @@ describe('scheduling planner', () => {
       requested_model: 'claude-sonnet-4-6',
       model: 'claude-sonnet-4-6',
     });
-    mockGenerateObjectWithClaudeSdk
+    mockGenerateObjectFromProvider
       .mockRejectedValueOnce(new Error('temporary planner failure'))
       .mockResolvedValueOnce({
         strategy: 'simple',
@@ -834,7 +836,7 @@ describe('scheduling planner', () => {
     await jest.advanceTimersByTimeAsync(1_000);
     const plan = await planPromise;
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(2);
     expect(plan).toMatchObject({
       strategy: 'simple',
       source: 'llm',
@@ -889,7 +891,7 @@ describe('scheduling planner', () => {
       requested_model: 'claude-sonnet-4-6',
       model: 'claude-sonnet-4-6',
     });
-    mockGenerateObjectWithClaudeSdk
+    mockGenerateObjectFromProvider
       .mockResolvedValueOnce({
         strategy: 'workflow',
         reason: 'Need a research workflow.',
@@ -948,7 +950,7 @@ describe('scheduling planner', () => {
     await jest.advanceTimersByTimeAsync(1_000);
     const plan = await planPromise;
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(2);
     expect(plan).toMatchObject({
       strategy: 'workflow',
       source: 'llm',
@@ -961,7 +963,7 @@ describe('scheduling planner', () => {
       },
     });
 
-    const secondPrompt = String(mockGenerateObjectWithClaudeSdk.mock.calls[1][0]?.prompt || '');
+    const secondPrompt = String(mockGenerateObjectFromProvider.mock.calls[1][0]?.prompt || '');
     expect(secondPrompt).toContain('previousAttemptFeedback');
     expect(secondPrompt).toContain('Planner returned invalid workflow DSL');
     expect(secondPrompt).toContain('Do not use unsupported browser fields such as query or prompt.');
@@ -984,7 +986,7 @@ describe('scheduling planner', () => {
       model: 'claude-sonnet-4-6',
     });
 
-    mockGenerateObjectWithClaudeSdk
+    mockGenerateObjectFromProvider
       .mockResolvedValueOnce({
         strategy: 'workflow',
         reason: 'Need browser research, synthesis, and export.',
@@ -1113,7 +1115,7 @@ describe('scheduling planner', () => {
     await jest.advanceTimersByTimeAsync(1_000);
     const plan = await planPromise;
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(2);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(2);
     expect(plan).toMatchObject({
       strategy: 'workflow',
       source: 'llm',
@@ -1126,7 +1128,7 @@ describe('scheduling planner', () => {
       },
     });
 
-    const secondPrompt = String(mockGenerateObjectWithClaudeSdk.mock.calls[1][0]?.prompt || '');
+    const secondPrompt = String(mockGenerateObjectFromProvider.mock.calls[1][0]?.prompt || '');
     expect(secondPrompt).toContain('previousAttemptFeedback');
     expect(secondPrompt).toContain(`long-form plain-text report synthesis agent steps must use timeoutMs >= 240000`);
     expect(secondPrompt).toContain('researcher steps are read-only and must not be instructed to write files');
@@ -1146,7 +1148,7 @@ describe('scheduling planner', () => {
       requested_model: 'claude-sonnet-4-6',
       model: 'claude-sonnet-4-6',
     });
-    mockGenerateObjectWithClaudeSdk
+    mockGenerateObjectFromProvider
       .mockRejectedValueOnce(new Error('planner timeout 1'))
       .mockRejectedValueOnce(new Error('planner timeout 2'))
       .mockRejectedValueOnce(new Error('planner timeout 3'));
@@ -1166,7 +1168,7 @@ describe('scheduling planner', () => {
     await instanceExpectation;
     await rejectionExpectation;
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(3);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(3);
   });
 
   test('surfaces provider status and body excerpt when structured planning returns invalid json', async () => {
@@ -1188,7 +1190,7 @@ describe('scheduling planner', () => {
       responseBody: '<html><body>upstream gateway returned non-json</body></html>',
     });
 
-    mockGenerateObjectWithClaudeSdk
+    mockGenerateObjectFromProvider
       .mockRejectedValueOnce(providerError)
       .mockRejectedValueOnce(providerError)
       .mockRejectedValueOnce(providerError);
@@ -1226,7 +1228,7 @@ describe('scheduling planner', () => {
       model: 'claude-sonnet-4-6',
     });
 
-    mockGenerateObjectWithClaudeSdk.mockRejectedValue(
+    mockGenerateObjectFromProvider.mockRejectedValue(
       new Error('Claude Code process aborted by user'),
     );
 
@@ -1278,7 +1280,7 @@ describe('scheduling planner', () => {
       }
       return '';
     });
-    mockGenerateObjectWithClaudeSdk.mockRejectedValue(new Error('planner override failure'));
+    mockGenerateObjectFromProvider.mockRejectedValue(new Error('planner override failure'));
 
     const { resolveSchedulingPlan, SchedulingPlannerError } = await import('../planner');
     const planningPromise = resolveSchedulingPlan(task);
@@ -1292,8 +1294,8 @@ describe('scheduling planner', () => {
       },
     });
 
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledTimes(1);
-    expect(mockGenerateObjectWithClaudeSdk).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObjectFromProvider).toHaveBeenCalledWith(expect.objectContaining({
       system: 'Custom scheduling prompt',
     }));
   });
@@ -1321,6 +1323,6 @@ describe('scheduling planner', () => {
       },
     });
 
-    expect(mockGenerateObjectWithClaudeSdk).not.toHaveBeenCalled();
+    expect(mockGenerateObjectFromProvider).not.toHaveBeenCalled();
   });
 });

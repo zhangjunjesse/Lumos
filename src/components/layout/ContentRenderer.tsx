@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { BrowserPanelTabData } from '@/types/browser';
 import { useContentPanelStore, type Tab } from '@/stores/content-panel';
 import { FileTree } from '@/components/project/FileTree';
+import { TaskActivityPanel } from '@/components/workflow/TaskActivityPanel';
 import { EmbeddedBrowserPanel } from '@/components/browser/EmbeddedBrowserPanel';
 import { FavoritesPanel } from '@/components/favorites/FavoritesPanel';
 import { FeishuDocPreview } from '@/components/feishu/FeishuDocPreview';
@@ -177,7 +178,7 @@ export function ContentRenderer() {
         const nextPageId = await createNativeBrowserTab(url);
         updateTab(tabId, {
           title: getBrowserTabTitle(url, t('tab.browser')),
-          data: { ...currentData, pageId: nextPageId, url },
+          data: { ...currentData, pageId: nextPageId, url, fitWidth: currentData.fitWidth ?? false },
         });
         return;
       }
@@ -259,7 +260,7 @@ export function ContentRenderer() {
         data: {
           pageId,
           url,
-          fitWidth: fromData.fitWidth,
+          fitWidth: fromData.fitWidth ?? false,
         },
       });
     } catch (error) {
@@ -272,7 +273,7 @@ export function ContentRenderer() {
     if (!normalized) return;
 
     const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? true;
+    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? false;
 
     try {
       const pageId = await createNativeBrowserTab(normalized);
@@ -297,7 +298,7 @@ export function ContentRenderer() {
   const hasActiveBrowserTab = Boolean(activeBrowserTab);
   const activeBrowserPageId = typeof activeBrowserData.pageId === 'string' ? activeBrowserData.pageId : '';
   const activeBrowserUrl = typeof activeBrowserData.url === 'string' ? activeBrowserData.url : '';
-  const activeBrowserFitWidth = activeBrowserData.fitWidth !== false;
+  const activeBrowserFitWidth = activeBrowserData.fitWidth ?? false;
   const activeBrowserFitWidthValue = activeBrowserData.fitWidth;
 
   useEffect(() => {
@@ -383,6 +384,30 @@ export function ContentRenderer() {
       return (nativeHost as HTMLElement | null) || rootHost;
     };
 
+    const ensureCdpConnection = async (allowAttach: boolean): Promise<boolean> => {
+      if (!pageId || !api.sendCDPCommand) {
+        return false
+      }
+
+      if (api.isCDPConnected) {
+        try {
+          const status = await api.isCDPConnected(pageId)
+          if (status.success && status.connected) {
+            return true
+          }
+        } catch (error) {
+          console.warn('[ContentRenderer] Failed to query CDP status:', error)
+        }
+      }
+
+      if (!allowAttach || !api.connectCDP) {
+        return false
+      }
+
+      const connected = await api.connectCDP(pageId)
+      return Boolean(connected.success)
+    }
+
     const syncViewportMode = async (rect: DOMRect) => {
       if (!pageId || !api.sendCDPCommand) {
         return;
@@ -396,18 +421,8 @@ export function ContentRenderer() {
       }
 
       try {
-        if (api.isCDPConnected) {
-          const status = await api.isCDPConnected(pageId);
-          if (!status.success) {
-            throw new Error(status.error || 'Failed to check CDP connection state');
-          }
-          if (!status.connected && api.connectCDP) {
-            await api.connectCDP(pageId);
-          }
-        } else if (api.connectCDP) {
-          await api.connectCDP(pageId);
-        }
-        if (cancelled) return;
+        const connected = await ensureCdpConnection(shouldFitWidth)
+        if (!connected || cancelled) return
 
         if (shouldFitWidth) {
           const scale = Math.min(1, rect.width / BROWSER_BASE_WIDTH);
@@ -473,30 +488,20 @@ export function ContentRenderer() {
       observer.disconnect();
       window.removeEventListener('resize', syncBounds);
 
-      if (canUseViewportCdp && pageId && api.sendCDPCommand) {
-        void Promise.resolve()
-          .then(async () => {
-            if (!api.isCDPConnected) {
-              if (api.connectCDP) {
-                await api.connectCDP(pageId);
-              }
-              return;
+      if (canUseViewportCdp && pageId && api.isCDPConnected && api.sendCDPCommand) {
+        void api.isCDPConnected(pageId)
+          .then((status) => {
+            if (!status.success || !status.connected) {
+              return undefined
             }
 
-            const status = await api.isCDPConnected(pageId);
-            if (!status.success) {
-              throw new Error(status.error || 'Failed to check CDP connection state');
-            }
-            if (!status.connected && api.connectCDP) {
-              await api.connectCDP(pageId);
-            }
+            return Promise.resolve(api.setZoomFactor ? api.setZoomFactor(pageId, 1) : undefined)
+              .then(() => api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {}))
+              .then(() => api.sendCDPCommand(pageId, 'Runtime.evaluate', {
+                expression: CLEAR_FIT_WIDTH_SCRIPT,
+                awaitPromise: false,
+              }))
           })
-          .then(() => (api.setZoomFactor ? api.setZoomFactor(pageId, 1) : undefined))
-          .then(() => api.sendCDPCommand(pageId, 'Emulation.clearDeviceMetricsOverride', {}))
-          .then(() => api.sendCDPCommand(pageId, 'Runtime.evaluate', {
-            expression: CLEAR_FIT_WIDTH_SCRIPT,
-            awaitPromise: false,
-          }))
           .catch((error) => {
             console.error('[ContentRenderer] Failed to reset browser viewport mode:', error);
           });
@@ -536,6 +541,7 @@ export function ContentRenderer() {
           {renderContent(
             activeTab,
             workingDirectory,
+            sessionId,
             setPreviewFile,
             handleFileAdd,
             handleFileAddToLibrary,
@@ -554,6 +560,7 @@ export function ContentRenderer() {
 function renderContent(
   tab: Tab,
   workingDirectory: string,
+  sessionId: string | null,
   setPreviewFile: (path: string | null) => void,
   handleFileAdd: (path: string) => void,
   handleFileAddToLibrary: (path: string) => void,
@@ -634,6 +641,9 @@ function renderContent(
           width={0} // Not used in tab context
         />
       );
+
+    case 'task-activity':
+      return <TaskActivityPanel sessionId={sessionId || ''} />;
 
     case 'settings':
       return <div className="p-4">Settings (Coming Soon)</div>;
