@@ -10,7 +10,10 @@ export type TaskEventType =
   | 'stage:failed'
   | 'run:started'
   | 'run:completed'
-  | 'run:cancelled';
+  | 'run:cancelled'
+  | 'schedule:run';
+
+export const GLOBAL_SESSION_ID = '__global__';
 
 export interface TaskEvent {
   type: TaskEventType;
@@ -19,6 +22,11 @@ export interface TaskEvent {
   runId?: string;
   stageId?: string;
   timestamp: number;
+  data?: Record<string, unknown>;
+}
+
+export interface GlobalEvent {
+  type: TaskEventType;
   data?: Record<string, unknown>;
 }
 
@@ -42,6 +50,18 @@ class TaskEventBus extends EventEmitter {
     this.emit(event.type, event);
   }
 
+  emitGlobalEvent(event: GlobalEvent): void {
+    const taskEvent: TaskEvent = {
+      type: event.type,
+      sessionId: GLOBAL_SESSION_ID,
+      taskId: '',
+      timestamp: Date.now(),
+      data: event.data,
+    };
+    this.emit('task-event', taskEvent);
+    this.emit('global-event', taskEvent);
+  }
+
   onTaskEvent(listener: (event: TaskEvent) => void): () => void {
     this.on('task-event', listener);
     return () => this.off('task-event', listener);
@@ -52,7 +72,7 @@ class TaskEventBus extends EventEmitter {
     listener: (event: TaskEvent) => void,
   ): () => void {
     const filtered = (event: TaskEvent) => {
-      if (event.sessionId === sessionId) {
+      if (event.sessionId === sessionId || event.sessionId === GLOBAL_SESSION_ID) {
         listener(event);
       }
     };

@@ -1,10 +1,125 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { resolveProviderPersistenceFields } from '../provider-config';
 import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from './seed-builtin';
 
 export function migrateLumosTables(db: Database.Database): void {
   // Knowledge base tables
   db.exec(`
+    CREATE TABLE IF NOT EXISTS deepsearch_sites (
+      id TEXT PRIMARY KEY,
+      site_key TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      base_url TEXT NOT NULL DEFAULT '',
+      cookie_value TEXT NOT NULL DEFAULT '',
+      cookie_status TEXT NOT NULL DEFAULT 'missing'
+        CHECK(cookie_status IN ('missing','valid','expired','unknown')),
+      cookie_expires_at TEXT DEFAULT NULL,
+      last_validated_at TEXT DEFAULT NULL,
+      validation_message TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS deepsearch_runs (
+      id TEXT PRIMARY KEY,
+      query_text TEXT NOT NULL,
+      site_keys_json TEXT NOT NULL DEFAULT '[]',
+      eligible_site_keys_json TEXT NOT NULL DEFAULT '[]',
+      blocked_site_keys_json TEXT NOT NULL DEFAULT '[]',
+      page_mode TEXT NOT NULL
+        CHECK(page_mode IN ('takeover_active_page','managed_page')),
+      strictness TEXT NOT NULL
+        CHECK(strictness IN ('strict','best_effort')),
+      status TEXT NOT NULL
+        CHECK(status IN ('pending','running','waiting_login','paused','completed','partial','failed','cancelled')),
+      status_message TEXT NOT NULL DEFAULT '',
+      result_summary TEXT NOT NULL DEFAULT '',
+      detail_markdown TEXT NOT NULL DEFAULT '',
+      created_from TEXT NOT NULL DEFAULT 'extensions'
+        CHECK(created_from IN ('extensions','chat','workflow','api')),
+      requested_by_session_id TEXT DEFAULT NULL,
+      started_at TEXT DEFAULT NULL,
+      completed_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS deepsearch_run_pages (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES deepsearch_runs(id) ON DELETE CASCADE,
+      page_id TEXT NOT NULL,
+      site_key TEXT DEFAULT NULL,
+      binding_type TEXT NOT NULL
+        CHECK(binding_type IN ('taken_over_active_page','managed_page')),
+      role TEXT NOT NULL DEFAULT 'seed'
+        CHECK(role IN ('seed','search','detail','login')),
+      initial_url TEXT DEFAULT NULL,
+      last_known_url TEXT DEFAULT NULL,
+      page_title TEXT DEFAULT NULL,
+      attached_at TEXT NOT NULL DEFAULT (datetime('now')),
+      released_at TEXT DEFAULT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS deepsearch_records (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES deepsearch_runs(id) ON DELETE CASCADE,
+      run_page_id TEXT DEFAULT NULL REFERENCES deepsearch_run_pages(id) ON DELETE SET NULL,
+      site_key TEXT DEFAULT NULL,
+      url TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      content_state TEXT NOT NULL DEFAULT 'partial'
+        CHECK(content_state IN ('list_only','partial','full','failed')),
+      snippet TEXT NOT NULL DEFAULT '',
+      evidence_count INTEGER NOT NULL DEFAULT 0,
+      failure_stage TEXT DEFAULT NULL
+        CHECK(failure_stage IS NULL OR failure_stage IN ('login','navigation','extraction','normalization')),
+      login_related INTEGER NOT NULL DEFAULT 0,
+      content_artifact_id TEXT DEFAULT NULL,
+      screenshot_artifact_id TEXT DEFAULT NULL,
+      error_message TEXT NOT NULL DEFAULT '',
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS deepsearch_artifacts (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES deepsearch_runs(id) ON DELETE CASCADE,
+      record_id TEXT DEFAULT NULL REFERENCES deepsearch_records(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL
+        CHECK(kind IN ('content','screenshot','structured_json','evidence_snippet','html_snapshot')),
+      title TEXT NOT NULL DEFAULT '',
+      storage_path TEXT NOT NULL DEFAULT '',
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS deepsearch_site_states (
+      site_key TEXT PRIMARY KEY REFERENCES deepsearch_sites(site_key) ON DELETE CASCADE,
+      display_name TEXT NOT NULL DEFAULT '',
+      login_state TEXT NOT NULL DEFAULT 'missing'
+        CHECK(login_state IN ('missing','connected','suspected_expired','expired','error')),
+      last_checked_at TEXT DEFAULT NULL,
+      last_login_at TEXT DEFAULT NULL,
+      blocking_reason TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_sites_status ON deepsearch_sites(cookie_status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_runs_status ON deepsearch_runs(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_runs_created ON deepsearch_runs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_run_pages_run ON deepsearch_run_pages(run_id, attached_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_run_pages_page ON deepsearch_run_pages(page_id, attached_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_records_run ON deepsearch_records(run_id, fetched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_records_page ON deepsearch_records(run_page_id, fetched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_artifacts_run ON deepsearch_artifacts(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_artifacts_record ON deepsearch_artifacts(record_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deepsearch_site_states_login ON deepsearch_site_states(login_state, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS workflow_definitions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -96,6 +211,16 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_kb_items_collection ON kb_items(collection_id);
     CREATE INDEX IF NOT EXISTS idx_kb_chunks_item ON kb_chunks(item_id);
     CREATE INDEX IF NOT EXISTS idx_kb_bm25_term ON kb_bm25_index(term);
+  `);
+
+  db.exec(`
+    INSERT OR IGNORE INTO deepsearch_sites (id, site_key, display_name, base_url)
+    VALUES
+      ('deepsearch-site-zhihu', 'zhihu', 'Zhihu', 'https://www.zhihu.com'),
+      ('deepsearch-site-xiaohongshu', 'xiaohongshu', 'Xiaohongshu', 'https://www.xiaohongshu.com'),
+      ('deepsearch-site-juejin', 'juejin', 'Juejin', 'https://juejin.cn'),
+      ('deepsearch-site-wechat', 'wechat', 'WeChat Articles', 'https://mp.weixin.qq.com'),
+      ('deepsearch-site-x', 'x', 'X / Twitter', 'https://x.com');
   `);
 
   // Add source_key to kb_items if missing
@@ -393,9 +518,31 @@ export function migrateLumosTables(db: Database.Database): void {
     if (tokenRow || baseUrlRow) {
       const id = crypto.randomBytes(16).toString('hex');
       const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+      const fields = resolveProviderPersistenceFields({
+        providerType: 'anthropic',
+        capabilities: ['agent-chat'],
+        providerOrigin: 'custom',
+        authMode: 'api_key',
+      });
       db.prepare(
-        'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(id, 'Default', 'anthropic', baseUrlRow?.value || '', tokenRow?.value || '', 1, 0, '{}', 'Migrated from settings', now, now);
+        'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        id,
+        'Default',
+        fields.providerType,
+        fields.apiProtocol,
+        fields.capabilities,
+        fields.providerOrigin,
+        fields.authMode,
+        baseUrlRow?.value || '',
+        tokenRow?.value || '',
+        1,
+        0,
+        '{}',
+        'Migrated from settings',
+        now,
+        now,
+      );
     }
   }
 
@@ -418,6 +565,19 @@ export function migrateLumosTables(db: Database.Database): void {
   if (!providerColNames.includes('model_catalog_updated_at')) {
     db.exec("ALTER TABLE api_providers ADD COLUMN model_catalog_updated_at TEXT DEFAULT NULL");
   }
+  if (!providerColNames.includes('api_protocol')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN api_protocol TEXT NOT NULL DEFAULT 'anthropic-messages'");
+  }
+  const capabilitiesColumnAdded = !providerColNames.includes('capabilities');
+  if (capabilitiesColumnAdded) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN capabilities TEXT NOT NULL DEFAULT '[\"text-gen\"]'");
+  }
+  if (!providerColNames.includes('provider_origin')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN provider_origin TEXT NOT NULL DEFAULT 'custom'");
+  }
+  if (!providerColNames.includes('auth_mode')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'api_key'");
+  }
   db.exec(`
     UPDATE api_providers
     SET model_catalog_source = CASE
@@ -425,6 +585,47 @@ export function migrateLumosTables(db: Database.Database): void {
       WHEN model_catalog_source NOT IN ('default', 'manual', 'detected') THEN 'manual'
       ELSE model_catalog_source
     END
+  `);
+  db.exec(`
+    UPDATE api_providers
+    SET api_protocol = CASE
+      WHEN provider_type IN ('openrouter', 'gemini-image') THEN 'openai-compatible'
+      ELSE 'anthropic-messages'
+    END
+    WHERE TRIM(COALESCE(api_protocol, '')) = ''
+      OR api_protocol NOT IN ('anthropic-messages', 'openai-compatible')
+  `);
+  db.exec(`
+    UPDATE api_providers
+    SET capabilities = CASE
+      WHEN provider_type = 'gemini-image' THEN '["image-gen"]'
+      WHEN is_builtin = 1 OR is_active = 1 THEN '["agent-chat"]'
+      ELSE '["text-gen"]'
+    END
+    ${capabilitiesColumnAdded
+      ? ''
+      : `WHERE TRIM(COALESCE(capabilities, '')) = ''
+      OR capabilities = '[]'`
+    }
+  `);
+  db.exec(`
+    UPDATE api_providers
+    SET provider_origin = CASE
+      WHEN is_builtin = 1 THEN 'system'
+      ELSE 'custom'
+    END
+    WHERE TRIM(COALESCE(provider_origin, '')) = ''
+      OR provider_origin NOT IN ('system', 'preset', 'custom')
+  `);
+  db.exec(`
+    UPDATE api_providers
+    SET auth_mode = CASE
+      WHEN provider_type = 'anthropic' AND auth_mode = 'local_auth' THEN 'local_auth'
+      ELSE 'api_key'
+    END
+    WHERE TRIM(COALESCE(auth_mode, '')) = ''
+      OR auth_mode NOT IN ('api_key', 'local_auth')
+      OR (auth_mode = 'local_auth' AND provider_type != 'anthropic')
   `);
 
   // Create unique index on is_builtin (only one provider can have is_builtin=1)
@@ -561,6 +762,8 @@ export function migrateLumosTables(db: Database.Database): void {
     if (namedBuiltin) {
       // Mark existing "Built-in" provider as builtin
       db.prepare('UPDATE api_providers SET is_builtin = 1 WHERE id = ?').run(namedBuiltin.id);
+      db.prepare("UPDATE api_providers SET provider_origin = 'system' WHERE id = ?").run(namedBuiltin.id);
+      db.prepare("UPDATE api_providers SET capabilities = '[\"agent-chat\"]' WHERE id = ?").run(namedBuiltin.id);
     } else {
       // Create new builtin provider if default key is available
       const defaultKey = process.env.LUMOS_DEFAULT_API_KEY || process.env.CODEPILOT_DEFAULT_API_KEY;
@@ -571,9 +774,37 @@ export function migrateLumosTables(db: Database.Database): void {
         const id = crypto.randomBytes(16).toString('hex');
         const now = new Date().toISOString().replace('T', ' ').split('.')[0];
         const defaultBaseUrl = process.env.CODEPILOT_DEFAULT_BASE_URL || '';
+        const fields = resolveProviderPersistenceFields({
+          providerType: 'anthropic',
+          capabilities: ['agent-chat'],
+          providerOrigin: 'system',
+          authMode: 'api_key',
+          isBuiltin: 1,
+        });
         db.prepare(
-          'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, 'Built-in', 'anthropic', defaultBaseUrl, defaultKey, 1, 0, '{}', '[]', 'default', null, 'Auto-created from embedded key', 1, 0, now, now);
+          'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(
+          id,
+          'Built-in',
+          fields.providerType,
+          fields.apiProtocol,
+          fields.capabilities,
+          fields.providerOrigin,
+          fields.authMode,
+          defaultBaseUrl,
+          defaultKey,
+          1,
+          0,
+          '{}',
+          '[]',
+          'default',
+          null,
+          'Auto-created from embedded key',
+          1,
+          0,
+          now,
+          now,
+        );
       }
     }
   }
@@ -713,6 +944,34 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_capability_drafts_created ON capability_drafts(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_capability_packages_status ON capability_packages(status);
     CREATE INDEX IF NOT EXISTS idx_capability_packages_category ON capability_packages(category);
+  `);
+
+  // Add min_fetch_count to deepsearch_sites if missing
+  const dsColsCheck = db.prepare("PRAGMA table_info(deepsearch_sites)").all() as { name: string }[];
+  if (!dsColsCheck.some(c => c.name === 'min_fetch_count')) {
+    db.exec("ALTER TABLE deepsearch_sites ADD COLUMN min_fetch_count INTEGER NOT NULL DEFAULT 3");
+  }
+
+  // Scheduled workflows table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      workflow_dsl TEXT NOT NULL DEFAULT '{}',
+      interval_minutes INTEGER NOT NULL DEFAULT 60,
+      working_directory TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      notify_on_complete INTEGER NOT NULL DEFAULT 1,
+      last_run_at TEXT DEFAULT NULL,
+      next_run_at TEXT DEFAULT NULL,
+      run_count INTEGER NOT NULL DEFAULT 0,
+      last_run_status TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_enabled ON scheduled_workflows(enabled);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_next_run ON scheduled_workflows(next_run_at);
   `);
 
   // Seed built-in data on first run
