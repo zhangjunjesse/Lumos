@@ -27,6 +27,9 @@ import {
   Sun,
   Brain,
   Message,
+  MagicWandIcon,
+  AlarmClockIcon,
+  RobotIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -182,6 +185,38 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         <WorkspacePicker expanded={expanded} />
 
         {/* Divider */}
+        <div className="my-2 h-px bg-border/50" />
+
+        {/* Workflow / Automation */}
+        {expanded && (
+          <div className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            自动化
+          </div>
+        )}
+        <nav className="space-y-0.5">
+          <SidebarNavItem
+            icon={MagicWandIcon}
+            label="工作流构建器"
+            href="/workflow/builder"
+            expanded={expanded}
+            active={isActive("/workflow/builder")}
+          />
+          <SidebarNavItem
+            icon={AlarmClockIcon}
+            label="定时任务"
+            href="/workflow/schedules"
+            expanded={expanded}
+            active={isActive("/workflow/schedules")}
+          />
+          <SidebarNavItem
+            icon={RobotIcon}
+            label="Agent 管理"
+            href="/workflow/agents"
+            expanded={expanded}
+            active={isActive("/workflow/agents")}
+          />
+        </nav>
+
         <div className="my-2 h-px bg-border/50" />
 
         {/* Bottom nav items */}
