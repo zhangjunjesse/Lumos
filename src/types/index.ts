@@ -30,13 +30,6 @@ export interface ChatSession {
 // Project / File Types
 // ==========================================
 
-export interface ProjectInfo {
-  path: string;
-  name: string;
-  files_count: number;
-  last_modified: string;
-}
-
 export interface FileTreeNode {
   name: string;
   path: string;
@@ -187,40 +180,14 @@ export interface TeamPlanTaskRecord {
   lastActionAt?: string | null;
 }
 
-export interface TeamDirectoryItem {
-  id: string;
-  runId?: string;
-  sessionId: string;
-  sessionTitle: string;
-  workingDirectory: string;
-  projectName: string;
-  title: string;
-  summary: string;
-  userGoal: string;
-  expectedOutcome: string;
-  approvalStatus: TeamPlanApprovalStatus;
-  runStatus: TeamRunStatus;
-  roleCount: number;
-  taskCount: number;
-  completedTaskCount: number;
-  updatedAt: string;
-  relatedTaskId: string;
-  relatedTaskPath: string;
-  teamPath: string;
-  executorLabel: string;
-  createdScenario: string;
-  roles: TeamRoleDirectoryItem[];
-  outputs: string[];
-  artifacts: TaskArtifactItem[];
-  currentStage?: string;
-  currentExecutorName?: string;
-  latestOutput?: string;
-  blockedReason?: string;
-  finalSummary?: string;
-}
-
 export const MAIN_AGENT_AGENT_PRESET_KIND = 'main-agent-agent-preset' as const;
 export const MAIN_AGENT_TEAM_TEMPLATE_KIND = 'main-agent-team-template' as const;
+
+export interface AgentPresetToolPermissions {
+  read: boolean;
+  write: boolean;
+  exec: boolean;
+}
 
 export interface AgentPresetRecord {
   kind: typeof MAIN_AGENT_AGENT_PRESET_KIND;
@@ -232,6 +199,9 @@ export interface AgentPresetRecord {
   description?: string;
   collaborationStyle?: string;
   outputContract?: string;
+  preferredModel?: string;
+  mcpServers?: string[];
+  toolPermissions?: AgentPresetToolPermissions;
 }
 
 export interface TeamTemplateRecord {
@@ -260,6 +230,9 @@ export interface AgentPresetDirectoryItem {
   description?: string;
   collaborationStyle?: string;
   outputContract?: string;
+  preferredModel?: string;
+  mcpServers?: string[];
+  toolPermissions?: AgentPresetToolPermissions;
   templateCount: number;
 }
 
@@ -275,76 +248,6 @@ export interface TeamTemplateDirectoryItem {
   defaultGoal?: string;
   defaultOutcome?: string;
   notes?: string;
-}
-
-export type TaskDirectorySource = 'manual' | 'team';
-export type TaskDirectoryStatus = TaskStatus | TeamRunStatus;
-export type TaskExecutionMode = 'main_agent' | 'team_mode';
-
-export interface TeamRoleDirectoryItem {
-  id: string;
-  name: string;
-  kind: TeamPlanRoleKind;
-  responsibility: string;
-  parentRoleId?: string;
-}
-
-export interface TaskArtifactItem {
-  id: string;
-  title: string;
-  summary: string;
-  status: TaskDirectoryStatus;
-  updatedAt: string;
-  ownerName?: string;
-  expectedOutput?: string;
-  dependsOn: string[];
-}
-
-export type RuntimeArtifactPreviewKind = 'markdown' | 'json' | 'text' | 'csv' | 'image' | 'pdf';
-
-export interface StageArtifactProjectionV1 {
-  artifactId: string;
-  title: string;
-  type: 'output' | 'file' | 'log' | 'metadata';
-  contentType: string;
-  size: number;
-  previewable: boolean;
-  previewKind?: RuntimeArtifactPreviewKind;
-  stageId?: string;
-  stageTitle?: string;
-  sourcePath?: string;
-}
-
-export interface TaskDirectoryItem {
-  id: string;
-  runId?: string;
-  source: TaskDirectorySource;
-  sessionId: string;
-  sessionTitle: string;
-  workingDirectory: string;
-  projectName: string;
-  title: string;
-  summary: string;
-  status: TaskDirectoryStatus;
-  updatedAt: string;
-  executionMode: TaskExecutionMode;
-  createdScenario: string;
-  executorLabel: string;
-  progressCompleted: number;
-  progressTotal: number;
-  outputs: string[];
-  artifacts: TaskArtifactItem[];
-  taskPath: string;
-  currentStage?: string;
-  currentExecutorName?: string;
-  latestOutput?: string;
-  userGoal?: string;
-  approvalStatus?: TeamPlanApprovalStatus;
-  ownerName?: string;
-  expectedOutput?: string;
-  dependsOn: string[];
-  teamId?: string;
-  teamTitle?: string;
 }
 
 export interface TeamWorkspaceProjectionV1 {
@@ -386,106 +289,6 @@ export interface TeamBannerProjectionV1 {
   historyCount: number;
   recent: TeamBannerHistoryItemV1[];
   workspace?: TeamWorkspaceProjectionV1;
-}
-
-export interface TaskDetailProjectionV1 {
-  projectionVersion: 1;
-  taskId: string;
-  runId?: string;
-  source: TaskDirectorySource;
-  sessionId: string;
-  sessionTitle: string;
-  workingDirectory: string;
-  projectName: string;
-  title: string;
-  summary: string;
-  businessStatus: TaskStatus;
-  runStatus?: TeamRunStatus;
-  executionMode: TaskExecutionMode;
-  createdScenario: string;
-  executorLabel: string;
-  progressCompleted: number;
-  progressTotal: number;
-  outputs: string[];
-  artifacts: TaskArtifactItem[];
-  runtimeArtifacts: StageArtifactProjectionV1[];
-  taskPath: string;
-  teamPath?: string;
-  currentStage?: string;
-  currentExecutorName?: string;
-  latestOutput?: string;
-  userGoal?: string;
-  approvalStatus?: TeamPlanApprovalStatus;
-  expectedOutcome?: string;
-  finalSummary?: string;
-  updatedAt: string;
-}
-
-export interface TeamRoleProjectionV1 {
-  roleId: string;
-  externalRoleId: string;
-  name: string;
-  roleKind: TeamPlanRoleKind;
-  responsibility: string;
-  parentRoleId?: string;
-}
-
-export interface TeamStageProjectionV1 {
-  stageId: string;
-  planTaskId: string;
-  title: string;
-  status: TeamRunStatus;
-  ownerRoleId: string;
-  ownerAgentType: string;
-  expectedOutput: string;
-  dependsOnStageIds: string[];
-  latestResultSummary?: string;
-  latestResultRef?: string;
-  artifacts: StageArtifactProjectionV1[];
-  retryCount: number;
-  updatedAt?: string;
-}
-
-export interface TeamRunDetailProjectionV1 {
-  projectionVersion: number;
-  taskId: string;
-  runId: string;
-  title: string;
-  summary: string;
-  userGoal: string;
-  expectedOutcome: string;
-  approvalStatus: TeamPlanApprovalStatus;
-  runStatus: TeamRunStatus;
-  budget: TeamRunBudget;
-  lifecycle: {
-    createdAt?: string;
-    startedAt?: string;
-    completedAt?: string;
-    publishedAt?: string;
-  };
-  guardrails: {
-    hierarchy: TeamPlanRoleKind[];
-    maxDepth: number;
-    lockScope: 'session_runtime';
-    resumeCount: number;
-  };
-  roles: TeamRoleProjectionV1[];
-  stages: TeamStageProjectionV1[];
-  context: {
-    summary: string;
-    finalSummary: string;
-    summarySource: TeamRunContextSource;
-    finalSummarySource: TeamRunContextSource;
-    blockedReason?: string;
-    lastError?: string;
-  };
-  outputs: string[];
-  artifacts: TaskArtifactItem[];
-  runtimeArtifacts: StageArtifactProjectionV1[];
-  taskPath: string;
-  teamPath: string;
-  currentStage?: string;
-  currentExecutorName?: string;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -591,6 +394,10 @@ export function parseTeamPlan(value: unknown): TeamPlan | null {
   };
 }
 
+function isTeamAgentPresetRoleKind(value: unknown): value is TeamAgentPresetRoleKind {
+  return typeof value === 'string' && ['orchestrator', 'lead', 'worker'].includes(value);
+}
+
 function isTeamRunStatus(value: unknown): value is TeamRunStatus {
   return typeof value === 'string' && [
     'pending',
@@ -605,10 +412,6 @@ function isTeamRunStatus(value: unknown): value is TeamRunStatus {
     'done',
     'failed',
   ].includes(value);
-}
-
-function isTeamAgentPresetRoleKind(value: unknown): value is TeamAgentPresetRoleKind {
-  return typeof value === 'string' && ['orchestrator', 'lead', 'worker'].includes(value);
 }
 
 export function createTeamRunSkeleton(plan: TeamPlan): TeamRun {
@@ -778,6 +581,18 @@ export function parseAgentPresetRecord(value: unknown): AgentPresetRecord | null
     return null;
   }
 
+  const mcpServers = Array.isArray(value.mcpServers)
+    ? value.mcpServers.filter(isNonEmptyString)
+    : undefined;
+
+  const toolPermissions = isObjectRecord(value.toolPermissions)
+    ? {
+        read: Boolean(value.toolPermissions.read),
+        write: Boolean(value.toolPermissions.write),
+        exec: Boolean(value.toolPermissions.exec),
+      }
+    : undefined;
+
   return {
     kind: MAIN_AGENT_AGENT_PRESET_KIND,
     version: 1,
@@ -788,11 +603,10 @@ export function parseAgentPresetRecord(value: unknown): AgentPresetRecord | null
     ...(isNonEmptyString(value.description) ? { description: value.description.trim() } : {}),
     ...(isNonEmptyString(value.collaborationStyle) ? { collaborationStyle: value.collaborationStyle.trim() } : {}),
     ...(isNonEmptyString(value.outputContract) ? { outputContract: value.outputContract.trim() } : {}),
+    ...(isNonEmptyString(value.preferredModel) ? { preferredModel: value.preferredModel.trim() } : {}),
+    ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
+    ...(toolPermissions ? { toolPermissions } : {}),
   };
-}
-
-export function serializeAgentPresetRecord(record: AgentPresetRecord): string {
-  return JSON.stringify(record);
 }
 
 export function parseTeamTemplateRecord(value: unknown): TeamTemplateRecord | null {
@@ -824,10 +638,6 @@ export function parseTeamTemplateRecord(value: unknown): TeamTemplateRecord | nu
     ...(isNonEmptyString(value.defaultOutcome) ? { defaultOutcome: value.defaultOutcome.trim() } : {}),
     ...(isNonEmptyString(value.notes) ? { notes: value.notes.trim() } : {}),
   };
-}
-
-export function serializeTeamTemplateRecord(record: TeamTemplateRecord): string {
-  return JSON.stringify(record);
 }
 
 export function parseTeamPlanBlock(text: string): { beforeText: string; plan: TeamPlan; afterText: string } | null {
@@ -891,6 +701,10 @@ export interface ApiProvider {
   id: string;
   name: string;
   provider_type: string; // 'anthropic' | 'openrouter' | 'bedrock' | 'vertex' | 'custom'
+  api_protocol: ProviderApiProtocol;
+  capabilities: string; // JSON string of ProviderCapability[]
+  provider_origin: ProviderOrigin;
+  auth_mode: ProviderAuthMode;
   base_url: string;
   api_key: string;
   is_active: number; // SQLite boolean: 0 or 1
@@ -906,6 +720,11 @@ export interface ApiProvider {
   updated_at: string;
 }
 
+export type ProviderApiProtocol = 'anthropic-messages' | 'openai-compatible';
+export type ProviderCapability = 'agent-chat' | 'text-gen' | 'image-gen' | 'embedding';
+export type ProviderOrigin = 'system' | 'preset' | 'custom';
+export type ProviderAuthMode = 'api_key' | 'local_auth';
+
 export type ProviderModelCatalogSource = 'default' | 'manual' | 'detected';
 
 export interface ProviderModelOption {
@@ -914,7 +733,7 @@ export interface ProviderModelOption {
 }
 
 export interface ProviderModelGroup {
-  provider_id: string;       // provider DB id, or 'env' for environment variables
+  provider_id: string;       // provider DB id
   provider_name: string;
   provider_type: string;
   models: ProviderModelOption[];
@@ -926,6 +745,10 @@ export interface ProviderModelGroup {
 export interface CreateProviderRequest {
   name: string;
   provider_type?: string;
+  api_protocol?: ProviderApiProtocol;
+  capabilities?: string;
+  provider_origin?: ProviderOrigin;
+  auth_mode?: ProviderAuthMode;
   base_url?: string;
   api_key?: string;
   extra_env?: string;
@@ -938,6 +761,10 @@ export interface CreateProviderRequest {
 export interface UpdateProviderRequest {
   name?: string;
   provider_type?: string;
+  api_protocol?: ProviderApiProtocol;
+  capabilities?: string;
+  provider_origin?: ProviderOrigin;
+  auth_mode?: ProviderAuthMode;
   base_url?: string;
   api_key?: string;
   extra_env?: string;
@@ -951,10 +778,30 @@ export interface UpdateProviderRequest {
 
 export interface ProvidersResponse {
   providers: ApiProvider[];
+  default_provider_id?: string;
 }
 
 export interface ProviderResponse {
   provider: ApiProvider;
+}
+
+export type ProviderPresetModule = 'chat' | 'knowledge' | 'workflow' | 'image';
+
+export interface ProviderPreset {
+  id: string;
+  name: string;
+  description: string;
+  provider_type: string;
+  api_protocol: ProviderApiProtocol;
+  capabilities: ProviderCapability[];
+  provider_origin: ProviderOrigin;
+  auth_mode: ProviderAuthMode;
+  base_url: string;
+  notes?: string;
+  tags?: string[];
+  supported_modules?: ProviderPresetModule[];
+  requires_base_url?: boolean;
+  default_models?: ProviderModelOption[];
 }
 
 // ==========================================
@@ -976,6 +823,7 @@ export interface TokenUsage {
 export interface CreateSessionRequest {
   title?: string;
   model?: string;
+  provider_id?: string;
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
@@ -1022,54 +870,6 @@ export interface FilePreviewRequest {
   path: string;
   maxLines?: number; // default 200
 }
-
-// --- Task API ---
-
-export interface CreateTaskRequest {
-  session_id: string;
-  title: string;
-  description?: string;
-}
-
-export interface UpdateTaskRequest {
-  title?: string;
-  status?: TaskStatus;
-  description?: string;
-  approvalStatus?: TeamPlanApprovalStatus;
-  phaseId?: string;
-  phaseStatus?: TeamRunStatus;
-  phaseLatestResult?: string;
-  teamSummary?: string;
-  finalSummary?: string;
-  blockedReason?: string;
-  lastError?: string;
-  publishSummary?: boolean;
-  resumeRun?: boolean;
-}
-
-export interface CreateAgentPresetRequest {
-  name: string;
-  roleKind: TeamAgentPresetRoleKind;
-  responsibility: string;
-  systemPrompt: string;
-  description?: string;
-  collaborationStyle?: string;
-  outputContract?: string;
-}
-
-export interface UpdateAgentPresetRequest extends Partial<CreateAgentPresetRequest> {}
-
-export interface CreateTeamTemplateRequest {
-  name: string;
-  summary: string;
-  agentPresetIds: string[];
-  activationHint?: string;
-  defaultGoal?: string;
-  defaultOutcome?: string;
-  notes?: string;
-}
-
-export interface UpdateTeamTemplateRequest extends Partial<CreateTeamTemplateRequest> {}
 
 // --- Skill API ---
 
@@ -1140,44 +940,6 @@ export interface FilePreviewResponse {
   preview: FilePreview;
 }
 
-// --- Task API Responses ---
-
-export interface TasksResponse {
-  tasks: TaskItem[];
-}
-
-export interface TaskResponse {
-  task: TaskItem;
-}
-
-export interface MainAgentCatalogResponse {
-  teams: TeamDirectoryItem[];
-  tasks: TaskDirectoryItem[];
-  agentPresets: AgentPresetDirectoryItem[];
-  teamTemplates: TeamTemplateDirectoryItem[];
-}
-
-export interface TeamBannerProjectionResponseV1 {
-  banner: TeamBannerProjectionV1 | null;
-}
-
-export interface TaskDetailProjectionResponseV1 {
-  task: TaskDetailProjectionV1;
-  workspace?: TeamWorkspaceProjectionV1;
-}
-
-export interface TeamRunDetailProjectionResponseV1 {
-  team: TeamRunDetailProjectionV1;
-}
-
-export interface AgentPresetResponse {
-  agentPreset: AgentPresetDirectoryItem;
-}
-
-export interface TeamTemplateResponse {
-  teamTemplate: TeamTemplateDirectoryItem;
-}
-
 // --- Skill API Responses ---
 
 export interface SkillsResponse {
@@ -1186,6 +948,12 @@ export interface SkillsResponse {
 
 export interface SkillResponse {
   skill: SkillDefinition;
+}
+
+// --- Task API Responses ---
+
+export interface TeamBannerProjectionResponseV1 {
+  banner: TeamBannerProjectionV1 | null;
 }
 
 // ==========================================
@@ -1281,15 +1049,6 @@ export type MCPServer = MCPServerConfig;
 export interface SettingsMap {
   [key: string]: string;
 }
-
-// Well-known setting keys
-export const SETTING_KEYS = {
-  DEFAULT_MODEL: 'default_model',
-  DEFAULT_SYSTEM_PROMPT: 'default_system_prompt',
-  THEME: 'theme',
-  PERMISSION_MODE: 'permission_mode',
-  MAX_THINKING_TOKENS: 'max_thinking_tokens',
-} as const;
 
 // ==========================================
 // Reference Image Types (for image generation)
@@ -1460,15 +1219,6 @@ export interface UpdateMediaJobItemsRequest {
   }>;
 }
 
-export interface MediaJobResponse {
-  job: MediaJob;
-  items: MediaJobItem[];
-}
-
-export interface MediaJobListResponse {
-  jobs: MediaJob[];
-}
-
 export interface ClaudeStreamOptions {
   prompt: string;
   /** Raw user prompt before any app-side context expansion (used by memory hooks). */
@@ -1479,6 +1229,8 @@ export interface ClaudeStreamOptions {
   systemPrompt?: string;
   workingDirectory?: string;
   mcpServers?: Record<string, MCPServerConfig>;
+  /** In-process MCP servers (created via createSdkMcpServer). Merged into mcpServers at query time. */
+  inProcessMcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance>;
   abortController?: AbortController;
   permissionMode?: string;
   files?: FileAttachment[];
@@ -1489,3 +1241,5 @@ export interface ClaudeStreamOptions {
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   onRuntimeStatusChange?: (status: string) => void;
 }
+
+export * from './deepsearch';
