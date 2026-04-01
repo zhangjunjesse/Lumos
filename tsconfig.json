@@ -33,14 +33,16 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
     ".next-workflow-smoke/types/**/*.ts",
-    ".next-workflow-smoke/dev/types/**/*.ts",
     "**/*.mts"
   ],
   "exclude": [
     "node_modules",
     "design",
+    "search-ai-info.ts",
+    "get-ai-results.ts",
+    "query-db.ts",
+    "test-deepsearch.ts",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.smoke.ts",
