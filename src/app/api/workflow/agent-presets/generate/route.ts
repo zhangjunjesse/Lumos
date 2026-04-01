@@ -53,7 +53,7 @@ systemPrompt（200 字以上，中文）
     - mcp__browser__browser_click — 点击元素，参数 pageId、uid
     - mcp__browser__browser_fill — 清空并填写输入框，参数 pageId、uid、value
     - mcp__browser__browser_type — 向聚焦元素输入文字，参数 pageId、text、submitKey(Enter/Tab)
-    - mcp__browser__browser_screenshot — 截图，参数 pageId
+    - mcp__browser__browser_screenshot — 截图保存为 PNG 文件，参数 pageId、filePath（必填绝对路径）；截图由 Electron 直接写入文件，禁止再用其他工具重写文件内容
     - mcp__browser__browser_evaluate — 执行 JavaScript，参数 pageId、expression
     - mcp__browser__browser_wait_for — 等待文字出现，参数 pageId、text(数组)、timeoutMs
     - mcp__browser__browser_close_page — 关闭标签页，参数 pageId

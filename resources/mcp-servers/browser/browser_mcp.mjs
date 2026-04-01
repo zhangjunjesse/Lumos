@@ -140,13 +140,14 @@ const TOOLS = [
   },
   {
     name: 'browser_screenshot',
-    description: '截取页面当前状态的截图，返回 base64 图片。用于观察页面视觉内容。',
+    description: '截取页面当前状态的截图并保存为 PNG 文件。必须提供 filePath 指定保存路径（绝对路径，.png 后缀）。截图由 Electron 直接写入文件，保证二进制完整，禁止用其他工具重新写入截图内容。',
     inputSchema: {
       type: 'object',
       properties: {
         pageId: { type: 'string', description: '目标页面 ID' },
+        filePath: { type: 'string', description: '截图保存路径（绝对路径，.png 后缀），必填' },
       },
-      required: ['pageId'],
+      required: ['pageId', 'filePath'],
     },
   },
   {
@@ -219,16 +220,8 @@ async function callTool(name, args) {
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_screenshot': {
-      const data = await callBridge('POST', '/v1/pages/screenshot', { pageId: args.pageId, background: HEADLESS });
-      if (data.base64) {
-        return {
-          content: [
-            { type: 'image', data: data.base64, mimeType: 'image/png' },
-            { type: 'text', text: `截图成功，页面：${data.url || args.pageId}` },
-          ],
-        };
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+      const data = await callBridge('POST', '/v1/pages/screenshot', { pageId: args.pageId, filePath: args.filePath, background: HEADLESS });
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, filePath: data.filePath, pageId: data.pageId }) }] };
     }
     case 'browser_evaluate': {
       const data = await callBridge('POST', '/v1/pages/evaluate', { pageId: args.pageId, expression: args.expression, background: HEADLESS });
