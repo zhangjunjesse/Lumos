@@ -14,6 +14,11 @@ import readline from 'readline';
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'browser-mcp.log');
 const BRIDGE_RUNTIME_FILE = path.join(os.homedir(), '.lumos', 'runtime', 'browser-bridge.json');
 
+// When set to '1', all browser operations run in background mode:
+// tabs are never switched to and the browser UI is not disturbed.
+// Set LUMOS_BROWSER_HEADLESS=1 in the MCP env config for agent/workflow use.
+const HEADLESS = process.env.LUMOS_BROWSER_HEADLESS === '1';
+
 function log(message) {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   try { fs.appendFileSync(LOG_FILE, line); } catch { /* ignore */ }
@@ -189,32 +194,32 @@ async function callTool(name, args) {
       return { content: [{ type: 'text', text: JSON.stringify(data.tabs || data, null, 2) }] };
     }
     case 'browser_open_page': {
-      const data = await callBridge('POST', '/v1/pages/new', { url: args.url, background: args.background ?? false });
+      const data = await callBridge('POST', '/v1/pages/new', { url: args.url, background: HEADLESS || (args.background ?? false) });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_navigate': {
-      const body = { pageId: args.pageId, type: args.type || 'url', url: args.url };
+      const body = { pageId: args.pageId, type: args.type || 'url', url: args.url, background: HEADLESS };
       const data = await callBridge('POST', '/v1/pages/navigate', body);
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_snapshot': {
-      const data = await callBridge('POST', '/v1/pages/snapshot', { pageId: args.pageId });
+      const data = await callBridge('POST', '/v1/pages/snapshot', { pageId: args.pageId, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
     }
     case 'browser_click': {
-      const data = await callBridge('POST', '/v1/pages/click', { pageId: args.pageId, uid: args.uid });
+      const data = await callBridge('POST', '/v1/pages/click', { pageId: args.pageId, uid: args.uid, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_type': {
-      const data = await callBridge('POST', '/v1/pages/type', { pageId: args.pageId, text: args.text, submitKey: args.submitKey });
+      const data = await callBridge('POST', '/v1/pages/type', { pageId: args.pageId, text: args.text, submitKey: args.submitKey, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_fill': {
-      const data = await callBridge('POST', '/v1/pages/fill', { pageId: args.pageId, uid: args.uid, value: args.value });
+      const data = await callBridge('POST', '/v1/pages/fill', { pageId: args.pageId, uid: args.uid, value: args.value, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_screenshot': {
-      const data = await callBridge('POST', '/v1/pages/screenshot', { pageId: args.pageId });
+      const data = await callBridge('POST', '/v1/pages/screenshot', { pageId: args.pageId, background: HEADLESS });
       if (data.base64) {
         return {
           content: [
@@ -226,7 +231,7 @@ async function callTool(name, args) {
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_evaluate': {
-      const data = await callBridge('POST', '/v1/pages/evaluate', { pageId: args.pageId, expression: args.expression });
+      const data = await callBridge('POST', '/v1/pages/evaluate', { pageId: args.pageId, expression: args.expression, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_close_page': {
@@ -234,7 +239,7 @@ async function callTool(name, args) {
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     case 'browser_wait_for': {
-      const data = await callBridge('POST', '/v1/pages/wait-for', { pageId: args.pageId, text: args.text, timeoutMs: args.timeoutMs });
+      const data = await callBridge('POST', '/v1/pages/wait-for', { pageId: args.pageId, text: args.text, timeoutMs: args.timeoutMs, background: HEADLESS });
       return { content: [{ type: 'text', text: JSON.stringify(data) }] };
     }
     default:
