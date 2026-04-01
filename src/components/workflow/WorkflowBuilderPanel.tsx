@@ -64,20 +64,6 @@ export function WorkflowBuilderPanel({ onSaveToSchedule, onSaveAsTemplate, onSav
       .catch(() => {});
   }, []);
 
-  const createBlank = useCallback(() => {
-    const blank: WorkflowDslResult = {
-      version: '2',
-      name: description.trim() || '新工作流',
-      steps: [],
-    };
-    setDsl(blank);
-    setDslText(JSON.stringify(blank, null, 2));
-    setValidation(null);
-    setError('');
-    setSavedWorkflowId(null);
-    setSaveMsg('');
-  }, [description]);
-
   const generate = useCallback(async () => {
     if (!description.trim() || loading) return;
     setLoading(true);
@@ -187,12 +173,9 @@ export function WorkflowBuilderPanel({ onSaveToSchedule, onSaveAsTemplate, onSav
               </button>))}
           </div>)}
 
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={createBlank} disabled={loading}>
-            空白创建
-          </Button>
+        <div className="flex items-center justify-end">
           <Button onClick={generate} disabled={loading || !description.trim()}>
-            {loading ? '生成中...' : 'AI 生成'}
+            {loading ? '生成中...' : '生成工作流'}
           </Button>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
