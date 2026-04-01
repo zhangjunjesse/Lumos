@@ -8,29 +8,28 @@ import type {
   SDKToolProgressMessage,
   SDKToolUseSummaryMessage,
   Options,
-  McpStdioServerConfig,
-  McpSSEServerConfig,
-  McpHttpServerConfig,
-  McpServerConfig,
   NotificationHookInput,
   PostToolUseHookInput,
   UserPromptSubmitHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, FileAttachment, ApiProvider } from '@/types';
+import { toSdkMcpConfig } from '@/lib/mcp-resolver';
 import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
-import { getSetting, getActiveProvider, updateSdkSessionId, createPermissionRequest, setSetting } from './db';
-import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
+import { getSetting, updateSdkSessionId, createPermissionRequest, setSetting } from './db';
+import { getExpandedPath } from './platform';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { searchWithMeta, buildContext } from '@/lib/knowledge/searcher';
-import { sanitizeEnv, resolveScriptFromCmd } from './claude/utils';
-import { findBundledClaudeSdkCliPath } from './claude/sdk-paths';
+import { sanitizeEnv } from './claude/utils';
 import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
+import { isClaudeLocalAuthProvider } from './claude/provider-env';
+import { ensureClaudeLocalAuthReady } from './claude/local-auth';
+import { buildClaudeSdkRuntimeBootstrap } from './claude/sdk-runtime';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -175,76 +174,7 @@ function findSystemNode(): string | undefined {
   return undefined;
 }
 
-/**
- * Find the SDK's bundled cli.js as a fallback when no system Claude CLI is installed.
- * The SDK package includes a complete Claude Code CLI at its root as cli.js.
- */
-function findBundledCliPath(): string | undefined {
-  return findBundledClaudeSdkCliPath();
-}
-
-/**
- * Convert our MCPServerConfig to the SDK's McpServerConfig format.
- * Supports stdio, sse, and http transport types.
- */
-function toSdkMcpConfig(
-  servers: Record<string, MCPServerConfig>
-): Record<string, McpServerConfig> {
-  const result: Record<string, McpServerConfig> = {};
-  for (const [name, config] of Object.entries(servers)) {
-    const transport = config.type || 'stdio';
-
-    switch (transport) {
-      case 'sse': {
-        if (!config.url) {
-          console.warn(`[mcp] SSE server "${name}" is missing url, skipping`);
-          continue;
-        }
-        const sseConfig: McpSSEServerConfig = {
-          type: 'sse',
-          url: config.url,
-        };
-        if (config.headers && Object.keys(config.headers).length > 0) {
-          sseConfig.headers = config.headers;
-        }
-        result[name] = sseConfig;
-        break;
-      }
-
-      case 'http': {
-        if (!config.url) {
-          console.warn(`[mcp] HTTP server "${name}" is missing url, skipping`);
-          continue;
-        }
-        const httpConfig: McpHttpServerConfig = {
-          type: 'http',
-          url: config.url,
-        };
-        if (config.headers && Object.keys(config.headers).length > 0) {
-          httpConfig.headers = config.headers;
-        }
-        result[name] = httpConfig;
-        break;
-      }
-
-      case 'stdio':
-      default: {
-        if (!config.command) {
-          console.warn(`[mcp] stdio server "${name}" is missing command, skipping`);
-          continue;
-        }
-        const stdioConfig: McpStdioServerConfig = {
-          command: config.command,
-          args: config.args,
-          env: config.env,
-        };
-        result[name] = stdioConfig;
-        break;
-      }
-    }
-  }
-  return result;
-}
+// toSdkMcpConfig is now imported from @/lib/mcp-resolver (single source of truth)
 
 /**
  * Format an SSE line from an event object
@@ -268,6 +198,10 @@ function emitStatus(
   }));
 }
 
+// Unique per server process. Ensures MCP signatures never match across restarts,
+// so dead MCP processes from a previous run are never silently reused.
+const SERVER_EPOCH = Date.now().toString(36);
+
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) return JSON.stringify(value);
   if (Array.isArray(value)) {
@@ -288,7 +222,24 @@ function getSessionMcpSignatureKey(sessionId: string): string {
 
 function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): string {
   if (!mcpServers || Object.keys(mcpServers).length === 0) return '';
-  return createHash('sha256').update(stableSerialize(mcpServers)).digest('hex');
+  // Include dependency readiness for MCPs that have a package.json.
+  // When node_modules is created/deleted the signature changes, forcing MCP reload.
+  const depsReady: string[] = [];
+  for (const config of Object.values(mcpServers)) {
+    const script = config.args?.[0];
+    if (typeof script === 'string' && script.startsWith('/')) {
+      try {
+        const dir = path.dirname(script);
+        if (fs.existsSync(path.join(dir, 'package.json'))) {
+          depsReady.push(fs.existsSync(path.join(dir, 'node_modules')) ? '1' : '0');
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  const payload = stableSerialize(mcpServers)
+    + (depsReady.length > 0 ? `|deps:${depsReady.join(',')}` : '')
+    + `|epoch:${SERVER_EPOCH}`;
+  return createHash('sha256').update(payload).digest('hex');
 }
 
 /**
@@ -401,6 +352,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     systemPrompt,
     workingDirectory,
     mcpServers,
+    inProcessMcpServers,
     abortController,
     permissionMode,
     files,
@@ -415,8 +367,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       console.log('[perf] streamClaude start');
       emitStatus(controller, 'Preparing Claude runtime...', { phase: 'preparing' });
 
-      // Hoist activeProvider so it's accessible in the catch block for error messages
-      const activeProvider: ApiProvider | undefined = options.provider ?? getActiveProvider();
+      const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
+        provider: options.provider,
+        sessionId,
+      });
+      const activeProvider: ApiProvider | undefined = runtimeBootstrap.activeProvider;
       console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');
 
       // Hoist execPath override vars so they're accessible in the finally block
@@ -424,107 +379,19 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       let systemNode: string | undefined;
 
       try {
-        // Build env for the Claude Code subprocess.
-        // Start with process.env (includes user shell env from Electron's loadUserShellEnv).
-        // Then overlay any API config the user set in Lumos settings (optional).
-        const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
+        const sdkEnv: Record<string, string> = {
+          ...runtimeBootstrap.env,
+          // Extend MCP tool timeout for long-running tools like image generation (~300s)
+          CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: '360',
+        };
 
-        // Ensure HOME/USERPROFILE are set so Claude Code can find ~/.claude/commands/
-        if (!sdkEnv.HOME) sdkEnv.HOME = os.homedir();
-        if (!sdkEnv.USERPROFILE) sdkEnv.USERPROFILE = os.homedir();
-        // Ensure SDK subprocess has expanded PATH (consistent with Electron mode)
-        sdkEnv.PATH = getExpandedPath();
-
-        // When running inside Electron, process.execPath is the Electron binary.
-        // The SDK uses process.execPath to fork the CLI subprocess, but Electron's
-        // Node.js runtime lacks web globals like ReadableStream, causing the CLI to
-        // crash with "ReferenceError: ReadableStream is not defined".
-        // Setting ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave as plain
-        // Node.js in child processes, restoring all expected globals.
-        sdkEnv.ELECTRON_RUN_AS_NODE = '1';
-
-        // === ISOLATION: Clear all user environment variables ===
-        // Remove all CLAUDE_* and ANTHROPIC_* variables from user's environment
-        // to prevent pollution from user's local Claude Code installation.
-        // We'll re-inject only what Lumos needs below.
-        for (const key of Object.keys(sdkEnv)) {
-          if (key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_')) {
-            delete sdkEnv[key];
-          }
+        if (isClaudeLocalAuthProvider(activeProvider)) {
+          await ensureClaudeLocalAuthReady(activeProvider);
+        } else if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN) {
+          console.warn('[claude-client] No API key found: no provider configured and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in environment');
         }
 
-        // On Windows, auto-detect Git Bash if not already configured
-        if (process.platform === 'win32' && !process.env.CLAUDE_CODE_GIT_BASH_PATH) {
-          console.log('[claude-client] Windows detected, searching for git-bash...');
-          const gitBashPath = findGitBash();
-          if (gitBashPath) {
-            sdkEnv.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
-            console.log('[claude-client] ✓ Set CLAUDE_CODE_GIT_BASH_PATH:', gitBashPath);
-          } else {
-            console.log('[claude-client] ✗ git-bash not found! Claude Code will fail.');
-            console.log('[claude-client] Please install Git for Windows: https://git-scm.com/downloads/win');
-          }
-        }
-
-        // Sandbox: isolate CLI config directory so it doesn't read/write ~/.claude/
-        const claudeConfigDir = process.env.LUMOS_CLAUDE_CONFIG_DIR || process.env.CODEPILOT_CLAUDE_CONFIG_DIR;
-        if (claudeConfigDir) {
-          sdkEnv.CLAUDE_CONFIG_DIR = claudeConfigDir;
-          console.log('[claude-client] Isolation: using config dir:', claudeConfigDir);
-          if (process.env.CODEPILOT_CLAUDE_CONFIG_DIR && !process.env.LUMOS_CLAUDE_CONFIG_DIR) {
-            console.warn('[claude-client] CODEPILOT_CLAUDE_CONFIG_DIR is deprecated. Please use LUMOS_CLAUDE_CONFIG_DIR instead.');
-          }
-        } else {
-          console.warn('[claude-client] WARNING: LUMOS_CLAUDE_CONFIG_DIR not set, may use user ~/.claude/');
-        }
-
-        if (activeProvider && activeProvider.api_key) {
-          // Inject provider config — set both token variants so extra_env can clear the unwanted one
-          sdkEnv.ANTHROPIC_AUTH_TOKEN = activeProvider.api_key;
-          sdkEnv.ANTHROPIC_API_KEY = activeProvider.api_key;
-          if (activeProvider.base_url) {
-            sdkEnv.ANTHROPIC_BASE_URL = activeProvider.base_url;
-          }
-
-          // Inject extra environment variables
-          // Empty string values mean "delete this variable" (e.g. clear ANTHROPIC_API_KEY for AUTH_TOKEN-only providers)
-          try {
-            const extraEnv = JSON.parse(activeProvider.extra_env || '{}');
-            for (const [key, value] of Object.entries(extraEnv)) {
-              if (typeof value === 'string') {
-                if (value === '') {
-                  delete sdkEnv[key];
-                } else {
-                  sdkEnv[key] = value;
-                }
-              }
-            }
-          } catch {
-            // ignore malformed extra_env
-          }
-        } else {
-          // No active provider — check legacy DB settings first, then fall back to
-          // environment variables already present in process.env (copied into sdkEnv above).
-          // This allows users who set ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL
-          // in their shell environment to use them without configuring a provider in the UI.
-          const appToken = getSetting('anthropic_auth_token');
-          const appBaseUrl = getSetting('anthropic_base_url');
-          if (appToken) {
-            sdkEnv.ANTHROPIC_AUTH_TOKEN = appToken;
-          }
-          if (appBaseUrl) {
-            sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl;
-          }
-          // If neither legacy settings nor env vars provide a key, log a warning
-          if (!appToken && !sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN) {
-            console.warn('[claude-client] No API key found: no active provider, no legacy settings, and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in environment');
-          }
-        }
-
-        // Check if dangerously_skip_permissions is enabled in app settings
         const skipPermissions = getSetting('dangerously_skip_permissions') === 'true';
-        const enableProjectSettings = getSetting('claude_project_settings_enabled') === 'true';
-        const settingSources: Options['settingSources'] = enableProjectSettings ? ['project'] : [];
 
         const queryOptions: Options = {
           cwd: workingDirectory || os.homedir(),
@@ -534,50 +401,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ? 'bypassPermissions'
             : ((permissionMode as Options['permissionMode']) || 'acceptEdits'),
           env: sanitizeEnv(sdkEnv),
-          // === ISOLATION: Prevent loading user's ~/.claude/ config ===
-          // settingSources: [] means the SDK won't read:
-          // - ~/.claude/settings.json (user's global settings)
-          // - ~/.claude.json (user's global MCP servers)
-          // - .claude/settings.json (project settings)
-          // - .claude.json (project MCP servers)
-          // When 'claude_project_settings_enabled' is true, we load ONLY project
-          // settings (including CLAUDE.md/rules) while still isolating user-level config.
-          settingSources,
+          settingSources: runtimeBootstrap.settingSources,
         };
 
         if (skipPermissions) {
           queryOptions.allowDangerouslySkipPermissions = true;
         }
 
-        // --- Sandbox mode: always use the SDK's bundled CLI ---
-        // In packaged Electron apps, process.execPath is the Electron binary
-        // which lacks web globals (ReadableStream etc.) that the CLI needs.
-        // We override process.execPath to the system `node` so the SDK forks
-        // the CLI with a proper Node.js runtime. The bundled CLI ensures the
-        // app is self-contained and doesn't depend on a system-installed
-        // Claude Code CLI.
-        const bundledCli = findBundledCliPath();
-        if (bundledCli) {
-          queryOptions.pathToClaudeCodeExecutable = bundledCli;
-          console.log('[claude-client] Sandbox: using bundled CLI:', bundledCli);
+        if (runtimeBootstrap.pathToClaudeCodeExecutable) {
+          queryOptions.pathToClaudeCodeExecutable = runtimeBootstrap.pathToClaudeCodeExecutable;
+          console.log('[claude-client] Using Claude CLI:', runtimeBootstrap.pathToClaudeCodeExecutable);
         } else {
-          // Fallback: try system CLI (dev mode or bundled CLI missing)
-          const claudePath = findClaudeBinary();
-          if (claudePath) {
-            const ext = path.extname(claudePath).toLowerCase();
-            if (ext === '.cmd' || ext === '.bat') {
-              const scriptPath = resolveScriptFromCmd(claudePath);
-              if (scriptPath) {
-                queryOptions.pathToClaudeCodeExecutable = scriptPath;
-                console.log('[claude-client] Using system CLI (resolved from .cmd):', scriptPath);
-              }
-            } else {
-              queryOptions.pathToClaudeCodeExecutable = claudePath;
-              console.log('[claude-client] Using system CLI:', claudePath);
-            }
-          } else {
-            console.warn('[claude-client] WARNING: No Claude CLI found (bundled or system)');
-          }
+          console.warn('[claude-client] WARNING: No Claude CLI found (bundled or system)');
         }
 
         if (model) {
@@ -683,6 +518,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           console.log('[claude-client] Resuming session without MCP servers');
         }
 
+        // Merge in-process MCP servers (e.g. lumos-image)
+        if (inProcessMcpServers && Object.keys(inProcessMcpServers).length > 0) {
+          queryOptions.mcpServers = {
+            ...(queryOptions.mcpServers || {}),
+            ...inProcessMcpServers,
+          };
+          console.log('[claude-client] Injected in-process MCP servers:', Object.keys(inProcessMcpServers));
+        }
+
         if (sessionId) {
           try {
             setSetting(getSessionMcpSignatureKey(sessionId), currentMcpSignature);
@@ -716,8 +560,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
-          // Auto-approve built-in MCP server tools (e.g. feishu)
-          if (toolName.startsWith('mcp__feishu__')) {
+          // Auto-approve built-in MCP server tools (e.g. feishu, lumos-image)
+          if (toolName.startsWith('mcp__feishu__') || toolName.startsWith('mcp__lumos-image__')) {
             return { behavior: 'allow' as const, updatedInput: input };
           }
           const permissionRequestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1194,8 +1038,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             const configInfo = {
               provider: activeProvider?.name || 'Built-in',
               model: model || 'default',
-              base_url: activeProvider?.base_url || 'default (https://api.anthropic.com)',
-              api_key_set: !!activeProvider?.api_key,
+              base_url: isClaudeLocalAuthProvider(activeProvider)
+                ? 'Claude 本地登录模式'
+                : (activeProvider?.base_url || 'default (https://api.anthropic.com)'),
+              api_key_set: isClaudeLocalAuthProvider(activeProvider) ? true : !!activeProvider?.api_key,
               api_key_length: activeProvider?.api_key?.length || 0,
               api_key_prefix: activeProvider?.api_key ? activeProvider.api_key.substring(0, 10) + '...' : 'not set',
             };
@@ -1205,9 +1051,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             console.error('[claude-client] Provider configuration:', configInfo);
 
             // Include config info in error message for user
-            const configDetails = `\n\n📋 Current Configuration:\n• Provider: ${configInfo.provider}\n• Model: ${configInfo.model}\n• Base URL: ${configInfo.base_url}\n• API Key: ${configInfo.api_key_set ? `Set (${configInfo.api_key_length} chars, prefix: ${configInfo.api_key_prefix})` : 'NOT SET ❌'}`;
+            const authLine = isClaudeLocalAuthProvider(activeProvider)
+              ? '• Auth: Claude 本地登录'
+              : `• API Key: ${configInfo.api_key_set ? `Set (${configInfo.api_key_length} chars, prefix: ${configInfo.api_key_prefix})` : 'NOT SET ❌'}`;
+            const configDetails = `\n\n📋 Current Configuration:\n• Provider: ${configInfo.provider}\n• Model: ${configInfo.model}\n• Base URL: ${configInfo.base_url}\n${authLine}`;
 
-            errorMessage = `Claude Code process exited with an error${providerHint}. This is often caused by:\n• Invalid or missing API Key\n• Incorrect Base URL configuration\n• Network connectivity issues${detailHint}${configDetails}\n\nOriginal error: ${rawMessage}`;
+            errorMessage = isClaudeLocalAuthProvider(activeProvider)
+              ? `Claude Code process exited with an error${providerHint}. This is often caused by:\n• Claude 本地登录已失效\n• 当前沙箱 Claude 账号没有可用订阅\n• Network connectivity issues${detailHint}${configDetails}\n\nOriginal error: ${rawMessage}`
+              : `Claude Code process exited with an error${providerHint}. This is often caused by:\n• Invalid or missing API Key\n• Incorrect Base URL configuration\n• Network connectivity issues${detailHint}${configDetails}\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('exited with code')) {
             const providerHint = activeProvider?.name ? ` (Provider: ${activeProvider.name})` : '';
             errorMessage = `Claude Code process crashed unexpectedly${providerHint}.\n\nOriginal error: ${rawMessage}`;
@@ -1216,9 +1067,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             errorMessage = `Cannot connect to API endpoint (${baseUrl}). Please check your network connection and Base URL configuration.\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('401') || rawMessage.includes('Unauthorized') || rawMessage.includes('authentication')) {
             const providerHint = activeProvider?.name ? ` for provider "${activeProvider.name}"` : '';
-            errorMessage = `Authentication failed${providerHint}. Please verify your API Key is correct and has not expired.\n\nOriginal error: ${rawMessage}`;
+            errorMessage = isClaudeLocalAuthProvider(activeProvider)
+              ? `Claude 本地登录认证失败${providerHint}。请在设置里重新登录后再试。\n\nOriginal error: ${rawMessage}`
+              : `Authentication failed${providerHint}. Please verify your API Key is correct and has not expired.\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('403') || rawMessage.includes('Forbidden')) {
-            errorMessage = `Access denied. Your API Key may not have permission for this operation.\n\nOriginal error: ${rawMessage}`;
+            errorMessage = isClaudeLocalAuthProvider(activeProvider)
+              ? `Claude 本地登录账号当前没有权限执行该操作，或登录状态已经失效。\n\nOriginal error: ${rawMessage}`
+              : `Access denied. Your API Key may not have permission for this operation.\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('429') || rawMessage.includes('rate limit') || rawMessage.includes('Rate limit')) {
             errorMessage = `Rate limit exceeded. Please wait a moment before retrying.\n\nOriginal error: ${rawMessage}`;
           }
