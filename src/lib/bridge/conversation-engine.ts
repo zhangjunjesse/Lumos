@@ -1,131 +1,61 @@
 import {
   addMessage,
   dataDir,
-  getAllProviders,
-  getEnabledMcpServersAsConfig,
   getSession,
   updateSdkSessionId,
   updateSessionResolvedModel,
 } from '@/lib/db';
+import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
-import { getFeishuCredentials } from '@/lib/feishu-config';
+import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
-const CHROME_MCP_NAMES = new Set(['chrome-devtools', 'chrome_devtools']);
-const GEMINI_IMAGE_MCP_SYSTEM_HINT = `When user asks to generate, draw, edit, or restyle images, use MCP tool \`generate_image\` from \`gemini-image\`.
-Do not ask user to edit \`.kiro/settings/mcp.json\`, \`.claude.json\`, or external config files. MCP in Lumos is managed internally via Settings -> Providers.
-For image requests, call tool first; only claim success after successful tool_result with image paths.
-If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.`;
-const FEISHU_REPORT_MCP_SYSTEM_HINT = `When user asks for Feishu reports, weekly reports, daily reports, monthly summaries, or "汇报", prefer MCP tools from \`feishu\`:
-- \`feishu_report_list\`: list report tasks first.
-- \`feishu_report_read\`: read selected report task detail.
-These tools target Feishu report app APIs (\`report/v1\`), not generic docs search.
-If API reports missing scopes, tell user to enable app identity scopes: \`report:rule:readonly\` and \`report:task:readonly\`.
-Do not claim report content before successful tool_result.`;
+const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools via server \`feishu\` for reading/editing Feishu docs, sheets, wikis, drive, and reports.
 
-function pickNonEmpty(...values: Array<string | undefined>): string {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return '';
-}
+**Docs & Wiki** — pass any feishu.cn URL directly:
+- \`feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
+- \`feishu_doc_append\` — append content to a doc
+- \`feishu_doc_update_block\` — update a specific block in a doc
+- \`feishu_doc_get_blocks\` / \`feishu_doc_create\` / \`feishu_doc_overwrite\` — advanced doc ops
 
-function parseExtraEnv(raw: string | undefined): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'string') env[key] = value;
-    }
-    return env;
-  } catch {
-    return {};
-  }
-}
+**Sheets** (for spreadsheet URLs, NOT doc URLs):
+- \`feishu_sheet_read\` — read sheet data
+- \`feishu_sheet_append_rows\` / \`feishu_sheet_update_cells\` — write to sheets
 
-function resolveGeminiMcpEnv(
-  existingEnv?: Record<string, string>,
-  sessionWorkingDirectory?: string,
-): Record<string, string> {
-  const env = { ...(existingEnv || {}) };
-  const geminiProvider = getAllProviders().find((p) => p.provider_type === 'gemini-image');
-  const providerEnv = parseExtraEnv(geminiProvider?.extra_env);
+**Drive & Wiki browse**:
+- \`feishu_search\` — search docs/sheets/wiki across drive
+- \`feishu_drive_list\` — list files in a folder
+- \`feishu_wiki_list_spaces\` — browse wiki spaces/nodes
 
-  const providerApiKey = pickNonEmpty(geminiProvider?.api_key, providerEnv.GEMINI_API_KEY);
-  const providerBaseUrl = pickNonEmpty(geminiProvider?.base_url, providerEnv.GEMINI_BASE_URL);
-  const providerModel = pickNonEmpty(providerEnv.GEMINI_MODEL, providerEnv.GEMINI_IMAGE_MODEL);
+**Images**: \`feishu_image_list\` / \`feishu_image_download\`
 
-  env.GEMINI_API_KEY = pickNonEmpty(
-    providerApiKey,
-    env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY,
-  );
-  env.GEMINI_BASE_URL = pickNonEmpty(
-    providerBaseUrl,
-    env.GEMINI_BASE_URL,
-    process.env.GEMINI_BASE_URL,
-    DEFAULT_GEMINI_BASE_URL,
-  );
-  env.GEMINI_MODEL = pickNonEmpty(
-    providerModel,
-    env.GEMINI_MODEL,
-    process.env.GEMINI_MODEL,
-    DEFAULT_GEMINI_MODEL,
-  );
-  env.GEMINI_OUTPUT_DIR = pickNonEmpty(
-    env.GEMINI_OUTPUT_DIR,
-    sessionWorkingDirectory,
-    process.env.GEMINI_OUTPUT_DIR,
-  );
+**Reports** (汇报/weekly/daily summaries):
+- \`feishu_report_list\` — find report tasks
+- \`feishu_report_read\` — read a report task detail
 
-  return env;
-}
+**Auth**: \`feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
 
-function resolveChromeBridgeEnv(existingEnv?: Record<string, string>): Record<string, string> {
-  const env = { ...(existingEnv || {}) };
-  let runtimeBridge: { url?: string; token?: string } = {};
-  try {
-    const dataDirPath = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-    const runtimePath = path.join(dataDirPath, 'runtime', 'browser-bridge.json');
-    if (fs.existsSync(runtimePath)) {
-      const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as { url?: unknown; token?: unknown };
-      runtimeBridge = {
-        url: typeof parsed.url === 'string' ? parsed.url : undefined,
-        token: typeof parsed.token === 'string' ? parsed.token : undefined,
-      };
-    }
-  } catch {
-    // ignore runtime bridge file parse errors
-  }
+Rules:
+- To read any feishu.cn doc or wiki link: call \`feishu_doc_read\` with the URL directly.
+- Do not claim content before successful tool_result.
+- If API reports missing scopes, tell user which scope to enable.`;
+const DEEPSEARCH_MCP_SYSTEM_HINT = `You have access to built-in DeepSearch tools for deep web research with shared browser login state. Use them for anti-bot sites like Zhihu, WeChat public articles, Xiaohongshu, Juejin, and Twitter/X.
 
-  env.LUMOS_BROWSER_BRIDGE_URL = pickNonEmpty(
-    process.env.LUMOS_BROWSER_BRIDGE_URL,
-    runtimeBridge.url,
-    env.LUMOS_BROWSER_BRIDGE_URL,
-  );
-  env.LUMOS_BROWSER_BRIDGE_TOKEN = pickNonEmpty(
-    process.env.LUMOS_BROWSER_BRIDGE_TOKEN,
-    runtimeBridge.token,
-    env.LUMOS_BROWSER_BRIDGE_TOKEN,
-  );
-  return env;
-}
+Available DeepSearch tools (call these directly by name):
+- \`start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
+- \`get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by \`start\`).
+- \`pause\` / \`resume\` / \`cancel\` — control run lifecycle. Required param: \`runId\`.
 
-function hasGeminiImageMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers['gemini-image'] || servers['gemini_image']);
-}
+Workflow: call \`start\` → poll with \`get_result\` until status is \`completed\` or \`partial\` → summarize results.
+
+Rules:
+- Do NOT use raw browser steps when the user wants DeepSearch — use these tools instead.
+- Prefer \`managed_page\` and \`best_effort\` by default.
+- If \`get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`resume\`.
+- Never fabricate search results — only report what the tool_result actually contains.`;
 
 function hasFeishuMcp(
   servers: Record<string, MCPServerConfig> | undefined,
@@ -134,71 +64,11 @@ function hasFeishuMcp(
   return Boolean(servers.feishu);
 }
 
-function loadMcpServers(sessionWorkingDirectory?: string): Record<string, MCPServerConfig> | undefined {
-  const mcpServers = getEnabledMcpServersAsConfig();
-  const { appId: feishuAppId, appSecret: feishuAppSecret } = getFeishuCredentials();
-
-  let runtimePath: string;
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    runtimePath = process.resourcesPath;
-  } else {
-    runtimePath = path.join(process.cwd(), 'resources');
-  }
-
-  const dataDirPath = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  const workspacePath = sessionWorkingDirectory || process.cwd();
-  const legacyMcpPathPattern = /[/\\]feishu-mcp-server[/\\]mcp-servers[/\\]/g;
-  const normalizedMcpPathSegment = `${path.sep}mcp-servers${path.sep}`;
-
-  for (const [name, config] of Object.entries(mcpServers)) {
-    if (config.args) {
-      config.args = config.args.map(arg => {
-        const normalizedArg = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
-        return normalizedArg
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDirPath)
-          .replace(/^~\//, os.homedir() + '/');
-      });
-    }
-    if (config.env) {
-      const resolvedEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries(config.env)) {
-        resolvedEnv[key] = value
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDirPath)
-          .replace(/^~\//, os.homedir() + '/');
-      }
-      config.env = resolvedEnv;
-    }
-
-    if (name === 'feishu') {
-      config.env = {
-        ...config.env,
-        FEISHU_APP_ID: feishuAppId,
-        FEISHU_APP_SECRET: feishuAppSecret,
-        FEISHU_TOKEN_PATH: path.join(dataDirPath, 'auth', 'feishu.json'),
-      };
-    }
-
-    if (name === 'bilibili' && !config.env?.BILIBILI_SESSDATA) {
-      config.env = {
-        ...config.env,
-        BILIBILI_SESSDATA: process.env.BILIBILI_SESSDATA || '',
-      };
-    }
-
-    if (name === 'gemini-image' || name === 'gemini_image') {
-      config.env = resolveGeminiMcpEnv(config.env, sessionWorkingDirectory);
-    }
-
-    if (CHROME_MCP_NAMES.has(name)) {
-      config.env = resolveChromeBridgeEnv(config.env);
-    }
-  }
-
-  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
+function hasDeepSearchMcp(
+  servers: Record<string, MCPServerConfig> | undefined,
+): boolean {
+  if (!servers) return false;
+  return Boolean(servers.deepsearch);
 }
 
 interface ConversationResponse {
@@ -253,13 +123,20 @@ export class ConversationEngine {
 
     addMessage(sessionId, 'user', savedContent);
 
-    const loadedMcpServers = loadMcpServers(session.working_directory || undefined);
+    const loadedMcpServers = resolveEnabledMcpServers({
+      sessionWorkingDirectory: session.working_directory || undefined,
+      sessionId,
+    });
     const hints: string[] = [];
-    if (hasGeminiImageMcp(loadedMcpServers)) {
-      hints.push(GEMINI_IMAGE_MCP_SYSTEM_HINT);
-    }
+
+    // In-process image gen tool replaces the external gemini-image MCP hint
+    const lumosMcpServer = createLumosMcpServer(sessionId);
+    hints.push(IMAGE_GEN_IN_PROCESS_HINT);
     if (hasFeishuMcp(loadedMcpServers)) {
-      hints.push(FEISHU_REPORT_MCP_SYSTEM_HINT);
+      hints.push(FEISHU_MCP_SYSTEM_HINT);
+    }
+    if (hasDeepSearchMcp(loadedMcpServers)) {
+      hints.push(DEEPSEARCH_MCP_SYSTEM_HINT);
     }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
 
@@ -272,6 +149,7 @@ export class ConversationEngine {
       permissionMode: 'acceptEdits',
       files,
       mcpServers: loadedMcpServers,
+      inProcessMcpServers: { [lumosMcpServer.name]: lumosMcpServer },
       systemPrompt,
     });
 

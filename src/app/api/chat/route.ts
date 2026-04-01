@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, getProvider, getDefaultProviderId, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, getEnabledMcpServersAsConfig, getAllProviders } from '@/lib/db';
+import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
+import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import {
   getMainAgentSessionTeamRuntimePrompt,
   getMainAgentSessionTeamRuntimeState,
@@ -21,54 +24,85 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { loadToken } from '@/lib/feishu-auth';
-import { getFeishuCredentials } from '@/lib/feishu-config';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
 import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
-import {
-  buildMainAgentTaskDispatchHint,
-  planMainAgentTaskDispatch,
-} from '@/lib/chat/main-agent-task-dispatch';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
-import { dispatchMainAgentTask, finalizeMainAgentTaskDispatch } from '@/lib/task-management';
+import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
 
-const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
-const CHROME_MCP_NAMES = new Set(['chrome-devtools', 'chrome_devtools']);
 const CHROME_BRIDGE_URL_HEADER = 'x-lumos-browser-bridge-url';
 const CHROME_BRIDGE_TOKEN_HEADER = 'x-lumos-browser-bridge-token';
 const FILE_DIRECTIVE_PREFIX = 'FEISHU_SEND_FILE::';
 const MAIL_DIRECTIVE_PREFIX = 'FEISHU_SEND_MAIL::';
 const MAX_FEISHU_CONTEXT_DOCS = 2;
 const FEISHU_CONTEXT_MAX_CHARS = 3500;
-const GEMINI_IMAGE_MCP_SYSTEM_HINT = `When the user asks to generate, draw, edit, restyle, or otherwise transform images, use the MCP tool \`generate_image\` from the \`gemini-image\` server.
-Do not output fenced planning blocks like \`image-gen-request\` or \`batch-plan\` when this tool is available.
-Tool argument guidance:
-- \`prompt\` (required): write a clear English prompt. For editing tasks, describe only the requested changes.
-- \`reference_images\` (optional): include local file paths of user-attached images or previously generated images when relevant.
-- \`output_dir\` (optional): prefer the current workspace root. Avoid temporary directories like /tmp.
-- \`aspect_ratio\` (optional): use values like 1:1, 16:9, 9:16, 3:2, 2:3, 4:3, 3:4 if requested.
+const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools via server \`feishu\` for reading/editing Feishu docs, sheets, wikis, drive, and reports.
+
+**Docs & Wiki** — pass any feishu.cn URL directly:
+- \`feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
+- \`feishu_doc_append\` — append content to a doc
+- \`feishu_doc_update_block\` — update a specific block in a doc
+- \`feishu_doc_get_blocks\` / \`feishu_doc_create\` / \`feishu_doc_overwrite\` — advanced doc ops
+
+**Sheets** (for spreadsheet URLs, NOT doc URLs):
+- \`feishu_sheet_read\` — read sheet data
+- \`feishu_sheet_append_rows\` / \`feishu_sheet_update_cells\` — write to sheets
+
+**Drive & Wiki browse**:
+- \`feishu_search\` — search docs/sheets/wiki across drive
+- \`feishu_drive_list\` — list files in a folder
+- \`feishu_wiki_list_spaces\` — browse wiki spaces/nodes
+
+**Images**: \`feishu_image_list\` / \`feishu_image_download\`
+
+**Reports** (汇报/weekly/daily summaries):
+- \`feishu_report_list\` — find report tasks
+- \`feishu_report_read\` — read a report task detail
+
+**Auth**: \`feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
+
 Rules:
-- For image requests, call \`generate_image\` before you claim success.
-- If no successful \`tool_result\` with image paths is available, do not claim the image is generated.
-- Do not claim anything was sent to Feishu unless the user explicitly asked to send to Feishu in this turn.
-- If user explicitly asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on a separate line for each file.
-- MCP config in Lumos is managed internally (database + built-in resources). Never ask users to edit \`.kiro/settings/mcp.json\`, \`.claude.json\`, or external client configs.
-- If tool result reports missing Gemini key, tell user to configure it in Lumos UI: Settings -> Providers -> \`gemini-image\` (API Key, optional Base URL/Model).
-After successful tool execution, briefly summarize what was generated and include returned image paths.`;
-const FEISHU_REPORT_MCP_SYSTEM_HINT = `When user asks for Feishu reports, weekly reports, daily reports, monthly summaries, or "汇报", prefer these MCP tools from server \`feishu\`:
-- \`feishu_report_list\`: find candidate report tasks first.
-- \`feishu_report_read\`: read the selected report task detail.
+- To read any feishu.cn doc or wiki link: call \`feishu_doc_read\` with the URL directly.
+- Do not claim content before successful tool_result.
+- If API reports missing scopes, tell user which scope to enable.`;
+const DEEPSEARCH_MCP_SYSTEM_HINT = `You have access to built-in DeepSearch tools for deep web research with shared browser login state. Use them for anti-bot sites like Zhihu, WeChat public articles, Xiaohongshu, Juejin, and Twitter/X.
+
+Available DeepSearch tools (call these directly by name):
+- \`start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
+- \`get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by \`start\`).
+- \`pause\` / \`resume\` / \`cancel\` — control run lifecycle. Required param: \`runId\`.
+
+Workflow: call \`start\` → wait or poll with \`get_result\` until status is \`completed\` or \`partial\` → summarize results.
+
 Rules:
-- Do not claim report content before successful tool_result.
-- These tools target Feishu report app APIs (\`report/v1\`), not generic docs search.
-- If API reports missing scopes, tell user to enable app identity scopes: \`report:rule:readonly\` and \`report:task:readonly\`.
-- If auth/token is missing, ask user to login Feishu in Lumos first.`;
+- Do NOT use raw browser click/fill/screenshot steps when the user wants DeepSearch — use these tools instead.
+- Prefer \`managed_page\` (default) unless the user explicitly asks to take over the current browser page.
+- Prefer \`best_effort\` (default) unless every selected site must succeed.
+- If \`get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`resume\`.
+- Never fabricate search results — only report what the tool_result actually contains.`;
+const BROWSER_MCP_SYSTEM_HINT = `You have access to built-in browser control tools that share the user's browser login state. Use them to navigate, read, click, type, and screenshot pages in the built-in Lumos browser.
+
+Available browser tools (call by exact name):
+- \`mcp__browser__browser_list_pages\` — list all open tabs (returns pageId, url, title)
+- \`mcp__browser__browser_open_page\` — open a new tab. Params: \`url\` (required)
+- \`mcp__browser__browser_navigate\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
+- \`mcp__browser__browser_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
+- \`mcp__browser__browser_click\` — click an element by uid. Params: \`pageId\`, \`uid\`
+- \`mcp__browser__browser_type\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
+- \`mcp__browser__browser_fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
+- \`mcp__browser__browser_screenshot\` — take a screenshot. Params: \`pageId\`
+- \`mcp__browser__browser_evaluate\` — run JavaScript. Params: \`pageId\`, \`expression\`
+- \`mcp__browser__browser_close_page\` — close a tab. Params: \`pageId\`
+- \`mcp__browser__browser_wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
+
+Workflow: call \`browser_list_pages\` → get pageId → use other tools with that pageId.
+Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
+
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
 Team Mode is session-scoped under the current Main Agent conversation, never a separate top-level agent.
 When the user explicitly asks for multi-role collaboration, or the task is clearly complex enough to benefit from coordinated roles, do not start execution immediately. First propose a structured Team Mode plan and wait for user confirmation.
@@ -107,27 +141,6 @@ const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main A
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
 
-const TASK_MANAGEMENT_HINT = `# Task Management - CRITICAL
-
-You have access to task-management MCP tools. For ANY complex implementation request, you MUST call createTask FIRST before attempting direct implementation.
-
-**MANDATORY: Call createTask for:**
-- System/feature implementation (e.g., "实现用户管理系统", "开发XX功能")
-- Multi-file modifications
-- Tasks requiring >2 minutes
-
-**How to use:**
-1. Recognize complex task → Call createTask tool immediately
-2. Do NOT start implementation yourself
-3. After createTask succeeds, inform user the task is delegated
-
-**Available tools:**
-- createTask(taskSummary, requirements, sessionId)
-- listTasks(sessionId, status)
-- getTaskDetail(taskId)
-- cancelTask(taskId)
-
-**Example:** User says "实现用户管理系统" → You MUST call createTask, NOT implement directly.`;
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -138,136 +151,10 @@ function pickNonEmpty(...values: Array<string | undefined>): string {
   return '';
 }
 
-function buildSseEvent(event: SSEEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
-}
-
-function createSyntheticAssistantResponse(message: string): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(buildSseEvent({ type: 'text', data: message })));
-      controller.enqueue(encoder.encode(buildSseEvent({ type: 'result', data: JSON.stringify({ usage: null }) })));
-      controller.enqueue(encoder.encode(buildSseEvent({ type: 'done', data: '' })));
-      controller.close();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  });
-}
-
-function parseExtraEnv(raw: string | undefined): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'string') env[key] = value;
-    }
-    return env;
-  } catch {
-    return {};
-  }
-}
-
-function resolveGeminiMcpEnv(
-  existingEnv?: Record<string, string>,
-  sessionWorkingDirectory?: string,
-): Record<string, string> {
-  const env = { ...(existingEnv || {}) };
-  const geminiProvider = getAllProviders().find((p) => p.provider_type === 'gemini-image');
-  const providerEnv = parseExtraEnv(geminiProvider?.extra_env);
-
-  const providerApiKey = pickNonEmpty(geminiProvider?.api_key, providerEnv.GEMINI_API_KEY);
-  const providerBaseUrl = pickNonEmpty(geminiProvider?.base_url, providerEnv.GEMINI_BASE_URL);
-  const providerModel = pickNonEmpty(providerEnv.GEMINI_MODEL, providerEnv.GEMINI_IMAGE_MODEL);
-
-  // Provider settings in Lumos UI are canonical and should override stale MCP env values.
-  env.GEMINI_API_KEY = pickNonEmpty(
-    providerApiKey,
-    env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY,
-  );
-  env.GEMINI_BASE_URL = pickNonEmpty(
-    providerBaseUrl,
-    env.GEMINI_BASE_URL,
-    process.env.GEMINI_BASE_URL,
-    DEFAULT_GEMINI_BASE_URL,
-  );
-  env.GEMINI_MODEL = pickNonEmpty(
-    providerModel,
-    env.GEMINI_MODEL,
-    process.env.GEMINI_MODEL,
-    DEFAULT_GEMINI_MODEL,
-  );
-  env.GEMINI_OUTPUT_DIR = pickNonEmpty(
-    env.GEMINI_OUTPUT_DIR,
-    sessionWorkingDirectory,
-    process.env.GEMINI_OUTPUT_DIR,
-  );
-
-  return env;
-}
-
 function readChromeBridgeEnvFromRequest(request: NextRequest): { url?: string; token?: string } {
   const url = pickNonEmpty(request.headers.get(CHROME_BRIDGE_URL_HEADER) || undefined);
   const token = pickNonEmpty(request.headers.get(CHROME_BRIDGE_TOKEN_HEADER) || undefined);
   return { url, token };
-}
-
-function readChromeBridgeEnvFromRuntimeFile(): { url?: string; token?: string } {
-  try {
-    const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-    const runtimePath = path.join(dataDir, 'runtime', 'browser-bridge.json');
-    if (!fs.existsSync(runtimePath)) return {};
-
-    const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as {
-      url?: unknown;
-      token?: unknown;
-    };
-
-    return {
-      url: typeof parsed.url === 'string' ? parsed.url : undefined,
-      token: typeof parsed.token === 'string' ? parsed.token : undefined,
-    };
-  } catch {
-    return {};
-  }
-}
-
-function resolveChromeBridgeEnv(
-  existingEnv?: Record<string, string>,
-  bridgeFromRequest?: { url?: string; token?: string },
-  bridgeFromRuntime?: { url?: string; token?: string },
-): Record<string, string> {
-  const env = { ...(existingEnv || {}) };
-  env.LUMOS_BROWSER_BRIDGE_URL = pickNonEmpty(
-    bridgeFromRequest?.url,
-    process.env.LUMOS_BROWSER_BRIDGE_URL,
-    bridgeFromRuntime?.url,
-    env.LUMOS_BROWSER_BRIDGE_URL,
-  );
-  env.LUMOS_BROWSER_BRIDGE_TOKEN = pickNonEmpty(
-    bridgeFromRequest?.token,
-    process.env.LUMOS_BROWSER_BRIDGE_TOKEN,
-    bridgeFromRuntime?.token,
-    env.LUMOS_BROWSER_BRIDGE_TOKEN,
-  );
-  return env;
-}
-
-function hasGeminiImageMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers['gemini-image'] || servers['gemini_image']);
 }
 
 function hasFeishuMcp(
@@ -275,6 +162,13 @@ function hasFeishuMcp(
 ): boolean {
   if (!servers) return false;
   return Boolean(servers.feishu);
+}
+
+function hasDeepSearchMcp(
+  servers: Record<string, MCPServerConfig> | undefined,
+): boolean {
+  if (!servers) return false;
+  return Boolean(servers.deepsearch);
 }
 
 function isLegacyImageAgentPrompt(systemPromptAppend?: string): boolean {
@@ -615,102 +509,6 @@ async function syncAssistantContentToFeishu(
   }
 }
 
-/** Load MCP servers from database (builtin + user) */
-function loadMcpServers(
-  sessionWorkingDirectory?: string,
-  bridgeFromRequest?: { url?: string; token?: string },
-  bridgeFromRuntime?: { url?: string; token?: string },
-): Record<string, MCPServerConfig> | undefined {
-  // Load enabled MCP servers from database
-  const mcpServers = getEnabledMcpServersAsConfig();
-  const { appId: feishuAppId, appSecret: feishuAppSecret } = getFeishuCredentials();
-
-  // Resolve [RUNTIME_PATH] placeholder in args
-  // In production: process.resourcesPath/
-  // In development: project_root/resources/
-  let runtimePath: string;
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    runtimePath = process.resourcesPath;
-  } else {
-    runtimePath = path.join(process.cwd(), 'resources');
-  }
-
-  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  const workspacePath = sessionWorkingDirectory || process.cwd();
-  const legacyMcpPathPattern = /[/\\]feishu-mcp-server[/\\]mcp-servers[/\\]/g;
-  const normalizedMcpPathSegment = `${path.sep}mcp-servers${path.sep}`;
-
-  for (const [name, config] of Object.entries(mcpServers)) {
-    if (config.args) {
-      config.args = config.args.map(arg => {
-        const normalizedArg = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
-        return normalizedArg
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace(/^~\//, os.homedir() + '/');
-      });
-    }
-    if (config.env) {
-      const resolvedEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries(config.env)) {
-        resolvedEnv[key] = value
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace(/^~\//, os.homedir() + '/');
-      }
-      config.env = resolvedEnv;
-    }
-
-    // Special handling for feishu MCP: inject environment variables
-    if (name === 'feishu') {
-      config.env = {
-        ...config.env,
-        FEISHU_APP_ID: feishuAppId,
-        FEISHU_APP_SECRET: feishuAppSecret,
-        FEISHU_TOKEN_PATH: path.join(dataDir, 'auth', 'feishu.json'),
-      };
-    }
-
-    // Special handling for bilibili MCP: inject SESSDATA from env if not already set
-    if (name === 'bilibili' && !config.env?.BILIBILI_SESSDATA) {
-      config.env = {
-        ...config.env,
-        BILIBILI_SESSDATA: process.env.BILIBILI_SESSDATA || '',
-      };
-    }
-
-    // Special handling for gemini-image MCP: allow provider-managed URL/KEY/model
-    if (name === 'gemini-image' || name === 'gemini_image') {
-      config.env = resolveGeminiMcpEnv(config.env, sessionWorkingDirectory);
-      console.log('[chat API] gemini-image MCP resolved:', {
-        command: config.command,
-        args: config.args,
-        hasApiKey: Boolean(config.env?.GEMINI_API_KEY),
-        baseUrl: config.env?.GEMINI_BASE_URL || '',
-        model: config.env?.GEMINI_MODEL || '',
-        outputDir: config.env?.GEMINI_OUTPUT_DIR || '',
-      });
-    }
-
-    if (CHROME_MCP_NAMES.has(name)) {
-      config.env = resolveChromeBridgeEnv(config.env, bridgeFromRequest, bridgeFromRuntime);
-      console.log('[chat API] chrome-devtools MCP bridge resolved:', {
-        name,
-        command: config.command,
-        args: config.args,
-        hasUrl: Boolean(config.env?.LUMOS_BROWSER_BRIDGE_URL),
-        hasToken: Boolean(config.env?.LUMOS_BROWSER_BRIDGE_TOKEN),
-        fromRequest: Boolean(bridgeFromRequest?.url && bridgeFromRequest?.token),
-        fromRuntimeFile: Boolean(bridgeFromRuntime?.url && bridgeFromRuntime?.token),
-        fromProcessEnv: Boolean(process.env.LUMOS_BROWSER_BRIDGE_URL && process.env.LUMOS_BROWSER_BRIDGE_TOKEN),
-      });
-    }
-  }
-
-  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
-}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -861,30 +659,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (isMainAgentSession(session)) {
-      const dispatchPlan = planMainAgentTaskDispatch({
-        sessionId: session_id,
-        userInput: content,
-        hasFiles: Array.isArray(files) && files.length > 0,
-      });
-      if (dispatchPlan) {
-        const dispatched = dispatchMainAgentTask({
-          sessionId: session_id,
-          sourceMessageId: userMessageId,
-          taskSummary: dispatchPlan.taskSummary,
-          requirements: dispatchPlan.requirements,
-          relevantMessages: [content],
-        });
-
-        releaseSessionLock(session_id, lockId);
-        setSessionRuntimeStatus(session_id, 'idle');
-        activeSessionId = undefined;
-        activeLockId = undefined;
-
-        return createSyntheticAssistantResponse(dispatched.assistantMessage);
-      }
-    }
-
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.requested_model || session.model || getSetting('default_model') || undefined;
 
@@ -894,28 +668,49 @@ export async function POST(request: NextRequest) {
       updateSessionModel(session_id, effectiveModel);
     }
 
-    // Resolve provider: explicit provider_id > default_provider_id > session provider_id > environment variables
+    // Resolve provider: existing session binding wins. Request/default only fill unbound sessions.
+    const requestProviderId = provider_id?.trim() || '';
+    const sessionProviderId = session.provider_id?.trim() || '';
     let resolvedProvider: import('@/types').ApiProvider | undefined;
-    const defaultProviderId = getDefaultProviderId() || '';
-    const effectiveProviderId = provider_id || defaultProviderId || session.provider_id || '';
-    if (effectiveProviderId && effectiveProviderId !== 'env') {
-      resolvedProvider = getProvider(effectiveProviderId);
-      if (!resolvedProvider) {
-        // Requested provider not found, try default
-        if (defaultProviderId) {
-          resolvedProvider = getProvider(defaultProviderId);
-        }
+    try {
+      resolvedProvider = resolveProviderForCapability({
+        moduleKey: 'chat',
+        capability: 'agent-chat',
+        preferredProviderId: sessionProviderId || requestProviderId || undefined,
+      });
+    } catch (error) {
+      if (error instanceof ProviderResolutionError) {
+        const status = sessionProviderId ? 409 : 400;
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          { status, headers: { 'Content-Type': 'application/json' } },
+        );
       }
+      throw error;
     }
-    // effectiveProviderId === 'env' → resolvedProvider stays undefined → uses env vars
 
-    const providerName = resolvedProvider?.name || '';
+    if (!resolvedProvider) {
+      return new Response(
+        JSON.stringify({ error: '未配置可用的主聊天服务商，请先到设置中选择一个支持 Agent Chat 的 provider。' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (sessionProviderId && requestProviderId && requestProviderId !== sessionProviderId) {
+      console.warn('[chat API] Ignoring provider override for bound session:', {
+        sessionId: session_id,
+        sessionProviderId,
+        requestProviderId,
+      });
+    }
+
+    const effectiveProviderId = resolvedProvider.id;
+    const providerName = resolvedProvider.name;
     if (providerName !== (session.provider_name || '')) {
       updateSessionProvider(session_id, providerName);
     }
-    const persistProviderId = effectiveProviderId || provider_id || '';
-    if (persistProviderId !== (session.provider_id || '')) {
-      updateSessionProviderId(session_id, persistProviderId);
+    if (!sessionProviderId && effectiveProviderId !== (session.provider_id || '')) {
+      updateSessionProviderId(session_id, effectiveProviderId);
     }
 
     const sessionSystemPrompt = stripMainAgentSessionMarker(session.system_prompt || '');
@@ -971,13 +766,12 @@ export async function POST(request: NextRequest) {
       || (isMainAgentSession(session) ? neutralMainAgentWorkingDirectory : undefined);
 
     console.time('[perf] MCP servers loading');
-    const bridgeFromRequest = readChromeBridgeEnvFromRequest(request);
-    const bridgeFromRuntime = readChromeBridgeEnvFromRuntimeFile();
-    const loadedMcpServers = loadMcpServers(
-      resolvedSessionWorkingDirectory,
-      bridgeFromRequest,
-      bridgeFromRuntime,
-    );
+    const loadedMcpServers = resolveEnabledMcpServers({
+      sessionWorkingDirectory: resolvedSessionWorkingDirectory,
+      sessionId: session_id,
+      browserBridgeOverride: readChromeBridgeEnvFromRequest(request),
+      skipNames: new Set(['task-management']),
+    });
     console.timeEnd('[perf] MCP servers loading');
 
     let teamRuntimeState: ReturnType<typeof getMainAgentSessionTeamRuntimeState> = null;
@@ -989,11 +783,6 @@ export async function POST(request: NextRequest) {
     }
     if (isMainAgentSession(session)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + TASK_MANAGEMENT_HINT;
-      const taskDispatchHint = buildMainAgentTaskDispatchHint(content);
-      if (taskDispatchHint) {
-        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + taskDispatchHint;
-      }
     }
     finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
     if (isMainAgentSession(session)) {
@@ -1007,15 +796,28 @@ export async function POST(request: NextRequest) {
         finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamRuntimePrompt;
       }
     }
-    if (
-      permissionMode !== 'default'
-      && hasGeminiImageMcp(loadedMcpServers)
-      && !isLegacyImageAgentPrompt(systemPromptAppend)
-    ) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + GEMINI_IMAGE_MCP_SYSTEM_HINT;
+    // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
+    if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
     }
     if (permissionMode !== 'default' && hasFeishuMcp(loadedMcpServers)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + FEISHU_REPORT_MCP_SYSTEM_HINT;
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + FEISHU_MCP_SYSTEM_HINT;
+    }
+    if (permissionMode !== 'default' && hasDeepSearchMcp(loadedMcpServers)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + DEEPSEARCH_MCP_SYSTEM_HINT;
+    }
+    if (permissionMode !== 'default' && loadedMcpServers?.['browser']) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
+    }
+    // Generic MCP discovery hint: list all loaded MCP servers so the agent knows they exist.
+    // This covers user-installed MCPs that don't have a dedicated hint.
+    if (permissionMode !== 'default' && loadedMcpServers) {
+      const BUILTIN_HINTED_MCPS = new Set(['feishu', 'deepsearch', 'browser']);
+      const userMcpNames = Object.keys(loadedMcpServers).filter(n => !BUILTIN_HINTED_MCPS.has(n));
+      if (userMcpNames.length > 0) {
+        const list = userMcpNames.map(n => `- \`${n}\`: tools available as \`mcp__${n}__<tool_name>\``).join('\n');
+        finalSystemPrompt = (finalSystemPrompt || '') + `\n\nYou have access to the following additional MCP servers. Use their tools when relevant:\n${list}`;
+      }
     }
 
     // Load recent conversation history from DB as fallback context.
@@ -1041,10 +843,12 @@ export async function POST(request: NextRequest) {
       mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
 
-    // Debug: Print full system prompt
-    console.log('[chat API] ========== FULL SYSTEM PROMPT ==========');
-    console.log(finalSystemPrompt || '(empty)');
-    console.log('[chat API] ========== END SYSTEM PROMPT ==========');
+    // Create in-process MCP server for image generation (only when hint is also injected)
+    const inProcessMcpServers: Record<string, ReturnType<typeof createLumosMcpServer>> = {};
+    if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
+      const lumosMcpServer = createLumosMcpServer(session_id);
+      inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
+    }
 
     const claudeStream = streamClaude({
       prompt: promptForModel,
@@ -1055,6 +859,7 @@ export async function POST(request: NextRequest) {
       systemPrompt: finalSystemPrompt,
       workingDirectory: resolvedSessionWorkingDirectory,
       mcpServers: loadedMcpServers,
+      inProcessMcpServers: Object.keys(inProcessMcpServers).length > 0 ? inProcessMcpServers : undefined,
       abortController,
       permissionMode,
       files: fileAttachments,
@@ -1127,6 +932,7 @@ async function collectStreamResponse(
   },
 ) {
   const sessionId = options.sessionId;
+  const streamStartTime = Date.now();
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
@@ -1271,15 +1077,8 @@ async function collectStreamResponse(
             'assistant',
             storedContent,
             tokenUsage ? JSON.stringify(tokenUsage) : null,
+            Date.now() - streamStartTime,
           );
-          if (options.sourceUserMessageId) {
-            finalizeMainAgentTaskDispatch({
-              sessionId,
-              sourceMessageId: options.sourceUserMessageId,
-              assistantMessageId: storedMessage.id,
-              assistantContent: storedContent,
-            });
-          }
           persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
@@ -1307,14 +1106,6 @@ async function collectStreamResponse(
         const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
           const storedMessage = addMessage(sessionId, 'assistant', storedContent);
-          if (options.sourceUserMessageId) {
-            finalizeMainAgentTaskDispatch({
-              sessionId,
-              sourceMessageId: options.sourceUserMessageId,
-              assistantMessageId: storedMessage.id,
-              assistantContent: storedContent,
-            });
-          }
           persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
