@@ -7,14 +7,11 @@ import type {
   WorkflowRuntimeBindings,
   WorkflowStepType,
 } from './types';
-
-interface StepContext {
-  stepType: WorkflowStepType;
-}
+// WorkflowStepType is used in the satisfies constraint below
 
 interface StepRuntimeDefinition<TInput extends object> {
   type: WorkflowStepType;
-  execute: (input: TInput, ctx: StepContext) => Promise<StepResult>;
+  execute: (input: TInput) => Promise<StepResult>;
 }
 
 export const STEP_RUNTIME_REGISTRY = {
@@ -34,8 +31,8 @@ export const STEP_RUNTIME_REGISTRY = {
 
 export function createWorkflowRuntimeBindings(): WorkflowRuntimeBindings {
   return {
-    agentStep: (input) => STEP_RUNTIME_REGISTRY.agent.execute(input, { stepType: 'agent' }),
-    waitStep: (input: WaitStepInput) => STEP_RUNTIME_REGISTRY.wait.execute(input, { stepType: 'wait' }),
+    agentStep: (input) => STEP_RUNTIME_REGISTRY.agent.execute(input),
+    waitStep: (input: WaitStepInput) => STEP_RUNTIME_REGISTRY.wait.execute(input),
   };
 }
 
