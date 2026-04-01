@@ -7,7 +7,9 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type WorkflowStepType = 'agent' | 'browser' | 'notification' | 'capability';
+export type WorkflowStepType = 'agent' | 'browser' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
+export type WorkflowStepTypeV1 = 'agent' | 'browser' | 'notification' | 'capability';
+export type WorkflowStepTypeV2Control = 'if-else' | 'for-each' | 'while';
 export const WORKFLOW_AGENT_ROLES = ['worker', 'researcher', 'coder', 'integration'] as const;
 export type WorkflowAgentRole = (typeof WORKFLOW_AGENT_ROLES)[number];
 export type WorkflowAgentExecutionMode = 'auto' | 'claude' | 'synthetic';
@@ -43,6 +45,7 @@ export interface WorkflowStepRuntimeCarrier {
 
 export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   prompt: string;
+  preset?: string;
   role?: WorkflowAgentRole;
   model?: string;
   tools?: string[];
@@ -50,32 +53,30 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   outputMode?: 'structured' | 'plain-text';
 }
 
-export interface BrowserStepInput extends WorkflowStepRuntimeCarrier {
-  action: 'navigate' | 'click' | 'fill' | 'screenshot';
-  url?: string;
-  selector?: string;
-  value?: string;
-  pageId?: string;
-  createPage?: boolean;
-}
-
-export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {
-  message: string;
-  level?: 'info' | 'warning' | 'error';
-  channel?: string;
-  sessionId?: string;
+export interface WaitStepInput {
+  durationMs: number;
 }
 
 export type ConditionExpr =
   | { op: 'exists'; ref: string }
   | { op: 'eq'; left: string; right: unknown }
-  | { op: 'neq'; left: string; right: unknown };
+  | { op: 'neq'; left: string; right: unknown }
+  | { op: 'gt'; left: string; right: unknown }
+  | { op: 'lt'; left: string; right: unknown }
+  | { op: 'and'; conditions: ConditionExpr[] }
+  | { op: 'or'; conditions: ConditionExpr[] }
+  | { op: 'not'; condition: ConditionExpr };
 
 export interface WorkflowStepPolicy {
   timeoutMs?: number;
   retry?: {
     maximumAttempts?: number;
   };
+}
+
+export interface WorkflowStepMetadata {
+  position?: { x: number; y: number };
+  label?: string;
 }
 
 export interface WorkflowStep {
@@ -85,16 +86,36 @@ export interface WorkflowStep {
   when?: ConditionExpr;
   input?: Record<string, unknown>;
   policy?: WorkflowStepPolicy;
+  metadata?: WorkflowStepMetadata;
+}
+
+export interface WorkflowParamDef {
+  name: string;
+  type: 'string' | 'number' | 'boolean';
+  description?: string;
+  default?: string | number | boolean;
+  required?: boolean;
 }
 
 export interface WorkflowDSL {
   version: 'v1';
   name: string;
+  params?: WorkflowParamDef[];
   steps: WorkflowStep[];
 }
 
+export interface WorkflowDSLV2 {
+  version: 'v2';
+  name: string;
+  description?: string;
+  params?: WorkflowParamDef[];
+  steps: WorkflowStep[];
+}
+
+export type AnyWorkflowDSL = WorkflowDSL | WorkflowDSLV2;
+
 export interface CompiledWorkflowManifest {
-  dslVersion: 'v1';
+  dslVersion: 'v1' | 'v2';
   artifactKind: 'workflow-factory-module';
   exportedSymbol: 'buildWorkflow';
   workflowName: string;
@@ -111,9 +132,7 @@ export interface WorkflowStepLifecycleEvent {
 
 export interface WorkflowRuntimeBindings {
   agentStep: (input: AgentStepInput) => Promise<StepResult>;
-  browserStep: (input: BrowserStepInput) => Promise<StepResult>;
-  notificationStep: (input: NotificationStepInput) => Promise<StepResult>;
-  capabilityStep: (input: { capabilityId: string; input: unknown }) => Promise<StepResult>;
+  waitStep: (input: WaitStepInput) => Promise<StepResult>;
   onStepStarted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepCompleted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepSkipped?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;

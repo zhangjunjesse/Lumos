@@ -3,7 +3,7 @@ import { WORKFLOW_AGENT_ROLES, type WorkflowStepType } from './types';
 
 export interface StepCompilerDefinition {
   type: WorkflowStepType;
-  runtimeBinding: 'agentStep' | 'browserStep' | 'notificationStep' | 'capabilityStep';
+  runtimeBinding: 'agentStep' | 'browserStep' | 'notificationStep' | 'capabilityStep' | 'waitStep';
   inputSchema: z.ZodType<Record<string, unknown>>;
 }
 
@@ -11,6 +11,7 @@ const supportedWorkflowAgentRoleValues = [...WORKFLOW_AGENT_ROLES, 'general'] as
 
 const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   prompt: z.string().min(1),
+  preset: z.string().min(1).optional(),
   role: z.enum(supportedWorkflowAgentRoleValues).optional(),
   model: z.string().min(1).optional(),
   tools: z.array(z.string().min(1)).optional(),
@@ -33,7 +34,6 @@ const browserStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
       path: ['url'],
     });
   }
-
   if ((input.action === 'click' || input.action === 'fill') && !input.selector) {
     ctx.addIssue({
       code: 'custom',
@@ -41,7 +41,6 @@ const browserStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
       path: ['selector'],
     });
   }
-
   if (input.action === 'fill' && !input.value) {
     ctx.addIssue({
       code: 'custom',
@@ -63,7 +62,13 @@ const capabilityStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   input: z.unknown(),
 }).strict();
 
-export const STEP_REGISTRY: Record<WorkflowStepType, StepCompilerDefinition> = {
+const waitStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
+  durationMs: z.number().int().min(0).max(3_600_000),
+}).strict();
+
+// Partial because v2 control flow types (if-else, for-each, while)
+// are validated by their own schemas in dsl.ts, not through this registry.
+export const STEP_REGISTRY: Partial<Record<WorkflowStepType, StepCompilerDefinition>> = {
   agent: {
     type: 'agent',
     runtimeBinding: 'agentStep',
@@ -83,6 +88,11 @@ export const STEP_REGISTRY: Record<WorkflowStepType, StepCompilerDefinition> = {
     type: 'capability',
     runtimeBinding: 'capabilityStep',
     inputSchema: capabilityStepInputSchema,
+  },
+  wait: {
+    type: 'wait',
+    runtimeBinding: 'waitStep',
+    inputSchema: waitStepInputSchema,
   },
 };
 

@@ -1,17 +1,12 @@
 import { agentStep } from './steps/agentStep';
-import { browserStep } from './steps/browserStep';
-import { notificationStep } from './steps/notificationStep';
-import { capabilityStep } from './steps/capabilityStep';
 import type {
   AgentStepInput,
-  BrowserStepInput,
-  NotificationStepInput,
+  WaitStepInput,
   StepResult,
   WorkflowStepLifecycleEvent,
   WorkflowRuntimeBindings,
   WorkflowStepType,
 } from './types';
-import type { CapabilityStepInput } from './steps/capabilityStep';
 
 interface StepContext {
   stepType: WorkflowStepType;
@@ -25,30 +20,22 @@ interface StepRuntimeDefinition<TInput extends object> {
 export const STEP_RUNTIME_REGISTRY = {
   agent: {
     type: 'agent',
-    execute: (input: AgentStepInput, _ctx: StepContext) => agentStep(input),
+    execute: (input: AgentStepInput) => agentStep(input),
   },
-  browser: {
-    type: 'browser',
-    execute: (input: BrowserStepInput, _ctx: StepContext) => browserStep(input),
+  wait: {
+    type: 'wait',
+    execute: async (input: { durationMs?: number }) => {
+      await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, input.durationMs ?? 1000)));
+      return { success: true, output: { durationMs: input.durationMs ?? 1000 } };
+    },
   },
-  notification: {
-    type: 'notification',
-    execute: (input: NotificationStepInput, _ctx: StepContext) => notificationStep(input),
-  },
-  capability: {
-    type: 'capability',
-    execute: (input: CapabilityStepInput, _ctx: StepContext) => capabilityStep(input),
-  },
-} satisfies Record<WorkflowStepType, StepRuntimeDefinition<any>>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+} satisfies Partial<Record<WorkflowStepType, StepRuntimeDefinition<any>>>;
 
 export function createWorkflowRuntimeBindings(): WorkflowRuntimeBindings {
   return {
     agentStep: (input) => STEP_RUNTIME_REGISTRY.agent.execute(input, { stepType: 'agent' }),
-    browserStep: (input) => STEP_RUNTIME_REGISTRY.browser.execute(input, { stepType: 'browser' }),
-    notificationStep: (input) =>
-      STEP_RUNTIME_REGISTRY.notification.execute(input, { stepType: 'notification' }),
-    capabilityStep: (input) =>
-      STEP_RUNTIME_REGISTRY.capability.execute(input, { stepType: 'capability' }),
+    waitStep: (input: WaitStepInput) => STEP_RUNTIME_REGISTRY.wait.execute(input, { stepType: 'wait' }),
   };
 }
 
