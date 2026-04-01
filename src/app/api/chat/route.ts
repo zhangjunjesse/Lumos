@@ -41,49 +41,49 @@ const FILE_DIRECTIVE_PREFIX = 'FEISHU_SEND_FILE::';
 const MAIL_DIRECTIVE_PREFIX = 'FEISHU_SEND_MAIL::';
 const MAX_FEISHU_CONTEXT_DOCS = 2;
 const FEISHU_CONTEXT_MAX_CHARS = 3500;
-const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools via server \`feishu\` for reading/editing Feishu docs, sheets, wikis, drive, and reports.
+const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools (server name: \`feishu\`) for reading/editing Feishu docs, sheets, wikis, drive, and reports. All tool names use the format \`mcp__feishu__<tool>\`.
 
 **Docs & Wiki** — pass any feishu.cn URL directly:
-- \`feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
-- \`feishu_doc_append\` — append content to a doc
-- \`feishu_doc_update_block\` — update a specific block in a doc
-- \`feishu_doc_get_blocks\` / \`feishu_doc_create\` / \`feishu_doc_overwrite\` — advanced doc ops
+- \`mcp__feishu__feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
+- \`mcp__feishu__feishu_doc_append\` — append content to a doc
+- \`mcp__feishu__feishu_doc_update_block\` — update a specific block in a doc
+- \`mcp__feishu__feishu_doc_get_blocks\` / \`mcp__feishu__feishu_doc_create\` / \`mcp__feishu__feishu_doc_overwrite\` — advanced doc ops
 
 **Sheets** (for spreadsheet URLs, NOT doc URLs):
-- \`feishu_sheet_read\` — read sheet data
-- \`feishu_sheet_append_rows\` / \`feishu_sheet_update_cells\` — write to sheets
+- \`mcp__feishu__feishu_sheet_read\` — read sheet data
+- \`mcp__feishu__feishu_sheet_append_rows\` / \`mcp__feishu__feishu_sheet_update_cells\` — write to sheets
 
 **Drive & Wiki browse**:
-- \`feishu_search\` — search docs/sheets/wiki across drive
-- \`feishu_drive_list\` — list files in a folder
-- \`feishu_wiki_list_spaces\` — browse wiki spaces/nodes
+- \`mcp__feishu__feishu_search\` — search docs/sheets/wiki across drive
+- \`mcp__feishu__feishu_drive_list\` — list files in a folder
+- \`mcp__feishu__feishu_wiki_list_spaces\` — browse wiki spaces/nodes
 
-**Images**: \`feishu_image_list\` / \`feishu_image_download\`
+**Images**: \`mcp__feishu__feishu_image_list\` / \`mcp__feishu__feishu_image_download\`
 
 **Reports** (汇报/weekly/daily summaries):
-- \`feishu_report_list\` — find report tasks
-- \`feishu_report_read\` — read a report task detail
+- \`mcp__feishu__feishu_report_list\` — find report tasks
+- \`mcp__feishu__feishu_report_read\` — read a report task detail
 
-**Auth**: \`feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
+**Auth**: \`mcp__feishu__feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
 
 Rules:
-- To read any feishu.cn doc or wiki link: call \`feishu_doc_read\` with the URL directly.
+- To read any feishu.cn doc or wiki link: call \`mcp__feishu__feishu_doc_read\` with the URL directly.
 - Do not claim content before successful tool_result.
 - If API reports missing scopes, tell user which scope to enable.`;
 const DEEPSEARCH_MCP_SYSTEM_HINT = `You have access to built-in DeepSearch tools for deep web research with shared browser login state. Use them for anti-bot sites like Zhihu, WeChat public articles, Xiaohongshu, Juejin, and Twitter/X.
 
-Available DeepSearch tools (call these directly by name):
-- \`start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
-- \`get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by \`start\`).
-- \`pause\` / \`resume\` / \`cancel\` — control run lifecycle. Required param: \`runId\`.
+Available DeepSearch tools (server name: \`deepsearch\`):
+- \`mcp__deepsearch__start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
+- \`mcp__deepsearch__get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by start).
+- \`mcp__deepsearch__pause\` / \`mcp__deepsearch__resume\` / \`mcp__deepsearch__cancel\` — control run lifecycle. Required param: \`runId\`.
 
-Workflow: call \`start\` → wait or poll with \`get_result\` until status is \`completed\` or \`partial\` → summarize results.
+Workflow: call \`mcp__deepsearch__start\` → poll \`mcp__deepsearch__get_result\` until status is \`completed\` or \`partial\` → summarize results.
 
 Rules:
 - Do NOT use raw browser click/fill/screenshot steps when the user wants DeepSearch — use these tools instead.
 - Prefer \`managed_page\` (default) unless the user explicitly asks to take over the current browser page.
 - Prefer \`best_effort\` (default) unless every selected site must succeed.
-- If \`get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`resume\`.
+- If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
 const BROWSER_MCP_SYSTEM_HINT = `You have access to built-in browser control tools that share the user's browser login state. Use them to navigate, read, click, type, and screenshot pages in the built-in Lumos browser.
 
