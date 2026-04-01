@@ -38,6 +38,8 @@
   ],
   "exclude": [
     "node_modules",
+    ".next/dev",
+    ".next-workflow-smoke/dev",
     "design",
     "search-ai-info.ts",
     "get-ai-results.ts",
