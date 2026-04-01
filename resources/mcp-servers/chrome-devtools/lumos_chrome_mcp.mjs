@@ -319,7 +319,7 @@ async function main() {
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } = sdk;
 
   const server = new Server(
-    { name: 'lumos-chrome-devtools-mcp', version: '1.0.0' },
+    { name: 'chrome-devtools', version: '1.0.0' },
     { capabilities: { tools: {} } },
   );
 

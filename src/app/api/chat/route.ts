@@ -100,7 +100,7 @@ Available browser tools (call by exact name):
 - \`mcp__browser__browser_close_page\` — close a tab. Params: \`pageId\`
 - \`mcp__browser__browser_wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
 
-Workflow: call \`browser_list_pages\` → get pageId → use other tools with that pageId.
+Workflow: call \`mcp__browser__browser_list_pages\` → get pageId → use other tools with that pageId.
 Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
 
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
