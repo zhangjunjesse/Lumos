@@ -677,6 +677,7 @@ function toStepResult(input: {
   result: StageExecutionResultV1;
   requestedModel?: string;
   timedOut?: boolean;
+  codeFellBackToAgent?: boolean;
 }): StepResult {
   const {
     runtimeContext,
@@ -686,6 +687,7 @@ function toStepResult(input: {
     result,
     requestedModel,
     timedOut,
+    codeFellBackToAgent,
   } = input;
 
   const errorMessage = timedOut
@@ -711,14 +713,17 @@ function toStepResult(input: {
       metrics: result.metrics,
     },
     error: errorMessage,
-    metadata: buildWorkflowAgentExecutionMetadata({
-      runtimeContext,
-      executionMode,
-      definition,
-      requestedModel,
-      payload,
-      timedOut,
-    }),
+    metadata: {
+      ...buildWorkflowAgentExecutionMetadata({
+        runtimeContext,
+        executionMode,
+        definition,
+        requestedModel,
+        payload,
+        timedOut,
+      }),
+      ...(codeFellBackToAgent ? { executedVia: 'agent-fallback' as unknown as JsonValue, codeFellBack: true as unknown as JsonValue } : { executedVia: 'agent' as unknown as JsonValue }),
+    },
   };
 }
 
@@ -726,10 +731,18 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   const runtimeContext = input.__runtime ?? getDefaultRuntimeContext();
 
   // 代码模式拦截：优先执行固定代码，失败可回退到 agent
+  const hasCodeConfig = Boolean(input.code?.script?.trim() || input.code?.handler);
   const codeOutcome = await executeCodeHandler(input, runtimeContext);
   if (codeOutcome) {
-    return codeOutcome.result;
+    // 在结果中标记执行路径，方便用户区分
+    const result = { ...codeOutcome.result };
+    const meta: Record<string, unknown> = { ...(result.metadata ?? {}), executedVia: codeOutcome.executedVia as string };
+    if (codeOutcome.codeError) meta.codeError = codeOutcome.codeError;
+    result.metadata = meta as StepResult['metadata'];
+    return result;
   }
+  // codeOutcome === null: 代码配置不存在，或代码失败已回退到 agent
+  const codeFellBackToAgent = hasCodeConfig;
 
   const requestedModel = input.model || runtimeContext.requestedModel;
   const definition = resolveWorkflowAgentDefinition(input);
@@ -841,6 +854,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       result,
       requestedModel,
       timedOut,
+      codeFellBackToAgent,
     });
   } catch (error) {
     const cancelled = abortController.signal.aborted || isCancelledError(error);
@@ -882,15 +896,20 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
         : cancelled
           ? WORKFLOW_AGENT_CANCELLED_MESSAGE
         : (error instanceof Error ? error.message : 'Unknown error'),
-      metadata: buildWorkflowAgentExecutionMetadata({
-        runtimeContext,
-        executionMode,
-        definition,
-        requestedModel,
-        payload,
-        cancelled,
-        timedOut,
-      }),
+      metadata: {
+        ...buildWorkflowAgentExecutionMetadata({
+          runtimeContext,
+          executionMode,
+          definition,
+          requestedModel,
+          payload,
+          cancelled,
+          timedOut,
+        }),
+        ...(codeFellBackToAgent
+          ? { executedVia: 'agent-fallback' as unknown as JsonValue, codeFellBack: true as unknown as JsonValue }
+          : { executedVia: 'agent' as unknown as JsonValue }),
+      },
     };
   } finally {
     if (timeoutHandle) {

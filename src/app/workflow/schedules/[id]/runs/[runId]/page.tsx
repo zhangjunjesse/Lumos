@@ -31,6 +31,7 @@ interface OutputFile {
   agentName: string;
   content: string;
   sizeBytes: number;
+  createdAt?: string;
 }
 
 const STATUS_CFG = {

@@ -17,6 +17,7 @@ interface OutputFile {
   content: string;
   sizeBytes: number;
   mimeType?: string;
+  createdAt?: string;
 }
 
 const BINARY_MIME: Record<string, string> = {
@@ -82,6 +83,7 @@ async function collectRunOutputFiles(
       try {
         const mimeType = getFileMimeType(fileName);
         const isBinary = Boolean(mimeType);
+        const fileStat = await stat(filePath);
         const buf = await readFile(filePath);
         const content = isBinary ? buf.toString('base64') : buf.toString('utf-8');
         results.push({
@@ -90,12 +92,15 @@ async function collectRunOutputFiles(
           agentName: agentNameMap.get(stageId) || stageId,
           content,
           sizeBytes: buf.byteLength,
+          createdAt: fileStat.mtime.toISOString(),
           ...(mimeType ? { mimeType } : {}),
         });
       } catch { /* skip unreadable */ }
     }
   }
 
+  // 按创建时间倒序排列
+  results.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   return results;
 }
 

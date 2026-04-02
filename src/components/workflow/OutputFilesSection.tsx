@@ -17,6 +17,14 @@ interface OutputFile {
   content: string;
   sizeBytes: number;
   mimeType?: string;
+  createdAt?: string;
+}
+
+function formatFileTime(iso?: string): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 function formatBytes(bytes: number): string {
@@ -47,10 +55,13 @@ const FileCard = memo(({ file, defaultOpen }: { file: OutputFile; defaultOpen: b
           <span className="text-sm font-medium truncate w-full">{displayName}</span>
           <span className="text-xs text-muted-foreground">{file.agentName}</span>
         </div>
-        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 shrink-0 ml-auto">
-          {formatBytes(file.sizeBytes)}
-        </Badge>
-        <span className="text-xs text-muted-foreground shrink-0">{open ? '收起' : '展开'}</span>
+        <div className="flex items-center gap-2 ml-auto shrink-0">
+          {file.createdAt && <span className="text-[10px] text-muted-foreground">{formatFileTime(file.createdAt)}</span>}
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+            {formatBytes(file.sizeBytes)}
+          </Badge>
+          <span className="text-xs text-muted-foreground">{open ? '收起' : '展开'}</span>
+        </div>
       </button>
 
       {open && (
@@ -89,7 +100,7 @@ export function OutputFilesSection({ files }: { files: OutputFile[] }) {
   return (
     <div className="space-y-3">
       {files.map((f, i) => (
-        <FileCard key={`${f.stepId}/${f.name}`} file={f} defaultOpen={i === files.length - 1} />
+        <FileCard key={`${f.stepId}/${f.name}`} file={f} defaultOpen={i === 0} />
       ))}
     </div>
   );

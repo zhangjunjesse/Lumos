@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { math } from '@streamdown/math';
@@ -36,15 +36,29 @@ interface ParsedStep {
   roleName: string | null;
   stepId: string | null;
   outcome: string | null;
-  body: string;
+  summary: string;
+  traceSection: string;
+}
+
+/** Split markdown body into summary (above ---) and trace (below ---) */
+function splitSummaryAndTrace(body: string): { summary: string; trace: string } {
+  const divider = body.indexOf('\n---\n');
+  if (divider === -1) return { summary: body, trace: '' };
+  return { summary: body.slice(0, divider).trim(), trace: body.slice(divider + 5).trim() };
 }
 
 function parseMessage(md: string): ParsedStep {
   const newFmt = parseStepHeader(md);
-  if (newFmt) return { roleName: newFmt.roleName, stepId: newFmt.stepId, outcome: newFmt.outcome, body: newFmt.body };
+  if (newFmt) {
+    const { summary, trace } = splitSummaryAndTrace(newFmt.body);
+    return { roleName: newFmt.roleName, stepId: newFmt.stepId, outcome: newFmt.outcome, summary, traceSection: trace };
+  }
   const legacy = parseLegacyStepHeader(md);
-  if (legacy) return { roleName: legacy.roleName, stepId: legacy.stepId, outcome: null, body: legacy.body };
-  return { roleName: null, stepId: null, outcome: null, body: md };
+  if (legacy) {
+    const { summary, trace } = splitSummaryAndTrace(legacy.body);
+    return { roleName: legacy.roleName, stepId: legacy.stepId, outcome: null, summary, traceSection: trace };
+  }
+  return { roleName: null, stepId: null, outcome: null, summary: md, traceSection: '' };
 }
 
 function formatTime(iso: string): string {
@@ -62,20 +76,24 @@ const OUTCOME_CFG: Record<string, { label: string; cls: string }> = {
 const StepCard = memo(({ message, index }: { message: DbMessage; index: number }) => {
   const md = extractMarkdown(message.content);
   const parsed = useMemo(() => parseMessage(md), [md]);
+  const [traceOpen, setTraceOpen] = useState(false);
 
-  if (!parsed.body && !parsed.roleName) return null;
+  if (!parsed.summary && !parsed.roleName) return null;
 
   const outcomeCfg = parsed.outcome ? OUTCOME_CFG[parsed.outcome] : null;
 
   return (
     <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-      {/* Card header: role name, status, time */}
+      {/* Card header */}
       <div className="px-5 py-3 border-b border-border/40 bg-muted/20 flex items-center gap-3">
         <div className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">
           {index + 1}
         </div>
         {parsed.roleName && (
           <span className="text-sm font-medium truncate">{parsed.roleName}</span>
+        )}
+        {parsed.stepId && (
+          <span className="text-[10px] text-muted-foreground font-mono">{parsed.stepId}</span>
         )}
         {outcomeCfg && (
           <Badge className={`border text-[10px] px-1.5 py-0 h-4 shrink-0 ${outcomeCfg.cls}`}>
@@ -85,15 +103,38 @@ const StepCard = memo(({ message, index }: { message: DbMessage; index: number }
         <span className="text-xs text-muted-foreground ml-auto shrink-0">{formatTime(message.created_at)}</span>
       </div>
 
-      {/* Content body: full Streamdown markdown rendering */}
-      {parsed.body && (
+      {/* Summary body */}
+      {parsed.summary && (
         <div className="px-5 py-4">
           <Streamdown
             className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 leading-relaxed"
             plugins={plugins}
           >
-            {parsed.body}
+            {parsed.summary}
           </Streamdown>
+        </div>
+      )}
+
+      {/* Collapsible trace section */}
+      {parsed.traceSection && (
+        <div className="border-t border-border/30">
+          <button
+            onClick={() => setTraceOpen(v => !v)}
+            className="w-full px-5 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors flex items-center gap-2"
+          >
+            <span className={`transition-transform ${traceOpen ? 'rotate-90' : ''}`}>&#9654;</span>
+            执行过程详情
+          </button>
+          {traceOpen && (
+            <div className="px-5 py-3 bg-muted/10 max-h-[500px] overflow-y-auto">
+              <Streamdown
+                className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 text-xs leading-relaxed"
+                plugins={plugins}
+              >
+                {parsed.traceSection}
+              </Streamdown>
+            </div>
+          )}
         </div>
       )}
     </div>
