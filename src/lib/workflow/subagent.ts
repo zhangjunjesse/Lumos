@@ -739,6 +739,25 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     const meta: Record<string, unknown> = { ...(result.metadata ?? {}), executedVia: codeOutcome.executedVia as string };
     if (codeOutcome.codeError) meta.codeError = codeOutcome.codeError;
     result.metadata = meta as StepResult['metadata'];
+
+    // 持久化代码执行结果到 session 消息，使执行记录页面能展示
+    const persistSessionId = runtimeContext.sessionId;
+    if (persistSessionId && !persistSessionId.startsWith('workflow:')) {
+      try {
+        const roleName = (input.preset ?? runtimeContext.stepId).replace(/:/g, '：');
+        const sid = runtimeContext.stepId.replace(/:/g, '：');
+        const outcome = result.success ? 'done' : 'failed';
+        const summary = typeof result.output === 'object' && result.output
+          ? (result.output as Record<string, unknown>).summary as string ?? ''
+          : String(result.output ?? '');
+        const errorLine = result.error ? `\n\n> 错误: ${result.error}` : '';
+        const md = `<!-- step:${roleName}:${sid}:${outcome} -->\n\n${summary}${errorLine}`;
+        addMessage(persistSessionId, 'assistant', JSON.stringify([{ type: 'text', text: md }]));
+      } catch (e) {
+        console.warn('[subagent] addMessage (code path) failed:', e instanceof Error ? e.message : e);
+      }
+    }
+
     return result;
   }
   // codeOutcome === null: 代码配置不存在，或代码失败已回退到 agent
