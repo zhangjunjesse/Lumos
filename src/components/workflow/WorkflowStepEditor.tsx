@@ -53,6 +53,12 @@ const STEP_TYPE_LABELS: Record<string, string> = {
   capability: '能力',
 };
 
+const CODE_STRATEGY_LABELS: Record<string, string> = {
+  'code-first': '代码优先（失败回退 Agent）',
+  'code-only': '仅代码',
+  'agent-only': '仅 Agent',
+};
+
 export function WorkflowStepEditor({
   step,
   allStepIds,
@@ -98,6 +104,10 @@ export function WorkflowStepEditor({
   const [timeoutMin, setTimeoutMin] = useState(
     step.policy?.timeoutMs ? String(step.policy.timeoutMs / 60_000) : '10',
   );
+  const initCode = step.input?.code as { handler?: string; strategy?: string } | undefined;
+  const [codeEnabled, setCodeEnabled] = useState(Boolean(initCode?.handler));
+  const [codeHandler, setCodeHandler] = useState(initCode?.handler ?? '');
+  const [codeStrategy, setCodeStrategy] = useState(initCode?.strategy ?? 'code-first');
 
   useEffect(() => {
     fetch('/api/workflow/agent-presets')
@@ -123,6 +133,11 @@ export function WorkflowStepEditor({
       const input: Record<string, unknown> = { ...step.input };
       if (preset) input.preset = preset;
       if (prompt) input.prompt = prompt;
+      if (codeEnabled && codeHandler.trim()) {
+        input.code = { handler: codeHandler.trim(), strategy: codeStrategy };
+      } else {
+        delete input.code;
+      }
       base.input = input;
     } else if (step.type === 'if-else') {
       let condition: unknown = step.input?.condition;
@@ -163,6 +178,7 @@ export function WorkflowStepEditor({
     step, stepId, preset, prompt, dependsOn,
     thenSteps, elseSteps, bodySteps, collection, itemVar,
     maxIterations, conditionJson, timeoutMin, onSave,
+    codeEnabled, codeHandler, codeStrategy,
   ]);
 
   const otherStepIds = allStepIds.filter(id => id !== step.id);
@@ -248,6 +264,47 @@ export function WorkflowStepEditor({
                   </code>
                 ))}
               </p>
+            )}
+          </div>
+
+          {/* Code mode */}
+          <div className="space-y-2 border-t border-border/40 pt-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">代码模式</Label>
+              <div className="flex items-center gap-1.5">
+                {codeEnabled && <Badge variant="outline" className="text-[9px] h-4 px-1">已启用</Badge>}
+                <button
+                  type="button"
+                  onClick={() => setCodeEnabled(v => !v)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {codeEnabled ? '关闭' : '启用'}
+                </button>
+              </div>
+            </div>
+            {codeEnabled && (
+              <div className="space-y-2 pl-1">
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Handler ID</Label>
+                  <Input
+                    value={codeHandler}
+                    onChange={e => setCodeHandler(e.target.value)}
+                    className="h-7 text-xs font-mono"
+                    placeholder="e.g. cross-border/download"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">执行策略</Label>
+                  <Select value={codeStrategy} onValueChange={setCodeStrategy}>
+                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(CODE_STRATEGY_LABELS).map(([k, v]) => (
+                        <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             )}
           </div>
         </>
