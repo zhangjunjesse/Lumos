@@ -73,9 +73,13 @@ export function dslToGraph(
     edges.push(...bodyEdges);
   }
 
-  // Apply dagre layout if no saved positions
-  const hasPositions = spec.steps.some(s => s.metadata?.position);
-  if (!hasPositions) {
+  // Apply dagre layout if no meaningful positions saved
+  // Treat all-zero positions as "no layout" (e.g. legacy data)
+  const hasDistinctPositions = spec.steps.some(s => {
+    const p = s.metadata?.position;
+    return p && (p.x !== 0 || p.y !== 0);
+  });
+  if (!hasDistinctPositions) {
     applyDagreLayout(nodes, edges);
   }
 
