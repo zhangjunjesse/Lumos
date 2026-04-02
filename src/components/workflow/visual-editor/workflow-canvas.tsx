@@ -22,6 +22,7 @@ import { PropertiesPanel } from './properties-panel';
 import {
   dslToGraph,
   graphToDsl,
+  stepTypeToNodeType,
   type StepNodeData,
 } from '@/lib/workflow/dsl-graph-converter';
 
@@ -113,7 +114,7 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
 
       const newNode: Node<StepNodeData> = {
         id: stepId,
-        type: type === 'agent' ? 'agent' : type,
+        type: stepTypeToNodeType(type),
         position,
         data: {
           stepId, stepType: type,

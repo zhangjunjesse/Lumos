@@ -5,10 +5,80 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
 
 interface AgentPreset { id: string; name: string; description?: string }
+
+interface CodeConfig {
+  handler?: string;
+  params?: Record<string, unknown>;
+  strategy?: 'code-only' | 'code-first' | 'agent-only';
+}
+
+const STRATEGY_LABELS: Record<string, string> = {
+  'code-first': '代码优先（失败回退 Agent）',
+  'code-only': '仅代码',
+  'agent-only': '仅 Agent',
+};
+
+function CodeModeSection({ input, updateInput }: {
+  input: Record<string, unknown>;
+  updateInput: (key: string, value: unknown) => void;
+}) {
+  const code = (input.code ?? null) as CodeConfig | null;
+  const hasCode = Boolean(code?.handler);
+
+  function toggleCode() {
+    if (hasCode) {
+      updateInput('code', undefined);
+    } else {
+      updateInput('code', { handler: '', strategy: 'code-first' });
+    }
+  }
+
+  return (
+    <div className="space-y-1.5 pt-1 border-t border-border/30">
+      <div className="flex items-center justify-between">
+        <Label className="text-[10px]">代码模式</Label>
+        <div className="flex items-center gap-1">
+          {hasCode && <Badge variant="outline" className="text-[8px] h-4 px-1">已启用</Badge>}
+          <button onClick={toggleCode} className="text-[10px] text-primary hover:underline">
+            {hasCode ? '关闭' : '启用'}
+          </button>
+        </div>
+      </div>
+      {hasCode && code && (
+        <div className="space-y-1.5">
+          <div className="space-y-1">
+            <Label className="text-[9px] text-muted-foreground">Handler ID</Label>
+            <Input
+              value={code.handler || ''}
+              onChange={e => updateInput('code', { ...code, handler: e.target.value })}
+              className="h-6 text-[10px] font-mono"
+              placeholder="e.g. cross-border/download"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[9px] text-muted-foreground">执行策略</Label>
+            <Select
+              value={code.strategy || 'code-first'}
+              onValueChange={v => updateInput('code', { ...code, strategy: v })}
+            >
+              <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Object.entries(STRATEGY_LABELS).map(([k, v]) => (
+                  <SelectItem key={k} value={k} className="text-xs">{v}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface PropertiesPanelProps {
   data: StepNodeData;
@@ -28,12 +98,15 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
     data.policy?.timeoutMs ? data.policy.timeoutMs / 60_000 : defaultTimeoutMin,
   );
 
-  useEffect(() => {
+  // Sync local state when data prop changes (React recommended pattern: adjust state during render)
+  const [prevData, setPrevData] = useState(data);
+  if (prevData !== data) {
+    setPrevData(data);
     setInput(data.input);
     setStepId(data.stepId);
     setDeps(data.dependsOn.join(', '));
     setTimeoutMin(data.policy?.timeoutMs ? data.policy.timeoutMs / 60_000 : defaultTimeoutMin);
-  }, [data]);
+  }
 
   useEffect(() => {
     fetch('/api/workflow/agent-presets')
@@ -93,6 +166,7 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
               className="min-h-[50px] text-xs"
             />
           </div>
+          <CodeModeSection input={input} updateInput={updateInput} />
         </>
       )}
 

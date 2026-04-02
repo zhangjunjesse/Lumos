@@ -35,7 +35,7 @@ export interface StepNodeData {
 const NODE_WIDTH = 190;
 const NODE_HEIGHT = 60;
 
-const CONTROL_FLOW_TYPES = new Set(['if-else', 'for-each', 'while']);
+const DEDICATED_NODE_TYPES = new Set(['agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability']);
 
 // ── DSL → Graph ────────────────────────────────────────────────────────────
 
@@ -140,8 +140,8 @@ function applyDagreLayout(nodes: Node[], edges: Edge[]): void {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function stepTypeToNodeType(type: string): string {
-  if (CONTROL_FLOW_TYPES.has(type)) return type;
+export function stepTypeToNodeType(type: string): string {
+  if (DEDICATED_NODE_TYPES.has(type)) return type;
   return 'agent';
 }
 
@@ -153,7 +153,12 @@ function getStepLabel(step: DslStep, presetNames: Record<string, string>): strin
   if (step.type === 'if-else') return 'IF / ELSE';
   if (step.type === 'for-each') return 'FOR EACH';
   if (step.type === 'while') return 'WHILE';
-  if (step.type === 'wait') return 'WAIT';
+  if (step.type === 'wait') return '等待';
+  if (step.type === 'notification') return '通知';
+  if (step.type === 'capability') {
+    const capId = step.input?.capabilityId;
+    return typeof capId === 'string' ? capId : '能力';
+  }
   return step.id;
 }
 
