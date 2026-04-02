@@ -9,6 +9,12 @@ export interface StepCompilerDefinition {
 
 const supportedWorkflowAgentRoleValues = [...WORKFLOW_AGENT_ROLES, 'general'] as const;
 
+const codeConfigSchema = z.object({
+  handler: z.string().min(1),
+  params: z.record(z.string(), z.unknown()).optional(),
+  strategy: z.enum(['code-only', 'code-first', 'agent-only']).optional(),
+}).strict();
+
 const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   prompt: z.string().min(1),
   preset: z.string().min(1).optional(),
@@ -17,6 +23,7 @@ const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   tools: z.array(z.string().min(1)).optional(),
   outputMode: z.enum(['structured', 'plain-text']).optional(),
   context: z.record(z.string(), z.unknown()).optional(),
+  code: codeConfigSchema.optional(),
 }).strict();
 
 const notificationStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({

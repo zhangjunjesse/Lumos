@@ -1,4 +1,5 @@
 import type { Workflow } from 'openworkflow';
+import type { AgentStepCodeConfig } from './code-handler-types';
 
 export type JsonPrimitive = string | number | boolean | null;
 
@@ -51,6 +52,8 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   tools?: string[];
   context?: Record<string, unknown>;
   outputMode?: 'structured' | 'plain-text';
+  /** 代码模式配置：优先执行固定代码，失败可回退到 agent */
+  code?: AgentStepCodeConfig;
 }
 
 export interface WaitStepInput {

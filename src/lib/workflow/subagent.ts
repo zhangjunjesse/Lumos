@@ -22,6 +22,7 @@ import type {
   WorkflowAgentRole,
   WorkflowStepRuntimeContext,
 } from './types';
+import { executeCodeHandler } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { buildPromptCapabilitiesSystemPrompt } from '@/lib/capability/prompt-loader';
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
@@ -723,6 +724,13 @@ function toStepResult(input: {
 
 export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<StepResult> {
   const runtimeContext = input.__runtime ?? getDefaultRuntimeContext();
+
+  // 代码模式拦截：优先执行固定代码，失败可回退到 agent
+  const codeOutcome = await executeCodeHandler(input, runtimeContext);
+  if (codeOutcome) {
+    return codeOutcome.result;
+  }
+
   const requestedModel = input.model || runtimeContext.requestedModel;
   const definition = resolveWorkflowAgentDefinition(input);
   const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(runtimeContext);
@@ -791,6 +799,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       provider: workflowProvider,
       onTraceEvent: shouldPersist
         ? (event) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const type = (event as any).type;
             if (type === 'assistant' || type === 'user') {
               traceEvents.push({ type: type as 'assistant' | 'user', raw: event });
