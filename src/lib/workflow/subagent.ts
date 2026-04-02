@@ -587,6 +587,8 @@ async function buildWorkflowAgentPayload(
         ...(dependencies.length > 0
           ? ['Use the provided dependency context to produce an integrated result; do not ignore branch outputs.']
           : []),
+        '禁止模拟、伪造或用脚本替代真实操作。如果所需工具（如浏览器 MCP）不可用，必须如实报告失败并在 outcome 中返回 failed，绝不能用 Python/curl/fetch 等替代方案伪造结果。',
+        '如果 MCP 工具调用失败或超时，先重试 1-2 次再判定失败。',
       ],
       ...(input.outputMode ? { responseMode: input.outputMode } : {}),
       inputContract: {

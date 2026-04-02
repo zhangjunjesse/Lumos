@@ -28,9 +28,19 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function normalizeRelativePath(rawValue: string): string {
-  const normalized = rawValue.replace(/\\/g, '/').trim()
-  if (!normalized || normalized.startsWith('/') || normalized.includes('..')) {
+function normalizeRelativePath(rawValue: string, outputDir?: string): string {
+  let normalized = rawValue.replace(/\\/g, '/').trim()
+  if (!normalized) {
+    throw new Error(`Invalid artifact path: ${rawValue}`)
+  }
+  // Agent 有时给绝对路径，如果在 outputDir 内则自动转为相对路径
+  if (normalized.startsWith('/') && outputDir) {
+    const normDir = outputDir.replace(/\\/g, '/').replace(/\/$/, '') + '/'
+    if (normalized.startsWith(normDir)) {
+      normalized = normalized.slice(normDir.length)
+    }
+  }
+  if (normalized.startsWith('/') || normalized.includes('..')) {
     throw new Error(`Invalid artifact path: ${rawValue}`)
   }
   return normalized
@@ -76,11 +86,11 @@ function listFilesRecursive(rootDir: string, currentDir: string = rootDir): stri
   return files.sort()
 }
 
-function validateModelArtifact(rawValue: unknown): StageExecutionModelArtifactV1 {
+function validateModelArtifact(rawValue: unknown, outputDir?: string): StageExecutionModelArtifactV1 {
   if (!isObjectRecord(rawValue)) {
     throw new Error('Artifact entry must be an object')
   }
-  if (typeof rawValue.kind !== 'string' || !MODEL_OUTPUT_ALLOWED_KINDS.includes(rawValue.kind as any)) {
+  if (typeof rawValue.kind !== 'string' || !(MODEL_OUTPUT_ALLOWED_KINDS as readonly string[]).includes(rawValue.kind)) {
     throw new Error(`Invalid artifact kind: ${String(rawValue.kind)}`)
   }
   if (typeof rawValue.title !== 'string' || !rawValue.title.trim()) {
@@ -93,14 +103,17 @@ function validateModelArtifact(rawValue: unknown): StageExecutionModelArtifactV1
   return {
     kind: rawValue.kind as StageExecutionModelArtifactV1['kind'],
     title: rawValue.title.trim(),
-    relativePath: normalizeRelativePath(rawValue.relativePath),
+    relativePath: normalizeRelativePath(rawValue.relativePath, outputDir),
     ...(typeof rawValue.contentType === 'string' && rawValue.contentType.trim()
       ? { contentType: rawValue.contentType.trim() }
       : {}),
   }
 }
 
-export function parseStageExecutionModelOutput(rawValue: unknown): StageExecutionModelOutputV1 {
+export function parseStageExecutionModelOutput(
+  rawValue: unknown,
+  outputDir?: string,
+): StageExecutionModelOutputV1 {
   if (!isObjectRecord(rawValue)) {
     throw new Error('Structured stage output must be an object')
   }
@@ -112,7 +125,7 @@ export function parseStageExecutionModelOutput(rawValue: unknown): StageExecutio
   }
 
   const artifacts = Array.isArray(rawValue.artifacts)
-    ? rawValue.artifacts.map((item) => validateModelArtifact(item))
+    ? rawValue.artifacts.map((item) => validateModelArtifact(item, outputDir))
     : []
 
   const parsed: StageExecutionModelOutputV1 = {
@@ -122,7 +135,7 @@ export function parseStageExecutionModelOutput(rawValue: unknown): StageExecutio
   }
 
   if (typeof rawValue.detailArtifactPath === 'string' && rawValue.detailArtifactPath.trim()) {
-    parsed.detailArtifactPath = normalizeRelativePath(rawValue.detailArtifactPath)
+    parsed.detailArtifactPath = normalizeRelativePath(rawValue.detailArtifactPath, outputDir)
   }
 
   if (isObjectRecord(rawValue.error)) {

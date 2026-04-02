@@ -10,7 +10,7 @@ import {
   normalizeStageExecutionResult,
   parseStageExecutionModelOutput,
 } from './runtime-result-normalizer'
-import { buildStageRuntimeToolPolicy, createStageCanUseTool, getStageExecutionCwd } from './runtime-tool-policy'
+import { buildStageRuntimeToolPolicy, getStageExecutionCwd } from './runtime-tool-policy'
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
 
 interface WorkerStatus {
@@ -31,6 +31,14 @@ type StageWorkerDiagnosticError = Error & {
   cause?: unknown
   outputPreview?: string
   structuredOutputPreview?: string
+}
+
+/** Shape of messages emitted by the Claude Agent SDK query stream. */
+interface SdkQueryMessage {
+  type?: string
+  text?: string
+  result?: string
+  structured_output?: unknown
 }
 
 function listDirFilesSync(dirPath: string): string[] {
@@ -268,7 +276,6 @@ export class StageWorker {
     const { query } = await import('@anthropic-ai/claude-agent-sdk')
 
     const prompt = this.buildPrompt(payload)
-    const runtimePolicy = buildStageRuntimeToolPolicy(payload.agent)
     const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
       provider,
       sessionId: payload.sessionId,
@@ -337,7 +344,7 @@ export class StageWorker {
       })
 
       for await (const message of queryResult) {
-        const msg = message as any
+        const msg = message as SdkQueryMessage
         const msgType: string = msg.type ?? ''
         if (onTraceEvent && (msgType === 'assistant' || msgType === 'user')) {
           onTraceEvent(message)
@@ -363,7 +370,7 @@ export class StageWorker {
       try {
         normalized = normalizeStageExecutionResult({
           payload,
-          modelOutput: parseStageExecutionModelOutput(structuredOutput),
+          modelOutput: parseStageExecutionModelOutput(structuredOutput, payload.workspace.artifactOutputDir),
           startedAt,
           finishedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
@@ -475,8 +482,8 @@ export class StageWorker {
         },
       })
 
-      for await (const message of queryResult as AsyncIterable<any>) {
-        const msg = message as any
+      for await (const message of queryResult as AsyncIterable<SdkQueryMessage>) {
+        const msg = message
         const msgType: string = msg.type ?? ''
         if (onTraceEvent && (msgType === 'assistant' || msgType === 'user')) {
           onTraceEvent(message)
