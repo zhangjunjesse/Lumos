@@ -158,7 +158,7 @@ const snap = await ctx.browser.snapshot();
 
 // 用正则从 snapshot content 中提取 uid
 function findUid(content, hint) {
-  const re = new RegExp('\\\\[uid=([^\\\\]]+)\\\\][^\\\\n]*' + hint);
+  const re = new RegExp('\\[uid=([^\\]]+)\\][^\\n]*' + hint);
   const m = content.match(re);
   return m ? m[1] : null;
 }

@@ -145,7 +145,7 @@ export async function triggerSchedule(scheduleId: string, runParams?: Record<str
 function checkSessionForFailedSteps(sessionId: string): boolean {
   try {
     const { messages } = getMessages(sessionId, { limit: 200 });
-    const failedPattern = /<!-- step:[^:]+:[^:]+:failed -->/;
+    const failedPattern = /<!-- step:[^:]+:[^:]+:(?:failed|blocked) -->/;
     return messages.some((m: { role: string; content: string }) => {
       if (m.role !== 'assistant') return false;
       let text = m.content;
