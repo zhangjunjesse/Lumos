@@ -10,7 +10,8 @@ export interface StepCompilerDefinition {
 const supportedWorkflowAgentRoleValues = [...WORKFLOW_AGENT_ROLES, 'general'] as const;
 
 const codeConfigSchema = z.object({
-  handler: z.string().min(1),
+  handler: z.string().min(1).optional(),
+  script: z.string().optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   strategy: z.enum(['code-only', 'code-first', 'agent-only']).optional(),
 }).strict();

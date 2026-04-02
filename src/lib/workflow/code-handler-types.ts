@@ -41,8 +41,10 @@ export interface CodeHandler {
 export type CodeExecutionStrategy = 'code-only' | 'code-first' | 'agent-only';
 
 export interface AgentStepCodeConfig {
-  /** 注册的代码处理器 ID */
-  handler: string;
+  /** 注册的代码处理器 ID（文件注册方式） */
+  handler?: string;
+  /** 内联脚本（由 Codify Agent 生成或用户编写） */
+  script?: string;
   /** 传给处理器的参数 */
   params?: Record<string, unknown>;
   /** 执行策略，默认 code-first */

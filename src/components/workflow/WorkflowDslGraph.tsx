@@ -78,8 +78,8 @@ function getStepLabel(step: DslStep, presetNames: Record<string, string>): strin
 }
 
 function getCodeModeLabel(step: DslStep): string | null {
-  const code = step.input?.code as { handler?: string; strategy?: string } | undefined;
-  if (!code?.handler) return null;
+  const code = step.input?.code as { script?: string; handler?: string; strategy?: string } | undefined;
+  if (!code?.script && !code?.handler) return null;
   return code.strategy === 'code-only' ? 'code' : 'code+';
 }
 

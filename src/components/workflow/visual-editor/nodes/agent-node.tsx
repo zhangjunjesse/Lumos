@@ -13,8 +13,8 @@ function formatTimeoutLabel(ms: number | undefined): string | null {
 function AgentNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) {
   const prompt = typeof data.input?.prompt === 'string' ? data.input.prompt : '';
   const timeoutLabel = formatTimeoutLabel(data.policy?.timeoutMs);
-  const codeConfig = data.input?.code as { handler?: string; strategy?: string } | undefined;
-  const hasCode = Boolean(codeConfig?.handler);
+  const codeConfig = data.input?.code as { script?: string; handler?: string; strategy?: string } | undefined;
+  const hasCode = Boolean(codeConfig?.script || codeConfig?.handler);
 
   return (
     <div
