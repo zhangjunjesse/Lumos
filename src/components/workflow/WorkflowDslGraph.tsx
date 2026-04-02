@@ -77,6 +77,12 @@ function getStepLabel(step: DslStep, presetNames: Record<string, string>): strin
   return step.id;
 }
 
+function getCodeModeLabel(step: DslStep): string | null {
+  const code = step.input?.code as { handler?: string; strategy?: string } | undefined;
+  if (!code?.handler) return null;
+  return code.strategy === 'code-only' ? 'code' : 'code+';
+}
+
 function getStepDetail(step: DslStep): string {
   if (step.type === 'agent') {
     return typeof step.input?.prompt === 'string' ? step.input.prompt : '';
@@ -196,6 +202,7 @@ export function WorkflowDslGraph({
         {graph.nodes.map(({ step, x, y }) => {
           const label = getStepLabel(step, presetNames);
           const detail = getStepDetail(step);
+          const codeLabel = getCodeModeLabel(step);
           const style = STEP_TYPE_STYLE[step.type] || STEP_TYPE_STYLE.agent;
           const isSelected = selectedStepId === step.id;
           const isClickable = !!onStepClick;
@@ -221,6 +228,9 @@ export function WorkflowDslGraph({
                   {style.badge}
                 </Badge>
                 <span className="text-xs font-semibold text-foreground truncate flex-1">{label}</span>
+                {codeLabel && (
+                  <span className="text-[8px] bg-emerald-500/15 text-emerald-600 px-1 rounded shrink-0">{codeLabel}</span>
+                )}
                 {timeoutLabel && <span className="text-[9px] text-muted-foreground shrink-0">{timeoutLabel}</span>}
               </div>
               <div className="text-[9px] text-muted-foreground mt-0.5 font-mono truncate">{step.id}</div>
