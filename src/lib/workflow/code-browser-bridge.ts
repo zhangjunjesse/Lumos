@@ -12,6 +12,9 @@ interface SnapshotResult { title: string; content: string }
  * 创建 BrowserBridgeApi 实例
  * 封装 Bridge Server HTTP 调用，代码脚本通过 ctx.browser 使用
  * 与 Agent 的 Chrome DevTools MCP 共享同一个浏览器实例和登录态
+ *
+ * 注意：Bridge Server 的 click/fill 使用 uid（来自 snapshot），
+ * waitFor 等待的是页面文本（不是 CSS selector）
  */
 export function createBrowserBridgeApi(): BrowserBridgeApi {
   const config = resolveBrowserBridgeRuntimeConfig();
@@ -27,26 +30,30 @@ export function createBrowserBridgeApi(): BrowserBridgeApi {
       await postToBrowserBridge(config, '/v1/pages/navigate', { url });
     },
 
-    async click(selector: string) {
-      await postToBrowserBridge(config, '/v1/pages/click', { selector });
+    async click(uid: string) {
+      await postToBrowserBridge(config, '/v1/pages/click', { uid });
     },
 
-    async fill(selector: string, value: string) {
-      await postToBrowserBridge(config, '/v1/pages/fill', { selector, value });
+    async fill(uid: string, value: string) {
+      await postToBrowserBridge(config, '/v1/pages/fill', { uid, value });
     },
 
-    async type(text: string) {
-      await postToBrowserBridge(config, '/v1/pages/type', { text });
+    async type(text: string, submitKey?: string) {
+      await postToBrowserBridge(config, '/v1/pages/type', {
+        text,
+        ...(submitKey ? { submitKey } : {}),
+      });
     },
 
     async press(key: string) {
       await postToBrowserBridge(config, '/v1/pages/press', { key });
     },
 
-    async waitFor(selector: string, options?: { timeout?: number }) {
+    async waitFor(texts: string | string[], options?: { timeout?: number }) {
+      const textArray = Array.isArray(texts) ? texts : [texts];
       await postToBrowserBridge(config, '/v1/pages/wait-for', {
-        selector,
-        ...(options?.timeout ? { timeout: options.timeout } : {}),
+        text: textArray,
+        ...(options?.timeout ? { timeoutMs: options.timeout } : {}),
       });
     },
 
