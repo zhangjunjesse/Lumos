@@ -152,7 +152,7 @@ function checkSessionForFailedSteps(sessionId: string): boolean {
       try {
         const blocks = JSON.parse(text) as Array<{ type: string; text?: string }>;
         if (Array.isArray(blocks)) {
-          text = blocks.filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n');
+          text = blocks.filter(b => b.type === 'text' && b.text).map(b => b.text as string).join('\n');
         }
       } catch { /* not JSON */ }
       return failedPattern.test(text);

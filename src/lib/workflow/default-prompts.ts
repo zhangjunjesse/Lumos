@@ -151,14 +151,31 @@ await ctx.browser.waitFor('登录');  // 等待页面出现"登录"文本
 
 // 获取快照，从 content 中解析元素 uid
 const snap = await ctx.browser.snapshot();
-// snap.content 示例：[uid=e12] <input name="email" placeholder="邮箱">
+// snap.content 中每个可交互元素带 [uid=xxx]，例如：
+// [uid=e12] <input name="email" placeholder="邮箱">
+// [uid=e15] <input name="password" type="password">
+// [uid=e18] <button type="submit">登录</button>
 
-// 用 evaluate 在页面中执行 JS（保持登录态）
-const title = await ctx.browser.evaluate('document.title');
+// 用正则从 snapshot content 中提取 uid
+function findUid(content, hint) {
+  const re = new RegExp('\\\\[uid=([^\\\\]]+)\\\\][^\\\\n]*' + hint);
+  const m = content.match(re);
+  return m ? m[1] : null;
+}
+
+const emailUid = findUid(snap.content, 'email');
+const pwdUid = findUid(snap.content, 'password');
+const submitUid = findUid(snap.content, '登录');
+
+if (emailUid) await ctx.browser.fill(emailUid, 'user@example.com');
+if (pwdUid) await ctx.browser.fill(pwdUid, 'password123');
+if (submitUid) await ctx.browser.click(submitUid);
+
+await ctx.browser.waitFor('欢迎');  // 等待登录成功页面
 
 return {
   success: true,
-  output: { summary: '页面标题: ' + title },
+  output: { summary: '登录成功' },
 };
 \`\`\`
 
