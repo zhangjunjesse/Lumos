@@ -17,6 +17,7 @@ import { KnowledgeSection } from "./KnowledgeSection";
 import { SchedulingAgentSection } from "./SchedulingAgentSection";
 import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
+import { CodifyAgentSection } from "./CodifyAgentSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
@@ -120,6 +121,8 @@ export function SettingsLayout() {
               <AgentCreationLLMSection />
               <div className="h-px bg-border/50" />
               <WorkflowBuilderLLMSection />
+              <div className="h-px bg-border/50" />
+              <CodifyAgentSection />
             </div>
           )}
           {activeSection === "usage" && <UsageStatsSection />}
