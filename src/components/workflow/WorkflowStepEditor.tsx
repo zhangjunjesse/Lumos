@@ -268,6 +268,7 @@ export function WorkflowStepEditor({
             script={codeScript}
             strategy={codeStrategy}
             prompt={prompt}
+            stepId={step.id}
             onEnabledChange={setCodeEnabled}
             onScriptChange={setCodeScript}
             onStrategyChange={setCodeStrategy}

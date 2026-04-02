@@ -29,12 +29,16 @@ interface CodeModeEditorProps {
   onStrategyChange: (v: string) => void;
   /** 紧凑模式（用于 PropertiesPanel） */
   compact?: boolean;
+  /** 定时任务 ID（用于获取历史执行 trace） */
+  scheduleId?: string;
+  /** 步骤 ID（用于获取历史执行 trace） */
+  stepId?: string;
 }
 
 export function CodeModeEditor({
   enabled, script, strategy, prompt,
   onEnabledChange, onScriptChange, onStrategyChange,
-  compact = false,
+  compact = false, scheduleId, stepId,
 }: CodeModeEditorProps) {
   const [codifying, setCodifying] = useState(false);
   const [codifyError, setCodifyError] = useState('');
@@ -44,13 +48,23 @@ export function CodeModeEditor({
     setCodifying(true);
     setCodifyError('');
     try {
+      // 先尝试获取历史执行 trace（从所有 schedule 的执行记录中搜索）
+      let trace = '（尚无执行记录，请根据 prompt 生成初始代码）';
+      if (stepId) {
+        try {
+          const sid = scheduleId || '_global';
+          const traceRes = await fetch(`/api/workflow/schedules/${sid}/step-trace?stepId=${encodeURIComponent(stepId)}`);
+          const traceData = await traceRes.json() as { trace?: string | null };
+          if (traceData.trace) {
+            trace = traceData.trace;
+          }
+        } catch { /* 获取 trace 失败不阻塞 */ }
+      }
+
       const res = await fetch('/api/workflow/codify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          trace: '（尚无执行记录，请根据 prompt 生成初始代码）',
-        }),
+        body: JSON.stringify({ prompt, trace }),
       });
       const data = await res.json() as { script?: string; error?: string };
       if (data.error) { setCodifyError(data.error); return; }

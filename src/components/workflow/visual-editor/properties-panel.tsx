@@ -103,6 +103,7 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
             script={((input.code as { script?: string } | undefined)?.script) ?? ''}
             strategy={((input.code as { strategy?: string } | undefined)?.strategy) ?? 'code-first'}
             prompt={typeof input.prompt === 'string' ? input.prompt : ''}
+            stepId={data.stepId}
             onEnabledChange={v => {
               if (v) updateInput('code', { script: '', strategy: 'code-first' });
               else updateInput('code', undefined);

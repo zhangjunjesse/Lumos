@@ -89,6 +89,22 @@ export function formatStepOutputMarkdown(
   return parts.join('\n').trim() || '';
 }
 
+/** Shape of a content block in Claude API trace messages. */
+interface TraceContentBlock {
+  type: string;
+  thinking?: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  content?: string | TraceContentBlock[];
+}
+
+/** Shape of the raw payload in a trace event. */
+interface TraceRawPayload {
+  message?: { content?: TraceContentBlock[] };
+  isSynthetic?: boolean;
+}
+
 /** Format the full execution trace (tool calls, results, thinking) as markdown. */
 export function formatExecutionTrace(events: RawTraceEvent[]): string {
   if (events.length === 0) return '';
@@ -98,16 +114,16 @@ export function formatExecutionTrace(events: RawTraceEvent[]): string {
   let thinkingCount = 0;
 
   for (const event of events) {
-    const raw = event.raw as any;
+    const raw = event.raw as TraceRawPayload;
 
     if (event.type === 'assistant') {
       const content = raw?.message?.content;
       if (!Array.isArray(content) || content.length === 0) continue;
 
-      const hasToolUse = content.some((b: any) => b.type === 'tool_use');
+      const hasToolUse = content.some((b: TraceContentBlock) => b.type === 'tool_use');
       const blocks: string[] = [];
 
-      for (const block of content as any[]) {
+      for (const block of content as TraceContentBlock[]) {
         if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim()) {
           thinkingCount++;
           const thinking = truncateTrace(block.thinking.trim(), 1500);
@@ -117,7 +133,7 @@ export function formatExecutionTrace(events: RawTraceEvent[]): string {
           toolCallCount++;
           let inputStr: string;
           try { inputStr = JSON.stringify(block.input, null, 2); } catch { inputStr = String(block.input ?? ''); }
-          inputStr = truncateTrace(inputStr, 600);
+          inputStr = truncateTrace(inputStr, 2000);
           blocks.push(`**🔧 调用：** \`${block.name}\`\n\`\`\`json\n${inputStr}\n\`\`\``);
         } else if (block.type === 'text' && block.text?.trim() && hasToolUse) {
           // Only show intermediate text blocks (those in messages that also contain tool calls)
@@ -127,22 +143,22 @@ export function formatExecutionTrace(events: RawTraceEvent[]): string {
 
       if (blocks.length > 0) sections.push(blocks.join('\n\n'));
 
-    } else if (event.type === 'user' && !(raw as any)?.isSynthetic) {
+    } else if (event.type === 'user' && !raw.isSynthetic) {
       const content = raw?.message?.content;
       if (!Array.isArray(content)) continue;
 
-      for (const block of content as any[]) {
+      for (const block of content as TraceContentBlock[]) {
         if (block.type !== 'tool_result') continue;
         let resultText: string;
         if (typeof block.content === 'string') {
           resultText = block.content;
         } else if (Array.isArray(block.content)) {
-          resultText = (block.content as any[]).filter((b: any) => b.type === 'text').map((b: any) => b.text ?? '').join('\n');
+          resultText = (block.content as TraceContentBlock[]).filter((b: TraceContentBlock) => b.type === 'text').map((b: TraceContentBlock) => b.text ?? '').join('\n');
         } else { continue; }
 
         resultText = resultText.trim();
         if (!resultText) continue;
-        resultText = truncateTrace(resultText, 1500);
+        resultText = truncateTrace(resultText, 3000);
         sections.push(`**📤 结果：**\n\`\`\`\n${resultText}\n\`\`\``);
       }
     }
