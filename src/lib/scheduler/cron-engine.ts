@@ -13,6 +13,7 @@ import {
   type ScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
 import { createSession } from '@/lib/db/sessions';
+import { getMessages } from '@/lib/db';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { submitWorkflow } from '@/lib/workflow/api';
 import { taskEventBus } from '@/lib/task-event-bus';
@@ -88,13 +89,22 @@ async function runSchedule(
       },
     }, {
       onCompleted: () => {
-        recordScheduleRun(schedule.id, 'success', '');
-        updateRunHistory(runId, 'success');
+        // 检查是否有步骤失败：从 session 消息中提取 step outcome
+        const hasFailedSteps = checkSessionForFailedSteps(session.id);
+        const finalStatus = hasFailedSteps ? 'error' : 'success';
+        const errorMsg = hasFailedSteps ? '部分步骤执行失败' : '';
+
+        recordScheduleRun(schedule.id, finalStatus, errorMsg);
+        updateRunHistory(runId, finalStatus, errorMsg || undefined);
         // Disable one-time tasks after execution
         if (schedule.runMode === 'once') {
           updateScheduledWorkflow(schedule.id, { enabled: false });
         }
-        if (schedule.notifyOnComplete) emitNotification(schedule, 'success');
+        if (finalStatus === 'success') {
+          if (schedule.notifyOnComplete) emitNotification(schedule, 'success');
+        } else {
+          emitNotification(schedule, 'error', errorMsg);
+        }
       },
       onFailed: (event) => {
         const msg = event.error.message || '工作流执行失败';
@@ -126,6 +136,30 @@ export async function triggerSchedule(scheduleId: string, runParams?: Record<str
   const schedule = getScheduledWorkflow(scheduleId);
   if (!schedule) throw new Error('任务不存在');
   await runSchedule(schedule, true, runParams);
+}
+
+/**
+ * 检查 session 消息中是否有步骤标记为 failed
+ * step output markdown header 格式: <!-- step:roleName:stepId:outcome -->
+ */
+function checkSessionForFailedSteps(sessionId: string): boolean {
+  try {
+    const { messages } = getMessages(sessionId, { limit: 200 });
+    const failedPattern = /<!-- step:[^:]+:[^:]+:failed -->/;
+    return messages.some((m: { role: string; content: string }) => {
+      if (m.role !== 'assistant') return false;
+      let text = m.content;
+      try {
+        const blocks = JSON.parse(text) as Array<{ type: string; text?: string }>;
+        if (Array.isArray(blocks)) {
+          text = blocks.filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n');
+        }
+      } catch { /* not JSON */ }
+      return failedPattern.test(text);
+    });
+  } catch {
+    return false;
+  }
 }
 
 function emitNotification(
