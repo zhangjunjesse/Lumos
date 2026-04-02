@@ -67,10 +67,20 @@ export interface WorkflowFailedEvent {
   };
 }
 
-const DEFAULT_WORKFLOW_RESULT_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
+const MIN_WORKFLOW_RESULT_TIMEOUT_MS = 15 * 60 * 1000;
 const registeredWorkflows = new Set<string>();
-const supportedStepTypes = new Set(getSupportedStepTypes());
+const supportedStepTypes = new Set([
+  ...getSupportedStepTypes(),
+  // v2 control-flow step types — handled by compiler-v2, not the step registry
+  'if-else', 'for-each', 'while',
+]);
 let globalWorker: Worker | null = null;
+
+function computeWorkflowTimeout(manifest: CompiledWorkflowManifest): number {
+  const stepCount = manifest.stepIds.length || 1;
+  return Math.max(stepCount * DEFAULT_STEP_TIMEOUT_MS, MIN_WORKFLOW_RESULT_TIMEOUT_MS);
+}
 
 interface WorkflowExecutionState {
   taskId: string;
@@ -175,7 +185,7 @@ export async function submitWorkflow(
       workflowId,
       request.taskId,
       runHandle,
-      request.timeoutMs ?? DEFAULT_WORKFLOW_RESULT_TIMEOUT_MS,
+      request.timeoutMs ?? computeWorkflowTimeout(request.workflowManifest),
       callbacks
     );
 
@@ -355,7 +365,7 @@ function getWorkflowRegistryKey(workflow: Workflow<unknown, unknown, unknown>): 
 function validateCompiledWorkflowManifest(manifest: CompiledWorkflowManifest): string[] {
   const errors: string[] = [];
 
-  if (manifest.dslVersion !== 'v1') {
+  if (manifest.dslVersion !== 'v1' && manifest.dslVersion !== 'v2') {
     errors.push(`Unsupported DSL version: ${manifest.dslVersion}`);
   }
 
@@ -537,7 +547,7 @@ export async function __testOnlyObserveWorkflowCompletion(input: {
     input.workflowId,
     input.taskId,
     input.runHandle,
-    input.timeoutMs ?? DEFAULT_WORKFLOW_RESULT_TIMEOUT_MS,
+    input.timeoutMs ?? MIN_WORKFLOW_RESULT_TIMEOUT_MS,
     input.callbacks
   );
 }

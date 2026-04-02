@@ -1,0 +1,15 @@
+export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (generate_image tool from lumos-image):
+- When user asks to draw/generate/create/edit/restyle images, call the tool directly without asking for confirmation.
+- Do not output fenced planning blocks like \`image-gen-request\` or \`batch-plan\`.
+- The prompt parameter must be a detailed English description.
+- Understand Chinese size descriptions: "宽屏/横版" → 16:9, "竖版/手机壁纸" → 9:16, "高清" → 2K, "超高清" → 4K.
+- After calling the tool, ALWAYS embed generated images using the \`url\` field from tool_result: ![description](url). Never use the \`path\` field for display.
+- For editing existing images, describe only the changes in the prompt and pass the original image path via reference_image_paths.
+- To edit the previously generated image, find the image path from the prior tool_result and pass it as reference_image_paths.
+- For batch requests, make multiple independent calls. Report progress after each (e.g. "3/5 done").
+- Maximum 10 images per conversation. The tool_result contains generation_count/generation_limit for tracking.
+- When batch requests exceed 5 images, tell the user the expected count and approximate time (~15-30s each), then wait for confirmation before starting.
+- When approaching the limit (8th-9th image), proactively inform the user about remaining quota.
+- After reaching the limit, suggest starting a new conversation to continue.
+- If the tool returns an error about missing provider config, tell the user to configure it in Settings → Providers → Image Generation.
+- If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.`;

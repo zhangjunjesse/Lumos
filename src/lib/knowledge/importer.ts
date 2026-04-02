@@ -6,8 +6,9 @@ import * as store from './store';
 import { splitText } from './chunker';
 import { indexItem } from './embedder';
 import { indexItemChunks } from './bm25';
-import { autoTagCategorized } from './tagger';
-import { summarizeAndEmbed } from './summarizer';
+import { autoTagCategorizedStrict } from './tagger';
+import { summarizeAndEmbedStrict } from './summarizer';
+import { isKnowledgeEnhancementUnavailableError } from './llm';
 import type { KbStageStatus, KbProcessingStatus, CategorizedTag } from './types';
 import { buildTagCandidates, syncItemTagSystem } from './tag-system';
 import {
@@ -16,6 +17,11 @@ import {
   resolveStatus,
   stageFailed,
 } from './processing-status';
+import {
+  appendProcessingError,
+  appendProcessingMessage,
+  buildStoredPreviewContent,
+} from './pipeline-support';
 
 interface ImportData {
   title: string;
@@ -30,16 +36,6 @@ interface ImportPipelineOptions {
   parseError?: string;
 }
 
-function formatStageError(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
-  }
-  if (typeof error === 'string' && error.trim()) {
-    return error.trim();
-  }
-  return fallback;
-}
-
 /** Core import flow: store item → chunk → BM25 → embed → tag */
 export async function processImport(
   collectionId: string,
@@ -52,13 +48,13 @@ export async function processImport(
   const parseStatus: KbStageStatus = parseError ? 'failed' : 'done';
   const detail = createDetail(mode, parseStatus);
   const hasParseError = Boolean(parseError);
-  let processingError = parseError;
+  let processingError = appendProcessingMessage('', '解析', parseError);
 
   // 1. Auto-tag
   let categorizedTags: CategorizedTag[] = [];
   try {
     const existingTags = data.tags || [];
-    const { matched, suggested } = await autoTagCategorized(fullContent, existingTags);
+    const { matched, suggested } = await autoTagCategorizedStrict(fullContent, existingTags);
     categorizedTags = [...matched, ...suggested];
     data.tags = Array.from(
       new Set([
@@ -66,7 +62,11 @@ export async function processImport(
         ...categorizedTags.map((tag) => tag.name),
       ]),
     );
-  } catch { /* skip */ }
+  } catch (error) {
+    if (!isKnowledgeEnhancementUnavailableError(error)) {
+      processingError = appendProcessingError(processingError, '标签', error, 'tag_generation_failed');
+    }
+  }
 
   // 2. Store item
   const item = store.addItem(collectionId, {
@@ -74,11 +74,11 @@ export async function processImport(
     source_type: data.source_type,
     source_path: data.source_path,
     source_key: data.source_key,
-    content: fullContent.length <= 2000 ? fullContent : '',
+    content: buildStoredPreviewContent(fullContent),
     tags: data.tags,
     processing_status: hasParseError ? 'partial' : 'pending',
     processing_detail: detailToJson(detail),
-    processing_error: parseError,
+    processing_error: processingError,
   });
 
   // 2.1 Keep a structured tag taxonomy in sync with item tags.
@@ -118,7 +118,12 @@ export async function processImport(
       detail.bm25 = 'done';
     } catch (error) {
       detail.bm25 = 'failed';
-      processingError = formatStageError(error, 'bm25_index_failed');
+      processingError = appendProcessingError(
+        processingError,
+        '检索索引',
+        error,
+        'bm25_index_failed',
+      );
     }
 
     persist({
@@ -152,7 +157,12 @@ export async function processImport(
     detail.bm25 = 'done';
   } catch (error) {
     detail.bm25 = 'failed';
-    processingError = formatStageError(error, 'bm25_index_failed');
+    processingError = appendProcessingError(
+      processingError,
+      '检索索引',
+      error,
+      'bm25_index_failed',
+    );
   }
   persist({});
 
@@ -165,7 +175,12 @@ export async function processImport(
   } catch (err) {
     console.error(`[kb] Embedding failed for ${item.id}:`, (err as Error).message);
     detail.embedding = 'failed';
-    processingError = formatStageError(err, 'embedding_failed');
+    processingError = appendProcessingError(
+      processingError,
+      '向量化',
+      err,
+      'embedding_failed',
+    );
   }
   persist({});
 
@@ -173,11 +188,26 @@ export async function processImport(
   detail.summary = 'running';
   persist({});
   try {
-    const summary = await summarizeAndEmbed(item.id);
-    detail.summary = summary ? 'done' : 'failed';
+    const summary = await summarizeAndEmbedStrict(item.id);
+    if (summary) {
+      detail.summary = 'done';
+    } else {
+      detail.summary = 'failed';
+      processingError = appendProcessingMessage(processingError, '摘要', '模型返回空内容，请检查服务商配置和模型是否可用');
+    }
   } catch (err) {
-    detail.summary = 'failed';
-    console.error(`[kb] Summarize failed for ${item.id}:`, (err as Error).message);
+    if (isKnowledgeEnhancementUnavailableError(err)) {
+      detail.summary = 'skipped';
+    } else {
+      detail.summary = 'failed';
+      console.error(`[kb] Summarize failed for ${item.id}:`, (err as Error).message);
+      processingError = appendProcessingError(
+        processingError,
+        '摘要',
+        err,
+        'summary_failed',
+      );
+    }
   }
   persist({
     status: resolveStatus(detail, stageFailed(detail)),

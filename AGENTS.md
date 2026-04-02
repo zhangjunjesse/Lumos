@@ -57,6 +57,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - 按“完整实现”标准落地 `03 / 04 / 05 / 06` 任务架构文档，而不只是打通最小闭环。
 - 让用户能基于产品界面和明确的阶段结论判断哪些能力已经可验收，哪些还只是内部链路可用。
 - 在不破坏 `01 ~ 06` 主链边界的前提下，为后续系统能力增长补齐 `07 动态能力扩展` 的独立架构定义。
+- 以“独立模块优先、聊天与工作流复用其服务”的原则补齐 `08 DeepSearch`，利用内置浏览器共享登录态为反爬站点提供可验收的深度研究能力。
 - 保持架构边界不扩张：
   - DSL v1 不支持 subworkflow
   - Phase 1 只支持 `agent / browser / notification`
@@ -64,6 +65,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - Scheduling Layer 产出 DSL
   - Workflow MCP 校验并编译
   - Workflow Engine 只执行编译产物
+  - `08 DeepSearch` 先作为独立模块 / service，不直接耦合进 Workflow 主链
 
 ## 阶段性目标和成果
 
@@ -122,6 +124,35 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 待完成：补齐 `06` 的正式执行代理 UI，并与现有团队设置页分层，避免和旧 team-run 角色预设混淆。
   - 待完成：把 `03` 调度信息与 `06` 运行态角色信息继续收进正式详情页，而不只留在测试页或配置页。
   - 待完成：`07` 仍未完整打通；虽然对话式确认、能力生成、发布入口，以及 `Prompt 节点` / `代码节点` 的显式任务引用主链都已具备第一段可验收实现，且报告导出到 PDF 已补上一条自动接能力的主链，但更通用的自动发现、自然语言参数提取、审批、回滚和更完整的运行时治理都还没有完成。
+- 阶段 4：DeepSearch 独立模块设计
+  - 成果：已确认 `08 DeepSearch` 不应先耦合到 Workflow，而应先做独立模块，再由聊天和 Workflow 复用。
+  - 成果：已确认产品需要在左侧侧边栏 `扩展` 下新增正式 `DeepSearch` 页，用于登录态配置、历史记录和抓取内容查看。
+  - 成果：已新增 `08-deepsearch-requirements-design.md` 与 `08-deepsearch-architecture-design.md`，明确产品需求、模块边界、登录态主链和对外调用形态。
+  - 成果：已新增 `08-deepsearch-bb-browser-integration-design.md`，明确 `bb-browser` 更适合作为能力样板而不是直接作为正式运行时接入，并收敛出 Lumos 应吸收的 `site adapter / session fetch / compact snapshot / network capture` 方向；结合源码复核后，方案已进一步具体化为在 Lumos 内增加 `bb-site compatibility runtime`，优先承接经过审查的 Tier 1 / Tier 2 adapter。
+  - 成果：已新增 `08-deepsearch-deployment-and-local-usage-design.md`，明确 DeepSearch 的 Phase 1 正式形态应为 Lumos 内置模块；本地使用方式应是“通过本地 Lumos 实例直接使用”，而不是先做成独立安装的外部 tool。
+  - 成果：已新增 `08-deepsearch-phase-1-implementation-design.md`，把 `08` 的第一阶段交付范围、实现顺序、站点优先级和严格 UI 验收标准显式写清。
+  - 成果：已新增 `08-deepsearch-ui-and-interaction-design.md`，把正式页的布局、按钮、状态、详情区、当前页接管确认、等待登录恢复、暂停/恢复/取消和 `partial` 展示方式进一步落成可实现交互。
+  - 成果：已新增 `08-deepsearch-data-and-api-design.md`，把 `run / run page / checkpoint / record / artifact / site state` 数据边界，以及 `DeepSearch Service / tool facade / Workflow capability` 的接口合同进一步写清。
+  - 成果：已新增 `08-deepsearch-engineering-implementation-design.md`，把当前仓库里的真实目录落点、`/extensions` 页 tab 接入、browser bridge 复用、DB 迁移文件位置和开发顺序进一步拆成工程可执行方案。
+  - 成果：已把两条最新架构决策正式写回 `08` 文档：DeepSearch 可以正式接管用户当前浏览器中的活动页；同时正式支持 `strict / best_effort` 两种执行语义，非严格模式下允许先跑能跑的站点并以 `partial` 收口。
+  - 成果：已统一 `08` 文档中的运行状态枚举、恢复语义和 Phase 边界；当前口径收敛为 `pending / running / waiting_login / paused / completed / partial / failed / cancelled`，其中 Workflow 正式复用进入 Phase 2，而不是继续和 Phase 1 混写。
+  - 成果：`08` 已开始正式代码实现；当前左侧 `扩展` 页中已新增 `DeepSearch` tab，并已落地站点登录态管理 UI、DeepSearch 本地 SQLite 表、`/api/deepsearch/sites` 与 `/api/deepsearch/runs`、抓取记录历史列表、详情面板，以及 `strict / best_effort`、`takeover_active_page / managed_page` 的正式参数落库与展示。
+  - 成果：`08` 已继续补上第一条真实浏览器运行时接线；当前 DeepSearch 已新增共享 browser bridge client、独立 DeepSearch service、`/api/deepsearch/runtime/page-binding` 预览接口，以及“当前活动页可否接管”的正式 UI 预览，不再只靠静态文案假设浏览器状态。
+  - 成果：`08` 已把“接管当前活动页”从预览升级为 run 级正式绑定；当前在 `扩展 > DeepSearch` 创建 takeover 任务时，会尝试锁定浏览器当前活动页并落库到 `run page` 记录，详情面板也可直接验收页面标题、URL、pageId、绑定类型和绑定时间。
+  - 成果：`08` 已继续把 run 从“只做绑定和草案”推进到“真实执行基础页面快照”；当前创建或恢复可执行任务后，DeepSearch 会通过 browser bridge 真正选中/创建页面，抓取页面 snapshot 与 screenshot，并把摘录和本地截图路径回写到任务详情。
+  - 成果：`08` 已补上第一版站点级共享登录探测；当前 DeepSearch 会通过 browser bridge 读取内置浏览器共享 cookie，对预置站点执行 auth cookie 检查，把结果写入站点状态，并在 run 执行前真实决定是否进入 `waiting_login` 或继续执行；正式页站点卡片也已新增“检查登录态”按钮，可直接验收探测结果。
+  - 成果：`08` 已补上第一版登录恢复动作；当前站点卡片和 `waiting_login` 详情都可直接打开站点登录页、重新检查登录态，并且 takeover 模式在恢复执行前会尝试重新绑定当前活动页，不再只停留在“提示用户自己处理”的文案层。
+  - 成果：`08` 已补上第一版结果主链结构化持久化；当前运行结果会正式落到 `deepsearch_records / deepsearch_artifacts`，并新增 artifact 读取 API 与详情页记录/正文/截图查看，不再只靠 detail markdown 塞摘录和文件路径。
+  - 成果：`08` 已补上第一版聊天 tool facade；当前通过 Lumos 内置 `deepsearch` MCP facade，把 `start / get_result / pause / resume / cancel` 统一接到同一 DeepSearch service，聊天侧也会注入当前会话 `sessionId` 并在相关诉求下优先提示模型调用该高层能力；同时 `扩展 > DeepSearch` 已支持 `runId` 深链，聊天结果可以直接落到对应 run 详情验收。
+  - 成果：`08` 已补上第一版站点 adapter runtime，并优先接入 `zhihu`；当前对于知乎页面，运行时会优先区分问题详情页、文章详情页和列表页，尝试展开“阅读全文”，抽取问题/回答或文章正文，写回更接近真实页面结构的 `contentState / snippet / structured_json`，同时保留失败时回退到通用正文抓取的兜底。
+  - 成果：`08` 已继续把知乎搜索结果页推进到“同一 run 自动跟进详情页”；当前当 seed 页被识别为知乎 `list_page` 时，会自动挑选最多 3 个详情 URL 创建托管页并继续抓取，其中已补上 `zhuanlan.zhihu.com/p/...` 专栏正文地址的正式支持；相关站点路由规则已补单测，最新整包 `Next build` 也再次通过。
+  - 成果：`08` 已继续补到正式 UI 可验层；当前 `扩展 > DeepSearch` 的任务详情里，绑定页面与抓取记录已改为按同一页面链路联动展示，用户可以直接看到哪一页是搜索页、哪几页是自动跟进的详情页，以及每个绑定页下面实际产出的正文/截图/结构化快照，不再需要在“绑定页面”和“抓取记录”两块之间手工对照。
+  - 成果：`08` 已把 `waiting_login` 的恢复编排从页面脚本下沉到独立 service / API；当前正式页后台自动恢复不再自己串联“逐站点 recheck + 逐任务 resume”，而是统一走服务端 `探测 -> 判定 -> 恢复 -> 回写 runs/sites`；同时抓取历史卡片也已补上每个任务的状态说明，用户不打开详情也能直接看到当前卡点。
+  - 成果：`08` 已补上第二条认证源主链；当前除直接复用内置浏览器共享登录态外，用户在站点配置里提供的 cookie 也会被解析并尽力导入到内置浏览器，再进入统一登录探测与恢复流程，不再只是数据库里的备注字段。
+  - 成果：`08` 已继续补上第一版“显式页面验证”校验；当前在保存站点 cookie 或手动点击“检查登录态”时，系统除看 cookie 命中外，还会对部分站点打开验证页做一次真实页面级判断，用于识别“cookie 长得像已登录、但页面仍落到登录态”的假阳性；同时这类站点在后台 cookie-only 轮询下也不会立刻被重新放行为 `connected`，直到下一次显式校验通过。
+  - 成果：已收口 DeepSearch 登录态链路里的三处关键回归风险：后台 `waiting_login` 恢复轮询不再反复重导用户保存的 cookie 以免覆盖浏览器里更新后的真实登录态；“站点 ready” 现已只认 live probe 的 `connected`，不再把手工 `cookieStatus=valid` 误当成可运行；同时内部 `PAGE_VALIDATION_BLOCKED` 哨兵也已从正式 UI 文案中隐藏，保存站点配置只做轻量 cookie 探测，抢焦点的页面级验证收敛到显式“检查登录态”动作。
+  - 成果：`08` 已继续收口一轮正式 UI 与浏览器接线缺陷；当前 `扩展 > DeepSearch` 页面已重排为“站点接入 / 抓取发起 / 历史与详情”的分区结构，不再把站点、任务和结果硬堆在同一长列；同时 browser bridge 现已把真实异常信息回传给 DeepSearch，且“打开登录页”链路里非关键的页面稳定/CDP 检查失败不再直接把整次打开动作打成 `INTERNAL_ERROR`；另外手动 `resume` 与聊天 tool `resume` 也已默认停止重导旧 cookie，避免用户刚完成共享登录后又被过期配置覆盖，而 takeover 模式在当前活动页已切到无关站点时也会主动清空旧绑定，回到“等待可接管页面”而不是带着错误页面继续执行。
+  - 待完成：补齐更强的自动登录完成检测与自动回收、执行期更细粒度页面控制、更强的完整正文抽取，以及 Workflow capability facade 的正式实现。
 
 ## 当前状态进度
 
@@ -150,7 +181,12 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 主链状态：`已打通`
   - 当前进展：已新增独立架构文档，明确“动态新增系统能力”不并入 `03 ~ 06`，而是作为横切能力单独定义；最新已按用户要求把产品目标进一步收敛为“尽量复用现有聊天式新增页，不引入复杂草稿流，AI 先确认需求，再直接生成两类待发布能力：`代码节点` 与 `Prompt 节点`，最后由用户发布”；同时文档已进一步明确 Phase 1 的最小改 UI 实施方案：保留当前能力列表页、聊天式新增页和详情页，只调整行为为“对话确认 -> 生成待发布能力 -> 发布 -> 正式可用”；当前产品侧已实现这条第一段主链：`Prompt 节点` 在任务明确提到能力 ID / 名称时，会进入 workflow agent step 的 `tools`；`代码节点` 在任务明确提到能力 ID / 名称并提供结构化 JSON 参数时，会进入真实 `capability` 步骤执行；历史遗留的本地能力文件也已开始进入当前发现范围；正式 `Workflow` 详情页也已开始展示“系统能力节点”和对应能力 ID；此外，报告/正文导出 PDF 场景现在已能在检测到可用格式转换能力时自动追加能力步骤，不再一律停在“需求已记录”的占位结果；最新又已补上正文类 workflow agent step 的纯文本交付模式、Claude SDK `result.result` 文本读取，以及 `md-converter` 在缺少 `pdflatex` 时回退到本机 `weasyprint` 生成 PDF；“给我一份 Claude 使用技巧报告，并导出 PDF” 这条真实任务现已完成一轮端到端验收并产出实际 PDF 文件
   - 当前缺口：`07` 仍未完整打通；当前可验收的是 UI 里的“对话确认 / 生成 / 发布”、两类能力的显式任务引用，以及报告到 PDF 的一条自动导出主链，但更通用的自动发现、自然语言参数提取、审批、回滚、配额/沙箱治理和更完整的运行态可视化仍未完成，因此还不能按“完整实现”标准验收
+- `08 DeepSearch 独立模块`
+  - 文档完整度：`基本完成`
+  - 主链状态：`未打通`
+  - 当前进展：已确认 DeepSearch 需要先作为独立模块建设，而不是先耦合进 Workflow；产品入口已收敛为左侧侧边栏 `扩展` 内的 `DeepSearch` tab，而不是单独一级路由；文档已明确 Phase 1 必须先补站点登录态检查、登录引导、登录后恢复执行、历史抓取记录、详细内容查看，以及面向聊天 / Workflow 的高层服务复用边界；同时也已明确核心形态应为内置模块 / service，外部独立 MCP 仍不是第一产品落点；另外针对 `bb-browser` 是否应直接接入的问题，也已补完单独评估文档，结论已进一步收敛为“保留 Lumos 内置浏览器为唯一正式运行时，在内部实现 `bb-site compatibility runtime`，只吸收 `site adapter / session fetch / compact snapshot / network capture` 等能力模型，并优先支持经过审查的 Tier 1 / Tier 2 adapter”；最新又已补上“部署与本地使用形态”“Phase 1 实现拆解”“UI 与交互设计”“数据与 API 设计”“工程落地拆解”五份子文档，把“内置在 Lumos、本地通过 Lumos 实例直接使用、先做 run/artifact/UI/登录态主链、后再扩外部 facade、正式页如何交互、service/tool 数据合同如何对齐、当前仓库里具体该改哪些文件”进一步写实；同时已把“正式接管当前活动页”“`strict / best_effort` 分离”“非严格模式以 `partial` 收口”“统一 run 状态和 resume 语义”“Workflow 正式复用进入 Phase 2”这些之前分散的结论写回主文档和补充文档，避免 08 内部继续口径分裂；在代码侧，当前已落地 `扩展 > DeepSearch` 正式页签、站点登录态配置弹窗、DeepSearch 本地 SQLite 表、DeepSearch runs API、抓取历史列表、详情页和暂停/继续/取消的本地状态控制；同时也已补上共享 browser bridge client、DeepSearch service 和“当前活动页接管预览”API/UI；随后又把 takeover run 的“活动页锁定”正式落到 `run page` 持久化模型中，创建任务时会尝试捕获当前活动页并在详情页展示具体绑定信息；之后创建或恢复可执行任务后，还会真正通过内置浏览器执行通用页面接管 / 托管页创建、抓取页面摘录和截图，并把结果写回任务详情；随后又补上共享 cookie 级站点探测与正式 `waiting_login` 收口；再进一步补上了站点级“打开登录页”、`waiting_login` 恢复引导，以及 takeover 模式恢复前的当前活动页重新绑定；随后已把执行结果正式落到 `records / artifacts`，并在详情页提供记录摘要、正文 artifact、截图 artifact 和截图预览；之后继续补上第一版聊天高层 facade，内置 `deepsearch` MCP server 已进入内置 MCP 列表并默认启用，聊天系统提示会在相关诉求下优先调用 `start / get_result / pause / resume / cancel`，tool 结果直接复用 run/artifact 读模型，并提供跳转 `扩展 > DeepSearch` 的 `runId` 深链；最新又补上第一版 `zhihu` 站点 adapter runtime，当前知乎问题页、文章页和列表页会优先走站点级提取逻辑，尝试展开正文并生成更贴近真实页面结构的 `contentState / snippet / structured_json`，同时保留通用抓取兜底；再进一步，当 seed 页被识别为知乎搜索结果页时，同一 run 里还会自动挑选最多 3 个详情页继续抓取，且现在已正式覆盖 `zhuanlan.zhihu.com/p/...` 专栏正文地址，同时托管搜索页角色也已显式收敛为 `search`；相关站点路由单测已通过，最新整包 `Next build` 也再次通过；而在正式 UI 上，任务详情现已按绑定页面链路联动展示关联记录，用户可以直接看出搜索页、自动跟进详情页及其各自产物，同时运行中的任务也会自动轮询刷新；此外，`waiting_login` 的自动恢复编排现已下沉到独立 DeepSearch service / API，前端不再自己串联逐站点 recheck 与逐任务 resume，而是统一走服务端 `探测 -> 判定 -> 恢复 -> 回写`，抓取历史列表也已补上每个任务的状态说明；现在第二条认证源也已打通，用户提供的 cookie 会被解析并尽力导入到内置浏览器，再进入与共享登录态一致的登录探测链；同时页面级验证语义已进一步收敛：保存 cookie 现在只做轻量 cookie 探测，真正会打开验证页的动作只保留在显式“检查登录态”，后台 `waiting_login` 恢复也不再重复重导用户保存的 cookie，从而避免覆盖浏览器里更新后的真实登录态；另外正式 UI 和 tool 的“站点 ready” 现已只认 live probe 的 `connected`，不再把手工 `cookieStatus=valid` 误当成可运行，同时内部 `PAGE_VALIDATION_BLOCKED` 哨兵也不再直接展示给用户；最新又已把正式页重排成“站点接入 / 抓取发起 / 历史与详情”的分区结构，站点卡片、当前站点详情、操作入口和运行结果不再堆成单列长表单；同时 browser bridge 现已向 DeepSearch 回传真实错误信息，而“打开登录页”链路里的非关键页面稳定/CDP 检查失败也不再直接打断整个动作；另外手动与 tool `resume` 都已默认停止重导旧 cookie，takeover 模式在当前活动页切到无关页面时也会主动清空旧绑定并回到“等待可接管页面”，因此“配置与记录层 + 接管准备层 + 基础执行层 + 第一版登录探测 + 第一版登录恢复 + 第一版 artifact-backed result + 第一版聊天复用入口 + 第一版知乎 adapter + 第一版知乎搜索结果自动跟进详情页 + 第一版页面链路可视化 + 第一版运行态自动刷新 + 第一版等待登录自动恢复 + 第一版服务端恢复编排 + 第一版用户 cookie 导入浏览器 + 第一版显式页面验证 + 第一版登录态回归修正 + 第一版正式 UI 重构 + 第一版 bridge 打开登录页回归修正”都已开始具备可验收面
+  - 当前缺口：自动登录完成检测、执行期更细粒度页面控制、更强的完整正文抽取、Workflow capability facade、更多站点 adapter、`bb-site compatibility runtime`、受控 session fetch、compact snapshot/ref、CDP observer 和 network capture 都还未落地；此外，知乎“搜索结果页 -> 多详情页”虽然现在已补上同 run 自动跟进、搜索页/详情页角色区分、UI 联动展示、运行态自动刷新、规则级单测，以及 `waiting_login` 阶段的自动检测和自动继续，并已新增服务端恢复编排、第一版用户 cookie 导入浏览器与第一版显式页面验证，但真实浏览器下的更多抓取质量调优与更系统的 UI 验收仍需继续完成，因此 DeepSearch 核心主链仍未正式打通；当前可验收的是产品壳层、本地数据层、接管预览、run 级页面绑定、基础页面快照、第一版共享登录探测、第一版登录恢复、第一版 artifact-backed result、第一版聊天 tool 复用、第一版知乎页面提取、第一版知乎搜索结果自动跟进详情页、第一版页面链路可视化、第一版运行态自动刷新、第一版等待登录自动恢复、第一版服务端恢复编排、第一版用户 cookie 导入浏览器，以及第一版显式页面验证，不是完整深度研究能力
 - 总体结论
   - 最小闭环：`已完成`
   - 按完整实现标准的总体验收：`未通过`
-  - 当前优先级：继续收 `03` 的调度质量和聊天侧任务交互细节，并同步补 `06` 的正式执行代理 UI / 配置能力，最后回头收 `04` / `05` 的完整实现尾项；`07` 先保持架构设计态，暂不混入当前 `03 ~ 06` 收口主线
+  - 当前优先级：在继续收 `03 / 04 / 05 / 06` 验收尾项的同时，按 `08` 文档先启动 DeepSearch 独立模块主线，优先补站点登录态、独立 UI 与可恢复执行，再让聊天和 Workflow 复用该服务；`07` 继续保持与主链并行的独立能力建设路线

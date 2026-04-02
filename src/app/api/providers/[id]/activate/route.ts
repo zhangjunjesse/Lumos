@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { activateProvider, deactivateAllProviders, getProvider } from '@/lib/db';
+import {
+  activateProvider,
+  deactivateAllProviders,
+  getProvider,
+  ProviderActivationBlockedError,
+} from '@/lib/db';
 import type { ErrorResponse } from '@/types';
 
 interface RouteContext {
@@ -44,6 +49,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ success: true, active: true });
   } catch (error) {
+    if (error instanceof ProviderActivationBlockedError) {
+      return NextResponse.json<ErrorResponse>(
+        { error: error.message },
+        { status: 409 }
+      );
+    }
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to activate provider' },
       { status: 500 }

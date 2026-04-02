@@ -11,7 +11,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type SchedulingStrategy = 'workflow' | 'simple';
-export type SchedulingPlanSource = 'heuristic' | 'llm';
+export type SchedulingPlanSource = 'llm';
 export type SchedulingTaskComplexity = 'simple' | 'moderate' | 'complex';
 
 export interface SchedulingPlanAnalysis {
@@ -41,8 +41,6 @@ export interface SchedulingPlanDiagnostics {
   llmErrors: string[];
   llmTimeoutMs?: number;
   llmSkippedReason?: string;
-  fallbackUsed?: 'heuristic-preview';
-  fallbackReason?: string;
 }
 
 export class SchedulingPlannerError extends Error {
@@ -56,15 +54,8 @@ export class SchedulingPlannerError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Internal interfaces (exported for sibling planner-*.ts modules)
+// Planning context types (used by planner-capabilities and planner-prompt)
 // ---------------------------------------------------------------------------
-
-export interface SearchTarget {
-  engine: 'baidu' | 'google' | 'bing' | 'duckduckgo';
-  engineLabel: string;
-  query: string;
-  url: string;
-}
 
 export interface PromptCapabilityPlanningContext {
   available: PublishedPromptCapabilitySummary[];
@@ -75,14 +66,6 @@ export interface CodeCapabilityPlanningContext {
   available: PublishedCodeCapabilitySummary[];
   explicitlyMatchedId?: string;
   explicitInput?: Record<string, unknown>;
-}
-
-export interface StructuredDeliverableCapability {
-  capabilityId: string;
-  capabilityName: string;
-  targetFormat: 'pdf' | 'docx' | 'html' | 'epub';
-  contentInputKey: string;
-  formatInputKey: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,122 +105,6 @@ export const REPORT_WRITING_TIMEOUT_MS = 420_000;
 export const REPORT_SYNTHESIS_TIMEOUT_MS = 240_000;
 export const BROWSER_STEP_TIMEOUT_MS = 45_000;
 export const NOTIFICATION_STEP_TIMEOUT_MS = 15_000;
-
-// ---------------------------------------------------------------------------
-// Intent / pattern constants
-// ---------------------------------------------------------------------------
-
-export const IMPLEMENTATION_INTENT_PATTERNS = [
-  '实现',
-  '开发',
-  '搭建',
-  '重构',
-  '修复',
-  '改造',
-  '接入',
-  'build',
-  'implement',
-  'develop',
-  'refactor',
-  'fix',
-];
-export const REPORT_INTENT_PATTERNS = [
-  '调研',
-  '研究',
-  '报告',
-  '分析',
-  '汇总',
-  '总结',
-  '对比',
-  '比较',
-  'report',
-  'research',
-  'analysis',
-  'summary',
-];
-export const EXPORT_INTENT_PATTERNS = [
-  'pdf',
-  '导出',
-  '导成',
-  '转成',
-  '保存为',
-  'export',
-];
-export const EXTERNAL_SEARCH_INTENT_PATTERNS = [
-  '搜索',
-  '搜一下',
-  '搜一搜',
-  '查一下',
-  '查询',
-  '检索',
-  'search',
-];
-export const SECURITY_RESEARCH_PATTERNS = [
-  '安全',
-  '安全问题',
-  '漏洞',
-  '威胁',
-  '攻击',
-  '攻击面',
-  'cve',
-];
-export const REMEDIATION_INTENT_PATTERNS = [
-  '方案',
-  '整改',
-  '修复建议',
-  '加固',
-  '缓解',
-  '对策',
-  '治理建议',
-  '防护建议',
-  '建议',
-];
-export const LOCAL_SEARCH_NEGATION_PATTERNS = [
-  '搜索代码',
-  '搜代码',
-  '查代码',
-  '检索代码',
-  '搜仓库',
-  '搜索仓库',
-  '搜本地',
-  '搜索本地',
-  '搜索文件',
-  '搜文件',
-  '搜索知识库',
-  '搜知识库',
-  '搜索记忆',
-  '搜记忆',
-  'grep',
-  'rg ',
-];
-export const DELIVERABLE_FORMAT_ALIASES: Array<{
-  format: StructuredDeliverableCapability['targetFormat'];
-  patterns: string[];
-}> = [
-  { format: 'pdf', patterns: ['pdf'] },
-  { format: 'docx', patterns: ['docx', 'word', 'word文档'] },
-  { format: 'html', patterns: ['html'] },
-  { format: 'epub', patterns: ['epub'] },
-];
-export const CAPABILITY_CONTENT_INPUT_CANDIDATES = [
-  'mdcontent',
-  'markdowncontent',
-  'markdown',
-  'content',
-  'text',
-  'body',
-  'sourcecontent',
-  'source',
-  'input',
-  'inputcontent',
-];
-export const CAPABILITY_FORMAT_INPUT_CANDIDATES = [
-  'targetformat',
-  'format',
-  'outputformat',
-  'exportformat',
-  'toformat',
-];
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -299,32 +166,12 @@ export const plannerConditionExprSchema = z.union([
 
 export const plannerAgentStepInputSchema = z.object({
   prompt: z.string().min(1),
+  preset: z.string().min(1).optional(),
   role: z.enum(['worker', 'researcher', 'coder', 'integration', 'general']).optional(),
   model: z.string().min(1).optional(),
   tools: z.array(z.string().min(1)).optional(),
   outputMode: z.enum(['structured', 'plain-text']).optional(),
   context: z.record(z.string(), z.unknown()).optional(),
-}).strict();
-
-export const plannerBrowserStepInputSchema = z.object({
-  action: z.enum(['navigate', 'click', 'fill', 'screenshot']),
-  url: z.string().min(1).optional(),
-  selector: z.string().min(1).optional(),
-  value: z.string().min(1).optional(),
-  pageId: z.string().min(1).optional(),
-  createPage: z.boolean().optional(),
-}).strict();
-
-export const plannerNotificationStepInputSchema = z.object({
-  message: z.string().min(1),
-  level: z.enum(['info', 'warning', 'error']).optional(),
-  channel: z.string().min(1).optional(),
-  sessionId: z.string().min(1).optional(),
-}).strict();
-
-export const plannerCapabilityStepInputSchema = z.object({
-  capabilityId: z.string().min(1),
-  input: z.unknown(),
 }).strict();
 
 export const plannerWorkflowBaseStepSchema = z.object({
@@ -334,30 +181,27 @@ export const plannerWorkflowBaseStepSchema = z.object({
   policy: plannerStepPolicySchema,
 });
 
-export const plannerWorkflowStepSchema = z.discriminatedUnion('type', [
-  plannerWorkflowBaseStepSchema.extend({
-    type: z.literal('agent'),
-    input: plannerAgentStepInputSchema,
-  }),
-  plannerWorkflowBaseStepSchema.extend({
-    type: z.literal('browser'),
-    input: plannerBrowserStepInputSchema,
-  }),
-  plannerWorkflowBaseStepSchema.extend({
-    type: z.literal('notification'),
-    input: plannerNotificationStepInputSchema,
-  }),
-  plannerWorkflowBaseStepSchema.extend({
-    type: z.literal('capability'),
-    input: plannerCapabilityStepInputSchema,
-  }),
-]);
+export const plannerWorkflowStepSchema = plannerWorkflowBaseStepSchema.extend({
+  type: z.literal('agent'),
+  input: plannerAgentStepInputSchema,
+});
 
 export const plannerWorkflowDslSchema = z.object({
   version: z.literal('v1'),
   name: z.string().min(1),
   steps: z.array(plannerWorkflowStepSchema).min(1).max(20),
 }).strict();
+
+export interface WorkflowAgentPresetSummary {
+  id: string;
+  name: string;
+  expertise: string;
+  category: 'builtin' | 'user';
+}
+
+export interface WorkflowAgentPlanningContext {
+  available: WorkflowAgentPresetSummary[];
+}
 
 export const plannerResponseSchema = z.object({
   strategy: z.enum(['workflow', 'simple']),

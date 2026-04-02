@@ -194,14 +194,20 @@ export interface AgentPresetRecord {
   version: 1;
   name: string;
   roleKind: TeamAgentPresetRoleKind;
-  responsibility: string;
+  responsibility?: string;
   systemPrompt: string;
   description?: string;
   collaborationStyle?: string;
   outputContract?: string;
   preferredModel?: string;
+  providerId?: string;
   mcpServers?: string[];
   toolPermissions?: AgentPresetToolPermissions;
+  // 员工身份信息
+  position?: string;
+  interests?: string;
+  specialties?: string;
+  avatarPath?: string;
 }
 
 export interface TeamTemplateRecord {
@@ -224,16 +230,23 @@ export interface AgentPresetDirectoryItem {
   source: AgentPresetSource;
   name: string;
   roleKind: TeamAgentPresetRoleKind;
-  responsibility: string;
+  responsibility?: string;
   systemPrompt: string;
   updatedAt: string;
   description?: string;
   collaborationStyle?: string;
   outputContract?: string;
   preferredModel?: string;
+  providerId?: string;
   mcpServers?: string[];
   toolPermissions?: AgentPresetToolPermissions;
   templateCount: number;
+  // 员工身份信息
+  position?: string;
+  interests?: string;
+  specialties?: string;
+  avatarPath?: string;
+  departmentId?: string;
 }
 
 export interface TeamTemplateDirectoryItem {
@@ -575,7 +588,6 @@ export function parseAgentPresetRecord(value: unknown): AgentPresetRecord | null
     value.kind !== MAIN_AGENT_AGENT_PRESET_KIND
     || !isNonEmptyString(value.name)
     || !isTeamAgentPresetRoleKind(value.roleKind)
-    || !isNonEmptyString(value.responsibility)
     || !isNonEmptyString(value.systemPrompt)
   ) {
     return null;
@@ -598,14 +610,19 @@ export function parseAgentPresetRecord(value: unknown): AgentPresetRecord | null
     version: 1,
     name: value.name.trim(),
     roleKind: value.roleKind,
-    responsibility: value.responsibility.trim(),
     systemPrompt: value.systemPrompt.trim(),
+    ...(isNonEmptyString(value.responsibility) ? { responsibility: value.responsibility.trim() } : {}),
     ...(isNonEmptyString(value.description) ? { description: value.description.trim() } : {}),
     ...(isNonEmptyString(value.collaborationStyle) ? { collaborationStyle: value.collaborationStyle.trim() } : {}),
     ...(isNonEmptyString(value.outputContract) ? { outputContract: value.outputContract.trim() } : {}),
     ...(isNonEmptyString(value.preferredModel) ? { preferredModel: value.preferredModel.trim() } : {}),
+    ...(isNonEmptyString(value.providerId) ? { providerId: value.providerId.trim() } : {}),
     ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
     ...(toolPermissions ? { toolPermissions } : {}),
+    ...(isNonEmptyString(value.position) ? { position: value.position.trim() } : {}),
+    ...(isNonEmptyString(value.interests) ? { interests: value.interests.trim() } : {}),
+    ...(isNonEmptyString(value.specialties) ? { specialties: value.specialties.trim() } : {}),
+    ...(isNonEmptyString(value.avatarPath) ? { avatarPath: value.avatarPath.trim() } : {}),
   };
 }
 
@@ -666,6 +683,7 @@ export interface Message {
   content: string; // JSON string of MessageContentBlock[] for structured content
   created_at: string;
   token_usage: string | null; // JSON string of TokenUsage
+  elapsed_ms?: number | null;
 }
 
 // Structured message content blocks (stored as JSON in messages.content)

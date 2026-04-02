@@ -1,0 +1,9 @@
+{
+  "name": "deepsearch",
+  "description": "Use the built-in DeepSearch module to run high-level browser research with shared login state, run history, and artifact-backed results.",
+  "command": "node",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/deepsearch/deepsearch_mcp.mjs"
+  ],
+  "env": {}
+}

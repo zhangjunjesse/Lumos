@@ -43,7 +43,14 @@ export function setEnvVar(name: string, value: string): void {
  * returns the app's own .claude/ directory instead of ~/.claude/.
  */
 export function getClaudeConfigDir(): string {
-  return getEnvVar('LUMOS_CLAUDE_CONFIG_DIR', 'CODEPILOT_CLAUDE_CONFIG_DIR') || path.join(os.homedir(), '.claude');
+  return getEnvVar(
+    'LUMOS_CLAUDE_CONFIG_DIR',
+    'CODEPILOT_CLAUDE_CONFIG_DIR',
+    path.join(
+      getEnvVar('LUMOS_DATA_DIR', 'CLAUDE_GUI_DATA_DIR', path.join(os.homedir(), '.lumos'))!,
+      '.claude',
+    ),
+  )!;
 }
 
 /**

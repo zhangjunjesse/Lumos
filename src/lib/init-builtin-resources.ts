@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import matter from 'gray-matter';
 import {
   createSkill,
+  getDefaultProvider,
   getSkillByNameAndScope,
   getSkillsByScope,
   updateSkill,
@@ -16,6 +17,8 @@ import {
 } from './db';
 import { getDb } from './db';
 import { initializeCapabilities } from './capability/init';
+import { seedBuiltinWorkflowAgentPresets } from './db/workflow-agent-presets';
+import { resolveProviderPersistenceFields } from './provider-config';
 
 // ==========================================
 // Types
@@ -182,8 +185,10 @@ function importMcpServers(): number {
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
       }
     } else {
-      // task-management and workflow are enabled by default for orchestration flows
-      const isEnabled = config.name === 'task-management' || config.name === 'workflow';
+      // task-management, workflow, and deepsearch are enabled by default for core orchestration flows
+      const isEnabled = config.name === 'task-management'
+        || config.name === 'workflow'
+        || config.name === 'deepsearch';
       createMcpServer({
         name: config.name,
         scope: 'builtin',
@@ -214,16 +219,47 @@ function importProviders(): void {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  const fields = resolveProviderPersistenceFields({
+    providerType: 'anthropic',
+    capabilities: ['agent-chat'],
+    providerOrigin: 'system',
+    authMode: 'api_key',
+    isBuiltin: 1,
+  });
 
-  // Check if there's already an active provider
-  const activeProvider = db.prepare('SELECT id FROM api_providers WHERE is_active = 1 LIMIT 1').get();
-  const isActive = activeProvider ? 0 : 1;
+  const resolvedDefaultProvider = getDefaultProvider();
+  const shouldBecomeDefaultProvider = !resolvedDefaultProvider;
+  const isActive = shouldBecomeDefaultProvider ? 1 : 0;
 
   db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, 'Anthropic (Built-in)', 'anthropic', '', '', isActive, 0, '{}', 'Built-in provider. Fill in your API key to activate.', 1, 0, now, now);
+    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id,
+    'Anthropic (Built-in)',
+    fields.providerType,
+    fields.apiProtocol,
+    fields.capabilities,
+    fields.providerOrigin,
+    fields.authMode,
+    '',
+    '',
+    isActive,
+    0,
+    '{}',
+    'Built-in provider. Fill in your API key to activate.',
+    1,
+    0,
+    now,
+    now,
+  );
 
-  console.log(`[init-builtin-resources] Created built-in Anthropic provider (is_active=${isActive})`);
+  if (shouldBecomeDefaultProvider) {
+    setSetting('default_provider_id', id);
+  }
+
+  console.log(
+    `[init-builtin-resources] Created built-in Anthropic provider (default=${shouldBecomeDefaultProvider}, is_active=${isActive})`,
+  );
 }
 
 // ==========================================
@@ -241,6 +277,8 @@ export async function initBuiltinResources(): Promise<void> {
     importProviders();
 
     await initializeCapabilities();
+
+    seedBuiltinWorkflowAgentPresets();
 
     setSetting('builtin_resources_imported', 'true');
     console.log('[init-builtin-resources] Done');

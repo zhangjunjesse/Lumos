@@ -4,13 +4,9 @@ import { getClaudeConfigDir } from '@/lib/platform';
 import fs from 'fs';
 import path from 'path';
 
-function findBundledCliPath(): string | undefined {
-  return findBundledClaudeSdkCliPath();
-}
-
 export async function GET() {
   try {
-    const bundledCli = findBundledCliPath();
+    const bundledCli = findBundledClaudeSdkCliPath();
     const configDir = getClaudeConfigDir();
 
     if (!bundledCli) {
@@ -24,8 +20,8 @@ export async function GET() {
       });
     }
 
-    const sdkPkgPath = path.join(path.dirname(bundledCli), 'package.json');
     try {
+      const sdkPkgPath = path.join(path.dirname(bundledCli), 'package.json');
       const sdkMeta = JSON.parse(fs.readFileSync(sdkPkgPath, 'utf-8')) as {
         version?: string;
         claudeCodeVersion?: string;

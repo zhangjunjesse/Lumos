@@ -30,9 +30,6 @@ const nextConfig: NextConfig = {
     'onnxruntime-common',
     'openworkflow',
   ],
-  experimental: {
-    serverComponentsExternalPackages: ['openworkflow'],
-  },
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
   },

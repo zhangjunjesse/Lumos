@@ -2,30 +2,30 @@ import fs from 'fs'
 import path from 'path'
 import { buildClaudeSdkRuntimeBootstrap } from '../sdk-runtime'
 
-const mockGetActiveProvider = jest.fn()
+const mockGetDefaultProvider = jest.fn()
 const mockGetProvider = jest.fn()
 const mockGetSetting = jest.fn()
-const mockGetDefaultProviderId = jest.fn()
 const mockGetSession = jest.fn()
 const mockFindClaudeBinary = jest.fn()
 const mockFindGitBash = jest.fn()
+const mockGetClaudeConfigDir = jest.fn()
 const mockGetExpandedPath = jest.fn()
 const existsSyncSpy = jest.spyOn(fs, 'existsSync')
 
 jest.mock('@/lib/db/providers', () => ({
-  getActiveProvider: () => mockGetActiveProvider(),
+  getDefaultProvider: () => mockGetDefaultProvider(),
   getProvider: (...args: unknown[]) => mockGetProvider(...args),
 }))
 
 jest.mock('@/lib/db/sessions', () => ({
   getSetting: (...args: unknown[]) => mockGetSetting(...args),
-  getDefaultProviderId: () => mockGetDefaultProviderId(),
   getSession: (...args: unknown[]) => mockGetSession(...args),
 }))
 
 jest.mock('@/lib/platform', () => ({
   findClaudeBinary: () => mockFindClaudeBinary(),
   findGitBash: () => mockFindGitBash(),
+  getClaudeConfigDir: () => mockGetClaudeConfigDir(),
   getExpandedPath: () => mockGetExpandedPath(),
 }))
 
@@ -40,18 +40,18 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
       CLAUDE_CONFIG_DIR: '/tmp/stale-config',
     }
 
-    mockGetActiveProvider.mockReset()
+    mockGetDefaultProvider.mockReset()
     mockGetProvider.mockReset()
     mockGetSetting.mockReset()
-    mockGetDefaultProviderId.mockReset()
     mockGetSession.mockReset()
     mockFindClaudeBinary.mockReset()
     mockFindGitBash.mockReset()
+    mockGetClaudeConfigDir.mockReset()
     mockGetExpandedPath.mockReset()
 
+    mockGetClaudeConfigDir.mockReturnValue('/tmp/lumos-claude')
     mockGetExpandedPath.mockReturnValue('/tmp/expanded-path')
     mockFindGitBash.mockReturnValue(null)
-    mockGetDefaultProviderId.mockReturnValue(undefined)
     mockGetSession.mockReturnValue(undefined)
     mockGetProvider.mockReturnValue(undefined)
     existsSyncSpy.mockImplementation((value: fs.PathLike) => {
@@ -70,10 +70,14 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
   })
 
   test('injects active provider env and bundled cli path', () => {
-    mockGetActiveProvider.mockReturnValue({
+    mockGetDefaultProvider.mockReturnValue({
       id: 'provider-1',
       name: 'Test Provider',
       provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'custom',
+      auth_mode: 'api_key',
       base_url: 'https://example.com/claude',
       api_key: 'provider-secret',
       is_active: 1,
@@ -111,11 +115,9 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     )
   })
 
-  test('falls back to app settings and system claude binary when no active provider exists', () => {
-    mockGetActiveProvider.mockReturnValue(undefined)
+  test('uses system claude binary but does not silently restore shell auth env when no provider exists', () => {
+    mockGetDefaultProvider.mockReturnValue(undefined)
     mockGetSetting.mockImplementation((key: string) => {
-      if (key === 'anthropic_auth_token') return 'legacy-token'
-      if (key === 'anthropic_base_url') return 'https://legacy.example.com'
       if (key === 'claude_project_settings_enabled') return 'false'
       return ''
     })
@@ -125,10 +127,48 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     const runtime = buildClaudeSdkRuntimeBootstrap()
 
     expect(runtime.activeProvider).toBeUndefined()
-    expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBe('legacy-token')
-    expect(runtime.env.ANTHROPIC_BASE_URL).toBe('https://legacy.example.com')
+    expect(runtime.env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(runtime.settingSources).toEqual([])
     expect(runtime.pathToClaudeCodeExecutable).toBe('/usr/local/bin/claude')
+  })
+
+  test('local_auth provider keeps sandbox auth isolated and does not inject stale key env', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-local-auth',
+      name: 'Claude Local Auth',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'custom',
+      auth_mode: 'local_auth',
+      base_url: 'https://should-not-be-used.example.com',
+      api_key: '',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: JSON.stringify({
+        CUSTOM_FLAG: 'local-auth',
+        ANTHROPIC_API_KEY: 'should-be-ignored',
+      }),
+      model_catalog: '[]',
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 0,
+      user_modified: 0,
+      created_at: '2026-03-15 00:00:00',
+      updated_at: '2026-03-15 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkRuntimeBootstrap()
+
+    expect(runtime.activeProvider?.id).toBe('provider-local-auth')
+    expect(runtime.env.CLAUDE_CONFIG_DIR).toBe('/tmp/lumos-claude')
+    expect(runtime.env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(runtime.env.CUSTOM_FLAG).toBe('local-auth')
   })
 
   test('prefers the session provider before the default or active provider when sessionId is provided', () => {
@@ -144,6 +184,10 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
         id: 'provider-session-001',
         name: 'Session Provider',
         provider_type: 'anthropic',
+        api_protocol: 'anthropic-messages',
+        capabilities: '["agent-chat"]',
+        provider_origin: 'custom',
+        auth_mode: 'api_key',
         base_url: 'https://session-provider.example.com/claude',
         api_key: 'session-provider-secret',
         is_active: 0,
@@ -159,10 +203,27 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
         updated_at: '2026-03-15 00:00:00',
       }
     })
-    mockGetActiveProvider.mockReturnValue({
+    mockGetDefaultProvider.mockReturnValue({
       id: 'provider-active',
+      name: 'Default Provider',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'custom',
+      auth_mode: 'api_key',
       api_key: 'active-secret',
       base_url: 'https://active-provider.example.com/claude',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: '[]',
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 0,
+      user_modified: 0,
+      created_at: '2026-03-15 00:00:00',
+      updated_at: '2026-03-15 00:00:00',
     })
 
     const runtime = buildClaudeSdkRuntimeBootstrap({
@@ -172,5 +233,39 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.activeProvider?.id).toBe('provider-session-001')
     expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBe('session-provider-secret')
     expect(runtime.env.ANTHROPIC_BASE_URL).toBe('https://session-provider.example.com/claude')
+  })
+
+  test('throws when a session is still bound to a deleted provider', () => {
+    mockGetSession.mockReturnValue({
+      id: 'session-002',
+      provider_id: 'provider-deleted',
+    })
+    mockGetProvider.mockReturnValue(undefined)
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-default',
+      name: 'Default Provider',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'custom',
+      auth_mode: 'api_key',
+      api_key: 'default-secret',
+      base_url: 'https://default-provider.example.com/claude',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: '[]',
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 0,
+      user_modified: 0,
+      created_at: '2026-03-15 00:00:00',
+      updated_at: '2026-03-15 00:00:00',
+    })
+
+    expect(() => buildClaudeSdkRuntimeBootstrap({
+      sessionId: 'session-002',
+    })).toThrow('原服务商已删除，请重新选择配置开启新会话')
   })
 })

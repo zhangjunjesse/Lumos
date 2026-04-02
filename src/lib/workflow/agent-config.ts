@@ -30,6 +30,8 @@ export interface WorkflowPlanningRoleConfig {
   notes: string[];
   plannerTimeoutMs: number;
   plannerMaxRetries: number;
+  preferredProviderId?: string;
+  preferredModel?: string;
 }
 
 export interface WorkflowExecutionRoleConfig {
@@ -75,6 +77,8 @@ export interface WorkflowAgentRoleProfile {
   defaultPlannerTimeoutMs?: number;
   plannerMaxRetries?: number;
   defaultPlannerMaxRetries?: number;
+  preferredProviderId?: string;
+  preferredModel?: string;
 }
 
 interface WorkflowAgentRoleOverride {
@@ -83,6 +87,8 @@ interface WorkflowAgentRoleOverride {
   concurrencyLimit?: number;
   plannerTimeoutMs?: number;
   plannerMaxRetries?: number;
+  preferredProviderId?: string;
+  preferredModel?: string;
 }
 
 interface WorkflowAgentRoleOverrideStore {
@@ -96,6 +102,8 @@ export interface WorkflowAgentRoleUpdateInput {
   concurrencyLimit?: number;
   plannerTimeoutMs?: number;
   plannerMaxRetries?: number;
+  preferredProviderId?: string;
+  preferredModel?: string;
 }
 
 const WORKFLOW_AGENT_ROLE_OVERRIDES_SETTING_KEY = 'workflow_agent_role_overrides_v1';
@@ -107,6 +115,8 @@ const workflowAgentRoleOverrideSchema = z.object({
   concurrencyLimit: z.number().int().min(1).max(10).optional(),
   plannerTimeoutMs: z.number().int().min(5_000).max(120_000).optional(),
   plannerMaxRetries: z.number().int().min(0).max(5).optional(),
+  preferredProviderId: z.string().trim().optional(),
+  preferredModel: z.string().trim().optional(),
 }).strict();
 const workflowAgentRoleOverrideStoreSchema = z.object({
   version: z.literal('v1').default('v1'),
@@ -128,19 +138,23 @@ const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, Work
     roleName: 'Workflow Scheduling Agent',
     agentType: 'workflow.scheduling',
     systemPrompt: [
-      'You are the Scheduling Layer planner for Workflow DSL v1.',
-      'Decide whether the task should use simple execution or workflow orchestration.',
-      'If workflow is selected, output only Workflow DSL v1 using the allowed step types: agent, browser, notification, capability.',
-      'Do not invent unsupported step types, subworkflow, custom code, TypeScript, or inline scripts.',
-      'If the task cannot be safely expressed with current DSL v1 constraints, choose simple.',
-      'For research, security, remediation-plan, or report/export tasks that depend on external facts, prefer browser-based evidence collection before synthesis/export instead of pure report drafting.',
-      'Agent prompts must be either a plain string literal or an exact reference like steps.someStep.output.summary.',
-      'Browser steps only support action=navigate|click|fill|screenshot with fields url|selector|value|pageId|createPage.',
-      'To express web search, first build a concrete static search-engine URL, then use browser.navigate with input.url.',
-      'Do not invent browser input fields such as query or prompt.',
-      'When the task has multiple independent concrete browser targets, you may express parallel execution by giving those steps the same dependency layer.',
-      'Return JSON only.',
-    ].join(' '),
+      '你是 Lumos 工作流调度规划层，负责分析任务并决定最优执行策略。',
+      '',
+      '## 策略选择',
+      '- simple：任务单一、一步可完成、无需多 Agent 协作',
+      '- workflow：需要多步骤、并行处理、或多个 Agent 依次/并行协作',
+      '',
+      '## 工作流规范',
+      '- 工作流只包含 agent 步骤',
+      '- 每个步骤必须通过 preset 字段引用 availableWorkflowAgents 中的 Agent id',
+      '- 不使用 role 字段；不引用列表之外的 preset id',
+      '- agent 的 prompt 只能是字面字符串，或精确引用上游输出如 steps.someStep.output.summary',
+      '- 步骤 ID 用 kebab-case；无公共依赖的步骤自动并行',
+      '- 如可用 Agent 不足以完成任务，在 reason 中说明需要补充哪类 Agent，strategy 选 simple',
+      '',
+      '## 输出要求',
+      '严格输出符合 plannerResponseSchema 的 JSON，不添加任何说明文字。',
+    ].join('\n'),
     tools: ['generate_workflow', 'update_task_status'],
     notes: [
       '只允许输出受限 Workflow DSL v1，不允许生成任意脚本或 TypeScript。',
@@ -181,7 +195,7 @@ const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, Work
     systemPrompt: [
       'You are the workflow research agent.',
       'Focus on analysis, synthesis, and extracting grounded facts from the provided context and local workspace.',
-      'Do not browse the web or trigger side effects; browser and notification actions belong to dedicated workflow step types.',
+      'Do not trigger side effects; notification actions belong to dedicated workflow step types.',
       'Return a concise, evidence-oriented summary for downstream steps.',
     ].join('\n'),
     allowedTools: ['workspace.read'],
@@ -204,7 +218,7 @@ const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, Work
       'You are the workflow code agent.',
       'Work directly against the local repository when the prompt requires code changes or code-aware analysis.',
       'Keep edits scoped to the assigned step and surface any blocking ambiguity in the structured result.',
-      'Do not take browser or notification side effects; those belong to dedicated workflow step types.',
+      'Do not take notification side effects; those belong to dedicated workflow step types.',
     ].join('\n'),
     allowedTools: ['workspace.read', 'workspace.write', 'shell.exec'],
     capabilityTags: ['code', 'implementation', 'workflow-step'],
@@ -225,7 +239,7 @@ const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, Work
     systemPrompt: [
       'You are the workflow integration agent.',
       'Prepare integration-ready outputs, message payloads, or coordination artifacts based on the provided context.',
-      'Do not directly send notifications or operate the browser; dedicated workflow step types own those side effects in Workflow DSL v1.',
+      'Do not directly send notifications; dedicated workflow step types own those side effects.',
       'Return structured outputs that another workflow step can execute or publish.',
     ].join('\n'),
     allowedTools: ['workspace.read', 'workspace.write'],
@@ -323,6 +337,8 @@ function buildRoleProfile(
       defaultPlannerTimeoutMs: config.plannerTimeoutMs,
       plannerMaxRetries: override?.plannerMaxRetries ?? config.plannerMaxRetries,
       defaultPlannerMaxRetries: config.plannerMaxRetries,
+      preferredProviderId: override?.preferredProviderId,
+      preferredModel: override?.preferredModel,
     };
   }
 
@@ -367,6 +383,12 @@ function normalizeOverrideForStorage(
     }
     if (typeof input.plannerMaxRetries === 'number' && input.plannerMaxRetries !== config.plannerMaxRetries) {
       nextOverride.plannerMaxRetries = input.plannerMaxRetries;
+    }
+    if (typeof input.preferredProviderId === 'string' && input.preferredProviderId.trim()) {
+      nextOverride.preferredProviderId = input.preferredProviderId.trim();
+    }
+    if (typeof input.preferredModel === 'string' && input.preferredModel.trim()) {
+      nextOverride.preferredModel = input.preferredModel.trim();
     }
     return workflowAgentRoleOverrideSchema.parse(nextOverride);
   }
@@ -439,6 +461,8 @@ export function getSchedulingPlannerConfig(): WorkflowPlanningRoleConfig {
     systemPrompt: profile.systemPrompt,
     plannerTimeoutMs: profile.plannerTimeoutMs ?? defaultConfig.plannerTimeoutMs,
     plannerMaxRetries: profile.plannerMaxRetries ?? defaultConfig.plannerMaxRetries,
+    preferredProviderId: profile.preferredProviderId,
+    preferredModel: profile.preferredModel,
   };
 }
 

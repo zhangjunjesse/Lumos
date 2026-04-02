@@ -68,7 +68,7 @@ interface WorkflowSchedulingManifest {
 
 interface WorkflowStepPlan {
   id: string;
-  type: 'agent' | 'browser' | 'notification' | 'capability';
+  type: 'agent' | 'notification' | 'capability';
   dependsOn?: string[];
   input?: Record<string, unknown>;
 }
@@ -254,8 +254,6 @@ function getStepTypeLabel(type: WorkflowStepPlan['type']): string {
   switch (type) {
     case 'agent':
       return '代理步骤';
-    case 'browser':
-      return '浏览器步骤';
     case 'notification':
       return '通知步骤';
     case 'capability':
@@ -375,8 +373,6 @@ function getStepTypeClassName(type: WorkflowStepPlan['type']): string {
   switch (type) {
     case 'agent':
       return 'bg-amber-500/10 text-amber-700 border-amber-500/20';
-    case 'browser':
-      return 'bg-sky-500/10 text-sky-700 border-sky-500/20';
     case 'notification':
       return 'bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/20';
     case 'capability':
@@ -713,10 +709,6 @@ function getStepActorLabel(
 
   if (roleProfile) {
     return roleProfile.shortLabel;
-  }
-
-  if (step.type === 'browser') {
-    return '系统浏览器';
   }
 
   if (step.type === 'notification') {
@@ -1673,8 +1665,6 @@ export function WorkflowCenterView() {
                             <p>边界说明：{getRoleBoundaryNote(currentRuntimeRoleProfile)}</p>
                           ) : null}
                         </>
-                      ) : currentRuntimeStep?.type === 'browser' ? (
-                        <p>边界说明：当前步骤由系统浏览器能力执行，不通过代理越权。</p>
                       ) : currentRuntimeStep?.type === 'notification' ? (
                         <p>边界说明：当前步骤由系统通知能力执行，不通过代理越权。</p>
                       ) : currentRuntimeStep?.type === 'capability' ? (
@@ -1728,8 +1718,6 @@ export function WorkflowCenterView() {
                                   {roleProfile.memoryPolicy ? <p>记忆策略：{roleProfile.memoryPolicy}</p> : null}
                                   {roleProfile.capabilityTags?.length ? <p>能力标签：{roleProfile.capabilityTags.join('、')}</p> : null}
                                 </>
-                              ) : step.type === 'browser' ? (
-                                <p>边界说明：浏览器副作用由系统 browser step 执行。</p>
                               ) : step.type === 'notification' ? (
                                 <p>边界说明：通知副作用由系统 notification step 执行。</p>
                               ) : step.type === 'capability' ? (
@@ -1870,8 +1858,6 @@ export function WorkflowCenterView() {
                             </div>
                             {roleProfile ? (
                               <Badge variant="outline">{roleProfile.shortLabel}</Badge>
-                            ) : step.type === 'browser' ? (
-                              <Badge variant="outline">系统浏览器能力</Badge>
                             ) : step.type === 'notification' ? (
                               <Badge variant="outline">系统通知能力</Badge>
                             ) : step.type === 'capability' ? (
@@ -1894,8 +1880,6 @@ export function WorkflowCenterView() {
                                 {roleProfile.capabilityTags?.length ? <p>能力标签：{roleProfile.capabilityTags.join('、')}</p> : null}
                                 {getRoleBoundaryNote(roleProfile) ? <p>边界说明：{getRoleBoundaryNote(roleProfile)}</p> : null}
                               </>
-                            ) : step.type === 'browser' ? (
-                              <p>说明：浏览器副作用由专门 browser step 执行，不通过代理越权。</p>
                             ) : step.type === 'notification' ? (
                               <p>说明：通知副作用由专门 notification step 执行，不通过代理越权。</p>
                             ) : step.type === 'capability' ? (

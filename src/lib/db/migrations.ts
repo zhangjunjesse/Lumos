@@ -98,6 +98,9 @@ export function migrateCoreTables(db: Database.Database): void {
   if (!msgColNames.includes('token_usage')) {
     db.exec("ALTER TABLE messages ADD COLUMN token_usage TEXT");
   }
+  if (!msgColNames.includes('elapsed_ms')) {
+    db.exec("ALTER TABLE messages ADD COLUMN elapsed_ms INTEGER");
+  }
 
   // Ensure tasks table exists for databases created before this migration
   db.exec(`
@@ -164,6 +167,10 @@ export function migrateCoreTables(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       provider_type TEXT NOT NULL DEFAULT 'anthropic',
+      api_protocol TEXT NOT NULL DEFAULT 'anthropic-messages',
+      capabilities TEXT NOT NULL DEFAULT '["text-gen"]',
+      provider_origin TEXT NOT NULL DEFAULT 'custom',
+      auth_mode TEXT NOT NULL DEFAULT 'api_key',
       base_url TEXT NOT NULL DEFAULT '',
       api_key TEXT NOT NULL DEFAULT '',
       is_active INTEGER NOT NULL DEFAULT 0,

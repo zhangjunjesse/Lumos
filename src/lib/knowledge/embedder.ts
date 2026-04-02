@@ -2,15 +2,17 @@
  * Local embedding — bge-small-zh-v1.5 via @huggingface/transformers
  * Ported from demo/local-server/services/knowledge/embedder.js
  */
+import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+// @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
+import * as onnxruntimeWebRuntime from 'onnxruntime-web';
+import * as transformersNodeRuntime from '@huggingface/transformers';
 import * as portableTransformersRuntime from './transformers-web-runtime';
 import { getDb } from '@/lib/db';
 
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
-const nodeRequire = createRequire(import.meta.url);
 
 interface OnnxruntimeWebModule {
   env: {
@@ -21,25 +23,73 @@ interface OnnxruntimeWebModule {
   };
 }
 
-const onnxruntimeWeb = nodeRequire('onnxruntime-web') as OnnxruntimeWebModule;
+const onnxruntimeWeb = onnxruntimeWebRuntime as OnnxruntimeWebModule;
 
 let _pipelinePromise: Promise<unknown> | null = null;
+
+const ONNXRUNTIME_WEB_DIST_CANDIDATES = [
+  path.join('node_modules', 'onnxruntime-web', 'dist'),
+  path.join('.next', 'node_modules', 'onnxruntime-web', 'dist'),
+  path.join('.next', 'standalone', 'node_modules', 'onnxruntime-web', 'dist'),
+  path.join('.next', 'standalone', '.next', 'node_modules', 'onnxruntime-web', 'dist'),
+];
+const ONNXRUNTIME_WEB_WASM_ENTRY = 'ort-wasm-simd-threaded.mjs';
+
+function addCandidateRoot(roots: Set<string>, root?: string | null): void {
+  if (!root) {
+    return;
+  }
+
+  const trimmed = root.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  roots.add(path.resolve(trimmed));
+}
 
 function shouldUsePortableEmbeddingRuntime(): boolean {
   return Boolean(process.versions.electron) || process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
 }
 
-function resolvePackageDir(specifier: string): string {
-  const entry = nodeRequire.resolve(specifier);
-  return path.resolve(path.dirname(entry), '..');
+function buildOnnxruntimeWebDistCandidates(): string[] {
+  const roots = new Set<string>();
+
+  addCandidateRoot(roots, process.cwd());
+  addCandidateRoot(roots, process.env.INIT_CWD);
+  addCandidateRoot(roots, process.resourcesPath);
+  addCandidateRoot(roots, process.resourcesPath ? path.join(process.resourcesPath, 'standalone') : null);
+  addCandidateRoot(roots, path.dirname(process.execPath));
+  addCandidateRoot(roots, process.execPath ? path.join(path.dirname(process.execPath), '..', 'Resources') : null);
+
+  const candidates = new Set<string>();
+  for (const root of roots) {
+    for (const relativePath of ONNXRUNTIME_WEB_DIST_CANDIDATES) {
+      candidates.add(path.join(root, relativePath));
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function resolveOnnxruntimeWebDir(): string {
+  for (const candidate of buildOnnxruntimeWebDistCandidates()) {
+    if (fs.existsSync(path.join(candidate, ONNXRUNTIME_WEB_WASM_ENTRY))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `onnxruntime-web dist not found; checked ${buildOnnxruntimeWebDistCandidates().join(', ')}`,
+  );
 }
 
 async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
-  const onnxruntimeWebDir = resolvePackageDir('onnxruntime-web');
+  const onnxruntimeWebDistDir = resolveOnnxruntimeWebDir();
 
   onnxruntimeWeb.env.wasm.wasmPaths = {
-    mjs: pathToFileURL(path.join(onnxruntimeWebDir, 'dist', 'ort-wasm-simd-threaded.mjs')).href,
-    wasm: pathToFileURL(path.join(onnxruntimeWebDir, 'dist', 'ort-wasm-simd-threaded.wasm')).href,
+    mjs: pathToFileURL(path.join(onnxruntimeWebDistDir, 'ort-wasm-simd-threaded.mjs')).href,
+    wasm: pathToFileURL(path.join(onnxruntimeWebDistDir, 'ort-wasm-simd-threaded.wasm')).href,
   };
   onnxruntimeWeb.env.wasm.proxy = false;
 
@@ -52,7 +102,7 @@ function getExtractor(): Promise<unknown> {
       const usePortableRuntime = shouldUsePortableEmbeddingRuntime();
       const transformers = usePortableRuntime
         ? await loadPortableTransformers()
-        : nodeRequire('@huggingface/transformers') as typeof import('@huggingface/transformers');
+        : transformersNodeRuntime;
 
       (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
       const pipelineOptions: Record<string, unknown> = usePortableRuntime

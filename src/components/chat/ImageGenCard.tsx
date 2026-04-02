@@ -14,6 +14,7 @@ interface ImageGenImage {
   data: string;
   mimeType: string;
   localPath?: string;
+  directUrl?: string;
 }
 
 interface ImageGenCardProps {
@@ -22,11 +23,13 @@ interface ImageGenCardProps {
   aspectRatio?: string;
   imageSize?: string;
   model?: string;
+  provider?: string;
   onRegenerate?: () => void;
   referenceImages?: Array<{ mimeType: string; data: string; localPath?: string }>;
 }
 
 function imageUrl(img: ImageGenImage): string {
+  if (img.directUrl) return img.directUrl;
   if (img.localPath) {
     return `/api/media/serve?path=${encodeURIComponent(img.localPath)}`;
   }
@@ -39,6 +42,7 @@ export function ImageGenCard({
   aspectRatio,
   imageSize,
   model,
+  provider,
   onRegenerate,
   referenceImages,
 }: ImageGenCardProps) {
@@ -140,6 +144,11 @@ export function ImageGenCard({
       {/* Badges + Actions */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
+          {provider && (
+            <Badge variant="outline" className="text-[10px]">
+              {provider}
+            </Badge>
+          )}
           {model && (
             <Badge variant="secondary" className="text-[10px] gap-1">
               <HugeiconsIcon icon={Paintbrush} className="h-3 w-3" />

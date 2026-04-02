@@ -742,6 +742,7 @@ export function ChatView({
       let shouldScheduleIdleTrigger = false;
       let shouldMarkStreamError = false;
       let autoRetryPrompt: string | null = null;
+      const streamStartMs = Date.now();
 
       const STREAM_IDLE_TIMEOUT_MS = 330_000;
       let lastEventTime = Date.now();
@@ -991,6 +992,7 @@ export function ChatView({
             content: messageContent,
             created_at: new Date().toISOString(),
             token_usage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
+            elapsed_ms: Date.now() - streamStartMs,
           };
           transferPendingToMessage(assistantMessage.id);
           appendMessage(assistantMessage);

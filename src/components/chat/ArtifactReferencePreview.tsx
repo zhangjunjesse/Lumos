@@ -22,6 +22,8 @@ interface ArtifactRef {
   path: string;
   category: FileCategory | null;
   previewUrl: string;
+  model?: string;
+  provider?: string;
 }
 
 const DOCUMENT_EXTS = new Set([
@@ -37,26 +39,12 @@ function getExt(filePath: string): string {
 }
 
 function isDocumentRef(ref: ArtifactRef): boolean {
-  if (
-    ref.category === 'pdf' ||
-    ref.category === 'word' ||
-    ref.category === 'excel' ||
-    ref.category === 'powerpoint'
-  ) {
-    return true;
-  }
+  if (['pdf', 'word', 'excel', 'powerpoint'].includes(ref.category ?? '')) return true;
   return DOCUMENT_EXTS.has(getExt(ref.path));
 }
 
-function isAbsolutePath(input: string): boolean {
-  return input.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(input);
-}
-
-function hasLikelyFileName(input: string): boolean {
-  const normalized = input.replace(/\\/g, '/');
-  const fileName = normalized.split('/').pop() || '';
-  return /\.[a-zA-Z0-9]{1,16}$/.test(fileName);
-}
+const isAbsolutePath = (s: string) => s.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(s);
+const hasLikelyFileName = (s: string) => /\.[a-zA-Z0-9]{1,16}$/.test(s.replace(/\\/g, '/').split('/').pop() || '');
 
 function cleanPathCandidate(raw: string): string | null {
   let candidate = raw.trim();
@@ -73,6 +61,8 @@ function cleanPathCandidate(raw: string): string | null {
   if (!isAbsolutePath(candidate)) return null;
   if (!hasLikelyFileName(candidate)) return null;
   if (candidate.includes('\n') || candidate.includes('\r')) return null;
+  // Reject API/URL paths — these are serve endpoints, not file system paths
+  if (candidate.startsWith('/api/')) return null;
 
   return candidate;
 }
@@ -112,55 +102,34 @@ function extractPathCandidatesFromText(text: string): string[] {
   return Array.from(candidates);
 }
 
-function extractPathCandidatesFromGeminiToolResult(tools: ToolSummary[] = []): string[] {
-  const paths = new Set<string>();
-
+function extractRefsFromImageToolResults(
+  tools: ToolSummary[] = [],
+): Array<{ path: string; model?: string; provider?: string }> {
+  const refs: Array<{ path: string; model?: string; provider?: string }> = [];
+  const seen = new Set<string>();
   for (const tool of tools) {
-    const toolName = tool.name.toLowerCase();
-    if (
-      !tool.result ||
-      tool.isError ||
-      (!toolName.includes('gemini-image') && !toolName.includes('generate_image'))
-    ) {
-      continue;
-    }
-
+    const n = tool.name.toLowerCase();
+    if (!tool.result || tool.isError || (!n.includes('gemini-image') && !n.includes('generate_image'))) continue;
     try {
-      const parsed = JSON.parse(tool.result) as Record<string, unknown>;
-      const images = Array.isArray(parsed.images) ? parsed.images : [];
-      for (const image of images) {
-        if (typeof image === 'string') {
-          const cleaned = cleanPathCandidate(image);
-          if (cleaned) paths.add(cleaned);
-          continue;
-        }
-        if (image && typeof image === 'object') {
-          const obj = image as Record<string, unknown>;
-          const cleaned = cleanPathCandidate(
-            typeof obj.path === 'string'
-              ? obj.path
-              : typeof obj.localPath === 'string'
-                ? obj.localPath
-                : typeof obj.filePath === 'string'
-                  ? obj.filePath
-                  : ''
-          );
-          if (cleaned) paths.add(cleaned);
-        }
+      const p = JSON.parse(tool.result) as Record<string, unknown>;
+      const model = typeof p.model === 'string' ? p.model : undefined;
+      const provider = typeof p.provider === 'string' ? p.provider : undefined;
+      for (const img of (Array.isArray(p.images) ? p.images : [])) {
+        const raw = typeof img === 'string' ? img
+          : (img as Record<string, unknown>)?.path ?? (img as Record<string, unknown>)?.localPath ?? '';
+        const cleaned = cleanPathCandidate(String(raw));
+        if (cleaned && !seen.has(cleaned)) { seen.add(cleaned); refs.push({ path: cleaned, model, provider }); }
       }
-    } catch {
-      // ignore malformed result payloads
-    }
+    } catch { /* ignore */ }
   }
-
-  return Array.from(paths);
+  return refs;
 }
 
 function toArtifactRefs(paths: string[]): ArtifactRef[] {
   return paths.map((p) => ({
     path: p,
     category: getFileCategory(p),
-    previewUrl: `/api/files/raw?path=${encodeURIComponent(p)}`,
+    previewUrl: `/api/media/serve?path=${encodeURIComponent(p)}`,
   }));
 }
 
@@ -169,10 +138,24 @@ export function ArtifactReferencePreview({ text, tools }: ArtifactReferencePrevi
   const { setPreviewFile, setContentPanelOpen } = usePanel();
 
   const refs = useMemo(() => {
-    const allPaths = new Set<string>();
-    for (const p of extractPathCandidatesFromText(text)) allPaths.add(p);
-    for (const p of extractPathCandidatesFromGeminiToolResult(tools)) allPaths.add(p);
-    return toArtifactRefs(Array.from(allPaths));
+    const toolRefs = extractRefsFromImageToolResults(tools);
+    const toolPaths = new Set(toolRefs.map((r) => r.path));
+
+    // Text-extracted paths (dedup against tool refs)
+    const textRefs = toArtifactRefs(
+      extractPathCandidatesFromText(text).filter((p) => !toolPaths.has(p))
+    );
+
+    // Tool refs with model/provider metadata
+    const enrichedToolRefs: ArtifactRef[] = toolRefs.map((r) => ({
+      path: r.path,
+      category: getFileCategory(r.path),
+      previewUrl: `/api/media/serve?path=${encodeURIComponent(r.path)}`,
+      model: r.model,
+      provider: r.provider,
+    }));
+
+    return [...enrichedToolRefs, ...textRefs];
   }, [text, tools]);
 
   const mediaRefs = refs.filter((ref) =>
@@ -213,8 +196,20 @@ export function ArtifactReferencePreview({ text, tools }: ArtifactReferencePrevi
                       unoptimized
                       className="h-44 w-full object-cover"
                     />
-                    <div className="truncate border-t border-border/60 px-2 py-1 text-[11px] text-muted-foreground group-hover:text-foreground">
-                      {fileName}
+                    <div className="flex items-center gap-1.5 border-t border-border/60 px-2 py-1.5">
+                      <span className="truncate text-[11px] text-muted-foreground group-hover:text-foreground flex-1">
+                        {fileName}
+                      </span>
+                      {ref.model && (
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono">
+                          {ref.model.length > 20 ? ref.model.slice(0, 20) + '…' : ref.model}
+                        </span>
+                      )}
+                      {ref.provider && (
+                        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/70">
+                          {ref.provider}
+                        </span>
+                      )}
                     </div>
                   </button>
                 );

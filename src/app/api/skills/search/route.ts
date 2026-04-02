@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getActiveProvider, getSetting } from '@/lib/db';
+import { resolveProviderForCapability } from '@/lib/provider-resolver';
+import { providerSupportsCapability } from '@/lib/provider-config';
 import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
+import type { ApiProvider } from '@/types';
 
 interface SkillInfo {
   name: string;
@@ -27,35 +29,60 @@ interface ApiConfig {
   model?: string;
 }
 
-function resolveApiConfig(model?: string): ApiConfig {
-  const provider = getActiveProvider();
+function parseExtraEnv(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
 
-  // Bedrock/Vertex don't support direct API calls
-  if (provider?.provider_type === 'bedrock' || provider?.provider_type === 'vertex') {
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string') {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function resolveSearchProvider(): ApiProvider | undefined {
+  try {
+    return resolveProviderForCapability({
+      moduleKey: 'knowledge',
+      capability: 'text-gen',
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveApiConfig(model?: string): ApiConfig {
+  const provider = resolveSearchProvider();
+
+  // Only providers that support text-gen with anthropic-messages protocol can be used here
+  if (
+    provider
+    && (
+      !providerSupportsCapability(provider, 'text-gen')
+      || provider.api_protocol !== 'anthropic-messages'
+      || provider.auth_mode === 'local_auth'
+    )
+  ) {
     return { supported: false };
   }
 
-  // Resolve API key: provider -> settings -> env
+  // Resolve API key: provider -> extra_env
   let apiKey = provider?.api_key || '';
-  if (!apiKey) {
-    apiKey = getSetting('anthropic_auth_token') || '';
-  }
 
   // Check extra_env overrides
-  let extraEnv: Record<string, string> = {};
-  if (provider?.extra_env) {
-    try {
-      extraEnv = JSON.parse(provider.extra_env);
-    } catch {
-      // ignore
-    }
-  }
+  const extraEnv = parseExtraEnv(provider?.extra_env);
 
   if (!apiKey && extraEnv.ANTHROPIC_API_KEY) {
     apiKey = extraEnv.ANTHROPIC_API_KEY;
-  }
-  if (!apiKey) {
-    apiKey = process.env.ANTHROPIC_API_KEY || '';
   }
 
   if (!apiKey) {
@@ -68,11 +95,16 @@ function resolveApiConfig(model?: string): ApiConfig {
     baseUrl = extraEnv.ANTHROPIC_BASE_URL;
   }
   if (!baseUrl) {
-    baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+    baseUrl = 'https://api.anthropic.com';
   }
 
   // Build Messages API URL
-  const messagesUrl = `${baseUrl.replace(/\/+$/, '')}/v1/messages`;
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const messagesUrl = normalizedBaseUrl.endsWith('/v1/messages')
+    ? normalizedBaseUrl
+    : normalizedBaseUrl.endsWith('/v1')
+      ? `${normalizedBaseUrl}/messages`
+      : `${normalizedBaseUrl}/v1/messages`;
 
   // Resolve model
   const modelAlias = model || 'haiku';

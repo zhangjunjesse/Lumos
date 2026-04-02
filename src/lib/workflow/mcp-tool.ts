@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { generateWorkflow } from './compiler';
-import type { GenerateWorkflowResult, WorkflowDSL } from './types';
+import { generateWorkflowFromDsl } from './compiler';
+import type { AnyWorkflowDSL, GenerateWorkflowResult } from './types';
 
 const generateWorkflowEnvelopeSchema = z.object({
   spec: z.record(z.string(), z.unknown()),
@@ -16,5 +16,5 @@ export function handleGenerateWorkflowTool(input: unknown): GenerateWorkflowResu
     throw new Error(`Invalid generate_workflow input: ${message}`);
   }
 
-  return generateWorkflow({ spec: parsed.data.spec as unknown as WorkflowDSL });
+  return generateWorkflowFromDsl(parsed.data.spec as unknown as AnyWorkflowDSL);
 }

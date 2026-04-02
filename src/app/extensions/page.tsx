@@ -11,9 +11,10 @@ import { McpManager } from "@/components/plugins/McpManager";
 import { FeishuPanel } from "@/components/feishu/FeishuPanel";
 import { ExtensionPackManager } from "@/components/extensions/ExtensionPackManager";
 import { ExtensionBuilderPanel } from "@/components/extensions/ExtensionBuilderPanel";
+import { DeepSearchPanel } from "@/components/deepsearch/DeepSearchPanel";
 import { useTranslation } from "@/hooks/useTranslation";
 
-type ExtTab = "skills" | "mcp" | "feishu" | "builder";
+type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch";
 
 export default function ExtensionsPage() {
   return (
@@ -44,24 +45,22 @@ function ExtensionsPageInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-6 pt-4 pb-0">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold">{t('extensions.title')}</h1>
-          <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
-        </div>
-
+      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-6 py-2">
         <Tabs value={tab} onValueChange={(v) => setTab(v as ExtTab)}>
           <TabsList>
             <TabsTrigger value="skills">{t('extensions.skills')}</TabsTrigger>
             <TabsTrigger value="mcp">{t('extensions.mcpServers')}</TabsTrigger>
+            <TabsTrigger value="deepsearch">{t('extensions.deepsearch')}</TabsTrigger>
             <TabsTrigger value="builder">{t('extensions.builder')}</TabsTrigger>
             <TabsTrigger value="feishu">{t('extensions.feishu')}</TabsTrigger>
           </TabsList>
         </Tabs>
+        <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
       </div>
       <div className="flex-1 overflow-hidden p-6 flex flex-col min-h-0">
         {tab === "skills" && <SkillsManager refreshKey={refreshKey} />}
         {tab === "mcp" && <McpManager refreshKey={refreshKey} />}
+        {tab === "deepsearch" && <DeepSearchPanel />}
         {tab === "builder" && <ExtensionBuilderPanel />}
         {tab === "feishu" && <FeishuPanel />}
       </div>

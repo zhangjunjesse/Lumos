@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import path from 'path';
 import { resolveProviderPersistenceFields } from '../provider-config';
 import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from './seed-builtin';
 
@@ -952,6 +953,30 @@ export function migrateLumosTables(db: Database.Database): void {
     db.exec("ALTER TABLE deepsearch_sites ADD COLUMN min_fetch_count INTEGER NOT NULL DEFAULT 3");
   }
 
+  // Add archived_at to deepsearch_runs (knowledge library auto-archive)
+  const dsRunColsCheck = db.prepare("PRAGMA table_info(deepsearch_runs)").all() as { name: string }[];
+  if (!dsRunColsCheck.some(c => c.name === 'archived_at')) {
+    db.exec("ALTER TABLE deepsearch_runs ADD COLUMN archived_at TEXT DEFAULT NULL");
+  }
+
+  // Standalone workflows table (independent of scheduled_workflows)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      dsl_version TEXT NOT NULL DEFAULT 'v2',
+      workflow_dsl TEXT NOT NULL DEFAULT '{}',
+      is_template INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL DEFAULT 'user',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_workflows_updated ON workflows(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_workflows_template ON workflows(is_template);
+  `);
+
   // Scheduled workflows table
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_workflows (
@@ -973,6 +998,66 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_enabled ON scheduled_workflows(enabled);
     CREATE INDEX IF NOT EXISTS idx_scheduled_workflows_next_run ON scheduled_workflows(next_run_at);
   `);
+
+  // Schedule run history table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schedule_run_history (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      session_id TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT NOT NULL,
+      completed_at TEXT DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_srh_schedule ON schedule_run_history(schedule_id, started_at DESC);
+  `);
+
+  // Add workflow_id column to scheduled_workflows (links to standalone workflows table)
+  const swCols = db.prepare("PRAGMA table_info(scheduled_workflows)").all() as { name: string }[];
+  if (!swCols.some(c => c.name === 'workflow_id')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN workflow_id TEXT DEFAULT NULL");
+  }
+  // Add run_mode column: 'scheduled' (default) or 'once'
+  if (!swCols.some(c => c.name === 'run_mode')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'scheduled'");
+  }
+  // Add run_params column: default parameter values for workflow execution
+  if (!swCols.some(c => c.name === 'run_params')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN run_params TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  // Ensure browser MCP server exists
+  const browserMcpExists = db.prepare("SELECT id FROM mcp_servers WHERE name = 'browser' AND scope = 'builtin'").get();
+  if (!browserMcpExists) {
+    const browserMcpPath = process.resourcesPath
+      ? path.join(process.resourcesPath, 'mcp-servers', 'browser', 'browser_mcp.mjs')
+      : path.join(process.cwd(), 'resources', 'mcp-servers', 'browser', 'browser_mcp.mjs');
+    const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+    db.prepare(`
+      INSERT INTO mcp_servers (id, name, command, args, env, scope, source, description, type, is_enabled, created_at, updated_at)
+      VALUES (?, 'browser', 'node', ?, '{}', 'builtin', 'builtin', 'Lumos 内置浏览器控制，共享用户登录态', 'stdio', 1, ?, ?)
+    `).run(crypto.randomBytes(16).toString('hex'), JSON.stringify([browserMcpPath]), now, now);
+    console.log('[migration] browser MCP server registered');
+  }
+
+  // Team departments table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS team_departments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // Add department_id to templates (agent presets)
+  const templateCols = db.prepare("PRAGMA table_info(templates)").all() as { name: string }[];
+  if (!templateCols.some(c => c.name === 'department_id')) {
+    db.exec("ALTER TABLE templates ADD COLUMN department_id TEXT DEFAULT NULL");
+  }
 
   // Seed built-in data on first run
   seedBuiltinProviders(db);

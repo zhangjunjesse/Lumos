@@ -95,3 +95,57 @@
 - 先不扩 Workflow DSL 基础 step type
 - 已发布能力先通过 `agent` 步骤的工具引用接入工作流
 - 等能力足够稳定后，再评估是否升级为 DSL v2 的专用 step type
+
+## DeepSearch 独立模块说明
+
+除 `07` 外，当前又新增一条不应硬塞进 `03 ~ 06` 的主线：
+
+- `08-deepsearch-requirements-design.md`
+- `08-deepsearch-architecture-design.md`
+- `08-deepsearch-bb-browser-integration-design.md`
+- `08-deepsearch-deployment-and-local-usage-design.md`
+- `08-deepsearch-phase-1-implementation-design.md`
+- `08-deepsearch-ui-and-interaction-design.md`
+- `08-deepsearch-data-and-api-design.md`
+- `08-deepsearch-engineering-implementation-design.md`
+
+这条主线的边界是：
+
+- DeepSearch 必须先作为独立模块完成
+- 它复用 Lumos 内置浏览器的共享登录态和真实页面实例
+- 它正式支持接管当前活动页，但执行前必须显式绑定 `runId + pageId`
+- 它正式区分 `strict / best_effort` 两种执行语义，非严格模式下允许以 `partial` 收口
+- 它先服务用户手动使用和独立 UI 验收
+- 聊天与 Workflow 后续只复用它的服务层，不直接承载其内部实现
+
+这样做的原因是：
+
+- 不把登录态管理误写成“只是浏览器 step 能力”
+- 不把 DeepSearch 误写成“只是 Workflow 编排的一部分”
+- 不让对话、手动使用、Workflow 分别维护三套抓取运行态
+
+另外，针对是否结合 `bb-browser`，当前也单独补了一份补充设计文档：
+
+- 不建议把 `bb-browser` 原样作为 Lumos 的正式 DeepSearch 运行时
+- 建议吸收其 `site adapter / session fetch / compact snapshot / network reverse engineering` 设计
+- 结合源码复核后，当前更具体收敛为在 Lumos 内实现 `bb-site compatibility runtime`
+- 正式主链仍然以 Lumos 内置浏览器和共享登录态为基础
+
+另外，围绕“怎么部署、怎么在本地使用、Phase 1 先做什么”这三个实现前必须说清的问题，`08` 也继续补了两份子文档：
+
+- `08-deepsearch-deployment-and-local-usage-design.md`
+- `08-deepsearch-phase-1-implementation-design.md`
+
+另外，围绕“正式页到底怎么交互”“service / tool / 数据边界到底怎么对齐”“当前仓库里具体该改哪些文件”这三个实现前很容易继续打架的问题，`08` 现已继续补了三份子文档：
+
+- `08-deepsearch-ui-and-interaction-design.md`
+- `08-deepsearch-data-and-api-design.md`
+- `08-deepsearch-engineering-implementation-design.md`
+
+它们的作用分别是：
+
+- 把 `08` 的正式交付形态收敛为“Lumos 内置模块，本地通过 Lumos 实例直接使用”
+- 把 `08 Phase 1` 的实现范围、顺序和严格验收标准显式写清，避免后续又退回“内部链路跑通就算完成”
+- 把正式 `DeepSearch` 页的按钮、状态、详情区和恢复流程具体化
+- 把 `run / run page / checkpoint / artifact / service / tool facade` 的合同进一步写清
+- 把当前仓库里的真实目录、文件落点、浏览器桥接复用方式和开发顺序进一步拆到工程可执行层

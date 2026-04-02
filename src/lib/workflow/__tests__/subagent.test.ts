@@ -8,14 +8,27 @@ import type {
 
 const mockBuildClaudeSdkRuntimeBootstrap = jest.fn();
 const mockGetSetting = jest.fn();
+const mockGetSession = jest.fn();
+const mockGetDefaultProvider = jest.fn();
+const mockGetProvider = jest.fn();
 
 jest.mock('@/lib/claude/sdk-runtime', () => ({
   buildClaudeSdkRuntimeBootstrap: (...args: unknown[]) => mockBuildClaudeSdkRuntimeBootstrap(...args),
 }));
 
 jest.mock('@/lib/db/sessions', () => ({
+  getSession: (...args: unknown[]) => mockGetSession(...args),
   getSetting: (...args: unknown[]) => mockGetSetting(...args),
   setSetting: jest.fn(),
+}));
+
+jest.mock('@/lib/db/providers', () => ({
+  getDefaultProvider: (...args: unknown[]) => mockGetDefaultProvider(...args),
+  getProvider: (...args: unknown[]) => mockGetProvider(...args),
+}));
+
+jest.mock('@/lib/db/workflow-agent-presets', () => ({
+  getWorkflowAgentPreset: jest.fn().mockReturnValue(undefined),
 }));
 
 import { StageWorker } from '@/lib/team-run/stage-worker';
@@ -61,6 +74,12 @@ describe('executeWorkflowAgentStep', () => {
     mockBuildClaudeSdkRuntimeBootstrap.mockReset();
     mockGetSetting.mockReset();
     mockGetSetting.mockReturnValue('');
+    mockGetSession.mockReset();
+    mockGetSession.mockReturnValue(undefined);
+    mockGetDefaultProvider.mockReset();
+    mockGetDefaultProvider.mockReturnValue(undefined);
+    mockGetProvider.mockReset();
+    mockGetProvider.mockReturnValue(undefined);
     mockBuildClaudeSdkRuntimeBootstrap.mockReturnValue({
       env: {},
       settingSources: [],
@@ -141,18 +160,15 @@ describe('executeWorkflowAgentStep', () => {
       },
     });
     expect((result.output as Record<string, unknown>).role).toBe('coder');
-    expect(mockBuildClaudeSdkRuntimeBootstrap).toHaveBeenCalledWith({
-      sessionId: 'session-001',
-    });
   });
 
   test('claude mode is enabled when auth is available and requested tools only narrow allowed capabilities', async () => {
-    mockBuildClaudeSdkRuntimeBootstrap.mockReturnValue({
-      env: {
-        ANTHROPIC_AUTH_TOKEN: 'token',
-      },
-      settingSources: [],
-      pathToClaudeCodeExecutable: '/tmp/claude',
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'test-provider',
+      provider_type: 'openai',
+      auth_mode: 'api_key',
+      api_key: 'test-api-key',
+      extra_env: '{}',
     });
     stageWorkerExecuteSpy.mockResolvedValue(
       buildStageExecutionResult({

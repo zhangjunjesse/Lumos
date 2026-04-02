@@ -1,14 +1,19 @@
 import { randomUUID } from 'crypto';
-import { mkdir } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { buildClaudeSdkRuntimeBootstrap } from '@/lib/claude/sdk-runtime';
+import { resolveProviderApiKey } from '@/lib/provider-model-discovery';
+import { getSession, addMessage } from '@/lib/db';
+import { getDefaultProvider, getProvider } from '@/lib/db/providers';
+import type { ApiProvider } from '@/types';
 import type {
   AgentExecutionBindingV1,
   StageExecutionPayloadV1,
   StageExecutionResultV1,
 } from '@/lib/team-run/runtime-contracts';
 import { StageWorker } from '@/lib/team-run/stage-worker';
+import { formatStepOutputMarkdown, type RawTraceEvent } from '@/lib/workflow/step-output-formatter';
+import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import type {
   AgentStepInput,
   JsonValue,
@@ -19,6 +24,8 @@ import type {
 } from './types';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { buildPromptCapabilitiesSystemPrompt } from '@/lib/capability/prompt-loader';
+import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
+import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
 
 type RuntimeCapability = AgentExecutionBindingV1['allowedTools'][number];
 
@@ -312,7 +319,74 @@ function resolveAllowedCapabilities(
   };
 }
 
+function buildDefinitionFromConversationPreset(
+  preset: AgentPresetDirectoryItem,
+  input: AgentStepInput,
+): ResolvedWorkflowAgentDefinition {
+  const baseAllowedTools: RuntimeCapability[] = ['workspace.read', 'workspace.write', 'shell.exec'];
+  const capabilitySelection = resolveAllowedCapabilities(baseAllowedTools, input.tools);
+  const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
+  const enhancedSystemPrompt = (preset.systemPrompt ?? '') + capabilityPrompt;
+
+  return {
+    role: 'worker',
+    binding: {
+      agentDefinitionId: `workflow-agent-def:conversation-preset:${preset.id}`,
+      agentType: 'workflow.agent',
+      roleName: preset.name,
+      systemPrompt: enhancedSystemPrompt,
+      allowedTools: uniqueValues(capabilitySelection.allowedTools),
+      capabilityTags: [],
+      memoryPolicy: 'ephemeral-stage',
+      outputSchema: 'stage-execution-result/v1',
+      concurrencyLimit: 1,
+    },
+    ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+  };
+}
+
+function buildDefinitionFromPreset(
+  preset: WorkflowAgentPreset,
+  input: AgentStepInput,
+): ResolvedWorkflowAgentDefinition {
+  const role = resolveWorkflowAgentRole(preset.config.role);
+  const baseAllowedTools = (preset.config.allowedTools ?? ['workspace.read', 'workspace.write', 'shell.exec']) as RuntimeCapability[];
+  const capabilitySelection = resolveAllowedCapabilities(baseAllowedTools, input.tools);
+  const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
+  const enhancedSystemPrompt = (preset.config.systemPrompt ?? '') + capabilityPrompt;
+
+  return {
+    role,
+    binding: {
+      agentDefinitionId: `workflow-agent-def:preset:${preset.id}`,
+      agentType: `workflow.${role}`,
+      roleName: preset.name,
+      systemPrompt: enhancedSystemPrompt,
+      allowedTools: uniqueValues(capabilitySelection.allowedTools),
+      capabilityTags: [...(preset.config.capabilityTags ?? [])],
+      memoryPolicy: (preset.config.memoryPolicy ?? 'ephemeral-stage') as AgentExecutionBindingV1['memoryPolicy'],
+      outputSchema: 'stage-execution-result/v1',
+      concurrencyLimit: preset.config.concurrencyLimit ?? 1,
+    },
+    ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+  };
+}
+
 function resolveWorkflowAgentDefinition(input: AgentStepInput): ResolvedWorkflowAgentDefinition {
+  if (input.preset) {
+    // First try workflow-agent presets (legacy/builtin)
+    const workflowPreset = getWorkflowAgentPreset(input.preset);
+    if (workflowPreset && workflowPreset.isEnabled !== false) {
+      return buildDefinitionFromPreset(workflowPreset, input);
+    }
+    // Then try conversation presets (user-created agents)
+    const conversationPreset = getAgentPreset(input.preset);
+    if (conversationPreset) {
+      return buildDefinitionFromConversationPreset(conversationPreset, input);
+    }
+    console.warn(`[subagent] Preset '${input.preset}' not found in any preset store, falling back to role`);
+  }
+
   const role = resolveWorkflowAgentRole(input.role);
   const roleDefinition = getWorkflowExecutionRoleConfig(role);
   const capabilitySelection = resolveAllowedCapabilities(roleDefinition.allowedTools, input.tools);
@@ -422,26 +496,42 @@ async function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function resolveExecutionMode(runtimeContext?: WorkflowStepRuntimeContext): Exclude<WorkflowAgentExecutionMode, 'auto'> {
+interface ResolvedExecutionMode {
+  mode: Exclude<WorkflowAgentExecutionMode, 'auto'>;
+  provider?: ApiProvider;
+}
+
+function resolveSessionProvider(sessionId?: string): ApiProvider | undefined {
+  const id = sessionId?.trim();
+  if (!id) return undefined;
+  const session = getSession(id);
+  const providerId = session?.provider_id?.trim();
+  if (!providerId) return undefined;
+  return getProvider(providerId);
+}
+
+async function resolveExecutionMode(runtimeContext?: WorkflowStepRuntimeContext): Promise<ResolvedExecutionMode> {
   const configuredMode = parseExecutionMode(process.env.LUMOS_WORKFLOW_AGENT_STEP_MODE);
   if (configuredMode === 'claude' || configuredMode === 'synthetic') {
-    return configuredMode;
+    return { mode: configuredMode };
   }
 
-  const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
-    sessionId: runtimeContext?.sessionId,
-  });
-  const hasAuthToken = Boolean(
-    runtimeBootstrap.env.ANTHROPIC_AUTH_TOKEN || runtimeBootstrap.env.ANTHROPIC_API_KEY,
-  );
-
-  return hasAuthToken ? 'claude' : 'synthetic';
+  const provider = resolveSessionProvider(runtimeContext?.sessionId) || getDefaultProvider();
+  if (!provider) {
+    return { mode: 'synthetic' };
+  }
+  if (isClaudeLocalAuthProvider(provider)) {
+    return { mode: 'claude', provider };
+  }
+  const hasCredentials = Boolean(resolveProviderApiKey(provider));
+  return { mode: hasCredentials ? 'claude' : 'synthetic', provider };
 }
 
 async function prepareWorkflowAgentWorkspace(runtimeContext: WorkflowStepRuntimeContext): Promise<StageExecutionPayloadV1['workspace']> {
   const safeRunId = sanitizePathSegment(runtimeContext.workflowRunId, 'workflow-run');
   const safeStepId = sanitizePathSegment(runtimeContext.stepId, 'agent-step');
-  const sessionWorkspace = runtimeContext.workingDirectory?.trim() || process.cwd();
+  const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+  const sessionWorkspace = runtimeContext.workingDirectory?.trim() || dataDir;
   const runWorkspace = path.join(getWorkflowAgentRootDir(), safeRunId);
   const stageWorkspace = path.join(runWorkspace, 'stages', safeStepId);
   const sharedReadDir = path.join(runWorkspace, 'shared');
@@ -484,7 +574,7 @@ async function buildWorkflowAgentPayload(
     taskContext: {
       userGoal: input.prompt,
       summary: `Workflow agent step ${runtimeContext.stepId}`,
-      expectedOutcome: 'Return a structured text result for the assigned workflow step prompt. Do not declare file artifacts for workflow agent steps.',
+      expectedOutcome: 'Return a structured text result and write any reports/documents to the artifact output directory.',
     },
     stage: {
       title: runtimeContext.stepId,
@@ -492,7 +582,7 @@ async function buildWorkflowAgentPayload(
       acceptanceCriteria: [
         `Address the prompt assigned to workflow step ${runtimeContext.stepId}.`,
         'Produce a concise summary that downstream workflow steps can consume.',
-        'Return summary text only; keep the artifacts array empty for workflow agent steps.',
+        'Write detailed reports/documents as files under the artifact output directory.',
         ...(dependencies.length > 0
           ? ['Use the provided dependency context to produce an integrated result; do not ignore branch outputs.']
           : []),
@@ -509,8 +599,8 @@ async function buildWorkflowAgentPayload(
       outputContract: {
         primaryFormat: 'markdown',
         mustProduceSummary: true,
-        mayProduceArtifacts: false,
-        artifactKinds: [],
+        mayProduceArtifacts: true,
+        artifactKinds: ['file', 'report'],
       },
     },
     dependencies,
@@ -635,7 +725,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   const runtimeContext = input.__runtime ?? getDefaultRuntimeContext();
   const requestedModel = input.model || runtimeContext.requestedModel;
   const definition = resolveWorkflowAgentDefinition(input);
-  const executionMode = resolveExecutionMode(runtimeContext);
+  const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(runtimeContext);
   const worker = new StageWorker(executionMode === 'claude');
   const abortController = new AbortController();
   const activeExecutionKey = buildActiveExecutionKey(runtimeContext);
@@ -692,7 +782,47 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       }
     }
 
-    const result = await worker.execute(payload, { abortController });
+    const persistSessionId = runtimeContext.sessionId;
+    const shouldPersist = Boolean(persistSessionId && !persistSessionId.startsWith('workflow:'));
+    const traceEvents: RawTraceEvent[] = [];
+
+    const result = await worker.execute(payload, {
+      abortController,
+      provider: workflowProvider,
+      onTraceEvent: shouldPersist
+        ? (event) => {
+            const type = (event as any).type;
+            if (type === 'assistant' || type === 'user') {
+              traceEvents.push({ type: type as 'assistant' | 'user', raw: event });
+            }
+          }
+        : undefined,
+    });
+
+    // Write step output to shared dir so downstream agents can read it as a file.
+    // Filename: {runId}_{stageId}_output.md — matches the path declared in the agent's I/O Contract.
+    if (result.outcome === 'done' && result.summary?.trim()) {
+      try {
+        const safeRunId = sanitizePathSegment(payload.runId, 'run');
+        const safeStageId = sanitizePathSegment(payload.stageId, 'step');
+        const outputFileName = `${safeRunId}_${safeStageId}_output.md`;
+        await writeFile(path.join(payload.workspace.sharedReadDir, outputFileName), result.summary.trim(), 'utf-8');
+      } catch (writeErr) {
+        console.warn('[subagent] Failed to write step output to shared dir:', writeErr instanceof Error ? writeErr.message : writeErr);
+      }
+    }
+
+    // Persist step output to session so execution history can show it
+    if (shouldPersist) {
+      try {
+        const md = formatStepOutputMarkdown(definition.binding.roleName, runtimeContext.stepId, result, traceEvents);
+        if (md) {
+          addMessage(persistSessionId!, 'assistant', JSON.stringify([{ type: 'text', text: md }]));
+        }
+      } catch (e) {
+        console.warn('[subagent] addMessage failed:', e instanceof Error ? e.message : e);
+      }
+    }
 
     return toStepResult({
       runtimeContext,
@@ -705,6 +835,25 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     });
   } catch (error) {
     const cancelled = abortController.signal.aborted || isCancelledError(error);
+
+    // 错误也写入 session 消息，让执行历史能看到
+    const errSessionId = runtimeContext.sessionId;
+    if (errSessionId && !errSessionId.startsWith('workflow:') && !cancelled) {
+      const errMsg = timedOut
+        ? `步骤超时 (${timeoutMs}ms)`
+        : (error instanceof Error ? error.message : String(error));
+      try {
+        const roleName = definition.binding.roleName.replace(/:/g, '：');
+        const sid = runtimeContext.stepId.replace(/:/g, '：');
+        addMessage(
+          errSessionId,
+          'assistant',
+          JSON.stringify([{ type: 'text', text: `<!-- step:${roleName}:${sid}:failed -->\n\n> ${errMsg}` }]),
+        );
+      } catch (e) {
+        console.warn('[subagent] addMessage (error path) failed:', e instanceof Error ? e.message : e);
+      }
+    }
 
     return {
       success: false,

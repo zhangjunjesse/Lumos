@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
+import { resolveMessagesUrl } from '@/lib/provider-model-discovery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,10 +8,7 @@ export const dynamic = 'force-dynamic';
 interface ProviderTestPayload {
   apiKey?: string;
   baseUrl?: string;
-}
-
-function normalizeBaseUrl(baseUrl?: string): string {
-  return (baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '');
+  model?: string;
 }
 
 async function parseAnthropicError(response: Response): Promise<string> {
@@ -27,7 +25,7 @@ async function parseAnthropicError(response: Response): Promise<string> {
 
 export async function POST(request: Request) {
   try {
-    const { apiKey, baseUrl } = await request.json() as ProviderTestPayload;
+    const { apiKey, baseUrl, model } = await request.json() as ProviderTestPayload;
 
     if (!apiKey) {
       return NextResponse.json(
@@ -36,8 +34,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const apiBase = normalizeBaseUrl(baseUrl);
-    const res = await fetch(`${apiBase}/v1/messages`, {
+    const messagesUrl = resolveMessagesUrl(baseUrl || 'https://api.anthropic.com');
+    const res = await fetch(messagesUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -45,7 +43,7 @@ export async function POST(request: Request) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
+        model: model || BUILTIN_CLAUDE_MODEL_IDS.haiku,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
       }),

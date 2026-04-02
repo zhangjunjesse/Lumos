@@ -756,6 +756,23 @@ export class BrowserManager extends EventEmitter {
     return this.cdpManager.isAttached(tabId);
   }
 
+  /**
+   * Ensure a background tab's view has non-zero bounds so Chromium actually
+   * renders the page content. Positions the view offscreen (-10000) so the
+   * user never sees it.
+   */
+  ensureViewRenderable(tabId: string): void {
+    const view = this.tabs.get(tabId);
+    if (!view) return;
+    const bounds = view.getBounds();
+    if (bounds.width > 0 && bounds.height > 0) return;
+    view.setBounds({ x: -10000, y: -10000, width: 1280, height: 800 });
+  }
+
+  getSessionPartition(): string {
+    return this.sessionPartition;
+  }
+
   async getCookies(filter?: Electron.CookiesGetFilter): Promise<Electron.Cookie[]> {
     const ses = session.fromPartition(this.sessionPartition);
     return filter ? ses.cookies.get(filter) : ses.cookies.get({});

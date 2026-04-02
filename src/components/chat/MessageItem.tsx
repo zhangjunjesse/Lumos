@@ -29,6 +29,7 @@ import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
 import { TaskCard, parseTeamPlanBlock } from './TaskCard';
 import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
+import { unwrapToolResult } from '@/lib/tool-result-parser';
 
 interface ImageGenRequest {
   prompt: string;
@@ -307,6 +308,7 @@ function pairTools(tools: ToolBlock[]): Array<{
   return paired;
 }
 
+
 function parseMessageMeta(content: string): { files: FileAttachment[]; source?: string; text: string } {
   let text = content;
   let files: FileAttachment[] = [];
@@ -384,6 +386,14 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
 }
 
 const COLLAPSE_HEIGHT = 300;
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${Math.round(s % 60)}s`;
+}
 
 export function MessageItem({ message }: MessageItemProps) {
   const { t } = useTranslation();
@@ -471,18 +481,50 @@ export function MessageItem({ message }: MessageItemProps) {
         )}
 
         {!isUser && (() => {
-          const ds = extractDeepSearchSources(pairedTools);
-          return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} /> : null;
+          try {
+            const ds = extractDeepSearchSources(pairedTools);
+            return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} runId={ds.runId} archivePrompt={ds.archivePrompt} /> : null;
+          } catch {
+            return null;
+          }
         })()}
+
+        {/* Image gen cards from generate_image tool results */}
+        {!isUser && pairedTools.map((tool, i) => {
+          const n = tool.name.toLowerCase();
+          if (tool.isError || !tool.result || !n.includes('generate_image')) return null;
+          try {
+            const r = unwrapToolResult(tool.result);
+            if (!r || !Array.isArray(r.images) || r.images.length === 0) return null;
+            const images = (r.images as Array<Record<string, unknown>>).map(img => ({
+              data: '',
+              mimeType: String(img.mime_type || 'image/png'),
+              directUrl: img.url ? String(img.url) : undefined,
+              localPath: img.url ? undefined : String(img.path || ''),
+            }));
+            const inp = tool.input as Record<string, unknown> | undefined;
+            return (
+              <ImageGenCard
+                key={`img-gen-${i}`}
+                images={images}
+                prompt={String(inp?.prompt || r.prompt || '')}
+                model={typeof r.model === 'string' ? r.model : undefined}
+                provider={typeof r.provider === 'string' ? r.provider : undefined}
+              />
+            );
+          } catch { return null; }
+        })}
 
         {!isUser && (
           <ArtifactReferencePreview
             text={displayText}
-            tools={pairedTools.map((tool) => ({
-              name: tool.name,
-              result: tool.result,
-              isError: tool.isError,
-            }))}
+            tools={pairedTools
+              .filter((tool) => !tool.name.toLowerCase().includes('generate_image'))
+              .map((tool) => ({
+                name: tool.name,
+                result: tool.result,
+                isError: tool.isError,
+              }))}
           />
         )}
 
@@ -650,6 +692,9 @@ export function MessageItem({ message }: MessageItemProps) {
       {/* Footer with copy, timestamp and token usage */}
       <div className={`flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'justify-end' : ''}`}>
         {!isUser && <span className="text-xs text-muted-foreground/50">{timestamp}</span>}
+        {!isUser && message.elapsed_ms != null && (
+          <span className="text-xs text-muted-foreground/50">{formatElapsed(message.elapsed_ms)}</span>
+        )}
         {!isUser && tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
         {displayText && <CopyButton text={displayText} />}
       </div>

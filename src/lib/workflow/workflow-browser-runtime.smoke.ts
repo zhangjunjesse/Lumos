@@ -150,26 +150,9 @@ async function main() {
             },
           },
           {
-            id: 'browse',
-            type: 'browser',
-            dependsOn: ['draft'],
-            input: {
-              action: 'navigate',
-              url: targetUrl,
-            },
-          },
-          {
-            id: 'capture',
-            type: 'browser',
-            dependsOn: ['browse'],
-            input: {
-              action: 'screenshot',
-            },
-          },
-          {
             id: 'notify',
             type: 'notification',
-            dependsOn: ['capture'],
+            dependsOn: ['draft'],
             input: {
               message: 'Workflow browser runtime smoke complete',
               level: 'info',

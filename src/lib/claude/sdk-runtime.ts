@@ -2,11 +2,15 @@ import os from 'os'
 import path from 'path'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ApiProvider } from '@/types'
-import { getActiveProvider, getProvider } from '@/lib/db/providers'
-import { getDefaultProviderId, getSession, getSetting } from '@/lib/db/sessions'
-import { findClaudeBinary, findGitBash, getExpandedPath } from '@/lib/platform'
+import { getDefaultProvider, getProvider } from '@/lib/db/providers'
+import { getSession, getSetting } from '@/lib/db/sessions'
+import { findClaudeBinary, findGitBash, getClaudeConfigDir, getExpandedPath } from '@/lib/platform'
 import { findBundledClaudeSdkCliPath } from './sdk-paths'
 import { resolveScriptFromCmd, sanitizeEnv } from './utils'
+import {
+  clearClaudeAndAnthropicEnv,
+  injectClaudeProviderEnv,
+} from './provider-env'
 
 export interface ClaudeSdkRuntimeBootstrap {
   activeProvider?: ApiProvider
@@ -38,18 +42,13 @@ function resolveRuntimeProvider(options?: ClaudeSdkRuntimeBootstrapOptions): Api
       if (sessionProvider) {
         return sessionProvider
       }
+
+      throw new Error('原服务商已删除，请重新选择配置开启新会话')
     }
   }
 
-  const defaultProviderId = getDefaultProviderId()?.trim() || ''
-  if (defaultProviderId) {
-    const defaultProvider = getProvider(defaultProviderId)
-    if (defaultProvider) {
-      return defaultProvider
-    }
-  }
-
-  return getActiveProvider()
+  // Single truth source: settings.default_provider_id (via getDefaultProvider)
+  return getDefaultProvider()
 }
 
 function injectProviderEnv(
@@ -57,43 +56,7 @@ function injectProviderEnv(
   options?: ClaudeSdkRuntimeBootstrapOptions,
 ): ApiProvider | undefined {
   const activeProvider = resolveRuntimeProvider(options)
-
-  if (activeProvider?.api_key) {
-    sdkEnv.ANTHROPIC_AUTH_TOKEN = activeProvider.api_key
-    sdkEnv.ANTHROPIC_API_KEY = activeProvider.api_key
-
-    if (activeProvider.base_url) {
-      sdkEnv.ANTHROPIC_BASE_URL = activeProvider.base_url
-    }
-
-    try {
-      const extraEnv = JSON.parse(activeProvider.extra_env || '{}')
-      for (const [key, value] of Object.entries(extraEnv)) {
-        if (typeof value !== 'string') {
-          continue
-        }
-        if (value === '') {
-          delete sdkEnv[key]
-        } else {
-          sdkEnv[key] = value
-        }
-      }
-    } catch {
-      // Ignore malformed provider extra_env.
-    }
-
-    return activeProvider
-  }
-
-  const appToken = getSetting('anthropic_auth_token')
-  const appBaseUrl = getSetting('anthropic_base_url')
-  if (appToken) {
-    sdkEnv.ANTHROPIC_AUTH_TOKEN = appToken
-  }
-  if (appBaseUrl) {
-    sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl
-  }
-
+  injectClaudeProviderEnv(sdkEnv, activeProvider)
   return activeProvider
 }
 
@@ -128,11 +91,7 @@ export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstr
   sdkEnv.PATH = getExpandedPath()
   sdkEnv.ELECTRON_RUN_AS_NODE = '1'
 
-  for (const key of Object.keys(sdkEnv)) {
-    if (key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_')) {
-      delete sdkEnv[key]
-    }
-  }
+  clearClaudeAndAnthropicEnv(sdkEnv)
 
   if (process.platform === 'win32' && !process.env.CLAUDE_CODE_GIT_BASH_PATH) {
     const gitBashPath = findGitBash()
@@ -141,10 +100,7 @@ export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstr
     }
   }
 
-  const claudeConfigDir = process.env.LUMOS_CLAUDE_CONFIG_DIR || process.env.CODEPILOT_CLAUDE_CONFIG_DIR
-  if (claudeConfigDir) {
-    sdkEnv.CLAUDE_CONFIG_DIR = claudeConfigDir
-  }
+  sdkEnv.CLAUDE_CONFIG_DIR = getClaudeConfigDir()
 
   const activeProvider = injectProviderEnv(sdkEnv, options)
 

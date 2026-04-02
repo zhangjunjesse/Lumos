@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllProviders, createProvider, getSetting } from '@/lib/db';
+import {
+  getAllProviders,
+  createProvider,
+  getDefaultProvider,
+  ProviderValidationError,
+} from '@/lib/db';
 import type { ProviderResponse, ErrorResponse, CreateProviderRequest, ApiProvider } from '@/types';
 
 function maskApiKey(provider: ApiProvider): ApiProvider {
@@ -10,38 +15,13 @@ function maskApiKey(provider: ApiProvider): ApiProvider {
   return { ...provider, api_key: maskedKey };
 }
 
-/** Check which ANTHROPIC_* env vars are set in the server process environment */
-function detectEnvVars(): Record<string, string> {
-  const detected: Record<string, string> = {};
-  const envKeys = [
-    'ANTHROPIC_API_KEY',
-    'ANTHROPIC_AUTH_TOKEN',
-    'ANTHROPIC_BASE_URL',
-  ];
-  for (const key of envKeys) {
-    const val = process.env[key];
-    if (val) {
-      // Mask secrets, show base_url in full
-      if (key.includes('URL')) {
-        detected[key] = val;
-      } else if (val.length > 8) {
-        detected[key] = '***' + val.slice(-8);
-      } else {
-        detected[key] = '***';
-      }
-    }
-  }
-  return detected;
-}
-
 export async function GET() {
   try {
     const providers = getAllProviders().map(maskApiKey);
-    const envDetected = detectEnvVars();
+    const defaultProvider = getDefaultProvider();
     return NextResponse.json({
       providers,
-      env_detected: envDetected,
-      default_provider_id: getSetting('default_provider_id') || '',
+      default_provider_id: defaultProvider?.id || '',
     });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(
@@ -68,6 +48,12 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof ProviderValidationError) {
+      return NextResponse.json<ErrorResponse>(
+        { error: error.message },
+        { status: 400 }
+      );
+    }
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to create provider' },
       { status: 500 }

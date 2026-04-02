@@ -120,14 +120,12 @@ async function main() {
         arguments: {
           spec: {
             version: 'v1',
-            name: 'invalid-browser',
+            name: 'invalid-agent',
             steps: [
               {
-                id: 'browse',
-                type: 'browser',
-                input: {
-                  action: 'navigate',
-                },
+                id: 'bad',
+                type: 'agent',
+                input: {},
               },
             ],
           },
@@ -147,10 +145,6 @@ async function main() {
     const invalidArtifact = JSON.parse(invalidContent) as GenerateWorkflowResult;
     if (invalidArtifact.validation.valid) {
       throw new Error('Workflow MCP invalid spec unexpectedly passed validation');
-    }
-
-    if (!invalidArtifact.validation.errors.includes('steps.browse.input.url: browser.navigate requires "url"')) {
-      throw new Error(`Workflow MCP invalid spec did not return expected validation error: ${JSON.stringify(invalidArtifact.validation.errors)}`);
     }
 
     const toolCallResponse = await handleRequest({

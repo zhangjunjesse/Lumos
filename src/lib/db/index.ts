@@ -2,6 +2,26 @@ export { getDb, closeDb, dataDir, DB_PATH } from './connection';
 export { initDb } from './schema';
 export { migrateCoreTables } from './migrations';
 export { migrateLumosTables } from './migrations-lumos';
+export {
+  listDeepSearchSites,
+  getDeepSearchSite,
+  getDeepSearchSiteCookieValue,
+  getDeepSearchSiteState,
+  upsertDeepSearchSite,
+  upsertDeepSearchSiteState,
+  listDeepSearchRuns,
+  getDeepSearchRun,
+  getDeepSearchArtifact,
+  createDeepSearchRun,
+  appendDeepSearchRunPageBindings,
+  replaceDeepSearchRunPageBindings,
+  replaceDeepSearchRunResults,
+  updateDeepSearchRunExecution,
+  applyDeepSearchRunAction,
+  deleteDeepSearchRun,
+  appendDeepSearchRunResult,
+  updateDeepSearchRunArchivedAt,
+} from './deepsearch';
 
 // Session + Message + Settings + Status
 export {
@@ -45,10 +65,15 @@ export {
   getAllProviders,
   getProvider,
   getActiveProvider,
+  getDefaultProvider,
   createProvider,
   cloneProvider,
   updateProvider,
   deleteProvider,
+  ProviderValidationError,
+  ProviderActivationBlockedError,
+  ProviderDeletionBlockedError,
+  ProviderUpdateBlockedError,
   activateProvider,
   deactivateAllProviders,
   getBuiltinProvider,

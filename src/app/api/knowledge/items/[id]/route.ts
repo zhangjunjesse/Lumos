@@ -4,13 +4,24 @@ import { splitText } from '@/lib/knowledge/chunker';
 import { indexItem } from '@/lib/knowledge/embedder';
 import { indexItemChunks, removeItemFromIndex } from '@/lib/knowledge/bm25';
 import { buildTagCandidates, syncItemTagSystem } from '@/lib/knowledge/tag-system';
+import {
+  appendProcessingError,
+  appendProcessingMessage,
+  buildStoredPreviewContent,
+  loadFullItemContent,
+} from '@/lib/knowledge/pipeline-support';
+import { clearSummaryArtifacts, summarizeAndEmbedStrict } from '@/lib/knowledge/summarizer';
+import { isKnowledgeEnhancementUnavailableError } from '@/lib/knowledge/llm';
 
 export async function GET(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
   const item = store.getItem(id);
   if (!item) return NextResponse.json({ error: 'not found' }, { status: 404 });
-  return NextResponse.json(item);
+  return NextResponse.json({
+    ...item,
+    full_content: loadFullItemContent(id, item.content),
+  });
 }
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -61,7 +72,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (!nextContent) {
       return NextResponse.json({ error: 'content cannot be empty' }, { status: 400 });
     }
-    patch.content = nextContent;
+    patch.content = buildStoredPreviewContent(nextContent);
   }
 
   if (nextContent !== null) {
@@ -72,6 +83,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
     const nextTitle = (patch.title as string | undefined) || current.title;
     try {
+      clearSummaryArtifacts(id);
       removeItemFromIndex(id);
       store.saveChunks(id, chunks);
       indexItemChunks(id, chunks, nextTitle);
@@ -80,17 +92,50 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       return NextResponse.json({ error: 'failed to rebuild index' }, { status: 500 });
     }
 
+    let processingError = '';
     let embeddingOk = true;
     try {
       await indexItem(id, chunks);
     } catch (err) {
       embeddingOk = false;
       console.error('[api/knowledge/items/:id] Embedding update failed:', err);
+      processingError = appendProcessingError(
+        processingError,
+        '向量化',
+        err,
+        'embedding_update_failed',
+      );
+    }
+
+    let summaryOk = true;
+    let summaryStage: 'done' | 'failed' | 'skipped' = 'done';
+    try {
+      const summary = await summarizeAndEmbedStrict(id);
+      if (!summary) {
+        summaryOk = false;
+        summaryStage = 'failed';
+        processingError = appendProcessingMessage(processingError, '摘要', '模型返回空内容，请检查服务商配置和模型是否可用');
+      }
+    } catch (err) {
+      if (isKnowledgeEnhancementUnavailableError(err)) {
+        summaryOk = true;
+        summaryStage = 'skipped';
+      } else {
+        summaryOk = false;
+        summaryStage = 'failed';
+        console.error('[api/knowledge/items/:id] Summary update failed:', err);
+        processingError = appendProcessingError(
+          processingError,
+          '摘要',
+          err,
+          'summary_update_failed',
+        );
+      }
     }
 
     patch.chunk_count = chunks.length;
-    patch.processing_status = embeddingOk ? 'ready' : 'partial';
-    patch.processing_error = embeddingOk ? '' : 'embedding_update_failed';
+    patch.processing_status = embeddingOk && summaryOk ? 'ready' : 'partial';
+    patch.processing_error = processingError;
     patch.processing_updated_at = new Date().toISOString();
     patch.processing_detail = JSON.stringify({
       mode: 'full',
@@ -98,7 +143,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       chunk: 'done',
       bm25: 'done',
       embedding: embeddingOk ? 'done' : 'failed',
-      summary: 'pending',
+      summary: summaryStage,
     });
   }
 

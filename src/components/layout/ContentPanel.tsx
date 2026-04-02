@@ -309,7 +309,7 @@ export function ContentPanel({ width = 288 }: ContentPanelProps) {
     }
 
     const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
-    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? true;
+    const fitWidth = getBrowserTabData(activeBrowserTab?.data).fitWidth ?? false;
 
     addTab({
       type: 'browser',

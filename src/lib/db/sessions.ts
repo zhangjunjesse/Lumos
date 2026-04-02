@@ -24,16 +24,39 @@ export function createSession(
   workingDirectory?: string,
   mode?: string,
   folder?: string,
+  providerId?: string,
 ): ChatSession {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const wd = workingDirectory || '';
   const projectName = path.basename(wd);
+  const normalizedProviderId = providerId?.trim() || '';
+  const providerName = normalizedProviderId
+    ? ((db.prepare('SELECT name FROM api_providers WHERE id = ?').get(normalizedProviderId) as { name?: string } | undefined)?.name || '')
+    : '';
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, requested_model, resolved_model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', model || '', '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', wd, folder || '');
+    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, requested_model, resolved_model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, provider_name, provider_id, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id,
+    title || 'New Chat',
+    now,
+    now,
+    model || '',
+    model || '',
+    '',
+    systemPrompt || '',
+    wd,
+    '',
+    projectName,
+    'active',
+    mode || 'code',
+    providerName,
+    normalizedProviderId,
+    wd,
+    folder || '',
+  );
 
   return getSession(id)!;
 }
@@ -142,14 +165,15 @@ export function addMessage(
   role: 'user' | 'assistant',
   content: string,
   tokenUsage?: string | null,
+  elapsedMs?: number | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   db.prepare(
-    'INSERT INTO messages (id, session_id, role, content, created_at, token_usage) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(id, sessionId, role, content, now, tokenUsage || null);
+    'INSERT INTO messages (id, session_id, role, content, created_at, token_usage, elapsed_ms) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, sessionId, role, content, now, tokenUsage || null, elapsedMs ?? null);
 
   updateSessionTimestamp(sessionId);
 

@@ -76,6 +76,27 @@ export function resolveProviderBaseUrl(
   return normalizeProviderBaseUrl(extraEnv.ANTHROPIC_BASE_URL || provider?.base_url || DEFAULT_BASE_URL);
 }
 
+export function resolveAnthropicSdkBaseUrl(
+  provider?: Pick<ApiProvider, 'base_url' | 'extra_env'> | null,
+  overrideBaseUrl?: string,
+): string {
+  const normalized = resolveProviderBaseUrl(provider, overrideBaseUrl);
+
+  if (normalized.endsWith('/v1/messages')) {
+    return normalized.slice(0, -'/messages'.length);
+  }
+
+  if (normalized.endsWith('/messages')) {
+    return normalized.replace(/\/messages$/, '');
+  }
+
+  if (normalized.endsWith('/v1')) {
+    return normalized;
+  }
+
+  return `${normalized}/v1`;
+}
+
 export function resolveModelsUrl(baseUrl: string): string {
   const normalized = normalizeProviderBaseUrl(baseUrl);
   if (normalized.endsWith('/v1/models')) return normalized;
@@ -94,18 +115,21 @@ export function buildProviderAuthHeaders(params: {
   apiKey: string;
   baseUrl: string;
   providerType?: string;
+  apiProtocol?: ApiProvider['api_protocol'];
 }): Record<string, string> {
   const normalizedBaseUrl = normalizeProviderBaseUrl(params.baseUrl).toLowerCase();
-  const useBearer = params.providerType === 'openrouter' || normalizedBaseUrl.includes('openrouter.ai');
+  const useBearer = params.apiProtocol === 'openai-compatible'
+    || params.providerType === 'openrouter'
+    || normalizedBaseUrl.includes('openrouter.ai');
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01',
   };
 
   if (useBearer) {
     headers.Authorization = `Bearer ${params.apiKey}`;
   } else {
+    headers['anthropic-version'] = '2023-06-01';
     headers['x-api-key'] = params.apiKey;
   }
 
@@ -228,6 +252,7 @@ async function probeProviderModels(params: {
   apiKey: string;
   baseUrl: string;
   providerType: string;
+  apiProtocol: ApiProvider['api_protocol'];
 }): Promise<ProviderModelOption[]> {
   const headers = buildProviderAuthHeaders(params);
   const url = resolveMessagesUrl(params.baseUrl);
@@ -279,11 +304,16 @@ async function probeProviderModels(params: {
 }
 
 export async function detectProviderModels(params: {
-  provider?: Pick<ApiProvider, 'provider_type' | 'base_url' | 'api_key' | 'extra_env'> | null;
+  provider?: Pick<ApiProvider, 'provider_type' | 'api_protocol' | 'base_url' | 'api_key' | 'extra_env' | 'auth_mode'> | null;
   apiKey?: string;
   baseUrl?: string;
   providerType?: string;
+  apiProtocol?: ApiProvider['api_protocol'];
 }): Promise<{ models: ProviderModelOption[]; baseUrl: string }> {
+  if (params.provider?.auth_mode === 'local_auth') {
+    throw new Error('当前认证方式暂不支持自动探测模型，请在模型列表中手动填写可用模型');
+  }
+
   const apiKey = resolveProviderApiKey(params.provider, params.apiKey);
   if (!apiKey) {
     throw new Error('当前配置缺少 API Key，无法探测模型');
@@ -291,10 +321,11 @@ export async function detectProviderModels(params: {
 
   const baseUrl = resolveProviderBaseUrl(params.provider, params.baseUrl);
   const providerType = params.providerType || params.provider?.provider_type || 'anthropic';
+  const apiProtocol = params.apiProtocol || params.provider?.api_protocol || 'anthropic-messages';
   try {
     const response = await fetchWithTimeout(`${resolveModelsUrl(baseUrl)}?limit=1000`, {
       method: 'GET',
-      headers: buildProviderAuthHeaders({ apiKey, baseUrl, providerType }),
+      headers: buildProviderAuthHeaders({ apiKey, baseUrl, providerType, apiProtocol }),
       cache: 'no-store',
     });
 
@@ -304,7 +335,7 @@ export async function detectProviderModels(params: {
         throw new Error(errorMessage);
       }
 
-      const models = await probeProviderModels({ apiKey, baseUrl, providerType });
+      const models = await probeProviderModels({ apiKey, baseUrl, providerType, apiProtocol });
       return { models, baseUrl };
     }
 
@@ -321,7 +352,7 @@ export async function detectProviderModels(params: {
     }
 
     if (error instanceof Error && error.message.includes('/v1/models')) {
-      const models = await probeProviderModels({ apiKey, baseUrl, providerType });
+      const models = await probeProviderModels({ apiKey, baseUrl, providerType, apiProtocol });
       return { models, baseUrl };
     }
 
@@ -333,7 +364,7 @@ export async function detectProviderModels(params: {
       error.message.includes('not found') ||
       error.message.includes('method not allowed')
     )) {
-      const models = await probeProviderModels({ apiKey, baseUrl, providerType });
+      const models = await probeProviderModels({ apiKey, baseUrl, providerType, apiProtocol });
       return { models, baseUrl };
     }
 

@@ -28,6 +28,7 @@ export default function WorkflowPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   const openTaskEditor = useCallback((id: string, mode: 'once' | 'scheduled') => {
@@ -54,6 +55,7 @@ export default function WorkflowPage() {
 
   const openCreate = useCallback(() => {
     setNewName('');
+    setCreateError('');
     setCreateOpen(true);
     setTimeout(() => nameInputRef.current?.focus(), 50);
   }, []);
@@ -73,7 +75,9 @@ export default function WorkflowPage() {
         setCreateOpen(false);
         router.push(`/workflow/${data.workflow.id}`);
       }
-    } catch { /* ignore */ } finally { setCreating(false); }
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : '创建失败，请重试');
+    } finally { setCreating(false); }
   }, [newName, router]);
 
   return (
@@ -137,14 +141,15 @@ export default function WorkflowPage() {
           <DialogHeader>
             <DialogTitle>新建工作流</DialogTitle>
           </DialogHeader>
-          <div className="py-2">
+          <div className="py-2 space-y-2">
             <Input
               ref={nameInputRef}
               placeholder="工作流名称"
               value={newName}
-              onChange={e => setNewName(e.target.value)}
+              onChange={e => { setNewName(e.target.value); setCreateError(''); }}
               onKeyDown={e => { if (e.key === 'Enter') void handleCreate(); }}
             />
+            {createError && <p className="text-xs text-destructive">{createError}</p>}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" asChild>

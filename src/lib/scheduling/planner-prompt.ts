@@ -2,9 +2,8 @@ import type { Task } from '@/lib/task-management/types';
 import type {
   PromptCapabilityPlanningContext,
   CodeCapabilityPlanningContext,
+  WorkflowAgentPlanningContext,
 } from './planner-types';
-
-const REPORT_SYNTHESIS_TIMEOUT_MS = 240_000;
 
 export function buildTaskPrompt(task: Task, closingInstruction: string): string {
   const lines: string[] = [
@@ -39,12 +38,18 @@ export function buildPlannerUserPrompt(
   capabilityContext?: PromptCapabilityPlanningContext,
   codeCapabilityContext?: CodeCapabilityPlanningContext,
   previousAttemptError?: string,
+  agentContext?: WorkflowAgentPlanningContext,
 ): string {
   const payload = {
     taskId: task.id,
     summary: task.summary,
     requirements: task.requirements,
     relevantMessages: Array.isArray(task.metadata?.relevantMessages) ? task.metadata.relevantMessages : [],
+    availableWorkflowAgents: (agentContext?.available ?? []).map((a) => ({
+      id: a.id,
+      name: a.name,
+      expertise: a.expertise,
+    })),
     publishedPromptCapabilities: (capabilityContext?.available || []).map((capability) => ({
       id: capability.id,
       name: capability.name,
@@ -52,44 +57,21 @@ export function buildPlannerUserPrompt(
       summary: capability.summary,
       usageExamples: capability.usageExamples,
     })),
-    publishedCodeCapabilities: (codeCapabilityContext?.available || []).map((capability) => ({
-      id: capability.id,
-      name: capability.name,
-      description: capability.description,
-      summary: capability.summary,
-      inputSchema: capability.inputSchema,
-      outputSchema: capability.outputSchema,
-      usageExamples: capability.usageExamples,
-    })),
     plannerRules: {
-      researchPlanning: [
-        'If the task asks for research, security issues, remediation plans, or report/export output based on external facts and no source material is already provided, prefer browser-based search/evidence collection before synthesis.',
-        'Prefer search/evidence -> summarize -> export over pure multi-agent report drafting for those tasks.',
+      agentUsage: [
+        '工作流只包含 agent 步骤，每个步骤必须使用 availableWorkflowAgents 中的 preset id。',
+        '如果某步骤没有完全匹配的 preset，选择能力最接近的 agent，并在 prompt 中说明具体任务。',
+        '不要使用 role 字段；不要引用不在 availableWorkflowAgents 列表中的 preset id。',
       ],
       promptCapabilityUsage: [
-        'If a published prompt capability matches the task, you may attach it to an agent step using input.tools.',
-        'Only attach published prompt capability IDs from the list above.',
-        'Do not invent capability IDs.',
-        'Prefer adding capabilities to agent steps that execute or finalize the actual task.',
-      ],
-      codeCapabilityUsage: [
-        'If a published code capability matches the task and the task contains enough structured input, you may use a capability step.',
-        'Only use published code capability IDs from the list above.',
-        'Capability step input must be a concrete object, not a natural-language paragraph.',
+        '如果已发布的提示词能力与任务匹配，可以通过 input.tools 附加到 agent 步骤。',
+        '只使用上方列表中的 capability id，不要创造不存在的 id。',
       ],
       workflowDslConstraints: [
-        'Workflow DSL v1 only supports step types: agent, browser, notification, capability.',
-        'Agent step input only supports: prompt, role, model, tools, outputMode, context.',
-        'Browser step input only supports: action, url, selector, value, pageId, createPage.',
-        'Browser action only supports: navigate, click, fill, screenshot.',
-        'To express web search, build a concrete static search-engine URL first, then use browser.navigate with input.url.',
-        'Do not use unsupported browser fields such as query or prompt.',
-        'Researcher steps are read-only; do not instruct them to write files.',
-        'Prefer passing generated markdown/text through steps.someStep.output.summary instead of asking an agent step to write a temp file.',
-        'If a capability such as md-converter needs markdown content, pass the upstream markdown text via input.mdContent from a step output reference.',
-        `If an agent step generates a long-form plain-text report or synthesis, omit timeoutMs or use at least ${REPORT_SYNTHESIS_TIMEOUT_MS}.`,
-        'Notification step input only supports: message, level, channel, sessionId.',
-        'Capability step input only supports: capabilityId and input.',
+        '工作流 DSL v1 只支持 agent 步骤类型。',
+        'agent 步骤 input 只支持：prompt、preset、model、tools、outputMode、context。',
+        '步骤 ID 用 kebab-case；dependsOn 引用其他步骤 ID；无共同依赖的步骤自动并行。',
+        'agent 的 prompt 只能是字面字符串或精确引用，如 steps.someStep.output.summary。',
       ],
     },
     responseSchema: {
@@ -110,128 +92,17 @@ export function buildPlannerUserPrompt(
         steps: [
           {
             id: 'string',
-            type: 'agent | browser | notification | capability',
+            type: 'agent',
             dependsOn: ['string'],
             input: {
+              preset: 'preset id from availableWorkflowAgents',
               prompt: 'string',
-              role: 'optional worker | researcher | coder | integration',
               tools: ['optional published prompt capability ids'],
               context: 'optional object',
-              capabilityId: 'required for capability step',
-              input: 'required object for capability step',
             },
             policy: {
-              timeoutMs: 10000,
-              retry: {
-                maximumAttempts: 2,
-              },
-            },
-          },
-        ],
-      },
-    },
-    workflowExamples: {
-      browserSearchSynthesis: {
-        version: 'v1',
-        name: 'task-example',
-        steps: [
-          {
-            id: 'analyze',
-            type: 'agent',
-            input: {
-              prompt: 'Analyze the research task and define evidence collection scope.',
-              role: 'researcher',
-            },
-          },
-          {
-            id: 'search',
-            type: 'browser',
-            dependsOn: ['analyze'],
-            input: {
-              action: 'navigate',
-              url: 'https://www.bing.com/search?q=openclaw%20security%20risk',
-              createPage: true,
-            },
-          },
-          {
-            id: 'capture',
-            type: 'browser',
-            dependsOn: ['search'],
-            when: {
-              op: 'exists',
-              ref: 'steps.search.output.pageId',
-            },
-            input: {
-              action: 'screenshot',
-              pageId: 'steps.search.output.pageId',
-            },
-          },
-          {
-            id: 'summarize',
-            type: 'agent',
-            dependsOn: ['capture'],
-            input: {
-              prompt: 'Summarize only from the provided search evidence.',
-              role: 'integration',
-              outputMode: 'plain-text',
-              context: {
-                searchResult: {
-                  url: 'steps.search.output.url',
-                  title: 'steps.search.output.title',
-                  lines: 'steps.search.output.lines',
-                  screenshotPath: 'steps.capture.output.screenshotPath',
-                },
-              },
-            },
-          },
-        ],
-      },
-      reportExportWithCapability: {
-        version: 'v1',
-        name: 'task-report-export-example',
-        steps: [
-          {
-            id: 'search',
-            type: 'browser',
-            input: {
-              action: 'navigate',
-              url: 'https://www.bing.com/search?q=openclaw%20security%20risk',
-              createPage: true,
-            },
-          },
-          {
-            id: 'synthesize-report',
-            type: 'agent',
-            dependsOn: ['search'],
-            policy: {
-              timeoutMs: REPORT_SYNTHESIS_TIMEOUT_MS,
-              retry: {
-                maximumAttempts: 2,
-              },
-            },
-            input: {
-              prompt: 'Write the final Markdown report using only the provided evidence.',
-              role: 'integration',
-              outputMode: 'plain-text',
-              context: {
-                searchResult: {
-                  url: 'steps.search.output.url',
-                  title: 'steps.search.output.title',
-                  lines: 'steps.search.output.lines',
-                },
-              },
-            },
-          },
-          {
-            id: 'export-pdf',
-            type: 'capability',
-            dependsOn: ['synthesize-report'],
-            input: {
-              capabilityId: 'md-converter',
-              input: {
-                mdContent: 'steps.synthesize-report.output.summary',
-                targetFormat: 'pdf',
-              },
+              timeoutMs: 90000,
+              retry: { maximumAttempts: 2 },
             },
           },
         ],
@@ -242,7 +113,7 @@ export function buildPlannerUserPrompt(
           previousAttemptFeedback: {
             previousAttemptFailed: true,
             error: previousAttemptError,
-            instruction: 'Correct the previous error and return a fresh full JSON response that strictly matches the supported DSL contracts. Do not reuse unsupported step fields or unsupported browser actions.',
+            instruction: '修正上次错误，返回符合约束的完整 JSON，不得使用不支持的步骤字段。',
           },
         }
       : {}),

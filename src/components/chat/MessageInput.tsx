@@ -382,31 +382,11 @@ export function MessageInput({
     fetch('/api/providers/models')
       .then((r) => r.json())
       .then((data) => {
-        if (data.groups && data.groups.length > 0) {
-          setProviderGroups(data.groups);
-        } else {
-          setProviderGroups([{
-            provider_id: 'env',
-            provider_name: 'Anthropic',
-            provider_type: 'anthropic',
-            models: DEFAULT_PROVIDER_MODEL_OPTIONS,
-            model_catalog_source: 'default',
-            model_catalog_updated_at: null,
-            model_catalog_uses_default: true,
-          }]);
-        }
+        setProviderGroups(data.groups || []);
         setDefaultProviderId(data.default_provider_id || '');
       })
       .catch(() => {
-        setProviderGroups([{
-          provider_id: 'env',
-          provider_name: 'Anthropic',
-          provider_type: 'anthropic',
-          models: DEFAULT_PROVIDER_MODEL_OPTIONS,
-          model_catalog_source: 'default',
-          model_catalog_updated_at: null,
-          model_catalog_uses_default: true,
-        }]);
+        setProviderGroups([]);
         setDefaultProviderId('');
       });
   }, []);
@@ -463,7 +443,7 @@ export function MessageInput({
     void fetchKnowledgeTags();
   }, [fetchKnowledgeTags, knowledgeMenuOpen, knowledgeTags.length, knowledgeTagsError, knowledgeTagsLoading]);
 
-  // Derive flat model list for current provider (used by currentModelOption lookup)
+  // Derive active provider + model for the selector.
   const hasExplicitProvider = !!providerId && providerGroups.some((group) => group.provider_id === providerId);
   const hasDefaultProvider = !!defaultProviderId && providerGroups.some((group) => group.provider_id === defaultProviderId);
   const currentProviderIdValue = hasExplicitProvider
@@ -471,9 +451,9 @@ export function MessageInput({
     : hasDefaultProvider
       ? defaultProviderId
       : (providerGroups[0]?.provider_id ?? '');
+  const hasProviders = providerGroups.length > 0;
   const currentGroup = providerGroups.find(g => g.provider_id === currentProviderIdValue) || providerGroups[0];
-  const visibleProviderGroups = currentGroup ? [currentGroup] : [];
-  const MODEL_OPTIONS = currentGroup?.models || DEFAULT_PROVIDER_MODEL_OPTIONS;
+  const MODEL_OPTIONS = currentGroup?.models || (hasProviders ? DEFAULT_PROVIDER_MODEL_OPTIONS : []);
 
   useEffect(() => {
     if (MODEL_OPTIONS.length === 0) return;
@@ -482,12 +462,10 @@ export function MessageInput({
     const currentValue = modelName || '';
     const hasSelectedModel = MODEL_OPTIONS.some((model) => model.value === currentValue);
     const fallbackModel = hasSelectedModel ? currentValue : MODEL_OPTIONS[0].value;
-    const providerChanged = providerId !== nextProviderId;
+    const providerMissing = !providerId || !hasExplicitProvider;
     const modelChanged = currentValue !== fallbackModel;
 
-    if (!providerChanged && !modelChanged) return;
-
-    if (nextProviderId && onProviderModelChange) {
+    if (providerMissing && nextProviderId && onProviderModelChange) {
       onProviderModelChange(nextProviderId, fallbackModel);
       return;
     }
@@ -498,6 +476,7 @@ export function MessageInput({
   }, [
     MODEL_OPTIONS,
     currentProviderIdValue,
+    hasExplicitProvider,
     modelName,
     onModelChange,
     onProviderModelChange,
@@ -836,7 +815,7 @@ export function MessageInput({
     const files = await convertFiles();
     const hasFiles = files.length > 0;
 
-    if ((!content && !hasFiles) || disabled || isStreaming) return;
+    if ((!content && !hasFiles) || disabled || isStreaming || !hasProviders) return;
 
     // Check if it's a direct slash command typed in the input
     if (content.startsWith('/') && !hasFiles) {
@@ -1082,10 +1061,12 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [knowledgeMenuOpen]);
 
-  const currentModelValue = MODEL_OPTIONS.some((model) => model.value === (modelName || ''))
-    ? (modelName || '')
-    : (MODEL_OPTIONS[0]?.value || DEFAULT_PROVIDER_MODEL_OPTIONS[0].value);
-  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
+  const currentModelValue = MODEL_OPTIONS.length > 0
+    ? (MODEL_OPTIONS.some((model) => model.value === (modelName || ''))
+        ? (modelName || '')
+        : MODEL_OPTIONS[0].value)
+    : '';
+  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0] || null;
   const hasResolvedModel = Boolean(resolvedModelName?.trim());
   const runtimeModelMismatch = hasResolvedModel
     ? !doesResolvedModelMatchRequested(currentModelValue, resolvedModelName)
@@ -1477,70 +1458,102 @@ export function MessageInput({
 
                 {/* Model selector */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>
-                  <PromptInputButton
-                    onClick={() => setModelMenuOpen((prev) => !prev)}
-                    className={cn(
-                      runtimeModelMismatch && "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
-                    )}
-                    tooltip={runtimeModelMismatch ? `实际运行：${resolvedModelName}` : undefined}
-                  >
-                    {runtimeModelMismatch && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                    )}
-                    <span className="text-xs font-mono">{currentModelOption.label}</span>
-                    <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
-                  </PromptInputButton>
+                  {hasProviders && currentModelOption ? (
+                    <>
+                      <PromptInputButton
+                        onClick={() => setModelMenuOpen((prev) => !prev)}
+                        className={cn(
+                          runtimeModelMismatch && "border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+                        )}
+                        tooltip={runtimeModelMismatch ? `实际运行：${resolvedModelName}` : undefined}
+                      >
+                        <span className="text-[10px] text-muted-foreground leading-none">
+                          {currentGroup?.provider_name}
+                        </span>
+                        <span className="mx-0.5 text-muted-foreground/40">/</span>
+                        <span className="text-xs font-mono">{currentModelOption.label}</span>
+                        {runtimeModelMismatch && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                        )}
+                        <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
+                      </PromptInputButton>
 
-                  {runtimeModelMismatch && (
-                    <div className="hidden h-7 max-w-52 items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300 sm:flex">
-                      <span className="shrink-0">实际</span>
-                      <span className="truncate font-mono">{resolvedModelName}</span>
-                    </div>
-                  )}
-
-                  {modelMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-1.5 w-52 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto">
-                      {visibleProviderGroups.map((group) => (
-                        <div key={group.provider_id}>
-                          <div className="border-b px-3 py-2">
-                            <div className="text-[10px] font-medium text-muted-foreground">
-                              当前配置
-                            </div>
-                            <div className="truncate text-xs font-medium">
-                              {group.provider_name}
-                            </div>
-                            {runtimeModelMismatch && (
-                              <div className="mt-1 rounded-md bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
-                                实际运行：<span className="font-mono">{resolvedModelName}</span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="py-0.5">
-                            {group.models.map((opt) => {
-                              const isActive = opt.value === currentModelValue && group.provider_id === currentProviderIdValue;
-                              return (
-                                <button
-                                  key={`${group.provider_id}-${opt.value}`}
-                                  className={cn(
-                                    "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors",
-                                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                                  )}
-                                  onClick={() => {
-                                    onModelChange?.(opt.value);
-                                    onProviderModelChange?.(group.provider_id, opt.value);
-                                    localStorage.setItem('codepilot:last-model', opt.value);
-                                    setModelMenuOpen(false);
-                                  }}
-                                >
-                                  <span className="font-mono text-xs">{opt.label}</span>
-                                  {isActive && <span className="text-xs">✓</span>}
-                                </button>
-                              );
-                            })}
-                          </div>
+                      {runtimeModelMismatch && (
+                        <div className="hidden h-7 max-w-52 items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300 sm:flex">
+                          <span className="shrink-0">实际</span>
+                          <span className="truncate font-mono">{resolvedModelName}</span>
                         </div>
-                      ))}
-                    </div>
+                      )}
+
+                      {modelMenuOpen && (
+                        <div className="absolute bottom-full left-0 mb-1.5 w-72 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-96 overflow-y-auto">
+                          {providerGroups.map((group, groupIndex) => {
+                            const isCurrent = group.provider_id === currentProviderIdValue;
+                            return (
+                              <div
+                                key={group.provider_id}
+                                className={cn(groupIndex > 0 && "border-t")}
+                              >
+                                <div className={cn("px-3 py-1.5", isCurrent ? "bg-accent/30" : "bg-muted/30")}>
+                                  <div className="flex items-center gap-2">
+                                    <span className={cn(
+                                      "h-1.5 w-1.5 rounded-full flex-shrink-0",
+                                      isCurrent ? "bg-primary" : "bg-muted-foreground/30"
+                                    )} />
+                                    <span className="truncate text-xs font-medium">{group.provider_name}</span>
+                                    {isCurrent && (
+                                      <span className="ml-auto text-[10px] text-primary font-medium">当前</span>
+                                    )}
+                                  </div>
+                                  {isCurrent && runtimeModelMismatch && (
+                                    <div className="mt-1 ml-3.5 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
+                                      实际运行：<span className="font-mono">{resolvedModelName}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="py-0.5">
+                                  {group.models.map((opt) => {
+                                    const isActive = opt.value === currentModelValue && isCurrent;
+                                    return (
+                                      <button
+                                        key={`${group.provider_id}-${opt.value}`}
+                                        className={cn(
+                                          "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors",
+                                          isActive
+                                            ? "bg-accent text-accent-foreground"
+                                            : "hover:bg-accent/50"
+                                        )}
+                                        onClick={() => {
+                                          onModelChange?.(opt.value);
+                                          onProviderModelChange?.(group.provider_id, opt.value);
+                                          localStorage.setItem('lumos:last-model', opt.value);
+                                          setModelMenuOpen(false);
+                                        }}
+                                      >
+                                        <span className="truncate font-mono text-xs">{opt.label}</span>
+                                        {isActive && (
+                                          <span className="text-primary text-xs flex-shrink-0">&#10003;</span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <a
+                      href="/settings"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-700 hover:bg-amber-500/20 dark:text-amber-300 transition-colors"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      <span>未配置 AI 服务</span>
+                      <span className="text-amber-700/60 dark:text-amber-300/60">·</span>
+                      <span className="underline underline-offset-2">前往设置</span>
+                    </a>
                   )}
                 </div>
 
@@ -1549,7 +1562,7 @@ export function MessageInput({
               <FileAwareSubmitButton
                 status={chatStatus}
                 onStop={onStop}
-                disabled={disabled}
+                disabled={disabled || !hasProviders}
                 inputValue={inputValue}
                 hasBadge={!!badge}
               />

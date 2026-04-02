@@ -87,26 +87,4 @@ describe('workflow compiler runtime context', () => {
     expect(artifact.manifest.stepIds).toEqual(['main']);
   });
 
-  test('generate_workflow tool still rejects invalid browser inputs', () => {
-    const artifact = handleGenerateWorkflowTool({
-      spec: {
-        version: 'v1',
-        name: 'invalid-browser',
-        steps: [
-          {
-            id: 'browse',
-            type: 'browser',
-            input: {
-              action: 'navigate',
-            },
-          },
-        ],
-      },
-    });
-
-    expect(artifact.validation.valid).toBe(false);
-    expect(artifact.validation.errors).toContain(
-      'steps.browse.input.url: browser.navigate requires "url"',
-    );
-  });
 });

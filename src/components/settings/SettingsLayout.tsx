@@ -6,6 +6,7 @@ import type { IconSvgElement } from "@hugeicons/react";
 import {
   Settings2,
   BookOpen,
+  UserGroup02Icon,
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -13,10 +14,13 @@ import { GeneralSection } from "./GeneralSection";
 import { ClaudeConfigSection } from "./ClaudeConfigSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
+import { SchedulingAgentSection } from "./SchedulingAgentSection";
+import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
+import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
-type Section = "general" | "knowledge" | "providers" | "usage";
+type Section = "general" | "knowledge" | "providers" | "usage" | "workflow-agents";
 
 interface SidebarItem {
   id: Section;
@@ -28,6 +32,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
+  { id: "workflow-agents", label: "AI 代理", icon: UserGroup02Icon },
   { id: "usage", label: "Usage", icon: Analytics },
 ];
 
@@ -63,6 +68,7 @@ export function SettingsLayout() {
     'General': 'settings.general',
     'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
+    'AI 代理': 'settings.workflowAgents',
     'Usage': 'settings.usage',
   };
 
@@ -107,6 +113,15 @@ export function SettingsLayout() {
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "knowledge" && <KnowledgeSection />}
           {activeSection === "providers" && <ClaudeConfigSection />}
+          {activeSection === "workflow-agents" && (
+            <div className="flex flex-col gap-10">
+              <SchedulingAgentSection />
+              <div className="h-px bg-border/50" />
+              <AgentCreationLLMSection />
+              <div className="h-px bg-border/50" />
+              <WorkflowBuilderLLMSection />
+            </div>
+          )}
           {activeSection === "usage" && <UsageStatsSection />}
         </div>
       </div>

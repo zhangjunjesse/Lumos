@@ -11,14 +11,20 @@ const toolPermissionsSchema = z.object({
 const updateAgentPresetSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   roleKind: z.enum(['orchestrator', 'lead', 'worker']).optional(),
-  responsibility: z.string().trim().min(1).max(500).optional(),
+  responsibility: z.string().trim().max(500).optional().nullable(),
   systemPrompt: z.string().trim().min(1).optional(),
   description: z.string().trim().max(500).optional().nullable(),
   collaborationStyle: z.string().trim().max(500).optional().nullable(),
   outputContract: z.string().trim().max(500).optional().nullable(),
   preferredModel: z.string().trim().optional().nullable(),
+  providerId: z.string().trim().optional().nullable(),
   mcpServers: z.array(z.string()).optional().nullable(),
   toolPermissions: toolPermissionsSchema.optional().nullable(),
+  position: z.string().trim().max(100).optional().nullable(),
+  interests: z.string().trim().max(300).optional().nullable(),
+  specialties: z.string().trim().max(300).optional().nullable(),
+  avatarPath: z.string().trim().optional().nullable(),
+  departmentId: z.string().optional().nullable(),
 });
 
 interface RouteContext {
@@ -46,12 +52,19 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     // Convert null to undefined for optional fields
     const input = {
       ...raw,
+      responsibility: raw.responsibility ?? undefined,
       description: raw.description ?? undefined,
       collaborationStyle: raw.collaborationStyle ?? undefined,
       outputContract: raw.outputContract ?? undefined,
       preferredModel: raw.preferredModel ?? undefined,
+      providerId: raw.providerId ?? undefined,
       mcpServers: raw.mcpServers ?? undefined,
       toolPermissions: raw.toolPermissions ?? undefined,
+      position: raw.position ?? undefined,
+      interests: raw.interests ?? undefined,
+      specialties: raw.specialties ?? undefined,
+      avatarPath: raw.avatarPath ?? undefined,
+      departmentId: raw.departmentId !== undefined ? raw.departmentId : undefined,
     };
 
     const preset = updateAgentPreset(id, input);

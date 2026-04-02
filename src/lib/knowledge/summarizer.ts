@@ -2,12 +2,13 @@
  * Auto-summarizer — generate document summaries + key points via Claude Haiku
  * Stores summary embedding for summary-level retrieval (P0)
  */
+import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import { genId } from '@/lib/stores/helpers';
 import { getEmbeddings, vectorToBuffer } from './embedder';
 import type { DocumentSummary } from './types';
-import { callKnowledgeModel } from './llm';
-import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
+import { callKnowledgeModel, callKnowledgeObjectModel, getKnowledgeDefaultModel } from './llm';
+import { loadFullItemContent } from './pipeline-support';
 
 const MAX_SUMMARY_SOURCE_CHARS = 9000;
 const SUMMARY_SECTION_COUNT = 3;
@@ -20,6 +21,11 @@ const SUMMARY_PROMPT = `你是文档摘要专家。为以下文档生成：
 
 文档内容：
 `;
+
+const summaryResponseSchema = z.object({
+  summary: z.string().trim().min(1),
+  key_points: z.array(z.string().trim().min(1)).max(5).default([]),
+});
 
 function sanitizeText(input: string): string {
   return input
@@ -62,12 +68,31 @@ function buildSummarySource(title: string, content: string): string {
   ].join('\n');
 }
 
-async function callHaiku(content: string): Promise<string> {
+async function callSummaryText(content: string): Promise<string> {
   return callKnowledgeModel({
-    model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
-    maxTokens: 600,
-    timeoutMs: 15000,
+    model: getKnowledgeDefaultModel(),
+    maxTokens: 16000,
+    timeoutMs: 30000,
     prompt: SUMMARY_PROMPT + content,
+  });
+}
+
+async function callSummaryStructured(content: string): Promise<z.infer<typeof summaryResponseSchema>> {
+  return callKnowledgeObjectModel({
+    model: getKnowledgeDefaultModel(),
+    maxTokens: 16000,
+    timeoutMs: 30000,
+    schema: summaryResponseSchema,
+    prompt: [
+      '请阅读文档并输出摘要对象。',
+      '要求：',
+      '- summary: 100-200 字中文摘要',
+      '- key_points: 3-5 条关键要点，每条一句话',
+      '- 不要遗漏文档主题和关键结论',
+      '',
+      '文档内容：',
+      content,
+    ].join('\n'),
   });
 }
 
@@ -98,21 +123,47 @@ export async function summarizeItem(itemId: string): Promise<DocumentSummary | n
     'SELECT id, title, content FROM kb_items WHERE id=?'
   ).get(itemId) as { id: string; title: string; content: string } | undefined;
 
-  if (!item) return null;
-
-  // Get full content from chunks if item.content is empty
-  let fullContent = item.content;
-  if (!fullContent || fullContent.length < 50) {
-    const chunks = db.prepare(
-      'SELECT content FROM kb_chunks WHERE item_id=? ORDER BY chunk_index'
-    ).all(itemId) as { content: string }[];
-    fullContent = chunks.map(c => c.content).join('\n\n');
+  if (!item) {
+    console.warn(`[kb] summarizeItem: item ${itemId} not found in DB`);
+    return null;
   }
 
-  if (!fullContent || fullContent.length < 30) return null;
+  const fullContent = loadFullItemContent(itemId, item.content);
 
-  const text = await callHaiku(buildSummarySource(item.title, fullContent));
-  const { summary, keyPoints } = parseResponse(text);
+  if (!fullContent || fullContent.length < 30) {
+    console.warn(`[kb] summarizeItem: content too short (${fullContent?.length ?? 0} chars) for item ${itemId}, skipping summary`);
+    return null;
+  }
+
+  const summarySource = buildSummarySource(item.title, fullContent);
+  let summary = '';
+  let keyPoints: string[] = [];
+
+  try {
+    const structured = await callSummaryStructured(summarySource);
+    summary = structured.summary.trim();
+    keyPoints = structured.key_points
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch (structuredError) {
+    const structuredMsg = structuredError instanceof Error ? structuredError.message : String(structuredError);
+    console.warn('[kb] Structured summary failed, falling back to text mode:', structuredMsg);
+    try {
+      const text = await callSummaryText(summarySource);
+      const parsed = parseResponse(text);
+      summary = parsed.summary.trim();
+      keyPoints = parsed.keyPoints;
+      if (!summary) {
+        console.warn('[kb] Text fallback returned empty summary for item', itemId);
+      }
+    } catch (fallbackError) {
+      const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      console.error(`[kb] Both structured and text summary failed for item ${itemId}:`, fallbackMsg);
+      throw new Error(`摘要生成失败: structured=${structuredMsg}; fallback=${fallbackMsg}`);
+    }
+  }
+
   if (!summary) return null;
 
   const now = new Date().toISOString();
@@ -130,6 +181,19 @@ export async function summarizeItem(itemId: string): Promise<DocumentSummary | n
   `).run(id, itemId, summary, JSON.stringify(keyPoints), now);
 
   return { itemId, summary, keyPoints, generatedAt: now };
+}
+
+export function clearSummaryArtifacts(itemId: string): void {
+  const db = getDb();
+  const transaction = db.transaction(() => {
+    db.prepare(
+      'UPDATE kb_items SET summary=?, key_points=?, summary_embedding=? WHERE id=?',
+    ).run('', '[]', null, itemId);
+    db.prepare(
+      "DELETE FROM kb_summaries WHERE scope = 'item' AND scope_id = ?",
+    ).run(itemId);
+  });
+  transaction();
 }
 
 /** Generate and store summary embedding for summary-level retrieval */
@@ -165,13 +229,17 @@ export async function embedSummary(itemId: string): Promise<boolean> {
 }
 
 /** Full pipeline: summarize + embed summary (call after import) */
+export async function summarizeAndEmbedStrict(itemId: string): Promise<DocumentSummary | null> {
+  const result = await summarizeItem(itemId);
+  if (result) {
+    await embedSummary(itemId);
+  }
+  return result;
+}
+
 export async function summarizeAndEmbed(itemId: string): Promise<DocumentSummary | null> {
   try {
-    const result = await summarizeItem(itemId);
-    if (result) {
-      await embedSummary(itemId);
-    }
-    return result;
+    return await summarizeAndEmbedStrict(itemId);
   } catch (err) {
     console.error('[kb] Summarize pipeline failed:', (err as Error).message);
     return null;

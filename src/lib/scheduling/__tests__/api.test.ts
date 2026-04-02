@@ -6,7 +6,6 @@ const mockCancelWorkflow = jest.fn();
 const mockHandleGenerateWorkflowTool = jest.fn();
 const mockCancelWorkflowAgentExecution = jest.fn();
 const mockExecuteWorkflowAgentStep = jest.fn();
-const mockBuildPreviewSchedulingPlan = jest.fn();
 const mockResolveSchedulingPlan = jest.fn();
 const mockGetSession = jest.fn();
 
@@ -25,7 +24,6 @@ jest.mock('@/lib/workflow/subagent', () => ({
 }));
 
 jest.mock('../planner', () => ({
-  buildPreviewSchedulingPlan: (...args: unknown[]) => mockBuildPreviewSchedulingPlan(...args),
   resolveSchedulingPlan: (...args: unknown[]) => mockResolveSchedulingPlan(...args),
 }));
 
@@ -136,12 +134,10 @@ describe('scheduling execution without silent fallback', () => {
     mockHandleGenerateWorkflowTool.mockReset();
     mockCancelWorkflowAgentExecution.mockReset();
     mockExecuteWorkflowAgentStep.mockReset();
-    mockBuildPreviewSchedulingPlan.mockReset();
     mockResolveSchedulingPlan.mockReset();
     mockGetSession.mockReset();
     mockCancelWorkflow.mockResolvedValue(false);
     mockCancelWorkflowAgentExecution.mockResolvedValue(false);
-    mockBuildPreviewSchedulingPlan.mockImplementation((task: Task) => buildWorkflowPlan(task.id));
     mockResolveSchedulingPlan.mockImplementation(async (task: Task) => buildWorkflowPlan(task.id));
     mockGetSession.mockImplementation((sessionId: string) => ({
       id: sessionId,
@@ -224,7 +220,6 @@ describe('scheduling execution without silent fallback', () => {
       requirements: ['一句话即可'],
     });
 
-    mockBuildPreviewSchedulingPlan.mockReturnValue(buildSimplePlan());
     mockResolveSchedulingPlan.mockResolvedValue(buildSimplePlan());
     mockExecuteWorkflowAgentStep.mockResolvedValue({
       success: true,

@@ -7,12 +7,7 @@ const FORMAL_NODE_TYPES = [
   {
     type: 'agent',
     status: '已上线',
-    description: '负责分析、汇总、生成文本结果，以及在受控边界内调用系统能力。',
-  },
-  {
-    type: 'browser',
-    status: '已上线',
-    description: '当前正式动作仍以打开页面、点击、填充、截图为主。',
+    description: '负责分析、汇总、生成文本结果，以及在受控边界内调用系统能力。浏览器操作通过 chrome-devtools MCP 工具完成。',
   },
   {
     type: 'notification',

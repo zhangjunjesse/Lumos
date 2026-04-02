@@ -1,7 +1,7 @@
 import type { WorkflowDSL, WorkflowStep } from '@/lib/workflow/types';
+import { getWorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import {
   type SchedulingPlanAnalysis,
-  BROWSER_WORKFLOW_ESTIMATED_DURATION_SECONDS,
   WORKFLOW_ESTIMATED_DURATION_SECONDS,
   AGENT_STEP_TIMEOUT_MS,
   REPORT_SYNTHESIS_TIMEOUT_MS,
@@ -24,6 +24,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function matchesAny(source: string, patterns: string[]): boolean {
   return patterns.some((pattern) => source.includes(pattern.toLowerCase()));
+}
+
+function resolvePresetRole(presetId: string): string | undefined {
+  try {
+    return getWorkflowAgentPreset(presetId)?.config.role;
+  } catch {
+    return undefined;
+  }
 }
 
 export function normalizeAnalysis(
@@ -49,6 +57,8 @@ export function validatePlannerWorkflowSemantics(spec: WorkflowDSL): string[] {
       const input = isRecord(step.input) ? step.input : {};
       const timeoutMs = step.policy?.timeoutMs;
       const role = typeof input.role === 'string' ? input.role.trim().toLowerCase() : '';
+      const presetRole = typeof input.preset === 'string' ? resolvePresetRole(input.preset) : undefined;
+      const effectiveRole = role || presetRole || '';
       const prompt = typeof input.prompt === 'string' ? input.prompt : '';
 
       if (typeof timeoutMs === 'number' && timeoutMs < AGENT_STEP_TIMEOUT_MS) {
@@ -59,30 +69,11 @@ export function validatePlannerWorkflowSemantics(spec: WorkflowDSL): string[] {
         errors.push(`steps.${step.id}.policy.timeoutMs: long-form plain-text report synthesis agent steps must use timeoutMs >= ${REPORT_SYNTHESIS_TIMEOUT_MS} or omit timeoutMs`);
       }
 
-      if (role === 'researcher' && promptRequestsFileWrite(prompt)) {
+      if (effectiveRole === 'researcher' && promptRequestsFileWrite(prompt)) {
         errors.push(`steps.${step.id}.input.prompt: researcher steps are read-only and must not be instructed to write files; return the report text in output.summary instead`);
       }
     }
 
-    if (step.type === 'capability') {
-      const input = isRecord(step.input) ? step.input : {};
-      const capabilityId = typeof input.capabilityId === 'string' ? input.capabilityId.trim() : '';
-      const capabilityInput = isRecord(input.input) ? input.input : null;
-      if (!capabilityInput) {
-        continue;
-      }
-
-      if (capabilityId === 'md-converter') {
-        const mdContent = capabilityInput.mdContent;
-        if (
-          typeof mdContent === 'string'
-          && isAbsolutePathLike(mdContent)
-          && dependsOnPlainTextAgentStep(step, stepById)
-        ) {
-          errors.push(`steps.${step.id}.input.input.mdContent: md-converter should consume markdown text from an upstream step output reference (for example steps.someStep.output.summary) instead of a hardcoded absolute path`);
-        }
-      }
-    }
   }
 
   return errors;
@@ -167,11 +158,5 @@ export function estimateDurationSeconds(
   workflowDsl: WorkflowDSL,
   analysis: SchedulingPlanAnalysis,
 ): number {
-  if (analysis.needsBrowser || workflowDsl.steps.some((step) => step.type === 'browser')) {
-    if (analysis.needsParallel || (analysis.detectedUrls?.length ?? 0) > 1) {
-      return Math.max(BROWSER_WORKFLOW_ESTIMATED_DURATION_SECONDS, 120 + ((analysis.detectedUrls?.length ?? 0) * 30));
-    }
-    return BROWSER_WORKFLOW_ESTIMATED_DURATION_SECONDS;
-  }
   return WORKFLOW_ESTIMATED_DURATION_SECONDS;
 }

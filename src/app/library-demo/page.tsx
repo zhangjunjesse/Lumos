@@ -6,6 +6,7 @@ import { Search, Delete } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { LibraryChatPanel } from "@/components/knowledge/LibraryChatPanel";
 import { LibraryImportPanel } from "@/components/knowledge/library-import-panel";
+import { BottomChatPanel } from "@/components/layout/BottomChatPanel";
 import {
   getDefaultCollection,
   getDirectoryImportJob,
@@ -17,6 +18,7 @@ import {
   type KnowledgeIngestJobItem,
 } from "@/lib/knowledge/client";
 import type { FileTreeNode } from "@/types";
+import { LibraryContentPreview } from "@/components/knowledge/library-content-preview";
 
 // 类型定义
 type PathItem = {
@@ -89,6 +91,10 @@ type KbItem = {
   processing_detail?: string;
   processing_error?: string;
   chunk_count?: number;
+};
+
+type KbItemDetail = KbItem & {
+  full_content?: string;
 };
 
 type TagCatalogItem = {
@@ -199,6 +205,31 @@ const FEISHU_SYSTEM_TAG: Tag = {
   type: "system",
 };
 
+function getTagStyle(tag: Tag, options?: { selected?: boolean; compact?: boolean }) {
+  const selected = options?.selected ?? false;
+  const compact = options?.compact ?? false;
+  const spacing = compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1.5 text-xs";
+  const ring = selected ? " ring-2 ring-primary/70 ring-offset-2 ring-offset-background" : "";
+
+  if (tag.type === "custom") {
+    const colors: Record<string, string> = {
+      red: "border-red-200 bg-red-50 text-red-700",
+      orange: "border-orange-200 bg-orange-50 text-orange-700",
+      yellow: "border-yellow-200 bg-yellow-50 text-yellow-700",
+      green: "border-green-200 bg-green-50 text-green-700",
+      blue: "border-blue-200 bg-blue-50 text-blue-700",
+      purple: "border-purple-200 bg-purple-50 text-purple-700",
+    };
+    return `border ${spacing}${ring} ${colors[tag.color || "blue"] || colors.blue}`;
+  }
+
+  if (tag.type === "ai") {
+    return `border border-sky-200 bg-sky-50 text-sky-700 ${spacing}${ring}`;
+  }
+
+  return `border border-slate-200 bg-slate-50 text-slate-700 ${spacing}${ring}`;
+}
+
 // 文件类型 Logo 组件
 const FileTypeLogo = ({ type }: { type: string }) => {
   const logos: Record<string, React.ReactElement> = {
@@ -243,6 +274,13 @@ const FileTypeLogo = ({ type }: { type: string }) => {
       <div className="w-8 h-8 rounded flex items-center justify-center bg-amber-500">
         <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+      </div>
+    ),
+    "联网搜索": (
+      <div className="w-8 h-8 rounded flex items-center justify-center bg-sky-500">
+        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
         </svg>
       </div>
     ),
@@ -563,6 +601,11 @@ function processingMeta(status?: string) {
   return PROCESSING_META[normalized];
 }
 
+function shouldShowKnowledgeEnhancementHint(item: LibraryItem): boolean {
+  const detail = parseProcessingDetail(item.processingDetail);
+  return detail.summary === "skipped" && !item.summary && item.keyPoints.length === 0;
+}
+
 function isReadyStatus(status?: ProcessingStatus) {
   return ["ready", "reference_only", "partial"].includes(status || "pending");
 }
@@ -667,7 +710,7 @@ function matchesTypeFilter(item: LibraryItem, filter: TypeFilter) {
   if (filter === "video") {
     return ["MP4 视频", "MOV 视频", "AVI 视频", "MKV 视频"].includes(item.type);
   }
-  if (filter === "web") return item.type === "网页";
+  if (filter === "web") return item.type === "网页" || item.type === "联网搜索";
   return true;
 }
 
@@ -1042,6 +1085,7 @@ export default function LibraryDemoPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagFilterMode, setTagFilterMode] = useState<"or" | "and">("or");
   const [showTagSelector, setShowTagSelector] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("updated_desc");
@@ -1062,12 +1106,13 @@ export default function LibraryDemoPage() {
 
   // 详情页状态
   const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null);
+  const [selectedItemFullContent, setSelectedItemFullContent] = useState("");
+  const [detailContentLoading, setDetailContentLoading] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [editFeedback, setEditFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const [libraryChatCollapsed, setLibraryChatCollapsed] = useState(true);
 
   // 目录导航状态
   const [currentPath, setCurrentPath] = useState<PathItem[]>([]); // 当前路径（面包屑）
@@ -1081,10 +1126,11 @@ export default function LibraryDemoPage() {
     try {
       const collection = await getDefaultCollection();
       setCollectionId(collection.id);
-      const [itemRes, tagRes, jobs] = await Promise.all([
+      const [itemRes, tagRes, jobs, collectionsRes] = await Promise.all([
         fetch(`/api/knowledge/items?collection_id=${collection.id}`),
         fetch('/api/knowledge/tags'),
         listDirectoryImportJobs({ collectionId: collection.id, limit: 200 }),
+        fetch('/api/knowledge/collections'),
       ]);
       const [itemData, tagData] = await Promise.all([itemRes.json(), tagRes.json()]);
       if (!itemRes.ok) {
@@ -1115,13 +1161,51 @@ export default function LibraryDemoPage() {
       const folderCards = Array.from(latestJobsByDir.values()).map((job) => mapIngestJobToFolderItem(job));
       const ingestDirs = folderCards.filter((folder) => folder.isDirectory).map((folder) => folder.path).filter(Boolean);
       const rootFiles = mapped.filter((item) => !ingestDirs.some((dir) => isPathInsideDir(item.path, dir)));
-      const rootItems = [...folderCards, ...rootFiles];
+      const rootItems: LibraryItem[] = [...folderCards, ...rootFiles];
+
+      // Inject "联网搜索资料" as a pinned virtual directory if the collection exists and has items
+      if (collectionsRes.ok) {
+        const allCollections = await collectionsRes.json() as Array<{ id: string; name: string }>;
+        const dsCol = (Array.isArray(allCollections) ? allCollections : []).find(c => c.name === '联网搜索资料');
+        if (dsCol) {
+          const dsRes = await fetch(`/api/knowledge/items?collection_id=${dsCol.id}`);
+          if (dsRes.ok) {
+            const dsItemData = await dsRes.json() as KbItem[];
+            const dsItems = (Array.isArray(dsItemData) ? dsItemData : []).map(item =>
+              mapKbItemToLibrary(item as KbItem, tagMetaByName),
+            );
+            if (dsItems.length > 0) {
+              const dsFolder: LibraryItem = {
+                id: 'virtual:deepsearch-collection',
+                type: '联网搜索',
+                title: '联网搜索资料',
+                preview: `${dsItems.length} 条来自互联网的搜索资料`,
+                summary: '',
+                keyPoints: [],
+                path: '',
+                timeLabel: '',
+                date: '',
+                fullDate: '',
+                tags: [{ label: '联网搜索', type: 'system' }],
+                isDirectory: true,
+                isVirtual: true,
+                children: dsItems,
+              };
+              rootItems.unshift(dsFolder);
+            }
+          }
+        }
+      }
 
       setItems((prev) => {
         const prevMap = new Map(prev.map((item) => [item.id, item]));
         return rootItems.map((item) => {
           const prevItem = prevMap.get(item.id);
-          return prevItem?.children ? { ...item, children: prevItem.children } : item;
+          // Preserve expanded children for non-deepsearch folders
+          if (prevItem?.children && item.id !== 'virtual:deepsearch-collection') {
+            return { ...item, children: prevItem.children };
+          }
+          return item;
         });
       });
     } catch (error) {
@@ -1381,9 +1465,16 @@ export default function LibraryDemoPage() {
 
   // 打开详情页（修改为支持目录导航）
   const openDetail = (item: LibraryItem) => {
-    // 如果是目录，进入目录
+    // 如果是文件目录，进入目录
     if (item.type === "文件目录") {
       void enterDirectory(item);
+      return;
+    }
+
+    // 如果是联网搜索虚拟目录，直接展开（children 已预加载）
+    if (item.type === "联网搜索" && item.children) {
+      setCurrentPath((prev) => [...prev, { id: item.id, title: item.title }]);
+      setCurrentItems(item.children);
       return;
     }
 
@@ -1391,6 +1482,8 @@ export default function LibraryDemoPage() {
     setSelectedItem(item);
     setShowDetail(true);
     setIsEditing(false);
+    setSelectedItemFullContent("");
+    setDetailContentLoading(false);
     setEditContent('');
     setEditFeedback(null);
   };
@@ -1399,9 +1492,51 @@ export default function LibraryDemoPage() {
   const closeDetail = () => {
     setShowDetail(false);
     setIsEditing(false);
+    setSelectedItemFullContent("");
+    setDetailContentLoading(false);
     setEditFeedback(null);
     setTimeout(() => setSelectedItem(null), 300); // 等待动画结束
   };
+
+  useEffect(() => {
+    if (!showDetail || !selectedItem || selectedItem.isVirtual || selectedItem.type === "文件目录") {
+      return;
+    }
+
+    let cancelled = false;
+    const loadFullContent = async () => {
+      setDetailContentLoading(true);
+      try {
+        const res = await fetch(`/api/knowledge/items/${encodeURIComponent(selectedItem.id)}`, {
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({})) as Partial<KbItemDetail> & { error?: string };
+        if (!res.ok) {
+          throw new Error(data.error || "加载资料正文失败");
+        }
+        if (!cancelled) {
+          setSelectedItemFullContent((data.full_content || data.content || "").trim());
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedItemFullContent("");
+          setEditFeedback((current) => current ?? {
+            type: "error",
+            message: error instanceof Error ? error.message : "加载资料正文失败",
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailContentLoading(false);
+        }
+      }
+    };
+
+    void loadFullContent();
+    return () => {
+      cancelled = true;
+    };
+  }, [showDetail, selectedItem?.id]);
 
   // 进入编辑模式
   const enterEditMode = () => {
@@ -1410,14 +1545,13 @@ export default function LibraryDemoPage() {
         setEditFeedback({ type: "error", message: "该资料暂不支持在线编辑" });
         return;
       }
+      if (detailContentLoading && !selectedItemFullContent.trim()) {
+        setEditFeedback({ type: "error", message: "正文仍在加载，请稍后再试" });
+        return;
+      }
       setIsEditing(true);
       setEditFeedback(null);
-      // 根据文件类型设置初始内容
-      if (selectedItem.type === 'Markdown') {
-        setEditContent(`# ${selectedItem.title}\n\n${selectedItem.preview}\n\n## 更多内容\n\n这里可以继续编辑...`);
-      } else {
-        setEditContent(selectedItem.preview);
-      }
+      setEditContent(selectedItemFullContent.trim() || selectedItem.preview);
     }
   };
 
@@ -1449,6 +1583,7 @@ export default function LibraryDemoPage() {
       setItems((prev) => patchItemInTree(prev, selectedItem.id, mergeItem));
       setCurrentItems((prev) => patchItemInTree(prev, selectedItem.id, mergeItem));
       setSelectedItem((prev) => (prev ? mergeItem(prev) : prev));
+      setSelectedItemFullContent(editContent.trim());
       setIsEditing(false);
       setEditFeedback({ type: "success", message: "保存成功，知识索引已更新" });
     } catch (error) {
@@ -1499,24 +1634,6 @@ export default function LibraryDemoPage() {
     setEditFeedback(null);
   };
 
-  // 基于此创作（跳转到创作页面）
-  const createProject = () => {
-    if (selectedItem) {
-      if (selectedItem.isVirtual || selectedItem.type === "文件目录") {
-        alert("该资料尚未入库，无法基于此创作");
-        return;
-      }
-      if (selectedItem.processingStatus === "failed") {
-        alert("该资料处理失败，请重新导入或先修复解析问题");
-        return;
-      }
-      // 先关闭弹窗
-      setShowDetail(false);
-      // 跳转到创作页面，传递资料 ID
-      router.push(`/library/create?itemId=${selectedItem.id}`);
-    }
-  };
-
   // ESC 键关闭详情页
   React.useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -1530,6 +1647,7 @@ export default function LibraryDemoPage() {
 
   // 过滤管线：视图 -> 类型 -> 标签 -> 搜索
   const viewFilteredItems = currentItems.filter((item) => {
+    if (item.isDirectory) return true; // 目录始终显示
     if (viewMode === "all") return true;
     if (viewMode === "recent") return isRecentUpdate(item.updatedAt, 7);
     if (viewMode === "ready") return isReadyStatus(item.processingStatus);
@@ -1541,7 +1659,9 @@ export default function LibraryDemoPage() {
   const tagFilteredItems = typeFilteredItems.filter((item) => {
     if (selectedTags.length === 0) return true;
     const itemTagLabels = item.tags?.map((tag) => tag.label) || [];
-    return selectedTags.some((tag) => itemTagLabels.includes(tag));
+    return tagFilterMode === "and"
+      ? selectedTags.every((tag) => itemTagLabels.includes(tag))
+      : selectedTags.some((tag) => itemTagLabels.includes(tag));
   });
 
   const favoriteFilteredItems = tagFilteredItems.filter((item) => {
@@ -1560,6 +1680,10 @@ export default function LibraryDemoPage() {
   });
 
   const sortedFilteredItems = [...filteredItems].sort((a, b) => {
+    // 联网搜索虚拟目录始终置顶
+    if (a.id === "virtual:deepsearch-collection") return -1;
+    if (b.id === "virtual:deepsearch-collection") return 1;
+
     const timeA = Date.parse(a.updatedAt || "") || 0;
     const timeB = Date.parse(b.updatedAt || "") || 0;
     const titleA = a.title || "";
@@ -1608,11 +1732,8 @@ export default function LibraryDemoPage() {
       tags: sortedTags.filter((tag) => tag.category === category),
     }))
     .filter((entry) => entry.tags.length > 0);
-  const canCreateProject = !!selectedItem
-    && !selectedItem.isVirtual
-    && selectedItem.type !== "文件目录"
-    && selectedItem.processingStatus !== "failed";
   const canReindexSelected = !!selectedItem && !selectedItem.isVirtual;
+  const detailPreviewContent = (selectedItemFullContent || selectedItem?.preview || "").trim();
   const hasAttentionItem = currentItems.some((item) => isAttentionStatus(item.processingStatus));
   const hasReadyItem = currentItems.some((item) => isReadyStatus(item.processingStatus));
   const hasRecentItem = currentItems.some((item) => isRecentUpdate(item.updatedAt, 7));
@@ -1834,15 +1955,25 @@ export default function LibraryDemoPage() {
 
               {selectedTags.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {selectedTags.map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => removeTag(tag)}
-                      className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent transition-colors"
-                    >
-                      {tag}
-                      <span>×</span>
-                    </button>
+                  {selectedTags.map((tag, i) => (
+                    <React.Fragment key={tag}>
+                      {i > 0 && selectedTags.length > 1 && (
+                        <button
+                          onClick={() => setTagFilterMode((m) => m === "or" ? "and" : "or")}
+                          className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                          title="点击切换 或/且"
+                        >
+                          {tagFilterMode === "or" ? "或" : "且"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => removeTag(tag)}
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent transition-colors"
+                      >
+                        {tag}
+                        <span>×</span>
+                      </button>
+                    </React.Fragment>
                   ))}
                 </div>
               ) : null}
@@ -1940,49 +2071,16 @@ export default function LibraryDemoPage() {
       </div>
 
       {/* 底部 AI 对话框 */}
-      <div className="border-t border-border/50 bg-background/95 backdrop-blur">
-        <div className="mx-auto max-w-4xl px-4 py-3">
-          <div
-            className={`transition-all duration-200 ${
-              libraryChatCollapsed
-                ? ""
-                : "overflow-hidden rounded-2xl border border-border/70 bg-background shadow-sm"
-            }`}
-          >
-            {!libraryChatCollapsed ? (
-              <div className="flex justify-end px-3 pt-3">
-                <button
-                  onClick={() => setLibraryChatCollapsed(true)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  收起
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />
-                  </svg>
-                </button>
-              </div>
-            ) : null}
-            <div
-              className={`transition-all duration-200 ${
-                libraryChatCollapsed ? "" : "h-[min(48vh,40rem)]"
-              }`}
-            >
-              <div className={`h-full ${libraryChatCollapsed ? "" : "pb-3"}`}>
-                <LibraryChatPanel
-                  compactInputOnly={libraryChatCollapsed}
-                  fullWidth
-                  hideEmptyState
-                  onInputFocus={() => {
-                    if (libraryChatCollapsed) {
-                      setLibraryChatCollapsed(false);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <BottomChatPanel>
+        {({ collapsed, expand }) => (
+          <LibraryChatPanel
+            compactInputOnly={collapsed}
+            fullWidth
+            hideEmptyState
+            onInputFocus={expand}
+          />
+        )}
+      </BottomChatPanel>
 
       {/* 详情页模态框 */}
       {showDetail && selectedItem && (
@@ -2014,23 +2112,6 @@ export default function LibraryDemoPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {/* 基于此创作按钮 */}
-                <button
-                  onClick={createProject}
-                  disabled={!canCreateProject}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                    canCreateProject
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "bg-muted text-muted-foreground cursor-not-allowed"
-                  }`}
-                  title="基于此创作"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  基于此创作
-                </button>
-
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -2152,14 +2233,14 @@ export default function LibraryDemoPage() {
                         {selectedItem.summary}
                       </p>
                     </div>
-                  ) : (
-                    <div className="rounded-lg border border-border bg-muted/30 p-4">
-                      <h3 className="text-sm font-medium mb-2">内容预览</h3>
-                      <pre className="whitespace-pre-wrap text-sm text-foreground">
-{selectedItem.preview || "暂无预览"}
-                      </pre>
-                    </div>
-                  )}
+                  ) : null}
+                  <div className="rounded-lg border border-border bg-muted/30 p-4 overflow-hidden">
+                    <h3 className="text-sm font-medium mb-2">内容预览</h3>
+                    <LibraryContentPreview
+                      item={selectedItem}
+                      textContent={detailPreviewContent}
+                    />
+                  </div>
                   {selectedItem.keyPoints.length > 0 ? (
                     <div className="rounded-lg border border-border bg-background p-3">
                       <div className="text-xs text-muted-foreground">关键要点</div>
@@ -2179,54 +2260,37 @@ export default function LibraryDemoPage() {
                       <div className="mt-1 text-sm break-all">{selectedItem.displayPath || selectedItem.path}</div>
                     </div>
                   )}
+                  {shouldShowKnowledgeEnhancementHint(selectedItem) ? (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
+                      <div className="text-xs text-sky-700">AI 增强未启用</div>
+                      <div className="mt-1 text-sm text-sky-700">
+                        当前已完成本地索引与检索，但未生成概述、要点和自动标签。请在“设置 &gt; 服务商”里为知识库选择一个支持文本处理的 API Key 服务。
+                      </div>
+                    </div>
+                  ) : null}
                   {selectedItem.processingError ? (
                     <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
                       <div className="text-xs text-rose-700">处理异常</div>
                       <div className="mt-1 text-sm text-rose-700 break-all">{selectedItem.processingError}</div>
                     </div>
                   ) : null}
-                  {selectedItem.processingDetail ? (
-                    <div className="rounded-lg border border-border bg-background p-3">
-                      <div className="text-xs text-muted-foreground">处理阶段</div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {Object.entries(parseProcessingDetail(selectedItem.processingDetail)).map(([stage, stageStatus]) => (
-                          <span key={`${stage}-${stageStatus}`} className="rounded-full bg-muted px-2 py-0.5 text-[11px]">
-                            {stage}: {stageStatus}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               )}
               {/* 标签 */}
               {selectedItem.tags && selectedItem.tags.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-sm font-medium mb-3">标签</h3>
-                  <div className="flex items-center gap-2 flex-wrap">
+                <div className="mt-4 mb-6 rounded-xl border border-border bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-medium">标签</h3>
+                    <span className="text-xs text-muted-foreground">{selectedItem.tags.length} 个</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
                     {selectedItem.tags.map((tag, index) => {
-                      const getTagStyle = () => {
-                        if (tag.type === 'custom') {
-                          const colors: Record<string, string> = {
-                            red: 'bg-red-500/10 text-red-600 dark:text-red-400',
-                            orange: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-                            yellow: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
-                            green: 'bg-green-500/10 text-green-600 dark:text-green-400',
-                            blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-                            purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-                          };
-                          return colors[tag.color || 'blue'] || colors.blue;
-                        } else if (tag.type === 'ai') {
-                          return 'border border-blue-500/50 text-blue-600 dark:text-blue-400 bg-transparent';
-                        } else {
-                          return 'bg-gray-500/10 text-gray-600 dark:text-gray-400';
-                        }
-                      };
                       return (
                         <span
                           key={index}
-                          className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${getTagStyle()}`}
+                          className={`inline-flex items-center gap-2 rounded-full font-medium ${getTagStyle(tag)}`}
                         >
+                          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
                           {tag.label}
                         </span>
                       );
@@ -2237,16 +2301,17 @@ export default function LibraryDemoPage() {
 
               {/* 元信息 */}
               <div className="border-t border-border pt-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
+                <div className="grid gap-4 text-sm sm:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-background p-4">
                     <span className="text-muted-foreground">类型</span>
-                    <p className="font-medium mt-1">{selectedItem.type}</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <div className="shrink-0 scale-[0.88] transform-gpu">
+                        <FileTypeLogo type={selectedItem.type} />
+                      </div>
+                      <p className="font-medium">{selectedItem.type}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">切片数</span>
-                    <p className="font-medium mt-1">{selectedItem.chunkCount || 0}</p>
-                  </div>
-                  <div>
+                  <div className="rounded-xl border border-border bg-background p-4">
                     <span className="text-muted-foreground">{selectedItem.timeLabel}</span>
                     <p className="font-medium mt-1">{selectedItem.fullDate}</p>
                   </div>
@@ -2267,12 +2332,6 @@ export default function LibraryDemoPage() {
                   {editFeedback.message}
                 </div>
               ) : null}
-              <button className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
-                分享
-              </button>
-              <button className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
-                导出
-              </button>
               {isEditing ? (
                 <>
                   <button
@@ -2293,9 +2352,10 @@ export default function LibraryDemoPage() {
               ) : (
                 <button
                   onClick={enterEditMode}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  disabled={detailContentLoading}
+                  className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
-                  编辑
+                  {detailContentLoading ? "正文加载中..." : "编辑"}
                 </button>
               )}
             </div>
@@ -2339,27 +2399,58 @@ function ContentCard({
   const visibleTags = item.tags?.slice(0, 3) || [];
   const remainingCount = (item.tags?.length || 0) - visibleTags.length;
 
-  // 根据标签类型返回样式
-  const getTagStyle = (tag: Tag) => {
-    if (tag.type === 'custom') {
-      // 自定义标签：彩色背景
-      const colors: Record<string, string> = {
-        red: 'bg-red-500/10 text-red-600 dark:text-red-400',
-        orange: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-        yellow: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
-        green: 'bg-green-500/10 text-green-600 dark:text-green-400',
-        blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-        purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-      };
-      return colors[tag.color || 'blue'] || colors.blue;
-    } else if (tag.type === 'ai') {
-      // AI标签：蓝色边框
-      return 'border border-blue-500/50 text-blue-600 dark:text-blue-400 bg-transparent';
-    } else {
-      // 系统标签：灰色
-      return 'bg-gray-500/10 text-gray-600 dark:text-gray-400';
-    }
-  };
+  // 联网搜索虚拟目录 — 全宽横幅卡片
+  if (item.type === "联网搜索") {
+    const count = item.children?.length ?? 0;
+    return (
+      <div
+        onClick={() => onClick(item)}
+        className="col-span-full group relative flex cursor-pointer items-center overflow-hidden rounded-xl bg-gradient-to-r from-sky-500 via-sky-500 to-blue-600 px-5 py-4 shadow-sm transition-all hover:shadow-md hover:shadow-sky-300/40 dark:from-sky-600 dark:via-sky-600 dark:to-blue-700 dark:hover:shadow-sky-800/40"
+      >
+        {/* 背景装饰：大地球轮廓 */}
+        <svg
+          className="pointer-events-none absolute right-0 top-1/2 h-32 w-32 -translate-y-1/2 translate-x-8 text-white/[0.07]"
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+        </svg>
+
+        {/* 图标 */}
+        <div className="mr-4 shrink-0 rounded-lg bg-white/15 p-2.5 backdrop-blur-sm">
+          <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+        </div>
+
+        {/* 文字区 */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-white">{item.title}</h3>
+            <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-medium text-white/90">
+              自动归档
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-white/65">
+            DeepSearch 联网搜索的网页内容，可在对话中直接引用检索
+          </p>
+        </div>
+
+        {/* 右侧：条数 + 箭头 */}
+        <div className="ml-4 flex shrink-0 items-center gap-3">
+          <div className="text-right">
+            <div className="text-xl font-bold leading-none text-white">{count}</div>
+            <div className="mt-0.5 text-[10px] text-white/60">条网页资料</div>
+          </div>
+          <svg
+            className="h-4 w-4 text-white/60 transition-transform group-hover:translate-x-0.5 group-hover:text-white"
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -2445,7 +2536,7 @@ function ContentCard({
                       isSelected
                         ? 'ring-2 ring-primary ring-offset-1 ring-offset-background'
                         : ''
-                    } ${getTagStyle(tag)}`}
+                    } ${getTagStyle(tag, { compact: true })}`}
                   >
                     {tag.label}
                   </button>

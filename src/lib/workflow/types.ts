@@ -7,8 +7,8 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type WorkflowStepType = 'agent' | 'browser' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
-export type WorkflowStepTypeV1 = 'agent' | 'browser' | 'notification' | 'capability';
+export type WorkflowStepType = 'agent' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
+export type WorkflowStepTypeV1 = 'agent' | 'notification' | 'capability';
 export type WorkflowStepTypeV2Control = 'if-else' | 'for-each' | 'while';
 export const WORKFLOW_AGENT_ROLES = ['worker', 'researcher', 'coder', 'integration'] as const;
 export type WorkflowAgentRole = (typeof WORKFLOW_AGENT_ROLES)[number];

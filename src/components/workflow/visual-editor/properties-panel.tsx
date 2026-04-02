@@ -23,11 +23,16 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
   const [stepId, setStepId] = useState(data.stepId);
   const [deps, setDeps] = useState(data.dependsOn.join(', '));
   const [presets, setPresets] = useState<AgentPreset[]>([]);
+  const defaultTimeoutMin = 10;
+  const [timeoutMin, setTimeoutMin] = useState(
+    data.policy?.timeoutMs ? data.policy.timeoutMs / 60_000 : defaultTimeoutMin,
+  );
 
   useEffect(() => {
     setInput(data.input);
     setStepId(data.stepId);
     setDeps(data.dependsOn.join(', '));
+    setTimeoutMin(data.policy?.timeoutMs ? data.policy.timeoutMs / 60_000 : defaultTimeoutMin);
   }, [data]);
 
   useEffect(() => {
@@ -39,8 +44,10 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
 
   const save = useCallback(() => {
     const newDeps = deps.split(',').map(s => s.trim()).filter(Boolean);
-    onUpdate({ ...data, stepId, input, dependsOn: newDeps });
-  }, [data, stepId, input, deps, onUpdate]);
+    const timeoutMs = timeoutMin > 0 ? Math.round(timeoutMin * 60_000) : undefined;
+    const policy = timeoutMs ? { ...data.policy, timeoutMs } : data.policy;
+    onUpdate({ ...data, stepId, input, dependsOn: newDeps, policy });
+  }, [data, stepId, input, deps, timeoutMin, onUpdate]);
 
   const updateInput = useCallback((key: string, value: unknown) => {
     setInput(prev => ({ ...prev, [key]: value }));
@@ -124,6 +131,20 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
           />
         </div>
       )}
+
+      <div className="space-y-1">
+        <Label className="text-[10px]">超时（分钟）</Label>
+        <Input
+          type="number"
+          value={timeoutMin}
+          onChange={e => setTimeoutMin(Number(e.target.value))}
+          className="h-7 text-xs"
+          min={1}
+          max={120}
+          step={1}
+        />
+        <p className="text-[9px] text-muted-foreground">节点执行超时时间，默认 10 分钟</p>
+      </div>
 
       <div className="flex gap-2 pt-1">
         <Button size="sm" className="h-7 text-xs flex-1" onClick={save}>保存</Button>

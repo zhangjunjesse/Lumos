@@ -3,6 +3,7 @@ import type {
   ProviderModelCatalogSource,
   ProviderModelOption,
 } from '@/types';
+import { providerSupportsCapability } from '@/lib/provider-config';
 
 export const BUILTIN_CLAUDE_MODEL_IDS = {
   sonnet: 'claude-sonnet-4-6',
@@ -18,6 +19,45 @@ export const DEFAULT_PROVIDER_MODEL_OPTIONS: ProviderModelOption[] = [
   { value: BUILTIN_CLAUDE_MODEL_IDS.haiku, label: 'Claude Haiku 4.5' },
 ];
 
+const SERVICE_SPECIFIC_PROVIDER_MODEL_OPTIONS: Record<string, ProviderModelOption[]> = {
+  'https://api.z.ai/api/anthropic': [
+    { value: 'sonnet', label: 'GLM-4.7' },
+    { value: 'opus', label: 'GLM-5' },
+    { value: 'haiku', label: 'GLM-4.5-Air' },
+  ],
+  'https://open.bigmodel.cn/api/anthropic': [
+    { value: 'sonnet', label: 'GLM-4.7' },
+    { value: 'opus', label: 'GLM-5' },
+    { value: 'haiku', label: 'GLM-4.5-Air' },
+  ],
+  'https://api.kimi.com/coding/': [
+    { value: 'sonnet', label: 'Kimi K2.5' },
+    { value: 'opus', label: 'Kimi K2.5' },
+    { value: 'haiku', label: 'Kimi K2.5' },
+  ],
+  'https://api.moonshot.ai/anthropic': [
+    { value: 'sonnet', label: 'Kimi K2.5' },
+    { value: 'opus', label: 'Kimi K2.5' },
+    { value: 'haiku', label: 'Kimi K2.5' },
+  ],
+  'https://api.moonshot.cn/anthropic': [
+    { value: 'sonnet', label: 'Kimi K2.5' },
+    { value: 'opus', label: 'Kimi K2.5' },
+    { value: 'haiku', label: 'Kimi K2.5' },
+  ],
+  'https://api.minimaxi.com/anthropic': [
+    { value: 'sonnet', label: 'MiniMax-M2.5' },
+    { value: 'opus', label: 'MiniMax-M2.5' },
+    { value: 'haiku', label: 'MiniMax-M2.5' },
+  ],
+  'https://api.minimax.io/anthropic': [
+    { value: 'sonnet', label: 'MiniMax-M2.5' },
+    { value: 'opus', label: 'MiniMax-M2.5' },
+    { value: 'haiku', label: 'MiniMax-M2.5' },
+  ],
+  'https://openrouter.ai/api': DEFAULT_PROVIDER_MODEL_OPTIONS,
+};
+
 const REQUESTED_MODEL_LABELS: Record<string, string> = {
   sonnet: 'Claude Sonnet',
   opus: 'Claude Opus',
@@ -29,6 +69,17 @@ const REQUESTED_MODEL_TARGET_PREFIXES: Record<string, string> = {
   opus: 'claude-opus-',
   haiku: 'claude-haiku-',
 };
+
+function normalizeProviderBaseUrl(baseUrl?: string | null): string {
+  return (baseUrl || '').trim().toLowerCase().replace(/\/+$/, '');
+}
+
+const NORMALIZED_SERVICE_SPECIFIC_PROVIDER_MODEL_OPTIONS = new Map<string, ProviderModelOption[]>(
+  Object.entries(SERVICE_SPECIFIC_PROVIDER_MODEL_OPTIONS).map(([baseUrl, models]) => [
+    normalizeProviderBaseUrl(baseUrl),
+    models,
+  ]),
+);
 
 function dedupeProviderModelOptions(models: ProviderModelOption[]): ProviderModelOption[] {
   const seen = new Set<string>();
@@ -77,6 +128,16 @@ function normalizeProviderModelCatalogSource(source?: string | null): ProviderMo
     return source;
   }
   return 'default';
+}
+
+export function getServiceSpecificProviderModelOptions(
+  baseUrl?: string | null,
+): ProviderModelOption[] {
+  const models = NORMALIZED_SERVICE_SPECIFIC_PROVIDER_MODEL_OPTIONS.get(
+    normalizeProviderBaseUrl(baseUrl),
+  );
+
+  return models ? dedupeProviderModelOptions(models) : [];
 }
 
 export function parseProviderModelCatalog(modelCatalog?: string | null): ProviderModelOption[] {
@@ -149,14 +210,17 @@ export function resolveBuiltInClaudeModelId(
 }
 
 export function getProviderModelCatalogMeta(
-  provider?: Pick<ApiProvider, 'provider_type' | 'model_catalog' | 'model_catalog_source' | 'model_catalog_updated_at'> | null,
+  provider?: Pick<
+    ApiProvider,
+    'provider_type' | 'api_protocol' | 'base_url' | 'capabilities' | 'model_catalog' | 'model_catalog_source' | 'model_catalog_updated_at'
+  > | null,
 ): {
   models: ProviderModelOption[];
   source: ProviderModelCatalogSource;
   updatedAt: string | null;
   usesDefault: boolean;
 } {
-  if (provider?.provider_type === 'gemini-image') {
+  if (provider && !providerSupportsCapability(provider, 'agent-chat') && !providerSupportsCapability(provider, 'text-gen')) {
     return {
       models: [],
       source: normalizeProviderModelCatalogSource(provider.model_catalog_source),
@@ -175,6 +239,25 @@ export function getProviderModelCatalogMeta(
     };
   }
 
+  const serviceSpecificModels = getServiceSpecificProviderModelOptions(provider?.base_url);
+  if (serviceSpecificModels.length > 0) {
+    return {
+      models: serviceSpecificModels,
+      source: 'default',
+      updatedAt: provider?.model_catalog_updated_at || null,
+      usesDefault: true,
+    };
+  }
+
+  if (provider?.api_protocol === 'openai-compatible') {
+    return {
+      models: [],
+      source: 'default',
+      updatedAt: provider?.model_catalog_updated_at || null,
+      usesDefault: true,
+    };
+  }
+
   return {
     models: DEFAULT_PROVIDER_MODEL_OPTIONS,
     source: 'default',
@@ -184,7 +267,10 @@ export function getProviderModelCatalogMeta(
 }
 
 export function getProviderModelOptions(
-  provider?: Pick<ApiProvider, 'provider_type' | 'model_catalog' | 'model_catalog_source' | 'model_catalog_updated_at'> | null,
+  provider?: Pick<
+    ApiProvider,
+    'provider_type' | 'api_protocol' | 'base_url' | 'capabilities' | 'model_catalog' | 'model_catalog_source' | 'model_catalog_updated_at'
+  > | null,
 ): ProviderModelOption[] {
   return getProviderModelCatalogMeta(provider).models;
 }

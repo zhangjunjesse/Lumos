@@ -11,7 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import type { TooltipContentProps, TooltipValueType } from "recharts";
+import type { TooltipContentProps } from "recharts";
 import { useTranslation } from "@/hooks/useTranslation";
 
 // ---------------------------------------------------------------------------
@@ -121,7 +121,9 @@ function getModelColor(_model: string, idx: number): string {
 // Chart tooltip (recharts v3 compatible)
 // ---------------------------------------------------------------------------
 
-function ChartTooltip({ active, payload, label }: TooltipContentProps<TooltipValueType, string | number>) {
+type ChartTooltipValue = number | string | ReadonlyArray<number | string>;
+
+function ChartTooltip({ active, payload, label }: TooltipContentProps<ChartTooltipValue, string | number>) {
   if (!active || !payload?.length) return null;
 
   const items = payload.flatMap((entry) => {

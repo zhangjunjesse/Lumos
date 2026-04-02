@@ -3,7 +3,7 @@ import { WORKFLOW_AGENT_ROLES, type WorkflowStepType } from './types';
 
 export interface StepCompilerDefinition {
   type: WorkflowStepType;
-  runtimeBinding: 'agentStep' | 'browserStep' | 'notificationStep' | 'capabilityStep' | 'waitStep';
+  runtimeBinding: 'agentStep' | 'notificationStep' | 'capabilityStep' | 'waitStep';
   inputSchema: z.ZodType<Record<string, unknown>>;
 }
 
@@ -18,37 +18,6 @@ const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   outputMode: z.enum(['structured', 'plain-text']).optional(),
   context: z.record(z.string(), z.unknown()).optional(),
 }).strict();
-
-const browserStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
-  action: z.enum(['navigate', 'click', 'fill', 'screenshot']),
-  url: z.string().min(1).optional(),
-  selector: z.string().min(1).optional(),
-  value: z.string().min(1).optional(),
-  pageId: z.string().min(1).optional(),
-  createPage: z.boolean().optional(),
-}).strict().superRefine((input, ctx) => {
-  if (input.action === 'navigate' && !input.url) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'browser.navigate requires "url"',
-      path: ['url'],
-    });
-  }
-  if ((input.action === 'click' || input.action === 'fill') && !input.selector) {
-    ctx.addIssue({
-      code: 'custom',
-      message: `browser.${input.action} requires "selector"`,
-      path: ['selector'],
-    });
-  }
-  if (input.action === 'fill' && !input.value) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'browser.fill requires "value"',
-      path: ['value'],
-    });
-  }
-});
 
 const notificationStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   message: z.string().min(1),
@@ -73,11 +42,6 @@ export const STEP_REGISTRY: Partial<Record<WorkflowStepType, StepCompilerDefinit
     type: 'agent',
     runtimeBinding: 'agentStep',
     inputSchema: agentStepInputSchema,
-  },
-  browser: {
-    type: 'browser',
-    runtimeBinding: 'browserStep',
-    inputSchema: browserStepInputSchema,
   },
   notification: {
     type: 'notification',

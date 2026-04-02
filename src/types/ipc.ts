@@ -84,6 +84,10 @@ export interface ProviderGetRequest {
 export interface ProviderCreateRequest {
   name: string;
   provider_type?: string;
+  api_protocol?: string;
+  capabilities?: string;
+  provider_origin?: string;
+  auth_mode?: string;
   base_url?: string;
   api_key?: string;
   is_active?: boolean;
@@ -97,6 +101,10 @@ export interface ProviderUpdateRequest {
   id: string;
   name?: string;
   provider_type?: string;
+  api_protocol?: string;
+  capabilities?: string;
+  provider_origin?: string;
+  auth_mode?: string;
   base_url?: string;
   api_key?: string;
   is_active?: boolean;
@@ -114,6 +122,10 @@ export interface Provider {
   id: string;
   name: string;
   provider_type: string;
+  api_protocol: string;
+  capabilities: string;
+  provider_origin: string;
+  auth_mode: string;
   base_url: string;
   api_key: string;
   is_active: number;

@@ -2,13 +2,18 @@ import { createHash } from 'crypto';
 import { z } from 'zod';
 import { getStepCompilerDefinition } from './step-registry';
 import type {
+  AnyWorkflowDSL,
   CompiledWorkflowManifest,
   ConditionExpr,
   GenerateWorkflowValidation,
   WorkflowDSL,
+  WorkflowDSLV2,
   WorkflowStep,
   WorkflowStepType,
 } from './types';
+
+const SAFE_IDENTIFIER_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const safeStepId = z.string().min(1).max(100).regex(SAFE_IDENTIFIER_RE, 'must be a safe identifier (letters, digits, hyphens, underscores; start with letter)');
 
 const workflowStepPolicySchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
@@ -17,7 +22,7 @@ const workflowStepPolicySchema = z.object({
   }).strict().optional(),
 }).strict().optional();
 
-const conditionExprSchema: z.ZodType<ConditionExpr> = z.union([
+const conditionExprV1Schema: z.ZodType<ConditionExpr> = z.union([
   z.object({
     op: z.literal('exists'),
     ref: z.string().min(1),
@@ -34,20 +39,113 @@ const conditionExprSchema: z.ZodType<ConditionExpr> = z.union([
   }).strict(),
 ]);
 
+const conditionExprSchema: z.ZodType<ConditionExpr> = z.lazy(() =>
+  z.union([
+    z.object({ op: z.literal('exists'), ref: z.string().min(1) }).strict(),
+    z.object({ op: z.literal('eq'), left: z.string().min(1), right: z.unknown() }).strict(),
+    z.object({ op: z.literal('neq'), left: z.string().min(1), right: z.unknown() }).strict(),
+    z.object({ op: z.literal('gt'), left: z.string().min(1), right: z.unknown() }).strict(),
+    z.object({ op: z.literal('lt'), left: z.string().min(1), right: z.unknown() }).strict(),
+    z.object({ op: z.literal('and'), conditions: z.array(conditionExprSchema).min(1) }).strict(),
+    z.object({ op: z.literal('or'), conditions: z.array(conditionExprSchema).min(1) }).strict(),
+    z.object({ op: z.literal('not'), condition: conditionExprSchema }).strict(),
+  ])
+);
+
+const workflowParamDefSchema = z.object({
+  name: z.string().min(1).max(50).regex(SAFE_IDENTIFIER_RE, 'param name must be a safe identifier'),
+  type: z.enum(['string', 'number', 'boolean']),
+  description: z.string().max(200).optional(),
+  default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  required: z.boolean().optional(),
+}).strict();
+
+const stepMetadataSchema = z.object({
+  position: z.object({ x: z.number(), y: z.number() }).optional(),
+  label: z.string().optional(),
+}).strict().optional();
+
 const workflowStepSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(['agent', 'browser', 'notification', 'capability']),
-  dependsOn: z.array(z.string().min(1)).optional(),
-  when: conditionExprSchema.optional(),
+  id: safeStepId,
+  type: z.enum(['agent', 'notification', 'capability']),
+  dependsOn: z.array(safeStepId).optional(),
+  when: conditionExprV1Schema.optional(),
   input: z.record(z.string(), z.unknown()).optional(),
   policy: workflowStepPolicySchema,
+  metadata: stepMetadataSchema,
 }).strict();
 
 const workflowDslSchema: z.ZodType<WorkflowDSL> = z.object({
   version: z.literal('v1'),
   name: z.string().min(1),
+  params: z.array(workflowParamDefSchema).max(20).optional(),
   steps: z.array(workflowStepSchema).min(1).max(20),
 }).strict();
+
+// ── V2 step schemas ─────────────────────────────────────────────────────────
+
+const ifElseStepInputSchema = z.object({
+  condition: conditionExprSchema,
+  then: z.array(safeStepId).min(1),
+  else: z.array(safeStepId).optional(),
+}).strict();
+
+const forEachStepInputSchema = z.object({
+  collection: z.string().min(1),
+  itemVar: z.string().min(1).regex(SAFE_IDENTIFIER_RE, 'itemVar must be a safe JS identifier'),
+  body: z.array(safeStepId).min(1),
+  maxIterations: z.number().int().positive().max(200).optional(),
+}).strict();
+
+const whileStepInputSchema = z.object({
+  condition: conditionExprSchema,
+  body: z.array(safeStepId).min(1),
+  maxIterations: z.number().int().positive().max(100).optional(),
+}).strict();
+
+const workflowStepV2Schema = z.discriminatedUnion('type', [
+  z.object({
+    id: safeStepId,
+    type: z.literal('agent'),
+    dependsOn: z.array(safeStepId).optional(),
+    when: conditionExprSchema.optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('if-else'),
+    dependsOn: z.array(safeStepId).optional(),
+    input: ifElseStepInputSchema,
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('for-each'),
+    dependsOn: z.array(safeStepId).optional(),
+    input: forEachStepInputSchema,
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('while'),
+    dependsOn: z.array(safeStepId).optional(),
+    input: whileStepInputSchema,
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+]);
+
+const workflowDslV2Schema: z.ZodType<WorkflowDSLV2> = z.object({
+  version: z.literal('v2'),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  params: z.array(workflowParamDefSchema).max(20).optional(),
+  steps: z.array(workflowStepV2Schema).min(1).max(50),
+}) as z.ZodType<WorkflowDSLV2>;
 
 const STEP_OUTPUT_REF_PATTERN = /^steps\.([A-Za-z0-9_-]+)\.output(?:\.(.+))?$/;
 
@@ -141,19 +239,139 @@ export function assertValidWorkflowDsl(spec: WorkflowDSL): void {
   }
 }
 
-export function createWorkflowVersion(spec: WorkflowDSL): string {
+// ── V2 validation ───────────────────────────────────────────────────────────
+
+export function validateWorkflowDslV2(spec: WorkflowDSLV2): GenerateWorkflowValidation {
+  const errors: string[] = [];
+  const base = workflowDslV2Schema.safeParse(spec);
+
+  if (!base.success) {
+    return {
+      valid: false,
+      errors: base.error.issues.map((issue) =>
+        formatZodIssue(
+          issue.path.map((s) => typeof s === 'symbol' ? s.toString() : s),
+          issue.message
+        )
+      ),
+    };
+  }
+
+  const stepIds = new Set<string>();
+  for (const step of spec.steps) {
+    if (stepIds.has(step.id)) {
+      errors.push(`steps.${step.id}: duplicate step id`);
+      continue;
+    }
+    stepIds.add(step.id);
+  }
+
+  // Validate control flow child step references + ownership
+  const ownerOf = new Map<string, string>();
+  for (const step of spec.steps) {
+    const childRefs = getControlFlowChildRefs(step);
+    for (const ref of childRefs) {
+      if (!stepIds.has(ref)) {
+        errors.push(`steps.${step.id}: references unknown step "${ref}"`);
+      } else if (ownerOf.has(ref)) {
+        errors.push(`steps.${step.id}: step "${ref}" already owned by "${ownerOf.get(ref)}"`);
+      } else {
+        ownerOf.set(ref, step.id);
+      }
+    }
+  }
+
+  // Validate agent steps via step registry
+  for (const step of spec.steps) {
+    if (step.type === 'agent') {
+      const definition = getStepCompilerDefinition(step.type);
+      if (definition) {
+        const parsedInput = definition.inputSchema.safeParse(step.input ?? {});
+        if (!parsedInput.success) {
+          for (const issue of parsedInput.error.issues) {
+            errors.push(formatZodIssue(
+              ['steps', step.id, 'input', ...issue.path.map(String)],
+              issue.message
+            ));
+          }
+        }
+      }
+    }
+  }
+
+  // Validate dependsOn references
+  const ownedIds = new Set(ownerOf.keys());
+  for (const step of spec.steps) {
+    const seenDeps = new Set<string>();
+    for (const dep of step.dependsOn ?? []) {
+      if (dep === step.id) {
+        errors.push(`steps.${step.id}.dependsOn: step cannot depend on itself`);
+      }
+      if (seenDeps.has(dep)) {
+        errors.push(`steps.${step.id}.dependsOn: duplicate dependency "${dep}"`);
+      }
+      seenDeps.add(dep);
+      if (!stepIds.has(dep)) {
+        errors.push(`steps.${step.id}.dependsOn: unknown step "${dep}"`);
+      } else if (ownedIds.has(dep)) {
+        errors.push(`steps.${step.id}.dependsOn: "${dep}" is owned by a control flow step and cannot be directly depended on`);
+      }
+    }
+  }
+
+  // Validate step output references (steps.X.output must be in dependsOn)
+  const depRefErrors = validateDependencyReferences(spec.steps as WorkflowStep[]);
+  errors.push(...depRefErrors);
+
+  // Check for dependency cycles among top-level steps (non-owned)
+  const topLevelSteps = spec.steps.filter(s => !ownedIds.has(s.id));
+  if (topLevelSteps.length > 0) {
+    try {
+      buildExecutionLayers(topLevelSteps as WorkflowStep[]);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/** Unified validation for any DSL version */
+export function validateAnyWorkflowDsl(spec: AnyWorkflowDSL): GenerateWorkflowValidation {
+  if (spec.version === 'v2') return validateWorkflowDslV2(spec);
+  return validateWorkflowDsl(spec as WorkflowDSL);
+}
+
+function getControlFlowChildRefs(step: WorkflowStep): string[] {
+  const input = step.input as Record<string, unknown> | undefined;
+  if (!input) return [];
+
+  const refs: string[] = [];
+  if (step.type === 'if-else') {
+    if (Array.isArray(input.then)) refs.push(...input.then as string[]);
+    if (Array.isArray(input.else)) refs.push(...input.else as string[]);
+  } else if (step.type === 'for-each' || step.type === 'while') {
+    if (Array.isArray(input.body)) refs.push(...input.body as string[]);
+  }
+  return refs;
+}
+
+// ── Version & Manifest helpers ──────────────────────────────────────────────
+
+export function createWorkflowVersion(spec: AnyWorkflowDSL): string {
   const normalized = stableStringify(spec);
+  const prefix = spec.version === 'v2' ? 'dsl-v2' : 'dsl-v1';
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
-  return `dsl-v1-${hash}`;
+  return `${prefix}-${hash}`;
 }
 
 export function buildCompiledWorkflowManifest(
-  spec: Pick<WorkflowDSL, 'name' | 'steps'>,
+  spec: Pick<AnyWorkflowDSL, 'name' | 'steps' | 'version'>,
   workflowVersion: string,
   warnings: string[] = []
 ): CompiledWorkflowManifest {
   return {
-    dslVersion: 'v1',
+    dslVersion: (spec.version || 'v1') as 'v1' | 'v2',
     artifactKind: 'workflow-factory-module',
     exportedSymbol: 'buildWorkflow',
     workflowName: spec.name,
@@ -299,6 +517,19 @@ function collectReferencesFromCondition(
     return;
   }
 
+  if (condition.op === 'and' || condition.op === 'or') {
+    for (let i = 0; i < condition.conditions.length; i++) {
+      collectReferencesFromCondition(condition.conditions[i], [...path, 'conditions', String(i)], refs);
+    }
+    return;
+  }
+
+  if (condition.op === 'not') {
+    collectReferencesFromCondition(condition.condition, [...path, 'condition'], refs);
+    return;
+  }
+
+  // eq, neq, gt, lt
   validateReferenceSyntax(condition.left, [...path, 'left'], refs);
   collectReferencesFromValue(condition.right, [...path, 'right'], refs);
 }

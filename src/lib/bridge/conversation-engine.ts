@@ -52,7 +52,7 @@ Available DeepSearch tools (server name: \`deepsearch\`):
 Workflow: call \`mcp__deepsearch__start\` → poll \`mcp__deepsearch__get_result\` until status is \`completed\` or \`partial\` → summarize results.
 
 Rules:
-- Do NOT use raw browser steps when the user wants DeepSearch — use these tools instead.
+- Do NOT use raw browser tools when the user wants DeepSearch — use these tools instead.
 - Prefer \`managed_page\` and \`best_effort\` by default.
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;

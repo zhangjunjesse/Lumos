@@ -40,7 +40,7 @@ const zh: Record<TranslationKey, string> = {
   'chatList.statusUnreadCompleted': '未读',
 
   // ── Message list ────────────────────────────────────────────
-  'messageList.claudeChat': 'Claude 对话',
+  'messageList.claudeChat': 'Lumos',
   'messageList.emptyDescription': '开始与 Claude 对话。提问、获取代码帮助或探索想法。',
   'messageList.loadEarlier': '加载更早的消息',
   'messageList.loading': '加载中...',
@@ -366,7 +366,7 @@ const zh: Record<TranslationKey, string> = {
   'docPreview.htmlPreview': 'HTML 预览',
 
   // ── Extensions page ─────────────────────────────────────────
-  'extensions.title': '扩展',
+  'extensions.title': '能力',
   'extensions.skills': '技能',
   'extensions.mcpServers': 'MCP 服务器',
   'extensions.deepsearch': 'DeepSearch',
@@ -1381,7 +1381,7 @@ const zh: Record<TranslationKey, string> = {
   'sidebar.trash': '回收站',
   'sidebar.knowledge': '知识库',
   'sidebar.mind': '了解彼此',
-  'sidebar.extensions': '扩展',
+  'sidebar.extensions': '能力',
   'sidebar.settings': '设置',
   'sidebar.mainAgent': '主代理',
   'sidebar.workflow': '工作流',
@@ -1413,7 +1413,7 @@ const zh: Record<TranslationKey, string> = {
   'topbar.settings': '设置',
   'topbar.document': '文档',
   'topbar.chat': '对话',
-  'topbar.mainAgent': '主代理',
+  'topbar.mainAgent': 'Lumos',
   'topbar.workflow': '工作流',
   'topbar.team': '团队',
   'topbar.tasks': '任务',
@@ -1873,6 +1873,34 @@ const zh: Record<TranslationKey, string> = {
   'tooltip.addFolder': '添加项目文件夹',
   'tooltip.deleteCollection': '删除集合',
   'tooltip.deleteItem': '删除条目',
+
+  // Workflow Agent Preset Settings (wapSettings.*)
+  'settings.workflowAgents': 'AI 代理',
+  'wapSettings.title': '工作流 Agent 预设',
+  'wapSettings.description': '配置工作流执行步骤使用的 Agent 预设。内置预设不可删除。',
+  'wapSettings.builtin': '内置',
+  'wapSettings.custom': '自定义',
+  'wapSettings.addPreset': '新建预设',
+  'wapSettings.editPreset': '编辑预设',
+  'wapSettings.deletePreset': '删除',
+  'wapSettings.deleteConfirm': '删除预设 "{name}"？',
+  'wapSettings.deleteConfirmDesc': '此操作不可撤销。引用该预设 ID 的工作流步骤将回退到基于角色的执行。',
+  'wapSettings.noCustomPresets': '暂无自定义预设。',
+  'wapSettings.fieldName': '名称',
+  'wapSettings.fieldDescription': '描述',
+  'wapSettings.fieldExpertise': '专业能力',
+  'wapSettings.fieldRole': '角色',
+  'wapSettings.fieldSystemPrompt': '系统提示词',
+  'wapSettings.roleWorker': '执行者',
+  'wapSettings.roleResearcher': '研究员',
+  'wapSettings.roleCoder': '代码专家',
+  'wapSettings.roleIntegration': '集成专员',
+  'wapSettings.save': '保存',
+  'wapSettings.cancel': '取消',
+  'wapSettings.loading': '加载中…',
+  'wapSettings.errorLoad': '加载预设失败',
+  'wapSettings.errorSave': '保存预设失败',
+  'wapSettings.errorDelete': '删除预设失败',
 };
 
 

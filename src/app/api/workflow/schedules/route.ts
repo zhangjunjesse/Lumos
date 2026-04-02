@@ -10,7 +10,7 @@ import { initScheduler } from '@/lib/scheduler/cron-engine';
 initScheduler();
 
 const workflowDslSchema = z.object({
-  version: z.literal('v1'),
+  version: z.string(),
   name: z.string(),
   steps: z.array(z.record(z.string(), z.unknown())),
 }).passthrough();
@@ -18,9 +18,12 @@ const workflowDslSchema = z.object({
 const createSchema = z.object({
   name: z.string().trim().min(1).max(100),
   workflowDsl: workflowDslSchema,
-  intervalMinutes: z.number().int().min(1).max(43200),
+  workflowId: z.string().optional(),
+  runMode: z.enum(['scheduled', 'once']).optional(),
+  intervalMinutes: z.number().int().min(0).max(43200),
   workingDirectory: z.string().optional(),
   notifyOnComplete: z.boolean().optional(),
+  runParams: z.record(z.string(), z.unknown()).optional(),
 });
 
 export async function GET() {
@@ -41,9 +44,12 @@ export async function POST(request: NextRequest) {
       name: input.name,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       workflowDsl: input.workflowDsl as any,
-      intervalMinutes: input.intervalMinutes,
+      workflowId: input.workflowId,
+      runMode: input.runMode,
+      intervalMinutes: input.intervalMinutes || 60,
       workingDirectory: input.workingDirectory,
       notifyOnComplete: input.notifyOnComplete,
+      runParams: input.runParams,
     });
     return NextResponse.json({ schedule }, { status: 201 });
   } catch (error) {

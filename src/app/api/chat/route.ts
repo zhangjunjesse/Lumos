@@ -85,22 +85,24 @@ Rules:
 - Prefer \`best_effort\` (default) unless every selected site must succeed.
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
-const BROWSER_MCP_SYSTEM_HINT = `You have access to built-in browser control tools that share the user's browser login state. Use them to navigate, read, click, type, and screenshot pages in the built-in Lumos browser.
+const BROWSER_MCP_SYSTEM_HINT = `You have access to built-in browser control tools (chrome-devtools) that share the user's browser login state. Use them to navigate, read, click, type, and screenshot pages in the built-in Lumos browser.
 
 Available browser tools (call by exact name):
-- \`mcp__browser__browser_list_pages\` — list all open tabs (returns pageId, url, title)
-- \`mcp__browser__browser_open_page\` — open a new tab. Params: \`url\` (required)
-- \`mcp__browser__browser_navigate\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
-- \`mcp__browser__browser_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
-- \`mcp__browser__browser_click\` — click an element by uid. Params: \`pageId\`, \`uid\`
-- \`mcp__browser__browser_type\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
-- \`mcp__browser__browser_fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
-- \`mcp__browser__browser_screenshot\` — take a screenshot. Params: \`pageId\`
-- \`mcp__browser__browser_evaluate\` — run JavaScript. Params: \`pageId\`, \`expression\`
-- \`mcp__browser__browser_close_page\` — close a tab. Params: \`pageId\`
-- \`mcp__browser__browser_wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
+- \`mcp__chrome-devtools__list_pages\` — list all open tabs (returns pageId, url, title)
+- \`mcp__chrome-devtools__new_page\` — open a new tab. Params: \`url\` (optional)
+- \`mcp__chrome-devtools__select_page\` — switch active page. Params: \`pageId\`
+- \`mcp__chrome-devtools__navigate_page\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
+- \`mcp__chrome-devtools__take_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
+- \`mcp__chrome-devtools__click\` — click an element by uid. Params: \`pageId\`, \`uid\`
+- \`mcp__chrome-devtools__type_text\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
+- \`mcp__chrome-devtools__fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
+- \`mcp__chrome-devtools__press_key\` — press key. Params: \`pageId\`, \`key\`
+- \`mcp__chrome-devtools__take_screenshot\` — take a screenshot. Params: \`pageId\`, optional \`filePath\`
+- \`mcp__chrome-devtools__evaluate_script\` — run JavaScript. Params: \`pageId\`, \`expression\`
+- \`mcp__chrome-devtools__close_page\` — close a tab. Params: \`pageId\`
+- \`mcp__chrome-devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
 
-Workflow: call \`mcp__browser__browser_list_pages\` → get pageId → use other tools with that pageId.
+Workflow: call \`mcp__chrome-devtools__list_pages\` → get pageId → use other tools with that pageId.
 Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
 
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
@@ -806,13 +808,13 @@ export async function POST(request: NextRequest) {
     if (permissionMode !== 'default' && hasDeepSearchMcp(loadedMcpServers)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + DEEPSEARCH_MCP_SYSTEM_HINT;
     }
-    if (permissionMode !== 'default' && loadedMcpServers?.['browser']) {
+    if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
     }
     // Generic MCP discovery hint: list all loaded MCP servers so the agent knows they exist.
     // This covers user-installed MCPs that don't have a dedicated hint.
     if (permissionMode !== 'default' && loadedMcpServers) {
-      const BUILTIN_HINTED_MCPS = new Set(['feishu', 'deepsearch', 'browser']);
+      const BUILTIN_HINTED_MCPS = new Set(['feishu', 'deepsearch', 'chrome-devtools', 'chrome_devtools']);
       const userMcpNames = Object.keys(loadedMcpServers).filter(n => !BUILTIN_HINTED_MCPS.has(n));
       if (userMcpNames.length > 0) {
         const list = userMcpNames.map(n => `- \`${n}\`: tools available as \`mcp__${n}__<tool_name>\``).join('\n');

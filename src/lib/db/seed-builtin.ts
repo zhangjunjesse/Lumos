@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { resolveProviderPersistenceFields } from '../provider-config';
 
 /**
  * Seed built-in API providers
@@ -15,11 +16,22 @@ export function seedBuiltinProviders(db: Database.Database): void {
   }
 
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  const fields = resolveProviderPersistenceFields({
+    providerType: 'anthropic',
+    capabilities: ['agent-chat'],
+    providerOrigin: 'system',
+    authMode: 'api_key',
+    isBuiltin: 1,
+  });
   const providers = [
     {
       id: crypto.randomBytes(16).toString('hex'),
       name: 'Anthropic',
-      provider_type: 'anthropic',
+      provider_type: fields.providerType,
+      api_protocol: fields.apiProtocol,
+      capabilities: fields.capabilities,
+      provider_origin: fields.providerOrigin,
+      auth_mode: fields.authMode,
       base_url: 'https://api.anthropic.com',
       api_key: '',
       is_active: 0,
@@ -35,11 +47,11 @@ export function seedBuiltinProviders(db: Database.Database): void {
   ];
 
   const stmt = db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
 
   for (const p of providers) {
-    stmt.run(p.id, p.name, p.provider_type, p.base_url, p.api_key, p.is_active, p.sort_order, p.extra_env, p.model_catalog, p.model_catalog_source, p.model_catalog_updated_at, p.notes, p.is_builtin, p.user_modified, now, now);
+    stmt.run(p.id, p.name, p.provider_type, p.api_protocol, p.capabilities, p.provider_origin, p.auth_mode, p.base_url, p.api_key, p.is_active, p.sort_order, p.extra_env, p.model_catalog, p.model_catalog_source, p.model_catalog_updated_at, p.notes, p.is_builtin, p.user_modified, now, now);
   }
 
   console.log(`[seed] Created ${providers.length} built-in providers`);

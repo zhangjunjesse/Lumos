@@ -1,33 +1,20 @@
 import crypto from 'crypto';
 import {
   createTeamRunSkeleton,
-  MAIN_AGENT_AGENT_PRESET_KIND,
-  MAIN_AGENT_TEAM_TEMPLATE_KIND,
   TEAM_PLAN_TASK_KIND,
   parseAgentPresetRecord,
   parseTeamPlan,
   parseTeamPlanTaskRecord,
   parseTeamTemplateRecord,
-  serializeAgentPresetRecord,
   serializeTeamPlanTaskRecord,
-  serializeTeamTemplateRecord,
 } from '@/types';
 import type {
   AgentPresetDirectoryItem,
   AgentPresetRecord,
-  ChatSession,
-  CreateAgentPresetRequest,
-  CreateTeamTemplateRequest,
-  TaskArtifactItem,
-  TaskDirectoryItem,
-  TaskDirectorySource,
   TaskItem,
   TaskStatus,
-  TeamAgentPresetRoleKind,
-  TeamRoleDirectoryItem,
   TeamPlan,
   TeamPlanApprovalStatus,
-  TeamDirectoryItem,
   TeamPlanTaskRecord,
   TeamTemplateDirectoryItem,
   TeamTemplateRecord,
@@ -35,14 +22,12 @@ import type {
   TeamRunContext,
   TeamRunStage,
   TeamRunStatus,
-  UpdateAgentPresetRequest,
-  UpdateTeamTemplateRequest,
 } from '@/types';
-import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { compileTeamPlanToRunPlan, parseCompiledRunPlan } from '@/lib/team-run/compiler';
 import { ensureTaskRunScheduled } from '@/lib/team-run/runtime-manager';
+import { taskEventBus } from '@/lib/task-event-bus';
 import { getDb } from './connection';
-import { getAllSessions, getSession } from './sessions';
+import { getSession } from './sessions';
 
 // ==========================================
 // Task Operations
@@ -71,7 +56,7 @@ interface TemplateRow {
 
 type TaskRow = TaskItem;
 
-export interface MainAgentSessionTeamRuntimeTaskView {
+interface MainAgentSessionTeamRuntimeTaskView {
   taskId: string;
   title: string;
   userGoal: string;
@@ -455,12 +440,6 @@ function hasTemplatesTable(): boolean {
   return row?.name === 'templates';
 }
 
-function ensureTemplatesTable(): void {
-  if (!hasTemplatesTable()) {
-    throw new Error('templates table is not available');
-  }
-}
-
 function parseTemplatePayload(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -475,43 +454,6 @@ function listMainAgentTemplateRows(): TemplateRow[] {
   return db
     .prepare('SELECT * FROM templates WHERE type = ? ORDER BY updated_at DESC')
     .all('conversation') as TemplateRow[];
-}
-
-function getMainAgentTemplateRow(id: string): TemplateRow | undefined {
-  if (!hasTemplatesTable()) return undefined;
-  const db = getDb();
-  return db.prepare('SELECT * FROM templates WHERE id = ?').get(id) as TemplateRow | undefined;
-}
-
-function normalizeOptionalText(value?: string): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function requireText(value: string | undefined, field: string): string {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    throw new Error(`${field} is required`);
-  }
-  return trimmed;
-}
-
-function normalizeAgentPresetIds(ids: string[] | undefined): string[] {
-  if (!Array.isArray(ids)) return [];
-  return Array.from(
-    new Set(
-      ids
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-function validateAgentRoleKind(roleKind: string | undefined): TeamAgentPresetRoleKind {
-  if (roleKind === 'orchestrator' || roleKind === 'lead' || roleKind === 'worker') {
-    return roleKind;
-  }
-  throw new Error('roleKind must be orchestrator, lead, or worker');
 }
 
 function isSystemTask(task: TaskItem): boolean {
@@ -927,69 +869,9 @@ function persistTeamPlanRecord(taskId: string, record: TeamPlanTaskRecord): Task
   return getTask(taskId);
 }
 
-function buildTaskPath(taskId: string): string {
-  return `/tasks/${taskId}`;
-}
-
-function buildTeamPath(teamId: string): string {
-  return `/team/${teamId}`;
-}
-
-function summarizeTeamExecutors(record: TeamPlanTaskRecord): string {
-  const roleNames = record.plan.roles
-    .filter((role) => role.kind !== 'main_agent')
-    .map((role) => role.name);
-
-  if (roleNames.length === 0) {
-    return '主代理';
-  }
-
-  if (roleNames.length === 1) {
-    return roleNames[0];
-  }
-
-  if (roleNames.length === 2) {
-    return roleNames.join(' / ');
-  }
-
-  return `${roleNames[0]} / ${roleNames[1]} / +${roleNames.length - 2}`;
-}
-
 function getCurrentTeamPhase(record: TeamPlanTaskRecord): TeamRunStage | undefined {
   return record.run.phases.find((phase) => ['running', 'blocked', 'waiting', 'ready'].includes(phase.status))
     || record.run.phases.find((phase) => phase.status === 'done');
-}
-
-function buildTeamArtifacts(record: TeamPlanTaskRecord, task: TaskItem): TaskArtifactItem[] {
-  const roleMap = new Map(record.plan.roles.map((role) => [role.id, role]));
-  const planTaskMap = new Map(record.plan.tasks.map((planTask) => [planTask.id, planTask]));
-
-  return record.run.phases.map((phase) => {
-    const owner = roleMap.get(phase.ownerRoleId);
-    const planTask = planTaskMap.get(phase.planTaskId);
-    return {
-      id: phase.id,
-      title: phase.title,
-      summary: phase.latestResult?.trim() || planTask?.summary || '',
-      status: phase.status,
-      updatedAt: phase.updatedAt || task.updated_at,
-      ...(owner ? { ownerName: owner.name } : {}),
-      ...(phase.expectedOutput ? { expectedOutput: phase.expectedOutput } : {}),
-      dependsOn: phase.dependsOn,
-    };
-  });
-}
-
-function buildTeamRoles(record: TeamPlanTaskRecord): TeamRoleDirectoryItem[] {
-  return record.plan.roles
-    .filter((role) => role.kind !== 'main_agent')
-    .map((role) => ({
-      id: role.id,
-      name: role.name,
-      kind: role.kind,
-      responsibility: role.responsibility,
-      ...(role.parentRoleId ? { parentRoleId: role.parentRoleId } : {}),
-    }));
 }
 
 function buildTeamOutputs(record: TeamPlanTaskRecord): string[] {
@@ -1010,69 +892,6 @@ function buildTeamOutputs(record: TeamPlanTaskRecord): string[] {
   }
 
   return outputs.slice(0, 4);
-}
-
-function toTeamDirectoryItem(
-  session: ChatSession,
-  task: TaskItem,
-  record: TeamPlanTaskRecord,
-): TeamDirectoryItem {
-  const currentPhase = getCurrentTeamPhase(record);
-  const outputs = buildTeamOutputs(record);
-  const artifacts = buildTeamArtifacts(record, task);
-  const roles = buildTeamRoles(record);
-  const currentExecutorName = currentPhase
-    ? record.plan.roles.find((role) => role.id === currentPhase.ownerRoleId)?.name
-    : undefined;
-  return {
-    id: task.id,
-    ...(task.current_run_id ? { runId: task.current_run_id } : {}),
-    sessionId: session.id,
-    sessionTitle: session.title,
-    workingDirectory: session.working_directory,
-    projectName: session.project_name,
-    title: record.plan.summary,
-    summary: record.plan.summary,
-    userGoal: record.plan.userGoal,
-    expectedOutcome: record.plan.expectedOutcome,
-    approvalStatus: record.approvalStatus,
-    runStatus: record.run.status,
-    roleCount: roles.length,
-    taskCount: record.plan.tasks.length,
-    completedTaskCount: record.run.phases.filter((phase) => phase.status === 'done').length,
-    updatedAt: task.updated_at,
-    relatedTaskId: task.id,
-    relatedTaskPath: buildTaskPath(task.id),
-    teamPath: buildTeamPath(task.id),
-    executorLabel: summarizeTeamExecutors(record),
-    createdScenario: record.plan.userGoal,
-    roles,
-    outputs,
-    artifacts,
-    ...(currentPhase ? { currentStage: currentPhase.title } : {}),
-    ...(currentExecutorName ? { currentExecutorName } : {}),
-    ...(outputs[0] ? { latestOutput: outputs[0] } : {}),
-    ...(record.run.context.blockedReason ? { blockedReason: record.run.context.blockedReason } : {}),
-    ...(record.run.context.finalSummary?.trim() ? { finalSummary: record.run.context.finalSummary.trim() } : {}),
-  };
-}
-
-function toTaskDirectoryItem(
-  session: ChatSession,
-  task: TaskItem,
-  source: TaskDirectorySource,
-  overrides: Omit<TaskDirectoryItem, 'id' | 'source' | 'sessionId' | 'sessionTitle' | 'workingDirectory' | 'projectName' | 'updatedAt'>,
-): TaskDirectoryItem {
-  return {
-    id: task.id,
-    source,
-    sessionId: session.id,
-    sessionTitle: session.title,
-    workingDirectory: session.working_directory,
-    projectName: session.project_name,
-    updatedAt: task.updated_at,
-    ...overrides,
-  };
 }
 
 function buildMainAgentConfigurationCatalog(): {
@@ -1140,310 +959,12 @@ function buildMainAgentConfigurationCatalog(): {
   return { agentPresets, teamTemplates };
 }
 
-function buildTeamTaskDirectoryItem(
-  session: ChatSession,
-  task: TaskItem,
-  record: TeamPlanTaskRecord,
-): TaskDirectoryItem {
-  const completedCount = record.run.phases.filter((phase) => phase.status === 'done').length;
-  const currentPhase = getCurrentTeamPhase(record);
-  const outputs = buildTeamOutputs(record);
-  const artifacts = buildTeamArtifacts(record, task);
-  const currentExecutorName = currentPhase
-    ? record.plan.roles.find((role) => role.id === currentPhase.ownerRoleId)?.name
-    : undefined;
-
-  return toTaskDirectoryItem(session, task, 'team', {
-    ...(task.current_run_id ? { runId: task.current_run_id } : {}),
-    title: record.plan.summary,
-    summary: record.plan.expectedOutcome,
-    status: record.run.status,
-    executionMode: 'team_mode',
-    createdScenario: record.plan.userGoal,
-    executorLabel: summarizeTeamExecutors(record),
-    progressCompleted: completedCount,
-    progressTotal: record.plan.tasks.length,
-    outputs,
-    artifacts,
-    taskPath: buildTaskPath(task.id),
-    ...(currentPhase ? { currentStage: currentPhase.title } : {}),
-    ...(currentExecutorName ? { currentExecutorName } : {}),
-    ...(outputs[0] ? { latestOutput: outputs[0] } : {}),
-    ...(record.plan.userGoal ? { userGoal: record.plan.userGoal } : {}),
-    approvalStatus: record.approvalStatus,
-    dependsOn: [],
-    teamId: task.id,
-    teamTitle: record.plan.summary,
-    expectedOutput: record.plan.expectedOutcome,
-  });
-}
-
-export function getMainAgentCatalog(): {
-  teams: TeamDirectoryItem[];
-  tasks: TaskDirectoryItem[];
-  agentPresets: AgentPresetDirectoryItem[];
-  teamTemplates: TeamTemplateDirectoryItem[];
-} {
-  const sessions = getAllSessions().filter((session) => isMainAgentSession(session));
-  const teams: TeamDirectoryItem[] = [];
-  const tasks: TaskDirectoryItem[] = [];
-
-  for (const session of sessions) {
-    const sessionTasks = getTasksBySession(session.id, { includeSystem: true });
-    for (const task of sessionTasks) {
-      const teamRecord = parseTeamPlanTaskRecord(task.description);
-      if (teamRecord) {
-        teams.push(toTeamDirectoryItem(session, task, teamRecord));
-        tasks.push(buildTeamTaskDirectoryItem(session, task, teamRecord));
-        continue;
-      }
-
-      tasks.push(toTaskDirectoryItem(session, task, 'manual', {
-        title: task.title,
-        summary: task.description?.trim() || '',
-        status: task.status,
-        executionMode: 'main_agent',
-        createdScenario: session.title || task.title,
-        executorLabel: '主代理',
-        progressCompleted: task.status === 'completed' ? 1 : 0,
-        progressTotal: 1,
-        outputs: task.status === 'completed' && task.description?.trim() ? [task.description.trim()] : [],
-        artifacts: [],
-        taskPath: buildTaskPath(task.id),
-        dependsOn: [],
-      }));
-    }
-  }
-
-  teams.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  tasks.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-
-  return {
-    teams,
-    tasks,
-    ...buildMainAgentConfigurationCatalog(),
-  };
-}
-
-export function getMainAgentTaskDirectoryItem(taskId: string): TaskDirectoryItem | undefined {
-  return getMainAgentCatalog().tasks.find((task) => task.id === taskId);
-}
-
-export function getMainAgentTeamDirectoryItem(teamId: string): TeamDirectoryItem | undefined {
-  return getMainAgentCatalog().teams.find((team) => team.id === teamId);
-}
-
 export function listMainAgentAgentPresets(): AgentPresetDirectoryItem[] {
   return buildMainAgentConfigurationCatalog().agentPresets;
 }
 
 export function listMainAgentTeamTemplates(): TeamTemplateDirectoryItem[] {
   return buildMainAgentConfigurationCatalog().teamTemplates;
-}
-
-function getValidatedAgentPresetRecord(
-  input: CreateAgentPresetRequest | UpdateAgentPresetRequest,
-  existing?: AgentPresetRecord,
-): AgentPresetRecord {
-  const roleKind = input.roleKind ?? existing?.roleKind;
-  return {
-    kind: MAIN_AGENT_AGENT_PRESET_KIND,
-    version: 1,
-    name: requireText(input.name ?? existing?.name, 'name'),
-    roleKind: validateAgentRoleKind(roleKind),
-    responsibility: requireText(input.responsibility ?? existing?.responsibility, 'responsibility'),
-    systemPrompt: requireText(input.systemPrompt ?? existing?.systemPrompt, 'systemPrompt'),
-    ...(normalizeOptionalText(input.description ?? existing?.description) ? { description: normalizeOptionalText(input.description ?? existing?.description) } : {}),
-    ...(normalizeOptionalText(input.collaborationStyle ?? existing?.collaborationStyle)
-      ? { collaborationStyle: normalizeOptionalText(input.collaborationStyle ?? existing?.collaborationStyle) }
-      : {}),
-    ...(normalizeOptionalText(input.outputContract ?? existing?.outputContract)
-      ? { outputContract: normalizeOptionalText(input.outputContract ?? existing?.outputContract) }
-      : {}),
-  };
-}
-
-function getValidatedTeamTemplateRecord(
-  input: CreateTeamTemplateRequest | UpdateTeamTemplateRequest,
-  existing?: TeamTemplateRecord,
-): TeamTemplateRecord {
-  const agentPresetIds = normalizeAgentPresetIds(input.agentPresetIds ?? existing?.agentPresetIds);
-  if (agentPresetIds.length === 0) {
-    throw new Error('agentPresetIds must include at least one agent preset');
-  }
-
-  const presetMap = new Map(listMainAgentAgentPresets().map((item) => [item.id, item]));
-  for (const agentPresetId of agentPresetIds) {
-    if (!presetMap.has(agentPresetId)) {
-      throw new Error(`Unknown agent preset: ${agentPresetId}`);
-    }
-  }
-
-  return {
-    kind: MAIN_AGENT_TEAM_TEMPLATE_KIND,
-    version: 1,
-    name: requireText(input.name ?? existing?.name, 'name'),
-    summary: requireText(input.summary ?? existing?.summary, 'summary'),
-    agentPresetIds,
-    ...(normalizeOptionalText(input.activationHint ?? existing?.activationHint)
-      ? { activationHint: normalizeOptionalText(input.activationHint ?? existing?.activationHint) }
-      : {}),
-    ...(normalizeOptionalText(input.defaultGoal ?? existing?.defaultGoal)
-      ? { defaultGoal: normalizeOptionalText(input.defaultGoal ?? existing?.defaultGoal) }
-      : {}),
-    ...(normalizeOptionalText(input.defaultOutcome ?? existing?.defaultOutcome)
-      ? { defaultOutcome: normalizeOptionalText(input.defaultOutcome ?? existing?.defaultOutcome) }
-      : {}),
-    ...(normalizeOptionalText(input.notes ?? existing?.notes)
-      ? { notes: normalizeOptionalText(input.notes ?? existing?.notes) }
-      : {}),
-  };
-}
-
-function getAgentPresetDirectoryItem(id: string): AgentPresetDirectoryItem | undefined {
-  return listMainAgentAgentPresets().find((item) => item.id === id);
-}
-
-function getTeamTemplateDirectoryItem(id: string): TeamTemplateDirectoryItem | undefined {
-  return listMainAgentTeamTemplates().find((item) => item.id === id);
-}
-
-export function createMainAgentAgentPreset(input: CreateAgentPresetRequest): AgentPresetDirectoryItem {
-  ensureTemplatesTable();
-  const record = getValidatedAgentPresetRecord(input);
-  const db = getDb();
-  const id = crypto.randomBytes(16).toString('hex');
-  const now = normalizeTimestamp();
-
-  db.prepare(`
-    INSERT INTO templates (id, name, type, category, content_skeleton, system_prompt, opening_message, ai_config, icon, description, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    record.name,
-    'conversation',
-    'user',
-    serializeAgentPresetRecord(record),
-    record.systemPrompt,
-    '',
-    JSON.stringify({ feature: 'main-agent-team', recordKind: MAIN_AGENT_AGENT_PRESET_KIND }),
-    'A',
-    record.description || record.responsibility,
-    now,
-    now,
-  );
-
-  const created = getAgentPresetDirectoryItem(id);
-  if (!created) {
-    throw new Error('Failed to create agent preset');
-  }
-  return created;
-}
-
-export function updateMainAgentAgentPreset(id: string, updates: UpdateAgentPresetRequest): AgentPresetDirectoryItem | undefined {
-  ensureTemplatesTable();
-  const row = getMainAgentTemplateRow(id);
-  if (!row) return undefined;
-
-  const existing = parseAgentPresetRecord(parseTemplatePayload(row.content_skeleton));
-  if (!existing) return undefined;
-
-  const record = getValidatedAgentPresetRecord(updates, existing);
-  const db = getDb();
-  const now = normalizeTimestamp();
-
-  db.prepare(`
-    UPDATE templates
-    SET name = ?, content_skeleton = ?, system_prompt = ?, description = ?, updated_at = ?
-    WHERE id = ?
-  `).run(
-    record.name,
-    serializeAgentPresetRecord(record),
-    record.systemPrompt,
-    record.description || record.responsibility,
-    now,
-    id,
-  );
-
-  return getAgentPresetDirectoryItem(id);
-}
-
-export function deleteMainAgentAgentPreset(id: string): boolean {
-  ensureTemplatesTable();
-  const preset = getAgentPresetDirectoryItem(id);
-  if (!preset) return false;
-  if (preset.templateCount > 0) {
-    throw new Error('Agent preset is still referenced by one or more team templates');
-  }
-
-  const db = getDb();
-  return db.prepare('DELETE FROM templates WHERE id = ?').run(id).changes > 0;
-}
-
-export function createMainAgentTeamTemplate(input: CreateTeamTemplateRequest): TeamTemplateDirectoryItem {
-  ensureTemplatesTable();
-  const record = getValidatedTeamTemplateRecord(input);
-  const db = getDb();
-  const id = crypto.randomBytes(16).toString('hex');
-  const now = normalizeTimestamp();
-
-  db.prepare(`
-    INSERT INTO templates (id, name, type, category, content_skeleton, system_prompt, opening_message, ai_config, icon, description, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    record.name,
-    'conversation',
-    'user',
-    serializeTeamTemplateRecord(record),
-    record.notes || '',
-    '',
-    JSON.stringify({ feature: 'main-agent-team', recordKind: MAIN_AGENT_TEAM_TEMPLATE_KIND }),
-    'T',
-    record.summary,
-    now,
-    now,
-  );
-
-  const created = getTeamTemplateDirectoryItem(id);
-  if (!created) {
-    throw new Error('Failed to create team template');
-  }
-  return created;
-}
-
-export function updateMainAgentTeamTemplate(id: string, updates: UpdateTeamTemplateRequest): TeamTemplateDirectoryItem | undefined {
-  ensureTemplatesTable();
-  const row = getMainAgentTemplateRow(id);
-  if (!row) return undefined;
-
-  const existing = parseTeamTemplateRecord(parseTemplatePayload(row.content_skeleton));
-  if (!existing) return undefined;
-
-  const record = getValidatedTeamTemplateRecord(updates, existing);
-  const db = getDb();
-  const now = normalizeTimestamp();
-
-  db.prepare(`
-    UPDATE templates
-    SET name = ?, content_skeleton = ?, system_prompt = ?, description = ?, updated_at = ?
-    WHERE id = ?
-  `).run(
-    record.name,
-    serializeTeamTemplateRecord(record),
-    record.notes || '',
-    record.summary,
-    now,
-    id,
-  );
-
-  return getTeamTemplateDirectoryItem(id);
-}
-
-export function deleteMainAgentTeamTemplate(id: string): boolean {
-  ensureTemplatesTable();
-  const db = getDb();
-  return db.prepare('DELETE FROM templates WHERE id = ?').run(id).changes > 0;
 }
 
 function truncateForPrompt(value: string | undefined, maxLength = 220): string {
@@ -1759,21 +1280,10 @@ export function getTask(id: string): TaskItem | undefined {
   return row ? materializeTask(row) : undefined;
 }
 
-export function ensureTeamRunExecution(taskId: string): void {
-  ensureTaskRunScheduled(taskId);
-}
-
 export function ensureSessionTeamRunsExecution(sessionId: string): void {
   const teamTasks = getRawTasksBySession(sessionId).filter((task) => task.current_run_id);
   for (const task of teamTasks) {
     ensureTaskRunScheduled(task.id);
-  }
-}
-
-export function ensureMainAgentTeamRunsExecution(): void {
-  const sessions = getAllSessions().filter((session) => isMainAgentSession(session));
-  for (const session of sessions) {
-    ensureSessionTeamRunsExecution(session.id);
   }
 }
 
@@ -1812,20 +1322,9 @@ export function deleteTask(id: string): boolean {
   return result.changes > 0;
 }
 
-export function getLatestTeamPlanTask(sessionId: string): TaskItem | undefined {
+function getLatestTeamPlanTask(sessionId: string): TaskItem | undefined {
   const teamTasks = getTasksBySession(sessionId, { kind: TEAM_PLAN_TASK_KIND });
   return teamTasks[teamTasks.length - 1];
-}
-
-export function getTeamPlanTaskBySourceMessageId(
-  sessionId: string,
-  sourceMessageId: string,
-): TaskItem | undefined {
-  const normalizedMessageId = sourceMessageId.trim();
-  if (!normalizedMessageId) return undefined;
-
-  const teamTasks = getTasksBySession(sessionId, { kind: TEAM_PLAN_TASK_KIND });
-  return teamTasks.find((task) => task.source_message_id === normalizedMessageId);
 }
 
 export function upsertTeamPlanTask(
@@ -1843,225 +1342,25 @@ export function upsertTeamPlanTask(
       formatTeamPlanTaskTitle(normalized),
       undefined,
     );
-    return persistTeamPlanRecord(created.id, normalized) || created;
+    const result = persistTeamPlanRecord(created.id, normalized) || created;
+    taskEventBus.emitTaskEvent({
+      type: 'task:created',
+      sessionId,
+      taskId: result.id,
+      timestamp: Date.now(),
+      data: { approvalStatus: normalized.approvalStatus },
+    });
+    return result;
   }
 
-  return persistTeamPlanRecord(existing.id, normalized) || existing;
+  const result = persistTeamPlanRecord(existing.id, normalized) || existing;
+  taskEventBus.emitTaskEvent({
+    type: 'task:updated',
+    sessionId,
+    taskId: result.id,
+    timestamp: Date.now(),
+    data: { approvalStatus: normalized.approvalStatus },
+  });
+  return result;
 }
 
-export function updateTeamPlanApproval(
-  taskId: string,
-  approvalStatus: TeamPlanApprovalStatus,
-): TaskItem | undefined {
-  const task = getTask(taskId);
-  if (!task) return undefined;
-
-  const record = parseTeamPlanTaskRecord(task.description);
-  if (!record) return undefined;
-
-  const now = nowIso();
-  const phases = unlockReadyPhases(record.run.phases);
-  const nextRun = {
-    ...record.run,
-    phases,
-    status: approvalStatus === 'approved' ? deriveRunStatus(phases) : 'blocked',
-    createdAt: approvalStatus === 'approved' ? record.run.createdAt || now : record.run.createdAt || null,
-    lastUpdatedAt: now,
-    context: {
-      ...record.run.context,
-      ...(approvalStatus === 'approved'
-        ? { blockedReason: undefined, lastError: undefined }
-        : {}),
-      ...(approvalStatus === 'rejected' ? { blockedReason: 'Team plan rejected by user.' } : {}),
-    },
-  };
-  const nextRecord: TeamPlanTaskRecord = {
-    ...record,
-    approvalStatus,
-    run: nextRun,
-    lastActionAt: now,
-    approvedAt: approvalStatus === 'approved' ? now : null,
-    rejectedAt: approvalStatus === 'rejected' ? now : null,
-  };
-
-  const updated = persistTeamPlanRecord(taskId, nextRecord);
-  if (updated && approvalStatus === 'approved') {
-    ensureTeamRunExecution(taskId);
-  }
-  return updated;
-}
-
-export function updateTeamRunPhase(
-  taskId: string,
-  payload: {
-    phaseId: string;
-    phaseStatus?: TeamRunStatus;
-    latestResult?: string;
-  },
-): TaskItem | undefined {
-  const task = getTask(taskId);
-  if (!task) return undefined;
-
-  const record = parseTeamPlanTaskRecord(task.description);
-  if (!record || record.approvalStatus !== 'approved') return undefined;
-
-  const now = nowIso();
-  let changed = false;
-  let phases = record.run.phases.map((phase) => {
-    if (phase.id !== payload.phaseId) return phase;
-    changed = true;
-
-    let nextStatus = payload.phaseStatus || phase.status;
-    if ((nextStatus === 'running' || nextStatus === 'done') && !canActivatePhase(phase, record.run.phases)) {
-      nextStatus = 'waiting';
-    }
-
-    return {
-      ...phase,
-      ...(payload.latestResult !== undefined ? { latestResult: payload.latestResult.trim() } : {}),
-      status: nextStatus,
-      updatedAt: now,
-    };
-  });
-
-  if (!changed) return undefined;
-
-  phases = unlockReadyPhases(phases);
-  const status = deriveRunStatus(phases);
-  const blockingPhase = phases.find((phase) => phase.status === 'blocked' && phase.latestResult?.trim());
-  const failedPhase = phases.find((phase) => phase.status === 'failed' && phase.latestResult?.trim());
-  const nextRun = applyAutomaticContextBackfill(record, {
-    ...record.run,
-    phases,
-    status,
-    startedAt: record.run.startedAt || (shouldMarkRunStarted(status) ? now : record.run.startedAt),
-    completedAt: status === 'done' ? now : null,
-    lastUpdatedAt: now,
-    context: {
-      ...record.run.context,
-      blockedReason: status === 'blocked'
-        ? blockingPhase?.latestResult?.trim() || record.run.context.blockedReason
-        : undefined,
-      lastError: status === 'failed'
-        ? failedPhase?.latestResult?.trim() || record.run.context.lastError
-        : undefined,
-    },
-  });
-
-  const updated = persistTeamPlanRecord(taskId, {
-    ...record,
-    run: nextRun,
-    lastActionAt: now,
-  });
-  if (updated && !isTerminalTeamRunStatus(nextRun.status)) {
-    ensureTeamRunExecution(taskId);
-  }
-  return updated;
-}
-
-export function updateTeamRunContext(
-  taskId: string,
-  payload: {
-    summary?: string;
-    finalSummary?: string;
-    blockedReason?: string;
-    lastError?: string;
-    publishSummary?: boolean;
-  },
-): TaskItem | undefined {
-  const task = getTask(taskId);
-  if (!task) return undefined;
-
-  const record = parseTeamPlanTaskRecord(task.description);
-  if (!record || record.approvalStatus !== 'approved') return undefined;
-
-  const now = nowIso();
-  const nextContext: TeamRunContext = {
-    ...record.run.context,
-    ...(payload.summary !== undefined
-      ? {
-          summary: payload.summary.trim(),
-          summarySource: payload.summary.trim() ? 'manual' : 'auto',
-        }
-      : {}),
-    ...(payload.finalSummary !== undefined
-      ? {
-          finalSummary: payload.finalSummary.trim(),
-          finalSummarySource: payload.finalSummary.trim() ? 'manual' : 'auto',
-        }
-      : {}),
-    ...(payload.blockedReason !== undefined
-      ? { blockedReason: payload.blockedReason.trim() || undefined }
-      : {}),
-    ...(payload.lastError !== undefined
-      ? { lastError: payload.lastError.trim() || undefined }
-      : {}),
-    ...(payload.publishSummary ? { publishedAt: now } : {}),
-  };
-
-  let nextStatus = record.run.status;
-  if (payload.lastError !== undefined && payload.lastError.trim()) {
-    nextStatus = 'failed';
-  } else if (payload.blockedReason !== undefined && payload.blockedReason.trim()) {
-    nextStatus = 'blocked';
-  } else if (record.run.phases.length > 0) {
-    nextStatus = deriveRunStatus(record.run.phases);
-  }
-
-  const nextRun = applyAutomaticContextBackfill(record, {
-    ...record.run,
-    status: nextStatus,
-    context: nextContext,
-    lastUpdatedAt: now,
-    completedAt: nextStatus === 'done' ? now : null,
-  });
-
-  const updated = persistTeamPlanRecord(taskId, {
-    ...record,
-    run: nextRun,
-    lastActionAt: now,
-  });
-  if (updated && !isTerminalTeamRunStatus(nextRun.status)) {
-    ensureTeamRunExecution(taskId);
-  }
-  return updated;
-}
-
-export function resumeTeamRun(taskId: string): TaskItem | undefined {
-  const task = getTask(taskId);
-  if (!task) return undefined;
-
-  const record = parseTeamPlanTaskRecord(task.description);
-  if (!record || record.approvalStatus !== 'approved') return undefined;
-
-  const now = nowIso();
-  const phases = unlockReadyPhases(record.run.phases.map((phase) => {
-    if (phase.status === 'waiting' && canActivatePhase(phase, record.run.phases)) {
-      return { ...phase, status: 'ready', updatedAt: now };
-    }
-    return phase;
-  }));
-  const status = deriveRunStatus(phases);
-  const nextRun = applyAutomaticContextBackfill(record, {
-    ...record.run,
-    phases,
-    status,
-    resumeCount: record.run.resumeCount + 1,
-    lastUpdatedAt: now,
-    completedAt: status === 'done' ? record.run.completedAt : null,
-    context: {
-      ...record.run.context,
-      blockedReason: status === 'blocked' ? record.run.context.blockedReason : undefined,
-    },
-  });
-
-  const updated = persistTeamPlanRecord(taskId, {
-    ...record,
-    run: nextRun,
-    lastActionAt: now,
-  });
-  if (updated) {
-    ensureTeamRunExecution(taskId);
-  }
-  return updated;
-}

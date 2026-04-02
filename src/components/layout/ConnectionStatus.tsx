@@ -131,8 +131,8 @@ export function ConnectionStatus() {
             </DialogTitle>
             <DialogDescription>
               {connected
-                ? "Lumos 正在使用自己的内置 Claude 沙箱运行环境。"
-                : "Lumos 只使用自己的内置 Claude 沙箱运行环境，不依赖本机 Claude CLI。"}
+                ? "Lumos 正在使用内置的独立 Claude 运行环境。"
+                : "Lumos 使用内置的独立 Claude 运行环境，不依赖本机 Claude CLI。"}
             </DialogDescription>
           </DialogHeader>
 
@@ -150,7 +150,7 @@ export function ConnectionStatus() {
                   运行来源：{status?.runtimeSource === "bundled" ? "Lumos 内置运行时" : "未知"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  沙箱隔离：{status?.sandboxed ? "已启用" : "未启用"}
+                  环境隔离：{status?.sandboxed ? "已启用" : "未启用"}
                 </p>
                 {status?.sdkVersion && (
                   <p className="text-xs text-muted-foreground">SDK 版本：{status.sdkVersion}</p>
@@ -164,7 +164,7 @@ export function ConnectionStatus() {
             <div className="space-y-4 text-sm">
               <div className="flex items-center gap-3 rounded-lg bg-red-500/10 px-4 py-3">
                 <span className="block h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
-                <p className="font-medium text-red-700 dark:text-red-400">沙箱运行环境未就绪</p>
+                <p className="font-medium text-red-700 dark:text-red-400">运行环境未就绪</p>
               </div>
               <p className="text-sm text-muted-foreground">
                 请先点击刷新。如果问题持续存在，需要修复当前 Lumos 安装或重新安装应用。

@@ -1,5 +1,11 @@
 import { EventEmitter } from 'events';
 
+// Declared for globalThis HMR persistence
+declare global {
+  // eslint-disable-next-line no-var
+  var __lumos_task_event_bus__: TaskEventBus | undefined;
+}
+
 export type TaskEventType =
   | 'task:created'
   | 'task:updated'
@@ -31,18 +37,17 @@ export interface GlobalEvent {
 }
 
 class TaskEventBus extends EventEmitter {
-  private static instance: TaskEventBus | null = null;
-
   private constructor() {
     super();
     this.setMaxListeners(50);
   }
 
+  /** Use globalThis so the singleton survives Next.js HMR module re-evaluations in dev mode. */
   static getInstance(): TaskEventBus {
-    if (!TaskEventBus.instance) {
-      TaskEventBus.instance = new TaskEventBus();
+    if (!global.__lumos_task_event_bus__) {
+      global.__lumos_task_event_bus__ = new TaskEventBus();
     }
-    return TaskEventBus.instance;
+    return global.__lumos_task_event_bus__;
   }
 
   emitTaskEvent(event: TaskEvent): void {

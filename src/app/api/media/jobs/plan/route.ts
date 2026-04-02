@@ -4,6 +4,7 @@ import { getDb } from '@/lib/db';
 import fs from 'fs';
 import type { PlanMediaJobRequest } from '@/types';
 import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
+import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,19 +54,37 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     let providerId = '';
     let modelId = '';
+    let sessionProviderId = '';
 
     if (body.sessionId) {
       const session = db.prepare('SELECT provider_id, model FROM chat_sessions WHERE id = ?').get(body.sessionId) as { provider_id: string; model: string } | undefined;
       if (session) {
-        providerId = session.provider_id;
+        sessionProviderId = session.provider_id;
         modelId = session.model;
       }
     }
 
-    // Fallback to default provider
+    try {
+      const provider = resolveProviderForCapability({
+        moduleKey: 'chat',
+        capability: 'agent-chat',
+        preferredProviderId: sessionProviderId || undefined,
+      });
+      providerId = provider?.id || '';
+    } catch (error) {
+      if (error instanceof ProviderResolutionError) {
+        return Response.json(
+          { error: error.message },
+          { status: sessionProviderId ? 409 : 400 }
+        );
+      }
+      throw error;
+    }
     if (!providerId) {
-      const defaultId = db.prepare("SELECT value FROM settings WHERE key = 'default_provider_id'").get() as { value: string } | undefined;
-      providerId = defaultId?.value || '';
+      return Response.json(
+        { error: '未配置可用的主聊天服务商，请先到设置中选择一个支持 Agent Chat 的 provider。' },
+        { status: 400 }
+      );
     }
     if (!modelId) {
       const defaultModel = db.prepare("SELECT value FROM settings WHERE key = 'default_model'").get() as { value: string } | undefined;

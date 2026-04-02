@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 
 type RetrievalMode = "reference" | "enhanced";
+type ArchiveMode = "auto" | "confirm" | "disabled";
 
 export function KnowledgeSection() {
   const [loading, setLoading] = useState(true);
@@ -15,6 +16,7 @@ export function KnowledgeSection() {
   const [rewriteEnabled, setRewriteEnabled] = useState(true);
   const [topK, setTopK] = useState(4);
   const [candidatePool, setCandidatePool] = useState(40);
+  const [archiveMode, setArchiveMode] = useState<ArchiveMode>("confirm");
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -29,6 +31,8 @@ export function KnowledgeSection() {
       setEnabled(settings.kb_context_enabled !== "false");
       setMode((settings.kb_retrieval_mode || "").toLowerCase() === "enhanced" ? "enhanced" : "reference");
       setRewriteEnabled(settings.kb_query_rewrite_enabled !== "false");
+      const rawArchiveMode = settings["deepsearch.archive_mode"];
+      setArchiveMode(rawArchiveMode === "auto" || rawArchiveMode === "disabled" ? rawArchiveMode : "confirm");
       const parsedTopK = Number(settings.kb_context_top_k || "4");
       if (Number.isFinite(parsedTopK) && parsedTopK > 0) {
         setTopK(Math.max(2, Math.min(10, Math.floor(parsedTopK))));
@@ -54,12 +58,14 @@ export function KnowledgeSection() {
     rewriteEnabled?: boolean;
     topK?: number;
     candidatePool?: number;
+    archiveMode?: ArchiveMode;
   }) => {
     const nextEnabled = next.enabled ?? enabled;
     const nextMode = next.mode ?? mode;
     const nextRewriteEnabled = next.rewriteEnabled ?? rewriteEnabled;
     const nextTopK = next.topK ?? topK;
     const nextCandidatePool = next.candidatePool ?? candidatePool;
+    const nextArchiveMode = next.archiveMode ?? archiveMode;
     setSaving(true);
     setError(null);
     try {
@@ -73,6 +79,7 @@ export function KnowledgeSection() {
             kb_context_top_k: String(nextTopK),
             kb_candidate_pool_size: String(nextCandidatePool),
             kb_query_rewrite_enabled: nextRewriteEnabled ? "true" : "false",
+            "deepsearch.archive_mode": nextArchiveMode,
           },
         }),
       });
@@ -85,12 +92,13 @@ export function KnowledgeSection() {
       setRewriteEnabled(nextRewriteEnabled);
       setTopK(nextTopK);
       setCandidatePool(nextCandidatePool);
+      setArchiveMode(nextArchiveMode);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     } finally {
       setSaving(false);
     }
-  }, [enabled, mode, rewriteEnabled, topK, candidatePool]);
+  }, [enabled, mode, rewriteEnabled, topK, candidatePool, archiveMode]);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -211,6 +219,37 @@ export function KnowledgeSection() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* DeepSearch archive mode */}
+      <div className="rounded-2xl border p-5">
+        <h2 className="text-base font-semibold">DeepSearch 自动归档</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          控制 DeepSearch 搜索完成后是否自动将结果保存到「联网搜索资料」知识库。
+        </p>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          {([
+            { value: "confirm", label: "提示后保存", desc: "搜索完成后弹出确认，默认推荐" },
+            { value: "auto", label: "自动保存", desc: "搜索完成后静默归档，无需操作" },
+            { value: "disabled", label: "不提示", desc: "仅保留手动保存按钮" },
+          ] as const).map(({ value, label, desc }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => void saveSettings({ archiveMode: value })}
+              disabled={loading || saving}
+              className={`rounded-xl border p-3 text-left transition-colors disabled:opacity-50 ${
+                archiveMode === value
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-border bg-background hover:bg-accent"
+              }`}
+            >
+              <div className="text-sm font-medium">{label}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{desc}</div>
+            </button>
+          ))}
         </div>
       </div>
     </div>

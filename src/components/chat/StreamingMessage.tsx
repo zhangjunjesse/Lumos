@@ -28,6 +28,7 @@ import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview
 import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
 import type { ToolUIPart } from 'ai';
 import type { PermissionRequestEvent, PlannerOutput } from '@/types';
+import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -457,6 +458,16 @@ export function StreamingMessage({
             streamingToolOutput={streamingToolOutput}
           />
         )}
+
+        {/* DeepSearch sources — show when tool results are available */}
+        {(() => {
+          const paired = toolUses.map((tool) => {
+            const result = toolResults.find((r) => r.tool_use_id === tool.id);
+            return { name: tool.name, result: result?.content, isError: result?.is_error };
+          });
+          const ds = extractDeepSearchSources(paired);
+          return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} /> : null;
+        })()}
 
         {/* Permission approval — AskUserQuestion gets a dedicated UI */}
         {pendingPermission?.toolName === 'AskUserQuestion' && !permissionResolved && (

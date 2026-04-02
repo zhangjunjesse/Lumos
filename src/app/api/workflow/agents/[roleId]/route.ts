@@ -12,6 +12,8 @@ const updateWorkflowAgentRoleRequestSchema = z.object({
   concurrencyLimit: z.number().int().min(1).max(10).optional(),
   plannerTimeoutMs: z.number().int().min(5_000).max(120_000).optional(),
   plannerMaxRetries: z.number().int().min(0).max(5).optional(),
+  preferredProviderId: z.string().trim().optional(),
+  preferredModel: z.string().trim().optional(),
 }).strict();
 
 interface WorkflowAgentRoleRouteContext {

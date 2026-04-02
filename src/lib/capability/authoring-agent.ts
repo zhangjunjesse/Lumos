@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { getDefaultProviderId } from '@/lib/db';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
+import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import { generateObjectFromProvider } from '@/lib/text-generator';
 import type { CapabilityCategory, CapabilityDraft, CapabilityKind, CapabilityRiskLevel } from './types';
 
@@ -160,8 +160,22 @@ export async function generateCapabilityDraft(
   request: GenerateCapabilityRequest
 ): Promise<GenerateCapabilityResponse> {
   const transcript = buildConversationTranscript(request.userPrompt, request.conversationHistory);
+  let resolvedProviderId = '';
+  try {
+    resolvedProviderId = resolveProviderForCapability({
+      moduleKey: 'knowledge',
+      capability: 'text-gen',
+      preferredProviderId: request.providerId?.trim() || undefined,
+    })?.id || '';
+  } catch (error) {
+    if (error instanceof ProviderResolutionError) {
+      throw new Error(error.message);
+    }
+    throw error;
+  }
+
   const generated = await generateObjectFromProvider({
-    providerId: request.providerId || getDefaultProviderId() || '',
+    providerId: resolvedProviderId,
     model: request.model || BUILTIN_CLAUDE_MODEL_IDS.sonnet,
     system: buildSystemPrompt(),
     prompt: buildPrompt(transcript),

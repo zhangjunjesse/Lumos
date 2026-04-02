@@ -1,12 +1,23 @@
 /**
  * AI auto-tagger — analyze document content and suggest categorized tags
- * Uses Claude Haiku for cost control (~$0.03/100 docs)
+ * Uses the knowledge provider's configured model
  */
+import { z } from 'zod';
 import type { TagResult, CategorizedTagResult, CategorizedTag, TagCategory } from './types';
-import { callKnowledgeModel } from './llm';
-import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
+import { callKnowledgeModel, callKnowledgeObjectModel, getKnowledgeDefaultModel } from './llm';
 
-const VALID_CATEGORIES: TagCategory[] = ['domain', 'tech', 'doctype', 'project', 'custom'];
+const VALID_CATEGORIES = ['domain', 'tech', 'doctype', 'project', 'custom'] as const satisfies readonly TagCategory[];
+
+const categorizedTagSchema = z.object({
+  name: z.string().trim().min(2).max(20),
+  category: z.enum(VALID_CATEGORIES),
+  confidence: z.number().min(0).max(1),
+});
+
+const categorizedTagResponseSchema = z.object({
+  matched: z.array(categorizedTagSchema).default([]),
+  suggested: z.array(categorizedTagSchema).default([]),
+});
 
 function buildCategorizedPrompt(existingTags: string[]): string {
   const has = existingTags.length > 0;
@@ -30,12 +41,39 @@ ${existing}标签分类：
 `;
 }
 
-async function callHaiku(content: string, existingTags: string[]): Promise<string> {
+async function callTagText(content: string, existingTags: string[]): Promise<string> {
   return callKnowledgeModel({
-    model: BUILTIN_CLAUDE_MODEL_IDS.haiku,
-    maxTokens: 400,
-    timeoutMs: 8000,
+    model: getKnowledgeDefaultModel(),
+    maxTokens: 16000,
+    timeoutMs: 30000,
     prompt: buildCategorizedPrompt(existingTags) + content.slice(0, 3000),
+  });
+}
+
+async function callTagStructured(
+  content: string,
+  existingTags: string[],
+): Promise<z.infer<typeof categorizedTagResponseSchema>> {
+  const has = existingTags.length > 0;
+  const existing = has ? `已有标签库（优先复用）：${existingTags.join('、')}` : '当前没有已有标签库。';
+  return callKnowledgeObjectModel({
+    model: getKnowledgeDefaultModel(),
+    maxTokens: 16000,
+    timeoutMs: 30000,
+    schema: categorizedTagResponseSchema,
+    prompt: [
+      '请为文档生成标签对象。',
+      existing,
+      '要求：',
+      '- matched: 仅填写命中已有标签库的标签',
+      '- suggested: 填写建议新增的标签',
+      '- 每个标签 2-8 字',
+      '- category 只能是 domain / tech / doctype / project / custom',
+      '- confidence 取 0 到 1',
+      '',
+      '文档内容：',
+      content.slice(0, 3000),
+    ].join('\n'),
   });
 }
 
@@ -85,20 +123,44 @@ function parseCategorizedResult(
   }
 }
 
-/** Categorized auto-tag with confidence scores (new API) */
-export async function autoTagCategorized(
+async function requestCategorizedTags(
   content: string,
-  existingTags: string[] = [],
+  existingTags: string[],
 ): Promise<CategorizedTagResult> {
   const empty: CategorizedTagResult = { matched: [], suggested: [] };
   if (!content || content.length < 20) return empty;
 
   try {
-    const response = await callHaiku(content, existingTags);
+    const response = await callTagStructured(content, existingTags);
+    const existingSet = new Set(existingTags);
+    return {
+      matched: response.matched.filter((tag) => existingSet.has(tag.name)),
+      suggested: response.suggested.filter((tag) => !existingSet.has(tag.name)),
+    };
+  } catch (error) {
+    console.warn('[kb] Structured tag generation failed, falling back to text mode:', (error as Error).message);
+    const response = await callTagText(content, existingTags);
     return parseCategorizedResult(response, existingTags);
+  }
+}
+
+export async function autoTagCategorizedStrict(
+  content: string,
+  existingTags: string[] = [],
+): Promise<CategorizedTagResult> {
+  return requestCategorizedTags(content, existingTags);
+}
+
+/** Categorized auto-tag with confidence scores (new API) */
+export async function autoTagCategorized(
+  content: string,
+  existingTags: string[] = [],
+): Promise<CategorizedTagResult> {
+  try {
+    return await requestCategorizedTags(content, existingTags);
   } catch (err) {
     console.error('[kb] Auto-tag failed:', (err as Error).message);
-    return empty;
+    return { matched: [], suggested: [] };
   }
 }
 

@@ -5,9 +5,10 @@ import { splitText } from '@/lib/knowledge/chunker';
 import { indexItem } from '@/lib/knowledge/embedder';
 import { indexItemChunks, removeItemFromIndex } from '@/lib/knowledge/bm25';
 import { parseFileForKnowledge, buildReferenceContent } from '@/lib/knowledge/parsers';
-import { summarizeAndEmbed } from '@/lib/knowledge/summarizer';
-import { autoTagCategorized } from '@/lib/knowledge/tagger';
+import { clearSummaryArtifacts, summarizeAndEmbedStrict } from '@/lib/knowledge/summarizer';
+import { autoTagCategorizedStrict } from '@/lib/knowledge/tagger';
 import { buildTagCandidates, syncItemTagSystem } from '@/lib/knowledge/tag-system';
+import { isKnowledgeEnhancementUnavailableError } from '@/lib/knowledge/llm';
 import type { KbItem, KbProcessingStatus, CategorizedTag } from '@/lib/knowledge/types';
 import {
   detailToJson,
@@ -15,16 +16,12 @@ import {
   stageFailed,
   type ProcessingDetail,
 } from '@/lib/knowledge/processing-status';
-
-function formatStageError(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
-  }
-  if (typeof error === 'string' && error.trim()) {
-    return error.trim();
-  }
-  return fallback;
-}
+import {
+  appendProcessingError,
+  appendProcessingMessage,
+  buildStoredPreviewContent,
+  loadFullItemContent,
+} from '@/lib/knowledge/pipeline-support';
 
 function buildMissingSourceReference(sourcePath: string, reason: string): string {
   return [
@@ -55,9 +52,10 @@ async function resolveReindexSource(item: KbItem, reparse: boolean): Promise<{
   parseError: string;
 }> {
   const sourcePath = item.source_path || '';
+  const fallbackContent = loadFullItemContent(item.id, item.content || '');
   const base = {
     title: item.title || 'Untitled',
-    content: item.content || '',
+    content: fallbackContent,
     mode: 'full' as const,
     parseError: '',
   };
@@ -153,15 +151,13 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     embedding: resolved.mode === 'reference' ? 'skipped' : 'pending',
     summary: resolved.mode === 'reference' ? 'skipped' : 'pending',
   };
-  let processingError = resolved.parseError;
+  let processingError = appendProcessingMessage('', '解析', resolved.parseError);
 
   const persist = (patch?: { status?: KbProcessingStatus; error?: string; chunkCount?: number }) => {
     const status = patch?.status || resolveStatus(detail, stageFailed(detail));
     store.patchItem(id, {
       title: resolved.title,
-      content: resolved.mode === 'full'
-        ? (resolved.content.length <= 2000 ? resolved.content : '')
-        : resolved.content,
+      content: buildStoredPreviewContent(resolved.content),
       processing_status: status,
       processing_detail: detailToJson(detail),
       processing_error: patch?.error ?? processingError,
@@ -171,6 +167,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   };
 
   try {
+    clearSummaryArtifacts(id);
+
     if (resolved.mode === 'reference') {
       const referenceText = resolved.content.trim() || buildMissingSourceReference(item.source_path || '', 'reference_empty');
       detail.chunk = 'running';
@@ -187,7 +185,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         detail.bm25 = 'done';
       } catch (error) {
         detail.bm25 = 'failed';
-        processingError = formatStageError(error, 'bm25_index_failed');
+        processingError = appendProcessingError(
+          processingError,
+          '检索索引',
+          error,
+          'bm25_index_failed',
+        );
       }
 
       persist({
@@ -225,7 +228,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       detail.bm25 = 'done';
     } catch (error) {
       detail.bm25 = 'failed';
-      processingError = formatStageError(error, 'bm25_index_failed');
+      processingError = appendProcessingError(
+        processingError,
+        '检索索引',
+        error,
+        'bm25_index_failed',
+      );
     }
     persist();
 
@@ -236,23 +244,47 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       detail.embedding = 'done';
     } catch (error) {
       detail.embedding = 'failed';
-      processingError = formatStageError(error, 'embedding_failed');
+      processingError = appendProcessingError(
+        processingError,
+        '向量化',
+        error,
+        'embedding_failed',
+      );
     }
     persist();
 
     detail.summary = 'running';
     persist();
     try {
-      const summary = await summarizeAndEmbed(id);
-      detail.summary = summary ? 'done' : 'failed';
-    } catch {
-      detail.summary = 'failed';
+      const summary = await summarizeAndEmbedStrict(id);
+      if (summary) {
+        detail.summary = 'done';
+      } else {
+        detail.summary = 'failed';
+        processingError = appendProcessingMessage(
+          processingError,
+          '摘要',
+          '模型返回空内容，请检查服务商配置和模型是否可用',
+        );
+      }
+    } catch (error) {
+      if (isKnowledgeEnhancementUnavailableError(error)) {
+        detail.summary = 'skipped';
+      } else {
+        detail.summary = 'failed';
+        processingError = appendProcessingError(
+          processingError,
+          '摘要',
+          error,
+          'summary_failed',
+        );
+      }
     }
 
     // Refresh auto tags after reindex and sync to tag taxonomy.
     let nextTags = originalTags;
     try {
-      const categorized = await autoTagCategorized(resolved.content, originalTags);
+      const categorized = await autoTagCategorizedStrict(resolved.content, originalTags);
       const aiTags: CategorizedTag[] = [...categorized.matched, ...categorized.suggested];
       if (aiTags.length > 0) {
         nextTags = Array.from(new Set([...originalTags, ...aiTags.map((tag) => tag.name)]));
@@ -260,7 +292,15 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       }
       syncItemTagSystem(id, buildTagCandidates(nextTags, aiTags));
     } catch (error) {
-      console.error('[api/knowledge/items/:id/reindex] auto-tag failed:', error);
+      if (!isKnowledgeEnhancementUnavailableError(error)) {
+        console.error('[api/knowledge/items/:id/reindex] auto-tag failed:', error);
+        processingError = appendProcessingError(
+          processingError,
+          '标签',
+          error,
+          'tag_generation_failed',
+        );
+      }
     }
 
     persist({

@@ -17,19 +17,15 @@ import { SidebarNavItem } from "./sidebar-nav-item";
 import {
   DashboardSquare01Icon,
   Star,
-  BookOpen,
-  Puzzle,
   Settings2,
-  Globe,
   SidebarLeft01Icon,
   SidebarRight01Icon,
   Moon,
   Sun,
   Brain,
-  Message,
   MagicWandIcon,
   AlarmClockIcon,
-  RobotIcon,
+  UserGroup02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -41,18 +37,14 @@ interface SidebarProps {
 }
 
 const mainNavItems = [
-  { href: "/main-agent", labelKey: "sidebar.mainAgent" as const, icon: Message },
-  { href: "/capabilities", labelKey: "sidebar.capabilities" as const, icon: Puzzle },
   { href: "/library", labelKey: "sidebar.workspace" as const, icon: DashboardSquare01Icon },
-  { href: "/browser", labelKey: "tab.browser" as const, icon: Globe },
 ] as const;
 
 const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon: typeof Star }> = [];
 
 const bottomNavItems = [
   { href: "/mind", labelKey: "sidebar.mind" as const, icon: Brain },
-  { href: "/knowledge", labelKey: "sidebar.knowledge" as const, icon: BookOpen },
-  { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: Puzzle },
+  { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: Star },
 ];
 
 export function Sidebar({ onOpenAssistant }: SidebarProps) {
@@ -113,6 +105,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         || pathname === "/chat"
         || pathname.startsWith("/chat/");
     }
+    if (href === "/workflow") {
+      return pathname === "/workflow"
+        || (pathname.startsWith("/workflow/")
+          && !pathname.startsWith("/workflow/schedules")
+          && !pathname.startsWith("/workflow/agents"));
+    }
     return pathname === href || pathname.startsWith(href + "/");
   };
 
@@ -147,7 +145,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
       </div>
 
       <ScrollArea className="sidebar-scroll-area flex-1 px-2 py-1">
-        {/* Main nav */}
+        {/* 探索 */}
+        {expanded && (
+          <div className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            探索
+          </div>
+        )}
         <nav className="space-y-0.5">
           {mainNavItems.map((item) => (
             <SidebarNavItem
@@ -196,21 +199,21 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         <nav className="space-y-0.5">
           <SidebarNavItem
             icon={MagicWandIcon}
-            label="工作流构建器"
-            href="/workflow/builder"
+            label="工作流"
+            href="/workflow"
             expanded={expanded}
-            active={isActive("/workflow/builder")}
+            active={isActive("/workflow")}
           />
           <SidebarNavItem
             icon={AlarmClockIcon}
-            label="定时任务"
+            label="任务"
             href="/workflow/schedules"
             expanded={expanded}
             active={isActive("/workflow/schedules")}
           />
           <SidebarNavItem
-            icon={RobotIcon}
-            label="Agent 管理"
+            icon={UserGroup02Icon}
+            label="团队"
             href="/workflow/agents"
             expanded={expanded}
             active={isActive("/workflow/agents")}
@@ -219,7 +222,12 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
 
         <div className="my-2 h-px bg-border/50" />
 
-        {/* Bottom nav items */}
+        {/* 拓展 */}
+        {expanded && (
+          <div className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            拓展
+          </div>
+        )}
         <nav className="space-y-0.5">
           {bottomNavItems.map((item) => (
             <SidebarNavItem

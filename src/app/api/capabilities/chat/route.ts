@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { getDefaultProviderId, getProvider } from '@/lib/db';
 import { listPublishedCodeCapabilities, listPublishedPromptCapabilities } from '@/lib/db/capabilities';
 import { initializeCapabilities } from '@/lib/capability/init';
+import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import type { SendMessageRequest } from '@/types';
 
 const CAPABILITY_SESSION_ID = 'capability-authoring';
@@ -96,12 +96,29 @@ export async function POST(request: NextRequest) {
         content: message.content,
       }));
 
-    const resolvedProvider = provider_id
-      ? getProvider(provider_id)
-      : (() => {
-          const defaultProviderId = getDefaultProviderId();
-          return defaultProviderId ? getProvider(defaultProviderId) : undefined;
-        })();
+    let resolvedProvider;
+    try {
+      resolvedProvider = resolveProviderForCapability({
+        moduleKey: 'chat',
+        capability: 'agent-chat',
+        preferredProviderId: provider_id?.trim() || undefined,
+      });
+    } catch (error) {
+      if (error instanceof ProviderResolutionError) {
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw error;
+    }
+
+    if (!resolvedProvider) {
+      return new Response(
+        JSON.stringify({ error: '未配置可用的主聊天服务商，请先到设置中选择一个支持 Agent Chat 的 provider。' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
 
     const stream = streamClaude({
       prompt: content,

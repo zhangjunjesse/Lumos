@@ -5,6 +5,7 @@ import type { ApiProvider, ChatSession } from '@/types';
 import { getSession } from '@/lib/db/sessions';
 import { buildClaudeSdkRuntimeBootstrap } from './sdk-runtime';
 import { z, type ZodType } from 'zod';
+import { ensureClaudeLocalAuthReady } from './local-auth';
 
 interface ClaudeStructuredObjectParams<T> {
   system: string;
@@ -112,6 +113,7 @@ export async function generateObjectWithClaudeSdk<T>(
     provider: params.provider,
     sessionId: params.sessionId,
   });
+  await ensureClaudeLocalAuthReady(runtimeBootstrap.activeProvider);
   const abortController = new AbortController();
   let streamedTextOutput = '';
   let finalResultTextOutput = '';

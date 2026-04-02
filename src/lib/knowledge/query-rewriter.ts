@@ -3,8 +3,7 @@
  * Ported from demo/local-server/services/knowledge/query-rewriter.js
  */
 import { getSetting } from '@/lib/db';
-import { callKnowledgeModel } from './llm';
-import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
+import { callKnowledgeModel, getKnowledgeDefaultModel } from './llm';
 
 const SYSTEM = [
   '你是知识检索的查询改写器。',
@@ -23,9 +22,9 @@ const rewriteCache = new Map<string, { ts: number; value: string[] }>();
 
 async function callClaude(query: string): Promise<string> {
   return callKnowledgeModel({
-    model: resolveBuiltInClaudeModelId(getSetting('kb_query_rewrite_model') || BUILTIN_CLAUDE_MODEL_IDS.haiku, 'haiku'),
-    maxTokens: 150,
-    timeoutMs: 5000,
+    model: getSetting('kb_query_rewrite_model') || getKnowledgeDefaultModel(),
+    maxTokens: 16000,
+    timeoutMs: 30000,
     system: SYSTEM,
     prompt: USER_PROMPT + query,
   });

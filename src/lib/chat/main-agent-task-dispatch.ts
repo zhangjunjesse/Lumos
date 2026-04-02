@@ -1,10 +1,6 @@
-import { buildPreviewSchedulingPlan, type SchedulingPlan } from '@/lib/scheduling/planner';
-import { TaskStatus, type Task } from '@/lib/task-management/types';
-
 export interface MainAgentTaskDispatchPlan {
   taskSummary: string;
   requirements: string[];
-  preview: SchedulingPlan;
 }
 
 const STATUS_OR_QUERY_PATTERNS = [
@@ -227,28 +223,13 @@ export function planMainAgentTaskDispatch(params: {
   const clauses = splitClauses(params.userInput);
   const taskSummary = buildTaskSummary(params.userInput, clauses);
   const requirements = buildTaskRequirements(params.userInput, clauses, taskSummary);
-  const previewTask: Task = {
-    id: 'task-preview',
-    sessionId: params.sessionId,
-    summary: taskSummary,
-    requirements,
-    status: TaskStatus.PENDING,
-    progress: 0,
-    createdAt: new Date(),
-  };
-  const preview = buildPreviewSchedulingPlan(previewTask);
 
   const longRequest = normalized.length >= 48 || clauses.length >= 2;
   const implementationLike = matchesAny(normalized, IMPLEMENTATION_PATTERNS);
   const taskLikeWithFiles = params.hasFiles === true && taskSignalCount > 0;
   const dispatchRequired = implementationLike
     || taskLikeWithFiles
-    || preview.strategy === 'workflow'
-    || preview.analysis.needsBrowser
-    || preview.analysis.needsParallel
-    || preview.analysis.needsMultipleSteps
-    || preview.analysis.complexity === 'complex'
-    || (taskSignalCount > 0 && (longRequest || requirements.length > 0 || preview.estimatedDurationSeconds > 45));
+    || (taskSignalCount > 0 && (longRequest || requirements.length > 0));
 
   if (!dispatchRequired) {
     return null;
@@ -257,6 +238,5 @@ export function planMainAgentTaskDispatch(params: {
   return {
     taskSummary,
     requirements,
-    preview,
   };
 }

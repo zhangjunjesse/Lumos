@@ -1,5 +1,9 @@
+import * as fs from 'fs'
+import * as path from 'path'
 import { ErrorSanitizer } from './security/error-sanitizer'
 import { buildClaudeSdkRuntimeBootstrap } from '@/lib/claude/sdk-runtime'
+import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth'
+import type { ApiProvider } from '@/types'
 import type { StageExecutionPayloadV1, StageExecutionResultV1 } from './runtime-contracts'
 import {
   buildStageExecutionOutputSchema,
@@ -7,6 +11,7 @@ import {
   parseStageExecutionModelOutput,
 } from './runtime-result-normalizer'
 import { buildStageRuntimeToolPolicy, createStageCanUseTool, getStageExecutionCwd } from './runtime-tool-policy'
+import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
 
 interface WorkerStatus {
   stageId: string
@@ -16,6 +21,8 @@ interface WorkerStatus {
 
 interface StageWorkerExecuteOptions {
   abortController?: AbortController
+  provider?: ApiProvider
+  onTraceEvent?: (event: unknown) => void
 }
 
 type StageWorkerDiagnosticError = Error & {
@@ -24,6 +31,17 @@ type StageWorkerDiagnosticError = Error & {
   cause?: unknown
   outputPreview?: string
   structuredOutputPreview?: string
+}
+
+function listDirFilesSync(dirPath: string): string[] {
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true })
+      .filter(e => e.isFile() && !e.name.startsWith('.'))
+      .map(e => e.name)
+      .sort()
+  } catch {
+    return []
+  }
 }
 
 function truncateDiagnostic(value: string | undefined, maxLength: number = 4000): string | undefined {
@@ -108,7 +126,7 @@ export class StageWorker {
       }
 
       if (this.useRealAgent) {
-        const result = await this.executeWithClaudeSDK(payload, startTime, startedAt)
+        const result = await this.executeWithClaudeSDK(payload, startTime, startedAt, options.provider, options.onTraceEvent)
         if (!this.isCancelled()) {
           this.state = 'idle'
         }
@@ -244,29 +262,39 @@ export class StageWorker {
     payload: StageExecutionPayloadV1,
     startTime: number,
     startedAt: string,
+    provider?: ApiProvider,
+    onTraceEvent?: (event: unknown) => void,
   ): Promise<StageExecutionResultV1> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk')
 
     const prompt = this.buildPrompt(payload)
     const runtimePolicy = buildStageRuntimeToolPolicy(payload.agent)
     const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
+      provider,
       sessionId: payload.sessionId,
     })
+    await ensureClaudeLocalAuthReady(runtimeBootstrap.activeProvider)
     const requestedModel = payload.requestedModel?.trim() || undefined
     let stderrOutput = ''
     let output = ''
     let structuredOutput: unknown
+
+    // Load MCP servers so workflow agents can use DeepSearch, Feishu, etc.
+    const lumosMcpServers = resolveEnabledMcpServers({
+      sessionWorkingDirectory: getStageExecutionCwd(payload),
+      sessionId: payload.sessionId,
+    })
+    const mcpServers = lumosMcpServers ? toSdkMcpConfig(lumosMcpServers) : undefined
+
     const baseQueryOptions = {
       abortController: this.abortController ?? new AbortController(),
       cwd: getStageExecutionCwd(payload),
       systemPrompt: payload.agent.systemPrompt,
-      tools: runtimePolicy.sdkTools,
-      allowedTools: runtimePolicy.allowedTools,
-      canUseTool: createStageCanUseTool(payload),
-      permissionMode: 'dontAsk' as const,
+      permissionMode: 'bypassPermissions' as const,
       env: runtimeBootstrap.env,
       settingSources: runtimeBootstrap.settingSources,
       ...(requestedModel ? { model: requestedModel } : {}),
+      ...(mcpServers ? { mcpServers } : {}),
       stderr: (data: string) => {
         stderrOutput += data
       },
@@ -285,6 +313,7 @@ export class StageWorker {
           startedAt,
           startTime,
           mode: 'preferred',
+          onTraceEvent,
         })
 
         if (!plainTextResult) {
@@ -308,14 +337,19 @@ export class StageWorker {
       })
 
       for await (const message of queryResult) {
-        if ((message as any).text) {
-          output += (message as any).text
+        const msg = message as any
+        const msgType: string = msg.type ?? ''
+        if (onTraceEvent && (msgType === 'assistant' || msgType === 'user')) {
+          onTraceEvent(message)
         }
-        if ((message as any).type === 'result' && typeof (message as any).result === 'string' && !(message as any).structured_output) {
-          output += (message as any).result
+        if (msg.text) {
+          output += msg.text
         }
-        if ((message as any).type === 'result' && (message as any).structured_output) {
-          structuredOutput = (message as any).structured_output
+        if (msgType === 'result' && typeof msg.result === 'string' && !msg.structured_output) {
+          output += msg.result
+        }
+        if (msgType === 'result' && msg.structured_output) {
+          structuredOutput = msg.structured_output
         }
       }
 
@@ -355,7 +389,7 @@ export class StageWorker {
         }],
       }
     } catch (error) {
-      if (isStructuredOutputRetryFailure(error) && isTextOnlyStageContract(payload)) {
+      if (isStructuredOutputRetryFailure(error)) {
         const fallbackResult = await this.executePlainTextMode({
           query,
           payload,
@@ -364,6 +398,7 @@ export class StageWorker {
           startedAt,
           startTime,
           mode: 'fallback',
+          onTraceEvent,
         })
 
         if (fallbackResult) {
@@ -395,6 +430,7 @@ export class StageWorker {
     startedAt: string
     startTime: number
     mode: 'preferred' | 'fallback'
+    onTraceEvent?: (event: unknown) => void
   }): Promise<StageExecutionResultV1 | null> {
     const {
       query,
@@ -404,6 +440,7 @@ export class StageWorker {
       startedAt,
       startTime,
       mode,
+      onTraceEvent,
     } = input
 
     let output = ''
@@ -439,11 +476,16 @@ export class StageWorker {
       })
 
       for await (const message of queryResult as AsyncIterable<any>) {
-        if ((message as any).text) {
-          output += (message as any).text
+        const msg = message as any
+        const msgType: string = msg.type ?? ''
+        if (onTraceEvent && (msgType === 'assistant' || msgType === 'user')) {
+          onTraceEvent(message)
         }
-        if ((message as any).type === 'result' && typeof (message as any).result === 'string') {
-          output += (message as any).result
+        if (msg.text) {
+          output += msg.text
+        }
+        if (msgType === 'result' && typeof msg.result === 'string') {
+          output += msg.result
         }
       }
 
@@ -563,14 +605,58 @@ export class StageWorker {
         : []),
     ]
 
+    const runId = payload.runId
+    const stageId = payload.stageId
+
+    const ioContract = [
+      '# I/O Contract',
+      '',
+      '## Inputs',
+      `- Run ID: ${runId}`,
+      `- Stage ID: ${stageId}`,
+      ...(payload.dependencies.length > 0
+        ? [
+            '- Upstream stage outputs:',
+            ...payload.dependencies.flatMap((dep) => {
+              const summaryFile = `${payload.workspace.sharedReadDir}/${runId}_${dep.stageId}_output.md`
+              const lines = [
+                `  • **${dep.stageId}**: ${dep.summary.slice(0, 200)}${dep.summary.length > 200 ? '…' : ''}`,
+                `    Summary file: ${summaryFile}`,
+              ]
+              const upstreamOutputDir = path.join(payload.workspace.runWorkspace, 'stages', dep.stageId, 'output')
+              const artifactFiles = listDirFilesSync(upstreamOutputDir)
+              if (artifactFiles.length > 0) {
+                lines.push(`    **完整产出物文件（优先读取这些文件获取完整内容，不要只依赖 summary）**:`)
+                for (const f of artifactFiles) {
+                  lines.push(`      - ${path.join(upstreamOutputDir, f)}`)
+                }
+              }
+              return lines
+            }),
+            '',
+            '**重要：如果上游步骤有产出物文件，必须读取这些文件获取完整原始内容进行分析，不要仅依赖 summary 摘要。**',
+          ]
+        : ['- No upstream dependencies']),
+      '',
+      '## Outputs',
+      '- Required: Return a text summary as your structured result (will be passed to downstream stages)',
+      `- **所有报告、文档、分析结果等文件必须写入**: ${payload.workspace.artifactOutputDir}`,
+      `- 文件命名规范: ${runId}_${stageId}_<描述>.<ext>`,
+      `- 禁止写入 shared 目录 (${payload.workspace.sharedReadDir})，shared 目录由运行时自动管理`,
+      '- Do NOT write files outside your artifact output dir',
+      '',
+      '## Stage Boundary',
+      `Execute ONLY the work for stage "${stageId}". Stop when done. Do NOT do work that belongs to other stages.`,
+    ]
+
     const dependencies = payload.dependencies.length > 0
       ? [
-          '# Dependencies',
+          '# Dependencies (full context)',
           ...payload.dependencies.map((dependency) => (
             `- ${dependency.title} (${dependency.stageId}): ${dependency.summary}${dependency.artifactRefs.length > 0 ? ` [artifacts: ${dependency.artifactRefs.join(', ')}]` : ''}`
           )),
         ]
-      : ['# Dependencies', 'None']
+      : []
 
     const memoryRefs = [
       '# Memory Refs',
@@ -594,10 +680,11 @@ export class StageWorker {
 
     return [
       header.join('\n'),
+      ioContract.join('\n'),
       context.join('\n'),
       stage.join('\n'),
       agentPolicy.join('\n'),
-      dependencies.join('\n'),
+      ...(dependencies.length > 0 ? [dependencies.join('\n')] : []),
       memoryRefs.join('\n'),
       workspaces.join('\n'),
     ].join('\n\n')

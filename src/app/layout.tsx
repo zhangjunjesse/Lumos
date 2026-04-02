@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { I18nProvider } from "@/components/layout/I18nProvider";
 import { AppLayout } from "@/components/layout/app-layout";
 import { MemoryToastProvider } from "@/components/memory/memory-toast-container";
+import { ScheduleNotifications } from "@/components/workflow/ScheduleNotifications";
 
 export const metadata: Metadata = {
   title: "Lumos",
@@ -22,6 +23,7 @@ export default function RootLayout({
           <I18nProvider>
             <MemoryToastProvider>
               <AppLayout>{children}</AppLayout>
+              <ScheduleNotifications />
             </MemoryToastProvider>
           </I18nProvider>
         </ThemeProvider>

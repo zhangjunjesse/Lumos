@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProvider, updateProvider, deleteProvider } from '@/lib/db';
+import {
+  getProvider,
+  updateProvider,
+  deleteProvider,
+  ProviderValidationError,
+  ProviderDeletionBlockedError,
+  ProviderUpdateBlockedError,
+} from '@/lib/db';
 import type { ProviderResponse, ErrorResponse, UpdateProviderRequest, ApiProvider } from '@/types';
 
 interface RouteContext {
@@ -54,11 +61,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       delete body.api_key;
     }
 
-    // Auto-activate built-in provider when user fills in API key
-    if (existing.is_builtin && body.api_key && body.api_key.trim() !== '') {
-      body.is_active = 1;
-    }
-
     const updated = updateProvider(id, body);
     if (!updated) {
       return NextResponse.json<ErrorResponse>(
@@ -69,6 +71,18 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json<ProviderResponse>({ provider: maskApiKey(updated) });
   } catch (error) {
+    if (error instanceof ProviderValidationError) {
+      return NextResponse.json<ErrorResponse>(
+        { error: error.message },
+        { status: 400 }
+      );
+    }
+    if (error instanceof ProviderUpdateBlockedError) {
+      return NextResponse.json<ErrorResponse>(
+        { error: error.message },
+        { status: 409 }
+      );
+    }
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to update provider' },
       { status: 500 }
@@ -90,6 +104,12 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof ProviderDeletionBlockedError) {
+      return NextResponse.json<ErrorResponse>(
+        { error: error.message },
+        { status: 409 }
+      );
+    }
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to delete provider' },
       { status: 500 }

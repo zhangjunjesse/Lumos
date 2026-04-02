@@ -26,6 +26,7 @@ export interface StepNodeData {
   label: string;
   input: Record<string, unknown>;
   dependsOn: string[];
+  policy?: { timeoutMs?: number; retry?: { maximumAttempts?: number } };
   [key: string]: unknown;
 }
 
@@ -52,6 +53,7 @@ export function dslToGraph(
       label: getStepLabel(step, presetNames),
       input: step.input ?? {},
       dependsOn: step.dependsOn ?? [],
+      ...(step.policy ? { policy: step.policy as StepNodeData['policy'] } : {}),
     },
   }));
 
@@ -104,7 +106,7 @@ export function graphToDsl(
       ...(deps.length > 0 ? { dependsOn: deps } : {}),
       ...(original?.when ? { when: original.when } : {}),
       input: d.input,
-      ...(original?.policy ? { policy: original.policy } : {}),
+      ...(d.policy ? { policy: d.policy } : original?.policy ? { policy: original.policy } : {}),
       metadata: { position: { x: node.position.x, y: node.position.y } },
     };
   });

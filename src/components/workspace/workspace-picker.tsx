@@ -252,7 +252,7 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
   return (
     <div className="w-full min-w-0 space-y-1">
       <div className="flex items-center justify-between px-3">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
           {t('sidebar.workspaces')}
         </span>
         <Button
