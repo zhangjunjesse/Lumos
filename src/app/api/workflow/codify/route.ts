@@ -54,7 +54,8 @@ export async function POST(request: NextRequest) {
       input.trace,
       '',
       '请将上述执行追踪转换为等效的 JavaScript 内联脚本。',
-      '脚本以 async function body 形式编写，可使用 ctx 变量（含 params, upstreamOutputs, signal）。',
+      '脚本以 async function body 形式编写，可使用 ctx 变量（含 params, upstreamOutputs, signal, browser）。',
+      '浏览器操作必须使用 ctx.browser（共享登录态），不要用 fetch 或 curl。',
       '必须 return { success: true/false, output: { summary: "..." } }。',
       '只输出代码块中的代码，不要包含 import 和 export。',
     ].join('\n');

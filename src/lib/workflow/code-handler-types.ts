@@ -1,6 +1,29 @@
 import type { StepResult, WorkflowStepRuntimeContext } from './types';
 
 /**
+ * 浏览器 Bridge 操作接口
+ * 封装 Bridge Server HTTP API，代码脚本通过 ctx.browser 使用
+ */
+export interface BrowserBridgeApi {
+  navigate(url: string): Promise<void>;
+  click(selector: string): Promise<void>;
+  fill(selector: string, value: string): Promise<void>;
+  type(text: string): Promise<void>;
+  press(key: string): Promise<void>;
+  waitFor(selector: string, options?: { timeout?: number }): Promise<void>;
+  evaluate<T = unknown>(script: string): Promise<T>;
+  snapshot(): Promise<{ title: string; content: string }>;
+  screenshot(): Promise<string>;
+  pages(): Promise<Array<{ id: string; url: string; title: string }>>;
+  currentPage(): Promise<{ id: string; url: string; title: string }>;
+  newPage(url?: string): Promise<{ id: string }>;
+  selectPage(id: string): Promise<void>;
+  closePage(id: string): Promise<void>;
+  /** 是否已连接到 Bridge Server */
+  readonly connected: boolean;
+}
+
+/**
  * 代码处理器执行上下文
  * 提供给 handler 函数的运行时信息
  */
@@ -19,6 +42,8 @@ export interface CodeHandlerContext {
   runtimeContext: WorkflowStepRuntimeContext;
   /** AbortSignal（支持取消） */
   signal?: AbortSignal;
+  /** 浏览器操作（通过 Bridge Server 共享同一个浏览器实例） */
+  browser: BrowserBridgeApi;
 }
 
 /**

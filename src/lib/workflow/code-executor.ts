@@ -5,6 +5,7 @@ import type {
   CodeHandlerContext,
 } from './code-handler-types';
 import { getCodeHandler } from './code-handler-registry';
+import { createBrowserBridgeApi } from './code-browser-bridge';
 
 /**
  * 判断是否应该走代码执行路径
@@ -37,6 +38,7 @@ function buildHandlerContext(
     upstreamOutputs: (input.context as Record<string, unknown>) ?? {},
     runtimeContext,
     signal,
+    browser: createBrowserBridgeApi(),
   };
 }
 
