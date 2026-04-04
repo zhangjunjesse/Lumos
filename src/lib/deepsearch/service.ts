@@ -25,8 +25,6 @@ import {
   postToBrowserBridge,
   resolveBrowserBridgeRuntimeConfig,
 } from '@/lib/browser-runtime/bridge-client';
-import { getAdapter } from './adapter-registry';
-import { createAdapterContext } from './adapter-context';
 import { executeAdapterRun } from './execution';
 import type { DeepSearchPageExtractionResult } from './adapter-types';
 import { buildDeepSearchCookieImportEntries } from './cookie-source';
@@ -36,7 +34,6 @@ import {
   deriveDeepSearchRunSiteProbeSummary,
 } from './recovery';
 import {
-  collectDeepSearchFollowUpUrls,
   resolveSiteSeedBindingRole,
   resolveSiteSeedUrl,
 } from './site-routing';
@@ -84,7 +81,8 @@ interface BrowserBridgePageNavigateResponse {
   pageId: string;
 }
 
-interface BrowserBridgePageSnapshotResponse {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface _BrowserBridgePageSnapshotResponse {
   ok: true;
   pageId: string;
   url?: string;
@@ -92,7 +90,8 @@ interface BrowserBridgePageSnapshotResponse {
   lines?: string[];
 }
 
-interface BrowserBridgePageScreenshotResponse {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface _BrowserBridgePageScreenshotResponse {
   ok: true;
   pageId: string;
   filePath?: string;
@@ -527,7 +526,8 @@ function sanitizeArtifactSegment(value: string, fallback: string): string {
   return sanitized || fallback;
 }
 
-function buildExecutionMarkdown(params: {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _buildExecutionMarkdown(params: {
   successes: Array<{
     siteKey: string | null;
     pageId: string;
@@ -616,7 +616,8 @@ function buildStructuredSnapshotContent(params: {
   }, null, 2);
 }
 
-function buildGenericExtractionResult(params: {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _buildGenericExtractionResult(params: {
   fallbackUrl: string;
   fallbackTitle: string;
   snapshotLines: string[];
@@ -642,7 +643,8 @@ function buildGenericExtractionResult(params: {
   };
 }
 
-async function createManagedFollowUpBindings(params: {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _createManagedFollowUpBindings(params: {
   runId: string;
   siteKey: string;
   urls: string[];
@@ -715,7 +717,8 @@ async function getCurrentBrowserPage(
   return mapBrowserPageSummary(payload.page ?? null);
 }
 
-async function syncTakeoverRunBinding(
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _syncTakeoverRunBinding(
   run: DeepSearchRunRecord,
   config: NonNullable<ReturnType<typeof resolveBrowserBridgeRuntimeConfig>>,
 ): Promise<DeepSearchRunRecord> {
@@ -754,7 +757,8 @@ async function syncTakeoverRunBinding(
   }]);
 }
 
-async function ensureManagedRunBindings(
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _ensureManagedRunBindings(
   run: DeepSearchRunRecord,
   config: NonNullable<ReturnType<typeof resolveBrowserBridgeRuntimeConfig>>,
 ): Promise<DeepSearchRunRecord> {
@@ -839,7 +843,8 @@ async function probeDeepSearchSitesForRuns(runs: DeepSearchRunRecord[]) {
   await Promise.all(siteKeys.map((siteKey) => probeDeepSearchSiteLoginState(siteKey)));
 }
 
-async function persistSingleResult(
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _persistSingleResult(
   runId: string,
   artifactDir: string,
   success: {
@@ -1184,11 +1189,16 @@ export async function openDeepSearchSiteLoginView(siteKey: string) {
       throw error;
     }
 
-    const navigated = await postToBrowserBridge<BrowserBridgePageNavigateResponse>(config, '/v1/pages/navigate', {
-      pageId: activePage.pageId,
-      type: 'url',
-      url: loginUrl,
-    });
+    const navigated = await postToBrowserBridge<BrowserBridgePageNavigateResponse>(
+      config,
+      '/v1/pages/navigate',
+      {
+        pageId: activePage.pageId,
+        type: 'url',
+        url: loginUrl,
+      },
+      { timeoutMs: 120_000 },
+    );
     const currentPage = await getCurrentBrowserPage(config);
 
     return {

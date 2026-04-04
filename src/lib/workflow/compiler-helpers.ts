@@ -1,5 +1,11 @@
 import ts from 'typescript';
-import type { WorkflowStep, WorkflowStepPolicy } from './types';
+import type { WorkflowStep } from './types';
+
+export const DEFAULT_AGENT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_NOTIFICATION_STEP_TIMEOUT_MS = 15_000;
+export const DEFAULT_CAPABILITY_STEP_TIMEOUT_MS = 2 * 60 * 1000;
+export const DEFAULT_WAIT_STEP_TIMEOUT_BUFFER_MS = 5_000;
+export const DEFAULT_STEP_MAXIMUM_ATTEMPTS = 1;
 
 export function resultBindingName(stepId: string): string {
   return `__result_${toSafeIdentifier(stepId)}`;
@@ -26,12 +32,34 @@ export function emitTimeoutLiteral(timeoutMs: number | undefined): string {
   return timeoutMs === undefined ? 'undefined' : String(timeoutMs);
 }
 
+export function resolveCompiledStepTimeoutMs(step: WorkflowStep): number | undefined {
+  const explicitTimeoutMs = step.policy?.timeoutMs;
+  if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs) && explicitTimeoutMs > 0) {
+    return explicitTimeoutMs;
+  }
+
+  switch (step.type) {
+    case 'agent':
+      return DEFAULT_AGENT_STEP_TIMEOUT_MS;
+    case 'notification':
+      return DEFAULT_NOTIFICATION_STEP_TIMEOUT_MS;
+    case 'capability':
+      return DEFAULT_CAPABILITY_STEP_TIMEOUT_MS;
+    case 'wait': {
+      const durationMs = typeof step.input?.durationMs === 'number' && Number.isFinite(step.input.durationMs)
+        ? Math.max(0, step.input.durationMs)
+        : 1000;
+      return durationMs + DEFAULT_WAIT_STEP_TIMEOUT_BUFFER_MS;
+    }
+    default:
+      return undefined;
+  }
+}
+
 export function createStepRunConfig(step: WorkflowStep): Record<string, unknown> {
   const config: Record<string, unknown> = { name: step.id };
-  const maximumAttempts = step.policy?.retry?.maximumAttempts;
-  if (maximumAttempts !== undefined) {
-    config.retryPolicy = { maximumAttempts };
-  }
+  const maximumAttempts = step.policy?.retry?.maximumAttempts ?? DEFAULT_STEP_MAXIMUM_ATTEMPTS;
+  config.retryPolicy = { maximumAttempts };
   return config;
 }
 
@@ -156,6 +184,20 @@ export function emitRuntimeHelpers(): string[] {
     '}',
     '',
     'async function __executeStep(options) {',
+    '  const { workflowRunId, stepId, runStep, onStepStarted, onStepCompleted } = options;',
+    '  await onStepStarted?.({ workflowRunId, stepId });',
+    '  const result = await runStep();',
+    '  await onStepCompleted?.({ workflowRunId, stepId });',
+    '  if (!result.success) {',
+    '    const err = new Error(result.error || `Step "${String(stepId)}" failed`);',
+    '    err.stepName = stepId;',
+    '    throw err;',
+    '  }',
+    '  return result;',
+    '}',
+    '',
+    '// continueOnFailure: stores result without throwing so if-else can reference steps.X.success',
+    'async function __executeStepSafe(options) {',
     '  const { workflowRunId, stepId, runStep, onStepStarted, onStepCompleted } = options;',
     '  await onStepStarted?.({ workflowRunId, stepId });',
     '  const result = await runStep();',

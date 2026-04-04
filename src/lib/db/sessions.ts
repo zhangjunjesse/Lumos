@@ -109,6 +109,11 @@ export function updateSessionProviderId(id: string, providerId: string): void {
   db.prepare('UPDATE chat_sessions SET provider_id = ? WHERE id = ?').run(providerId, id);
 }
 
+export function updateSessionSystemPrompt(id: string, systemPrompt: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET system_prompt = ? WHERE id = ?').run(systemPrompt, id);
+}
+
 export function getDefaultProviderId(): string | undefined {
   return getSetting('default_provider_id') || undefined;
 }

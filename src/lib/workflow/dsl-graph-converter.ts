@@ -36,6 +36,7 @@ const NODE_WIDTH = 190;
 const NODE_HEIGHT = 60;
 
 const DEDICATED_NODE_TYPES = new Set(['agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability']);
+const STEP_OUTPUT_REF_PATTERN = /^steps\.([A-Za-z0-9_-]+)\.output(?:\.(.+))?$/;
 
 // ── DSL → Graph ────────────────────────────────────────────────────────────
 
@@ -111,7 +112,44 @@ export function graphToDsl(
     };
   });
 
-  return { ...baseDsl, steps };
+  return sanitizeDslStepReferences({ ...baseDsl, steps });
+}
+
+export function removeStepFromDsl(
+  spec: DslSpec,
+  stepId: string,
+): DslSpec {
+  return sanitizeDslStepReferences({
+    ...spec,
+    steps: spec.steps.filter((step) => step.id !== stepId),
+  });
+}
+
+export function sanitizeDslStepReferences(spec: DslSpec): DslSpec {
+  const validStepIds = new Set(spec.steps.map((step) => step.id));
+
+  return {
+    ...spec,
+    steps: spec.steps.map((step) => {
+      const nextDependsOn = (step.dependsOn ?? []).filter((dep) => dep !== step.id && validStepIds.has(dep));
+      const sanitizedInput = sanitizeGenericStepRefs(step.input, validStepIds);
+      const nextInput = sanitizeControlFlowInputRefs({
+        ...step,
+        input: sanitizedInput,
+      }, validStepIds);
+      const nextWhen = containsMissingStepReference(step.when, validStepIds)
+        ? undefined
+        : step.when;
+
+      return {
+        ...step,
+        ...(nextDependsOn.length > 0 ? { dependsOn: nextDependsOn } : {}),
+        ...(nextDependsOn.length === 0 && step.dependsOn ? { dependsOn: undefined } : {}),
+        ...(nextWhen ? { when: nextWhen } : step.when ? { when: undefined } : {}),
+        ...(nextInput ? { input: nextInput } : step.input ? { input: undefined } : {}),
+      };
+    }),
+  };
 }
 
 // ── Dagre auto-layout ──────────────────────────────────────────────────────
@@ -181,4 +219,104 @@ function buildControlFlowEdges(step: DslStep): Edge[] {
   }
 
   return edges;
+}
+
+function sanitizeControlFlowInputRefs(
+  step: DslStep,
+  validStepIds: Set<string>,
+): DslStep['input'] {
+  if (!step.input) {
+    return step.input;
+  }
+
+  if (step.type === 'if-else') {
+    const thenRefs = pruneStepIdArray(step.input.then, validStepIds);
+    const elseRefs = pruneStepIdArray(step.input.else, validStepIds);
+
+    return {
+      ...step.input,
+      then: thenRefs,
+      ...(elseRefs.length > 0 ? { else: elseRefs } : {}),
+      ...(elseRefs.length === 0 && 'else' in step.input ? { else: undefined } : {}),
+    };
+  }
+
+  if (step.type === 'for-each' || step.type === 'while') {
+    return {
+      ...step.input,
+      body: pruneStepIdArray(step.input.body, validStepIds),
+    };
+  }
+
+  return step.input;
+}
+
+function sanitizeGenericStepRefs(
+  value: Record<string, unknown> | undefined,
+  validStepIds: Set<string>,
+): Record<string, unknown> | undefined {
+  const sanitized = sanitizeUnknownValue(value, validStepIds);
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) {
+    return undefined;
+  }
+  return sanitized as Record<string, unknown>;
+}
+
+function sanitizeUnknownValue(
+  value: unknown,
+  validStepIds: Set<string>,
+): unknown {
+  if (typeof value === 'string') {
+    const match = STEP_OUTPUT_REF_PATTERN.exec(value);
+    if (match && !validStepIds.has(match[1])) {
+      return undefined;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeUnknownValue(entry, validStepIds))
+      .filter((entry) => entry !== undefined);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  return Object.entries(value).reduce<Record<string, unknown>>((result, [key, entry]) => {
+    const sanitized = sanitizeUnknownValue(entry, validStepIds);
+    if (sanitized !== undefined) {
+      result[key] = sanitized;
+    }
+    return result;
+  }, {});
+}
+
+function containsMissingStepReference(
+  value: unknown,
+  validStepIds: Set<string>,
+): boolean {
+  if (typeof value === 'string') {
+    const match = STEP_OUTPUT_REF_PATTERN.exec(value);
+    return Boolean(match && !validStepIds.has(match[1]));
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsMissingStepReference(entry, validStepIds));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  return Object.values(value).some((entry) => containsMissingStepReference(entry, validStepIds));
+}
+
+function pruneStepIdArray(value: unknown, validStepIds: Set<string>): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string' && validStepIds.has(entry));
 }

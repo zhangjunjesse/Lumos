@@ -25,6 +25,8 @@ export interface McpResolveOptions {
   browserBridgeOverride?: { url?: string; token?: string };
   /** MCP names to skip (e.g. chat route skips 'task-management'). */
   skipNames?: Set<string>;
+  /** When true, browser MCP operates in background mode (no UI tab switching). */
+  browserBackground?: boolean;
 }
 
 // Re-export enricher utilities that callers may need
@@ -49,6 +51,7 @@ export function resolveEnabledMcpServers(
     sessionId: options.sessionId,
     dataDir,
     browserBridgeOverride: options.browserBridgeOverride,
+    browserBackground: options.browserBackground,
   };
 
   const legacyMcpPathPattern = /[/\\]feishu-mcp-server[/\\]mcp-servers[/\\]/g;

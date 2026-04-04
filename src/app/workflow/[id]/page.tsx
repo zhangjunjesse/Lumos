@@ -28,6 +28,42 @@ interface ValidationResult {
   errors: string[];
 }
 
+interface WorkflowEditorDebugEntry {
+  timestamp: string;
+  event: string;
+  payload: Record<string, unknown>;
+}
+
+function fingerprintText(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33 + value.charCodeAt(index)) >>> 0;
+  }
+  return `${value.length}:${hash.toString(16)}`;
+}
+
+function logWorkflowEditorDebug(event: string, payload: Record<string, unknown>) {
+  const entry: WorkflowEditorDebugEntry = {
+    timestamp: new Date().toISOString(),
+    event,
+    payload,
+  };
+
+  if (typeof window !== 'undefined') {
+    const globalWindow = window as typeof window & {
+      __lumosWorkflowEditorDebug?: WorkflowEditorDebugEntry[];
+    };
+    const bucket = globalWindow.__lumosWorkflowEditorDebug ?? [];
+    bucket.push(entry);
+    if (bucket.length > 200) {
+      bucket.splice(0, bucket.length - 200);
+    }
+    globalWindow.__lumosWorkflowEditorDebug = bucket;
+  }
+
+  console.info('[workflow-editor-debug]', entry);
+}
+
 export default function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -48,20 +84,62 @@ export default function WorkflowDetailPage() {
   const savedNameRef = useRef('');
   const savedDslTextRef = useRef('');
   const isDirtyRef = useRef(false);
+  const currentNameRef = useRef('');
+  const currentDslTextRef = useRef('');
+  const computeDirty = useCallback((nextName: string, nextDslText: string) => (
+    nextName !== savedNameRef.current || nextDslText !== savedDslTextRef.current
+  ), []);
+
+  const applyDirtyState = useCallback((
+    source: string,
+    nextDirty: boolean,
+    input?: {
+      nextName?: string;
+      nextDslText?: string;
+      extra?: Record<string, unknown>;
+    },
+  ) => {
+    const nextName = input?.nextName ?? currentNameRef.current;
+    const nextDslText = input?.nextDslText ?? currentDslTextRef.current;
+    isDirtyRef.current = nextDirty;
+    setIsDirty(nextDirty);
+    logWorkflowEditorDebug(source, {
+      nextDirty,
+      currentName: nextName,
+      savedName: savedNameRef.current,
+      currentDslFingerprint: fingerprintText(nextDslText),
+      savedDslFingerprint: fingerprintText(savedDslTextRef.current),
+      ...(input?.extra ?? {}),
+    });
+  }, []);
+
+  useEffect(() => {
+    currentNameRef.current = name;
+  }, [name]);
+
+  useEffect(() => {
+    currentDslTextRef.current = dslText;
+  }, [dslText]);
 
   // Keep ref in sync for beforeunload handler
-  useEffect(() => { isDirtyRef.current = isDirty; }, [isDirty]);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
 
   // Warn on browser close/refresh
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!isDirtyRef.current) return;
+      logWorkflowEditorDebug('beforeunload-blocked', {
+        isDirty,
+        isDirtyRef: isDirtyRef.current,
+      });
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, []);
+  }, [isDirty]);
 
   // Load workflow
   useEffect(() => {
@@ -75,10 +153,16 @@ export default function WorkflowDetailPage() {
         setName(data.workflow.name);
         savedDslTextRef.current = text;
         savedNameRef.current = data.workflow.name;
-        setIsDirty(false);
+        applyDirtyState('load-workflow', false, {
+          nextName: data.workflow.name,
+          nextDslText: text,
+          extra: {
+            stepCount: data.workflow.workflowDsl.steps?.length ?? 0,
+          },
+        });
       })
       .catch(() => setLoadError('加载失败'));
-  }, [id]);
+  }, [applyDirtyState, id]);
 
   // Load preset names
   useEffect(() => {
@@ -96,22 +180,50 @@ export default function WorkflowDetailPage() {
     if (!dsl) return;
     setSaving(true);
     setSaveMsg('');
+    logWorkflowEditorDebug('save-start', {
+      workflowId: id,
+      stepCount: dsl.steps?.length ?? 0,
+      isDirty,
+      isDirtyRef: isDirtyRef.current,
+      currentDslFingerprint: fingerprintText(JSON.stringify(dsl, null, 2)),
+    });
     try {
       const res = await fetch(`/api/workflow/definitions/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, workflowDsl: dsl }),
       });
-      const data = await res.json() as { error?: string };
+      const data = await res.json() as { error?: string; workflow?: { workflowDsl: WorkflowDsl; name: string } };
       if (!res.ok || data.error) { setSaveMsg(data.error || '保存失败'); return; }
-      savedDslTextRef.current = JSON.stringify(dsl, null, 2);
-      savedNameRef.current = name;
-      setIsDirty(false);
-      setSaveMsg('已保存');
+      const saveValidation = (data as { validation?: ValidationResult | null }).validation ?? null;
+      const persistedDsl = data.workflow?.workflowDsl ?? dsl;
+      const persistedName = data.workflow?.name ?? name;
+      const persistedText = JSON.stringify(persistedDsl, null, 2);
+      setDsl(persistedDsl);
+      setDslText(persistedText);
+      setName(persistedName);
+      setValidation(saveValidation);
+      savedDslTextRef.current = persistedText;
+      savedNameRef.current = persistedName;
+      applyDirtyState('save-success', false, {
+        nextName: persistedName,
+        nextDslText: persistedText,
+        extra: {
+          workflowId: id,
+          stepCount: persistedDsl.steps?.length ?? 0,
+          validationValid: saveValidation?.valid ?? true,
+        },
+      });
+      setSaveMsg(saveValidation && !saveValidation.valid ? '已保存（草稿含校验问题）' : '已保存');
       setTimeout(() => setSaveMsg(''), 2000);
-    } catch { setSaveMsg('保存失败'); }
+    } catch {
+      logWorkflowEditorDebug('save-failed', {
+        workflowId: id,
+      });
+      setSaveMsg('保存失败');
+    }
     finally { setSaving(false); }
-  }, [id, dsl, name]);
+  }, [applyDirtyState, dsl, id, isDirty, name]);
 
   const handleValidate = useCallback(async () => {
     if (!dslText) return;
@@ -126,31 +238,74 @@ export default function WorkflowDetailPage() {
     setDsl(newDsl);
     setDslText(text);
     setValidation(null);
-    setIsDirty(true);
-  }, []);
+    applyDirtyState('dsl-change', computeDirty(name, text), {
+      nextName: name,
+      nextDslText: text,
+      extra: {
+        stepCount: newDsl.steps?.length ?? 0,
+      },
+    });
+  }, [applyDirtyState, computeDirty, name]);
 
   const handleDslTextEdit = useCallback((text: string) => {
     setDslText(text);
-    setIsDirty(true);
-    try { setDsl(JSON.parse(text) as WorkflowDsl); setValidation(null); } catch { /* typing */ }
-  }, []);
+    try {
+      const parsed = JSON.parse(text) as WorkflowDsl;
+      setDsl(parsed);
+      if (typeof parsed.name === 'string') {
+        setName(parsed.name);
+      }
+      setValidation(null);
+      applyDirtyState('dsl-text-edit', computeDirty(typeof parsed.name === 'string' ? parsed.name : name, text), {
+        nextName: typeof parsed.name === 'string' ? parsed.name : name,
+        nextDslText: text,
+        extra: {
+          parseSucceeded: true,
+          stepCount: parsed.steps?.length ?? 0,
+        },
+      });
+    } catch {
+      applyDirtyState('dsl-text-edit', computeDirty(name, text), {
+        nextName: name,
+        nextDslText: text,
+        extra: {
+          parseSucceeded: false,
+        },
+      });
+    }
+  }, [applyDirtyState, computeDirty, name]);
 
   const handleNameBlur = useCallback(() => {
     setEditingName(false);
-    if (dsl && name !== dsl.name) {
-      setDsl(prev => prev ? { ...prev, name } : prev);
-      setIsDirty(true);
+    if (!dsl || name === dsl.name) {
+      return;
     }
-  }, [dsl, name]);
+    const nextDsl = { ...dsl, name };
+    const nextText = JSON.stringify(nextDsl, null, 2);
+    setDsl(nextDsl);
+    setDslText(nextText);
+    applyDirtyState('name-blur', computeDirty(name, nextText), {
+      nextName: name,
+      nextDslText: nextText,
+    });
+  }, [applyDirtyState, computeDirty, dsl, name]);
 
   const handleApplyDsl = useCallback((raw: Record<string, unknown>) => {
     const next = raw as unknown as WorkflowDsl;
     if (!next.steps || !Array.isArray(next.steps)) return;
+    const nextText = JSON.stringify(next, null, 2);
+    const nextName = next.name || name;
     setDsl(next);
-    setDslText(JSON.stringify(next, null, 2));
+    setDslText(nextText);
     if (next.name) setName(next.name);
-    setIsDirty(true);
-  }, []);
+    applyDirtyState('apply-dsl', computeDirty(nextName, nextText), {
+      nextName,
+      nextDslText: nextText,
+      extra: {
+        stepCount: next.steps?.length ?? 0,
+      },
+    });
+  }, [applyDirtyState, computeDirty, name]);
 
   if (loadError) {
     return (
@@ -180,6 +335,14 @@ export default function WorkflowDetailPage() {
           variant="ghost" size="sm"
           className="text-muted-foreground h-7 px-2 text-xs"
           onClick={() => {
+            logWorkflowEditorDebug('leave-click', {
+              isDirty,
+              isDirtyRef: isDirtyRef.current,
+              currentName: name,
+              savedName: savedNameRef.current,
+              currentDslFingerprint: fingerprintText(dslText),
+              savedDslFingerprint: fingerprintText(savedDslTextRef.current),
+            });
             if (isDirty && !window.confirm('有未保存的更改，确认离开？未保存内容将丢失。')) return;
             router.push('/workflow');
           }}

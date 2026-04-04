@@ -3,6 +3,7 @@ import {
   createStepRunConfig,
   emitLiteral,
   emitTimeoutLiteral,
+  resolveCompiledStepTimeoutMs,
   resolvedInputBindingName,
   resultBindingName,
   runtimeContextBindingName,
@@ -37,18 +38,20 @@ export function emitAgentStep(step: WorkflowStep, indent: number): string {
   const condLit = emitLiteral(step.when ?? null);
   const inputLit = emitLiteral(step.input ?? {});
   const configLit = emitLiteral(createStepRunConfig(step));
-  const timeoutLit = emitTimeoutLiteral(step.policy?.timeoutMs);
+  const timeoutLit = emitTimeoutLiteral(resolveCompiledStepTimeoutMs(step));
   const bind = resultBindingName(step.id);
   const rInput = resolvedInputBindingName(step.id);
   const rtx = runtimeContextBindingName(step.id);
   const sid = emitLiteral(step.id);
   const stype = emitLiteral(step.type);
 
+  const execFn = step.policy?.continueOnFailure ? '__executeStepSafe' : '__executeStep';
+
   return [
     `${pad}if (__evaluateCondition(${condLit}, input, stepOutputs)) {`,
     `${pad}  const ${rtx} = __resolveRuntimeContext(input, { workflowRunId: run.id, stepId: ${sid}, stepType: ${stype}, timeoutMs: ${timeoutLit} });`,
     `${pad}  const ${rInput} = __attachRuntimeContext(__resolveValue(${inputLit}, input, stepOutputs), ${rtx});`,
-    `${pad}  const ${bind} = await step.run(${configLit}, () => __executeStep({`,
+    `${pad}  const ${bind} = await step.run(${configLit}, () => ${execFn}({`,
     `${pad}    workflowRunId: run.id, stepId: ${sid},`,
     `${pad}    runStep: () => __withTimeout(${def.runtimeBinding}(${rInput}), ${timeoutLit}, ${sid}),`,
     `${pad}    onStepStarted, onStepCompleted`,

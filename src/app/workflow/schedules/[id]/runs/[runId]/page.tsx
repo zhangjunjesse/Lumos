@@ -31,7 +31,16 @@ interface OutputFile {
   agentName: string;
   content: string;
   sizeBytes: number;
+  filePath: string;
+  mimeType?: string;
   createdAt?: string;
+}
+
+interface RunDetailResponse {
+  run?: RunRecord;
+  messages?: DbMessage[];
+  outputFiles?: OutputFile[];
+  error?: string;
 }
 
 const STATUS_CFG = {
@@ -63,6 +72,29 @@ function extractParam(val: string | string[] | undefined): string {
   return typeof val === 'string' ? val : '';
 }
 
+async function fetchRunDetail(scheduleId: string, runId: string): Promise<RunDetailResponse> {
+  const primaryUrl = `/api/workflow/schedules/${encodeURIComponent(scheduleId)}/runs/${encodeURIComponent(runId)}`;
+  const fallbackUrl = `/api/workflow/schedule-runs/${encodeURIComponent(runId)}?scheduleId=${encodeURIComponent(scheduleId)}`;
+
+  const primaryRes = await fetch(primaryUrl, { cache: 'no-store' });
+  if (primaryRes.ok) {
+    return await primaryRes.json() as RunDetailResponse;
+  }
+
+  if (primaryRes.status === 404) {
+    const fallbackRes = await fetch(fallbackUrl, { cache: 'no-store' });
+    if (fallbackRes.ok) {
+      return await fallbackRes.json() as RunDetailResponse;
+    }
+
+    const fallbackBody = await fallbackRes.json().catch(() => ({})) as RunDetailResponse;
+    throw new Error(fallbackBody.error || `请求失败 (${fallbackRes.status})`);
+  }
+
+  const primaryBody = await primaryRes.json().catch(() => ({})) as RunDetailResponse;
+  throw new Error(primaryBody.error || `请求失败 (${primaryRes.status})`);
+}
+
 export default function RunDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -83,15 +115,7 @@ export default function RunDetailPage() {
       return;
     }
     try {
-      const url = `/api/workflow/schedules/${scheduleId}/runs/${runId}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error || `请求失败 (${res.status})`);
-        setLoading(false);
-        return;
-      }
-      const data = await res.json() as { run?: RunRecord; messages?: DbMessage[]; outputFiles?: OutputFile[] };
+      const data = await fetchRunDetail(scheduleId, runId);
       if (data.run) setRun(data.run);
       if (data.messages) setMessages(data.messages);
       if (data.outputFiles) setOutputFiles(data.outputFiles);

@@ -4,15 +4,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Loading } from '@hugeicons/core-free-icons';
 import { ChatView } from '@/components/chat/ChatView';
+import { useMessagesStore } from '@/stores/messages-store';
 import type { ChatSession, Message, MessagesResponse } from '@/types';
 
 const WORKFLOW_CHAT_MARKER = '__LUMOS_WORKFLOW_CHAT__';
 const STORAGE_KEY_PREFIX = 'lumos:workflow-chat-session:';
 
+const CAPABILITIES_SENTINEL = '## 能力说明';
+
 function isWorkflowChatSession(
   session?: Pick<ChatSession, 'system_prompt'> | null,
 ): boolean {
   return Boolean(session?.system_prompt?.includes(WORKFLOW_CHAT_MARKER));
+}
+
+function needsCapabilitiesUpgrade(
+  session?: Pick<ChatSession, 'system_prompt'> | null,
+): boolean {
+  return isWorkflowChatSession(session) && !session?.system_prompt?.includes(CAPABILITIES_SENTINEL);
 }
 
 /** Extract valid workflow DSL JSON from a message text. */
@@ -97,6 +106,8 @@ export function WorkflowChatPanel({
   // Use ref so init effect only runs once per workflow, not on every DSL edit
   const currentDslRef = useRef(currentDsl);
   currentDslRef.current = currentDsl;
+  // Stable string for DSL change detection (avoids effect re-fire on same-content new refs)
+  const dslJsonForSync = currentDsl ? JSON.stringify(currentDsl) : '';
 
   const loadMessages = useCallback(async (id: string) => {
     const res = await fetch(`/api/chat/sessions/${id}/messages?limit=100`);
@@ -123,6 +134,18 @@ export function WorkflowChatPanel({
             const data: { session: ChatSession } = await res.json();
             if (isWorkflowChatSession(data.session)) {
               nextSession = data.session;
+              // Upgrade old sessions that lack capabilities hint
+              if (needsCapabilitiesUpgrade(nextSession)) {
+                const refreshRes = await fetch('/api/workflow/chat/session/refresh', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId: cachedId, workflowDsl: currentDslRef.current }),
+                });
+                if (refreshRes.ok) {
+                  const refreshData: { session: ChatSession } = await refreshRes.json();
+                  nextSession = refreshData.session;
+                }
+              }
             } else if (typeof window !== 'undefined') {
               localStorage.removeItem(storageKey);
             }
@@ -182,11 +205,34 @@ export function WorkflowChatPanel({
     return () => window.clearInterval(interval);
   }, [loadMessages, sessionId]);
 
+  // Sync DSL changes to agent session prompt (debounced 1.5s)
+  const dslSyncSkipFirst = useRef(true);
+  useEffect(() => {
+    if (!sessionId || !dslJsonForSync) return;
+    // Skip first run — init already embedded DSL into session
+    if (dslSyncSkipFirst.current) {
+      dslSyncSkipFirst.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      void fetch('/api/workflow/chat/session/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, workflowDsl: currentDslRef.current }),
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [sessionId, dslJsonForSync]);
+
+  // Read from ChatView's centralized store for real-time detection (no 4s polling lag)
+  const storeMessages = useMessagesStore((state) => state.sessions[sessionId]?.messages);
+  const messagesForDetection = storeMessages ?? messages;
+
   const detectedDsl = useMemo(() => {
-    if (!onApplyDsl || messages.length === 0) return null;
-    const text = getLastAssistantText(messages);
+    if (!onApplyDsl || messagesForDetection.length === 0) return null;
+    const text = getLastAssistantText(messagesForDetection);
     return text ? extractDslFromText(text) : null;
-  }, [onApplyDsl, messages]);
+  }, [onApplyDsl, messagesForDetection]);
 
   const [applied, setApplied] = useState(false);
   useEffect(() => { setApplied(false); }, [detectedDsl]);

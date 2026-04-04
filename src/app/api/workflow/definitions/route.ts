@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listWorkflows, createWorkflow } from '@/lib/db/workflows';
-import { validateAnyWorkflowDsl } from '@/lib/workflow/dsl';
+import { isBlankWorkflowDraft, validateAnyWorkflowDsl } from '@/lib/workflow/dsl';
 import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 
 const MAX_NAME_LEN = 200;
@@ -45,8 +45,8 @@ export async function POST(request: NextRequest) {
 
     // Skip strict DSL validation for blank workflows (steps empty) — they are
     // saved as drafts and validated only when run.
-    const dslObj = workflowDsl as AnyWorkflowDSL & { steps?: unknown[] };
-    const isBlank = !Array.isArray(dslObj.steps) || dslObj.steps.length === 0;
+    const dslObj = workflowDsl as AnyWorkflowDSL;
+    const isBlank = isBlankWorkflowDraft(dslObj);
     if (!isBlank) {
       const dslValidation = validateAnyWorkflowDsl(dslObj);
       if (!dslValidation.valid) {

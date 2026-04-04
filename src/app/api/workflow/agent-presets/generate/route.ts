@@ -44,7 +44,9 @@ systemPrompt（200 字以上，中文）
 
 如果是浏览器操作类 Agent（涉及网页自动化、数据采集、表单填写、页面交互等），systemPrompt 中必须额外包含：
   • 工具调用顺序：每次操作前先调用 mcp__browser__browser_list_pages 获取可用页面及 pageId，再用该 pageId 调用其他工具
+  • 多标签页约束：如果同一网站存在多个相似标签页，禁止凭标题猜测目标页；必须先核对 URL / 页面特征，再 selectPage，或直接打开新的目标页避免串页
   • 页面分析：交互前调用 mcp__browser__browser_snapshot 获取页面可交互元素列表（每个元素有唯一 uid），点击或填写必须基于 snapshot 返回的 uid
+  • 等待策略：登录、跳转、导出、慢页面加载优先使用 mcp__browser__browser_wait_for，timeoutMs 不要写 10000 / 15000 这类过短值；至少使用 30000，默认建议 60000 ~ 120000
   • 可用工具清单（在 systemPrompt 中明确列出）：
     - mcp__browser__browser_list_pages — 列出所有标签页
     - mcp__browser__browser_open_page — 打开新标签页，参数 url

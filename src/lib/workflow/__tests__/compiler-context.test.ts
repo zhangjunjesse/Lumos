@@ -1,5 +1,9 @@
 import { compileWorkflowDsl, generateWorkflow } from '../compiler';
-import { handleGenerateWorkflowTool } from '../mcp-tool';
+import {
+  DEFAULT_AGENT_STEP_TIMEOUT_MS,
+  DEFAULT_NOTIFICATION_STEP_TIMEOUT_MS,
+  DEFAULT_STEP_MAXIMUM_ATTEMPTS,
+} from '../compiler-helpers';
 
 describe('workflow compiler runtime context', () => {
   test('compiler injects stable workflow runtime context into generated steps', () => {
@@ -29,8 +33,12 @@ describe('workflow compiler runtime context', () => {
     expect(code).toContain('function __attachRuntimeContext(value, runtimeContext)');
     expect(code).toContain('function __resolveRuntimeContext(input, baseRuntimeContext)');
     expect(code).toContain('const reserved = input.__lumosRuntime;');
-    expect(code).toContain('{ workflowRunId: run.id, stepId: "draft", stepType: "agent", timeoutMs: undefined }');
-    expect(code).toContain('{ workflowRunId: run.id, stepId: "notify", stepType: "notification", timeoutMs: undefined }');
+    expect(code).toContain('notificationStep,');
+    expect(code).toContain('capabilityStep,');
+    expect(code).toContain('waitStep,');
+    expect(code).toContain(`{ workflowRunId: run.id, stepId: "draft", stepType: "agent", timeoutMs: ${DEFAULT_AGENT_STEP_TIMEOUT_MS} }`);
+    expect(code).toContain(`{ workflowRunId: run.id, stepId: "notify", stepType: "notification", timeoutMs: ${DEFAULT_NOTIFICATION_STEP_TIMEOUT_MS} }`);
+    expect(code).toContain(`retryPolicy":{"maximumAttempts":${DEFAULT_STEP_MAXIMUM_ATTEMPTS}}`);
     expect(code).toContain('runtimeContext.sessionId = reserved.sessionId;');
     expect(code).toContain('runtimeContext.requestedModel = reserved.requestedModel;');
   });
@@ -60,8 +68,8 @@ describe('workflow compiler runtime context', () => {
       ],
     });
 
-    expect(code).toContain("const stepMatch = /^steps\\.([A-Za-z0-9_-]+)\\.(output)(?:\\.(.+))?$/.exec(ref);");
-    expect(code).toContain("const stepOutput = stepResult && typeof stepResult === 'object' ? stepResult.output : undefined;");
+    expect(code).toContain("const stepMatch = /^steps\\.([A-Za-z0-9_-]+)(?:\\.(success|error|output|metadata)(?:\\.(.+))?)?$/.exec(ref);");
+    expect(code).toContain("const stepOutput = stepResult.output;");
     expect(code).toContain("return __getByPath(stepOutput, stepMatch[3].split('.'));");
   });
 
@@ -85,6 +93,31 @@ describe('workflow compiler runtime context', () => {
 
     expect(artifact.validation.valid).toBe(true);
     expect(artifact.manifest.stepIds).toEqual(['main']);
+    expect(artifact.manifest.stepTimeoutsMs).toEqual([DEFAULT_AGENT_STEP_TIMEOUT_MS]);
+  });
+
+  test('compiler preserves explicit retry attempts when DSL overrides the default', () => {
+    const code = compileWorkflowDsl({
+      version: 'v1',
+      name: 'retry-override-test',
+      steps: [
+        {
+          id: 'retryable',
+          type: 'agent',
+          input: {
+            prompt: 'Retry me',
+            role: 'worker',
+          },
+          policy: {
+            retry: {
+              maximumAttempts: 3,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(code).toContain('retryPolicy":{"maximumAttempts":3}');
   });
 
 });

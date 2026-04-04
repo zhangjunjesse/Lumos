@@ -10,8 +10,8 @@ import type { StepResult, WorkflowStepRuntimeContext } from './types';
 export interface BrowserBridgeApi {
   /** 导航到指定 URL */
   navigate(url: string): Promise<void>;
-  /** 点击元素（uid 来自 snapshot） */
-  click(uid: string): Promise<void>;
+  /** 点击元素（优先使用 uid；兼容历史 text 目标会先从 snapshot 解析 uid） */
+  click(target: string | { text: string }): Promise<void>;
   /** 填充输入框（uid 来自 snapshot） */
   fill(uid: string, value: string): Promise<void>;
   /** 键盘输入文本，可选 submitKey 如 "Enter" */
@@ -23,8 +23,8 @@ export interface BrowserBridgeApi {
   /** 在页面中执行 JS 并返回结果 */
   evaluate<T = unknown>(script: string): Promise<T>;
   /** 获取页面结构快照（包含元素 uid，用于 click/fill） */
-  snapshot(): Promise<{ title: string; content: string }>;
-  /** 截图（返回 base64） */
+  snapshot(): Promise<{ title: string; content: string; url?: string }>;
+  /** 截图（返回本地文件路径） */
   screenshot(): Promise<string>;
   /** 列出所有页签 */
   pages(): Promise<Array<{ id: string; url: string; title: string }>>;

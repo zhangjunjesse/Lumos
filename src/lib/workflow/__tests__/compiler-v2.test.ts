@@ -204,4 +204,23 @@ describe('v2 compiler — control flow', () => {
     expect(result.manifest.stepIds).toEqual(['start', 'check', 'process']);
     expect(result.manifest.stepTypes).toEqual(['agent', 'if-else', 'agent']);
   });
+
+  test('compiled module binds dedicated runtime handlers for non-agent steps', () => {
+    const dsl: WorkflowDSLV2 = {
+      version: 'v2',
+      name: 'runtime-bindings',
+      steps: [
+        { id: 'notify', type: 'notification', input: { message: 'done' } },
+        { id: 'pause', type: 'wait', dependsOn: ['notify'], input: { durationMs: 1000 } },
+        { id: 'convert', type: 'capability', dependsOn: ['pause'], input: { capabilityId: 'md-converter', input: { text: 'hi' } } },
+      ],
+    };
+
+    const result = generateWorkflowFromDsl(dsl);
+    expect(result.validation.valid).toBe(true);
+    expect(result.code).toContain('const { agentStep, notificationStep, capabilityStep, waitStep, onStepStarted, onStepCompleted, onStepSkipped } = runtime;');
+    expect(result.code).toContain('notificationStep(');
+    expect(result.code).toContain('waitStep(');
+    expect(result.code).toContain('capabilityStep(');
+  });
 });

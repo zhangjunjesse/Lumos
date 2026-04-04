@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+const BACKGROUND_MODE = process.env.LUMOS_BROWSER_BACKGROUND === '1';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -146,10 +147,84 @@ function normalizePageId(raw) {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 }
 
+function safeParseUrl(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return null;
+  }
+
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function buildPageFingerprint(page) {
+  const parsed = safeParseUrl(page?.url);
+  if (parsed) {
+    return `${parsed.origin}${parsed.pathname}`;
+  }
+  return `${page?.title || ''}|${page?.url || ''}`;
+}
+
+function decoratePagesPayload(payload) {
+  const activePageId = normalizePageId(payload?.activePageId);
+  const rawPages = Array.isArray(payload?.pages) ? payload.pages : [];
+  const fingerprintCounts = new Map();
+
+  for (const page of rawPages) {
+    const fingerprint = buildPageFingerprint(page);
+    fingerprintCounts.set(fingerprint, (fingerprintCounts.get(fingerprint) || 0) + 1);
+  }
+
+  const pages = rawPages.map((page, index) => {
+    const parsed = safeParseUrl(page?.url);
+    const fingerprint = buildPageFingerprint(page);
+    return {
+      ...page,
+      index,
+      isActive: page?.pageId === activePageId,
+      hostname: parsed?.hostname || undefined,
+      pathname: parsed?.pathname || undefined,
+      duplicateCount: fingerprintCounts.get(fingerprint) || 1,
+    };
+  });
+
+  const warnings = [];
+  if (pages.length > 1) {
+    warnings.push('Multiple browser pages are open. Always pass an explicit pageId to follow-up tools.');
+  }
+  if (pages.some((page) => (page.duplicateCount || 1) > 1)) {
+    warnings.push('Some pages share the same site/path. Do not guess among similar tabs; prefer opening a fresh page or selecting a verified pageId.');
+  }
+
+  return {
+    ...payload,
+    activePageId,
+    pageCount: pages.length,
+    pages,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+async function resolveExplicitPageId(pageId, toolName) {
+  const normalized = normalizePageId(pageId);
+  if (normalized) {
+    return normalized;
+  }
+
+  const pagesPayload = decoratePagesPayload(await callBridge('/v1/pages'));
+  if (pagesPayload.pageCount > 1) {
+    throw new Error(`${toolName} requires pageId when multiple pages are open. Call list_pages first and pass an explicit pageId.`);
+  }
+
+  return normalizePageId(pagesPayload.activePageId);
+}
+
 async function handleTool(name, args) {
   switch (name) {
     case 'list_pages': {
-      return callBridge('/v1/pages');
+      return decoratePagesPayload(await callBridge('/v1/pages'));
     }
 
     case 'new_page': {
@@ -157,12 +232,14 @@ async function handleTool(name, args) {
       const created = await withBridgeRetry(
         () => callBridge('/v1/pages/new', {
           method: 'POST',
-          body: { url: url || undefined },
+          body: { url: url || undefined, background: BACKGROUND_MODE || undefined },
         }),
         { delayMs: 700 },
       );
-      const pages = await callBridge('/v1/pages');
-      return { ...created, pages: pages.pages, activePageId: pages.activePageId };
+      return decoratePagesPayload({
+        ...created,
+        ...(await callBridge('/v1/pages')),
+      });
     }
 
     case 'select_page': {
@@ -171,39 +248,39 @@ async function handleTool(name, args) {
       await withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/select', {
           method: 'POST',
-          body: { pageId: resolvedPageId || pageId },
+          body: { pageId: resolvedPageId || pageId, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
-      return callBridge('/v1/pages');
+      return decoratePagesPayload(await callBridge('/v1/pages'));
     }
 
     case 'close_page': {
       const pageId = normalizePageId(args?.pageId);
       if (!pageId) throw new Error('close_page requires pageId');
       await callBridge('/v1/pages/close', { method: 'POST', body: { pageId } });
-      return callBridge('/v1/pages');
+      return decoratePagesPayload(await callBridge('/v1/pages'));
     }
 
     case 'navigate_page': {
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'navigate_page');
       const type = typeof args?.type === 'string' ? args.type : 'url';
       const url = typeof args?.url === 'string' ? args.url : undefined;
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/navigate', {
           method: 'POST',
-          body: { pageId: resolvedPageId, type, url },
+          body: { pageId: resolvedPageId, type, url, background: BACKGROUND_MODE || undefined },
         }),
         { pageId, delayMs: 700 },
       );
     }
 
     case 'take_snapshot': {
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'take_snapshot');
       const snapshot = await withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/snapshot', {
           method: 'POST',
-          body: { pageId: resolvedPageId },
+          body: { pageId: resolvedPageId, background: BACKGROUND_MODE || undefined },
         }),
         { pageId, delayMs: 700 },
       );
@@ -219,11 +296,11 @@ async function handleTool(name, args) {
     case 'click': {
       const uid = typeof args?.uid === 'string' ? args.uid : '';
       if (!uid) throw new Error('click requires uid');
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'click');
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/click', {
           method: 'POST',
-          body: { pageId: resolvedPageId, uid },
+          body: { pageId: resolvedPageId, uid, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
@@ -232,12 +309,12 @@ async function handleTool(name, args) {
     case 'fill': {
       const uid = typeof args?.uid === 'string' ? args.uid : '';
       if (!uid) throw new Error('fill requires uid');
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'fill');
       const value = typeof args?.value === 'string' ? args.value : '';
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/fill', {
           method: 'POST',
-          body: { pageId: resolvedPageId, uid, value },
+          body: { pageId: resolvedPageId, uid, value, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
@@ -246,12 +323,12 @@ async function handleTool(name, args) {
     case 'type_text': {
       const text = typeof args?.text === 'string' ? args.text : '';
       if (!text) throw new Error('type_text requires text');
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'type_text');
       const submitKey = typeof args?.submitKey === 'string' ? args.submitKey : undefined;
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/type', {
           method: 'POST',
-          body: { pageId: resolvedPageId, text, submitKey },
+          body: { pageId: resolvedPageId, text, submitKey, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
@@ -260,11 +337,11 @@ async function handleTool(name, args) {
     case 'press_key': {
       const key = typeof args?.key === 'string' ? args.key : '';
       if (!key) throw new Error('press_key requires key');
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'press_key');
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/press', {
           method: 'POST',
-          body: { pageId: resolvedPageId, key },
+          body: { pageId: resolvedPageId, key, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
@@ -274,11 +351,11 @@ async function handleTool(name, args) {
       const text = Array.isArray(args?.text) ? args.text.filter((v) => typeof v === 'string' && v.trim()) : [];
       if (text.length === 0) throw new Error('wait_for requires non-empty text[]');
       const timeoutMs = typeof args?.timeout === 'number' ? args.timeout : DEFAULT_WAIT_TIMEOUT_MS;
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'wait_for');
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/wait-for', {
           method: 'POST',
-          body: { pageId: resolvedPageId, text, timeoutMs },
+          body: { pageId: resolvedPageId, text, timeoutMs, background: BACKGROUND_MODE || undefined },
         }),
         { pageId, delayMs: 700 },
       );
@@ -287,23 +364,23 @@ async function handleTool(name, args) {
     case 'evaluate_script': {
       const expression = typeof args?.expression === 'string' ? args.expression : '';
       if (!expression) throw new Error('evaluate_script requires expression');
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'evaluate_script');
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/evaluate', {
           method: 'POST',
-          body: { pageId: resolvedPageId, expression },
+          body: { pageId: resolvedPageId, expression, background: BACKGROUND_MODE || undefined },
         }),
         { pageId },
       );
     }
 
     case 'take_screenshot': {
-      const pageId = normalizePageId(args?.pageId);
+      const pageId = await resolveExplicitPageId(args?.pageId, 'take_screenshot');
       const filePath = typeof args?.filePath === 'string' ? args.filePath : undefined;
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/screenshot', {
           method: 'POST',
-          body: { pageId: resolvedPageId, filePath },
+          body: { pageId: resolvedPageId, filePath, background: BACKGROUND_MODE || undefined },
         }),
         { pageId, delayMs: 700 },
       );
@@ -327,12 +404,12 @@ async function main() {
     tools: [
       {
         name: 'list_pages',
-        description: 'List available browser pages in Lumos built-in browser context.',
+        description: 'List available browser pages in Lumos built-in browser context. Use this before other tools, and do not guess among similar tabs when warnings indicate duplicates.',
         inputSchema: { type: 'object', properties: {} },
       },
       {
         name: 'new_page',
-        description: 'Create and activate a new page. Optional url.',
+        description: 'Create and activate a new page. Prefer this when multiple similar tabs are already open and you need a deterministic fresh page.',
         inputSchema: {
           type: 'object',
           properties: { url: { type: 'string' } },
@@ -358,7 +435,7 @@ async function main() {
       },
       {
         name: 'navigate_page',
-        description: 'Navigate active/selected page. type=url|back|forward|reload.',
+        description: 'Navigate a selected page. type=url|back|forward|reload. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -370,7 +447,7 @@ async function main() {
       },
       {
         name: 'take_snapshot',
-        description: 'Take a text snapshot of current page and assign uids for interactive elements.',
+        description: 'Take a text snapshot of a selected page and assign uids for interactive elements. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: { pageId: { type: 'string' } },
@@ -378,7 +455,7 @@ async function main() {
       },
       {
         name: 'click',
-        description: 'Click element by uid from latest snapshot.',
+        description: 'Click element by uid from latest snapshot. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: { pageId: { type: 'string' }, uid: { type: 'string' } },
@@ -387,7 +464,7 @@ async function main() {
       },
       {
         name: 'fill',
-        description: 'Fill input-like element by uid.',
+        description: 'Fill input-like element by uid. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -400,7 +477,7 @@ async function main() {
       },
       {
         name: 'type_text',
-        description: 'Type text into currently focused element. Optional submitKey.',
+        description: 'Type text into currently focused element. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -413,7 +490,7 @@ async function main() {
       },
       {
         name: 'press_key',
-        description: 'Press key on currently focused element.',
+        description: 'Press key on currently focused element. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -425,7 +502,7 @@ async function main() {
       },
       {
         name: 'wait_for',
-        description: 'Wait until any provided text appears on page.',
+        description: 'Wait until any provided text appears on page. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -438,7 +515,7 @@ async function main() {
       },
       {
         name: 'evaluate_script',
-        description: 'Evaluate JavaScript expression in page context and return value.',
+        description: 'Evaluate JavaScript expression in page context and return value. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -450,7 +527,7 @@ async function main() {
       },
       {
         name: 'take_screenshot',
-        description: 'Capture screenshot of page and save to local path.',
+        description: 'Capture screenshot of page and save to local path. When multiple pages are open, pageId is required.',
         inputSchema: {
           type: 'object',
           properties: {

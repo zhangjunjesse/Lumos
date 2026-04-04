@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { z } from 'zod';
+import { resolveCompiledStepTimeoutMs } from './compiler-helpers';
 import { getStepCompilerDefinition } from './step-registry';
 import type {
   AnyWorkflowDSL,
@@ -20,6 +21,7 @@ const workflowStepPolicySchema = z.object({
   retry: z.object({
     maximumAttempts: z.number().int().positive().optional(),
   }).strict().optional(),
+  continueOnFailure: z.boolean().optional(),
 }).strict().optional();
 
 const conditionExprV1Schema: z.ZodType<ConditionExpr> = z.union([
@@ -107,6 +109,33 @@ const workflowStepV2Schema = z.discriminatedUnion('type', [
   z.object({
     id: safeStepId,
     type: z.literal('agent'),
+    dependsOn: z.array(safeStepId).optional(),
+    when: conditionExprSchema.optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('notification'),
+    dependsOn: z.array(safeStepId).optional(),
+    when: conditionExprSchema.optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('capability'),
+    dependsOn: z.array(safeStepId).optional(),
+    when: conditionExprSchema.optional(),
+    input: z.record(z.string(), z.unknown()).optional(),
+    policy: workflowStepPolicySchema,
+    metadata: stepMetadataSchema,
+  }),
+  z.object({
+    id: safeStepId,
+    type: z.literal('wait'),
     dependsOn: z.array(safeStepId).optional(),
     when: conditionExprSchema.optional(),
     input: z.record(z.string(), z.unknown()).optional(),
@@ -281,20 +310,19 @@ export function validateWorkflowDslV2(spec: WorkflowDSLV2): GenerateWorkflowVali
     }
   }
 
-  // Validate agent steps via step registry
+  // Validate step inputs for all dedicated runtime-backed step types via step registry
   for (const step of spec.steps) {
-    if (step.type === 'agent') {
-      const definition = getStepCompilerDefinition(step.type);
-      if (definition) {
-        const parsedInput = definition.inputSchema.safeParse(step.input ?? {});
-        if (!parsedInput.success) {
-          for (const issue of parsedInput.error.issues) {
-            errors.push(formatZodIssue(
-              ['steps', step.id, 'input', ...issue.path.map(String)],
-              issue.message
-            ));
-          }
-        }
+    const definition = getStepCompilerDefinition(step.type);
+    if (!definition) {
+      continue;
+    }
+    const parsedInput = definition.inputSchema.safeParse(step.input ?? {});
+    if (!parsedInput.success) {
+      for (const issue of parsedInput.error.issues) {
+        errors.push(formatZodIssue(
+          ['steps', step.id, 'input', ...issue.path.map(String)],
+          issue.message
+        ));
       }
     }
   }
@@ -342,6 +370,15 @@ export function validateAnyWorkflowDsl(spec: AnyWorkflowDSL): GenerateWorkflowVa
   return validateWorkflowDsl(spec as WorkflowDSL);
 }
 
+export function isBlankWorkflowDraft(spec: unknown): boolean {
+  if (!spec || typeof spec !== 'object') {
+    return false;
+  }
+
+  const steps = (spec as { steps?: unknown }).steps;
+  return !Array.isArray(steps) || steps.length === 0;
+}
+
 function getControlFlowChildRefs(step: WorkflowStep): string[] {
   const input = step.input as Record<string, unknown> | undefined;
   if (!input) return [];
@@ -378,6 +415,7 @@ export function buildCompiledWorkflowManifest(
     workflowVersion,
     stepIds: spec.steps.map((step) => step.id),
     stepTypes: spec.steps.map((step) => step.type as WorkflowStepType),
+    stepTimeoutsMs: spec.steps.map((step) => resolveCompiledStepTimeoutMs(step) ?? 0),
     warnings,
   };
 }

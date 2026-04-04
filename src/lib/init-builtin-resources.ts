@@ -188,7 +188,8 @@ function importMcpServers(): number {
       // task-management, workflow, and deepsearch are enabled by default for core orchestration flows
       const isEnabled = config.name === 'task-management'
         || config.name === 'workflow'
-        || config.name === 'deepsearch';
+        || config.name === 'deepsearch'
+        || config.name === 'office-docs';
       createMcpServer({
         name: config.name,
         scope: 'builtin',

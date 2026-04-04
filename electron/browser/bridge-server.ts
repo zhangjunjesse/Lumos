@@ -18,6 +18,49 @@ interface PageRuntimeState {
   url: string;
 }
 
+function normalizeNavigationUrl(raw: string | undefined | null): string {
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (!value) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return value.replace(/\/+$/, '');
+  }
+}
+
+export function didNavigationReachTarget(input: {
+  targetUrl: string;
+  state: PageRuntimeState | null;
+  fallbackUrl?: string;
+}): boolean {
+  const targetUrl = normalizeNavigationUrl(input.targetUrl);
+  if (!targetUrl) {
+    return false;
+  }
+
+  const currentUrl = normalizeNavigationUrl(input.state?.url || input.fallbackUrl);
+  if (!currentUrl || currentUrl !== targetUrl) {
+    return false;
+  }
+
+  const hasReadableState = Boolean(
+    input.state?.hasBody
+    && (
+      Boolean(input.state?.title?.trim())
+      || (input.state?.textLength || 0) > 24
+      || input.state?.readyState === 'interactive'
+      || input.state?.readyState === 'complete'
+    ),
+  );
+
+  return hasReadableState;
+}
+
 function parseJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -326,11 +369,18 @@ function typeTextScript(text: string, submitKey?: string): string {
   })()`;
 }
 
-function waitForTextScript(texts: string[]): string {
+export function waitForTextScript(texts: string[]): string {
   const escaped = JSON.stringify(texts);
   return `(() => {
-    const hay = (document.body?.innerText || document.documentElement?.innerText || '').toLowerCase();
-    const needles = ${escaped}.map((t) => String(t || '').toLowerCase());
+    const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const hay = [
+      document.title,
+      document.body?.innerText,
+      document.body?.textContent,
+      document.documentElement?.innerText,
+      document.documentElement?.textContent,
+    ].map(normalize).filter(Boolean).join('\\n');
+    const needles = ${escaped}.map((t) => normalize(t));
     const matched = needles.find((t) => t && hay.includes(t)) || '';
     return { found: Boolean(matched), text: matched };
   })()`;
@@ -676,7 +726,40 @@ export class BrowserBridgeServer {
           if (!bg) await manager.switchTab(pageId);
 
           if (navType === 'url') {
-            await manager.navigate(pageId, { url: body.url! });
+            try {
+              await manager.navigate(pageId, {
+                url: body.url!,
+                waitUntil: 'domcontentloaded',
+              });
+            } catch (error) {
+              const message = getErrorMessage(error);
+              const isNavigationTimeout = error instanceof Error && /^Navigation timeout after \d+ms$/.test(error.message);
+              if (!isNavigationTimeout) {
+                throw error;
+              }
+
+              const fallbackSettle = await waitForPageStable(manager, pageId, {
+                timeoutMs: 4_000,
+                background: bg,
+              });
+              const fallbackUrl = manager.getTabs().find((tab) => tab.id === pageId)?.url;
+
+              if (!didNavigationReachTarget({
+                targetUrl: body.url!,
+                state: fallbackSettle.state,
+                fallbackUrl,
+              })) {
+                throw error;
+              }
+
+              console.warn('[browser-bridge] navigation timed out but target page is already reachable:', {
+                pageId,
+                targetUrl: body.url,
+                currentUrl: fallbackSettle.state?.url || fallbackUrl || '',
+                title: fallbackSettle.state?.title || '',
+                reason: message,
+              });
+            }
             await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: bg });
             if (!bg) forwardUrlToContentTabs(body.url!, pageId);
             return;

@@ -20,6 +20,8 @@ export interface McpEnrichContext {
   dataDir: string;
   /** Browser bridge info from HTTP request headers (chat route only). */
   browserBridgeOverride?: { url?: string; token?: string };
+  /** When true, browser MCP operates in background mode (no UI tab switching). */
+  browserBackground?: boolean;
 }
 
 export type McpEnvEnricher = (
@@ -103,6 +105,7 @@ function enrichBrowserBridgeEnv(env: Record<string, string>, ctx: McpEnrichConte
       process.env.LUMOS_BROWSER_BRIDGE_TOKEN,
       env.LUMOS_BROWSER_BRIDGE_TOKEN,
     ),
+    ...(ctx.browserBackground ? { LUMOS_BROWSER_BACKGROUND: '1' } : {}),
   };
 }
 

@@ -17,7 +17,7 @@ import {
 } from './provider-env';
 
 const LOCAL_AUTH_PROBE_TIMEOUT_MS = 15000;
-const LOCAL_AUTH_STATUS_CACHE_TTL_MS = 5000;
+const LOCAL_AUTH_STATUS_CACHE_TTL_MS = 60_000;
 
 let cachedLocalAuthStatus:
   | {
@@ -81,7 +81,6 @@ export class ClaudeLocalAuthRequiredError extends Error {
 
 function stripAnsi(value: string): string {
   return value.replace(
-    // eslint-disable-next-line no-control-regex
     /\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g,
     '',
   );
@@ -212,12 +211,14 @@ function isMissingLoginMessage(value?: string | null): boolean {
     || normalized.includes('not logged in');
 }
 
+const LOCAL_AUTH_ERROR_CACHE_TTL_MS = 30_000;
+
 function getStatusCacheTtl(status: ClaudeLocalAuthStatus): number {
   if (status.authenticated) {
     return LOCAL_AUTH_STATUS_CACHE_TTL_MS;
   }
 
-  return 1000;
+  return LOCAL_AUTH_ERROR_CACHE_TTL_MS;
 }
 
 function parseProbeLine(
@@ -325,6 +326,18 @@ async function spawnClaudeProbeProcess(timeoutMs: number): Promise<ClaudeLocalAu
         (message) => {
           runtimeVersion = message.claude_code_version || null;
           authSource = message.tokenSource || message.apiKeySource || null;
+          // Init message already contains auth source — if valid, resolve immediately
+          // without waiting for the full ping roundtrip to the API.
+          if (authSource && authSource !== 'none') {
+            finish({
+              available: true,
+              authenticated: true,
+              status: 'authenticated',
+              configDir,
+              runtimeVersion,
+              authSource,
+            });
+          }
         },
         (message) => {
           const assistantText = extractAssistantText(message.message);
@@ -465,6 +478,27 @@ function buildLoginCommand(nodePath: string, cliPath: string, configDir: string)
   return `CLAUDE_CONFIG_DIR=${quoteForShell(configDir)} ELECTRON_RUN_AS_NODE=1 ${quoteForShell(nodePath)} ${loginArgs}`;
 }
 
+/**
+ * Fast filesystem-based auth check.
+ * If the config file has a valid oauthAccount.accountUuid, we can assume
+ * the user has authenticated and skip the expensive probe process.
+ * The actual token validity will be verified when the Claude SDK is used.
+ */
+function fastFilesystemAuthCheck(): ClaudeLocalAuthStatus | null {
+  const configDir = getClaudeConfigDir();
+  if (!readSandboxOauthAccountHint(configDir)) {
+    return null;
+  }
+
+  return {
+    available: true,
+    authenticated: true,
+    status: 'authenticated',
+    configDir,
+    authSource: 'local_auth',
+  };
+}
+
 export async function getClaudeLocalAuthStatus(
   options?: {
     timeoutMs?: number;
@@ -478,6 +512,18 @@ export async function getClaudeLocalAuthStatus(
     return cachedLocalAuthStatus.value;
   }
 
+  // Fast path: check config file without spawning a process.
+  // Covers the common case where the user has already logged in.
+  const fastResult = fastFilesystemAuthCheck();
+  if (fastResult) {
+    cachedLocalAuthStatus = {
+      value: fastResult,
+      expiresAt: Date.now() + LOCAL_AUTH_STATUS_CACHE_TTL_MS,
+    };
+    return fastResult;
+  }
+
+  // Slow path: spawn a probe process (only when config file has no OAuth data).
   if (inflightLocalAuthStatusPromise) {
     return await inflightLocalAuthStatusPromise;
   }

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 
 export const runtime = 'nodejs';
@@ -47,6 +47,15 @@ export async function PATCH(
     }
     if (body.mode) {
       updateSessionMode(id, body.mode);
+    }
+    if (body.provider_id) {
+      updateSessionProviderId(id, body.provider_id);
+    }
+    if (body.model) {
+      updateSessionModel(id, body.model);
+    }
+    if (typeof body.system_prompt === 'string') {
+      updateSessionSystemPrompt(id, body.system_prompt);
     }
     if (body.clear_messages) {
       clearSessionMessages(id);

@@ -56,6 +56,18 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   code?: AgentStepCodeConfig;
 }
 
+export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {
+  message: string;
+  level?: 'info' | 'warning' | 'error';
+  channel?: string;
+  sessionId?: string;
+}
+
+export interface CapabilityStepInput extends WorkflowStepRuntimeCarrier {
+  capabilityId: string;
+  input: unknown;
+}
+
 export interface WaitStepInput {
   durationMs: number;
 }
@@ -75,6 +87,8 @@ export interface WorkflowStepPolicy {
   retry?: {
     maximumAttempts?: number;
   };
+  /** When true, step failure does not throw — result is stored in stepOutputs for if-else to reference */
+  continueOnFailure?: boolean;
 }
 
 export interface WorkflowStepMetadata {
@@ -125,6 +139,7 @@ export interface CompiledWorkflowManifest {
   workflowVersion: string;
   stepIds: string[];
   stepTypes: WorkflowStepType[];
+  stepTimeoutsMs?: number[];
   warnings: string[];
 }
 
@@ -135,6 +150,8 @@ export interface WorkflowStepLifecycleEvent {
 
 export interface WorkflowRuntimeBindings {
   agentStep: (input: AgentStepInput) => Promise<StepResult>;
+  notificationStep: (input: NotificationStepInput) => Promise<StepResult>;
+  capabilityStep: (input: CapabilityStepInput) => Promise<StepResult>;
   waitStep: (input: WaitStepInput) => Promise<StepResult>;
   onStepStarted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepCompleted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;

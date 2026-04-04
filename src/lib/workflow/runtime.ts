@@ -1,6 +1,10 @@
 import { agentStep } from './steps/agentStep';
+import { capabilityStep } from './steps/capabilityStep';
+import { notificationStep } from './steps/notificationStep';
 import type {
   AgentStepInput,
+  CapabilityStepInput,
+  NotificationStepInput,
   WaitStepInput,
   StepResult,
   WorkflowStepLifecycleEvent,
@@ -19,6 +23,14 @@ export const STEP_RUNTIME_REGISTRY = {
     type: 'agent',
     execute: (input: AgentStepInput) => agentStep(input),
   },
+  notification: {
+    type: 'notification',
+    execute: (input: NotificationStepInput) => notificationStep(input),
+  },
+  capability: {
+    type: 'capability',
+    execute: (input: CapabilityStepInput) => capabilityStep(input),
+  },
   wait: {
     type: 'wait',
     execute: async (input: { durationMs?: number }) => {
@@ -32,6 +44,8 @@ export const STEP_RUNTIME_REGISTRY = {
 export function createWorkflowRuntimeBindings(): WorkflowRuntimeBindings {
   return {
     agentStep: (input) => STEP_RUNTIME_REGISTRY.agent.execute(input),
+    notificationStep: (input) => STEP_RUNTIME_REGISTRY.notification.execute(input),
+    capabilityStep: (input) => STEP_RUNTIME_REGISTRY.capability.execute(input),
     waitStep: (input: WaitStepInput) => STEP_RUNTIME_REGISTRY.wait.execute(input),
   };
 }

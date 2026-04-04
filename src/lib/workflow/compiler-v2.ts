@@ -140,7 +140,7 @@ function wrapModule(name: string, version: string, body: string): string {
     ...helpers,
     '',
     'export function buildWorkflow(runtime) {',
-    '  const { agentStep, onStepStarted, onStepCompleted, onStepSkipped } = runtime;',
+    '  const { agentStep, notificationStep, capabilityStep, waitStep, onStepStarted, onStepCompleted, onStepSkipped } = runtime;',
     '',
     '  return defineWorkflow(',
     `    { name: ${emitLiteral(name)}, version: ${emitLiteral(version)} },`,

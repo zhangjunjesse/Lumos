@@ -81,7 +81,13 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 成果：调度层已补齐模型分析的超时、重试、回退诊断；测试页可直接创建和取消调度测试任务。
   - 成果：主 Agent 对话下发的任务已补实现类、网页搜索类、搜索后汇总报告类与导出诉求识别，不再一律退回通用两步流。
   - 成果：simple execution 与 workflow agent step 已补运行时超时透传，减少“任务已创建但长期挂起不收口”的问题。
+  - 成果：workflow 浏览器运行时已补四处关键收口：`ctx.browser.waitFor()` 现在会把请求体里的 `timeoutMs` 同步透传到 browser bridge HTTP 传输超时，不再被客户端固定 30 秒误杀；同时当脚本把 `waitFor` 写成 `10000 / 15000ms` 这类高脆弱值时，运行时也会自动抬到更安全的下限，减少登录页和慢页面反复秒超时；`/v1/pages/navigate`、新建页、快照、截图等桥接请求也已补接口级更长默认传输超时，不再一律沿用 30 秒；另外同一段 `ctx.browser` 执行里由 `navigate/selectPage/newPage/currentPage` 获得的 `pageId` 也会持续传递到后续 `snapshot/click/fill/waitFor/evaluate/screenshot`，减少同站点多标签页场景下误落到错误页面；同时 `chrome-devtools` MCP 现在在多标签页场景下会强制要求显式 `pageId`，并在 `list_pages` 返回里增加活动页与相似页签警告，降低纯 Agent 浏览器路径误选 tab 的概率。
+  - 成果：workflow `code-only` 浏览器步骤现已补上失败留痕；当脚本返回 `success:false` 或直接抛错时，运行时会自动保存当前页面快照、失败截图与代码调试日志到步骤输出目录，并把这些路径挂回结果元数据；正式 `Workflow` 详情页也已补上“打开失败截图 / 页面快照 / 调试日志”入口，减少“节点失败但现场已经丢失”的黑盒排障成本。
+  - 成果：workflow `code-only` 浏览器下载步骤现已补上下载产物收口；当步骤在执行过程中触发浏览器真实下载时，运行时会把本次新下载文件自动复制到当前步骤 `output` 目录，使正式“执行记录 > 结果文件”tab 能稳定收录，而不再只依赖脚本摘要里口头回传的绝对路径。
   - 成果：Scheduling planner 已切到与主 Agent 一致的 Claude SDK 规划路径；同时 workflow / simple execution 也已补上任务会话的 `provider / model / workingDirectory` 透传，减少“主对话能用但工作流规划或执行走到别的 provider / 目录”的断链问题；最新还已把 planner 默认超时从 30 秒放宽到 90 秒，并把 Claude SDK 超时误报的 `aborted by user` 文案归一为明确的规划超时诊断；另外当 Claude SDK 没有填充 `structured_output`、但返回了纯 JSON 文本或单个 JSON code fence 时，规划器也已改为先做严格 JSON 解析再进入 schema 校验，减少这类网关兼容场景下的误失败；同时规划响应 schema 现已容忍 `detectedUrl: null` / `detectedUrls: []` 这类空位输出，并在入库前归一化为“未提供”，避免研究类任务因可选 URL 字段的空值格式直接失败；此外，planner 输出的 `workflowDsl` 现已改成按 step type 的严格结构化 schema，browser step 只允许当前引擎真实支持的 `navigate/click/fill/screenshot` 输入字段，且 DSL 校验失败原因会显式回灌到下一次 LLM 重试，减少模型连续三次复用同一类非法节点形状；现在还进一步补上了 planner 语义校验：长篇 plain-text 报告综合步骤的超时下限、`researcher` 只读角色不得被要求落文件、以及 `md-converter` 这类导出能力优先消费上游 `output.summary` 而不是假设 temp 文件存在。
+  - 成果：workflow 编译/执行链路已补默认 step timeout 与外层收口缓冲；当 DSL 未显式声明 `policy.timeoutMs` 时，编译产物现在会为 `agent / notification / capability / wait` 生成默认超时，并把这些 timeout 写进 manifest；workflow outer timeout 也已改为按 step timeout 求和后再加额外缓冲，减少“步骤产物已经写完，但整体任务卡在外层超时边界被判失败”的问题。
+  - 成果：workflow 运行时已补齐 `notification / capability / wait` 的真实 runtime binding，编译产物也会显式解构这些 handler，不再出现“DSL 校验允许节点类型，但执行期缺少运行时绑定”的断链。
+  - 成果：workflow `code-only` 浏览器执行链路现已默认走后台模式；任务运行时的 `ctx.browser` 会把 `background: true` 透传到 browser bridge，减少代码节点执行时反复切前台浏览器标签页对用户操作的打扰，同时保留手动调试入口的前台行为。
   - 待完成：补齐使 `03 / 04 / 05 / 06` 能按“完整实现”标准过验收的缺口。
 - 阶段 3：UI 验收对齐
   - 成果：已确认用户当前只能做 UI 测试，后续汇报必须产品化表达。
@@ -89,6 +95,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 成果：`06` 已新增正式工作流角色配置 UI，并已接到真实调度/执行配置源，不再只是测试页或硬编码。
   - 成果：已新增正式 `Workflow` 页面入口，把任务创建、调度判断、执行计划和角色快照收进产品界面，不再只依赖 `/task-management-test`。
   - 成果：`Workflow` 正式页已补上真实最终输出展示，并能区分“原始规划步骤”和“实际执行步骤”；当任务回退为 simple execution 时，不再把旧工作流步骤错误展示为当前执行状态。
+  - 成果：正式 `Workflow` 编辑页已补一轮保存收口；现在删除最后一个节点后仍可按“空白草稿”正常保存，且删除节点时会同步清理残留的依赖/控制流引用，减少“界面上节点已删、点击保存后仍一直显示未保存”的假失败。
   - 成果：已修正调度层对中文否定语义的一个显性误判，`不需要通知` 不再被当成通知需求。
   - 成果：已补 OpenWorkflow / backend-sqlite 的 Next 服务端外部包配置，收口当前开发环境下的一个工作流引擎兼容风险。
   - 成果：已收紧 workflow agent step 的输出合同，默认只交付结构化文本结果，不再允许虚报未落盘的 artifact 文件，减少多步代理工作流的伪失败。
@@ -109,6 +116,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 成果：正式 `Workflow` 详情页的 `03 调度判断` 已升级为调度诊断视图，当前可直接验收调度受理状态、初始判定与实际执行差异、浏览器/通知/多步/并行触发条件、规划产物校验结果、原始规划步骤，以及模型分析/执行前回退记录。
   - 成果：正式 `Workflow Roles` 页已新增“运行中代理会话”面板，并接入真实活跃代理会话数据；现在除静态角色配置外，也能在正式 UI 直接看到当前活跃会话、生命周期状态、隔离目录、记忆槽、能力边界，并可发起单代理中断。
   - 成果：正式 `Workflow` 详情页里的浏览器步骤现已支持截图直接预览，并提供截图文件 / 详细结果的正式打开入口；`05` 的浏览器产物验收不再只依赖绝对路径文本。
+  - 成果：正式“执行记录 > 结果文件”tab 已继续补上浏览器下载文件的正式验收体验；现在除步骤 output 目录下的文本/图片外，浏览器真实下载得到的 `.xlsx/.pdf/.docx` 等文件也会随步骤产物进入该 tab，并以“打开本地文件 / 下载原文件”的方式展示，不再误用文本预览或因未复制进 output 而完全不可见。
   - 成果：按 `01 / 02 / 03` 设计文档要求，主 Agent 复杂请求已补上正式下发闭环：命中复杂任务时会直接创建 Task Management 任务并返回交接确认，不再在主对话里自己执行整项任务；同时 `createTask` 生成的任务会正式回写来源用户消息与助手确认消息。
   - 成果：按用户最新要求，主 Agent 页已去掉临时任务面板，任务标签也已从全局左侧导航撤下，改为出现在聊天界面右侧的轻量任务标签；用户可直接点击标签跳到标准 `Workflow` 任务详情查看报告，不看详情时仍由主 Agent 在对话里汇报结果。
   - 成果：已新增 `07-dynamic-capability-extension-design.md`，把“用户通过 LLM 动态新增系统能力，并让工作流后续可正式使用”定义为独立横切架构，不再硬塞进 `03 ~ 06` 任一单层文档。
@@ -164,12 +172,12 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - `04 流程编译层`
   - 文档完整度：`基本完成`
   - 主链状态：`已打通`
-  - 当前进展：已修正 `steps.<stepId>.output.*` 的编译期引用解析错误，避免多步 agent workflow 中下游步骤读取到空值
+  - 当前进展：已修正 `steps.<stepId>.output.*` 的编译期引用解析错误，避免多步 agent workflow 中下游步骤读取到空值；同时当 DSL 未显式声明 `policy.timeoutMs` 时，编译产物现在会为 `agent / notification / capability / wait` 生成默认超时并写入 manifest，且编译后的 workflow module 也会显式解构 `notificationStep / capabilityStep / waitStep`，不再只解构 `agentStep`
   - 当前缺口：仍有最终形态与运行时覆盖范围上的收口工作
 - `05 流程执行层`
   - 文档完整度：`基本完成`
   - 主链状态：`已打通`
-  - 当前进展：正式工作流页已开始展示真实执行输出和实际执行步骤，不再只展示 DSL 规划视角；同时已补 OpenWorkflow sqlite backend 的 Next 外部包配置以降低开发环境兼容风险；workflow agent step 现已默认收紧为文本结果交付，避免因声明不存在的 artifact 而导致执行伪失败；文本型 stage 还具备结构化输出失败后的纯文本兜底，降低真实执行时因 JSON schema 收敛失败造成的主链中断；任务完成后写回主 Agent 对话的结果消息也已改为稳定直写，可保留浏览器截图的真实绝对路径并在聊天区直接预览；并行浏览器分支现已为每个分支创建独立页面并把 pageId 显式传递到后续截图步骤，减少复杂工作流中的串页风险；workflow agent step 现已支持受控 context 依赖输入，汇总代理可以读取并行分支结果做真实汇总；当汇总代理与最终通知正文相同，任务完成系统通知也已收敛为简短提示，避免在对话里第三次重复整份长报告；正式页现在还能展示 workflow 投影返回的真实运行态，包括运行中/跳过步骤、失败原因和关键步骤结果；浏览器步骤还已支持截图直出预览和产物打开入口；混合复杂工作流执行主链已完成一轮真实 UI 验收；最新 simple execution 与 workflow agent step 已补运行时超时透传，同时浏览器搜索步骤还能把页面摘录传给后续汇总代理使用；此外，编译产物与执行提交层也已补上任务级 runtime 元数据注入，workflow step 现在可稳定拿到来源 task/session 的 `taskId / sessionId / requestedModel / workingDirectory`
+  - 当前进展：正式工作流页已开始展示真实执行输出和实际执行步骤，不再只展示 DSL 规划视角；同时已补 OpenWorkflow sqlite backend 的 Next 外部包配置以降低开发环境兼容风险；workflow agent step 现已默认收紧为文本结果交付，避免因声明不存在的 artifact 而导致执行伪失败；文本型 stage 还具备结构化输出失败后的纯文本兜底，降低真实执行时因 JSON schema 收敛失败造成的主链中断；任务完成后写回主 Agent 对话的结果消息也已改为稳定直写，可保留浏览器截图的真实绝对路径并在聊天区直接预览；并行浏览器分支现已为每个分支创建独立页面并把 pageId 显式传递到后续截图步骤，减少复杂工作流中的串页风险；workflow agent step 现已支持受控 context 依赖输入，汇总代理可以读取并行分支结果做真实汇总；当汇总代理与最终通知正文相同，任务完成系统通知也已收敛为简短提示，避免在对话里第三次重复整份长报告；正式页现在还能展示 workflow 投影返回的真实运行态，包括运行中/跳过步骤、失败原因和关键步骤结果；浏览器步骤还已支持截图直出预览和产物打开入口；混合复杂工作流执行主链已完成一轮真实 UI 验收；最新 simple execution 与 workflow agent step 已补运行时超时透传，同时浏览器搜索步骤还能把页面摘录传给后续汇总代理使用；此外，编译产物与执行提交层也已补上任务级 runtime 元数据注入，workflow step 现在可稳定拿到来源 task/session 的 `taskId / sessionId / requestedModel / workingDirectory`；browser bridge 代码模式运行时还已补上 `waitFor` 传输超时透传、短等待自动抬底与同实例 `pageId` 粘连，减少登录页/收藏页这类慢页面场景下被 `10000 / 15000 / 30000ms` 的客户端等待或多标签页错页共同放大失败概率；同时 `/v1/pages/navigate`、新建页、快照、截图这些桥接请求也已补接口级更长默认传输超时；workflow `code-only` 浏览器步骤现在还会在失败时自动保存页面快照、失败截图与调试日志，并把这些调试产物通过正式 `Workflow` 详情页暴露出来，减少浏览器代码节点的黑盒排障；最新这条 `code-only` 浏览器链路也已默认改成后台执行，运行中的页面操作不再主动切前台浏览器标签页，只在手动调试入口保留前台行为；workflow outer timeout 也已改为按 manifest step timeout 求和并追加缓冲，`notification / capability / wait` step 的真实 runtime binding 也已补齐；另外 `chrome-devtools` MCP 在多标签页场景下已改为要求显式 `pageId`，且 `list_pages` 结果会附带活动页和相似页签警告，纯 Agent 浏览器路径的串页风险也开始收口
   - 当前缺口：浏览器与通知能力仍有工程化收尾项，尚未按“完整实现”关闭；工作流引擎在真实 UI 开发环境中的重新验证仍需继续完成
 - `06 执行代理层`
   - 文档完整度：`部分完成`

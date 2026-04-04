@@ -398,6 +398,15 @@ export function ChatView({
     setCurrentProviderId(nextProviderId);
     setCurrentModel(model);
     onRequestedModelChange?.(model);
+
+    // 非 fork 场景（如工作流）：直接更新 session 的 provider/model
+    if (providerChanged && sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: nextProviderId, model }),
+      }).catch(() => { /* best-effort */ });
+    }
   }, [currentProviderId, isStreaming, onRequestedModelChange, pathname, sessionId]);
 
   // Cleanup on unmount - but don't abort streaming to allow background completion

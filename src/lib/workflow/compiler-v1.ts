@@ -9,6 +9,7 @@ import {
   emitLiteral,
   emitRuntimeHelpers,
   emitTimeoutLiteral,
+  resolveCompiledStepTimeoutMs,
   resolvedInputBindingName,
   resultBindingName,
   runtimeContextBindingName,
@@ -40,7 +41,7 @@ function emitSequentialStep(step: WorkflowStep): string {
   const conditionLit = emitLiteral(step.when ?? null);
   const inputLit = emitLiteral(step.input ?? {});
   const configLit = emitLiteral(createStepRunConfig(step));
-  const timeoutLit = emitTimeoutLiteral(step.policy?.timeoutMs);
+  const timeoutLit = emitTimeoutLiteral(resolveCompiledStepTimeoutMs(step));
 
   return [
     `      if (__evaluateCondition(${conditionLit}, input, stepOutputs)) {`,
@@ -95,7 +96,7 @@ function emitParallelPromise(step: WorkflowStep): string {
   const conditionLit = emitLiteral(step.when ?? null);
   const inputLit = emitLiteral(step.input ?? {});
   const configLit = emitLiteral(createStepRunConfig(step));
-  const timeoutLit = emitTimeoutLiteral(step.policy?.timeoutMs);
+  const timeoutLit = emitTimeoutLiteral(resolveCompiledStepTimeoutMs(step));
 
   return [
     '        (async () => {',
@@ -141,6 +142,9 @@ function wrapWorkflowModule(
     'export function buildWorkflow(runtime) {',
     '  const {',
     '    agentStep,',
+    '    notificationStep,',
+    '    capabilityStep,',
+    '    waitStep,',
     '    onStepStarted,',
     '    onStepCompleted,',
     '    onStepSkipped,',

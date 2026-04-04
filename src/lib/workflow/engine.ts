@@ -23,6 +23,7 @@ import {
   getWorkflowEngine,
   resetWorkflowClientForTests,
 } from './openworkflow-client';
+import { DEFAULT_AGENT_STEP_TIMEOUT_MS } from './compiler-helpers';
 import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
 import { getSupportedStepTypes } from './step-registry';
 import { cancelWorkflowAgentExecution } from './subagent';
@@ -31,7 +32,6 @@ import type {
   SubmitWorkflowRequest,
   SubmitWorkflowResponse,
   WorkflowExecutionStatus,
-  WorkflowFactoryModule,
   WorkflowStatusResponse,
 } from './types';
 
@@ -53,7 +53,7 @@ export interface WorkflowProgressEvent {
 export interface WorkflowCompletedEvent {
   workflowId: string;
   taskId: string;
-  result: any;
+  result: unknown;
   duration: number;
 }
 
@@ -67,8 +67,8 @@ export interface WorkflowFailedEvent {
   };
 }
 
-const DEFAULT_STEP_TIMEOUT_MS = 10 * 60 * 1000;
 const MIN_WORKFLOW_RESULT_TIMEOUT_MS = 15 * 60 * 1000;
+const WORKFLOW_RESULT_TIMEOUT_GRACE_MS = 2 * 60 * 1000;
 const registeredWorkflows = new Set<string>();
 const supportedStepTypes = new Set([
   ...getSupportedStepTypes(),
@@ -78,8 +78,18 @@ const supportedStepTypes = new Set([
 let globalWorker: Worker | null = null;
 
 function computeWorkflowTimeout(manifest: CompiledWorkflowManifest): number {
-  const stepCount = manifest.stepIds.length || 1;
-  return Math.max(stepCount * DEFAULT_STEP_TIMEOUT_MS, MIN_WORKFLOW_RESULT_TIMEOUT_MS);
+  const declaredStepTimeouts = Array.isArray(manifest.stepTimeoutsMs)
+    ? manifest.stepTimeoutsMs.filter((timeoutMs): timeoutMs is number => (
+      typeof timeoutMs === 'number'
+      && Number.isFinite(timeoutMs)
+      && timeoutMs > 0
+    ))
+    : [];
+  const fallbackStepCount = manifest.stepIds.length || 1;
+  const baseTimeoutMs = declaredStepTimeouts.length > 0
+    ? declaredStepTimeouts.reduce((total, timeoutMs) => total + timeoutMs, 0)
+    : fallbackStepCount * DEFAULT_AGENT_STEP_TIMEOUT_MS;
+  return Math.max(baseTimeoutMs, MIN_WORKFLOW_RESULT_TIMEOUT_MS) + WORKFLOW_RESULT_TIMEOUT_GRACE_MS;
 }
 
 interface WorkflowExecutionState {
@@ -190,7 +200,7 @@ export async function submitWorkflow(
     );
 
     return { workflowId, status: 'accepted' };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to submit workflow:', error);
     return {
       workflowId: '',
@@ -217,8 +227,8 @@ async function loadWorkflowDefinition(
   await writeFile(filePath, code, 'utf-8');
 
   const moduleUrl = `${pathToFileURL(filePath).href}?v=${cacheBust}`;
-  const module = await loadCompiledWorkflowModule(moduleUrl, filePath);
-  const buildWorkflow = module[manifest.exportedSymbol];
+  const workflowModule = await loadCompiledWorkflowModule(moduleUrl, filePath);
+  const buildWorkflow = workflowModule[manifest.exportedSymbol];
 
   if (typeof buildWorkflow !== 'function') {
     throw new Error(`Compiled workflow module is missing export "${manifest.exportedSymbol}"`);
@@ -308,16 +318,17 @@ async function waitForWorkflowCompletion(
       duration
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     const currentExecution = workflowExecutions.get(workflowId);
     if (currentExecution?.status === 'cancelled' || currentExecution?.cancellationRequested) {
       return;
     }
 
+    const err = error as Record<string, unknown> | Error | null;
     const failure = {
-      code: error?.code || 'WORKFLOW_FAILED',
+      code: (err && typeof err === 'object' && 'code' in err ? String(err.code) : undefined) || 'WORKFLOW_FAILED',
       message: error instanceof Error ? error.message : String(error),
-      stepName: error?.stepName,
+      stepName: err && typeof err === 'object' && 'stepName' in err ? String(err.stepName) : undefined,
     };
     const failedProjection = failWorkflowProjection(workflowId, failure);
 

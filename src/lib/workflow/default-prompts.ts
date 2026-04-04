@@ -147,7 +147,7 @@ ctx.browser.closePage(id)                     // 关闭页签
 \`\`\`javascript
 // 示例：浏览器登录自动化
 await ctx.browser.navigate('https://example.com/login');
-await ctx.browser.waitFor('登录');  // 等待页面出现"登录"文本
+await ctx.browser.waitFor('登录', { timeout: 60000 });  // 登录/跳转类页面优先给 60s
 
 // 获取快照，从 content 中解析元素 uid
 const snap = await ctx.browser.snapshot();
@@ -171,7 +171,7 @@ if (emailUid) await ctx.browser.fill(emailUid, 'user@example.com');
 if (pwdUid) await ctx.browser.fill(pwdUid, 'password123');
 if (submitUid) await ctx.browser.click(submitUid);
 
-await ctx.browser.waitFor('欢迎');  // 等待登录成功页面
+await ctx.browser.waitFor('欢迎', { timeout: 60000 });  // 登录成功后页面也不要只等 10s/15s
 
 return {
   success: true,
@@ -186,6 +186,7 @@ return {
 - 浏览器操作必须使用 ctx.browser（它与 Agent 使用的是同一个浏览器实例，共享 cookie 和登录态）
 - **click/fill 的第一个参数是 uid（来自 snapshot），绝对不是 CSS selector！**
 - **waitFor 等待的是页面文本内容，绝对不是 CSS selector！**
+- 登录、跳转、导出、重页面加载场景，waitFor 不要写 10000 / 15000 这类短超时；至少用 30000ms，默认优先 60000ms，必要时提高到 120000ms
 - 操作表单的标准流程：navigate → waitFor(文本) → snapshot() → 从 content 解析 uid → click/fill(uid)
 - 数据请求优先用 ctx.browser.evaluate 在页面内执行（保持登录态），而非 fetch
 - 代码必须处理常见错误（网络超时、元素未找到等）

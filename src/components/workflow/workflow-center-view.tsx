@@ -680,6 +680,27 @@ function buildStepRuntimeNotes(snapshot: WorkflowTaskStepResult | null | undefin
     notes.push(`详细结果文件：${detailArtifactPath}`);
   }
 
+  const debugLogPath = formatRuntimeValue(metadata?.debugLogPath);
+  if (debugLogPath) {
+    notes.push(`调试日志：${debugLogPath}`);
+  }
+
+  const failureSnapshotPath = formatRuntimeValue(metadata?.browserFailureSnapshotPath);
+  if (failureSnapshotPath) {
+    notes.push(`失败页面快照：${failureSnapshotPath}`);
+  }
+
+  const failureScreenshotPath = formatRuntimeValue(metadata?.browserFailureScreenshotPath);
+  if (failureScreenshotPath) {
+    notes.push(`失败截图：${failureScreenshotPath}`);
+  }
+
+  const failurePageTitle = formatRuntimeValue(metadata?.browserFailurePageTitle);
+  const failurePageUrl = formatRuntimeValue(metadata?.browserFailurePageUrl);
+  if (failurePageTitle || failurePageUrl) {
+    notes.push(`失败页面：${[failurePageTitle, failurePageUrl].filter(Boolean).join(' @ ')}`);
+  }
+
   const durationMs = formatRuntimeValue(metrics?.durationMs);
   if (durationMs) {
     notes.push(`执行耗时：${durationMs} ms`);
@@ -1833,11 +1854,22 @@ export function WorkflowCenterView() {
                       const stepState = getStepVisualState(step.id, selectedTask);
                       const snapshot = selectedTask?.result?.outputs?.[step.id] || null;
                       const stepOutputRecord = snapshot?.output && isRecord(snapshot.output) ? snapshot.output : null;
+                      const stepMetadataRecord = snapshot?.metadata && isRecord(snapshot.metadata) ? snapshot.metadata : null;
                       const runtimeNotes = buildStepRuntimeNotes(snapshot);
                       const stepOutputText = snapshot?.output ? extractPreferredOutputText(snapshot.output) : null;
                       const screenshotPath = (
                         stepOutputRecord && typeof stepOutputRecord.screenshotPath === 'string' && stepOutputRecord.screenshotPath.trim()
                       ) ? stepOutputRecord.screenshotPath.trim() : null;
+                      const failureScreenshotPath = (
+                        stepMetadataRecord && typeof stepMetadataRecord.browserFailureScreenshotPath === 'string' && stepMetadataRecord.browserFailureScreenshotPath.trim()
+                      ) ? stepMetadataRecord.browserFailureScreenshotPath.trim() : null;
+                      const failureSnapshotPath = (
+                        stepMetadataRecord && typeof stepMetadataRecord.browserFailureSnapshotPath === 'string' && stepMetadataRecord.browserFailureSnapshotPath.trim()
+                      ) ? stepMetadataRecord.browserFailureSnapshotPath.trim() : null;
+                      const debugLogPath = (
+                        stepMetadataRecord && typeof stepMetadataRecord.debugLogPath === 'string' && stepMetadataRecord.debugLogPath.trim()
+                      ) ? stepMetadataRecord.debugLogPath.trim() : null;
+                      const previewScreenshotPath = screenshotPath || failureScreenshotPath;
                       const detailArtifactPath = (
                         stepOutputRecord && typeof stepOutputRecord.detailArtifactPath === 'string' && stepOutputRecord.detailArtifactPath.trim()
                       ) ? stepOutputRecord.detailArtifactPath.trim() : null;
@@ -1896,16 +1928,16 @@ export function WorkflowCenterView() {
                             ))}
                           </div>
 
-                          {screenshotPath ? (
+                          {previewScreenshotPath ? (
                             <div className="mt-4 space-y-3">
                               <div className="flex flex-wrap items-center gap-2">
                                 <a
-                                  href={buildRawFileUrl(screenshotPath)}
+                                  href={buildRawFileUrl(previewScreenshotPath)}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
                                 >
-                                  打开截图文件
+                                  {screenshotPath ? '打开截图文件' : '打开失败截图'}
                                 </a>
                                 {detailArtifactPath ? (
                                   <a
@@ -1917,12 +1949,32 @@ export function WorkflowCenterView() {
                                     打开详细结果
                                   </a>
                                 ) : null}
+                                {failureSnapshotPath ? (
+                                  <a
+                                    href={buildRawFileUrl(failureSnapshotPath)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+                                  >
+                                    打开页面快照
+                                  </a>
+                                ) : null}
+                                {debugLogPath ? (
+                                  <a
+                                    href={buildRawFileUrl(debugLogPath)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+                                  >
+                                    打开调试日志
+                                  </a>
+                                ) : null}
                               </div>
 
-                              {isImageFilePath(screenshotPath) ? (
+                              {isImageFilePath(previewScreenshotPath) ? (
                                 <div className="overflow-hidden rounded-2xl border border-border/60 bg-muted/10">
                                   <Image
-                                    src={buildRawFileUrl(screenshotPath)}
+                                    src={buildRawFileUrl(previewScreenshotPath)}
                                     alt={`${step.id} screenshot`}
                                     width={1440}
                                     height={960}
@@ -1932,16 +1984,40 @@ export function WorkflowCenterView() {
                                 </div>
                               ) : null}
                             </div>
-                          ) : detailArtifactPath ? (
+                          ) : detailArtifactPath || failureSnapshotPath || debugLogPath ? (
                             <div className="mt-4">
-                              <a
-                                href={buildRawFileUrl(detailArtifactPath)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
-                              >
-                                打开详细结果
-                              </a>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {detailArtifactPath ? (
+                                  <a
+                                    href={buildRawFileUrl(detailArtifactPath)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+                                  >
+                                    打开详细结果
+                                  </a>
+                                ) : null}
+                                {failureSnapshotPath ? (
+                                  <a
+                                    href={buildRawFileUrl(failureSnapshotPath)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+                                  >
+                                    打开页面快照
+                                  </a>
+                                ) : null}
+                                {debugLogPath ? (
+                                  <a
+                                    href={buildRawFileUrl(debugLogPath)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+                                  >
+                                    打开调试日志
+                                  </a>
+                                ) : null}
+                              </div>
                             </div>
                           ) : null}
                         </div>

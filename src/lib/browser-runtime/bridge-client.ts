@@ -14,6 +14,11 @@ export interface BrowserBridgeResponse {
   message?: string;
 }
 
+interface BrowserBridgeRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 function pickNonEmpty(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     const normalized = value?.trim();
@@ -86,27 +91,106 @@ async function parseBridgeResponse<T extends BrowserBridgeResponse>(response: Re
 export async function getFromBrowserBridge<T extends BrowserBridgeResponse>(
   config: BrowserBridgeRuntimeConfig,
   pathname: string,
+  options?: BrowserBridgeRequestOptions,
 ): Promise<T> {
-  const response = await fetch(`${config.baseUrl}${pathname}`, {
-    method: 'GET',
-    headers: buildHeaders(config),
-  });
+  const timeoutMs = options?.timeoutMs ?? resolveDefaultBridgeTimeoutMs(pathname);
+  const response = await fetchFromBrowserBridge(
+    `${config.baseUrl}${pathname}`,
+    {
+      method: 'GET',
+      headers: buildHeaders(config),
+    },
+    {
+      signal: options?.signal,
+      timeoutMs,
+      timeoutMessage: `Browser bridge request timed out (${timeoutMs}ms): ${pathname}`,
+    },
+  );
 
   return parseBridgeResponse<T>(response);
+}
+
+const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
+const DEFAULT_NAVIGATE_BRIDGE_TIMEOUT_MS = 120_000;
+const DEFAULT_NEW_PAGE_BRIDGE_TIMEOUT_MS = 60_000;
+const DEFAULT_PAGE_READ_BRIDGE_TIMEOUT_MS = 60_000;
+
+function resolveDefaultBridgeTimeoutMs(pathname: string): number {
+  switch (pathname) {
+    case '/v1/pages/navigate':
+      return DEFAULT_NAVIGATE_BRIDGE_TIMEOUT_MS;
+    case '/v1/pages/new':
+      return DEFAULT_NEW_PAGE_BRIDGE_TIMEOUT_MS;
+    case '/v1/pages/snapshot':
+    case '/v1/pages/screenshot':
+      return DEFAULT_PAGE_READ_BRIDGE_TIMEOUT_MS;
+    default:
+      return DEFAULT_BRIDGE_TIMEOUT_MS;
+  }
+}
+
+async function fetchFromBrowserBridge(
+  url: string,
+  init: RequestInit,
+  options: {
+    signal?: AbortSignal;
+    timeoutMs: number;
+    timeoutMessage: string;
+  },
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted && !(options.signal?.aborted)) {
+      throw new Error(options.timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function postToBrowserBridge<T extends BrowserBridgeResponse>(
   config: BrowserBridgeRuntimeConfig,
   pathname: string,
   body: Record<string, unknown>,
+  options?: BrowserBridgeRequestOptions,
 ): Promise<T> {
-  const response = await fetch(`${config.baseUrl}${pathname}`, {
-    method: 'POST',
-    headers: buildHeaders(config),
-    body: JSON.stringify(body),
-  });
-
-  return parseBridgeResponse<T>(response);
+  // When the endpoint contract already carries timeoutMs in the request body,
+  // keep the transport timeout aligned so long waits are not aborted at the
+  // default 30s client boundary before the bridge can respond.
+  const bodyTimeoutMs = typeof body.timeoutMs === 'number' && Number.isFinite(body.timeoutMs) && body.timeoutMs > 0
+    ? body.timeoutMs
+    : undefined;
+  const timeoutMs = options?.timeoutMs ?? bodyTimeoutMs ?? resolveDefaultBridgeTimeoutMs(pathname);
+  const response = await fetchFromBrowserBridge(
+    `${config.baseUrl}${pathname}`,
+    {
+      method: 'POST',
+      headers: buildHeaders(config),
+      body: JSON.stringify(body),
+    },
+    {
+      signal: options?.signal,
+      timeoutMs,
+      timeoutMessage: `Browser bridge request timed out (${timeoutMs}ms): ${pathname}`,
+    },
+  );
+  return await parseBridgeResponse<T>(response);
 }
 
 export async function checkBrowserBridgeReady(

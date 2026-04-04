@@ -67,6 +67,7 @@ lumos/
 │   │   ├── capability/       # Agent 能力定义
 │   │   ├── memory/           # Agent 记忆系统
 │   │   ├── mcp-resolver.ts   # MCP 服务器解析（路径替换、env 注入）
+│   │   ├── office/           # Office 文档处理（Excel/Word/PDF/PPT，纯 Node.js）
 │   │   ├── provider-*.ts     # Provider 配置、解析、预设
 │   │   ├── feishu/           # 飞书 API 集成
 │   │   └── scheduler/        # 定时任务调度引擎
@@ -76,7 +77,7 @@ lumos/
 │   ├── browser/              # 浏览器管理（BrowserManager、Bridge 服务器、CDP）
 │   └── preload.ts            # 预加载脚本
 ├── resources/
-│   └── mcp-servers/          # 内置 MCP 服务器（deepsearch、bilibili 等）
+│   └── mcp-servers/          # 内置 MCP 服务器（deepsearch、bilibili、office-docs 等）
 ├── public/
 │   └── mcp-servers/          # MCP 服务器配置 JSON
 └── dev.sh                    # 开发启动脚本（注入隔离环境变量）
@@ -87,17 +88,31 @@ lumos/
 ## 工作流系统
 
 ### 架构
-- **DSL**（`src/lib/workflow/dsl.ts`）：声明式多步骤 Agent 工作流
-- **引擎**（`src/lib/workflow/engine.ts`）：步骤调度、依赖解析、并发控制
-- **subagent**（`src/lib/workflow/subagent.ts`）：每个 Agent 步骤的执行入口，负责构建 payload、调用 StageWorker、持久化执行结果
-- **StageWorker**（`src/lib/team-run/stage-worker.ts`）：调用 Claude Agent SDK，捕获 trace 事件（tool calls、results、thinking）
-- **调度器**（`src/lib/scheduler/`）：定时触发工作流执行（interval-based cron）
+- **DSL**（`src/lib/workflow/dsl.ts`）：声明式多步骤 Agent 工作流，支持 V1（线性/并行）和 V2（控制流）
+- **编译器**（`src/lib/workflow/compiler-v2.ts`）：将 V2 DSL 编译为可执行 JS 模块
+- **引擎**（`src/lib/workflow/engine.ts`）：步骤调度、依赖解析、并发控制（OpenWorkflow Worker，并发=5）
+- **运行时**（`src/lib/workflow/runtime.ts`）：步骤执行绑定注册（agent、wait）
+- **subagent**（`src/lib/workflow/subagent.ts`）：Agent 步骤执行入口，构建 payload、调用 StageWorker、持久化结果
+- **StageWorker**（`src/lib/team-run/stage-worker.ts`）：调用 Claude Agent SDK，捕获 trace 事件
+- **调度器**（`src/lib/scheduler/`）：定时触发工作流执行（60 秒 tick）
+
+### DSL V2 能力
+- **步骤类型**：`agent`（已实现）、`wait`（已实现）、`if-else`/`for-each`/`while`（控制流，已实现）、`notification`/`capability`（schema 已定义，运行时未接入）
+- **输出引用**：`steps.stepId.output.xxx` 直接引用 / `{{ steps.stepId.output.xxx }}` 模板插值
+- **条件表达式**：`exists`/`eq`/`neq`/`gt`/`lt`/`and`/`or`/`not`
+- **硬限制**：V1 最多 20 步 / V2 最多 50 步，for-each 最多 200 次迭代，while 最多 100 次
+- **Agent 角色**：`worker`/`researcher`/`coder`/`integration`
+- **代码模式**：agent 步骤支持 `code` 配置，可执行内联脚本或注册 handler，含 browser bridge API
+
+### 缺失的步骤类型
+- **`approval`**：人工审批门（暂停工作流等待人确认），是实现产品开发全流程工作流的关键缺口
+- **`notification`**：通知步骤（schema 已有，runtime 未绑定）
 
 ### Agent 工具权限
 `src/lib/team-run/runtime-tool-policy.ts` 中 `canUseTool` 对所有工具返回 allow（包括 MCP 工具）。MCP 服务器通过 `src/lib/mcp-resolver.ts` 统一注入。
 
 ### 执行目录
-Agent 的工作目录（`sessionWorkspace`）优先使用 schedule 配置的 `workingDirectory`，未配置时 fallback 到 `LUMOS_DATA_DIR`（即 `~/.lumos`），**不使用 `process.cwd()`**，避免在开发环境下读取项目文件。
+Agent 的工作目录（`sessionWorkspace`）优先使用 schedule 配置的 `workingDirectory`，未配置时 fallback 到 `LUMOS_DATA_DIR`（即 `~/.lumos`），**不使用 `process.cwd()`**。
 
 ### 执行记录
 - 存储于 `schedule_run_history` 表
@@ -171,6 +186,52 @@ Lumos 内嵌 Claude CLI，通过五层隔离防止污染用户本地环境：
 4. 不要手动创建 GitHub Release（会与 CI 冲突）
 
 构建产物：macOS DMG（universal）/ Windows NSIS / Linux AppImage + deb + rpm
+
+---
+
+## 内置 MCP 开发规范
+
+### 架构
+每个内置 MCP 采用 **stdio 桥接 + API 回调** 模式：
+1. **MCP 进程**（`resources/mcp-servers/{name}/{name}_mcp.mjs`）：JSON-RPC stdio 服务器，接收 Claude SDK 的工具调用
+2. **API 路由**（`src/app/api/{name}/route.ts`）：实际业务逻辑，MCP 进程通过 HTTP 回调调用
+3. **配置文件**（`public/mcp-servers/{name}.json`）：声明 command/args/env，`[RUNTIME_PATH]` 占位符在运行时解析
+
+### 路径解析
+`src/lib/mcp-resolver.ts` 统一处理：
+- `[RUNTIME_PATH]` → 开发环境 `resources/`，生产环境 `process.resourcesPath`
+- `[WORKSPACE_PATH]` → 会话工作目录
+- `[DATA_DIR]` → `~/.lumos`
+
+### 环境注入
+需要运行时 env 注入的 MCP 在 `src/lib/mcp-env-enrichers.ts` 的 `ENRICHER_MAP` 中注册 enricher 函数。
+
+### 默认启用
+在 `src/lib/init-builtin-resources.ts` 的 `isEnabled` 列表中添加 MCP name。
+
+---
+
+## Office 文档处理
+
+纯 Node.js 实现，零系统依赖，可直接打包到 Electron。
+
+### 依赖库
+| 格式 | 读取 | 写入 | 公式 |
+|------|------|------|------|
+| Excel | exceljs | exceljs | hyperformula（398 个内置函数） |
+| Word | mammoth | docx | — |
+| PDF | pdf-lib（元数据） | pdf-lib | — |
+| PPT | — | pptxgenjs | — |
+
+### 文件结构
+- `src/lib/office/` — 核心库（excel-reader/writer、excel-formula、word-reader/writer、pdf-handler、ppt-writer、path-guard）
+- `src/app/api/office/route.ts` — API 路由（含路径遍历防护）
+- `resources/mcp-servers/office-docs/` — MCP 服务器（office_docs_mcp.mjs + tools.mjs）
+- `public/mcp-servers/office-docs.json` — MCP 配置
+- `public/skills/office-docs.md` — Skill 提示词
+
+### 安全
+所有文件路径操作经过 `path-guard.ts` 的 `assertSafePath` 校验，限制在用户 home 目录和 /tmp 内。
 
 ---
 

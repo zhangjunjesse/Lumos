@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
@@ -29,6 +30,7 @@ import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
+import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 
@@ -103,6 +105,7 @@ Available browser tools (call by exact name):
 - \`mcp__chrome-devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
 
 Workflow: call \`mcp__chrome-devtools__list_pages\` → get pageId → use other tools with that pageId.
+If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome-devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.
 Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
 
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
@@ -773,6 +776,7 @@ export async function POST(request: NextRequest) {
       sessionId: session_id,
       browserBridgeOverride: readChromeBridgeEnvFromRequest(request),
       skipNames: new Set(['task-management']),
+      browserBackground: isWorkflowChatSession(session),
     });
     console.timeEnd('[perf] MCP servers loading');
 
@@ -845,11 +849,16 @@ export async function POST(request: NextRequest) {
       mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
 
-    // Create in-process MCP server for image generation (only when hint is also injected)
+    // Create in-process MCP servers
     const inProcessMcpServers: Record<string, ReturnType<typeof createLumosMcpServer>> = {};
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       const lumosMcpServer = createLumosMcpServer(session_id);
       inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
+    }
+    // Workflow code runner — only for workflow chat sessions
+    if (isWorkflowChatSession(session)) {
+      const workflowMcp = createWorkflowMcpServer();
+      inProcessMcpServers[workflowMcp.name] = workflowMcp;
     }
 
     const claudeStream = streamClaude({

@@ -36,6 +36,7 @@ export {
   updateSessionResolvedModel,
   updateSessionProvider,
   updateSessionProviderId,
+  updateSessionSystemPrompt,
   getDefaultProviderId,
   setDefaultProviderId,
   updateSessionWorkingDirectory,

@@ -16,8 +16,21 @@ interface OutputFile {
   agentName: string;
   content: string;
   sizeBytes: number;
+  filePath: string;
   mimeType?: string;
   createdAt?: string;
+}
+
+function buildRawFileUrl(filePath: string): string {
+  return `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+}
+
+async function openLocalFile(filePath: string): Promise<void> {
+  await fetch('/api/files/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: filePath }),
+  });
 }
 
 function formatFileTime(iso?: string): string {
@@ -40,9 +53,44 @@ function humanFileName(raw: string): string {
   return m?.[1] || raw;
 }
 
+function isTextLikeMimeType(mimeType: string | undefined): boolean {
+  if (!mimeType) {
+    return true;
+  }
+  return mimeType.startsWith('text/')
+    || mimeType === 'application/json';
+}
+
+function getFileKindLabel(mimeType: string | undefined): string {
+  if (!mimeType) {
+    return '文本文件';
+  }
+  if (mimeType.startsWith('image/')) {
+    return '图片文件';
+  }
+  if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) {
+    return '表格文件';
+  }
+  if (mimeType.includes('wordprocessingml') || mimeType.includes('msword')) {
+    return '文档文件';
+  }
+  if (mimeType.includes('presentation')) {
+    return '演示文件';
+  }
+  if (mimeType === 'application/pdf') {
+    return 'PDF 文件';
+  }
+  if (mimeType === 'application/zip') {
+    return '压缩文件';
+  }
+  return '二进制文件';
+}
+
 const FileCard = memo(({ file, defaultOpen }: { file: OutputFile; defaultOpen: boolean }) => {
   const [open, setOpen] = useState(defaultOpen);
   const displayName = humanFileName(file.name);
+  const isImage = file.mimeType?.startsWith('image/');
+  const isText = isTextLikeMimeType(file.mimeType);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
@@ -65,21 +113,44 @@ const FileCard = memo(({ file, defaultOpen }: { file: OutputFile; defaultOpen: b
       </button>
 
       {open && (
-        <div className="px-5 py-4 border-t border-border/40">
-          {file.mimeType?.startsWith('image/') ? (
+        <div className="px-5 py-4 border-t border-border/40 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { void openLocalFile(file.filePath); }}
+              className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+            >
+              打开本地文件
+            </button>
+            <a
+              href={buildRawFileUrl(file.filePath)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-md border border-border/60 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/40"
+            >
+              下载原文件
+            </a>
+            <span className="text-xs text-muted-foreground">{getFileKindLabel(file.mimeType)}</span>
+          </div>
+
+          {isImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`data:${file.mimeType};base64,${file.content}`}
               alt={displayName}
               className="max-w-full rounded"
             />
-          ) : (
+          ) : isText ? (
             <Streamdown
               className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 leading-relaxed"
               plugins={plugins}
             >
               {file.content}
             </Streamdown>
+          ) : (
+            <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-4 py-4 text-sm text-muted-foreground">
+              当前文件类型暂不支持在此处内联预览，请使用上方按钮打开或下载。
+            </div>
           )}
         </div>
       )}

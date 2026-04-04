@@ -12,6 +12,7 @@ import {
   useReactFlow,
   ReactFlowProvider,
   type Connection,
+  type Edge,
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -91,13 +92,17 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
     onChange(graphToDsl(currentNodes, currentEdges, dslRef.current));
   }, [getNodes, getEdges, onChange]);
 
+  const emitDsl = useCallback((nextNodes: Node<StepNodeData>[], nextEdges: Edge[]) => {
+    onChange(graphToDsl(nextNodes, nextEdges, dslRef.current));
+  }, [onChange]);
+
   const onConnect = useCallback(
     (params: Connection) => {
-      setEdges(eds => addEdge({ ...params, id: `dep-${params.source}-${params.target}` }, eds));
-      // syncDsl after state settles
-      setTimeout(syncDsl, 0);
+      const nextEdges = addEdge({ ...params, id: `dep-${params.source}-${params.target}` }, edges);
+      setEdges(nextEdges);
+      emitDsl(nodes as Node<StepNodeData>[], nextEdges);
     },
-    [setEdges, syncDsl],
+    [edges, emitDsl, nodes, setEdges],
   );
 
   const onNodeDragStop = useCallback(() => syncDsl(), [syncDsl]);
@@ -123,10 +128,11 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
         },
       };
 
-      setNodes(nds => [...nds, newNode]);
-      setTimeout(syncDsl, 0);
+      const nextNodes = [...nodes, newNode];
+      setNodes(nextNodes);
+      emitDsl(nextNodes, edges);
     },
-    [setNodes, syncDsl],
+    [edges, emitDsl, nodes, setNodes],
   );
 
   const onDragOver = useCallback((event: DragEvent) => {
@@ -141,19 +147,22 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
 
   const handleNodeUpdate = useCallback(
     (data: StepNodeData) => {
-      setNodes(nds => nds.map(n => n.id === selectedNodeId ? { ...n, data } : n));
-      setTimeout(syncDsl, 0);
+      const nextNodes = nodes.map(n => n.id === selectedNodeId ? { ...n, data } : n) as Node<StepNodeData>[];
+      setNodes(nextNodes);
+      emitDsl(nextNodes, edges);
     },
-    [selectedNodeId, setNodes, syncDsl],
+    [edges, emitDsl, nodes, selectedNodeId, setNodes],
   );
 
   const handleNodeDelete = useCallback(() => {
     if (!selectedNodeId) return;
-    setNodes(nds => nds.filter(n => n.id !== selectedNodeId));
-    setEdges(eds => eds.filter(e => e.source !== selectedNodeId && e.target !== selectedNodeId));
+    const nextNodes = nodes.filter(n => n.id !== selectedNodeId) as Node<StepNodeData>[];
+    const nextEdges = edges.filter(e => e.source !== selectedNodeId && e.target !== selectedNodeId);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
     setSelectedNodeId(null);
-    setTimeout(syncDsl, 0);
-  }, [selectedNodeId, setNodes, setEdges, syncDsl]);
+    emitDsl(nextNodes, nextEdges);
+  }, [edges, emitDsl, nodes, selectedNodeId, setNodes, setEdges]);
 
   return (
     <div className="flex rounded-xl border border-border/60 overflow-hidden" style={{ height }}>
@@ -200,4 +209,3 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) {
     </ReactFlowProvider>
   );
 }
-

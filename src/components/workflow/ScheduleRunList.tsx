@@ -165,7 +165,7 @@ export function ScheduleRunList({ scheduleId }: ScheduleRunListProps) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/workflow/schedules/${scheduleId}/runs`);
+      const res = await fetch(`/api/workflow/schedules/${scheduleId}/runs`, { cache: 'no-store' });
       const data = await res.json() as { runs?: RunRecord[] };
       setRuns(data.runs ?? []);
     } catch { /* ignore */ } finally { setLoading(false); }

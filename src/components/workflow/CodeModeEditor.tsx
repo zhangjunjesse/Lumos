@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,6 +18,15 @@ const STRATEGY_LABELS: Record<string, string> = {
   'code-only': '仅代码',
   'agent-only': '仅 Agent',
 };
+
+interface CodeRunResult {
+  success: boolean;
+  output: unknown;
+  error?: string;
+  stack?: string;
+  logs: string[];
+  durationMs: number;
+}
 
 interface CodeModeEditorProps {
   enabled: boolean;
@@ -42,6 +51,8 @@ export function CodeModeEditor({
 }: CodeModeEditorProps) {
   const [codifying, setCodifying] = useState(false);
   const [codifyError, setCodifyError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<CodeRunResult | null>(null);
 
   async function handleCodify() {
     if (!prompt.trim()) return;
@@ -76,6 +87,25 @@ export function CodeModeEditor({
     }
   }
 
+  const handleRun = useCallback(async () => {
+    if (!script.trim()) return;
+    setRunning(true);
+    setRunResult(null);
+    try {
+      const res = await fetch('/api/workflow/code-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script }),
+      });
+      const data = await res.json() as CodeRunResult;
+      setRunResult(data);
+    } catch {
+      setRunResult({ success: false, output: null, error: '请求失败', logs: [], durationMs: 0 });
+    } finally {
+      setRunning(false);
+    }
+  }, [script]);
+
   const labelSize = compact ? 'text-[10px]' : 'text-xs';
   const subLabelSize = compact ? 'text-[9px]' : 'text-[10px]';
 
@@ -104,15 +134,26 @@ export function CodeModeEditor({
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className={`${subLabelSize} text-muted-foreground`}>脚本代码</Label>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-5 text-[10px] px-2"
-                disabled={codifying || !prompt.trim()}
-                onClick={() => void handleCodify()}
-              >
-                {codifying ? '生成中...' : 'AI 生成'}
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-5 text-[10px] px-2"
+                  disabled={running || !script.trim()}
+                  onClick={() => void handleRun()}
+                >
+                  {running ? '运行中...' : '运行'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-5 text-[10px] px-2"
+                  disabled={codifying || !prompt.trim()}
+                  onClick={() => void handleCodify()}
+                >
+                  {codifying ? '生成中...' : 'AI 生成'}
+                </Button>
+              </div>
             </div>
             <Textarea
               value={script}
@@ -125,6 +166,34 @@ export function CodeModeEditor({
             <p className={`${compact ? 'text-[8px]' : 'text-[9px]'} text-muted-foreground`}>
               async function body，可用 ctx，必须 return {'{'} success, output {'}'} 对象
             </p>
+            {runResult && (
+              <div className={`rounded border p-2 space-y-1 ${runResult.success ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-destructive/30 bg-destructive/5'}`}>
+                <div className="flex items-center justify-between">
+                  <span className={`${subLabelSize} font-medium ${runResult.success ? 'text-emerald-600' : 'text-destructive'}`}>
+                    {runResult.success ? 'OK' : 'FAILED'} ({runResult.durationMs}ms)
+                  </span>
+                  <button type="button" onClick={() => setRunResult(null)} className={`${subLabelSize} text-muted-foreground hover:text-foreground`}>
+                    关闭
+                  </button>
+                </div>
+                {runResult.error && (
+                  <pre className={`${subLabelSize} text-destructive whitespace-pre-wrap break-all`}>{runResult.error}</pre>
+                )}
+                {runResult.output != null && (
+                  <pre className={`${subLabelSize} text-foreground/80 whitespace-pre-wrap break-all max-h-32 overflow-auto`}>
+                    {typeof runResult.output === 'string' ? runResult.output : JSON.stringify(runResult.output, null, 2)}
+                  </pre>
+                )}
+                {runResult.logs.length > 0 && (
+                  <details className={subLabelSize}>
+                    <summary className="text-muted-foreground cursor-pointer">console ({runResult.logs.length})</summary>
+                    <pre className="mt-1 text-muted-foreground whitespace-pre-wrap break-all max-h-24 overflow-auto">
+                      {runResult.logs.join('\n')}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
           <div className="space-y-1">
             <Label className={`${subLabelSize} text-muted-foreground`}>执行策略</Label>

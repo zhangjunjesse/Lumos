@@ -1,0 +1,9 @@
+{
+  "name": "office-docs",
+  "description": "Process Office documents: read/write Excel (with formula execution), Word, PDF, and PowerPoint files. Pure Node.js, no system dependencies.",
+  "command": "node",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/office-docs/office_docs_mcp.mjs"
+  ],
+  "env": {}
+}

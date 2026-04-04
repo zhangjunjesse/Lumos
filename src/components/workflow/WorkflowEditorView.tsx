@@ -7,6 +7,7 @@ import { WorkflowDslViewer } from './WorkflowDslViewer';
 import { WorkflowResultToolbar } from './WorkflowResultToolbar';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { WorkflowParamManager } from './WorkflowParamManager';
+import { removeStepFromDsl } from '@/lib/workflow/dsl-graph-converter';
 import type { WorkflowParamDef } from '@/lib/workflow/types';
 
 const WorkflowCanvas = dynamic(
@@ -84,10 +85,7 @@ export function WorkflowEditorView({
   }, [dsl, selectedStepId, onDslChange]);
 
   const handleStepDelete = useCallback((stepId: string) => {
-    const newSteps = dsl.steps
-      .filter(s => s.id !== stepId)
-      .map(s => ({ ...s, dependsOn: s.dependsOn?.filter(d => d !== stepId) }));
-    const newDsl = { ...dsl, steps: newSteps };
+    const newDsl = removeStepFromDsl(dsl, stepId);
     onDslChange(newDsl, JSON.stringify(newDsl, null, 2));
     setSelectedStepId(null);
   }, [dsl, onDslChange]);
