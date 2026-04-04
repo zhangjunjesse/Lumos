@@ -1,26 +1,28 @@
 import Database from 'better-sqlite3';
 
-export function migrateCoreTables(db: Database.Database): void {
-  const columns = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
-  const colNames = columns.map(c => c.name);
+// Helper: safely run ALTER TABLE ADD COLUMN, ignoring "duplicate column" errors from
+// concurrent multi-process initialization (e.g. Next.js build with multiple workers).
+function safeAddColumn(db: Database.Database, sql: string): void {
+  try {
+    db.exec(sql);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('duplicate column name')) throw err;
+  }
+}
 
-  if (!colNames.includes('model')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('requested_model')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN requested_model TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('resolved_model')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN resolved_model TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('system_prompt')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('sdk_session_id')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN sdk_session_id TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('project_name')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN project_name TEXT NOT NULL DEFAULT ''");
+export function migrateCoreTables(db: Database.Database): void {
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN requested_model TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN resolved_model TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN sdk_session_id TEXT NOT NULL DEFAULT ''");
+
+  // project_name: backfill from working_directory on first addition only
+  const columns = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
+  const hasProjectName = columns.some(c => c.name === 'project_name');
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN project_name TEXT NOT NULL DEFAULT ''");
+  if (!hasProjectName) {
     db.exec(`
       UPDATE chat_sessions
       SET project_name = CASE
@@ -30,34 +32,22 @@ export function migrateCoreTables(db: Database.Database): void {
       WHERE project_name = ''
     `);
   }
-  if (!colNames.includes('status')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
-  }
-  if (!colNames.includes('mode')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
-  }
-  if (!colNames.includes('provider_name')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('provider_id')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
-  }
+
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
+
+  const colNames = columns.map(c => c.name);
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN sdk_cwd TEXT NOT NULL DEFAULT ''");
   if (!colNames.includes('sdk_cwd')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN sdk_cwd TEXT NOT NULL DEFAULT ''");
     db.exec("UPDATE chat_sessions SET sdk_cwd = working_directory WHERE sdk_cwd = '' AND working_directory != ''");
   }
-  if (!colNames.includes('runtime_status')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN runtime_status TEXT NOT NULL DEFAULT 'idle'");
-  }
-  if (!colNames.includes('runtime_updated_at')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN runtime_updated_at TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('runtime_error')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN runtime_error TEXT NOT NULL DEFAULT ''");
-  }
-  if (!colNames.includes('folder')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
-  }
+
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_status TEXT NOT NULL DEFAULT 'idle'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_updated_at TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_error TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
   db.exec(`
     UPDATE chat_sessions
     SET requested_model = CASE
