@@ -171,9 +171,19 @@ export function initDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_media_context_events_job_id ON media_context_events(job_id);
   `);
 
-  // Run migrations for existing databases
-  migrateCoreTables(db);
-  migrateLumosTables(db);
-  migrateSyncTables(db);
-  migrateTeamRunTables(db);
+  // Run migrations inside an IMMEDIATE transaction to serialize concurrent
+  // worker processes (e.g. Next.js build on Windows where file locking is strict).
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    migrateCoreTables(db);
+    migrateLumosTables(db);
+    migrateSyncTables(db);
+    migrateTeamRunTables(db);
+    db.exec('COMMIT');
+  } catch (err: unknown) {
+    try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+    const msg = err instanceof Error ? err.message : String(err);
+    // Swallow "duplicate column" from a concurrent winner — schema is already up to date
+    if (!msg.includes('duplicate column name')) throw err;
+  }
 }

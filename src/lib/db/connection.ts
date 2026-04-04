@@ -138,7 +138,7 @@ export function getDb(): Database.Database {
 
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
-    db.pragma('busy_timeout = 5000');
+    db.pragma('busy_timeout = 30000');
     db.pragma('foreign_keys = ON');
     initDb(db);
 
