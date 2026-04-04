@@ -97,11 +97,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download runtime assets and build Next.js
+        run: node scripts/download-node.mjs && node scripts/download-git-bash.mjs && npm run build
+
       - name: Rebuild better-sqlite3 for Electron
         run: npx electron-rebuild -f -o better-sqlite3
 
-      - name: Build Electron app
-        run: npm run electron:build
+      - name: Build Electron main process
+        run: node scripts/build-electron.mjs
 
       - name: Package for Windows
         env:
@@ -138,11 +141,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Rebuild better-sqlite3 for target arch BEFORE build
+      - name: Download runtime assets and build Next.js
+        run: node scripts/download-node.mjs && npm run build
+
+      - name: Rebuild better-sqlite3 for Electron (arm64)
         run: npx electron-rebuild -f -o better-sqlite3 -a arm64
 
-      - name: Build Electron app
-        run: npm run electron:build
+      - name: Build Electron main process
+        run: node scripts/build-electron.mjs
 
       - name: Package for macOS (arm64)
         env:
