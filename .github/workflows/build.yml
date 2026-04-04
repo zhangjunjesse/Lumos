@@ -66,8 +66,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Rebuild better-sqlite3 for current Node version
-        run: npm rebuild better-sqlite3
+      - name: Rebuild better-sqlite3 from source for current Node version
+        run: |
+          rm -rf node_modules/better-sqlite3/build
+          npm_config_build_from_source=true npm rebuild better-sqlite3
 
       - name: Verify source
         run: npm run ci:verify
