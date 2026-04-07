@@ -158,17 +158,28 @@ function emitWhile(
   const isDoWhile = input.mode === 'do-while';
   const bodyCode = emitBodySteps(bodyIds, stepMap, ownedStepIds, indent + 2);
 
+  // Wrap loop body in try-catch so a single iteration failure doesn't kill the loop.
+  // Failed iterations are logged and the loop continues to the next check.
+  const iterErrorVar = `__iterErr_${safe}`;
+
   if (isDoWhile) {
     // do-while: execute body first, then check condition
     return [
       `${pad}// do-while: ${step.id.replace(/[\r\n]/g, ' ')}`,
       `${pad}await onStepStarted?.({ workflowRunId: run.id, stepId: ${sid} });`,
       `${pad}let __iter_${safe} = 0;`,
+      `${pad}let ${iterErrorVar} = [];`,
       `${pad}do {`,
+      `${pad}  try {`,
       bodyCode,
+      `${pad}  } catch (__e) {`,
+      `${pad}    const __msg = __e instanceof Error ? __e.message : String(__e);`,
+      `${pad}    console.warn(\`[workflow] do-while ${step.id.replace(/[\r\n]/g, ' ')} iteration \${__iter_${safe}} failed: \${__msg}\`);`,
+      `${pad}    ${iterErrorVar}.push({ iteration: __iter_${safe}, error: __msg });`,
+      `${pad}  }`,
       `${pad}  __iter_${safe}++;`,
       `${pad}} while (__evaluateCondition(${condLit}, input, stepOutputs) && __iter_${safe} < ${maxIter});`,
-      `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe} } };`,
+      `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe}, errors: ${iterErrorVar} } };`,
       `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
     ].join('\n');
   }
@@ -177,11 +188,18 @@ function emitWhile(
     `${pad}// while: ${step.id.replace(/[\r\n]/g, ' ')}`,
     `${pad}await onStepStarted?.({ workflowRunId: run.id, stepId: ${sid} });`,
     `${pad}let __iter_${safe} = 0;`,
+    `${pad}let ${iterErrorVar} = [];`,
     `${pad}while (__evaluateCondition(${condLit}, input, stepOutputs) && __iter_${safe} < ${maxIter}) {`,
+    `${pad}  try {`,
     bodyCode,
+    `${pad}  } catch (__e) {`,
+    `${pad}    const __msg = __e instanceof Error ? __e.message : String(__e);`,
+    `${pad}    console.warn(\`[workflow] while ${step.id.replace(/[\r\n]/g, ' ')} iteration \${__iter_${safe}} failed: \${__msg}\`);`,
+    `${pad}    ${iterErrorVar}.push({ iteration: __iter_${safe}, error: __msg });`,
+    `${pad}  }`,
     `${pad}  __iter_${safe}++;`,
     `${pad}}`,
-    `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe} } };`,
+    `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe}, errors: ${iterErrorVar} } };`,
     `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
   ].join('\n');
 }
