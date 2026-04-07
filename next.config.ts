@@ -26,6 +26,7 @@ const nextConfig: NextConfig = {
     '@node-rs/jieba',
     '@huggingface/transformers',
     '@openworkflow/backend-sqlite',
+    'onnxruntime-node',
     'onnxruntime-web',
     'onnxruntime-common',
     'openworkflow',

@@ -7,7 +7,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 // @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
 import * as onnxruntimeWebRuntime from 'onnxruntime-web';
-import * as transformersNodeRuntime from '@huggingface/transformers';
 import * as portableTransformersRuntime from './transformers-web-runtime';
 import { getDb } from '@/lib/db';
 
@@ -102,7 +101,7 @@ function getExtractor(): Promise<unknown> {
       const usePortableRuntime = shouldUsePortableEmbeddingRuntime();
       const transformers = usePortableRuntime
         ? await loadPortableTransformers()
-        : transformersNodeRuntime;
+        : await import('@huggingface/transformers');
 
       (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
