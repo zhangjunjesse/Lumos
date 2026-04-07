@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -16,6 +17,7 @@ import { formatStepOutputMarkdown, type RawTraceEvent } from '@/lib/workflow/ste
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import type {
   AgentStepInput,
+  InlineAgentDef,
   JsonValue,
   StepResult,
   WorkflowAgentExecutionMode,
@@ -375,6 +377,33 @@ function buildDefinitionFromPreset(
   };
 }
 
+function buildDefinitionFromInlineAgentDef(
+  agentDef: InlineAgentDef,
+  input: AgentStepInput,
+): ResolvedWorkflowAgentDefinition {
+  const role = resolveWorkflowAgentRole(agentDef.role);
+  const baseAllowedTools = (agentDef.allowedTools ?? ['workspace.read', 'workspace.write', 'shell.exec']) as RuntimeCapability[];
+  const capabilitySelection = resolveAllowedCapabilities(baseAllowedTools, input.tools);
+  const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
+  const enhancedSystemPrompt = (agentDef.systemPrompt ?? '') + capabilityPrompt;
+
+  return {
+    role,
+    binding: {
+      agentDefinitionId: `workflow-agent-def:inline:${agentDef.name}`,
+      agentType: `workflow.${role}`,
+      roleName: agentDef.name,
+      systemPrompt: enhancedSystemPrompt,
+      allowedTools: uniqueValues(capabilitySelection.allowedTools),
+      capabilityTags: [...(agentDef.capabilityTags ?? [])],
+      memoryPolicy: (agentDef.memoryPolicy ?? 'ephemeral-stage') as AgentExecutionBindingV1['memoryPolicy'],
+      outputSchema: 'stage-execution-result/v1',
+      concurrencyLimit: agentDef.concurrencyLimit ?? 1,
+    },
+    ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+  };
+}
+
 function resolveWorkflowAgentDefinition(input: AgentStepInput): ResolvedWorkflowAgentDefinition {
   if (input.preset) {
     // First try workflow-agent presets (legacy/builtin)
@@ -386,6 +415,10 @@ function resolveWorkflowAgentDefinition(input: AgentStepInput): ResolvedWorkflow
     const conversationPreset = getAgentPreset(input.preset);
     if (conversationPreset) {
       return buildDefinitionFromConversationPreset(conversationPreset, input);
+    }
+    // Fallback: use inline agentDef if preset ID not found locally (imported workflow)
+    if (input.agentDef) {
+      return buildDefinitionFromInlineAgentDef(input.agentDef, input);
     }
     // #8: Error instead of silently falling back when preset is missing
     throw new Error(`Agent preset「${input.preset}」不存在或已被删除，请检查工作流配置`);
@@ -531,11 +564,32 @@ async function resolveExecutionMode(runtimeContext?: WorkflowStepRuntimeContext)
   return { mode: hasCredentials ? 'claude' : 'synthetic', provider };
 }
 
-async function prepareWorkflowAgentWorkspace(runtimeContext: WorkflowStepRuntimeContext): Promise<StageExecutionPayloadV1['workspace']> {
+/** Extract the first directory path from resolved context values. */
+function extractContextWorkingDir(context: AgentStepInput['context']): string | null {
+  if (!context || typeof context !== 'object') return null;
+  for (const value of Object.values(context)) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    // Accept absolute paths that look like directories (no file extension or end with /)
+    if (trimmed.startsWith('/') && (!path.extname(trimmed) || trimmed.endsWith('/'))) {
+      try {
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).isDirectory()) return trimmed;
+      } catch { /* ignore */ }
+    }
+  }
+  return null;
+}
+
+async function prepareWorkflowAgentWorkspace(
+  runtimeContext: WorkflowStepRuntimeContext,
+  context?: AgentStepInput['context'],
+): Promise<StageExecutionPayloadV1['workspace']> {
   const safeRunId = sanitizePathSegment(runtimeContext.workflowRunId, 'workflow-run');
   const safeStepId = sanitizePathSegment(runtimeContext.stepId, 'agent-step');
   const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-  const sessionWorkspace = runtimeContext.workingDirectory?.trim() || dataDir;
+  // Context-provided directory takes priority over default workspace
+  const contextDir = extractContextWorkingDir(context);
+  const sessionWorkspace = contextDir || runtimeContext.workingDirectory?.trim() || dataDir;
   const runWorkspace = path.join(getWorkflowAgentRootDir(), safeRunId);
   const stageWorkspace = path.join(runWorkspace, 'stages', safeStepId);
   const sharedReadDir = path.join(runWorkspace, 'shared');
@@ -562,7 +616,7 @@ async function buildWorkflowAgentPayload(
   runtimeContext: WorkflowStepRuntimeContext,
   definition: ResolvedWorkflowAgentDefinition,
 ): Promise<StageExecutionPayloadV1> {
-  const workspace = await prepareWorkflowAgentWorkspace(runtimeContext);
+  const workspace = await prepareWorkflowAgentWorkspace(runtimeContext, input.context);
   const dependencies = buildWorkflowAgentDependencies(input.context);
 
   return {
