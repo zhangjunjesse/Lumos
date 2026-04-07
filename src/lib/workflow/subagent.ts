@@ -592,6 +592,9 @@ async function buildWorkflowAgentPayload(
           : []),
         '禁止模拟、伪造或用脚本替代真实操作。如果所需工具（如浏览器 MCP）不可用，必须如实报告失败，绝不能用 Python/curl/fetch 等替代方案伪造结果。',
         '如果 MCP 工具调用失败或超时，先重试 1-2 次再判定失败。',
+        ...(input.outputMode === 'structured'
+          ? ['CRITICAL: You MUST include a ```json code block in your response containing ALL structured output fields as a JSON object. Example:\n```json\n{"field1": value1, "field2": value2}\n```\nThis JSON block is machine-parsed by downstream steps — omitting it will break the workflow.']
+          : []),
         ...(input.outputSchema
           ? [(() => {
               const raw = JSON.stringify(input.outputSchema, null, 2);
@@ -704,6 +707,24 @@ function extractStructuredFields(summary: string | undefined): Record<string, un
   if (braceMatch) {
     try { return JSON.parse(braceMatch[0]); } catch { /* ignore */ }
   }
+
+  // 4. Fallback: parse markdown key-value patterns like "- **key**: value" or "- key: value"
+  const kvPattern = /[-*]\s*\**(\w+)\**\s*[:：]\s*(.+)/g;
+  let kvMatch;
+  const kvResult: Record<string, unknown> = {};
+  let kvCount = 0;
+  while ((kvMatch = kvPattern.exec(text)) !== null) {
+    const key = kvMatch[1].trim();
+    const rawVal = kvMatch[2].trim();
+    // Parse typed values
+    if (rawVal === 'true') kvResult[key] = true;
+    else if (rawVal === 'false') kvResult[key] = false;
+    else if (/^-?\d+$/.test(rawVal)) kvResult[key] = parseInt(rawVal, 10);
+    else if (/^-?\d+\.\d+$/.test(rawVal)) kvResult[key] = parseFloat(rawVal);
+    else kvResult[key] = rawVal;
+    kvCount++;
+  }
+  if (kvCount > 0) return kvResult;
 
   return null;
 }
