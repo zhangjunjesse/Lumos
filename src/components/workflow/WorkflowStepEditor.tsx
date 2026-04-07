@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CodeModeEditor } from './CodeModeEditor';
+import { WorkflowKnowledgePanel, type WorkflowKnowledgeConfigDraft } from './WorkflowKnowledgePanel';
 
 interface DslStep {
   id: string;
@@ -105,6 +106,14 @@ export function WorkflowStepEditor({
   const [codeScript, setCodeScript] = useState(initCode?.script ?? '');
   const [codeStrategy, setCodeStrategy] = useState(initCode?.strategy ?? 'code-first');
 
+  const initKnowledge = step.input?.knowledge as WorkflowKnowledgeConfigDraft | undefined;
+  const [knowledge, setKnowledge] = useState<WorkflowKnowledgeConfigDraft>({
+    enabled: Boolean(initKnowledge?.enabled),
+    defaultTagNames: Array.isArray(initKnowledge?.defaultTagNames) ? initKnowledge.defaultTagNames : [],
+    allowAgentTagSelection: initKnowledge?.allowAgentTagSelection ?? true,
+    topK: typeof initKnowledge?.topK === 'number' ? initKnowledge.topK : undefined,
+  });
+
   useEffect(() => {
     fetch('/api/workflow/agent-presets')
       .then(r => r.json())
@@ -133,6 +142,16 @@ export function WorkflowStepEditor({
         input.code = { script: codeScript, strategy: codeStrategy };
       } else {
         delete input.code;
+      }
+      if (knowledge.enabled) {
+        input.knowledge = {
+          enabled: true,
+          defaultTagNames: knowledge.defaultTagNames,
+          allowAgentTagSelection: knowledge.allowAgentTagSelection,
+          ...(typeof knowledge.topK === 'number' ? { topK: knowledge.topK } : {}),
+        };
+      } else {
+        delete input.knowledge;
       }
       base.input = input;
     } else if (step.type === 'if-else') {
@@ -175,6 +194,7 @@ export function WorkflowStepEditor({
     thenSteps, elseSteps, bodySteps, collection, itemVar,
     maxIterations, conditionJson, timeoutMin, onSave,
     codeEnabled, codeScript, codeStrategy,
+    knowledge,
   ]);
 
   const otherStepIds = allStepIds.filter(id => id !== step.id);
@@ -272,6 +292,11 @@ export function WorkflowStepEditor({
             onEnabledChange={setCodeEnabled}
             onScriptChange={setCodeScript}
             onStrategyChange={setCodeStrategy}
+          />
+
+          <WorkflowKnowledgePanel
+            value={knowledge}
+            onChange={setKnowledge}
           />
         </>
       )}

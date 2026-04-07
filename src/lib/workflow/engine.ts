@@ -27,6 +27,7 @@ import { DEFAULT_AGENT_STEP_TIMEOUT_MS } from './compiler-helpers';
 import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
 import { getSupportedStepTypes } from './step-registry';
 import { cancelWorkflowAgentExecution } from './subagent';
+import { taskEventBus } from '@/lib/task-event-bus';
 import type {
   CompiledWorkflowManifest,
   SubmitWorkflowRequest,
@@ -78,6 +79,11 @@ const supportedStepTypes = new Set([
 let globalWorker: Worker | null = null;
 
 function computeWorkflowTimeout(manifest: CompiledWorkflowManifest): number {
+  // #15: Honor DSL-level maxDurationMs when set
+  if (typeof manifest.maxDurationMs === 'number' && Number.isFinite(manifest.maxDurationMs) && manifest.maxDurationMs > 0) {
+    return manifest.maxDurationMs + WORKFLOW_RESULT_TIMEOUT_GRACE_MS;
+  }
+
   const declaredStepTimeouts = Array.isArray(manifest.stepTimeoutsMs)
     ? manifest.stepTimeoutsMs.filter((timeoutMs): timeoutMs is number => (
       typeof timeoutMs === 'number'
@@ -582,6 +588,24 @@ function syncExecutionStateFromProjection(projection: WorkflowProjection): void 
 
 function emitProgressFromProjection(projection: WorkflowProjection): void {
   const execution = workflowExecutions.get(projection.workflowId);
+
+  // #10: Emit step-level progress via taskEventBus for real-time UI updates
+  try {
+    taskEventBus.emitGlobalEvent({
+      type: 'workflow:progress',
+      data: {
+        workflowId: projection.workflowId,
+        taskId: projection.taskId,
+        status: projection.status,
+        progress: projection.progress,
+        currentStep: projection.currentStep,
+        completedSteps: projection.completedSteps,
+      },
+    });
+  } catch (e) {
+    console.warn('[workflow] taskEventBus emit failed:', e instanceof Error ? e.message : e);
+  }
+
   if (!execution?.callbacks?.onProgress) {
     return;
   }

@@ -15,7 +15,7 @@ import {
   updateDeepSearchRunEntry,
 } from './service';
 import { isDeepSearchSiteReady } from './site-state';
-import { getSetting } from '@/lib/db';
+import { getSetting, getSession } from '@/lib/db';
 import { archiveDeepSearchRun } from '@/lib/knowledge/deepsearch-importer';
 
 const SITE_ALIASES: Record<string, string[]> = {
@@ -409,7 +409,12 @@ export async function getDeepSearchToolResult(runId: string) {
   ) {
     const archiveMode = getSetting('deepsearch.archive_mode') ?? 'confirm';
 
-    if (archiveMode === 'auto') {
+    // In workflow context there's no UI to confirm — treat 'confirm' as 'auto'
+    const isWorkflowSession = run.requestedBySessionId
+      ? getSession(run.requestedBySessionId)?.mode === 'workflow'
+      : false;
+
+    if (archiveMode === 'auto' || (archiveMode === 'confirm' && isWorkflowSession)) {
       archiveDeepSearchRun(runId).catch((e: Error) =>
         console.error('[deepsearch] auto-archive failed:', e.message)
       );

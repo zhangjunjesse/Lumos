@@ -5,6 +5,7 @@ import {
   createScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
 import { initScheduler } from '@/lib/scheduler/cron-engine';
+import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 
 // Start the scheduler on the first request to the schedules API
 initScheduler();
@@ -21,6 +22,8 @@ const createSchema = z.object({
   workflowId: z.string().optional(),
   runMode: z.enum(['scheduled', 'once']).optional(),
   intervalMinutes: z.number().int().min(0).max(43200),
+  scheduleTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  scheduleDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
   workingDirectory: z.string().optional(),
   notifyOnComplete: z.boolean().optional(),
   runParams: z.record(z.string(), z.unknown()).optional(),
@@ -40,6 +43,16 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const input = createSchema.parse(body);
+
+    // #7: Validate DSL at save time instead of only at execution time
+    const dslValidation = generateWorkflowFromDsl(input.workflowDsl as unknown as Parameters<typeof generateWorkflowFromDsl>[0]);
+    if (!dslValidation.validation.valid) {
+      return NextResponse.json(
+        { error: `工作流 DSL 校验失败: ${dslValidation.validation.errors.join('; ')}` },
+        { status: 400 },
+      );
+    }
+
     const schedule = createScheduledWorkflow({
       name: input.name,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +60,8 @@ export async function POST(request: NextRequest) {
       workflowId: input.workflowId,
       runMode: input.runMode,
       intervalMinutes: input.intervalMinutes || 60,
+      scheduleTime: input.scheduleTime,
+      scheduleDayOfWeek: input.scheduleDayOfWeek,
       workingDirectory: input.workingDirectory,
       notifyOnComplete: input.notifyOnComplete,
       runParams: input.runParams,

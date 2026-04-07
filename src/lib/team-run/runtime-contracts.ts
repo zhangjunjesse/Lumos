@@ -1,4 +1,5 @@
 import type { CompiledStageV1 } from './compiler'
+import type { WorkflowKnowledgeConfig } from '@/lib/workflow/types'
 
 export interface WorkspaceBindingV1 {
   sessionWorkspace: string
@@ -57,6 +58,8 @@ export interface StageExecutionPayloadV1 {
     plannerMemoryId: string
     agentMemoryId: string
   }
+  /** 步骤级别知识库访问配置(仅 workflow agent 步骤使用,可选) */
+  knowledgeConfig?: WorkflowKnowledgeConfig
 }
 
 export interface StageExecutionArtifactV1 {

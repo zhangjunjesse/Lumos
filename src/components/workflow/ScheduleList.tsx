@@ -20,6 +20,8 @@ interface ScheduledWorkflow {
   name: string;
   runMode: 'scheduled' | 'once';
   intervalMinutes: number;
+  scheduleTime?: string | null;
+  scheduleDayOfWeek?: number | null;
   workingDirectory: string;
   enabled: boolean;
   notifyOnComplete: boolean;
@@ -43,8 +45,17 @@ const INTERVALS = [
   { value: 10080, label: '每周' },
 ];
 
-function intervalLabel(minutes: number): string {
-  return INTERVALS.find(i => i.value === minutes)?.label ?? `每 ${minutes} 分钟`;
+const DAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+function intervalLabel(s: ScheduledWorkflow): string {
+  const base = INTERVALS.find(i => i.value === s.intervalMinutes)?.label ?? `每 ${s.intervalMinutes} 分钟`;
+  if (s.intervalMinutes === 10080 && typeof s.scheduleDayOfWeek === 'number' && s.scheduleTime) {
+    return `每${DAY_NAMES[s.scheduleDayOfWeek]} ${s.scheduleTime}`;
+  }
+  if (s.intervalMinutes === 1440 && s.scheduleTime) {
+    return `每天 ${s.scheduleTime}`;
+  }
+  return base;
 }
 
 function formatDateTime(iso: string | null): string {
@@ -100,7 +111,7 @@ function ScheduleCard({
             <StatusDot status={s.lastRunStatus} enabled={s.enabled} />
             <span className="font-medium text-sm truncate">{s.name}</span>
             <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
-              {s.runMode === 'once' ? '一次性' : intervalLabel(s.intervalMinutes)}
+              {s.runMode === 'once' ? '一次性' : intervalLabel(s)}
             </Badge>
             {s.lastRunStatus === 'error' && (
               <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4 shrink-0">上次失败</Badge>
@@ -112,7 +123,7 @@ function ScheduleCard({
             {s.runMode === 'scheduled' && s.enabled && (
               <>
                 {s.runCount > 0 && <span className="text-border">|</span>}
-                <span className={s.nextRunAt && new Date(s.nextRunAt).getTime() - Date.now() < 300000 ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}>
+                <span className={formatNextRun(s.nextRunAt) === '即将运行' ? 'text-amber-600 dark:text-amber-400 font-medium' : ''}>
                   下次: {formatNextRun(s.nextRunAt)}
                 </span>
               </>

@@ -14,8 +14,9 @@ if (platform !== 'win32') {
   process.exit(0);
 }
 
-// Download both x64 and arm64 for Windows
-const architectures = ['x64', 'arm64'];
+// Only download the architecture matching the current build target
+const targetArch = process.env.npm_config_arch || process.arch;
+const architectures = [targetArch];
 
 for (const arch of architectures) {
   const gitBashDir = path.join(process.cwd(), 'resources', 'git-bash', 'win32', arch);

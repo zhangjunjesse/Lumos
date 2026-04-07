@@ -19,6 +19,9 @@ export interface WhileStepInput {
   condition: ConditionExpr;
   body: string[];
   maxIterations?: number;
+  /** 'while' (default): evaluate condition before first iteration.
+   *  'do-while': execute body once first, then evaluate condition. */
+  mode?: 'while' | 'do-while';
 }
 
 // ── V2 step definition (union of all step types) ────────────────────────────

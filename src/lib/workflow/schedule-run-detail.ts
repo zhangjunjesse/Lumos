@@ -6,6 +6,7 @@ import {
   getWorkflowExecutionId,
   type ScheduleRunRecord,
 } from '@/lib/db/scheduled-workflows';
+import { listRunSteps, type ScheduleRunStep } from '@/lib/db/schedule-run-steps';
 import { getMessages, getSession } from '@/lib/db/sessions';
 import { parseStepHeader } from '@/lib/workflow/step-output-formatter';
 
@@ -29,6 +30,7 @@ export interface ScheduleRunOutputFile {
 
 export interface ScheduleRunDetailPayload {
   run: ScheduleRunRecord;
+  steps: ScheduleRunStep[];
   messages: ScheduleRunDetailMessage[];
   outputFiles: ScheduleRunOutputFile[];
 }
@@ -189,5 +191,6 @@ export async function getScheduleRunDetail(
     }
   }
 
-  return { run, messages, outputFiles };
+  const steps = listRunSteps(runId);
+  return { run, steps, messages, outputFiles };
 }

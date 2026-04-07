@@ -4,13 +4,13 @@ import path from 'path';
 
 const NODE_VERSION = 'v20.18.1';
 
-// Download Node.js for current platform
-// For Windows: download both x64 and arm64 to support universal installer
+// Download Node.js for current platform and build target architecture
 const platform = process.platform;
 const currentArch = process.arch;
 
-// On Windows CI, download both architectures
-const architectures = platform === 'win32' ? ['x64', 'arm64'] : [currentArch];
+// Only download the architecture matching the current build target
+const targetArch = process.env.npm_config_arch || currentArch;
+const architectures = [targetArch];
 
 for (const arch of architectures) {
   const ext = platform === 'win32' ? '.exe' : '';

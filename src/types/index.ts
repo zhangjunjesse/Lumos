@@ -15,7 +15,7 @@ export interface ChatSession {
   sdk_session_id: string; // Claude Agent SDK session ID for resume
   project_name: string;
   status: 'active' | 'archived';
-  mode?: 'code' | 'plan' | 'ask';
+  mode?: 'code' | 'plan' | 'ask' | 'workflow';
   needs_approval?: boolean;
   provider_name: string;
   provider_id: string;

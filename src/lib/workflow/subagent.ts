@@ -27,6 +27,8 @@ import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { buildPromptCapabilitiesSystemPrompt } from '@/lib/capability/prompt-loader';
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
+import { generateObjectWithClaudeSdk } from '@/lib/claude/structured-output';
+import { z } from 'zod';
 
 type RuntimeCapability = AgentExecutionBindingV1['allowedTools'][number];
 
@@ -385,7 +387,8 @@ function resolveWorkflowAgentDefinition(input: AgentStepInput): ResolvedWorkflow
     if (conversationPreset) {
       return buildDefinitionFromConversationPreset(conversationPreset, input);
     }
-    console.warn(`[subagent] Preset '${input.preset}' not found in any preset store, falling back to role`);
+    // #8: Error instead of silently falling back when preset is missing
+    throw new Error(`Agent preset「${input.preset}」不存在或已被删除，请检查工作流配置`);
   }
 
   const role = resolveWorkflowAgentRole(input.role);
@@ -575,7 +578,7 @@ async function buildWorkflowAgentPayload(
     taskContext: {
       userGoal: input.prompt,
       summary: `Workflow agent step ${runtimeContext.stepId}`,
-      expectedOutcome: 'Return a structured text result and write any reports/documents to the artifact output directory.',
+      expectedOutcome: 'Complete the assigned task and produce a concise text summary. Write detailed reports/documents as files when appropriate.',
     },
     stage: {
       title: runtimeContext.stepId,
@@ -587,10 +590,17 @@ async function buildWorkflowAgentPayload(
         ...(dependencies.length > 0
           ? ['Use the provided dependency context to produce an integrated result; do not ignore branch outputs.']
           : []),
-        '禁止模拟、伪造或用脚本替代真实操作。如果所需工具（如浏览器 MCP）不可用，必须如实报告失败并在 outcome 中返回 failed，绝不能用 Python/curl/fetch 等替代方案伪造结果。',
+        '禁止模拟、伪造或用脚本替代真实操作。如果所需工具（如浏览器 MCP）不可用，必须如实报告失败，绝不能用 Python/curl/fetch 等替代方案伪造结果。',
         '如果 MCP 工具调用失败或超时，先重试 1-2 次再判定失败。',
+        ...(input.outputSchema
+          ? [(() => {
+              const raw = JSON.stringify(input.outputSchema, null, 2);
+              const schema = raw.length > 4000 ? JSON.stringify(input.outputSchema) : raw;
+              return `Your output MUST conform to the following JSON Schema:\n${schema.slice(0, 4000)}\nReturn your result as valid JSON matching this schema.`;
+            })()]
+          : []),
       ],
-      ...(input.outputMode ? { responseMode: input.outputMode } : {}),
+      responseMode: 'plain-text' as const,  // Phase 1 always plain text; outcome classified in Phase 2
       inputContract: {
         requiredDependencyOutputs: [],
         taskContext: {
@@ -602,8 +612,9 @@ async function buildWorkflowAgentPayload(
       outputContract: {
         primaryFormat: 'markdown',
         mustProduceSummary: true,
-        mayProduceArtifacts: true,
-        artifactKinds: ['file', 'report'],
+        mayProduceArtifacts: false,
+        artifactKinds: [],
+        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
       },
     },
     dependencies,
@@ -612,6 +623,7 @@ async function buildWorkflowAgentPayload(
       plannerMemoryId: `workflow-planner-memory:${runtimeContext.workflowRunId}`,
       agentMemoryId: `workflow-agent-memory:${runtimeContext.stepId}`,
     },
+    ...(input.knowledge?.enabled ? { knowledgeConfig: input.knowledge } : {}),
   };
 }
 
@@ -671,6 +683,69 @@ function buildWorkflowAgentExecutionMetadata(input: {
   };
 }
 
+/** Try to extract structured JSON fields from agent summary text. */
+function extractStructuredFields(summary: string | undefined): Record<string, unknown> | null {
+  if (!summary?.trim()) return null;
+  const text = summary.trim();
+
+  // 1. Try parsing the entire summary as JSON
+  if (text.startsWith('{')) {
+    try { return JSON.parse(text); } catch { /* fall through */ }
+  }
+
+  // 2. Extract from ```json ... ``` fenced block
+  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenced) {
+    try { return JSON.parse(fenced[1].trim()); } catch { /* fall through */ }
+  }
+
+  // 3. Extract from first { ... } block (greedy)
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try { return JSON.parse(braceMatch[0]); } catch { /* ignore */ }
+  }
+
+  return null;
+}
+
+const outcomeClassificationSchema = z.object({
+  outcome: z.enum(['done', 'failed']),
+  failureReason: z.string().optional(),
+});
+
+/** Phase 2: Lightweight SDK call to classify agent outcome from plain-text output. */
+async function classifyAgentOutcome(input: {
+  summary: string;
+  stepId: string;
+  provider?: ApiProvider;
+  sessionId?: string;
+  workingDirectory?: string;
+  abortSignal?: AbortSignal;
+}): Promise<z.infer<typeof outcomeClassificationSchema>> {
+  const maxChars = 3000;
+  const truncated = input.summary.length > maxChars
+    ? `${input.summary.slice(0, maxChars)}\n...(已截断，共 ${input.summary.length} 字符)`
+    : input.summary;
+
+  return generateObjectWithClaudeSdk({
+    system: '你是工作流步骤结果分类器。根据 agent 的执行输出判断任务是否成功完成。只输出 JSON。',
+    prompt: [
+      `工作流步骤「${input.stepId}」的 agent 执行输出如下：`,
+      '',
+      truncated,
+      '',
+      '请判断此步骤是否成功完成。',
+      '如果 agent 明确报告了失败、错误、无法完成任务，则 outcome 为 "failed"，并在 failureReason 中简述原因；',
+      '否则 outcome 为 "done"。',
+    ].join('\n'),
+    schema: outcomeClassificationSchema,
+    provider: input.provider,
+    sessionId: input.sessionId,
+    workingDirectory: input.workingDirectory,
+    abortSignal: input.abortSignal,
+  });
+}
+
 function toStepResult(input: {
   runtimeContext: WorkflowStepRuntimeContext;
   executionMode: Exclude<WorkflowAgentExecutionMode, 'auto'>;
@@ -680,6 +755,7 @@ function toStepResult(input: {
   requestedModel?: string;
   timedOut?: boolean;
   codeFellBackToAgent?: boolean;
+  agentInput?: AgentStepInput;
 }): StepResult {
   const {
     runtimeContext,
@@ -690,6 +766,7 @@ function toStepResult(input: {
     requestedModel,
     timedOut,
     codeFellBackToAgent,
+    agentInput,
   } = input;
 
   const errorMessage = timedOut
@@ -700,20 +777,36 @@ function toStepResult(input: {
       || result.diagnostics?.sanitizedMessage
       || 'Workflow agent step failed';
 
+  // When outputMode is 'structured', parse JSON fields from summary and merge into output.
+  // This allows `steps.X.output.fieldName` references to work in downstream steps.
+  const baseOutput: Record<string, unknown> = {
+    summary: result.summary,
+    outcome: result.outcome,
+    role: definition.role,
+    roleName: definition.binding.roleName,
+    agentType: definition.binding.agentType,
+    detailArtifactPath: result.detailArtifactPath ?? null,
+    artifacts: result.artifacts,
+    diagnostics: result.diagnostics ?? null,
+    memoryAppend: result.memoryAppend ?? [],
+    metrics: result.metrics,
+  };
+
+  if (agentInput?.outputMode === 'structured' && result.outcome === 'done') {
+    const parsed = extractStructuredFields(result.summary);
+    if (parsed) {
+      // Merge parsed fields into output, but don't overwrite system fields
+      for (const [key, value] of Object.entries(parsed)) {
+        if (!(key in baseOutput)) {
+          baseOutput[key] = value;
+        }
+      }
+    }
+  }
+
   return {
     success: result.outcome === 'done',
-    output: {
-      summary: result.summary,
-      outcome: result.outcome,
-      role: definition.role,
-      roleName: definition.binding.roleName,
-      agentType: definition.binding.agentType,
-      detailArtifactPath: result.detailArtifactPath ?? null,
-      artifacts: result.artifacts,
-      diagnostics: result.diagnostics ?? null,
-      memoryAppend: result.memoryAppend ?? [],
-      metrics: result.metrics,
-    },
+    output: baseOutput,
     error: errorMessage,
     metadata: {
       ...buildWorkflowAgentExecutionMetadata({
@@ -805,6 +898,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   });
 
   let payload: StageExecutionPayloadV1 | null = null;
+  const traceEvents: RawTraceEvent[] = [];
 
   try {
     payload = await buildWorkflowAgentPayload(input, runtimeContext, definition);
@@ -826,7 +920,6 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
 
     const persistSessionId = runtimeContext.sessionId;
     const shouldPersist = Boolean(persistSessionId && !persistSessionId.startsWith('workflow:'));
-    const traceEvents: RawTraceEvent[] = [];
 
     const result = await worker.execute(payload, {
       abortController,
@@ -843,7 +936,6 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     });
 
     // Write step output to shared dir so downstream agents can read it as a file.
-    // Filename: {runId}_{stageId}_output.md — matches the path declared in the agent's I/O Contract.
     if (result.outcome === 'done' && result.summary?.trim()) {
       try {
         const safeRunId = sanitizePathSegment(payload.runId, 'run');
@@ -855,10 +947,44 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       }
     }
 
+    // ── Phase 2: Classify outcome via lightweight SDK call ──────────────
+    // Phase 1 (plain-text mode) always returns outcome:'done' when SDK succeeds.
+    // We need the model to self-report whether the task actually succeeded or failed.
+    let finalResult: StageExecutionResultV1 = result;
+    if (result.outcome === 'done' && result.summary?.trim()) {
+      try {
+        const classification = await classifyAgentOutcome({
+          summary: result.summary,
+          stepId: runtimeContext.stepId,
+          provider: workflowProvider,
+          sessionId: runtimeContext.sessionId,
+          workingDirectory: runtimeContext.workingDirectory,
+          abortSignal: abortController.signal,
+        });
+        if (classification.outcome === 'failed') {
+          finalResult = {
+            ...result,
+            outcome: 'failed',
+            error: {
+              code: 'agent_reported_failure',
+              message: classification.failureReason || 'Agent 报告任务未完成',
+              retryable: false,
+            },
+          };
+        }
+      } catch (classifyError) {
+        const err = new Error(
+          `Agent 执行完成但结果分类失败: ${classifyError instanceof Error ? classifyError.message : String(classifyError)}`,
+        );
+        (err as Error & { agentOutput?: string }).agentOutput = result.summary?.slice(0, 2000);
+        throw err;
+      }
+    }
+
     // Persist step output to session so execution history can show it
     if (shouldPersist) {
       try {
-        const md = formatStepOutputMarkdown(definition.binding.roleName, runtimeContext.stepId, result, traceEvents);
+        const md = formatStepOutputMarkdown(definition.binding.roleName, runtimeContext.stepId, finalResult, traceEvents);
         if (md) {
           addMessage(persistSessionId!, 'assistant', JSON.stringify([{ type: 'text', text: md }]));
         }
@@ -872,27 +998,48 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       executionMode,
       definition,
       payload,
-      result,
+      result: finalResult,
       requestedModel,
       timedOut,
       codeFellBackToAgent,
+      agentInput: input,
     });
   } catch (error) {
     const cancelled = abortController.signal.aborted || isCancelledError(error);
 
-    // 错误也写入 session 消息，让执行历史能看到
+    // 错误 + 部分 trace 写入 session 消息，让执行历史能看到
     const errSessionId = runtimeContext.sessionId;
     if (errSessionId && !errSessionId.startsWith('workflow:') && !cancelled) {
+      const presetLabel = input.preset ? ` (preset: ${input.preset})` : '';
+      const timeoutLabel = timedOut ? ` — 已运行 ${Math.round((timeoutMs ?? 0) / 1000)}s` : '';
       const errMsg = timedOut
-        ? `步骤超时 (${timeoutMs}ms)`
+        ? `步骤「${runtimeContext.stepId}」超时${presetLabel}${timeoutLabel}`
         : (error instanceof Error ? error.message : String(error));
       try {
         const roleName = definition.binding.roleName.replace(/:/g, '：');
         const sid = runtimeContext.stepId.replace(/:/g, '：');
+        const parts: string[] = [
+          `<!-- step:${roleName}:${sid}:failed -->`,
+          '',
+          `> **失败原因：** ${errMsg}`,
+        ];
+        // 附加部分执行 trace（超时前 agent 做了什么）
+        if (traceEvents.length > 0) {
+          const trace = formatStepOutputMarkdown(roleName, sid, {
+            outcome: 'failed',
+            summary: '',
+            error: { message: errMsg },
+          } as unknown as import('@/lib/team-run/runtime-contracts').StageExecutionResultV1, traceEvents);
+          // 从格式化结果中提取 trace 部分（跳过 header，已有自己的 header）
+          const traceSection = trace.split('---').slice(1).join('---').trim();
+          if (traceSection) {
+            parts.push('', '---', '', traceSection);
+          }
+        }
         addMessage(
           errSessionId,
           'assistant',
-          JSON.stringify([{ type: 'text', text: `<!-- step:${roleName}:${sid}:failed -->\n\n> ${errMsg}` }]),
+          JSON.stringify([{ type: 'text', text: parts.join('\n') }]),
         );
       } catch (e) {
         console.warn('[subagent] addMessage (error path) failed:', e instanceof Error ? e.message : e);
@@ -902,7 +1049,9 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     return {
       success: false,
       output: {
-        summary: '',
+        summary: timedOut
+          ? `步骤「${runtimeContext.stepId}」超时（${Math.round((timeoutMs ?? 0) / 60000)} 分钟），agent 执行过程中有 ${traceEvents.length} 个 trace 事件`
+          : '',
         outcome: 'failed',
         role: definition.role,
         roleName: definition.binding.roleName,
@@ -913,7 +1062,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
         memoryAppend: [],
       },
       error: timedOut
-        ? `Workflow agent step timed out after ${timeoutMs}ms`
+        ? `步骤「${runtimeContext.stepId}」超时 (${Math.round((timeoutMs ?? 0) / 60000)} 分钟)${input.preset ? `，preset: ${input.preset}` : ''}，收集到 ${traceEvents.length} 个 trace 事件`
         : cancelled
           ? WORKFLOW_AGENT_CANCELLED_MESSAGE
         : (error instanceof Error ? error.message : 'Unknown error'),

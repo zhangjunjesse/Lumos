@@ -1011,6 +1011,21 @@ export function migrateLumosTables(db: Database.Database): void {
       completed_at TEXT DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_srh_schedule ON schedule_run_history(schedule_id, started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS schedule_run_steps (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      preset_name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','success','error','skipped')),
+      error TEXT NOT NULL DEFAULT '',
+      output_summary TEXT NOT NULL DEFAULT '',
+      duration_ms INTEGER DEFAULT NULL,
+      started_at TEXT DEFAULT NULL,
+      completed_at TEXT DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_srs_run ON schedule_run_steps(run_id, started_at);
   `);
 
   // Add workflow_id column to scheduled_workflows (links to standalone workflows table)
@@ -1025,6 +1040,13 @@ export function migrateLumosTables(db: Database.Database): void {
   // Add run_params column: default parameter values for workflow execution
   if (!swCols.some(c => c.name === 'run_params')) {
     db.exec("ALTER TABLE scheduled_workflows ADD COLUMN run_params TEXT NOT NULL DEFAULT '{}'");
+  }
+  // Add schedule_time (HH:mm) and schedule_day_of_week (0=Sun..6=Sat) for daily/weekly scheduling
+  if (!swCols.some(c => c.name === 'schedule_time')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN schedule_time TEXT DEFAULT NULL");
+  }
+  if (!swCols.some(c => c.name === 'schedule_day_of_week')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN schedule_day_of_week INTEGER DEFAULT NULL");
   }
 
   // Ensure browser MCP server exists

@@ -16,6 +16,13 @@ const codeConfigSchema = z.object({
   strategy: z.enum(['code-only', 'code-first', 'agent-only']).optional(),
 }).strict();
 
+const knowledgeConfigSchema = z.object({
+  enabled: z.boolean(),
+  defaultTagNames: z.array(z.string().min(1)).default([]),
+  allowAgentTagSelection: z.boolean().default(true),
+  topK: z.number().int().min(1).max(10).optional(),
+}).strict();
+
 const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   prompt: z.string().min(1),
   preset: z.string().min(1).optional(),
@@ -23,8 +30,10 @@ const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   model: z.string().min(1).optional(),
   tools: z.array(z.string().min(1)).optional(),
   outputMode: z.enum(['structured', 'plain-text']).optional(),
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
   context: z.record(z.string(), z.unknown()).optional(),
   code: codeConfigSchema.optional(),
+  knowledge: knowledgeConfigSchema.optional(),
 }).strict();
 
 const notificationStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({

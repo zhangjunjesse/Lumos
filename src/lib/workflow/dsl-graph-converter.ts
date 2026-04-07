@@ -1,5 +1,6 @@
 import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
+import { sanitizeDslStepReferences } from './dsl-sanitize';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -26,17 +27,70 @@ export interface StepNodeData {
   label: string;
   input: Record<string, unknown>;
   dependsOn: string[];
+  isContainer?: boolean;
   policy?: { timeoutMs?: number; retry?: { maximumAttempts?: number } };
   [key: string]: unknown;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const NODE_WIDTH = 190;
-const NODE_HEIGHT = 60;
+const NODE_W = 190;
+const NODE_H = 60;
+const HEADER_H = 46;
+const BODY_H = 56;
+const BODY_GAP = 8;
+const BODY_PAD_X = 10;
+const BODY_PAD_B = 12;
 
-const DEDICATED_NODE_TYPES = new Set(['agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability']);
-const STEP_OUTPUT_REF_PATTERN = /^steps\.([A-Za-z0-9_-]+)\.output(?:\.(.+))?$/;
+const DEDICATED = new Set(['agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability']);
+const CONTAINERS = new Set(['if-else', 'for-each', 'while']);
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function getBodyIds(step: DslStep): string[] {
+  if (!step.input) return [];
+  return [
+    ...((step.input.body as string[] | undefined) ?? []),
+    ...((step.input.then as string[] | undefined) ?? []),
+    ...((step.input.else as string[] | undefined) ?? []),
+  ];
+}
+
+function buildBodyMap(steps: DslStep[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const s of steps) {
+    if (!CONTAINERS.has(s.type)) continue;
+    for (const id of getBodyIds(s)) m.set(id, s.id);
+  }
+  return m;
+}
+
+function containerDims(n: number): { w: number; h: number } {
+  return { w: NODE_W + BODY_PAD_X * 2, h: HEADER_H + n * (BODY_H + BODY_GAP) - BODY_GAP + BODY_PAD_B };
+}
+
+export function stepTypeToNodeType(t: string): string {
+  return DEDICATED.has(t) ? t : 'agent';
+}
+
+function stepLabel(step: DslStep, names: Record<string, string>): string {
+  if (step.type === 'agent') {
+    const p = step.input?.preset;
+    return typeof p === 'string' ? (names[p] || p) : step.id;
+  }
+  if (step.type === 'while') {
+    return step.input?.mode === 'do-while' ? 'DO-WHILE' : 'WHILE';
+  }
+  const m: Record<string, string> = {
+    'if-else': 'IF / ELSE', 'for-each': 'FOR EACH', wait: '等待', notification: '通知',
+  };
+  if (m[step.type]) return m[step.type];
+  if (step.type === 'capability') {
+    const c = step.input?.capabilityId;
+    return typeof c === 'string' ? c : '能力';
+  }
+  return step.id;
+}
 
 // ── DSL → Graph ────────────────────────────────────────────────────────────
 
@@ -44,40 +98,53 @@ export function dslToGraph(
   spec: DslSpec,
   presetNames: Record<string, string> = {},
 ): { nodes: Node<StepNodeData>[]; edges: Edge[] } {
-  const nodes: Node<StepNodeData>[] = spec.steps.map(step => ({
-    id: step.id,
-    type: stepTypeToNodeType(step.type),
-    position: step.metadata?.position ?? { x: 0, y: 0 },
-    data: {
-      stepId: step.id,
-      stepType: step.type,
-      label: getStepLabel(step, presetNames),
-      input: step.input ?? {},
-      dependsOn: step.dependsOn ?? [],
-      ...(step.policy ? { policy: step.policy as StepNodeData['policy'] } : {}),
-    },
-  }));
-
+  const bodyMap = buildBodyMap(spec.steps);
+  const stepMap = new Map(spec.steps.map(s => [s.id, s]));
+  const nodes: Node<StepNodeData>[] = [];
   const edges: Edge[] = [];
+
   for (const step of spec.steps) {
-    // dependsOn edges
+    const parentId = bodyMap.get(step.id);
+    const isCont = CONTAINERS.has(step.type);
+    const bodyIds = isCont ? getBodyIds(step).filter(id => stepMap.has(id)) : [];
+    const dims = isCont && bodyIds.length > 0 ? containerDims(bodyIds.length) : null;
+
+    nodes.push({
+      id: step.id,
+      type: stepTypeToNodeType(step.type),
+      position: step.metadata?.position ?? (parentId ? { x: BODY_PAD_X, y: HEADER_H } : { x: 0, y: 0 }),
+      ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+      ...(dims ? { style: { width: dims.w, height: dims.h } } : {}),
+      data: {
+        stepId: step.id, stepType: step.type,
+        label: stepLabel(step, presetNames),
+        input: step.input ?? {}, dependsOn: step.dependsOn ?? [],
+        isContainer: isCont && bodyIds.length > 0,
+        ...(step.policy ? { policy: step.policy as StepNodeData['policy'] } : {}),
+      },
+    });
+
     for (const dep of step.dependsOn ?? []) {
-      edges.push({
-        id: `dep-${dep}-${step.id}`,
-        source: dep,
-        target: step.id,
-        type: 'default',
-      });
+      edges.push({ id: `dep-${dep}-${step.id}`, source: dep, target: step.id });
     }
-    // Control flow body edges
-    const bodyEdges = buildControlFlowEdges(step);
-    edges.push(...bodyEdges);
   }
 
-  // Apply dagre layout if any node is missing a saved position
-  const allHavePositions = spec.steps.every(s => s.metadata?.position);
-  if (!allHavePositions) {
-    applyDagreLayout(nodes, edges);
+  // Auto-layout when positions are missing
+  if (!spec.steps.every(s => s.metadata?.position)) {
+    const topNodes = nodes.filter(n => !n.parentId);
+    const topNodeIds = new Set(topNodes.map(n => n.id));
+    const topEdges = edges.filter(e => topNodeIds.has(e.source) && topNodeIds.has(e.target));
+    applyDagreLayout(topNodes, topEdges);
+
+    // Position body steps inside their containers
+    for (const step of spec.steps) {
+      if (!CONTAINERS.has(step.type)) continue;
+      const ids = getBodyIds(step).filter(id => stepMap.has(id));
+      ids.forEach((id, i) => {
+        const n = nodes.find(nd => nd.id === id);
+        if (n) n.position = { x: BODY_PAD_X, y: HEADER_H + i * (BODY_H + BODY_GAP) };
+      });
+    }
   }
 
   return { nodes, edges };
@@ -90,24 +157,38 @@ export function graphToDsl(
   edges: Edge[],
   baseDsl: DslSpec,
 ): DslSpec {
-  const originalStepMap = new Map(baseDsl.steps.map(s => [s.id, s]));
+  const origMap = new Map(baseDsl.steps.map(s => [s.id, s]));
+  const kidsByParent = new Map<string, Node<StepNodeData>[]>();
+  for (const n of nodes) {
+    if (!n.parentId) continue;
+    const arr = kidsByParent.get(n.parentId) ?? [];
+    arr.push(n as Node<StepNodeData>);
+    kidsByParent.set(n.parentId, arr);
+  }
 
-  const steps: DslStep[] = nodes.map(node => {
+  const steps = nodes.map(node => {
     const d = node.data;
-    const original = originalStepMap.get(d.stepId);
+    const orig = origMap.get(d.stepId);
+    const deps = edges.filter(e => e.target === node.id && e.id.startsWith('dep-')).map(e => e.source);
 
-    // Rebuild dependsOn from dep-* edges targeting this node
-    const deps = edges
-      .filter(e => e.target === node.id && e.id.startsWith('dep-'))
-      .map(e => e.source);
+    let input = d.input;
+    if (CONTAINERS.has(d.stepType) && kidsByParent.has(node.id)) {
+      const kids = kidsByParent.get(node.id)!.slice().sort((a, b) => a.position.y - b.position.y);
+      const kidIds = kids.map(k => (k as Node<StepNodeData>).data.stepId);
+      if (d.stepType === 'while' || d.stepType === 'for-each') {
+        input = { ...input, body: kidIds };
+      } else if (d.stepType === 'if-else') {
+        const thenSet = new Set((orig?.input?.then as string[] | undefined) ?? []);
+        input = { ...input, then: kidIds.filter(id => thenSet.has(id)), else: kidIds.filter(id => !thenSet.has(id)) };
+      }
+    }
 
     return {
-      id: d.stepId,
-      type: d.stepType,
+      id: d.stepId, type: d.stepType,
       ...(deps.length > 0 ? { dependsOn: deps } : {}),
-      ...(original?.when ? { when: original.when } : {}),
-      input: d.input,
-      ...(d.policy ? { policy: d.policy } : original?.policy ? { policy: original.policy } : {}),
+      ...(orig?.when ? { when: orig.when } : {}),
+      input,
+      ...(d.policy ? { policy: d.policy } : orig?.policy ? { policy: orig.policy } : {}),
       metadata: { position: { x: node.position.x, y: node.position.y } },
     };
   });
@@ -115,41 +196,8 @@ export function graphToDsl(
   return sanitizeDslStepReferences({ ...baseDsl, steps });
 }
 
-export function removeStepFromDsl(
-  spec: DslSpec,
-  stepId: string,
-): DslSpec {
-  return sanitizeDslStepReferences({
-    ...spec,
-    steps: spec.steps.filter((step) => step.id !== stepId),
-  });
-}
-
-export function sanitizeDslStepReferences(spec: DslSpec): DslSpec {
-  const validStepIds = new Set(spec.steps.map((step) => step.id));
-
-  return {
-    ...spec,
-    steps: spec.steps.map((step) => {
-      const nextDependsOn = (step.dependsOn ?? []).filter((dep) => dep !== step.id && validStepIds.has(dep));
-      const sanitizedInput = sanitizeGenericStepRefs(step.input, validStepIds);
-      const nextInput = sanitizeControlFlowInputRefs({
-        ...step,
-        input: sanitizedInput,
-      }, validStepIds);
-      const nextWhen = containsMissingStepReference(step.when, validStepIds)
-        ? undefined
-        : step.when;
-
-      return {
-        ...step,
-        ...(nextDependsOn.length > 0 ? { dependsOn: nextDependsOn } : {}),
-        ...(nextDependsOn.length === 0 && step.dependsOn ? { dependsOn: undefined } : {}),
-        ...(nextWhen ? { when: nextWhen } : step.when ? { when: undefined } : {}),
-        ...(nextInput ? { input: nextInput } : step.input ? { input: undefined } : {}),
-      };
-    }),
-  };
+export function removeStepFromDsl(spec: DslSpec, stepId: string): DslSpec {
+  return sanitizeDslStepReferences({ ...spec, steps: spec.steps.filter(s => s.id !== stepId) });
 }
 
 // ── Dagre auto-layout ──────────────────────────────────────────────────────
@@ -158,165 +206,19 @@ function applyDagreLayout(nodes: Node[], edges: Edge[]): void {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
-
-  for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  for (const n of nodes) {
+    const w = (n.style?.width as number | undefined) ?? NODE_W;
+    const h = (n.style?.height as number | undefined) ?? NODE_H;
+    g.setNode(n.id, { width: w, height: h });
   }
-  for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
-  }
-
+  for (const e of edges) g.setEdge(e.source, e.target);
   dagre.layout(g);
-
-  for (const node of nodes) {
-    const pos = g.node(node.id);
-    if (pos) {
-      node.position = { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 };
-    }
+  for (const n of nodes) {
+    const pos = g.node(n.id);
+    const w = (n.style?.width as number | undefined) ?? NODE_W;
+    const h = (n.style?.height as number | undefined) ?? NODE_H;
+    if (pos) n.position = { x: pos.x - w / 2, y: pos.y - h / 2 };
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-export function stepTypeToNodeType(type: string): string {
-  if (DEDICATED_NODE_TYPES.has(type)) return type;
-  return 'agent';
-}
-
-function getStepLabel(step: DslStep, presetNames: Record<string, string>): string {
-  if (step.type === 'agent') {
-    const preset = step.input?.preset;
-    return typeof preset === 'string' ? (presetNames[preset] || preset) : step.id;
-  }
-  if (step.type === 'if-else') return 'IF / ELSE';
-  if (step.type === 'for-each') return 'FOR EACH';
-  if (step.type === 'while') return 'WHILE';
-  if (step.type === 'wait') return '等待';
-  if (step.type === 'notification') return '通知';
-  if (step.type === 'capability') {
-    const capId = step.input?.capabilityId;
-    return typeof capId === 'string' ? capId : '能力';
-  }
-  return step.id;
-}
-
-function buildControlFlowEdges(step: DslStep): Edge[] {
-  const input = step.input as Record<string, unknown> | undefined;
-  if (!input) return [];
-  const edges: Edge[] = [];
-
-  if (step.type === 'if-else') {
-    for (const id of (input.then as string[]) ?? []) {
-      edges.push({ id: `then-${step.id}-${id}`, source: step.id, target: id, label: 'then', style: { strokeDasharray: '5 3' } });
-    }
-    for (const id of (input.else as string[] | undefined) ?? []) {
-      edges.push({ id: `else-${step.id}-${id}`, source: step.id, target: id, label: 'else', style: { strokeDasharray: '5 3' } });
-    }
-  } else if (step.type === 'for-each' || step.type === 'while') {
-    for (const id of (input.body as string[]) ?? []) {
-      edges.push({ id: `body-${step.id}-${id}`, source: step.id, target: id, label: 'body', style: { strokeDasharray: '5 3' } });
-    }
-  }
-
-  return edges;
-}
-
-function sanitizeControlFlowInputRefs(
-  step: DslStep,
-  validStepIds: Set<string>,
-): DslStep['input'] {
-  if (!step.input) {
-    return step.input;
-  }
-
-  if (step.type === 'if-else') {
-    const thenRefs = pruneStepIdArray(step.input.then, validStepIds);
-    const elseRefs = pruneStepIdArray(step.input.else, validStepIds);
-
-    return {
-      ...step.input,
-      then: thenRefs,
-      ...(elseRefs.length > 0 ? { else: elseRefs } : {}),
-      ...(elseRefs.length === 0 && 'else' in step.input ? { else: undefined } : {}),
-    };
-  }
-
-  if (step.type === 'for-each' || step.type === 'while') {
-    return {
-      ...step.input,
-      body: pruneStepIdArray(step.input.body, validStepIds),
-    };
-  }
-
-  return step.input;
-}
-
-function sanitizeGenericStepRefs(
-  value: Record<string, unknown> | undefined,
-  validStepIds: Set<string>,
-): Record<string, unknown> | undefined {
-  const sanitized = sanitizeUnknownValue(value, validStepIds);
-  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) {
-    return undefined;
-  }
-  return sanitized as Record<string, unknown>;
-}
-
-function sanitizeUnknownValue(
-  value: unknown,
-  validStepIds: Set<string>,
-): unknown {
-  if (typeof value === 'string') {
-    const match = STEP_OUTPUT_REF_PATTERN.exec(value);
-    if (match && !validStepIds.has(match[1])) {
-      return undefined;
-    }
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => sanitizeUnknownValue(entry, validStepIds))
-      .filter((entry) => entry !== undefined);
-  }
-
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-
-  return Object.entries(value).reduce<Record<string, unknown>>((result, [key, entry]) => {
-    const sanitized = sanitizeUnknownValue(entry, validStepIds);
-    if (sanitized !== undefined) {
-      result[key] = sanitized;
-    }
-    return result;
-  }, {});
-}
-
-function containsMissingStepReference(
-  value: unknown,
-  validStepIds: Set<string>,
-): boolean {
-  if (typeof value === 'string') {
-    const match = STEP_OUTPUT_REF_PATTERN.exec(value);
-    return Boolean(match && !validStepIds.has(match[1]));
-  }
-
-  if (Array.isArray(value)) {
-    return value.some((entry) => containsMissingStepReference(entry, validStepIds));
-  }
-
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  return Object.values(value).some((entry) => containsMissingStepReference(entry, validStepIds));
-}
-
-function pruneStepIdArray(value: unknown, validStepIds: Set<string>): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((entry): entry is string => typeof entry === 'string' && validStepIds.has(entry));
-}
+export { sanitizeDslStepReferences } from './dsl-sanitize';

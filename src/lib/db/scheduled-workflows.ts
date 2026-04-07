@@ -12,6 +12,8 @@ export interface ScheduledWorkflowRow {
   workflow_id: string | null;
   run_mode: string;
   interval_minutes: number;
+  schedule_time: string | null;
+  schedule_day_of_week: number | null;
   working_directory: string;
   enabled: number;
   notify_on_complete: number;
@@ -32,6 +34,10 @@ export interface ScheduledWorkflow {
   workflowId: string | null;
   runMode: RunMode;
   intervalMinutes: number;
+  /** "HH:mm" — target time for daily/weekly schedules (null = interval-based) */
+  scheduleTime: string | null;
+  /** 0=Sun, 1=Mon, ..., 6=Sat — target day for weekly schedules (null = not weekly) */
+  scheduleDayOfWeek: number | null;
   workingDirectory: string;
   enabled: boolean;
   notifyOnComplete: boolean;
@@ -51,6 +57,8 @@ export interface CreateScheduledWorkflowInput {
   workflowId?: string;
   runMode?: RunMode;
   intervalMinutes: number;
+  scheduleTime?: string | null;
+  scheduleDayOfWeek?: number | null;
   workingDirectory?: string;
   notifyOnComplete?: boolean;
   runParams?: Record<string, unknown>;
@@ -62,6 +70,8 @@ export type UpdateScheduledWorkflowInput = Partial<{
   workflowId: string | null;
   runMode: RunMode;
   intervalMinutes: number;
+  scheduleTime: string | null;
+  scheduleDayOfWeek: number | null;
   workingDirectory: string;
   enabled: boolean;
   notifyOnComplete: boolean;
@@ -86,6 +96,8 @@ function rowToSchedule(row: ScheduledWorkflowRow): ScheduledWorkflow {
     workflowId: row.workflow_id || null,
     runMode: (row.run_mode === 'once' ? 'once' : 'scheduled') as RunMode,
     intervalMinutes: row.interval_minutes,
+    scheduleTime: row.schedule_time || null,
+    scheduleDayOfWeek: typeof row.schedule_day_of_week === 'number' ? row.schedule_day_of_week : null,
     workingDirectory: row.working_directory,
     enabled: row.enabled === 1,
     notifyOnComplete: row.notify_on_complete === 1,
@@ -100,9 +112,55 @@ function rowToSchedule(row: ScheduledWorkflowRow): ScheduledWorkflow {
   };
 }
 
-function computeNextRunAt(intervalMinutes: number): string {
-  const next = new Date(Date.now() + intervalMinutes * 60 * 1000);
-  return next.toISOString();
+interface ScheduleTimingConfig {
+  intervalMinutes: number;
+  scheduleTime?: string | null;
+  scheduleDayOfWeek?: number | null;
+}
+
+/** Parse "HH:mm" → [hours, minutes]. Falls back to [9, 0]. */
+function parseTime(time: string | null | undefined): [number, number] {
+  if (!time) return [9, 0];
+  const parts = time.split(':').map(Number);
+  const h = Number.isFinite(parts[0]) ? Math.min(Math.max(parts[0], 0), 23) : 9;
+  const m = Number.isFinite(parts[1]) ? Math.min(Math.max(parts[1], 0), 59) : 0;
+  return [h, m];
+}
+
+function computeNextDailyRun(time: string | null | undefined): string {
+  const [h, m] = parseTime(time);
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(h, m, 0, 0);
+  if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
+  return target.toISOString();
+}
+
+function computeNextWeeklyRun(time: string | null | undefined, dayOfWeek: number): string {
+  const [h, m] = parseTime(time);
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(h, m, 0, 0);
+  const currentDay = now.getDay(); // 0=Sun..6=Sat
+  let daysUntil = dayOfWeek - currentDay;
+  if (daysUntil < 0) daysUntil += 7;
+  if (daysUntil === 0 && target.getTime() <= now.getTime()) daysUntil = 7;
+  target.setDate(target.getDate() + daysUntil);
+  return target.toISOString();
+}
+
+function computeNextRunAt(config: ScheduleTimingConfig): string {
+  const { intervalMinutes, scheduleTime, scheduleDayOfWeek } = config;
+  // Weekly: specific day + time
+  if (intervalMinutes === 10080 && typeof scheduleDayOfWeek === 'number') {
+    return computeNextWeeklyRun(scheduleTime, scheduleDayOfWeek);
+  }
+  // Daily: specific time
+  if (intervalMinutes === 1440) {
+    return computeNextDailyRun(scheduleTime);
+  }
+  // Interval-based
+  return new Date(Date.now() + intervalMinutes * 60 * 1000).toISOString();
 }
 
 function hasTable(): boolean {
@@ -153,13 +211,12 @@ export function createScheduledWorkflow(
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const runMode: RunMode = input.runMode || 'scheduled';
-  // One-time tasks run immediately; scheduled tasks run after interval
-  const nextRunAt = runMode === 'once' ? now : computeNextRunAt(input.intervalMinutes);
+  const nextRunAt = runMode === 'once' ? now : computeNextRunAt(input);
 
   db.prepare(`
     INSERT INTO scheduled_workflows
-      (id, name, workflow_dsl, workflow_id, run_mode, interval_minutes, working_directory, enabled, notify_on_complete, run_params, next_run_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+      (id, name, workflow_dsl, workflow_id, run_mode, interval_minutes, schedule_time, schedule_day_of_week, working_directory, enabled, notify_on_complete, run_params, next_run_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.name.trim(),
@@ -167,6 +224,8 @@ export function createScheduledWorkflow(
     input.workflowId || null,
     runMode,
     input.intervalMinutes,
+    input.scheduleTime || null,
+    input.scheduleDayOfWeek ?? null,
     (input.workingDirectory || '').trim(),
     input.notifyOnComplete !== false ? 1 : 0,
     JSON.stringify(input.runParams ?? {}),
@@ -191,7 +250,14 @@ export function updateScheduledWorkflow(
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   const intervalMinutes = input.intervalMinutes ?? existing.intervalMinutes;
-  const nextRunAt = input.intervalMinutes !== undefined ? computeNextRunAt(input.intervalMinutes) : existing.nextRunAt;
+  const scheduleTime = input.scheduleTime !== undefined ? input.scheduleTime : existing.scheduleTime;
+  const scheduleDayOfWeek = input.scheduleDayOfWeek !== undefined ? input.scheduleDayOfWeek : existing.scheduleDayOfWeek;
+  const timingChanged = input.intervalMinutes !== undefined
+    || input.scheduleTime !== undefined
+    || input.scheduleDayOfWeek !== undefined;
+  const nextRunAt = timingChanged
+    ? computeNextRunAt({ intervalMinutes, scheduleTime, scheduleDayOfWeek })
+    : existing.nextRunAt;
 
   db.prepare(`
     UPDATE scheduled_workflows SET
@@ -200,6 +266,8 @@ export function updateScheduledWorkflow(
       workflow_id = ?,
       run_mode = ?,
       interval_minutes = ?,
+      schedule_time = ?,
+      schedule_day_of_week = ?,
       working_directory = ?,
       enabled = ?,
       notify_on_complete = ?,
@@ -213,6 +281,8 @@ export function updateScheduledWorkflow(
     input.workflowId !== undefined ? input.workflowId : existing.workflowId,
     input.runMode ?? existing.runMode,
     intervalMinutes,
+    scheduleTime || null,
+    scheduleDayOfWeek ?? null,
     input.workingDirectory ?? existing.workingDirectory,
     (input.enabled ?? existing.enabled) ? 1 : 0,
     (input.notifyOnComplete ?? existing.notifyOnComplete) ? 1 : 0,
@@ -231,7 +301,7 @@ export function advanceScheduleTimer(id: string): void {
   const schedule = getScheduledWorkflow(id);
   if (!schedule) return;
   getDb().prepare('UPDATE scheduled_workflows SET next_run_at = ? WHERE id = ?')
-    .run(computeNextRunAt(schedule.intervalMinutes), id);
+    .run(computeNextRunAt(schedule), id);
 }
 
 export function recordScheduleRun(
@@ -245,7 +315,7 @@ export function recordScheduleRun(
   if (!schedule) return;
 
   const now = new Date().toISOString();
-  const nextRunAt = computeNextRunAt(schedule.intervalMinutes);
+  const nextRunAt = computeNextRunAt(schedule);
 
   db.prepare(`
     UPDATE scheduled_workflows SET

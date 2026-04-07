@@ -44,6 +44,17 @@ export interface WorkflowStepRuntimeCarrier {
   __runtime?: WorkflowStepRuntimeContext;
 }
 
+export interface WorkflowKnowledgeConfig {
+  /** 是否启用知识库工具（默认 false） */
+  enabled: boolean;
+  /** 默认标签名列表（kb_tags.name，UNIQUE） */
+  defaultTagNames: string[];
+  /** 是否允许 agent 自行选择/覆盖标签 */
+  allowAgentTagSelection: boolean;
+  /** 每次检索返回的最大条数（默认 5，最多 10） */
+  topK?: number;
+}
+
 export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   prompt: string;
   preset?: string;
@@ -52,8 +63,12 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   tools?: string[];
   context?: Record<string, unknown>;
   outputMode?: 'structured' | 'plain-text';
+  /** JSON Schema 描述期望的输出结构，注入到 agent prompt 中引导结构化输出 */
+  outputSchema?: Record<string, unknown>;
   /** 代码模式配置：优先执行固定代码，失败可回退到 agent */
   code?: AgentStepCodeConfig;
+  /** 知识库访问配置（步骤级别，默认禁用） */
+  knowledge?: WorkflowKnowledgeConfig;
 }
 
 export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {
@@ -118,6 +133,8 @@ export interface WorkflowDSL {
   version: 'v1';
   name: string;
   params?: WorkflowParamDef[];
+  /** Maximum total workflow execution time in milliseconds */
+  maxDurationMs?: number;
   steps: WorkflowStep[];
 }
 
@@ -126,6 +143,8 @@ export interface WorkflowDSLV2 {
   name: string;
   description?: string;
   params?: WorkflowParamDef[];
+  /** Maximum total workflow execution time in milliseconds */
+  maxDurationMs?: number;
   steps: WorkflowStep[];
 }
 
@@ -140,6 +159,8 @@ export interface CompiledWorkflowManifest {
   stepIds: string[];
   stepTypes: WorkflowStepType[];
   stepTimeoutsMs?: number[];
+  /** Max total workflow execution time from DSL (milliseconds) */
+  maxDurationMs?: number;
   warnings: string[];
 }
 

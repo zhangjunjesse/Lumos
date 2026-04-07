@@ -103,6 +103,7 @@ const whileStepInputSchema = z.object({
   condition: conditionExprSchema,
   body: z.array(safeStepId).min(1),
   maxIterations: z.number().int().positive().max(100).optional(),
+  mode: z.enum(['while', 'do-while']).optional(),
 }).strict();
 
 const workflowStepV2Schema = z.discriminatedUnion('type', [
@@ -341,7 +342,9 @@ export function validateWorkflowDslV2(spec: WorkflowDSLV2): GenerateWorkflowVali
       seenDeps.add(dep);
       if (!stepIds.has(dep)) {
         errors.push(`steps.${step.id}.dependsOn: unknown step "${dep}"`);
-      } else if (ownedIds.has(dep)) {
+      } else if (ownedIds.has(dep) && ownerOf.get(dep) !== ownerOf.get(step.id)) {
+        // Allow dependsOn between siblings in the same control flow body;
+        // block cross-owner references to owned steps.
         errors.push(`steps.${step.id}.dependsOn: "${dep}" is owned by a control flow step and cannot be directly depended on`);
       }
     }
@@ -379,18 +382,24 @@ export function isBlankWorkflowDraft(spec: unknown): boolean {
   return !Array.isArray(steps) || steps.length === 0;
 }
 
-function getControlFlowChildRefs(step: WorkflowStep): string[] {
+function getControlFlowBodies(step: WorkflowStep): string[][] {
   const input = step.input as Record<string, unknown> | undefined;
   if (!input) return [];
-
-  const refs: string[] = [];
-  if (step.type === 'if-else') {
-    if (Array.isArray(input.then)) refs.push(...input.then as string[]);
-    if (Array.isArray(input.else)) refs.push(...input.else as string[]);
-  } else if (step.type === 'for-each' || step.type === 'while') {
-    if (Array.isArray(input.body)) refs.push(...input.body as string[]);
+  if (step.type === 'while' || step.type === 'for-each') {
+    const body = input.body;
+    return Array.isArray(body) ? [body as string[]] : [];
   }
-  return refs;
+  if (step.type === 'if-else') {
+    const bodies: string[][] = [];
+    if (Array.isArray(input.then)) bodies.push(input.then as string[]);
+    if (Array.isArray(input.else)) bodies.push(input.else as string[]);
+    return bodies;
+  }
+  return [];
+}
+
+function getControlFlowChildRefs(step: WorkflowStep): string[] {
+  return getControlFlowBodies(step).flat();
 }
 
 // ── Version & Manifest helpers ──────────────────────────────────────────────
@@ -403,10 +412,14 @@ export function createWorkflowVersion(spec: AnyWorkflowDSL): string {
 }
 
 export function buildCompiledWorkflowManifest(
-  spec: Pick<AnyWorkflowDSL, 'name' | 'steps' | 'version'>,
+  spec: Pick<AnyWorkflowDSL, 'name' | 'steps' | 'version'> & { maxDurationMs?: number },
   workflowVersion: string,
   warnings: string[] = []
 ): CompiledWorkflowManifest {
+  const rawMax = (spec as { maxDurationMs?: unknown }).maxDurationMs;
+  const maxDurationMs = typeof rawMax === 'number' && Number.isFinite(rawMax) && rawMax > 0
+    ? rawMax
+    : undefined;
   return {
     dslVersion: (spec.version || 'v1') as 'v1' | 'v2',
     artifactKind: 'workflow-factory-module',
@@ -416,6 +429,7 @@ export function buildCompiledWorkflowManifest(
     stepIds: spec.steps.map((step) => step.id),
     stepTypes: spec.steps.map((step) => step.type as WorkflowStepType),
     stepTimeoutsMs: spec.steps.map((step) => resolveCompiledStepTimeoutMs(step) ?? 0),
+    ...(maxDurationMs ? { maxDurationMs } : {}),
     warnings,
   };
 }
@@ -477,9 +491,34 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
     stepMap.set(step.id, step);
   }
 
+  // Build implicit dependency sets:
+  // - Control flow steps can reference their owned body steps
+  // - Body steps can reference prior siblings in the same body (sequential execution order)
+  // - Body steps inherit their parent control flow step's transitive dependencies
+  const implicitDeps = new Map<string, Set<string>>();
+  for (const step of steps) {
+    const bodies = getControlFlowBodies(step);
+    if (bodies.length === 0) continue;
+    // Control flow step itself can reference all its body steps
+    const allOwned = new Set(bodies.flat());
+    implicitDeps.set(step.id, allOwned);
+    // Parent's transitive deps: everything the control flow step can reach
+    const parentDeps = collectTransitiveDependencies(step.id, stepMap);
+    // Each body step can reference prior siblings + parent's transitive deps
+    for (const body of bodies) {
+      for (let i = 0; i < body.length; i++) {
+        const allowed = implicitDeps.get(body[i]) ?? new Set<string>();
+        for (let j = 0; j < i; j++) allowed.add(body[j]);
+        for (const dep of parentDeps) allowed.add(dep);
+        implicitDeps.set(body[i], allowed);
+      }
+    }
+  }
+
   for (const step of steps) {
     const references = collectStepOutputReferences(step);
     const allowedDependencies = collectTransitiveDependencies(step.id, stepMap);
+    const implicitAllowed = implicitDeps.get(step.id);
 
     for (const ref of references) {
       if (ref.stepId === step.id) {
@@ -492,7 +531,7 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
         continue;
       }
 
-      if (!allowedDependencies.has(ref.stepId)) {
+      if (!allowedDependencies.has(ref.stepId) && !implicitAllowed?.has(ref.stepId)) {
         errors.push(
           `${ref.path}: references steps.${ref.stepId}.output without declaring dependency`
         );

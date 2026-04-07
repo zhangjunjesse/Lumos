@@ -5,11 +5,14 @@ import {
   updateScheduledWorkflow,
   deleteScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
+import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   runMode: z.enum(['scheduled', 'once']).optional(),
   intervalMinutes: z.number().int().min(0).max(43200).optional(),
+  scheduleTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  scheduleDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
   workingDirectory: z.string().optional(),
   enabled: z.boolean().optional(),
   notifyOnComplete: z.boolean().optional(),
@@ -43,10 +46,24 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     const body = await request.json();
     const input = updateSchema.parse(body);
+
+    // #7: Validate DSL at save time when it changes
+    if (input.workflowDsl) {
+      const dslValidation = generateWorkflowFromDsl(input.workflowDsl as unknown as Parameters<typeof generateWorkflowFromDsl>[0]);
+      if (!dslValidation.validation.valid) {
+        return NextResponse.json(
+          { error: `工作流 DSL 校验失��: ${dslValidation.validation.errors.join('; ')}` },
+          { status: 400 },
+        );
+      }
+    }
+
     const schedule = updateScheduledWorkflow(id, {
       name: input.name,
       runMode: input.runMode,
       intervalMinutes: input.intervalMinutes,
+      scheduleTime: input.scheduleTime,
+      scheduleDayOfWeek: input.scheduleDayOfWeek,
       workingDirectory: input.workingDirectory,
       enabled: input.enabled,
       notifyOnComplete: input.notifyOnComplete,

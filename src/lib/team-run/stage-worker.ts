@@ -12,6 +12,12 @@ import {
 } from './runtime-result-normalizer'
 import { buildStageRuntimeToolPolicy, getStageExecutionCwd } from './runtime-tool-policy'
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
+import { createKnowledgeMcpServer } from '@/lib/knowledge/workflow-knowledge-tool'
+import {
+  buildKnowledgePromptSection,
+  KNOWLEDGE_MCP_SERVER_NAME,
+} from '@/lib/knowledge/workflow-prompt-section'
+import { resolveTagNames, listTagCatalog } from '@/lib/knowledge/tag-resolver'
 
 interface WorkerStatus {
   stageId: string
@@ -89,10 +95,21 @@ function isAbortError(error: unknown): boolean {
   )
 }
 
-function isStructuredOutputRetryFailure(error: unknown): boolean {
+function isRetryableApiError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
-  return /Failed to provide valid structured output after \d+ attempts/i.test(error.message)
+  const msg = error.message.toLowerCase()
+  const code = (error as { code?: string }).code ?? ''
+  // HTTP 429 rate limit
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests')) return true
+  // HTTP 5xx server errors
+  if (/\b5\d{2}\b/.test(msg) || msg.includes('internal server error') || msg.includes('bad gateway') || msg.includes('service unavailable')) return true
+  // Network errors
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' || msg.includes('network') || msg.includes('socket hang up')) return true
+  // Anthropic overloaded
+  if (msg.includes('overloaded') || msg.includes('capacity')) return true
+  return false
 }
+
 
 function isTextOnlyStageContract(payload: StageExecutionPayloadV1): boolean {
   return !payload.stage.outputContract.mayProduceArtifacts
@@ -134,7 +151,7 @@ export class StageWorker {
       }
 
       if (this.useRealAgent) {
-        const result = await this.executeWithClaudeSDK(payload, startTime, startedAt, options.provider, options.onTraceEvent)
+        const result = await this.executeWithRetry(payload, startTime, startedAt, options.provider, options.onTraceEvent)
         if (!this.isCancelled()) {
           this.state = 'idle'
         }
@@ -266,6 +283,31 @@ export class StageWorker {
     }
   }
 
+  private async executeWithRetry(
+    payload: StageExecutionPayloadV1,
+    startTime: number,
+    startedAt: string,
+    provider?: ApiProvider,
+    onTraceEvent?: (event: unknown) => void,
+  ): Promise<StageExecutionResultV1> {
+    const MAX_API_RETRIES = 3
+    for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
+      try {
+        return await this.executeWithClaudeSDK(payload, startTime, startedAt, provider, onTraceEvent)
+      } catch (error) {
+        if (this.isCancelled() || isAbortError(error)) throw error
+        if (attempt < MAX_API_RETRIES && isRetryableApiError(error)) {
+          const delay = Math.min(2000 * Math.pow(2, attempt - 1), 30000)
+          console.warn(`[StageWorker] Retryable API error (attempt ${attempt}/${MAX_API_RETRIES}), retrying in ${delay}ms:`, error instanceof Error ? error.message : error)
+          await new Promise(r => setTimeout(r, delay))
+          continue
+        }
+        throw error
+      }
+    }
+    throw new Error('Unexpected: retry loop exited without result')
+  }
+
   private async executeWithClaudeSDK(
     payload: StageExecutionPayloadV1,
     startTime: number,
@@ -291,17 +333,43 @@ export class StageWorker {
       sessionWorkingDirectory: getStageExecutionCwd(payload),
       sessionId: payload.sessionId,
     })
-    const mcpServers = lumosMcpServers ? toSdkMcpConfig(lumosMcpServers) : undefined
+    const stdioMcpServers = lumosMcpServers ? toSdkMcpConfig(lumosMcpServers) : undefined
+
+    // Knowledge base tool (in-process) — only when step explicitly enables it
+    let knowledgeSystemPromptSuffix = ''
+    let knowledgeInProcessServer: Record<string, ReturnType<typeof createKnowledgeMcpServer>> | undefined
+    if (payload.knowledgeConfig?.enabled) {
+      const cfg = payload.knowledgeConfig
+      const resolved = resolveTagNames(cfg.defaultTagNames ?? [])
+      const catalog = cfg.allowAgentTagSelection ? listTagCatalog({ limit: 30 }) : undefined
+      knowledgeSystemPromptSuffix = buildKnowledgePromptSection({
+        config: cfg,
+        resolvedTagNames: resolved.tags.map((t) => t.name),
+        missingTagNames: resolved.missing,
+        catalog,
+      })
+      knowledgeInProcessServer = {
+        [KNOWLEDGE_MCP_SERVER_NAME]: createKnowledgeMcpServer(cfg),
+      }
+    }
+
+    const mergedMcpServers = (stdioMcpServers || knowledgeInProcessServer)
+      ? { ...(stdioMcpServers ?? {}), ...(knowledgeInProcessServer ?? {}) }
+      : undefined
+
+    const effectiveSystemPrompt = knowledgeSystemPromptSuffix
+      ? `${payload.agent.systemPrompt}${knowledgeSystemPromptSuffix}`
+      : payload.agent.systemPrompt
 
     const baseQueryOptions = {
       abortController: this.abortController ?? new AbortController(),
       cwd: getStageExecutionCwd(payload),
-      systemPrompt: payload.agent.systemPrompt,
+      systemPrompt: effectiveSystemPrompt,
       permissionMode: 'bypassPermissions' as const,
       env: runtimeBootstrap.env,
       settingSources: runtimeBootstrap.settingSources,
       ...(requestedModel ? { model: requestedModel } : {}),
-      ...(mcpServers ? { mcpServers } : {}),
+      ...(mergedMcpServers ? { mcpServers: mergedMcpServers } : {}),
       stderr: (data: string) => {
         stderrOutput += data
       },
@@ -319,7 +387,6 @@ export class StageWorker {
           baseQueryOptions,
           startedAt,
           startTime,
-          mode: 'preferred',
           onTraceEvent,
         })
 
@@ -396,23 +463,6 @@ export class StageWorker {
         }],
       }
     } catch (error) {
-      if (isStructuredOutputRetryFailure(error)) {
-        const fallbackResult = await this.executePlainTextMode({
-          query,
-          payload,
-          prompt,
-          baseQueryOptions,
-          startedAt,
-          startTime,
-          mode: 'fallback',
-          onTraceEvent,
-        })
-
-        if (fallbackResult) {
-          return fallbackResult
-        }
-      }
-
       if (error instanceof Error) {
         const diagnosticError = error as StageWorkerDiagnosticError
         if (stderrOutput.trim()) {
@@ -436,7 +486,6 @@ export class StageWorker {
     baseQueryOptions: Record<string, unknown>
     startedAt: string
     startTime: number
-    mode: 'preferred' | 'fallback'
     onTraceEvent?: (event: unknown) => void
   }): Promise<StageExecutionResultV1 | null> {
     const {
@@ -446,30 +495,19 @@ export class StageWorker {
       baseQueryOptions,
       startedAt,
       startTime,
-      mode,
       onTraceEvent,
     } = input
 
     let output = ''
     let stderrOutput = ''
-    const plainTextPrompt = mode === 'fallback'
-      ? [
-          prompt,
-          '# Fallback Delivery Mode',
-          'The previous structured-output attempt failed.',
-          'Return only the final deliverable text for this stage.',
-          'Do not return JSON.',
-          'Do not mention the schema, the retry, or the formatting failure.',
-          'Do not create or declare any artifacts. The artifacts array will be forced to empty by runtime.',
-        ].join('\n\n')
-      : [
-          prompt,
-          '# Plain-Text Delivery Mode',
-          'Return only the final deliverable text for this stage.',
-          'Do not return JSON.',
-          'Do not mention any schema or formatting rules.',
-          'Do not create or declare any artifacts. The artifacts array will be forced to empty by runtime.',
-        ].join('\n\n')
+    const plainTextPrompt = [
+      prompt,
+      '# Plain-Text Delivery Mode',
+      'Return only the final deliverable text for this stage.',
+      'Do not return JSON.',
+      'Do not mention any schema or formatting rules.',
+      'Do not create or declare any artifacts. The artifacts array will be forced to empty by runtime.',
+    ].join('\n\n')
 
     try {
       const queryResult = query({
@@ -509,35 +547,18 @@ export class StageWorker {
         outcome: 'done',
         summary,
         artifacts: [],
-        ...(mode === 'fallback'
-          ? {
-              diagnostics: {
-                errorName: 'StructuredOutputFallback',
-                sanitizedMessage: 'Structured output fallback used',
-                rawMessage: 'Claude structured output failed; runtime accepted plain-text fallback',
-                ...(stderrOutput.trim() ? { stderr: ErrorSanitizer.sanitizeText(stderrOutput.trim()) } : {}),
-                executionCwd: getStageExecutionCwd(payload),
-                roleName: payload.agent.roleName,
-                agentType: payload.agent.agentType,
-                allowedRuntimeTools: [...payload.agent.allowedTools],
-                allowedClaudeTools: [...buildStageRuntimeToolPolicy(payload.agent).sdkTools],
-                dependencyCount: payload.dependencies.length,
-              },
-            }
-          : {
-              diagnostics: {
-                errorName: 'PlainTextDeliveryMode',
-                sanitizedMessage: 'Plain-text delivery mode used',
-                rawMessage: 'Runtime requested plain-text stage delivery',
-                ...(stderrOutput.trim() ? { stderr: ErrorSanitizer.sanitizeText(stderrOutput.trim()) } : {}),
-                executionCwd: getStageExecutionCwd(payload),
-                roleName: payload.agent.roleName,
-                agentType: payload.agent.agentType,
-                allowedRuntimeTools: [...payload.agent.allowedTools],
-                allowedClaudeTools: [...buildStageRuntimeToolPolicy(payload.agent).sdkTools],
-                dependencyCount: payload.dependencies.length,
-              },
-            }),
+        diagnostics: {
+          errorName: 'PlainTextDeliveryMode',
+          sanitizedMessage: 'Plain-text delivery mode used',
+          rawMessage: 'Runtime requested plain-text stage delivery',
+          ...(stderrOutput.trim() ? { stderr: ErrorSanitizer.sanitizeText(stderrOutput.trim()) } : {}),
+          executionCwd: getStageExecutionCwd(payload),
+          roleName: payload.agent.roleName,
+          agentType: payload.agent.agentType,
+          allowedRuntimeTools: [...payload.agent.allowedTools],
+          allowedClaudeTools: [...buildStageRuntimeToolPolicy(payload.agent).sdkTools],
+          dependencyCount: payload.dependencies.length,
+        },
         memoryAppend: [{
           scope: 'agent',
           content: `Completed ${payload.stage.title}\n${summary}`,
@@ -557,9 +578,6 @@ export class StageWorker {
         if (output.trim() && !diagnosticError.outputPreview) {
           diagnosticError.outputPreview = truncateDiagnostic(output)
         }
-      }
-      if (mode === 'fallback') {
-        return null
       }
       throw error
     }

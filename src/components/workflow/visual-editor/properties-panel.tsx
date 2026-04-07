@@ -7,9 +7,23 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CodeModeEditor } from '@/components/workflow/CodeModeEditor';
+import {
+  WorkflowKnowledgePanel,
+  type WorkflowKnowledgeConfigDraft,
+} from '@/components/workflow/WorkflowKnowledgePanel';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
 
 interface AgentPreset { id: string; name: string; description?: string }
+
+function readKnowledge(raw: unknown): WorkflowKnowledgeConfigDraft {
+  const src = (raw ?? {}) as Partial<WorkflowKnowledgeConfigDraft>;
+  return {
+    enabled: Boolean(src.enabled),
+    defaultTagNames: Array.isArray(src.defaultTagNames) ? src.defaultTagNames : [],
+    allowAgentTagSelection: src.allowAgentTagSelection ?? true,
+    topK: typeof src.topK === 'number' ? src.topK : undefined,
+  };
+}
 
 interface PropertiesPanelProps {
   data: StepNodeData;
@@ -110,6 +124,16 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
             }}
             onScriptChange={v => updateInput('code', { ...(input.code as Record<string, unknown> ?? {}), script: v })}
             onStrategyChange={v => updateInput('code', { ...(input.code as Record<string, unknown> ?? {}), strategy: v })}
+          />
+
+          <WorkflowKnowledgePanel
+            value={readKnowledge(input.knowledge)}
+            onChange={next => updateInput('knowledge', next.enabled ? {
+              enabled: true,
+              defaultTagNames: next.defaultTagNames,
+              allowAgentTagSelection: next.allowAgentTagSelection,
+              ...(typeof next.topK === 'number' ? { topK: next.topK } : {}),
+            } : undefined)}
           />
         </>
       )}

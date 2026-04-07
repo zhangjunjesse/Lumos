@@ -2,7 +2,6 @@ import { EventEmitter } from 'events';
 
 // Declared for globalThis HMR persistence
 declare global {
-  // eslint-disable-next-line no-var
   var __lumos_task_event_bus__: TaskEventBus | undefined;
 }
 
@@ -17,7 +16,8 @@ export type TaskEventType =
   | 'run:started'
   | 'run:completed'
   | 'run:cancelled'
-  | 'schedule:run';
+  | 'schedule:run'
+  | 'workflow:progress';
 
 export const GLOBAL_SESSION_ID = '__global__';
 

@@ -41,6 +41,8 @@ interface FormState {
   name: string;
   runMode: RunMode;
   intervalMinutes: number;
+  scheduleTime: string;
+  scheduleDayOfWeek: number;
   workingDirectory: string;
   notifyOnComplete: boolean;
   workflowId: string;
@@ -53,11 +55,28 @@ function toStringParams(raw: Record<string, unknown> | undefined): Record<string
   return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v !== undefined ? String(v) : '']));
 }
 
+/** Fill in DSL param defaults for keys not already set */
+function prefillParamDefaults(
+  defs: WorkflowParamDef[],
+  existing: Record<string, string>,
+): Record<string, string> {
+  if (!defs.length) return existing;
+  const merged = { ...existing };
+  for (const p of defs) {
+    if (!merged[p.name] && p.default !== undefined) {
+      merged[p.name] = String(p.default);
+    }
+  }
+  return merged;
+}
+
 function defaultForm(initial?: ScheduledWorkflow | null): FormState {
   return {
     name: initial?.name ?? '',
     runMode: (initial?.runMode as RunMode) ?? 'scheduled',
     intervalMinutes: initial?.intervalMinutes ?? 60,
+    scheduleTime: initial?.scheduleTime ?? '09:00',
+    scheduleDayOfWeek: initial?.scheduleDayOfWeek ?? 1,
     workingDirectory: initial?.workingDirectory ?? '',
     notifyOnComplete: initial?.notifyOnComplete ?? true,
     workflowId: initial?.workflowId ?? '',
@@ -101,19 +120,20 @@ export function ScheduleEditor({
     setShowDsl(false);
   }, [open, initial, presetWorkflowId, presetRunMode]);
 
-  // When workflows load and a workflowId is set, populate DSL + name
+  // When workflows load and a workflowId is set, populate DSL + name + param defaults
   useEffect(() => {
     if (!form.workflowId || workflows.length === 0) return;
     const wf = workflows.find(w => w.id === form.workflowId);
     if (!wf) return;
     const dslText = JSON.stringify(wf.workflowDsl, null, 2);
+    const dslParamDefs = (wf.workflowDsl as { params?: WorkflowParamDef[] }).params ?? [];
     setForm(prev => ({
       ...prev,
       dslText,
       name: prev.name || wf.name,
+      defaultParams: prefillParamDefaults(dslParamDefs, prev.defaultParams),
     }));
   // Only run when workflows load or workflowId changes from preset
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflows, form.workflowId]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -128,12 +148,13 @@ export function ScheduleEditor({
       set('dslText', EMPTY_DSL);
       return;
     }
+    const dslParamDefs = (wf.workflowDsl as { params?: WorkflowParamDef[] }).params ?? [];
     setForm(prev => ({
       ...prev,
       workflowId: wfId,
       dslText: JSON.stringify(wf.workflowDsl, null, 2),
       name: prev.name || wf.name,
-      defaultParams: {},
+      defaultParams: prefillParamDefaults(dslParamDefs, {}),
     }));
   }
 
@@ -146,10 +167,14 @@ export function ScheduleEditor({
     }
     setSaving(true);
     try {
+      const isDaily = form.intervalMinutes === 1440;
+      const isWeekly = form.intervalMinutes === 10080;
       const body = {
         name: form.name.trim(),
         runMode: form.runMode,
         intervalMinutes: form.runMode === 'once' ? 0 : form.intervalMinutes,
+        scheduleTime: (isDaily || isWeekly) ? form.scheduleTime : null,
+        scheduleDayOfWeek: isWeekly ? form.scheduleDayOfWeek : null,
         workingDirectory: form.workingDirectory.trim(),
         notifyOnComplete: form.notifyOnComplete,
         workflowDsl: dsl,
@@ -222,24 +247,65 @@ export function ScheduleEditor({
 
           {/* Frequency picker - only for scheduled mode */}
           {form.runMode === 'scheduled' && (
-            <div className="space-y-1.5">
-              <Label>执行频率 <span className="text-destructive">*</span></Label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {INTERVALS.map(i => (
-                  <button
-                    key={i.value}
-                    type="button"
-                    onClick={() => set('intervalMinutes', i.value)}
-                    className={`px-2 py-1.5 rounded-md border text-xs font-medium transition-all ${
-                      form.intervalMinutes === i.value
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border/50 hover:border-border hover:bg-accent/30 text-muted-foreground'
-                    }`}
-                  >
-                    {i.label}
-                  </button>
-                ))}
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>执行频率 <span className="text-destructive">*</span></Label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {INTERVALS.map(i => (
+                    <button
+                      key={i.value}
+                      type="button"
+                      onClick={() => set('intervalMinutes', i.value)}
+                      className={`px-2 py-1.5 rounded-md border text-xs font-medium transition-all ${
+                        form.intervalMinutes === i.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border/50 hover:border-border hover:bg-accent/30 text-muted-foreground'
+                      }`}
+                    >
+                      {i.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {/* Weekly: day-of-week picker */}
+              {form.intervalMinutes === 10080 && (
+                <div className="space-y-1.5">
+                  <Label>星期几</Label>
+                  <div className="flex gap-1.5">
+                    {(['一', '二', '三', '四', '五', '六', '日']).map((label, i) => {
+                      const dow = i === 6 ? 0 : i + 1; // Mon=1..Sat=6, Sun=0
+                      return (
+                        <button
+                          key={dow}
+                          type="button"
+                          onClick={() => set('scheduleDayOfWeek', dow)}
+                          className={`flex-1 py-1.5 rounded-md border text-xs font-medium transition-all ${
+                            form.scheduleDayOfWeek === dow
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border/50 hover:border-border hover:bg-accent/30 text-muted-foreground'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Daily / Weekly: time picker */}
+              {(form.intervalMinutes === 1440 || form.intervalMinutes === 10080) && (
+                <div className="space-y-1.5">
+                  <Label>执行时间</Label>
+                  <Input
+                    type="time"
+                    value={form.scheduleTime}
+                    onChange={e => set('scheduleTime', e.target.value)}
+                    className="w-32 h-8 text-sm"
+                  />
+                </div>
+              )}
             </div>
           )}
 

@@ -17,6 +17,7 @@ import { getMessages } from '@/lib/db';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { submitWorkflow } from '@/lib/workflow/api';
 import { taskEventBus } from '@/lib/task-event-bus';
+import type { WorkflowDSL, WorkflowDSLV2 } from '@/lib/workflow/types';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -72,7 +73,7 @@ async function runSchedule(
   const label = `[${modeLabel}] ${schedule.name}`;
   const session = createSession(label, undefined, undefined, schedule.workingDirectory || undefined, 'workflow');
   const runId = insertRunHistory(schedule.id, session.id);
-  const effectiveParams = runParams ?? schedule.runParams ?? {};
+  const effectiveParams = mergeParamDefaults(schedule.workflowDsl, runParams ?? schedule.runParams ?? {});
 
   try {
     const result = await submitWorkflow({
@@ -160,6 +161,22 @@ function checkSessionForFailedSteps(sessionId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Merge DSL param defaults into effective params — fills in missing keys only */
+function mergeParamDefaults(
+  dsl: WorkflowDSL | WorkflowDSLV2,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const dslParams = (dsl as { params?: Array<{ name: string; default?: unknown }> }).params;
+  if (!dslParams?.length) return params;
+  const merged = { ...params };
+  for (const p of dslParams) {
+    if (!(p.name in merged) && p.default !== undefined) {
+      merged[p.name] = p.default;
+    }
+  }
+  return merged;
 }
 
 function emitNotification(

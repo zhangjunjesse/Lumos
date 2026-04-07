@@ -54,7 +54,7 @@ export function emitAgentStep(step: WorkflowStep, indent: number): string {
     `${pad}  const ${bind} = await step.run(${configLit}, () => ${execFn}({`,
     `${pad}    workflowRunId: run.id, stepId: ${sid},`,
     `${pad}    runStep: () => __withTimeout(${def.runtimeBinding}(${rInput}), ${timeoutLit}, ${sid}),`,
-    `${pad}    onStepStarted, onStepCompleted`,
+    `${pad}    onStepStarted, onStepCompleted, retryPolicy: ${configLit}.retryPolicy`,
     `${pad}  }));`,
     `${pad}  stepOutputs[${sid}] = ${bind};`,
     `${pad}} else {`,
@@ -155,13 +155,30 @@ function emitWhile(
     ? input.maxIterations : WHILE_MAX_ITERATIONS_DEFAULT;
   const sid = emitLiteral(step.id);
   const safe = toSafeIdentifier(step.id);
+  const isDoWhile = input.mode === 'do-while';
+  const bodyCode = emitBodySteps(bodyIds, stepMap, ownedStepIds, indent + 2);
+
+  if (isDoWhile) {
+    // do-while: execute body first, then check condition
+    return [
+      `${pad}// do-while: ${step.id.replace(/[\r\n]/g, ' ')}`,
+      `${pad}await onStepStarted?.({ workflowRunId: run.id, stepId: ${sid} });`,
+      `${pad}let __iter_${safe} = 0;`,
+      `${pad}do {`,
+      bodyCode,
+      `${pad}  __iter_${safe}++;`,
+      `${pad}} while (__evaluateCondition(${condLit}, input, stepOutputs) && __iter_${safe} < ${maxIter});`,
+      `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe} } };`,
+      `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
+    ].join('\n');
+  }
 
   return [
     `${pad}// while: ${step.id.replace(/[\r\n]/g, ' ')}`,
     `${pad}await onStepStarted?.({ workflowRunId: run.id, stepId: ${sid} });`,
     `${pad}let __iter_${safe} = 0;`,
     `${pad}while (__evaluateCondition(${condLit}, input, stepOutputs) && __iter_${safe} < ${maxIter}) {`,
-    emitBodySteps(bodyIds, stepMap, ownedStepIds, indent + 2),
+    bodyCode,
     `${pad}  __iter_${safe}++;`,
     `${pad}}`,
     `${pad}stepOutputs[${sid}] = { output: { iterations: __iter_${safe} } };`,
