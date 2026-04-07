@@ -792,7 +792,7 @@ function toStepResult(input: {
     metrics: result.metrics,
   };
 
-  if (agentInput?.outputMode === 'structured' && result.outcome === 'done') {
+  if (agentInput?.outputMode === 'structured') {
     const parsed = extractStructuredFields(result.summary);
     if (parsed) {
       // Merge parsed fields into output, but don't overwrite system fields
@@ -950,8 +950,10 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     // ── Phase 2: Classify outcome via lightweight SDK call ──────────────
     // Phase 1 (plain-text mode) always returns outcome:'done' when SDK succeeds.
     // We need the model to self-report whether the task actually succeeded or failed.
+    // Skip Phase 2 for structured-output steps: their data IS the result —
+    // LLM classification often misreads "2 items pending" as "task failed".
     let finalResult: StageExecutionResultV1 = result;
-    if (result.outcome === 'done' && result.summary?.trim()) {
+    if (result.outcome === 'done' && result.summary?.trim() && input.outputMode !== 'structured') {
       try {
         const classification = await classifyAgentOutcome({
           summary: result.summary,
