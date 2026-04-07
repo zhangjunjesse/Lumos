@@ -273,7 +273,7 @@ function checkNativeModuleABI(): void {
     if (msg.includes('NODE_MODULE_VERSION')) {
       console.error(`[ABI check] ABI mismatch detected: ${msg}`);
       dialog.showErrorBox(
-        'CodePilot - Native Module ABI Mismatch',
+        'Lumos - Native Module ABI Mismatch',
         `The bundled better-sqlite3 native module was compiled for a different Node.js version.\n\n` +
         `${msg}\n\n` +
         `This usually means the build process did not correctly recompile native modules for Electron.\n` +
@@ -475,8 +475,8 @@ function startServer(port: number): Electron.UtilityProcess {
     ...(browserBridgeToken ? { LUMOS_BROWSER_BRIDGE_TOKEN: browserBridgeToken } : {}),
     ...(bridgeRuntimeToken ? { LUMOS_BRIDGE_RUNTIME_TOKEN: bridgeRuntimeToken } : {}),
     ...(defaultKey ? { LUMOS_DEFAULT_API_KEY: defaultKey } : {}),
-    ...(process.env.CODEPILOT_DEFAULT_BASE_URL
-      ? { CODEPILOT_DEFAULT_BASE_URL: process.env.CODEPILOT_DEFAULT_BASE_URL }
+    ...(process.env.LUMOS_DEFAULT_BASE_URL || process.env.CODEPILOT_DEFAULT_BASE_URL
+      ? { LUMOS_DEFAULT_BASE_URL: process.env.LUMOS_DEFAULT_BASE_URL || process.env.CODEPILOT_DEFAULT_BASE_URL }
       : {}),
   };
 
@@ -486,7 +486,7 @@ function startServer(port: number): Electron.UtilityProcess {
     env,
     cwd: standaloneDir,
     stdio: 'pipe',
-    serviceName: 'codepilot-server',
+    serviceName: 'lumos-server',
   });
 
   child.stdout?.on('data', (data: Buffer) => {
@@ -884,7 +884,7 @@ app.whenReady().then(async () => {
   // Log warning if user's ~/.claude/ exists (potential pollution source)
   const userClaudeDir = path.join(os.homedir(), '.claude');
   if (fs.existsSync(userClaudeDir)) {
-    console.warn('[main] WARNING: User ~/.claude/ directory detected. CodePilot uses isolated config at:', claudeConfigDir);
+    console.warn('[main] WARNING: User ~/.claude/ directory detected. Lumos uses isolated config at:', claudeConfigDir);
   }
 
   // Clear cache on version upgrade
@@ -1310,7 +1310,7 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('Failed to start:', err);
     dialog.showErrorBox(
-      'CodePilot - Failed to Start',
+      'Lumos - Failed to Start',
       `The internal server could not start.\n\n${err instanceof Error ? err.message : String(err)}\n\nPlease try restarting the application.`
     );
     app.quit();

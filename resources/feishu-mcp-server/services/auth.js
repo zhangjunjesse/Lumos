@@ -15,7 +15,7 @@ const APP_SECRET = process.env.FEISHU_APP_SECRET;
 
 // user token 文件路径
 const USER_TOKEN_PATH = process.env.FEISHU_TOKEN_PATH
-  || path.resolve(__dirname, '../../CodePilot/data/auth/feishu.json');
+  || path.resolve(__dirname, '../../Lumos/data/auth/feishu.json');
 
 // 缓存 tenant_access_token
 let cachedToken = null;

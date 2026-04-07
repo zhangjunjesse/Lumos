@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_TOAPIS_BASE_URL = 'https://toapis.com/v1';
 const DEFAULT_MODEL = 'gemini-3.1-flash-image-preview';
-const DEFAULT_OUTPUT_DIR = '.codepilot-images';
+const DEFAULT_OUTPUT_DIR = '.lumos-images';
 const TOAPIS_POLL_INTERVAL_MS = 3000;
 const TOAPIS_POLL_TIMEOUT_MS = 120000;
 

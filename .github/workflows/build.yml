@@ -103,6 +103,15 @@ jobs:
       - name: Rebuild better-sqlite3 for Electron
         run: npx electron-rebuild -f -o better-sqlite3
 
+      - name: Copy Electron-ABI native module into standalone
+        shell: bash
+        run: |
+          SRC="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          DEST=".next/standalone/node_modules/better-sqlite3/build/Release/"
+          mkdir -p "$DEST"
+          cp "$SRC" "$DEST"
+          echo "Copied better_sqlite3.node ($(wc -c < "$SRC") bytes) into standalone"
+
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
 
@@ -146,6 +155,14 @@ jobs:
 
       - name: Rebuild better-sqlite3 for Electron (arm64)
         run: npx electron-rebuild -f -o better-sqlite3 -a arm64
+
+      - name: Copy Electron-ABI native module into standalone
+        run: |
+          SRC="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          DEST=".next/standalone/node_modules/better-sqlite3/build/Release/"
+          mkdir -p "$DEST"
+          cp "$SRC" "$DEST"
+          echo "Copied better_sqlite3.node ($(wc -c < "$SRC") bytes) into standalone"
 
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
@@ -211,10 +228,10 @@ jobs:
           ## Downloads
 
           **Windows**
-          - **CodePilot Setup ${{ steps.meta.outputs.version }}.exe** — Windows installer
+          - **Lumos Setup ${{ steps.meta.outputs.version }}.exe** — Windows installer
 
           **macOS**
-          - **CodePilot-${{ steps.meta.outputs.version }}-arm64.dmg** — macOS Apple Silicon (M1/M2/M3/M4)
+          - **Lumos-${{ steps.meta.outputs.version }}-arm64.dmg** — macOS Apple Silicon (M1/M2/M3/M4)
 
           ## Installation
 
@@ -222,7 +239,7 @@ jobs:
 
           **macOS**:
           1. Download the DMG for your chip architecture
-          2. Open the DMG, drag CodePilot into Applications
+          2. Open the DMG, drag Lumos into Applications
           3. If you see a security prompt on first launch, go to **System Settings > Privacy & Security** and click "Open Anyway"
           4. Configure your Anthropic API Key in Settings
 

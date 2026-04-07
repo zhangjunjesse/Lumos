@@ -27,7 +27,7 @@ ${existing}标签分类：
 - domain: 业务领域（如"金融"、"教育"）
 - tech: 技术栈（如"React"、"Python"）
 - doctype: 文档类型（如"技术方案"、"会议纪要"）
-- project: 项目名（如"Lumos"、"CodePilot"）
+- project: 项目名（如"Lumos"）
 - custom: 其他
 
 要求：
