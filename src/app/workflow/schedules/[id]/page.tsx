@@ -98,6 +98,23 @@ export default function ScheduleDetailPage() {
     } catch { setTriggerMsg('触发失败'); } finally { setTriggering(false); }
   }, [triggering, scheduleId, loadSchedule]);
 
+  const handleExport = useCallback(async () => {
+    if (!scheduleId) return;
+    try {
+      const res = await fetch(`/api/workflow/export/${scheduleId}?source=schedule`);
+      const pkg = await res.json() as { error?: string; workflow?: { name?: string } };
+      if (pkg.error) { setTriggerMsg(`导出失败: ${pkg.error}`); return; }
+      const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = (pkg.workflow?.name || 'workflow').replace(/[/\\:*?"<>|]/g, '_');
+      a.download = `${safeName}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setTriggerMsg('导出失败'); }
+  }, [scheduleId]);
+
   const handleDelete = useCallback(async () => {
     if (!schedule || !confirm(`确认删除任务「${schedule.name}」？`)) return;
     await fetch(`/api/workflow/schedules/${scheduleId}`, { method: 'DELETE' });
@@ -152,6 +169,7 @@ export default function ScheduleDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => void handleExport()}>导出</Button>
           <Button variant="outline" size="sm" onClick={() => setEditorOpen(true)}>编辑</Button>
           <Button size="sm" onClick={() => void handleTrigger()} disabled={triggering}>
             {triggering ? '执行中...' : '立即运行'}

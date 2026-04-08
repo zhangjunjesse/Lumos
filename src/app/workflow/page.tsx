@@ -29,7 +29,9 @@ export default function WorkflowPage() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [importError, setImportError] = useState('');
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const openTaskEditor = useCallback((id: string, mode: 'once' | 'scheduled') => {
     setTaskWorkflowId(id);
@@ -80,6 +82,39 @@ export default function WorkflowPage() {
     } finally { setCreating(false); }
   }, [newName, router]);
 
+  const handleImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (importInputRef.current) importInputRef.current.value = '';
+    if (!file) return;
+    setImportError('');
+    if (file.size > 1024 * 1024) {
+      setImportError('文件过大，最大支持 1MB');
+      return;
+    }
+    try {
+      const text = await file.text();
+      const pkg = JSON.parse(text) as Record<string, unknown>;
+      if (pkg.format !== 'lumos-workflow/v1') {
+        setImportError('无效的工作流包格式：缺少 format 标识');
+        return;
+      }
+      const res = await fetch('/api/workflow/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: text,
+      });
+      const data = await res.json() as {
+        workflow?: { id: string };
+        createdPresets?: Array<{ name: string }>;
+        error?: string;
+      };
+      if (data.error) { setImportError(data.error); return; }
+      if (data.workflow?.id) {
+        router.push(`/workflow/${data.workflow.id}`);
+      }
+    } catch { setImportError('导入失败：文件格式不正确'); }
+  }, [router]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
@@ -88,8 +123,17 @@ export default function WorkflowPage() {
           <h1 className="text-xl font-semibold tracking-tight">工作流</h1>
           <p className="text-sm text-muted-foreground mt-0.5">用 AI 自动化你的重复任务</p>
         </div>
-        <Button onClick={openCreate}>+ 新建工作流</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => importInputRef.current?.click()}>导入</Button>
+          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
+          <Button onClick={openCreate}>+ 新建工作流</Button>
+        </div>
       </div>
+      {importError && (
+        <div className="mx-8 mt-3 text-sm px-3 py-2 rounded-lg border bg-destructive/10 text-destructive border-destructive/20">
+          {importError}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">

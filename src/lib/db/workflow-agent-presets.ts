@@ -187,6 +187,16 @@ export function getWorkflowAgentPreset(id: string): WorkflowAgentPreset | undefi
   return rowToPreset(row) ?? undefined;
 }
 
+export function getWorkflowAgentPresetByName(name: string): WorkflowAgentPreset | undefined {
+  if (!hasTemplatesTable()) return undefined;
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM templates WHERE type='workflow-agent' AND name=? LIMIT 1")
+    .get(name.trim()) as TemplateRow | undefined;
+  if (!row) return undefined;
+  return rowToPreset(row) ?? undefined;
+}
+
 export function createWorkflowAgentPreset(data: CreateWorkflowAgentPresetInput): WorkflowAgentPreset {
   if (!hasTemplatesTable()) throw new Error('Templates table not available');
   const db = getDb();

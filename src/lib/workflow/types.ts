@@ -55,6 +55,20 @@ export interface WorkflowKnowledgeConfig {
   topK?: number;
 }
 
+/** Inline agent definition for portable DSL (used when preset ID is not available locally) */
+export interface InlineAgentDef {
+  name: string;
+  expertise: string;
+  role?: WorkflowAgentRole;
+  systemPrompt?: string;
+  model?: string;
+  allowedTools?: ('workspace.read' | 'workspace.write' | 'shell.exec')[];
+  outputMode?: 'structured' | 'plain-text';
+  capabilityTags?: string[];
+  memoryPolicy?: string;
+  concurrencyLimit?: number;
+}
+
 export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   prompt: string;
   preset?: string;
@@ -69,6 +83,8 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   code?: AgentStepCodeConfig;
   /** 知识库访问配置（步骤级别，默认禁用） */
   knowledge?: WorkflowKnowledgeConfig;
+  /** Inline agent definition — fallback when preset ID doesn't exist locally (e.g. imported workflow) */
+  agentDef?: InlineAgentDef;
 }
 
 export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {

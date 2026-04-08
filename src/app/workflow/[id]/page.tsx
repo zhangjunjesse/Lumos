@@ -79,6 +79,7 @@ export default function WorkflowDetailPage() {
   const [editingName, setEditingName] = useState(false);
   const [taskEditorOpen, setTaskEditorOpen] = useState(false);
   const [taskRunMode, setTaskRunMode] = useState<'scheduled' | 'once'>('once');
+  const [exporting, setExporting] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const savedNameRef = useRef('');
@@ -307,6 +308,25 @@ export default function WorkflowDetailPage() {
     });
   }, [applyDirtyState, computeDirty, name]);
 
+  const handleExport = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/workflow/export/${id}`);
+      const pkg = await res.json() as { error?: string; workflow?: { name?: string } };
+      if (pkg.error) { setSaveMsg(`导出失败: ${pkg.error}`); return; }
+      const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = (pkg.workflow?.name || 'workflow').replace(/[/\\:*?"<>|]/g, '_');
+      a.download = `${safeName}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { setSaveMsg('导出失败'); }
+    finally { setExporting(false); }
+  }, [exporting, id]);
+
   if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
@@ -383,6 +403,13 @@ export default function WorkflowDetailPage() {
               {saveMsg}
             </span>
           )}
+          <Button
+            variant="outline" size="sm" className="h-7 text-xs"
+            onClick={() => void handleExport()}
+            disabled={exporting}
+          >
+            {exporting ? '导出中...' : '导出'}
+          </Button>
           <Button
             variant="outline" size="sm" className="h-7 text-xs"
             onClick={() => { setTaskRunMode('once'); setTaskEditorOpen(true); }}

@@ -173,10 +173,12 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
   return (
     <div className="overflow-x-auto pb-2">
       <div
-        className="relative rounded-2xl border border-border/60 bg-gradient-to-br from-violet-500/5 via-background to-sky-500/5"
-        style={{ width: `${Math.max(graph.totalW, 480)}px`, minHeight: `${graph.totalH}px` }}
+        className="relative w-full rounded-2xl border border-border/60 bg-gradient-to-br from-violet-500/5 via-background to-sky-500/5"
+        style={{ minWidth: `${Math.max(graph.totalW, 480)}px`, minHeight: `${graph.totalH}px` }}
       >
-        <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(graph.totalW, 480)} ${graph.totalH}`} aria-hidden="true">
+        {/* Inner container: fixed width, centered, holds all positioned content */}
+        <div className="relative mx-auto" style={{ width: `${graph.totalW}px`, height: `${graph.totalH}px` }}>
+        <svg className="absolute inset-0 h-full w-full" aria-hidden="true">
           <defs>
             <marker id="dsl-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
               <path d="M0,0 L0,6 L8,3 z" className="fill-slate-400" />
@@ -256,6 +258,7 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );
