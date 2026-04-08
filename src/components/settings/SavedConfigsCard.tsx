@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -499,22 +499,6 @@ export function SavedConfigsCard({ embedded = false, capabilityFilter }: SavedCo
     }
   };
 
-  const getTimeAgo = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return '刚刚';
-    if (diffMins < 60) return `${diffMins} 分钟前`;
-    if (diffHours < 24) return `${diffHours} 小时前`;
-    if (diffDays < 7) return `${diffDays} 天前`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} 周前`;
-    return `${Math.floor(diffDays / 30)} 月前`;
-  };
-
   const filteredConfigs = configs.filter((config) => matchesCapabilityFilter(config, capabilityFilter));
   const activeConfig = filteredConfigs.find((config) => config.id === defaultProviderId)
     || null;
@@ -538,25 +522,6 @@ export function SavedConfigsCard({ embedded = false, capabilityFilter }: SavedCo
       sourceLabel: getModelCatalogSourceLabel(catalogMeta.source, catalogMeta.usesDefault),
       updatedAt: catalogMeta.updatedAt,
     };
-  };
-
-  const formatDateTime = (value?: string | null) => {
-    if (!value) return '';
-    const date = new Date(value.replace(' ', 'T'));
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const getAuthModeLabel = (config: SavedConfig) => {
-    if (config.provider_type === 'anthropic' && config.auth_mode === 'local_auth') {
-      return 'Claude 本地登录';
-    }
-    return 'API Key';
   };
 
   const handleCreatedProvider = async () => {
@@ -645,17 +610,12 @@ export function SavedConfigsCard({ embedded = false, capabilityFilter }: SavedCo
 	                            : activeConfig.base_url}
 	                        </p>
 	                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-	                          <Badge variant="outline" className="text-[10px] h-5">
-	                            {getAuthModeLabel(activeConfig)}
-	                          </Badge>
 	                          {activeConfig.provider_type === 'anthropic' && activeConfig.auth_mode === 'local_auth' && (
 	                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${authMeta.className}`}>
 	                              {authMeta.label}
 	                            </span>
 	                          )}
-	                          <span>{meta.count} 个模型</span>
-                          <span>·</span>
-                          <span>更新于 {getTimeAgo(activeConfig.updated_at)}</span>
+	                          <span>{meta.count} 个模型可用</span>
                         </div>
                       </>
                     );
@@ -699,17 +659,12 @@ export function SavedConfigsCard({ embedded = false, capabilityFilter }: SavedCo
 	                                : config.base_url}
 	                            </p>
 	                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-	                              <Badge variant="outline" className="text-[10px] h-5">
-	                                {getAuthModeLabel(config)}
-	                              </Badge>
 	                              {config.provider_type === 'anthropic' && config.auth_mode === 'local_auth' ? (
 	                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${authMeta.className}`}>
 	                                  {authMeta.label}
 	                                </span>
-	                              ) : config.api_key ? (
-	                                <span className="font-mono">{config.api_key.slice(0, 8)}••••</span>
 	                              ) : null}
-	                              <span>{meta.count} 个模型</span>
+	                              <span>{meta.count} 个模型可用</span>
                             </div>
                           </>
                         );

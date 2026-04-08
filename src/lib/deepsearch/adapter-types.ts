@@ -72,6 +72,26 @@ export interface AdapterLoginProbe {
 }
 
 // ---------------------------------------------------------------------------
+// Account Data (browsing history, etc.)
+// ---------------------------------------------------------------------------
+
+export interface AdapterAccountDataItem {
+  id: string;
+  type: string;
+  title: string;
+  url: string;
+  viewedAt: string;
+  snippet?: string;
+}
+
+export interface AdapterAccountDataResult {
+  dataType: string;
+  items: AdapterAccountDataItem[];
+  hasMore: boolean;
+  total?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Site Adapter Interface
 // ---------------------------------------------------------------------------
 
@@ -86,6 +106,13 @@ export interface SiteAdapter {
 
   /** Extract: given a specific URL, return full content */
   extract(ctx: AdapterContext, url: string): Promise<AdapterExtractResult>;
+
+  /** Fetch personal account data (e.g. browse history). Optional — not all adapters support this. */
+  fetchAccountData?(
+    ctx: AdapterContext,
+    dataType: string,
+    options?: { limit?: number },
+  ): Promise<AdapterAccountDataResult>;
 }
 
 // ---------------------------------------------------------------------------

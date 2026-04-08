@@ -1081,6 +1081,12 @@ export function migrateLumosTables(db: Database.Database): void {
     db.exec("ALTER TABLE templates ADD COLUMN department_id TEXT DEFAULT NULL");
   }
 
+  // Add group_name to workflows table
+  const workflowCols = db.prepare("PRAGMA table_info(workflows)").all() as { name: string }[];
+  if (!workflowCols.some(c => c.name === 'group_name')) {
+    db.exec("ALTER TABLE workflows ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
+  }
+
   // Seed built-in data on first run
   seedBuiltinProviders(db);
   seedBuiltinSkills(db);

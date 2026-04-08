@@ -99,6 +99,32 @@ const TOOLS = [
       required: ['runId'],
     },
   },
+  {
+    name: 'fetch_account_data',
+    description: 'Fetch personal account data from a supported site using the logged-in session. Currently supports zhihu browse_history (知乎浏览历史，需已登录). Returns a list of recently viewed items with title, url, type, and viewedAt.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        site: {
+          type: 'string',
+          description: 'Site key, e.g. "zhihu"',
+          enum: ['zhihu'],
+        },
+        type: {
+          type: 'string',
+          description: 'Data type to fetch, e.g. "browse_history"',
+          enum: ['browse_history'],
+        },
+        limit: {
+          type: 'integer',
+          description: 'Max number of items to return (default 20, max 100)',
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+      required: ['site', 'type'],
+    },
+  },
 ];
 
 async function callDeepSearchTool(name, args) {

@@ -14,6 +14,7 @@ interface WorkflowItem {
   name: string;
   description: string;
   dslVersion: string;
+  groupName: string;
   workflowDsl: { steps?: unknown[] };
   updatedAt: string;
 }
@@ -53,6 +54,17 @@ export default function WorkflowPage() {
 
   const handleDeleted = useCallback((id: string) => {
     setWorkflows(prev => prev.filter(w => w.id !== id));
+  }, []);
+
+  const handleGroupChange = useCallback(async (id: string, groupName: string) => {
+    setWorkflows(prev => prev.map(w => w.id === id ? { ...w, groupName } : w));
+    try {
+      await fetch(`/api/workflow/definitions/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupName }),
+      });
+    } catch { /* ignore, optimistic update already applied */ }
   }, []);
 
   const openCreate = useCallback(() => {
@@ -115,6 +127,31 @@ export default function WorkflowPage() {
     } catch { setImportError('导入失败：文件格式不正确'); }
   }, [router]);
 
+  // Compute group metadata
+  const existingGroups = [...new Set(workflows.map(w => w.groupName).filter(Boolean))].sort();
+  const ungrouped = workflows.filter(w => !w.groupName);
+  const grouped = existingGroups.map(g => ({
+    name: g,
+    items: workflows.filter(w => w.groupName === g),
+  }));
+
+  const cardProps = (w: WorkflowItem) => ({
+    id: w.id,
+    name: w.name,
+    description: w.description,
+    dslVersion: w.dslVersion,
+    stepCount: Array.isArray(w.workflowDsl?.steps) ? w.workflowDsl.steps.length : 0,
+    updatedAt: w.updatedAt,
+    groupName: w.groupName,
+    existingGroups,
+    onDeleted: handleDeleted,
+    onGroupChange: handleGroupChange,
+    onRun: (id: string) => openTaskEditor(id, 'once'),
+    onSchedule: (id: string) => openTaskEditor(id, 'scheduled'),
+  });
+
+  const gridClass = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
+
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
@@ -138,7 +175,7 @@ export default function WorkflowPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {loading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className={gridClass}>
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="h-36 rounded-xl border border-border/40 bg-muted/20 animate-pulse" />
             ))}
@@ -153,33 +190,40 @@ export default function WorkflowPage() {
             <Button size="lg" onClick={openCreate}>新建工作流</Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {/* Create new card */}
-            <button
-              onClick={openCreate}
-              className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-muted/10 p-5 text-muted-foreground transition-colors hover:border-border hover:bg-accent/30 hover:text-foreground min-h-[9rem]"
-            >
-              <span className="text-2xl">+</span>
-              <span className="text-sm font-medium">新建工作流</span>
-            </button>
+          <div className="space-y-8">
+            {/* Ungrouped (includes the + new card) */}
+            <div className={gridClass}>
+              <button
+                onClick={openCreate}
+                className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-muted/10 p-5 text-muted-foreground transition-colors hover:border-border hover:bg-accent/30 hover:text-foreground min-h-[9rem]"
+              >
+                <span className="text-2xl">+</span>
+                <span className="text-sm font-medium">新建工作流</span>
+              </button>
+              {ungrouped.map(w => (
+                <WorkflowCard key={w.id} {...cardProps(w)} />
+              ))}
+            </div>
 
-            {workflows.map(w => (
-              <WorkflowCard
-                key={w.id}
-                id={w.id}
-                name={w.name}
-                description={w.description}
-                dslVersion={w.dslVersion}
-                stepCount={Array.isArray(w.workflowDsl?.steps) ? w.workflowDsl.steps.length : 0}
-                updatedAt={w.updatedAt}
-                onDeleted={handleDeleted}
-                onRun={id => openTaskEditor(id, 'once')}
-                onSchedule={id => openTaskEditor(id, 'scheduled')}
-              />
+            {/* Named groups */}
+            {grouped.map(group => (
+              <div key={group.name}>
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="text-sm font-medium text-foreground/70">{group.name}</span>
+                  <div className="flex-1 h-px bg-border/50" />
+                  <span className="text-[11px] text-muted-foreground">{group.items.length} 个</span>
+                </div>
+                <div className={gridClass}>
+                  {group.items.map(w => (
+                    <WorkflowCard key={w.id} {...cardProps(w)} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )}
       </div>
+
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>

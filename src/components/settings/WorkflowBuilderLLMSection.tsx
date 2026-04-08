@@ -111,7 +111,7 @@ export function WorkflowBuilderLLMSection() {
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-base font-semibold">工作流构建器 LLM</h2>
+          <h2 className="text-base font-semibold">工作流助手</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
             AI 生成和修改工作流 DSL 时使用的服务商、模型和系统提示词
           </p>

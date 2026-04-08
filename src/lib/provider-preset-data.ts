@@ -214,6 +214,11 @@ const DOUBAO_IMAGE_MODELS: ProviderModelOption[] = [
   { value: 'doubao-seedream-4-5-251128', label: 'Seedream 4.5' },
 ];
 
+const DASHSCOPE_IMAGE_MODELS: ProviderModelOption[] = [
+  { value: 'wan2.7-image-pro', label: '万相 2.7 Pro（4K，思考模式）' },
+  { value: 'wan2.7-image', label: '万相 2.7（快速）' },
+];
+
 const IMAGE_GEN_PRESETS: ProviderPreset[] = [
   {
     id: 'doubao-seedream',
@@ -229,6 +234,21 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
     tags: ['图片', '补充能力', '国产'],
     supported_modules: ['image'],
     default_models: DOUBAO_IMAGE_MODELS,
+  },
+  {
+    id: 'dashscope-wanxiang',
+    name: '通义万相 2.7（阿里云）',
+    description: '阿里云 DashScope 万相 2.7 图片生成模型。支持文生图、图片编辑、区域编辑、一致性组图，最高 4K 分辨率。',
+    provider_type: 'dashscope',
+    api_protocol: 'openai-compatible',
+    capabilities: ['image-gen'],
+    provider_origin: 'preset',
+    auth_mode: 'api_key',
+    base_url: 'https://dashscope.aliyuncs.com',
+    notes: '在阿里云 DashScope 控制台获取 API Key。Pro 模型支持思考模式和 4K 输出。',
+    tags: ['图片', '补充能力', '国产'],
+    supported_modules: ['image'],
+    default_models: DASHSCOPE_IMAGE_MODELS,
   },
   {
     id: 'gemini-image',

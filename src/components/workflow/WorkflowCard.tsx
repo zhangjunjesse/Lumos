@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface WorkflowCardProps {
   id: string;
@@ -11,7 +13,10 @@ interface WorkflowCardProps {
   dslVersion: string;
   stepCount: number;
   updatedAt: string;
+  groupName: string;
+  existingGroups: string[];
   onDeleted: (id: string) => void;
+  onGroupChange: (id: string, groupName: string) => void;
   onRun?: (id: string) => void;
   onSchedule?: (id: string) => void;
 }
@@ -29,8 +34,11 @@ const VERSION_COLORS: Record<string, string> = {
   v1: 'bg-slate-500/10 text-slate-500',
 };
 
-export function WorkflowCard({ id, name, description, dslVersion, stepCount, updatedAt, onDeleted, onRun, onSchedule }: WorkflowCardProps) {
+export function WorkflowCard({ id, name, description, dslVersion, stepCount, updatedAt, groupName, existingGroups, onDeleted, onGroupChange, onRun, onSchedule }: WorkflowCardProps) {
   const [deleting, setDeleting] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupInput, setGroupInput] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDelete = useCallback(async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -45,6 +53,32 @@ export function WorkflowCard({ id, name, description, dslVersion, stepCount, upd
     }
   }, [id, name, onDeleted]);
 
+  const handleGroupOpen = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setGroupInput('');
+    setGroupOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const applyGroup = (e: React.MouseEvent, value: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onGroupChange(id, value);
+    setGroupOpen(false);
+  };
+
+  const handleInputConfirm = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const value = groupInput.trim();
+    if (value) {
+      onGroupChange(id, value);
+      setGroupOpen(false);
+    }
+  };
+
+  const otherGroups = existingGroups.filter(g => g !== groupName);
   const versionClass = VERSION_COLORS[dslVersion] ?? VERSION_COLORS.v1;
 
   return (
@@ -69,32 +103,70 @@ export function WorkflowCard({ id, name, description, dslVersion, stepCount, upd
 
       {/* Footer */}
       <div className="flex items-center justify-between mt-auto pt-1 border-t border-border/30">
-        <span className="text-[10px] text-muted-foreground">{stepCount} 步骤 · {formatRelativeTime(updatedAt)}</span>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[10px] text-muted-foreground shrink-0">{stepCount} 步骤 · {formatRelativeTime(updatedAt)}</span>
+          {groupName && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground truncate max-w-[80px]">
+              {groupName}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {onRun && (
-            <Button
-              variant="ghost" size="sm"
-              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-              onClick={e => { e.preventDefault(); e.stopPropagation(); onRun(id); }}
-            >
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+              onClick={e => { e.preventDefault(); e.stopPropagation(); onRun(id); }}>
               运行
             </Button>
           )}
           {onSchedule && (
-            <Button
-              variant="ghost" size="sm"
-              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-              onClick={e => { e.preventDefault(); e.stopPropagation(); onSchedule(id); }}
-            >
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+              onClick={e => { e.preventDefault(); e.stopPropagation(); onSchedule(id); }}>
               定时
             </Button>
           )}
-          <Button
-            variant="ghost" size="sm"
-            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-destructive"
-            onClick={handleDelete}
-            disabled={deleting}
-          >
+          <Popover open={groupOpen} onOpenChange={setGroupOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                onClick={handleGroupOpen}>
+                分组
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-52 p-2" onClick={e => e.preventDefault()}>
+              <p className="text-[10px] text-muted-foreground px-1 mb-1.5">移至分组</p>
+              {otherGroups.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {otherGroups.map(g => (
+                    <button key={g}
+                      className="text-[11px] px-2 py-1 rounded-md bg-accent hover:bg-accent/80 transition-colors"
+                      onClick={e => applyGroup(e, g)}>
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-1">
+                <Input
+                  ref={inputRef}
+                  value={groupInput}
+                  onChange={e => setGroupInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleInputConfirm(e as unknown as React.MouseEvent); }}
+                  placeholder="新分组名称"
+                  className="h-7 text-xs"
+                />
+                <Button size="sm" className="h-7 px-2 text-xs shrink-0" onClick={handleInputConfirm}>
+                  确定
+                </Button>
+              </div>
+              {groupName && (
+                <button className="mt-1.5 w-full text-left text-[11px] px-1 py-1 text-muted-foreground hover:text-destructive transition-colors"
+                  onClick={e => applyGroup(e, '')}>
+                  清除分组
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-destructive"
+            onClick={handleDelete} disabled={deleting}>
             {deleting ? '...' : '删除'}
           </Button>
         </div>

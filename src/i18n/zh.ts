@@ -110,10 +110,10 @@ const zh: Record<TranslationKey, string> = {
 
   // ── Settings: General ───────────────────────────────────────
   'settings.title': '设置',
-  'settings.description': '管理 Lumos、Claude 运行环境与服务商配置',
+  'settings.description': '配置 AI 服务、功能偏好与应用选项',
   'settings.general': '通用',
   'settings.knowledge': '知识库',
-  'settings.providers': 'Claude 与服务商',
+  'settings.providers': '服务商',
   'settings.claudeCli': 'Claude 运行环境',
   'settings.codepilot': 'Lumos',
   'settings.version': '版本 {version}',
@@ -1875,7 +1875,7 @@ const zh: Record<TranslationKey, string> = {
   'tooltip.deleteItem': '删除条目',
 
   // Workflow Agent Preset Settings (wapSettings.*)
-  'settings.workflowAgents': 'AI 代理',
+  'settings.workflowAgents': 'AI助手',
   'wapSettings.title': '工作流 Agent 预设',
   'wapSettings.description': '配置工作流执行步骤使用的 Agent 预设。内置预设不可删除。',
   'wapSettings.builtin': '内置',

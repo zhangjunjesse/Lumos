@@ -501,8 +501,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             { phase: 'tools' },
           );
 
+          // Always pass MCP config so the SDK can reconnect dead processes.
+          // The SDK itself handles reuse when the connection is still alive.
+          queryOptions.mcpServers = toSdkMcpConfig(mcpServers!);
           if (!shouldResume || forceReloadOnResume) {
-            queryOptions.mcpServers = toSdkMcpConfig(mcpServers!);
             console.log('[claude-client] Loading MCP servers:', {
               names: serverNames,
               reason: shouldResume
@@ -511,8 +513,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                   : 'resume-reload'
                 : 'initial',
             });
-          } else if (shouldResume) {
-            console.log('[claude-client] Resuming session, reusing existing MCP connections');
+          } else {
+            console.log('[claude-client] Resuming session, MCP config passed for reconnect safety');
           }
         } else if (shouldResume) {
           console.log('[claude-client] Resuming session without MCP servers');

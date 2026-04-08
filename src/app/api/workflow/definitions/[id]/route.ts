@@ -18,10 +18,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
   const { id } = await params;
   try {
     const body = await request.json();
-    const { name, description, tags, workflowDsl, isTemplate } = body as {
+    const { name, description, tags, groupName, workflowDsl, isTemplate } = body as {
       name?: string;
       description?: string;
       tags?: string[];
+      groupName?: string;
       workflowDsl?: unknown;
       isTemplate?: boolean;
     };
@@ -60,6 +61,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       name,
       description,
       tags,
+      groupName,
       workflowDsl: workflowDsl as Parameters<typeof updateWorkflow>[1]['workflowDsl'],
       isTemplate,
     });

@@ -38,6 +38,7 @@ export function getDefaultApiProtocolForProviderType(providerType?: string | nul
     case 'openrouter':
     case 'gemini-image':
     case 'volcengine':
+    case 'dashscope':
       return 'openai-compatible';
     default:
       return 'anthropic-messages';
@@ -48,6 +49,7 @@ export function getDefaultCapabilitiesForProviderType(providerType?: string | nu
   switch (normalizeProviderType(providerType)) {
     case 'gemini-image':
     case 'volcengine':
+    case 'dashscope':
       return ['image-gen'];
     default:
       return ['text-gen'];
@@ -58,6 +60,7 @@ export function getDefaultProviderOrigin(isBuiltin?: boolean | number | null): P
   return isBuiltin ? 'system' : 'custom';
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getDefaultAuthMode(_providerType?: string | null): ProviderAuthMode {
   return 'api_key';
 }

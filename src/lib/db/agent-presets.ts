@@ -132,6 +132,16 @@ export function getAgentPreset(id: string): AgentPresetDirectoryItem | null {
   return rowToDirectoryItem(row);
 }
 
+export function getAgentPresetByName(name: string): AgentPresetDirectoryItem | null {
+  if (!hasTemplatesTable()) return null;
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM templates WHERE type = 'conversation' AND name = ? LIMIT 1")
+    .get(name.trim()) as TemplateRow | undefined;
+  if (!row) return null;
+  return rowToDirectoryItem(row);
+}
+
 export function createAgentPreset(input: CreateAgentPresetInput): AgentPresetDirectoryItem {
   const db = getDb();
   const id = randomUUID();

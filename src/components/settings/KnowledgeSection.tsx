@@ -103,19 +103,11 @@ export function KnowledgeSection() {
   return (
     <div className="max-w-3xl space-y-6">
       <div className="rounded-2xl border p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold">知识库检索设置</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              统一配置知识检索行为。资料库页面不再展示这些策略参数。
-            </p>
-          </div>
-          <a
-            href="/knowledge"
-            className="rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
-          >
-            查看知识库页面
-          </a>
+        <div>
+          <h2 className="text-base font-semibold">知识库检索设置</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            统一配置知识检索行为。资料库页面不再展示这些策略参数。
+          </p>
         </div>
 
         {error ? (

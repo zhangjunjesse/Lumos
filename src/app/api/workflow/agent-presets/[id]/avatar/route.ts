@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAgentPreset, updateAgentPreset } from '@/lib/db/agent-presets';
-import { generateSingleImage } from '@/lib/image-generator';
+import { generateImages } from '@/lib/image';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 
 const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   try {
     // imageSize '2K' = 2048×2048, satisfies Volcengine Seedream's 3686400px minimum
-    const result = await generateSingleImage({ prompt, aspectRatio: '1:1', imageSize: '2K' });
+    const result = await generateImages({ prompt, aspectRatio: '1:1', imageSize: '2K' });
     if (!result.images.length) {
       return NextResponse.json({ error: '图片生成未返回结果' }, { status: 500 });
     }

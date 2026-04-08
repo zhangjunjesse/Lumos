@@ -625,7 +625,8 @@ export async function POST(request: NextRequest) {
           return { id: f.id, name: f.name, type: f.type, size: f.size, filePath: f.filePath };
         } else {
           // File uploaded by user - save to .lumos-uploads
-          const workDir = session.working_directory;
+          const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+          const workDir = session.working_directory || dataDir;
           const uploadDir = path.join(workDir, '.lumos-uploads');
           if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });

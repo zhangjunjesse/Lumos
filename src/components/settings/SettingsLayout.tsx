@@ -33,7 +33,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
-  { id: "workflow-agents", label: "AI 代理", icon: UserGroup02Icon },
+  { id: "workflow-agents", label: "AI助手", icon: UserGroup02Icon },
   { id: "usage", label: "Usage", icon: Analytics },
 ];
 
@@ -69,7 +69,7 @@ export function SettingsLayout() {
     'General': 'settings.general',
     'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
-    'AI 代理': 'settings.workflowAgents',
+    'AI助手': 'settings.workflowAgents',
     'Usage': 'settings.usage',
   };
 

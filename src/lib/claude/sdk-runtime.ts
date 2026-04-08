@@ -3,7 +3,7 @@ import path from 'path'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ApiProvider } from '@/types'
 import { getDefaultProvider, getProvider } from '@/lib/db/providers'
-import { getSession, getSetting } from '@/lib/db/sessions'
+import { getSession } from '@/lib/db/sessions'
 import { findClaudeBinary, findGitBash, getClaudeConfigDir, getExpandedPath } from '@/lib/platform'
 import { findBundledClaudeSdkCliPath } from './sdk-paths'
 import { resolveScriptFromCmd, sanitizeEnv } from './utils'
@@ -107,7 +107,7 @@ export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstr
   return {
     activeProvider,
     env: sanitizeEnv(sdkEnv),
-    settingSources: getSetting('claude_project_settings_enabled') === 'true' ? ['project'] : [],
+    settingSources: ['project'],
     pathToClaudeCodeExecutable: resolveClaudeCliPath(),
   }
 }

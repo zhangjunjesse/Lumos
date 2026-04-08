@@ -111,7 +111,7 @@ export function SchedulingAgentSection() {
   }
 
   async function handleReset() {
-    if (!confirm('确认恢复规划代理为默认配置？')) return;
+    if (!confirm('确认恢复任务规划助手为默认配置？')) return;
     await fetch('/api/workflow/agents/scheduling', { method: 'DELETE' });
     setEditing(false);
     await load();
@@ -131,9 +131,9 @@ export function SchedulingAgentSection() {
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-base font-semibold">规划代理</h2>
+          <h2 className="text-base font-semibold">任务规划助手</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            分析用户请求、制定工作流执行计划的 AI 代理
+            分析用户请求、制定工作流执行计划的 AI 助手
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

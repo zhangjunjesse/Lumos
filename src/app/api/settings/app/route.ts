@@ -48,6 +48,7 @@ const ALLOWED_KEYS = [
   'model_override:image',
   'claude_project_settings_enabled',
   'locale',
+  'deepsearch.archive_mode',
 ];
 
 const PROVIDER_SETTING_RULES: Partial<Record<string, {

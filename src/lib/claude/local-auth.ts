@@ -554,7 +554,7 @@ export async function ensureClaudeLocalAuthReady(provider?: ApiProvider): Promis
   }
 
   const message = status.status === 'missing'
-    ? '当前 Claude 本地登录未完成或已失效。请到 设置 > Claude 与服务商 重新登录后再试。'
+    ? '当前 Claude 本地登录未完成或已失效。请到 设置 > 服务商 重新登录后再试。'
     : `Claude 本地登录状态检测失败：${status.error || '未知错误'}`;
 
   throw new ClaudeLocalAuthRequiredError(message, status);

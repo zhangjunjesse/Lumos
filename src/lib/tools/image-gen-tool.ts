@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
-import { generateSingleImage } from '@/lib/image-generator';
+import { generateImages } from '@/lib/image';
 
 /** Minimal CallToolResult compatible with MCP SDK types used by the Claude Agent SDK. */
 interface CallToolResult {
@@ -24,10 +24,25 @@ const inputSchema = {
     .describe('Aspect ratio. Defaults to 1:1.'),
   image_size: z.enum(['1K', '2K', '4K'])
     .optional()
-    .describe('Resolution. Defaults to 1K.'),
+    .describe('Resolution. 1K=1024px, 2K=2048px, 4K=4096px (pro model only). Defaults to 1K.'),
+  count: z.number().int().min(1).max(4)
+    .optional()
+    .describe('Number of images to generate (1-4). Defaults to 1. Use with enable_sequential for consistent multi-image sets.'),
   reference_image_paths: z.array(z.string())
     .optional()
     .describe('Local file paths of reference images for editing or style transfer.'),
+  enable_sequential: z.boolean()
+    .optional()
+    .describe('Enable sequential group mode for character/style-consistent multi-image generation. Set count>1 when using this.'),
+  color_palette: z.string()
+    .optional()
+    .describe("Hex color palette to control image colors, e.g. '#FF5733,#33FF57,#3357FF'."),
+  region_edit_bbox: z.array(z.array(z.number()))
+    .optional()
+    .describe('Bounding boxes for region editing: [[x1,y1,x2,y2], ...]. Only modify specified regions of the reference image.'),
+  thinking_mode: z.boolean()
+    .optional()
+    .describe('Enable thinking mode for better prompt understanding and creative quality. Defaults to true.'),
 };
 
 export function createImageGenTool(sessionId?: string) {
@@ -57,11 +72,19 @@ export function createImageGenTool(sessionId?: string) {
       }
 
       try {
-        const result = await generateSingleImage({
+        const providerOptions: Record<string, unknown> = {};
+        if (args.enable_sequential) providerOptions.enable_sequential = true;
+        if (args.color_palette) providerOptions.color_palette = args.color_palette;
+        if (args.region_edit_bbox) providerOptions.bbox_list = args.region_edit_bbox;
+        if (args.thinking_mode === false) providerOptions.thinking_mode = false;
+
+        const result = await generateImages({
           prompt: args.prompt,
           aspectRatio: args.aspect_ratio || '1:1',
           imageSize: args.image_size || '1K',
+          n: args.count,
           referenceImagePaths: args.reference_image_paths,
+          providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
           sessionId,
         });
 

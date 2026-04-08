@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { generateSingleImage, NoImageGeneratedError } from '@/lib/image-generator';
+import { generateImages, ImageGenError } from '@/lib/image';
 
 interface GenerateRequest {
   prompt: string;
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await generateSingleImage({
+    const result = await generateImages({
       prompt: body.prompt,
       model: body.model,
       aspectRatio: body.aspectRatio,
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[media/generate] Failed:', error);
 
-    if (NoImageGeneratedError.isInstance(error)) {
+    if (error instanceof ImageGenError && error.code === 'content_policy') {
       return new Response(
         JSON.stringify({ error: 'No images were generated. Try a different prompt.' }),
         { status: 422, headers: { 'Content-Type': 'application/json' } }

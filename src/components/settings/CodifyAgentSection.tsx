@@ -115,7 +115,7 @@ export function CodifyAgentSection() {
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-base font-semibold">代码固化代理</h2>
+          <h2 className="text-base font-semibold">工作流代码助手</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
             将 Agent 步骤的执行记录转换为确定性代码，减少 LLM 调用。支持从浏览器操作追踪自动生成 TypeScript 处理器。
           </p>

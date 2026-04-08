@@ -9,6 +9,7 @@ export interface WorkflowRow {
   name: string;
   description: string;
   tags: string;
+  group_name: string;
   dsl_version: string;
   workflow_dsl: string;
   is_template: number;
@@ -22,6 +23,7 @@ export interface WorkflowRecord {
   name: string;
   description: string;
   tags: string[];
+  groupName: string;
   dslVersion: string;
   workflowDsl: AnyWorkflowDSL;
   isTemplate: boolean;
@@ -34,6 +36,7 @@ export interface CreateWorkflowInput {
   name: string;
   description?: string;
   tags?: string[];
+  groupName?: string;
   workflowDsl: AnyWorkflowDSL;
   isTemplate?: boolean;
   createdBy?: string;
@@ -43,6 +46,7 @@ export interface UpdateWorkflowInput {
   name?: string;
   description?: string;
   tags?: string[];
+  groupName?: string;
   workflowDsl?: AnyWorkflowDSL;
   isTemplate?: boolean;
 }
@@ -69,6 +73,7 @@ function rowToRecord(row: WorkflowRow): WorkflowRecord {
     name: row.name,
     description: row.description,
     tags,
+    groupName: row.group_name || '',
     dslVersion: row.dsl_version,
     workflowDsl: dsl,
     isTemplate: row.is_template === 1,
@@ -122,13 +127,14 @@ export function createWorkflow(input: CreateWorkflowInput): WorkflowRecord {
 
   db.prepare(`
     INSERT INTO workflows
-      (id, name, description, tags, dsl_version, workflow_dsl, is_template, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, name, description, tags, group_name, dsl_version, workflow_dsl, is_template, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.name.trim(),
     (input.description || '').trim(),
     JSON.stringify(input.tags || []),
+    input.groupName || '',
     dslVersion,
     JSON.stringify(input.workflowDsl),
     input.isTemplate ? 1 : 0,
@@ -158,6 +164,7 @@ export function updateWorkflow(
       name = ?,
       description = ?,
       tags = ?,
+      group_name = ?,
       dsl_version = ?,
       workflow_dsl = ?,
       is_template = ?,
@@ -167,6 +174,7 @@ export function updateWorkflow(
     input.name ?? existing.name,
     input.description ?? existing.description,
     JSON.stringify(input.tags ?? existing.tags),
+    input.groupName ?? existing.groupName,
     dsl.version || existing.dslVersion,
     JSON.stringify(dsl),
     (input.isTemplate ?? existing.isTemplate) ? 1 : 0,

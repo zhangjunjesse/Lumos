@@ -3,8 +3,8 @@ import type {
   AdapterContext,
   AdapterSearchResult,
   AdapterExtractResult,
-  AdapterLoginProbe,
 } from '../adapter-types';
+import { fetchZhihuBrowseHistory } from './zhihu-account';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -236,7 +236,8 @@ function parseZhihuUrl(url: string): { type: 'question'; id: string } | { type: 
 export const zhihuAdapter: SiteAdapter = {
   siteKey: 'zhihu',
 
-  async probeLogin(ctx, site) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async probeLogin(ctx, _site) {
     try {
       // Quick probe: call a lightweight API and check for auth
       const resp = await ctx.fetch('https://www.zhihu.com/api/v4/me', {
@@ -270,5 +271,13 @@ export const zhihuAdapter: SiteAdapter = {
       return extractQuestion(ctx, parsed.id);
     }
     return extractArticle(ctx, parsed.id);
+  },
+
+  async fetchAccountData(ctx, dataType, options = {}) {
+    const limit = Math.min(options.limit ?? 20, 100);
+    if (dataType === 'browse_history') {
+      return fetchZhihuBrowseHistory(ctx, limit);
+    }
+    throw new Error(`知乎不支持账号数据类型：${dataType}`);
   },
 };

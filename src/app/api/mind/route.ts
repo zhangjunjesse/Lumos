@@ -507,7 +507,7 @@ export async function GET(request: NextRequest) {
     const activeMemories = allMemories.filter((memory) => !memory.isArchived);
     const visibleMemories = includeArchived ? allMemories : activeMemories;
     const memorySystemEnabled = getSetting('memory_system_enabled') !== 'false';
-    const projectRulesEnabled = getSetting('claude_project_settings_enabled') === 'true';
+    const projectRulesEnabled = true;
     const memoryContextMaxItems = getMemoryContextLimit();
     const personaProfile = getMindPersonaProfile();
     const personaHistory = getMindPersonaHistory(20);

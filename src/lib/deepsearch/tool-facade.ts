@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { getAdapter } from './adapter-registry';
+import { createAdapterContext } from './adapter-context';
+import { resolveBrowserBridgeRuntimeConfig } from '@/lib/browser-runtime/bridge-client';
 import type {
   CreateDeepSearchRunInput,
   DeepSearchArtifactKind,
@@ -437,4 +440,41 @@ export async function controlDeepSearchToolRun(action: DeepSearchRunAction, runI
     action,
     ...buildRunView(run, sites),
   };
+}
+
+export async function fetchAccountDataTool(site: string, dataType: string, limit?: number) {
+  const adapter = getAdapter(site);
+  if (!adapter.fetchAccountData) {
+    throw new Error(`${site} 不支持账号数据获取`);
+  }
+
+  const config = resolveBrowserBridgeRuntimeConfig();
+  if (!config) {
+    throw new Error('浏览器桥接未就绪，请确保 Lumos 桌面端正在运行');
+  }
+
+  const ctx = createAdapterContext(config);
+
+  try {
+    const result = await adapter.fetchAccountData(ctx, dataType, { limit });
+    return {
+      action: 'fetch_account_data' as const,
+      site,
+      dataType: result.dataType,
+      total: result.total,
+      count: result.items.length,
+      hasMore: result.hasMore,
+      items: result.items,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const authPattern = /未登录|登录已过期|请先登录|需要登录|expired|unauthorized|not logged in/i;
+    return {
+      action: 'fetch_account_data' as const,
+      site,
+      error: msg,
+      loginRequired: authPattern.test(msg),
+      loginUrl: `/extensions?tab=deepsearch`,
+    };
+  }
 }

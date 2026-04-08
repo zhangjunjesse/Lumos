@@ -7,7 +7,7 @@ import {
   updateMediaJobCounters,
   cancelPendingJobItems,
 } from '@/lib/db';
-import { generateSingleImage } from '@/lib/image-generator';
+import { generateImages } from '@/lib/image';
 import type { BatchConfig, JobProgressEvent, MediaJobItem } from '@/types';
 
 // ==========================================
@@ -130,7 +130,7 @@ export async function startJob(jobId: string): Promise<void> {
 }
 
 async function executeQueue(runningJob: RunningJob): Promise<void> {
-  const { jobId, config, abortController } = runningJob;
+  const { jobId, config } = runningJob;
 
   while (runningJob.isRunning) {
     // Get items that need processing
@@ -190,7 +190,7 @@ async function processItem(runningJob: RunningJob, item: MediaJobItem): Promise<
   });
 
   try {
-    const result = await generateSingleImage({
+    const result = await generateImages({
       prompt: item.prompt,
       aspectRatio: item.aspect_ratio,
       imageSize: item.image_size,

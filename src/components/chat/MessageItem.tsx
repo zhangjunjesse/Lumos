@@ -29,6 +29,7 @@ import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
 import { TaskCard, parseTeamPlanBlock } from './TaskCard';
 import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
+import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
 import { unwrapToolResult } from '@/lib/tool-result-parser';
 
 interface ImageGenRequest {
@@ -483,7 +484,9 @@ export function MessageItem({ message }: MessageItemProps) {
         {!isUser && (() => {
           try {
             const ds = extractDeepSearchSources(pairedTools);
-            return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} runId={ds.runId} archivePrompt={ds.archivePrompt} /> : null;
+            if (ds) return <DeepSearchSourcesCard sources={ds.sources} query={ds.query} runId={ds.runId} archivePrompt={ds.archivePrompt} />;
+            const dsError = extractDeepSearchError(pairedTools);
+            return dsError ? <DeepSearchLoginCard info={dsError} /> : null;
           } catch {
             return null;
           }

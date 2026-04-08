@@ -1,8 +1,6 @@
 'use client';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { ClaudeRuntimeCard } from './ClaudeRuntimeCard';
 import { SavedConfigsCard } from './SavedConfigsCard';
 import { ModuleOverrideSection } from './ModuleOverrideSection';
 
@@ -18,8 +16,6 @@ export function ClaudeConfigSection() {
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
-          <ClaudeRuntimeCard embedded />
-          <Separator />
           <SavedConfigsCard embedded capabilityFilter="agent-chat" />
         </CardContent>
       </Card>

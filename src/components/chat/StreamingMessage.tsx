@@ -29,6 +29,7 @@ import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
 import type { ToolUIPart } from 'ai';
 import type { PermissionRequestEvent, PlannerOutput } from '@/types';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
+import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
 
 interface ImageGenRequest {
   prompt: string;
@@ -171,7 +172,7 @@ function AskUserQuestionUI({
     setSelections((prev) => {
       const current = new Set(prev[qIdx] || []);
       if (multi) {
-        current.has(label) ? current.delete(label) : current.add(label);
+        if (current.has(label)) { current.delete(label); } else { current.add(label); }
       } else {
         current.clear();
         current.add(label);
@@ -459,14 +460,16 @@ export function StreamingMessage({
           />
         )}
 
-        {/* DeepSearch sources — show when tool results are available */}
+        {/* DeepSearch sources / error — show when tool results are available */}
         {(() => {
           const paired = toolUses.map((tool) => {
             const result = toolResults.find((r) => r.tool_use_id === tool.id);
             return { name: tool.name, result: result?.content, isError: result?.is_error };
           });
           const ds = extractDeepSearchSources(paired);
-          return ds ? <DeepSearchSourcesCard sources={ds.sources} query={ds.query} /> : null;
+          if (ds) return <DeepSearchSourcesCard sources={ds.sources} query={ds.query} />;
+          const dsError = extractDeepSearchError(paired);
+          return dsError ? <DeepSearchLoginCard info={dsError} /> : null;
         })()}
 
         {/* Permission approval — AskUserQuestion gets a dedicated UI */}
@@ -559,7 +562,7 @@ export function StreamingMessage({
             return (
               <>
                 {batchPlanResult.beforeText && <MessageResponse>{batchPlanResult.beforeText}</MessageResponse>}
-                <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId={`streaming-${Date.now()}`} />
+                <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId="streaming-batch-plan" />
                 {batchPlanResult.afterText && <MessageResponse>{batchPlanResult.afterText}</MessageResponse>}
               </>
             );

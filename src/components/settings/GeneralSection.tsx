@@ -116,11 +116,9 @@ function UpdateCard() {
 export function GeneralSection() {
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
-  const [projectSettingsEnabled, setProjectSettingsEnabled] = useState(false);
   const [showSkipPermWarning, setShowSkipPermWarning] = useState(false);
   const [skipPermSaving, setSkipPermSaving] = useState(false);
   const [memorySaving, setMemorySaving] = useState(false);
-  const [projectSettingsSaving, setProjectSettingsSaving] = useState(false);
   const { t, locale, setLocale } = useTranslation();
 
   const fetchAppSettings = useCallback(async () => {
@@ -131,7 +129,6 @@ export function GeneralSection() {
         const appSettings = data.settings || {};
         setSkipPermissions(appSettings.dangerously_skip_permissions === "true");
         setMemoryEnabled(appSettings.memory_system_enabled !== "false");
-        setProjectSettingsEnabled(appSettings.claude_project_settings_enabled === "true");
       }
     } catch {
       // ignore
@@ -192,18 +189,6 @@ export function GeneralSection() {
     }
   };
 
-  const handleProjectSettingsToggle = async (enabled: boolean) => {
-    setProjectSettingsSaving(true);
-    try {
-      const ok = await saveAppSettings({
-        claude_project_settings_enabled: enabled ? "true" : "",
-      });
-      if (ok) setProjectSettingsEnabled(enabled);
-    } finally {
-      setProjectSettingsSaving(false);
-    }
-  };
-
   return (
     <div className="max-w-3xl space-y-6">
       <UpdateCard />
@@ -244,27 +229,6 @@ export function GeneralSection() {
             disabled={memorySaving}
           />
         </div>
-      </div>
-
-      {/* Project CLAUDE/rules loading toggle */}
-      <div className={`rounded-lg border p-4 transition-shadow hover:shadow-sm ${projectSettingsEnabled ? "border-amber-500/50 bg-amber-500/5" : "border-border/50"}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-medium">{t('settings.projectRulesTitle')}</h2>
-            <p className="text-xs text-muted-foreground">{t('settings.projectRulesDesc')}</p>
-          </div>
-          <Switch
-            checked={projectSettingsEnabled}
-            onCheckedChange={handleProjectSettingsToggle}
-            disabled={projectSettingsSaving}
-          />
-        </div>
-        {projectSettingsEnabled && (
-          <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-            {t('settings.projectRulesWarning')}
-          </div>
-        )}
       </div>
 
       {/* Language picker */}

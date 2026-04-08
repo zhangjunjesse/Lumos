@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     const provider = providerId ? getProvider(providerId) : getDefaultProvider();
     if (!provider) {
       return NextResponse.json(
-        { error: '未配置 Codify Agent 服务商，请先在设置 → AI 代理中配置' },
+        { error: '未配置 Codify Agent 服务商，请先在设置 → AI助手中配置' },
         { status: 400 },
       );
     }
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
 
     if (!effectiveModel) {
       return NextResponse.json(
-        { error: '未配置 Codify Agent 模型，请在设置 → AI 代理中选择模型' },
+        { error: '未配置 Codify Agent 模型，请在设置 → AI助手中选择模型' },
         { status: 400 },
       );
     }

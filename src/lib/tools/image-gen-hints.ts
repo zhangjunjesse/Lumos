@@ -12,4 +12,11 @@ export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (generate_image
 - When approaching the limit (8th-9th image), proactively inform the user about remaining quota.
 - After reaching the limit, suggest starting a new conversation to continue.
 - If the tool returns an error about missing provider config, tell the user to configure it in Settings → Providers → Image Generation.
-- If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.`;
+- If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.
+
+Advanced features (DashScope Wanxiang 2.7):
+- Sequential group mode (enable_sequential=true, count=2-4): generates multiple images with consistent characters/style. Use when user asks for "连续插图", "多角度", "一致性组图", "绘本", "故事板", or multiple views of the same subject.
+- Color palette (color_palette): controls the color scheme. Use when user specifies colors like "暖色调", "蓝白配色", or provides hex codes.
+- Region editing (region_edit_bbox + reference_image_paths): modifies only specific areas of an image. Coordinates are [x1,y1,x2,y2] in pixels. Use when user says "只改这部分", "局部修改", or points to a specific area.
+- Thinking mode (thinking_mode): enabled by default. Improves creative quality and prompt understanding. Only disable if user explicitly asks for faster generation.
+- Resolution: 1K for quick previews, 2K for quality output, 4K for print/professional use (pro model only, slower).`;

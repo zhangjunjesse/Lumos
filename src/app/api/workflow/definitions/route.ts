@@ -18,10 +18,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, description, tags, workflowDsl, isTemplate, createdBy } = body as {
+    const { name, description, tags, groupName, workflowDsl, isTemplate, createdBy } = body as {
       name?: string;
       description?: string;
       tags?: string[];
+      groupName?: string;
       workflowDsl?: unknown;
       isTemplate?: boolean;
       createdBy?: string;
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
       name,
       description,
       tags,
+      groupName,
       workflowDsl: workflowDsl as Parameters<typeof createWorkflow>[0]['workflowDsl'],
       isTemplate,
       createdBy,

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const pid = getSetting('workflow_builder_provider_id') || '';
     const provider = pid ? getProvider(pid) : getDefaultProvider();
     if (!provider) {
-      return NextResponse.json({ error: '未配置 AI 服务商，请在设置 → AI 代理中配置' }, { status: 400 });
+      return NextResponse.json({ error: '未配置 AI 服务商，请在设置 → AI助手中配置' }, { status: 400 });
     }
 
     const model = getSetting('workflow_builder_model')
