@@ -84,6 +84,16 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
       }
     }
 
+    // Initialize venv if any MCP needs Python packages or scripts
+    const needsPython = mcps.some(s => s.scriptContent || (s.pythonPackages && s.pythonPackages.length > 0));
+    if (needsPython) {
+      await fetch('/api/python-runtime/packages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'init' }),
+      }).catch(() => {});
+    }
+
     for (const server of mcps) {
       const name = String(server.name || '').trim();
       const config = server.config || {};
@@ -96,6 +106,7 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
       const command = config.command || '';
       const url = config.url || '';
 
+      // Validate transport type consistency
       if (type === 'stdio' && !command) {
         mcpResults.push({ name, status: 'invalid', message: t('extensions.builderMcpMissingCommand') });
         continue;
@@ -104,25 +115,39 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
         mcpResults.push({ name, status: 'invalid', message: t('extensions.builderMcpMissingUrl') });
         continue;
       }
+      if (type === 'stdio' && url && !command) {
+        mcpResults.push({ name, status: 'invalid', message: 'stdio type should not use URL — use sse or http instead' });
+        continue;
+      }
 
       try {
         // Write Python script file if provided
         if (server.scriptContent) {
-          await fetch('/api/python-runtime/packages', {
+          const writeRes = await fetch('/api/python-runtime/packages', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'write-script', name, content: server.scriptContent }),
           });
+          if (!writeRes.ok) {
+            const body = await writeRes.json().catch(() => ({}));
+            mcpResults.push({ name, status: 'error', message: body.error || 'Failed to write script' });
+            continue;
+          }
         }
 
         // Install Python packages if specified
         if (server.pythonPackages && server.pythonPackages.length > 0) {
           for (const pkg of server.pythonPackages) {
-            await fetch('/api/python-runtime/packages', {
+            const pkgRes = await fetch('/api/python-runtime/packages', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ action: 'install', package: pkg }),
             });
+            if (!pkgRes.ok) {
+              const body = await pkgRes.json().catch(() => ({}));
+              mcpResults.push({ name, status: 'error', message: `Failed to install ${pkg}: ${body.error || 'unknown'}` });
+              continue;
+            }
           }
         }
 
