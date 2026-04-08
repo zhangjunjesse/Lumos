@@ -100,13 +100,23 @@ function copyDirectory(src: string, dest: string): void {
 
 export function getDb(): Database.Database {
   if (!db) {
-    // Run migration before anything else
-    migrateFromCodePilot();
-
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+
+    // During `next build`, multiple workers collect page data in parallel.
+    // Skip migrations and async side effects to avoid SQLITE_BUSY deadlocks.
+    if (process.env.LUMOS_BUILD_PHASE === '1') {
+      db = new Database(DB_PATH);
+      db.pragma('journal_mode = WAL');
+      db.pragma('busy_timeout = 30000');
+      db.pragma('foreign_keys = ON');
+      return db;
+    }
+
+    // Run migration before anything else
+    migrateFromCodePilot();
 
     // Migrate from old locations if the new DB doesn't exist yet
     if (!fs.existsSync(DB_PATH)) {
