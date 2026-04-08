@@ -17,6 +17,8 @@ import type {
 import { getEnabledMcpServersAsConfig, dataDir } from '@/lib/db';
 import type { MCPServerConfig } from '@/types';
 import { ENRICHER_MAP, type McpEnrichContext } from '@/lib/mcp-env-enrichers';
+import { getVenvPythonPath } from '@/lib/python-venv';
+import { resolvePythonBinary } from '@/lib/python-runtime';
 
 export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
@@ -46,6 +48,7 @@ export function resolveEnabledMcpServers(
   // Build resolution context (once per call)
   const runtimePath = resolveRuntimePath();
   const workspacePath = options.sessionWorkingDirectory || process.cwd();
+  const pythonPath = resolvePythonBinary() || getVenvPythonPath();
   const enrichContext: McpEnrichContext = {
     sessionWorkingDirectory: options.sessionWorkingDirectory,
     sessionId: options.sessionId,
@@ -64,7 +67,16 @@ export function resolveEnabledMcpServers(
       continue;
     }
 
-    // Step 1: Resolve path placeholders in args
+    // Step 1a: Resolve path placeholders in command
+    if (config.command) {
+      config.command = config.command
+        .replace('[RUNTIME_PATH]', runtimePath)
+        .replace('[PYTHON_PATH]', pythonPath)
+        .replace('[DATA_DIR]', dataDir)
+        .replace(/^~\//, os.homedir() + '/');
+    }
+
+    // Step 1b: Resolve path placeholders in args
     if (config.args) {
       config.args = config.args.map(arg => {
         const normalized = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
@@ -72,6 +84,7 @@ export function resolveEnabledMcpServers(
           .replace('[RUNTIME_PATH]', runtimePath)
           .replace('[WORKSPACE_PATH]', workspacePath)
           .replace('[DATA_DIR]', dataDir)
+          .replace('[PYTHON_PATH]', pythonPath)
           .replace(/^~\//, os.homedir() + '/');
       });
     }
@@ -84,6 +97,7 @@ export function resolveEnabledMcpServers(
           .replace('[RUNTIME_PATH]', runtimePath)
           .replace('[WORKSPACE_PATH]', workspacePath)
           .replace('[DATA_DIR]', dataDir)
+          .replace('[PYTHON_PATH]', pythonPath)
           .replace(/^~\//, os.homedir() + '/');
       }
       config.env = resolved;

@@ -26,6 +26,8 @@ type ExtensionPlan = {
       url?: string;
       headers?: Record<string, string>;
     };
+    pythonPackages?: string[];
+    scriptContent?: string;
   }>;
 };
 
@@ -104,6 +106,26 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
       }
 
       try {
+        // Write Python script file if provided
+        if (server.scriptContent) {
+          await fetch('/api/python-runtime/packages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'write-script', name, content: server.scriptContent }),
+          });
+        }
+
+        // Install Python packages if specified
+        if (server.pythonPackages && server.pythonPackages.length > 0) {
+          for (const pkg of server.pythonPackages) {
+            await fetch('/api/python-runtime/packages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'install', package: pkg }),
+            });
+          }
+        }
+
         const res = await fetch('/api/plugins/mcp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

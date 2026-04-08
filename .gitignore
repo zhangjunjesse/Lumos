@@ -55,5 +55,6 @@ next-env.d.ts
 .lumos-uploads/
 .codepilot-uploads/
 resources/feishu-mcp-server/node_modules/
+resources/python-runtime/
 /tasks
 /node_modules_incomplete_201
