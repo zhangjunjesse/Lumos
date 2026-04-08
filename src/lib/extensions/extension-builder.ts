@@ -51,6 +51,10 @@ Lumos connects to an already-running remote server via URL.
 
 **Use when:** The user provides a URL endpoint, or wants to connect to an existing MCP-compatible service.
 
+**sse vs http:**
+- Use \`"http"\` (Streamable HTTP) by default — it's the newer, recommended transport
+- Use \`"sse"\` (Server-Sent Events) only if the user explicitly says the server uses SSE, or the server documentation specifies SSE
+
 Config:
 - \`type\`: "sse" or "http"
 - \`url\`: the server endpoint URL (required)
@@ -164,7 +168,7 @@ if __name__ == "__main__":
 2. **MUST write to stdout** with \\n delimiter and flush immediately
 3. **MUST NOT print anything else to stdout** — use stderr for logging: \`print("debug", file=sys.stderr)\`
 4. **MUST handle unknown methods** gracefully with error response
-5. **All imports at the top** — if using pip packages, import them inside the handler to give better error messages
+5. **Standard library imports at the top.** For pip packages, use lazy import with try/except inside handlers so the script still starts and reports a clear error if a package is missing
 
 ## Skill Format
 

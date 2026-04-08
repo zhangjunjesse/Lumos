@@ -115,11 +115,6 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
         mcpResults.push({ name, status: 'invalid', message: t('extensions.builderMcpMissingUrl') });
         continue;
       }
-      if (type === 'stdio' && url && !command) {
-        mcpResults.push({ name, status: 'invalid', message: 'stdio type should not use URL — use sse or http instead' });
-        continue;
-      }
-
       try {
         // Write Python script file if provided
         if (server.scriptContent) {
@@ -136,6 +131,7 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
         }
 
         // Install Python packages if specified
+        let pkgFailed = false;
         if (server.pythonPackages && server.pythonPackages.length > 0) {
           for (const pkg of server.pythonPackages) {
             const pkgRes = await fetch('/api/python-runtime/packages', {
@@ -146,10 +142,12 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
             if (!pkgRes.ok) {
               const body = await pkgRes.json().catch(() => ({}));
               mcpResults.push({ name, status: 'error', message: `Failed to install ${pkg}: ${body.error || 'unknown'}` });
-              continue;
+              pkgFailed = true;
+              break;
             }
           }
         }
+        if (pkgFailed) continue;
 
         const res = await fetch('/api/plugins/mcp', {
           method: 'POST',
