@@ -495,6 +495,7 @@ export class BrowserBridgeServer {
         title: tab.title,
         isActive: tab.id === manager.getActiveTabId(),
         isLoading: tab.isLoading,
+        isIncognito: tab.isIncognito || false,
       }));
       sendJson(res, 200, { ok: true, pages, activePageId: manager.getActiveTabId() });
       return;
@@ -587,15 +588,15 @@ export class BrowserBridgeServer {
     }
 
     if (method === 'POST' && pathname === '/v1/pages/new') {
-      const body = (await parseJsonBody(req)) as { url?: string; background?: boolean };
+      const body = (await parseJsonBody(req)) as { url?: string; background?: boolean; incognito?: boolean };
       const pageId = await withAiActivity(
         manager,
         {
-          action: 'AI opened a browser tab',
+          action: body?.incognito ? 'AI opened an incognito tab' : 'AI opened a browser tab',
           details: body?.url || 'about:blank',
         },
         async () => {
-          const createdPageId = await manager.createTab(body?.url);
+          const createdPageId = await manager.createTab(body?.url, { incognito: body?.incognito });
           if (body?.background) {
             // Set offscreen bounds so Chromium renders the page content
             manager.ensureViewRenderable(createdPageId);

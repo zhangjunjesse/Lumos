@@ -229,10 +229,11 @@ async function handleTool(name, args) {
 
     case 'new_page': {
       const url = typeof args?.url === 'string' ? args.url : '';
+      const incognito = args?.incognito === true;
       const created = await withBridgeRetry(
         () => callBridge('/v1/pages/new', {
           method: 'POST',
-          body: { url: url || undefined, background: BACKGROUND_MODE || undefined },
+          body: { url: url || undefined, background: BACKGROUND_MODE || undefined, incognito: incognito || undefined },
         }),
         { delayMs: 700 },
       );
@@ -409,10 +410,13 @@ async function main() {
       },
       {
         name: 'new_page',
-        description: 'Create and activate a new page. Prefer this when multiple similar tabs are already open and you need a deterministic fresh page.',
+        description: 'Create and activate a new page. Prefer this when multiple similar tabs are already open and you need a deterministic fresh page. Use incognito=true only when the user explicitly requests private/incognito browsing.',
         inputSchema: {
           type: 'object',
-          properties: { url: { type: 'string' } },
+          properties: {
+            url: { type: 'string' },
+            incognito: { type: 'boolean', description: 'Open in incognito mode (no cookies/history persisted). Only use when user explicitly requests it.' },
+          },
         },
       },
       {

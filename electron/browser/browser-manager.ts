@@ -32,6 +32,7 @@ export interface BrowserTab {
   canGoBack: boolean;
   canGoForward: boolean;
   isPinned: boolean;
+  isIncognito?: boolean;
   createdAt: number;
   lastAccessedAt: number;
 }
@@ -494,16 +495,17 @@ export class BrowserManager extends EventEmitter {
     this.handleWindowResize();
   }
 
-  async createTab(url?: string): Promise<string> {
+  async createTab(url?: string, options?: { incognito?: boolean }): Promise<string> {
     if (this.tabs.size >= this.maxTabs) {
       throw new Error(`Maximum tab limit (${this.maxTabs}) reached`);
     }
 
+    const incognito = options?.incognito ?? false;
     const tabId = createId('tab');
 
     try {
       await this.evictIfNeeded();
-      const view = this.createView();
+      const view = this.createView(incognito);
       view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       this.mainWindow.contentView.addChildView(view);
       this.tabs.set(tabId, view);
@@ -511,11 +513,12 @@ export class BrowserManager extends EventEmitter {
       const metadata: BrowserTab = {
         id: tabId,
         url: url || 'about:blank',
-        title: 'New Tab',
+        title: incognito ? 'New Incognito Tab' : 'New Tab',
         isLoading: false,
         canGoBack: false,
         canGoForward: false,
         isPinned: false,
+        isIncognito: incognito || undefined,
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
       };
@@ -1081,10 +1084,12 @@ export class BrowserManager extends EventEmitter {
     this.database.close();
   }
 
-  private createView(): WebContentsView {
+  private createView(incognito?: boolean): WebContentsView {
+    // Incognito tabs use a non-persist partition (in-memory only, cleared on close)
+    const partition = incognito ? 'lumos-incognito' : this.sessionPartition;
     return new WebContentsView({
       webPreferences: {
-        partition: this.sessionPartition,
+        partition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -1315,6 +1320,8 @@ export class BrowserManager extends EventEmitter {
   private async persistTabState(tabId: string): Promise<void> {
     const metadata = this.tabMetadata.get(tabId);
     if (!metadata) return;
+    // Incognito tabs should not be persisted to disk
+    if (metadata.isIncognito) return;
 
     let scrollPosition = { x: 0, y: 0 };
     const view = this.tabs.get(tabId);
