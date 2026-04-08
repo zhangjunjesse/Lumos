@@ -188,7 +188,8 @@ function importMcpServers(): number {
       const isEnabled = config.name === 'task-management'
         || config.name === 'workflow'
         || config.name === 'deepsearch'
-        || config.name === 'office-docs';
+        || config.name === 'office-docs'
+        || config.name === 'chrome-devtools';
       createMcpServer({
         name: config.name,
         scope: 'builtin',

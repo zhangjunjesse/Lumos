@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
-import path from 'path';
 import { resolveProviderPersistenceFields } from '../provider-config';
 import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from './seed-builtin';
 
@@ -1049,19 +1048,8 @@ export function migrateLumosTables(db: Database.Database): void {
     db.exec("ALTER TABLE scheduled_workflows ADD COLUMN schedule_day_of_week INTEGER DEFAULT NULL");
   }
 
-  // Ensure browser MCP server exists
-  const browserMcpExists = db.prepare("SELECT id FROM mcp_servers WHERE name = 'browser' AND scope = 'builtin'").get();
-  if (!browserMcpExists) {
-    const browserMcpPath = process.resourcesPath
-      ? path.join(process.resourcesPath, 'mcp-servers', 'browser', 'browser_mcp.mjs')
-      : path.join(process.cwd(), 'resources', 'mcp-servers', 'browser', 'browser_mcp.mjs');
-    const now = new Date().toISOString().replace('T', ' ').split('.')[0];
-    db.prepare(`
-      INSERT INTO mcp_servers (id, name, command, args, env, scope, source, description, type, is_enabled, created_at, updated_at)
-      VALUES (?, 'browser', 'node', ?, '{}', 'builtin', 'builtin', 'Lumos 内置浏览器控制，共享用户登录态', 'stdio', 1, ?, ?)
-    `).run(crypto.randomBytes(16).toString('hex'), JSON.stringify([browserMcpPath]), now, now);
-    console.log('[migration] browser MCP server registered');
-  }
+  // Remove legacy browser MCP (replaced by chrome-devtools, registered via init-builtin-resources)
+  db.prepare("DELETE FROM mcp_servers WHERE name = 'browser' AND scope = 'builtin'").run();
 
   // Team departments table
   db.exec(`

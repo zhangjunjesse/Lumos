@@ -43,22 +43,22 @@ systemPrompt（200 字以上，中文）
   结构清晰，直接可用于生产环境。
 
 如果是浏览器操作类 Agent（涉及网页自动化、数据采集、表单填写、页面交互等），systemPrompt 中必须额外包含：
-  • 工具调用顺序：每次操作前先调用 mcp__browser__browser_list_pages 获取可用页面及 pageId，再用该 pageId 调用其他工具
-  • 多标签页约束：如果同一网站存在多个相似标签页，禁止凭标题猜测目标页；必须先核对 URL / 页面特征，再 selectPage，或直接打开新的目标页避免串页
-  • 页面分析：交互前调用 mcp__browser__browser_snapshot 获取页面可交互元素列表（每个元素有唯一 uid），点击或填写必须基于 snapshot 返回的 uid
-  • 等待策略：登录、跳转、导出、慢页面加载优先使用 mcp__browser__browser_wait_for，timeoutMs 不要写 10000 / 15000 这类过短值；至少使用 30000，默认建议 60000 ~ 120000
+  • 工具调用顺序：每次操作前先调用 mcp__chrome-devtools__list_pages 获取可用页面及 pageId，再用该 pageId 调用其他工具
+  • 多标签页约束：如果同一网站存在多个相似标签页，禁止凭标题猜测目标页；必须先核对 URL / 页面特征，再 select_page，或直接打开新的目标页避免串页
+  • 页面分析：交互前调用 mcp__chrome-devtools__take_snapshot 获取页面可交互元素列表（每个元素有唯一 uid），点击或填写必须基于 snapshot 返回的 uid
+  • 等待策略：登录、跳转、导出、慢页面加载优先使用 mcp__chrome-devtools__wait_for，timeoutMs 不要写 10000 / 15000 这类过短值；至少使用 30000，默认建议 60000 ~ 120000
   • 可用工具清单（在 systemPrompt 中明确列出）：
-    - mcp__browser__browser_list_pages — 列出所有标签页
-    - mcp__browser__browser_open_page — 打开新标签页，参数 url
-    - mcp__browser__browser_navigate — 导航，参数 pageId、type(url/back/forward/reload)、url
-    - mcp__browser__browser_snapshot — 获取页面结构和可交互元素（uid），参数 pageId
-    - mcp__browser__browser_click — 点击元素，参数 pageId、uid
-    - mcp__browser__browser_fill — 清空并填写输入框，参数 pageId、uid、value
-    - mcp__browser__browser_type — 向聚焦元素输入文字，参数 pageId、text、submitKey(Enter/Tab)
-    - mcp__browser__browser_screenshot — 截图保存为 PNG 文件，参数 pageId、filePath（必填绝对路径）；截图由 Electron 直接写入文件，禁止再用其他工具重写文件内容
-    - mcp__browser__browser_evaluate — 执行 JavaScript，参数 pageId、expression
-    - mcp__browser__browser_wait_for — 等待文字出现，参数 pageId、text(数组)、timeoutMs
-    - mcp__browser__browser_close_page — 关闭标签页，参数 pageId
+    - mcp__chrome-devtools__list_pages — 列出所有标签页
+    - mcp__chrome-devtools__new_page — 打开新标签页，参数 url
+    - mcp__chrome-devtools__navigate_page — 导航，参数 pageId、type(url/back/forward/reload)、url
+    - mcp__chrome-devtools__take_snapshot — 获取页面结构和可交互元素（uid），参数 pageId
+    - mcp__chrome-devtools__click — 点击元素，参数 pageId、uid
+    - mcp__chrome-devtools__fill — 清空并填写输入框，参数 pageId、uid、value
+    - mcp__chrome-devtools__type_text — 向聚焦元素输入文字，参数 pageId、text、submitKey(Enter/Tab)
+    - mcp__chrome-devtools__take_screenshot — 截图保存为 PNG 文件，参数 pageId、filePath（必填绝对路径）；截图由 Electron 直接写入文件，禁止再用其他工具重写文件内容
+    - mcp__chrome-devtools__evaluate_script — 执行 JavaScript，参数 pageId、expression
+    - mcp__chrome-devtools__wait_for — 等待文字出现，参数 pageId、text(数组)、timeoutMs
+    - mcp__chrome-devtools__close_page — 关闭标签页，参数 pageId
   • 登录态说明：浏览器与用户共享登录态，可直接访问用户已登录的网站，无需重新认证
 
 直接输出 JSON，不添加任何解释文字。`;
