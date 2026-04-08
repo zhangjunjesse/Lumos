@@ -233,7 +233,7 @@ export function saveDraft(draft: CapabilityDraft): void {
 
 export function getDraft(id: string): CapabilityDraft | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM capability_drafts WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  const row = db.prepare('SELECT * FROM capability_drafts WHERE id = ?').get(id) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
   if (!row) return null;
 
   return {
@@ -255,7 +255,7 @@ export function getDraft(id: string): CapabilityDraft | null {
 
 export function listDrafts(): CapabilityDraft[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM capability_drafts ORDER BY created_at DESC').all() as Record<string, unknown>[];
+  const rows = db.prepare('SELECT * FROM capability_drafts ORDER BY created_at DESC').all() as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   return rows.map(row => ({
     id: row.id,
@@ -312,7 +312,7 @@ export function savePackage(pkg: CapabilityPackage): void {
 
 export function getPackage(id: string): CapabilityPackage | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM capability_packages WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  const row = db.prepare('SELECT * FROM capability_packages WHERE id = ?').get(id) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
   if (!row) return null;
 
   const implementation = JSON.parse(row.implementation);
@@ -343,7 +343,7 @@ export function getPackage(id: string): CapabilityPackage | null {
 
 export function listPackages(): CapabilityPackage[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM capability_packages ORDER BY updated_at DESC').all() as Record<string, unknown>[];
+  const rows = db.prepare('SELECT * FROM capability_packages ORDER BY updated_at DESC').all() as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   return rows.map((row) => {
     const implementation = JSON.parse(row.implementation);

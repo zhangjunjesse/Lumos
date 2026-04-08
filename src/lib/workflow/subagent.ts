@@ -26,7 +26,8 @@ import type {
 } from './types';
 import { executeCodeHandler } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
-function buildPromptCapabilitiesSystemPrompt(): string { return ''; }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function buildPromptCapabilitiesSystemPrompt(_tools?: unknown): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
 import { generateObjectWithClaudeSdk } from '@/lib/claude/structured-output';
