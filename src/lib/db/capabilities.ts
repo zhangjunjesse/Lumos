@@ -2,8 +2,56 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { getDb } from './connection';
-import { deriveCapabilityKind } from '@/lib/capability/types';
-import type { CapabilityDraft, CapabilityPackage } from '@/lib/capability/types';
+type CapabilityKind = 'code' | 'prompt';
+type CapabilityStatus = 'draft' | 'validation_failed' | 'testing' | 'test_failed' | 'awaiting_approval' | 'ready_to_publish' | 'published' | 'disabled' | 'archived';
+type CapabilityCategory = 'document' | 'integration' | 'browser-helper' | 'data';
+type CapabilityRiskLevel = 'low' | 'medium' | 'high';
+type CapabilityImplementation = { kind: string; source?: string; adapterId?: string; packageId?: string; [key: string]: unknown };
+
+interface CapabilityDraft {
+  id: string;
+  name: string;
+  description: string;
+  kind?: CapabilityKind;
+  category: CapabilityCategory;
+  riskLevel: CapabilityRiskLevel;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  permissions?: Record<string, unknown>;
+  implementation?: CapabilityImplementation;
+  validationErrors?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CapabilityPackage {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  digest?: string;
+  status: CapabilityStatus;
+  kind?: CapabilityKind;
+  category: CapabilityCategory;
+  riskLevel: CapabilityRiskLevel;
+  scope: { visibility: 'global' | 'workspace' | 'team'; workspaceId?: string; teamId?: string };
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  permissions: Record<string, unknown>;
+  runtimePolicy: { timeoutMs: number; maximumAttempts: number };
+  approvalPolicy: { requireHumanApproval: boolean; approverRoles: string[] };
+  implementation: CapabilityImplementation;
+  tests: Array<{ name: string; input: Record<string, unknown>; expectedAssertions: string[] }>;
+  docs: { summary: string; usageExamples: string[] };
+  createdAt: string;
+  updatedAt: string;
+}
+
+function deriveCapabilityKind(implementation?: CapabilityImplementation | null): CapabilityKind {
+  if (implementation?.kind === 'inline-code') return 'code';
+  if (implementation?.kind === 'inline-prompt') return 'prompt';
+  return 'code';
+}
 
 interface LegacyCapabilityManifestField {
   name?: unknown;
@@ -185,7 +233,7 @@ export function saveDraft(draft: CapabilityDraft): void {
 
 export function getDraft(id: string): CapabilityDraft | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM capability_drafts WHERE id = ?').get(id) as any;
+  const row = db.prepare('SELECT * FROM capability_drafts WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
 
   return {
@@ -207,7 +255,7 @@ export function getDraft(id: string): CapabilityDraft | null {
 
 export function listDrafts(): CapabilityDraft[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM capability_drafts ORDER BY created_at DESC').all() as any[];
+  const rows = db.prepare('SELECT * FROM capability_drafts ORDER BY created_at DESC').all() as Record<string, unknown>[];
 
   return rows.map(row => ({
     id: row.id,
@@ -264,7 +312,7 @@ export function savePackage(pkg: CapabilityPackage): void {
 
 export function getPackage(id: string): CapabilityPackage | null {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM capability_packages WHERE id = ?').get(id) as any;
+  const row = db.prepare('SELECT * FROM capability_packages WHERE id = ?').get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
 
   const implementation = JSON.parse(row.implementation);
@@ -295,7 +343,7 @@ export function getPackage(id: string): CapabilityPackage | null {
 
 export function listPackages(): CapabilityPackage[] {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM capability_packages ORDER BY updated_at DESC').all() as any[];
+  const rows = db.prepare('SELECT * FROM capability_packages ORDER BY updated_at DESC').all() as Record<string, unknown>[];
 
   return rows.map((row) => {
     const implementation = JSON.parse(row.implementation);

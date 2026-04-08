@@ -16,7 +16,6 @@ import {
   getBuiltinProvider,
 } from './db';
 import { getDb } from './db';
-import { initializeCapabilities } from './capability/init';
 import { seedBuiltinWorkflowAgentPresets } from './db/workflow-agent-presets';
 import { resolveProviderPersistenceFields } from './provider-config';
 
@@ -276,8 +275,6 @@ export async function initBuiltinResources(): Promise<void> {
     console.log(`[init-builtin-resources] MCP servers: ${mcpImported} new`);
 
     importProviders();
-
-    await initializeCapabilities();
 
     seedBuiltinWorkflowAgentPresets();
 

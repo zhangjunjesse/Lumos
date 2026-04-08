@@ -26,7 +26,7 @@ import type {
 } from './types';
 import { executeCodeHandler } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
-import { buildPromptCapabilitiesSystemPrompt } from '@/lib/capability/prompt-loader';
+function buildPromptCapabilitiesSystemPrompt(): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
 import { generateObjectWithClaudeSdk } from '@/lib/claude/structured-output';
