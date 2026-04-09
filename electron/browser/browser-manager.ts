@@ -497,7 +497,14 @@ export class BrowserManager extends EventEmitter {
 
   async createTab(url?: string, options?: { incognito?: boolean }): Promise<string> {
     if (this.tabs.size >= this.maxTabs) {
-      throw new Error(`Maximum tab limit (${this.maxTabs}) reached`);
+      // Auto-close the oldest non-active, non-pinned tab to make room
+      const victim = this.findEvictableTab();
+      if (victim) {
+        console.log(`[browser-manager] Tab limit reached, auto-closing oldest tab: ${victim}`);
+        await this.closeTab(victim);
+      } else {
+        throw new Error(`Maximum tab limit (${this.maxTabs}) reached`);
+      }
     }
 
     const incognito = options?.incognito ?? false;
@@ -1440,6 +1447,14 @@ export class BrowserManager extends EventEmitter {
     void this.persistTabState(tabId);
     this.emit('tab-loading', { tabId, isLoading: false });
     this.emit('tab-url-updated', { tabId, url: metadata.url });
+  }
+
+  /** Find the oldest non-active, non-pinned tab that can be closed to free a slot. */
+  private findEvictableTab(): string | null {
+    const candidates = Array.from(this.tabMetadata.entries())
+      .filter(([id, meta]) => id !== this.activeTabId && !meta.isPinned)
+      .sort(([, a], [, b]) => a.lastAccessedAt - b.lastAccessedAt);
+    return candidates.length > 0 ? candidates[0][0] : null;
   }
 
   private findTabIdByWebContents(webContents: WebContents): string | null {

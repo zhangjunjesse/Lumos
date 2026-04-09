@@ -133,7 +133,7 @@ function emitForEach(
     `${pad}const __items_${safe} = Array.isArray(__col_${safe}) ? __col_${safe} : [];`,
     `${pad}const __results_${safe} = [];`,
     `${pad}for (let __i_${safe} = 0; __i_${safe} < Math.min(__items_${safe}.length, ${maxIter}); __i_${safe}++) {`,
-    `${pad}  stepOutputs[${sid}] = { output: { ${itemVar}: __items_${safe}[__i_${safe}], index: __i_${safe} } };`,
+    `${pad}  stepOutputs[${sid}] = { output: { ${itemVar}: __items_${safe}[__i_${safe}], currentItem: __items_${safe}[__i_${safe}], index: __i_${safe} } };`,
     emitBodySteps(bodyIds, stepMap, ownedStepIds, indent + 2),
     lastBodyId ? `${pad}  __results_${safe}.push(stepOutputs[${emitLiteral(lastBodyId)}]);` : '',
     `${pad}}`,

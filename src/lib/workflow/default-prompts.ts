@@ -176,6 +176,10 @@ return { success: false, output: null, error: "操作失败原因" };
     "maxIterations": 50
   }
 }
+- **循环体内引用当前元素：** \`steps.<for-each步骤ID>.output.currentItem\`（固定别名，始终可用）或 \`steps.<for-each步骤ID>.output.<itemVar的值>\`（如 itemVar="kw" 则用 output.kw）
+- **引用当前索引：** \`steps.<for-each步骤ID>.output.index\`（从 0 开始）
+- **循环结束后的输出：** \`steps.<for-each步骤ID>.output.results\`（数组，每次迭代最后一个 body 步骤的输出）、\`steps.<for-each步骤ID>.output.count\`（迭代次数）
+- ⚠️ 推荐统一使用 \`output.currentItem\`，避免因 itemVar 命名不一致导致引用错误
 
 ### 4. 条件循环 while
 {
