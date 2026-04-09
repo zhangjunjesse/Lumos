@@ -43,6 +43,31 @@ const DOUBAO_AGENT_MODELS: ProviderModelOption[] = [
   { value: 'kimi-k2.5', label: 'Kimi K2.5' },
 ];
 
+/* ── Lumos Cloud (Pro 版专用) ─────────────────────────── */
+
+const LUMOS_CLOUD_MODELS: ProviderModelOption[] = [
+  { value: 'doubao-seed-2.0-lite', label: 'Doubao Seed 2.0 Lite' },
+  { value: 'doubao-seed-2.0-pro', label: 'Doubao Seed 2.0 Pro' },
+  { value: 'doubao-seed-2.0-code', label: 'Doubao Seed 2.0 Code' },
+];
+
+const LUMOS_CLOUD_PRESET: ProviderPreset = {
+  id: 'lumos-cloud',
+  name: 'Lumos Cloud',
+  description: 'Lumos 内置云端服务，登录即可使用，无需自行配置 API Key。',
+  provider_type: 'custom',
+  api_protocol: 'anthropic-messages',
+  capabilities: ['agent-chat'],
+  provider_origin: 'system',
+  auth_mode: 'api_key',
+  base_url: 'http://api.miki.zj.cn',
+  tags: ['主聊天', 'Agent', 'Lumos Cloud'],
+  supported_modules: ['chat', 'workflow'],
+  default_models: LUMOS_CLOUD_MODELS,
+};
+
+export { LUMOS_CLOUD_PRESET };
+
 /* ── agent-chat 预设 ──────────────────────────────────── */
 
 const AGENT_CHAT_PRESETS: ProviderPreset[] = [

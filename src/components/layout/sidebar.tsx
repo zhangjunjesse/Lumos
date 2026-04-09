@@ -14,6 +14,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkspacePicker } from "@/components/workspace/workspace-picker";
 import { SidebarNavItem } from "./sidebar-nav-item";
+import { SidebarUserSection } from "./sidebar-user-section";
 import {
   DashboardSquare01Icon,
   Star,
@@ -29,6 +30,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
+import { isPro } from "@/lib/edition";
 
 const SIDEBAR_EXPANDED_KEY = "lumos_sidebar_expanded";
 
@@ -244,6 +246,8 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
 
       {/* Bottom controls */}
       <div className="border-t border-border/50 px-2 py-2 space-y-0.5">
+        {isPro() && <SidebarUserSection expanded={expanded} />}
+
         <SidebarNavItem
           icon={Settings2}
           label={t('sidebar.settings')}

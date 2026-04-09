@@ -10,8 +10,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
+import { isPro } from "@/lib/edition";
 import { GeneralSection } from "./GeneralSection";
 import { ClaudeConfigSection } from "./ClaudeConfigSection";
+import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
 import { SchedulingAgentSection } from "./SchedulingAgentSection";
@@ -113,7 +115,7 @@ export function SettingsLayout() {
         <div className="flex-1 overflow-auto p-6">
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "knowledge" && <KnowledgeSection />}
-          {activeSection === "providers" && <ClaudeConfigSection />}
+          {activeSection === "providers" && (isPro() ? <LumosCloudSection /> : <ClaudeConfigSection />)}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
               <SchedulingAgentSection />

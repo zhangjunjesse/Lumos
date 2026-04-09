@@ -3,6 +3,7 @@ import { migrateCoreTables } from './migrations';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateTeamRunTables } from './migrations-team-run';
+import { seedAdminUser } from '@/lib/auth/user-service';
 
 export function initDb(db: Database.Database): void {
   db.exec(`
@@ -180,6 +181,9 @@ export function initDb(db: Database.Database): void {
     migrateSyncTables(db);
     migrateTeamRunTables(db);
     db.exec('COMMIT');
+
+    // Seed admin user after migrations (outside transaction, idempotent)
+    try { seedAdminUser(); } catch { /* ignore if new-api unavailable */ }
   } catch (err: unknown) {
     try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
     const msg = err instanceof Error ? err.message : String(err);

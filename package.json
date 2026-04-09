@@ -14,6 +14,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:open": "NEXT_PUBLIC_LUMOS_EDITION=open next build",
+    "build:pro": "NEXT_PUBLIC_LUMOS_EDITION=pro next build",
     "start": "next start",
     "test": "jest",
     "lint": "eslint",
@@ -24,10 +26,15 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "electron:dev": "cross-env LUMOS_CLAUDE_CONFIG_DIR=$HOME/.lumos/.claude LUMOS_DATA_DIR=$HOME/.lumos concurrently -k \"next dev\" \"node scripts/build-electron.mjs && wait-on http://localhost:3000 && electron .\"",
     "electron:build": "node scripts/download-node.mjs && node scripts/download-git-bash.mjs && next build && node scripts/build-electron.mjs",
+    "electron:build:pro": "cross-env NEXT_PUBLIC_LUMOS_EDITION=pro npm run electron:build",
+    "electron:build:open": "cross-env NEXT_PUBLIC_LUMOS_EDITION=open npm run electron:build",
     "electron:pack": "npm run electron:build && electron-builder --config electron-builder.yml",
     "electron:pack:mac": "npm run electron:build && electron-builder --mac --config electron-builder.yml",
     "electron:pack:win": "npm run electron:build && electron-builder --win --config electron-builder.yml",
-    "electron:pack:linux": "npm run electron:build && electron-builder --linux --config electron-builder.yml"
+    "electron:pack:linux": "npm run electron:build && electron-builder --linux --config electron-builder.yml",
+    "electron:pack:pro": "npm run electron:build:pro && electron-builder --config electron-builder.yml",
+    "electron:pack:pro:mac": "npm run electron:build:pro && electron-builder --mac --config electron-builder.yml",
+    "electron:pack:pro:win": "npm run electron:build:pro && electron-builder --win --config electron-builder.yml"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.47",
@@ -86,6 +93,7 @@
     "nanoid": "^5.1.6",
     "next": "16.1.6",
     "next-themes": "^0.4.6",
+    "nodemailer": "^8.0.5",
     "openworkflow": "^0.8.1",
     "p-queue": "^8.1.1",
     "pdf-lib": "^1.17.1",
@@ -119,6 +127,7 @@
     "@types/jest": "^30.0.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",

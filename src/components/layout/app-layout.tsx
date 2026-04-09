@@ -40,9 +40,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   // ContentPanel store
   const { tabs, addTab, setActiveTab } = useContentPanelStore();
 
-  // Panel state - 使用固定初始值避免 hydration 错误
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [contentPanelOpen, setContentPanelOpen] = useState(true);
+  // Panel state - 默认关闭，从 localStorage 恢复后再展开
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [contentPanelOpen, setContentPanelOpen] = useState(false);
 
   const [panelContent, setPanelContent] = useState<PanelContent>("files");
 
@@ -85,7 +85,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Panel width state - 使用固定初始值避免 hydration 错误
   const [contentPanelWidth, setContentPanelWidth] = useState(480);
 
-  // 在客户端挂载后从 localStorage 恢复状态
+  // 在客户端挂载后从 localStorage 恢复状态（one-time hydration）
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -109,6 +110,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       setContentPanelWidth(parseInt(savedContentPanelWidth));
     }
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleContentPanelResize = useCallback((delta: number) => {
     setContentPanelWidth((w) => Math.min(CONTENTPANEL_MAX, Math.max(CONTENTPANEL_MIN, w - delta)));

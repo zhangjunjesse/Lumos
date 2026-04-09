@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
+import { getDb } from '@/lib/db/connection';
 
 /** Minimal CallToolResult compatible with MCP SDK types used by the Claude Agent SDK. */
 interface CallToolResult {
@@ -45,7 +47,32 @@ const inputSchema = {
     .describe('Enable thinking mode for better prompt understanding and creative quality. Defaults to true.'),
 };
 
-export function createImageGenTool(sessionId?: string) {
+function getMonthlyImageUsage(userId: string): number {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(count), 0) AS total
+     FROM lumos_image_usage
+     WHERE user_id = ? AND created_at >= date('now', 'start of month')`,
+  ).get(userId) as { total: number };
+  return row.total;
+}
+
+function getImageQuota(userId: string): number {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT image_quota_monthly FROM lumos_users WHERE id = ?',
+  ).get(userId) as { image_quota_monthly: number } | undefined;
+  return row?.image_quota_monthly ?? 0;
+}
+
+function recordImageUsage(userId: string, model: string, count: number): void {
+  const db = getDb();
+  db.prepare(
+    'INSERT INTO lumos_image_usage (id, user_id, model, count) VALUES (?, ?, ?, ?)',
+  ).run(crypto.randomUUID(), userId, model, count);
+}
+
+export function createImageGenTool(sessionId?: string, userId?: string) {
   const key = sessionId ?? '';
 
   return tool(
@@ -71,6 +98,25 @@ export function createImageGenTool(sessionId?: string) {
         };
       }
 
+      // Check monthly image quota
+      const imageCount = args.count ?? 1;
+      if (userId) {
+        const quota = getImageQuota(userId);
+        const used = getMonthlyImageUsage(userId);
+        if (quota > 0 && used + imageCount > quota) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `本月图片额度已用完（已用 ${used}/${quota}）。请充值图片加油包或升级月卡。`,
+              }),
+            }],
+            isError: true,
+          };
+        }
+      }
+
       try {
         const providerOptions: Record<string, unknown> = {};
         if (args.enable_sequential) providerOptions.enable_sequential = true;
@@ -87,6 +133,11 @@ export function createImageGenTool(sessionId?: string) {
           providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
           sessionId,
         });
+
+        // Record usage after successful generation
+        if (userId) {
+          recordImageUsage(userId, result.model || 'unknown', result.images.length);
+        }
 
         return {
           content: [{

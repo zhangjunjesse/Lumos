@@ -1075,6 +1075,87 @@ export function migrateLumosTables(db: Database.Database): void {
     db.exec("ALTER TABLE workflows ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
   }
 
+  // ── Lumos 自建用户系统 ──────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lumos_users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      nickname TEXT NOT NULL DEFAULT '',
+      avatar_url TEXT NOT NULL DEFAULT '',
+      membership TEXT NOT NULL DEFAULT 'free'
+        CHECK(membership IN ('free','monthly','yearly')),
+      membership_expires_at TEXT DEFAULT NULL,
+      newapi_token_key TEXT NOT NULL DEFAULT '',
+      newapi_token_id INTEGER DEFAULT NULL,
+      image_quota_monthly INTEGER NOT NULL DEFAULT 0,
+      role TEXT NOT NULL DEFAULT 'user'
+        CHECK(role IN ('admin','user')),
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active','disabled','deleted')),
+      last_login_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_lumos_users_email ON lumos_users(email);
+
+    CREATE TABLE IF NOT EXISTS lumos_user_sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES lumos_users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_lumos_sessions_user ON lumos_user_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_lumos_sessions_expires ON lumos_user_sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS lumos_email_verifications (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT 'register'
+        CHECK(purpose IN ('register','reset_password')),
+      used INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_email_verify_email ON lumos_email_verifications(email, purpose);
+
+    CREATE TABLE IF NOT EXISTS lumos_orders (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES lumos_users(id),
+      plan_id TEXT NOT NULL DEFAULT '',
+      plan_name TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL,
+      quota_amount INTEGER NOT NULL DEFAULT 0,
+      pay_type TEXT NOT NULL DEFAULT 'alipay'
+        CHECK(pay_type IN ('alipay','wxpay')),
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','paid','failed','expired','refunded')),
+      trade_no TEXT NOT NULL DEFAULT '',
+      paid_at TEXT DEFAULT NULL,
+      notify_raw TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_lumos_orders_user ON lumos_orders(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_lumos_orders_status ON lumos_orders(status);
+
+    CREATE TABLE IF NOT EXISTS lumos_image_usage (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES lumos_users(id),
+      model TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_usage_user_month ON lumos_image_usage(user_id, created_at);
+  `);
+
+  // Add role column to lumos_users (for existing databases)
+  const userCols = db.prepare("PRAGMA table_info(lumos_users)").all() as { name: string }[];
+  if (userCols.length > 0 && !userCols.some(c => c.name === 'role')) {
+    db.exec("ALTER TABLE lumos_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
+
   // Seed built-in data on first run
   seedBuiltinProviders(db);
   seedBuiltinSkills(db);

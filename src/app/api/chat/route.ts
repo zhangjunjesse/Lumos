@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
@@ -564,6 +565,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Extract current user ID from session cookie for image quota tracking
+    const lumosToken = request.cookies.get('lumos_session')?.value;
+    const lumosUserId = lumosToken ? validateSession(lumosToken)?.id : undefined;
+
     // Acquire exclusive lock for this session to prevent concurrent requests
     const lockId = crypto.randomBytes(8).toString('hex');
     const lockAcquired = acquireSessionLock(session_id, lockId, `chat-${process.pid}`, 600);
@@ -853,7 +858,7 @@ export async function POST(request: NextRequest) {
     // Create in-process MCP servers
     const inProcessMcpServers: Record<string, ReturnType<typeof createLumosMcpServer>> = {};
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
-      const lumosMcpServer = createLumosMcpServer(session_id);
+      const lumosMcpServer = createLumosMcpServer(session_id, lumosUserId);
       inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
     }
     // Workflow code runner — only for workflow chat sessions

@@ -3,6 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import { I18nProvider } from "@/components/layout/I18nProvider";
 import { AppLayout } from "@/components/layout/app-layout";
+import { ProAuthGate } from "@/components/layout/ProAuthGate";
 import { MemoryToastProvider } from "@/components/memory/memory-toast-container";
 import { ScheduleNotifications } from "@/components/workflow/ScheduleNotifications";
 
@@ -22,8 +23,10 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <MemoryToastProvider>
-              <AppLayout>{children}</AppLayout>
-              <ScheduleNotifications />
+              <ProAuthGate>
+                <AppLayout>{children}</AppLayout>
+                <ScheduleNotifications />
+              </ProAuthGate>
             </MemoryToastProvider>
           </I18nProvider>
         </ThemeProvider>
