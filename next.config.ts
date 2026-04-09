@@ -9,7 +9,11 @@ const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const customDistDir = process.env.LUMOS_NEXT_DIST_DIR?.trim();
 
 function createConfig(phase: string): NextConfig {
-  const isBuild = phase === PHASE_PRODUCTION_BUILD;
+  // Set real process.env so server-side code (connection.ts) can read it.
+  // Next.js `env` config only does compile-time inlining for client bundles.
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    process.env.LUMOS_BUILD_PHASE = '1';
+  }
 
   return {
     output: 'standalone',
@@ -37,7 +41,6 @@ function createConfig(phase: string): NextConfig {
     ],
     env: {
       NEXT_PUBLIC_APP_VERSION: pkg.version,
-      ...(isBuild ? { LUMOS_BUILD_PHASE: '1' } : {}),
     },
     webpack: (config, { isServer }) => {
       if (isServer) {

@@ -105,16 +105,6 @@ export function getDb(): Database.Database {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // During `next build`, multiple workers collect page data in parallel.
-    // Skip migrations and async side effects to avoid SQLITE_BUSY deadlocks.
-    if (process.env.LUMOS_BUILD_PHASE === '1') {
-      db = new Database(DB_PATH);
-      db.pragma('journal_mode = WAL');
-      db.pragma('busy_timeout = 30000');
-      db.pragma('foreign_keys = ON');
-      return db;
-    }
-
     // Run migration before anything else
     migrateFromCodePilot();
 
@@ -150,10 +140,26 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL');
     db.pragma('busy_timeout = 30000');
     db.pragma('foreign_keys = ON');
-    initDb(db);
 
-    const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
-    if (!isTestEnv) {
+    // initDb runs migrations inside BEGIN IMMEDIATE which acquires a write lock.
+    // During `next build`, multiple workers collect page data in parallel and
+    // can deadlock competing for the same lock. If another process already holds
+    // it, gracefully skip — migrations are idempotent and will run at real startup.
+    try {
+      initDb(db);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('SQLITE_BUSY') || msg.includes('database is locked')) {
+        console.warn('[db] Skipping migrations (another process holds the write lock)');
+      } else {
+        throw err;
+      }
+    }
+
+    const skipSideEffects = process.env.NODE_ENV === 'test'
+      || Boolean(process.env.JEST_WORKER_ID)
+      || process.env.LUMOS_BUILD_PHASE === '1';
+    if (!skipSideEffects) {
       // Initialize builtin resources (Skills and MCP servers) after DB is ready
       // This runs on every startup to check for updates
       import('../init-builtin-resources').then(({ initBuiltinResources }) => {
