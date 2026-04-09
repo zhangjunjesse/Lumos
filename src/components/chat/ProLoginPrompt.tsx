@@ -36,7 +36,7 @@ export function ProLoginPrompt({ onLoggedIn }: Props) {
   };
 
   return (
-    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+    <div className="relative flex h-screen w-full items-center justify-center overflow-hidden">
       {/* Electron drag region */}
       <div
         className="absolute inset-x-0 top-0 z-50 h-8"
