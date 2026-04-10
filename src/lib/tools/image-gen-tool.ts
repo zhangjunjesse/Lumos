@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
@@ -15,6 +14,80 @@ const MAX_GENERATIONS_PER_SESSION = 10;
 
 /** Module-level counter keyed by sessionId, persists across requests within the same process. */
 const sessionGenerationCounts = new Map<string, number>();
+
+function getWebBase(): string {
+  return process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+}
+
+function getWebSessionToken(userId: string): string | null {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT web_session_token FROM lumos_users WHERE id = ?',
+  ).get(userId) as { web_session_token: string } | undefined;
+  return row?.web_session_token || null;
+}
+
+/**
+ * Atomically consume image quota via lumos-web. Returns quota error message
+ * if exceeded, or null on success. Throws on network/auth failure.
+ */
+async function consumeRemoteQuota(
+  userId: string,
+  count: number,
+  model: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const token = getWebSessionToken(userId);
+  if (!token) {
+    return { ok: false, error: '未登录 Lumos 云账户，无法使用图片生成功能' };
+  }
+
+  const res = await fetch(`${getWebBase()}/api/quota/image/consume`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ count, model, action: 'consume' }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (res.status === 401) {
+    return { ok: false, error: 'Lumos 云会话已过期，请重新登录' };
+  }
+  if (res.status === 402) {
+    return { ok: false, error: data.error || '本月图片额度已用完' };
+  }
+  if (!res.ok || !data.success) {
+    return { ok: false, error: data.error || `配额检查失败 (HTTP ${res.status})` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Refund previously consumed quota (e.g., when generation fails).
+ * Best-effort — logs errors but does not throw.
+ */
+async function refundRemoteQuota(
+  userId: string,
+  count: number,
+  model: string,
+): Promise<void> {
+  const token = getWebSessionToken(userId);
+  if (!token) return;
+  try {
+    await fetch(`${getWebBase()}/api/quota/image/consume`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ count, model, action: 'refund' }),
+    });
+  } catch (e) {
+    console.warn('[image-gen-tool] Failed to refund quota:', e);
+  }
+}
 
 const inputSchema = {
   prompt: z.string().describe(
@@ -47,31 +120,6 @@ const inputSchema = {
     .describe('Enable thinking mode for better prompt understanding and creative quality. Defaults to true.'),
 };
 
-function getMonthlyImageUsage(userId: string): number {
-  const db = getDb();
-  const row = db.prepare(
-    `SELECT COALESCE(SUM(count), 0) AS total
-     FROM lumos_image_usage
-     WHERE user_id = ? AND created_at >= date('now', 'start of month')`,
-  ).get(userId) as { total: number };
-  return row.total;
-}
-
-function getImageQuota(userId: string): number {
-  const db = getDb();
-  const row = db.prepare(
-    'SELECT image_quota_monthly FROM lumos_users WHERE id = ?',
-  ).get(userId) as { image_quota_monthly: number } | undefined;
-  return row?.image_quota_monthly ?? 0;
-}
-
-function recordImageUsage(userId: string, model: string, count: number): void {
-  const db = getDb();
-  db.prepare(
-    'INSERT INTO lumos_image_usage (id, user_id, model, count) VALUES (?, ?, ?, ?)',
-  ).run(crypto.randomUUID(), userId, model, count);
-}
-
 export function createImageGenTool(sessionId?: string, userId?: string) {
   const key = sessionId ?? '';
 
@@ -98,23 +146,25 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
         };
       }
 
-      // Check monthly image quota
+      // Reserve monthly image quota via lumos-web (atomic across devices).
+      // Uses a placeholder model name — the real model is only known after
+      // generation, so we refund on failure and track only the count.
       const imageCount = args.count ?? 1;
+      const placeholderModel = 'pending';
+      let quotaConsumed = false;
+
       if (userId) {
-        const quota = getImageQuota(userId);
-        const used = getMonthlyImageUsage(userId);
-        if (quota > 0 && used + imageCount > quota) {
+        const check = await consumeRemoteQuota(userId, imageCount, placeholderModel);
+        if (!check.ok) {
           return {
             content: [{
               type: 'text',
-              text: JSON.stringify({
-                success: false,
-                error: `本月图片额度已用完（已用 ${used}/${quota}）。请充值图片加油包或升级月卡。`,
-              }),
+              text: JSON.stringify({ success: false, error: check.error }),
             }],
             isError: true,
           };
         }
+        quotaConsumed = true;
       }
 
       try {
@@ -133,11 +183,6 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
           providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
           sessionId,
         });
-
-        // Record usage after successful generation
-        if (userId) {
-          recordImageUsage(userId, result.model || 'unknown', result.images.length);
-        }
 
         return {
           content: [{
@@ -159,6 +204,10 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
           }],
         };
       } catch (error) {
+        // Refund the reserved quota since generation failed
+        if (userId && quotaConsumed) {
+          await refundRemoteQuota(userId, imageCount, placeholderModel);
+        }
         const message = error instanceof Error ? error.message : '图片生成失败';
         return {
           content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }) }],

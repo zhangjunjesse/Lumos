@@ -1093,6 +1093,7 @@ export function migrateLumosTables(db: Database.Database): void {
         CHECK(role IN ('admin','user')),
       status TEXT NOT NULL DEFAULT 'active'
         CHECK(status IN ('active','disabled','deleted')),
+      web_session_token TEXT NOT NULL DEFAULT '',
       last_login_at TEXT DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1154,6 +1155,10 @@ export function migrateLumosTables(db: Database.Database): void {
   const userCols = db.prepare("PRAGMA table_info(lumos_users)").all() as { name: string }[];
   if (userCols.length > 0 && !userCols.some(c => c.name === 'role')) {
     db.exec("ALTER TABLE lumos_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
+  // Add web_session_token column for calling lumos-web APIs (quota, orders, etc.)
+  if (userCols.length > 0 && !userCols.some(c => c.name === 'web_session_token')) {
+    db.exec("ALTER TABLE lumos_users ADD COLUMN web_session_token TEXT NOT NULL DEFAULT ''");
   }
 
   // Seed built-in data on first run

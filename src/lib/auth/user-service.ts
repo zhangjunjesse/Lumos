@@ -6,7 +6,7 @@
 
 import crypto from 'crypto';
 import { getDb } from '@/lib/db/connection';
-import { hashPassword, verifyPassword } from './password';
+import { hashPassword } from './password';
 import { createSession, validateSession } from './session';
 import { verifyCode } from './email';
 import { createNewApiToken, getTokenQuota } from './newapi-admin';
@@ -92,34 +92,93 @@ export async function registerUser(params: RegisterParams): Promise<AuthResult> 
 }
 
 /**
+ * Extract lumos_session cookie from a fetch Response's Set-Cookie header.
+ * Used to capture the session token so Lumos desktop can call lumos-web APIs
+ * (quota, orders, etc.) on behalf of the user.
+ */
+function extractWebSessionToken(res: Response): string {
+  const setCookieList = res.headers.getSetCookie?.() ?? [];
+  for (const c of setCookieList) {
+    const match = c.match(/lumos_session=([^;]+)/);
+    if (match) return match[1];
+  }
+  const raw = res.headers.get('set-cookie') || '';
+  const match = raw.match(/lumos_session=([^;]+)/);
+  return match ? match[1] : '';
+}
+
+/**
  * Login with email or nickname and password.
+ * Authenticates against lumos-web website (not local DB).
+ * On success, upserts the user into local DB and provisions the Lumos Cloud provider.
  */
 export async function loginUser(
   emailOrNickname: string,
   password: string,
 ): Promise<AuthResult> {
+  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const res = await fetch(`${webBase}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: emailOrNickname, password }),
+  });
+  const data = await res.json();
+  if (!data.success || !data.data) {
+    throw new Error(data.error || '账号或密码错误');
+  }
+
+  const remoteUser = data.data as {
+    id: string;
+    email: string;
+    nickname: string;
+    role: 'admin' | 'user';
+    membership: 'free' | 'monthly' | 'yearly';
+    status: string;
+    image_quota_monthly: number;
+    newapi_token_key: string | null;
+    newapi_token_id: number | null;
+  };
+
+  const webSessionToken = extractWebSessionToken(res);
+
   const db = getDb();
-  const row = db.prepare(
-    'SELECT * FROM lumos_users WHERE (email = ? OR nickname = ?) AND status = ?',
-  ).get(emailOrNickname, emailOrNickname, 'active') as (LumosUser & { password_hash: string }) | undefined;
-
-  if (!row) {
-    throw new Error('账号或密码错误');
-  }
-
-  if (!verifyPassword(password, row.password_hash)) {
-    throw new Error('账号或密码错误');
-  }
-
-  // Update last_login_at
   const now = nowISO();
-  db.prepare(
-    'UPDATE lumos_users SET last_login_at = ?, updated_at = ? WHERE id = ?',
-  ).run(now, now, row.id);
 
-  const session = createSession(row.id);
+  // Upsert user into local DB using the remote user's ID
+  const existing = db.prepare('SELECT id FROM lumos_users WHERE id = ?').get(remoteUser.id);
+  if (existing) {
+    db.prepare(
+      `UPDATE lumos_users SET
+        email = ?, nickname = ?, role = ?, membership = ?,
+        newapi_token_key = ?, newapi_token_id = ?, image_quota_monthly = ?,
+        web_session_token = ?, last_login_at = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(
+      remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
+      remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
+      webSessionToken, now, now, remoteUser.id,
+    );
+  } else {
+    db.prepare(
+      `INSERT INTO lumos_users
+       (id, email, password_hash, nickname, role, membership, newapi_token_key, newapi_token_id, image_quota_monthly, web_session_token, created_at, updated_at, last_login_at)
+       VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      remoteUser.id, remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
+      remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
+      webSessionToken, now, now, now,
+    );
+  }
 
-  return { user: stripPasswordHash(row), token: session.token };
+  // Provision Lumos Cloud provider with full token key
+  if (remoteUser.newapi_token_key) {
+    await provisionCloudProvider(`sk-${remoteUser.newapi_token_key}`);
+  }
+
+  const session = createSession(remoteUser.id);
+  const user = getUserById(remoteUser.id)!;
+
+  return { user, token: session.token };
 }
 
 /**

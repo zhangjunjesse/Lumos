@@ -2,9 +2,8 @@
 
 import { cn } from "@/lib/utils";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Logout, CreditCard, Settings01Icon } from "@hugeicons/core-free-icons";
+import { Logout, CreditCard } from "@hugeicons/core-free-icons";
 import { useProAuth } from "@/hooks/useProAuth";
-import Link from "next/link";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,14 +62,6 @@ export function SidebarUserSection({ expanded }: Props) {
           </DropdownMenuItem>
         }
       />
-      {user.role === "admin" && (
-        <DropdownMenuItem asChild>
-          <Link href="/admin">
-            <HugeiconsIcon icon={Settings01Icon} className="mr-2 h-3.5 w-3.5" />
-            管理后台
-          </Link>
-        </DropdownMenuItem>
-      )}
       <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
         <HugeiconsIcon icon={Logout} className="mr-2 h-3.5 w-3.5" />
         退出登录
