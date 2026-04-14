@@ -9,6 +9,7 @@ import {
   resolveAnthropicSdkBaseUrl,
   resolveProviderApiKey,
 } from '@/lib/provider-model-discovery';
+import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import type { ApiProvider } from '@/types';
 import type { ZodType } from 'zod';
 
@@ -99,8 +100,14 @@ function resolveTextGenerationBaseUrl(provider: ApiProvider): string | undefined
 /**
  * Create an AI SDK language model instance from a provider config.
  */
-function createLanguageModel(provider: ApiProvider, modelId: string) {
+function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
   const apiKey = resolveProviderApiKey(provider);
+  const resolvedModelId = resolveProviderModelForRequest(provider, requestedModelId);
+  const modelId = resolvedModelId || requestedModelId.trim();
+
+  if (!modelId) {
+    throw new Error(`服务商“${provider.name}”未解析出可用模型。`);
+  }
 
   if (provider.api_protocol === 'anthropic-messages') {
     const anthropic = createAnthropic({

@@ -111,6 +111,18 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
               className="min-h-[50px] text-xs"
             />
           </div>
+          <div className="space-y-1">
+            <Label className="text-[10px]">验收说明（可选）</Label>
+            <Textarea
+              value={typeof input.expectedOutput === 'string' ? input.expectedOutput : ''}
+              onChange={e => updateInput('expectedOutput', e.target.value || undefined)}
+              className="min-h-[50px] text-xs"
+              placeholder={'怎样算这一步做完了？留空=跳过判分'}
+            />
+            <p className="text-[9px] text-muted-foreground leading-tight">
+              判分老师只读这段文字对照 agent 输出
+            </p>
+          </div>
           <CodeModeEditor
             compact
             enabled={Boolean((input.code as { script?: string } | undefined)?.script)}

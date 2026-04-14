@@ -1,4 +1,5 @@
 import { appendFile, copyFile, mkdir, readdir, stat, writeFile } from 'fs/promises';
+import { mkdirSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import type { AgentStepInput, StepResult, WorkflowStepRuntimeContext } from './types';
@@ -488,6 +489,9 @@ function buildHandlerContext(
   debugLogger: CodeExecutionDebugLogger,
   signal?: AbortSignal,
 ): CodeHandlerContext {
+  const outputDir = resolveArtifactOutputDir(runtimeContext);
+  // Pre-create so scripts can write directly with fs without mkdir boilerplate.
+  try { mkdirSync(outputDir, { recursive: true }); } catch { /* ignore */ }
   return {
     params: code.params ?? {},
     stepId: runtimeContext.stepId,
@@ -501,7 +505,33 @@ function buildHandlerContext(
       logger: debugLogger,
       background: true,
     }),
+    outputDir,
+    saveArtifact: (source, name) => saveArtifactToOutput(outputDir, source, name),
   };
+}
+
+async function saveArtifactToOutput(
+  outputDir: string,
+  source: Buffer | string,
+  name?: string,
+): Promise<string> {
+  const relName = name ?? (typeof source === 'string' ? path.basename(source) : undefined);
+  if (!relName) {
+    throw new Error('saveArtifact: name is required when source is a Buffer');
+  }
+  if (path.isAbsolute(relName) || relName.split(/[\\/]+/).includes('..')) {
+    throw new Error(`saveArtifact: name must be a relative path inside outputDir: ${relName}`);
+  }
+
+  const targetPath = path.join(outputDir, relName);
+  await mkdir(path.dirname(targetPath), { recursive: true });
+
+  if (typeof source === 'string') {
+    await copyFile(source, targetPath);
+  } else {
+    await writeFile(targetPath, source);
+  }
+  return targetPath;
 }
 
 function createInlineScriptConsole(debugLogger: CodeExecutionDebugLogger): Console {
@@ -529,9 +559,11 @@ async function executeInlineScript(
   ctx: CodeHandlerContext,
   debugLogger: CodeExecutionDebugLogger,
 ): Promise<StepResult> {
-  const fn = new Function('ctx', 'fetch', 'console', `return (async () => { ${script} })()`) as
-    (ctx: CodeHandlerContext, fetch: typeof globalThis.fetch, console: Console) => Promise<StepResult>;
-  const result = await fn(ctx, globalThis.fetch, createInlineScriptConsole(debugLogger));
+  const nodeFs = await import('fs');
+  const nodePath = await import('path');
+  const fn = new Function('ctx', 'fetch', 'console', 'fs', 'path', `return (async () => { ${script} })()`) as
+    (ctx: CodeHandlerContext, fetch: typeof globalThis.fetch, console: Console, fs: typeof import('fs'), path: typeof import('path')) => Promise<StepResult>;
+  const result = await fn(ctx, globalThis.fetch, createInlineScriptConsole(debugLogger), nodeFs, nodePath);
   if (!result || typeof result !== 'object' || typeof result.success !== 'boolean') {
     return { success: true, output: { summary: String(result ?? '') } };
   }

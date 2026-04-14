@@ -37,6 +37,42 @@ export function ProAuthGate({ children }: { children: ReactNode }) {
     setState("login");
   }, []);
 
+  // Single-device login: poll lumos-web via /api/auth/pro-heartbeat.
+  // If the server kicked this session (another device logged in), force logout.
+  useEffect(() => {
+    if (state !== "ready" || !isPro()) return;
+
+    let cancelled = false;
+    let running = false;
+
+    const check = async () => {
+      if (running || cancelled) return;
+      running = true;
+      try {
+        const r = await fetch("/api/auth/pro-heartbeat", { cache: "no-store" });
+        const data = await r.json().catch(() => null);
+        if (!cancelled && data && data.valid === false) {
+          setUser(null);
+          setState("login");
+        }
+      } catch {
+        /* network failure — server treats as inconclusive, we do nothing */
+      } finally {
+        running = false;
+      }
+    };
+
+    const interval = setInterval(check, 60_000);
+    const onFocus = () => { void check(); };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [state]);
+
   const ctxValue = useMemo(() => ({ user, logout }), [user, logout]);
 
   if (state === "checking") {

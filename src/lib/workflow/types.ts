@@ -85,6 +85,12 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
   knowledge?: WorkflowKnowledgeConfig;
   /** Inline agent definition — fallback when preset ID doesn't exist locally (e.g. imported workflow) */
   agentDef?: InlineAgentDef;
+  /**
+   * 用户写的"验收说明"(natural language)——Phase 2 判分老师的唯一信息源。
+   * 留空 → 跳过 Phase 2，直接信任 Phase 1 outcome。
+   * 非空 → classifier 只读这个字段 + agent 输出 + 工具调用事实，不再读 prompt。
+   */
+  expectedOutput?: string;
 }
 
 export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {

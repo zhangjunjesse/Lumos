@@ -3,12 +3,15 @@ import os from 'os';
 import path from 'path';
 import {
   getRunHistory,
+  getScheduledWorkflow,
   getWorkflowExecutionId,
   type ScheduleRunRecord,
 } from '@/lib/db/scheduled-workflows';
 import { listRunSteps, type ScheduleRunStep } from '@/lib/db/schedule-run-steps';
+import { listAgentPresets } from '@/lib/db/agent-presets';
 import { getMessages, getSession } from '@/lib/db/sessions';
 import { parseStepHeader } from '@/lib/workflow/step-output-formatter';
+import type { WorkflowDSL } from '@/lib/workflow/types';
 
 export interface ScheduleRunDetailMessage {
   id: string;
@@ -28,11 +31,23 @@ export interface ScheduleRunOutputFile {
   createdAt?: string;
 }
 
+export interface ScheduleStepOverlay {
+  status: ScheduleRunStep['status'];
+  durationMs: number | null;
+  outputFileCount: number;
+  outputSummary: string;
+  error: string;
+}
+
 export interface ScheduleRunDetailPayload {
   run: ScheduleRunRecord;
   steps: ScheduleRunStep[];
   messages: ScheduleRunDetailMessage[];
   outputFiles: ScheduleRunOutputFile[];
+  workflowDsl: WorkflowDSL | null;
+  workflowDslSource: 'snapshot' | 'live' | 'none';
+  stepOverlays: Record<string, ScheduleStepOverlay>;
+  presetNames: Record<string, string>;
 }
 
 const BINARY_MIME: Record<string, string> = {
@@ -127,41 +142,122 @@ async function collectRunOutputFiles(
   for (const stageId of stageIds) {
     const outputDir = path.join(stagesDir, stageId, 'output');
     if (!await dirExists(outputDir)) continue;
-
-    const files = await readdir(outputDir).catch(() => [] as string[]);
-    for (const fileName of files) {
-      if (fileName.startsWith('.')) continue;
-      const filePath = path.join(outputDir, fileName);
-      try {
-        const mimeType = getFileMimeType(fileName);
-        const fileStat = await stat(filePath);
-        let content = '';
-
-        if (mimeType?.startsWith('image/')) {
-          const buffer = await readFile(filePath);
-          content = buffer.toString('base64');
-        } else if (isTextLikeMimeType(mimeType)) {
-          content = await readFile(filePath, 'utf-8');
-        }
-
-        results.push({
-          name: fileName,
-          stepId: stageId,
-          agentName: agentNameMap.get(stageId) || stageId,
-          filePath,
-          content,
-          sizeBytes: fileStat.size,
-          createdAt: fileStat.mtime.toISOString(),
-          ...(mimeType ? { mimeType } : {}),
-        });
-      } catch {
-        // Ignore unreadable files and keep returning the rest of the report.
-      }
-    }
+    await walkOutputDir(outputDir, '', stageId, agentNameMap, results);
   }
 
   results.sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''));
   return results;
+}
+
+/**
+ * Recursively walk the step's output dir and collect every file. Subdirectory
+ * paths are preserved in `name` so `main/img_01.jpg` stays distinguishable
+ * from `detail/img_01.jpg`.
+ */
+async function walkOutputDir(
+  rootDir: string,
+  relativePrefix: string,
+  stageId: string,
+  agentNameMap: Map<string, string>,
+  results: ScheduleRunOutputFile[],
+): Promise<void> {
+  const currentDir = path.join(rootDir, relativePrefix);
+  const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const rel = relativePrefix ? path.join(relativePrefix, entry.name) : entry.name;
+    const abs = path.join(rootDir, rel);
+    if (entry.isDirectory()) {
+      await walkOutputDir(rootDir, rel, stageId, agentNameMap, results);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    try {
+      const mimeType = getFileMimeType(entry.name);
+      const fileStat = await stat(abs);
+      let content = '';
+      if (mimeType?.startsWith('image/')) {
+        content = (await readFile(abs)).toString('base64');
+      } else if (isTextLikeMimeType(mimeType)) {
+        content = await readFile(abs, 'utf-8');
+      }
+      results.push({
+        name: rel.split(path.sep).join('/'),
+        stepId: stageId,
+        agentName: agentNameMap.get(stageId) || stageId,
+        filePath: abs,
+        content,
+        sizeBytes: fileStat.size,
+        createdAt: fileStat.mtime.toISOString(),
+        ...(mimeType ? { mimeType } : {}),
+      });
+    } catch {
+      // Ignore unreadable files and keep returning the rest of the report.
+    }
+  }
+}
+
+function resolveWorkflowDsl(
+  run: ScheduleRunRecord,
+): { dsl: WorkflowDSL | null; source: 'snapshot' | 'live' | 'none' } {
+  if (run.workflowDslSnapshot) {
+    return { dsl: run.workflowDslSnapshot, source: 'snapshot' };
+  }
+  const schedule = getScheduledWorkflow(run.scheduleId);
+  if (schedule?.workflowDsl) {
+    return { dsl: schedule.workflowDsl, source: 'live' };
+  }
+  return { dsl: null, source: 'none' };
+}
+
+function buildStepOverlays(
+  steps: ScheduleRunStep[],
+  outputFiles: ScheduleRunOutputFile[],
+): Record<string, ScheduleStepOverlay> {
+  const fileCounts = new Map<string, number>();
+  for (const f of outputFiles) {
+    fileCounts.set(f.stepId, (fileCounts.get(f.stepId) ?? 0) + 1);
+  }
+  const overlays: Record<string, ScheduleStepOverlay> = {};
+  for (const s of steps) {
+    overlays[s.stepId] = {
+      status: s.status,
+      durationMs: s.durationMs,
+      outputFileCount: fileCounts.get(s.stepId) ?? 0,
+      outputSummary: s.outputSummary,
+      error: s.error,
+    };
+  }
+  // Steps with files but no run-step row (e.g. legacy runs) still get a minimal overlay.
+  for (const [stepId, count] of fileCounts) {
+    if (!overlays[stepId]) {
+      overlays[stepId] = {
+        status: 'success',
+        durationMs: null,
+        outputFileCount: count,
+        outputSummary: '',
+        error: '',
+      };
+    }
+  }
+  return overlays;
+}
+
+function buildPresetNameMap(dsl: WorkflowDSL | null): Record<string, string> {
+  if (!dsl) return {};
+  const presetIds = new Set<string>();
+  for (const step of dsl.steps ?? []) {
+    if (step.type === 'agent') {
+      const preset = (step.input as Record<string, unknown> | undefined)?.preset;
+      if (typeof preset === 'string' && preset) presetIds.add(preset);
+    }
+  }
+  if (presetIds.size === 0) return {};
+  const map: Record<string, string> = {};
+  for (const p of listAgentPresets()) {
+    if (presetIds.has(p.id)) map[p.id] = p.name;
+  }
+  return map;
 }
 
 export async function getScheduleRunDetail(
@@ -192,5 +288,18 @@ export async function getScheduleRunDetail(
   }
 
   const steps = listRunSteps(runId);
-  return { run, steps, messages, outputFiles };
+  const { dsl, source } = resolveWorkflowDsl(run);
+  const stepOverlays = buildStepOverlays(steps, outputFiles);
+  const presetNames = buildPresetNameMap(dsl);
+
+  return {
+    run,
+    steps,
+    messages,
+    outputFiles,
+    workflowDsl: dsl,
+    workflowDslSource: source,
+    stepOverlays,
+    presetNames,
+  };
 }

@@ -29,7 +29,7 @@ import { sanitizeEnv } from './claude/utils';
 import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
 import { isClaudeLocalAuthProvider } from './claude/provider-env';
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
-import { buildClaudeSdkRuntimeBootstrap } from './claude/sdk-runtime';
+import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -367,11 +367,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       console.log('[perf] streamClaude start');
       emitStatus(controller, 'Preparing Claude runtime...', { phase: 'preparing' });
 
-      const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
+      const runtimeContext = buildClaudeSdkInvocationContext({
         provider: options.provider,
         sessionId,
+        requestedModel: model,
       });
-      const activeProvider: ApiProvider | undefined = runtimeBootstrap.activeProvider;
+      const activeProvider: ApiProvider | undefined = runtimeContext.activeProvider;
       console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');
 
       // Hoist execPath override vars so they're accessible in the finally block
@@ -380,7 +381,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
       try {
         const sdkEnv: Record<string, string> = {
-          ...runtimeBootstrap.env,
+          ...runtimeContext.env,
           // Extend MCP tool timeout for long-running tools like image generation (~300s)
           CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: '360',
         };
@@ -401,22 +402,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ? 'bypassPermissions'
             : ((permissionMode as Options['permissionMode']) || 'acceptEdits'),
           env: sanitizeEnv(sdkEnv),
-          settingSources: runtimeBootstrap.settingSources,
+          settingSources: runtimeContext.settingSources,
         };
 
         if (skipPermissions) {
           queryOptions.allowDangerouslySkipPermissions = true;
         }
 
-        if (runtimeBootstrap.pathToClaudeCodeExecutable) {
-          queryOptions.pathToClaudeCodeExecutable = runtimeBootstrap.pathToClaudeCodeExecutable;
-          console.log('[claude-client] Using Claude CLI:', runtimeBootstrap.pathToClaudeCodeExecutable);
+        if (runtimeContext.pathToClaudeCodeExecutable) {
+          queryOptions.pathToClaudeCodeExecutable = runtimeContext.pathToClaudeCodeExecutable;
+          console.log('[claude-client] Using Claude CLI:', runtimeContext.pathToClaudeCodeExecutable);
         } else {
           console.warn('[claude-client] WARNING: No Claude CLI found (bundled or system)');
         }
 
-        if (model) {
-          queryOptions.model = model;
+        if (runtimeContext.resolvedModel) {
+          queryOptions.model = runtimeContext.resolvedModel;
         }
 
         // Knowledge base context injection (only if enabled)

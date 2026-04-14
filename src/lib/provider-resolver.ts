@@ -1,6 +1,9 @@
+import { getDb } from '@/lib/db/connection';
 import { getDefaultProvider, getProvider } from '@/lib/db/providers';
 import { getSetting } from '@/lib/db/sessions';
 import { providerSupportsCapability } from '@/lib/provider-config';
+import { isPro } from '@/lib/edition';
+import { canUseCustomProviders } from '@/lib/edition-runtime';
 import type { ApiProvider, ProviderCapability } from '@/types';
 
 export type ProviderModuleKey = 'chat' | 'knowledge' | 'workflow' | 'image';
@@ -48,6 +51,16 @@ function ensureProviderSupportsCapability(
   return provider;
 }
 
+function getLumosCloudSystemProvider(): ApiProvider | undefined {
+  const db = getDb();
+  const row = db
+    .prepare(
+      "SELECT id FROM api_providers WHERE name = 'Lumos Cloud' AND provider_origin = 'system' LIMIT 1",
+    )
+    .get() as { id: string } | undefined;
+  return row ? getProvider(row.id) : undefined;
+}
+
 function resolveProviderById(
   providerId: string,
   capability: ProviderCapability,
@@ -76,6 +89,20 @@ export function resolveProviderForCapability(options: {
   preferredProviderId?: string | null;
   allowDefault?: boolean;
 }): ApiProvider | undefined {
+  // Pro-edition lockdown: when admin has disabled custom providers, ignore any
+  // user-configured preferred/override/default and force the system Lumos
+  // Cloud provider. image-gen is routed via provider_override:image (admin-
+  // managed) so it falls through to the normal path below.
+  if (isPro() && !canUseCustomProviders() && options.capability !== 'image-gen') {
+    const cloud = getLumosCloudSystemProvider();
+    if (!cloud) {
+      throw new ProviderResolutionError(
+        '管理员已禁用自定义服务商，但未找到 Lumos Cloud 服务商，请重新登录',
+      );
+    }
+    return ensureProviderSupportsCapability(cloud, options.capability, 'Lumos Cloud');
+  }
+
   const preferredProviderId = options.preferredProviderId?.trim() || '';
   if (preferredProviderId) {
     return resolveProviderById(preferredProviderId, options.capability, '指定服务商');

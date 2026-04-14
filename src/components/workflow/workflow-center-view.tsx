@@ -31,6 +31,10 @@ interface WorkflowPlannerDiagnostics {
   llmErrors?: string[];
   llmTimeoutMs?: number;
   llmSkippedReason?: string;
+  providerId?: string;
+  providerName?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
   fallbackUsed?: 'heuristic-preview';
   fallbackReason?: string;
 }
@@ -1454,6 +1458,15 @@ export function WorkflowCenterView() {
                           <>
                             <p>模型分析尝试次数：<span className="text-foreground">{plannerDiagnostics.llmAttempts || 0}</span></p>
                             <p>模型超时：<span className="text-foreground">{plannerDiagnostics.llmTimeoutMs || '未提供'} ms</span></p>
+                            {plannerDiagnostics.providerName || plannerDiagnostics.providerId ? (
+                              <p>分析服务商：<span className="text-foreground">{plannerDiagnostics.providerName || plannerDiagnostics.providerId}</span></p>
+                            ) : null}
+                            {plannerDiagnostics.requestedModel ? (
+                              <p>分析请求模型：<span className="text-foreground">{plannerDiagnostics.requestedModel}</span></p>
+                            ) : null}
+                            {plannerDiagnostics.resolvedModel ? (
+                              <p>分析实际模型：<span className="text-foreground">{plannerDiagnostics.resolvedModel}</span></p>
+                            ) : null}
                             {plannerDiagnostics.fallbackUsed ? (
                               <p>分析回退方式：<span className="text-foreground">{plannerDiagnostics.fallbackUsed}</span></p>
                             ) : null}

@@ -29,6 +29,26 @@ export interface AdapterContext {
     script?: string;
     screenshotPath?: string;
   }): Promise<AdapterBrowserCaptureResult>;
+
+  /**
+   * Evaluate JS inside a persistent, hidden per-site tab. The tab stays alive
+   * across calls so page-generated request signatures (e.g. Xiaohongshu's
+   * x-s / x-t / x-s-common) are produced in the real page context and shared
+   * login cookies are automatically attached.
+   *
+   * The script is CDP-evaluated with awaitPromise=true, so returning a Promise
+   * is fine — the resolved value is what comes back.
+   */
+  siteEvaluate(domain: string, script: string, options?: {
+    /** Landing page used when the tab is first created. Defaults to https://www.{domain}/ */
+    initialUrl?: string;
+    /**
+     * Before evaluating, navigate the persistent tab to this URL and wait for
+     * it to stabilize. The hostname must match {domain}. Skips navigation if
+     * the tab is already on this URL.
+     */
+    navigateTo?: string;
+  }): Promise<{ value: unknown; url: string; pageId: string }>;
 }
 
 // ---------------------------------------------------------------------------

@@ -58,3 +58,23 @@ resources/feishu-mcp-server/node_modules/
 resources/python-runtime/
 /tasks
 /node_modules_incomplete_201
+
+# claude code local settings
+/.claude/
+
+# local exploration / scratch scripts (not project code)
+/AI-Information-Summary.md
+/ai-search-*.md
+/ai-search-*.js
+/ai-search-*.mjs
+/deepsearch-content/
+/deepsearch-result.txt
+/format-search-results.mjs
+/get-ai-results.ts
+/query-db.ts
+/retrieve-deepsearch-results.mjs
+/search-ai-*.js
+/search-ai-*.mjs
+/search-ai-*.ts
+/simple-ai-search.js
+/test-deepsearch.ts

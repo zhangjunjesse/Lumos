@@ -36,9 +36,23 @@ const DSL_BASE_PROMPT = `你是 Lumos 工作流 DSL 生成器。
     "preset": "<来自可用 Agent 列表的 agent id>",
     "prompt": "<该步骤自身的任务描述，不包含上游数据>",
     "context": { "<上游步骤ID>": "steps.<上游步骤ID>.output.summary" },
-    "outputMode": "plain-text" | "structured"
+    "outputMode": "plain-text" | "structured",
+    "expectedOutput": "<可选的验收说明，见下>"
   }
 }
+
+**expectedOutput（验收说明，可选）**
+用自然语言写"怎样算这一步做完了"，判分老师会拿这段话去对照 agent 的实际输出 + 工具调用事实打分。
+- 留空 / 不写这个字段 → 系统跳过判分，只看 SDK 执行成功与否
+- 写了 → 判分老师只读这段文字，**不会**看 prompt，所以别指望它从 prompt 里推理
+- 只写验收要求，不写任务指令；只写看得见的交付物，不写内部步骤
+- 有硬性工具调用需求（必须出图/必须写文件/必须发消息），就明确写出来——判分老师能看到工具调用次数和工具名
+- 纯文本分析/纯思考类任务，写明"不需要调用工具"，避免判分老师误判
+- 如果用户需求里没有明显的验收边界（比如只是"总结一下"），就留空，不要硬凑
+示例：
+  "expectedOutput": "必须调用 generate_image 工具生成至少 1 张图片，输出里包含图片链接"
+  "expectedOutput": "纯文本竞品分析，输出包含至少 3 个竞品的价格对比；不需要调用任何工具"
+  "expectedOutput": "必须把报告写入 /tmp/report.md，agent 在输出里报告文件路径"
 
 ### 2. 条件分支 if-else — 根据上游步骤输出决定走哪条分支
 {

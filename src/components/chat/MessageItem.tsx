@@ -511,6 +511,8 @@ export function MessageItem({ message }: MessageItemProps) {
                 key={`img-gen-${i}`}
                 images={images}
                 prompt={String(inp?.prompt || r.prompt || '')}
+                aspectRatio={typeof inp?.aspect_ratio === 'string' ? inp.aspect_ratio : undefined}
+                imageSize={typeof inp?.image_size === 'string' ? inp.image_size : undefined}
                 model={typeof r.model === 'string' ? r.model : undefined}
                 provider={typeof r.provider === 'string' ? r.provider : undefined}
               />

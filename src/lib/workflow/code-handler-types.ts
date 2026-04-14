@@ -61,6 +61,19 @@ export interface CodeHandlerContext {
   signal?: AbortSignal;
   /** 浏览器操作（通过 Bridge Server 共享同一个浏览器实例） */
   browser: BrowserBridgeApi;
+  /**
+   * 本步骤的产出目录（已自动创建）。往这里写入的文件会自动被"本步产出"收录并支持预览/下载。
+   * 例：`path.join(ctx.outputDir, 'main', 'img_01.jpg')`。
+   * 禁止写 `/tmp` 或任何此目录之外的绝对路径。
+   */
+  outputDir: string;
+  /**
+   * 便捷写入产出:接受 Buffer 或源文件路径,返回最终落盘的绝对路径。
+   * - source 是 Buffer:必须提供 name(含扩展名)。
+   * - source 是字符串:视为源文件路径,name 缺省时用 basename。
+   * - name 可带子目录,如 `main/img_01.jpg`,子目录会自动创建。
+   */
+  saveArtifact(source: Buffer | string, name?: string): Promise<string>;
 }
 
 /**

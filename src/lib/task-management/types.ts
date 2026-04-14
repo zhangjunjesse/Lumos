@@ -138,6 +138,10 @@ export interface SubmitTaskResponse {
       llmErrors: string[];
       llmTimeoutMs?: number;
       llmSkippedReason?: string;
+      providerId?: string;
+      providerName?: string;
+      requestedModel?: string;
+      resolvedModel?: string;
       fallbackUsed?: 'heuristic-preview';
       fallbackReason?: string;
     };

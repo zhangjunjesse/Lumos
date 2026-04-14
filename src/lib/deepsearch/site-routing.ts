@@ -41,6 +41,19 @@ function isZhihuDetailUrl(url: string): boolean {
   }
 }
 
+function isXiaohongshuDetailUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (!(hostname === 'xiaohongshu.com' || hostname.endsWith('.xiaohongshu.com'))) {
+      return false;
+    }
+    return /^\/(?:explore|discovery\/item)\/[0-9a-f]+/i.test(parsed.pathname || '/');
+  } catch {
+    return false;
+  }
+}
+
 export function resolveSiteSeedUrl(siteKey: string, baseUrl: string, queryText: string): string {
   const query = queryText.trim();
   if (!query) {
@@ -50,6 +63,8 @@ export function resolveSiteSeedUrl(siteKey: string, baseUrl: string, queryText: 
   switch (siteKey) {
     case 'zhihu':
       return `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(query)}`;
+    case 'xiaohongshu':
+      return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(query)}&source=web_search_result_notes`;
     default:
       return baseUrl.trim() || 'about:blank';
   }
@@ -63,6 +78,8 @@ export function resolveSiteSeedBindingRole(
 
   switch (siteKey) {
     case 'zhihu':
+      return hasQuery ? 'search' : 'seed';
+    case 'xiaohongshu':
       return hasQuery ? 'search' : 'seed';
     default:
       return 'seed';
@@ -117,6 +134,26 @@ export function collectDeepSearchFollowUpUrls(params: {
         }
       }
 
+      return followUpUrls;
+    }
+    case 'xiaohongshu': {
+      const results = Array.isArray(params.extraction.structuredData?.results)
+        ? params.extraction.structuredData.results
+        : [];
+      const followUpUrls: string[] = [];
+
+      for (const entry of results) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          continue;
+        }
+        const candidate = normalizeHttpUrl((entry as { url?: unknown }).url);
+        if (!candidate || params.seenUrls.has(candidate)) continue;
+        if (!isXiaohongshuDetailUrl(candidate)) continue;
+
+        params.seenUrls.add(candidate);
+        followUpUrls.push(candidate);
+        if (followUpUrls.length >= limit) break;
+      }
       return followUpUrls;
     }
     default:

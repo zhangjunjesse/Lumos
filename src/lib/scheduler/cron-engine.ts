@@ -72,7 +72,7 @@ async function runSchedule(
   const modeLabel = isManual ? '手动' : schedule.runMode === 'once' ? '一次性' : '定时';
   const label = `[${modeLabel}] ${schedule.name}`;
   const session = createSession(label, undefined, undefined, schedule.workingDirectory || undefined, 'workflow');
-  const runId = insertRunHistory(schedule.id, session.id);
+  const runId = insertRunHistory(schedule.id, session.id, schedule.workflowDsl);
   const effectiveParams = mergeParamDefaults(schedule.workflowDsl, runParams ?? schedule.runParams ?? {});
 
   try {

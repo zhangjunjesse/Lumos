@@ -11,6 +11,7 @@ import {
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { isPro } from "@/lib/edition";
+import { useProAuth } from "@/hooks/useProAuth";
 import { GeneralSection } from "./GeneralSection";
 import { ClaudeConfigSection } from "./ClaudeConfigSection";
 import { LumosCloudSection } from "./LumosCloudSection";
@@ -66,6 +67,8 @@ export function SettingsLayout() {
   const activeSection = overrideSection ?? hashSection;
 
   const { t } = useTranslation();
+  const { user: proUser } = useProAuth();
+  const allowCustomProviders = proUser?.allow_custom_providers === true;
 
   const settingsLabelKeys: Record<string, TranslationKey> = {
     'General': 'settings.general',
@@ -115,7 +118,21 @@ export function SettingsLayout() {
         <div className="flex-1 overflow-auto p-6">
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "knowledge" && <KnowledgeSection />}
-          {activeSection === "providers" && (isPro() ? <LumosCloudSection /> : <ClaudeConfigSection />)}
+          {activeSection === "providers" && (
+            isPro() ? (
+              allowCustomProviders ? (
+                <div className="flex flex-col gap-10">
+                  <LumosCloudSection />
+                  <div className="h-px bg-border/50" />
+                  <ClaudeConfigSection />
+                </div>
+              ) : (
+                <LumosCloudSection />
+              )
+            ) : (
+              <ClaudeConfigSection />
+            )
+          )}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
               <SchedulingAgentSection />

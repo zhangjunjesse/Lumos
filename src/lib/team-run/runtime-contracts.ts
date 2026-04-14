@@ -99,6 +99,10 @@ export interface StageExecutionResultV1 {
     executionCwd?: string
     roleName?: string
     agentType?: string
+    providerId?: string
+    providerName?: string
+    requestedModel?: string
+    resolvedModel?: string
     allowedRuntimeTools?: string[]
     allowedClaudeTools?: string[]
     dependencyCount?: number

@@ -37,6 +37,7 @@ export function getDefaultApiProtocolForProviderType(providerType?: string | nul
   switch (normalizeProviderType(providerType)) {
     case 'openrouter':
     case 'gemini-image':
+    case 'toapis-image':
     case 'volcengine':
     case 'dashscope':
       return 'openai-compatible';
@@ -48,6 +49,7 @@ export function getDefaultApiProtocolForProviderType(providerType?: string | nul
 export function getDefaultCapabilitiesForProviderType(providerType?: string | null): ProviderCapability[] {
   switch (normalizeProviderType(providerType)) {
     case 'gemini-image':
+    case 'toapis-image':
     case 'volcengine':
     case 'dashscope':
       return ['image-gen'];

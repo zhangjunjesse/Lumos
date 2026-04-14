@@ -14,6 +14,11 @@ import {
 } from '@/components/ui/dialog';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import {
+  buildDefaultAdvancedValues,
+  ImageGenOptionsFields,
+  type ImageProviderUiConfigResponse,
+} from '@/components/chat/ImageGenOptionsFields';
+import {
   formatProviderModelCatalogForEditor,
   getProviderModelCatalogMeta,
   parseProviderModelCatalogEditor,
@@ -23,6 +28,7 @@ import {
   parseProviderCapabilities,
   serializeProviderCapabilities,
 } from '@/lib/provider-config';
+import { serializeImageProviderDefaults } from '@/lib/image/provider-defaults';
 import type { ProviderAuthMode, ProviderModelCatalogSource } from '@/types';
 
 export interface ProviderEditTarget {
@@ -34,6 +40,7 @@ export interface ProviderEditTarget {
   auth_mode: ProviderAuthMode;
   base_url: string;
   api_key: string;
+  extra_env: string;
   model_catalog: string;
   model_catalog_source: ProviderModelCatalogSource;
   model_catalog_updated_at: string | null;
@@ -74,6 +81,7 @@ export function ProviderEditDialog({
   const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [extraEnv, setExtraEnv] = useState('{}');
   const [modelCatalogText, setModelCatalogText] = useState('');
   const [modelCatalogSource, setModelCatalogSource] = useState<ProviderModelCatalogSource>('default');
   const [showKey, setShowKey] = useState(false);
@@ -82,11 +90,18 @@ export function ProviderEditDialog({
   const [detectingModels, setDetectingModels] = useState(false);
   const [detectMessage, setDetectMessage] = useState('');
   const [detectError, setDetectError] = useState('');
+  const [imageUiConfig, setImageUiConfig] = useState<ImageProviderUiConfigResponse | null>(null);
+  const [imageAspectRatio, setImageAspectRatio] = useState('1:1');
+  const [imageResolution, setImageResolution] = useState('1K');
+  const [imageCount, setImageCount] = useState(1);
+  const [imageAdvancedOpen, setImageAdvancedOpen] = useState(false);
+  const [imageAdvancedValues, setImageAdvancedValues] = useState<Record<string, unknown>>({});
 
   const resetForm = useCallback((p: ProviderEditTarget) => {
     setName(p.name);
     setApiKey(p.api_key);
     setBaseUrl(p.base_url);
+    setExtraEnv(p.extra_env || '{}');
     setModelCatalogText(formatProviderModelCatalogForEditor(p.model_catalog));
     setModelCatalogSource(p.model_catalog_source);
     setShowKey(false);
@@ -94,11 +109,68 @@ export function ProviderEditDialog({
     setUpdateError('');
     setDetectMessage('');
     setDetectError('');
+    setImageUiConfig(null);
+    setImageAspectRatio('1:1');
+    setImageResolution('1K');
+    setImageCount(1);
+    setImageAdvancedOpen(false);
+    setImageAdvancedValues({});
   }, []);
 
   useEffect(() => {
     if (open && provider) resetForm(provider);
   }, [open, provider, resetForm]);
+
+  useEffect(() => {
+    if (!open || !provider) return;
+
+    const caps = parseProviderCapabilities(provider.capabilities, provider.provider_type);
+    if (!caps.includes('image-gen')) return;
+
+    let cancelled = false;
+    const loadImageUiConfig = async () => {
+      try {
+        const res = await fetch(`/api/providers/${provider.id}/image-ui-config`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as ImageProviderUiConfigResponse;
+        if (cancelled) return;
+        setImageUiConfig(data);
+        setImageAspectRatio(data.defaults?.aspectRatio || '1:1');
+        setImageResolution(data.defaults?.resolution || '1K');
+        setImageCount(data.defaults?.count || 1);
+        setImageAdvancedValues(buildDefaultAdvancedValues(
+          data.uiConfig.advancedOptions ?? {},
+          data.defaults?.providerOptions,
+        ));
+      } catch {
+        if (!cancelled) setImageUiConfig(null);
+      }
+    };
+
+    void loadImageUiConfig();
+    return () => { cancelled = true; };
+  }, [open, provider]);
+
+  useEffect(() => {
+    const ratios = imageUiConfig?.uiConfig.supportedAspectRatios ?? ['1:1'];
+    if (!ratios.includes(imageAspectRatio)) {
+      setImageAspectRatio(ratios[0] || '1:1');
+    }
+  }, [imageAspectRatio, imageUiConfig]);
+
+  useEffect(() => {
+    const resolutions = imageUiConfig?.uiConfig.supportedResolutions ?? ['1K'];
+    if (!resolutions.includes(imageResolution)) {
+      setImageResolution(resolutions[0] || '1K');
+    }
+  }, [imageResolution, imageUiConfig]);
+
+  useEffect(() => {
+    const maxCount = imageUiConfig?.uiConfig.maxCount ?? 4;
+    if (imageCount > maxCount) {
+      setImageCount(maxCount);
+    }
+  }, [imageCount, imageUiConfig]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     onOpenChange(nextOpen);
@@ -143,6 +215,50 @@ export function ProviderEditDialog({
     setUpdating(true);
     setUpdateError('');
     try {
+      let nextExtraEnv = extraEnv || '{}';
+
+      if (caps.includes('image-gen')) {
+        const advancedSchema = imageUiConfig?.uiConfig.advancedOptions ?? {};
+        const providerOptions: Record<string, unknown> = {};
+
+        for (const [key, value] of Object.entries(imageAdvancedValues)) {
+          const def = advancedSchema[key];
+          if (!def) continue;
+
+          if (def.type === 'json') {
+            if (typeof value !== 'string' || !value.trim()) continue;
+            providerOptions[key] = JSON.parse(value);
+            continue;
+          }
+
+          if (def.type === 'number') {
+            if (value === '' || value === null || value === undefined) continue;
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) {
+              throw new Error(`默认高级参数“${def.label}”不是合法数字`);
+            }
+            providerOptions[key] = parsed;
+            continue;
+          }
+
+          if (def.type === 'boolean') {
+            if (typeof value === 'boolean') providerOptions[key] = value;
+            continue;
+          }
+
+          if (typeof value === 'string' && value.trim()) {
+            providerOptions[key] = value.trim();
+          }
+        }
+
+        nextExtraEnv = serializeImageProviderDefaults(nextExtraEnv, {
+          aspectRatio: imageAspectRatio,
+          resolution: imageResolution,
+          count: imageCount,
+          providerOptions,
+        });
+      }
+
       const res = await fetch(`/api/providers/${provider.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -153,6 +269,7 @@ export function ProviderEditDialog({
           auth_mode: provider.auth_mode,
           api_key: provider.auth_mode === 'local_auth' ? undefined : apiKey,
           base_url: provider.auth_mode === 'local_auth' ? undefined : baseUrl,
+          extra_env: nextExtraEnv,
           model_catalog: serializeProviderModelCatalog(modelCatalog),
           model_catalog_source: modelCatalog.length > 0
             ? (modelCatalogSource === 'detected' ? 'detected' : 'manual')
@@ -278,6 +395,31 @@ export function ProviderEditDialog({
             {detectMessage && <p className="text-xs text-emerald-600 dark:text-emerald-400">{detectMessage}</p>}
             {detectError && <p className="text-xs text-destructive">{detectError}</p>}
           </div>
+
+          {caps.includes('image-gen') && imageUiConfig && (
+            <div className="space-y-2 rounded-lg border border-border/60 p-3">
+              <div>
+                <label className="text-sm font-medium">默认图片参数</label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  这里设置该图片服务商的默认比例、分辨率和张数。聊天里不手动改参数时，会先使用这里的默认值。
+                </p>
+              </div>
+              <ImageGenOptionsFields
+                providerConfig={imageUiConfig}
+                aspectRatio={imageAspectRatio}
+                resolution={imageResolution}
+                count={imageCount}
+                advancedOpen={imageAdvancedOpen}
+                advancedValues={imageAdvancedValues}
+                onAspectRatioChange={setImageAspectRatio}
+                onResolutionChange={setImageResolution}
+                onCountChange={setImageCount}
+                onAdvancedOpenChange={setImageAdvancedOpen}
+                onAdvancedValueChange={(key, value) => setImageAdvancedValues((prev) => ({ ...prev, [key]: value }))}
+              />
+            </div>
+          )}
+
           {updateError && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
               <p className="text-xs text-destructive">{updateError}</p>

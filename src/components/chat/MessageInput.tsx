@@ -23,6 +23,13 @@ import {
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { TranslationKey } from '@/i18n';
+import { Button } from '@/components/ui/button';
+import {
+  buildDefaultAdvancedValues,
+  ImageGenOptionsFields,
+  type ImageProviderUiConfigResponse,
+} from './ImageGenOptionsFields';
+import { buildImageGenerationSystemPrompt } from '@/lib/image/provider-defaults';
 import {
   DEFAULT_PROVIDER_MODEL_OPTIONS,
   doesResolvedModelMatchRequested,
@@ -129,6 +136,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
 
 const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
 const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
+const IMAGE_REQUEST_HINT_REGEX = /(生成图片|生成一张图|做图|改图|出图|海报|主图|banner|封面|插画|渲染|画一张|render|draw|generate image|image poster|image banner)/i;
 
 interface ChatDraftPayload {
   text: string;
@@ -370,8 +378,17 @@ export function MessageInput({
   const [knowledgeTagsError, setKnowledgeTagsError] = useState<string | null>(null);
   const [knowledgeTagFilter, setKnowledgeTagFilter] = useState('');
   const [selectedKnowledgeTagIds, setSelectedKnowledgeTagIds] = useState<string[]>([]);
+  const [imageProviderConfig, setImageProviderConfig] = useState<ImageProviderUiConfigResponse | null>(null);
+  const [imageOptionsOpen, setImageOptionsOpen] = useState(false);
+  const [imageAspectRatio, setImageAspectRatio] = useState('1:1');
+  const [imageResolution, setImageResolution] = useState('1K');
+  const [imageCount, setImageCount] = useState(1);
+  const [imageAdvancedOpen, setImageAdvancedOpen] = useState(false);
+  const [imageAdvancedValues, setImageAdvancedValues] = useState<Record<string, unknown>>({});
+  const [imageOptionsError, setImageOptionsError] = useState<string | null>(null);
   const aiSearchAbortRef = useRef<AbortController | null>(null);
   const aiSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoImagePanelPromptRef = useRef('');
 
   useEffect(() => {
     setKnowledgeEnabled(initialKnowledgeEnabled);
@@ -438,10 +455,62 @@ export function MessageInput({
   }, [fetchProviderModels]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadImageProviderConfig = async () => {
+      try {
+        const response = await fetch('/api/media/provider-config', { cache: 'no-store' });
+        if (!response.ok) {
+          if (!cancelled) setImageProviderConfig(null);
+          return;
+        }
+
+        const data = await response.json() as ImageProviderUiConfigResponse;
+        if (cancelled) return;
+
+        setImageProviderConfig(data);
+        setImageAspectRatio(data.defaults?.aspectRatio || '1:1');
+        setImageResolution(data.defaults?.resolution || '1K');
+        setImageCount(data.defaults?.count || 1);
+        setImageAdvancedValues(buildDefaultAdvancedValues(
+          data.uiConfig.advancedOptions ?? {},
+          data.defaults?.providerOptions,
+        ));
+      } catch {
+        if (!cancelled) setImageProviderConfig(null);
+      }
+    };
+
+    loadImageProviderConfig();
+    const handleProviderChange = () => { void loadImageProviderConfig(); };
+    window.addEventListener('provider-changed', handleProviderChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('provider-changed', handleProviderChange);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!knowledgeMenuOpen) return;
     if (knowledgeTagsLoading || knowledgeTags.length > 0 || knowledgeTagsError) return;
     void fetchKnowledgeTags();
   }, [fetchKnowledgeTags, knowledgeMenuOpen, knowledgeTags.length, knowledgeTagsError, knowledgeTagsLoading]);
+
+  useEffect(() => {
+    if (!imageProviderConfig || imageOptionsOpen) return;
+    const trimmed = inputValue.trim();
+    if (!trimmed) {
+      lastAutoImagePanelPromptRef.current = '';
+      return;
+    }
+    if (
+      IMAGE_REQUEST_HINT_REGEX.test(trimmed)
+      && trimmed !== lastAutoImagePanelPromptRef.current
+    ) {
+      lastAutoImagePanelPromptRef.current = trimmed;
+      setImageOptionsOpen(true);
+    }
+  }, [imageOptionsOpen, imageProviderConfig, inputValue]);
 
   // Derive active provider + model for the selector.
   const hasExplicitProvider = !!providerId && providerGroups.some((group) => group.provider_id === providerId);
@@ -453,7 +522,37 @@ export function MessageInput({
       : (providerGroups[0]?.provider_id ?? '');
   const hasProviders = providerGroups.length > 0;
   const currentGroup = providerGroups.find(g => g.provider_id === currentProviderIdValue) || providerGroups[0];
-  const MODEL_OPTIONS = currentGroup?.models || (hasProviders ? DEFAULT_PROVIDER_MODEL_OPTIONS : []);
+  const MODEL_OPTIONS = useMemo(
+    () => currentGroup?.models || (hasProviders ? DEFAULT_PROVIDER_MODEL_OPTIONS : []),
+    [currentGroup, hasProviders],
+  );
+  const imageSupportedAspectRatios = useMemo<string[]>(
+    () => imageProviderConfig?.uiConfig.supportedAspectRatios ?? ['1:1'],
+    [imageProviderConfig],
+  );
+  const imageSupportedResolutions = useMemo<string[]>(
+    () => imageProviderConfig?.uiConfig.supportedResolutions ?? ['1K'],
+    [imageProviderConfig],
+  );
+  const imageMaxCount = imageProviderConfig?.uiConfig.maxCount ?? 4;
+
+  useEffect(() => {
+    if (!imageSupportedAspectRatios.includes(imageAspectRatio)) {
+      setImageAspectRatio(imageSupportedAspectRatios[0] || '1:1');
+    }
+  }, [imageAspectRatio, imageSupportedAspectRatios]);
+
+  useEffect(() => {
+    if (!imageSupportedResolutions.includes(imageResolution)) {
+      setImageResolution(imageSupportedResolutions[0] || '1K');
+    }
+  }, [imageResolution, imageSupportedResolutions]);
+
+  useEffect(() => {
+    if (imageCount > imageMaxCount) {
+      setImageCount(imageMaxCount);
+    }
+  }, [imageCount, imageMaxCount]);
 
   useEffect(() => {
     if (MODEL_OPTIONS.length === 0) return;
@@ -697,6 +796,61 @@ export function MessageInput({
     }
   }, [fetchFiles, fetchSkills, popoverMode, closePopover]);
 
+  const buildImageOverridePrompt = useCallback(() => {
+    if (!imageOptionsOpen || !imageProviderConfig) return undefined;
+
+    const providerOptions: Record<string, unknown> = {};
+    const advancedSchema = imageProviderConfig.uiConfig.advancedOptions ?? {};
+
+    for (const [key, value] of Object.entries(imageAdvancedValues)) {
+      const def = advancedSchema[key];
+      if (!def) continue;
+
+      if (def.type === 'json') {
+        if (typeof value !== 'string' || !value.trim()) continue;
+        try {
+          providerOptions[key] = JSON.parse(value);
+        } catch {
+          throw new Error(`高级参数“${def.label}”不是合法 JSON`);
+        }
+        continue;
+      }
+
+      if (def.type === 'number') {
+        if (value === '' || value === null || value === undefined) continue;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`高级参数“${def.label}”不是合法数字`);
+        }
+        providerOptions[key] = parsed;
+        continue;
+      }
+
+      if (def.type === 'boolean') {
+        if (typeof value === 'boolean') providerOptions[key] = value;
+        continue;
+      }
+
+      if (typeof value === 'string' && value.trim()) {
+        providerOptions[key] = value.trim();
+      }
+    }
+
+    return buildImageGenerationSystemPrompt({
+      aspectRatio: imageAspectRatio,
+      resolution: imageResolution,
+      count: imageCount,
+      providerOptions,
+    }) || undefined;
+  }, [
+    imageAdvancedValues,
+    imageAspectRatio,
+    imageCount,
+    imageOptionsOpen,
+    imageProviderConfig,
+    imageResolution,
+  ]);
+
   const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ id?: string; type: string; url: string; filename?: string; mediaType?: string; filePath?: string }> }, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const content = inputValue.trim();
@@ -806,9 +960,17 @@ export function MessageInput({
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
       };
+      let imageOverridePrompt: string | undefined;
+      try {
+        imageOverridePrompt = buildImageOverridePrompt();
+        setImageOptionsError(null);
+      } catch (error) {
+        setImageOptionsError(error instanceof Error ? error.message : '图片高级参数格式错误');
+        return;
+      }
       setBadge(null);
       setInputValue('');
-      onSend(finalPrompt, files.length > 0 ? files : undefined, undefined, undefined, knowledgeOptions);
+      onSend(finalPrompt, files.length > 0 ? files : undefined, imageOverridePrompt, undefined, knowledgeOptions);
       return;
     }
 
@@ -851,10 +1013,19 @@ export function MessageInput({
       }
     }
 
+    let imageOverridePrompt: string | undefined;
+    try {
+      imageOverridePrompt = buildImageOverridePrompt();
+      setImageOptionsError(null);
+    } catch (error) {
+      setImageOptionsError(error instanceof Error ? error.message : '图片高级参数格式错误');
+      return;
+    }
+
     onSend(
       content || 'Please review the attached file(s).',
       hasFiles ? files : undefined,
-      undefined,
+      imageOverridePrompt,
       undefined,
       {
         enabled: knowledgeEnabled,
@@ -864,8 +1035,10 @@ export function MessageInput({
     setInputValue('');
   }, [
     badge,
+    buildImageOverridePrompt,
     closePopover,
     disabled,
+    hasProviders,
     inputValue,
     isStreaming,
     knowledgeEnabled,
@@ -1420,6 +1593,63 @@ export function MessageInput({
             )}
             {/* File attachment capsules */}
             <FileAttachmentsCapsules />
+            {imageOptionsOpen && imageProviderConfig && (
+              <div className="px-3 pt-2 pb-0 order-first">
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">本次图片参数</div>
+                      <div className="text-xs text-muted-foreground">仅对这条消息里的做图/改图调用生效，优先级高于服务商默认值。</div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        setImageOptionsOpen(false);
+                        setImageOptionsError(null);
+                      }}
+                    >
+                      收起
+                    </Button>
+                  </div>
+
+                  <ImageGenOptionsFields
+                    providerConfig={imageProviderConfig}
+                    aspectRatio={imageAspectRatio}
+                    resolution={imageResolution}
+                    count={imageCount}
+                    disabled={disabled || isStreaming}
+                    advancedOpen={imageAdvancedOpen}
+                    advancedValues={imageAdvancedValues}
+                    onAspectRatioChange={(value) => {
+                      setImageAspectRatio(value);
+                      setImageOptionsError(null);
+                    }}
+                    onResolutionChange={(value) => {
+                      setImageResolution(value);
+                      setImageOptionsError(null);
+                    }}
+                    onCountChange={(value) => {
+                      setImageCount(value);
+                      setImageOptionsError(null);
+                    }}
+                    onAdvancedOpenChange={setImageAdvancedOpen}
+                    onAdvancedValueChange={(key, value) => {
+                      setImageAdvancedValues((prev) => ({ ...prev, [key]: value }));
+                      setImageOptionsError(null);
+                    }}
+                  />
+
+                  {imageOptionsError && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                      {imageOptionsError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <PromptInputTextarea
               ref={textareaRef}
               placeholder={badge ? t('messageInput.badgePlaceholder') : t('messageInput.placeholder')}
@@ -1455,6 +1685,24 @@ export function MessageInput({
                     />
                   </PromptInputButton>
                 </div>
+
+                {imageProviderConfig && (
+                  <PromptInputButton
+                    onClick={() => {
+                      setImageOptionsOpen((prev) => !prev);
+                      setImageOptionsError(null);
+                    }}
+                    className={cn(
+                      imageOptionsOpen && "border-blue-500/40 bg-blue-500/10 text-blue-700 hover:bg-blue-500/15 dark:text-blue-300"
+                    )}
+                  >
+                    <HugeiconsIcon icon={Edit} className="h-3.5 w-3.5" />
+                    <span className="text-xs">图片参数</span>
+                    <span className="rounded-full bg-current/10 px-1.5 py-0.5 text-[10px] leading-none">
+                      {imageAspectRatio}/{imageResolution}
+                    </span>
+                  </PromptInputButton>
+                )}
 
                 {/* Model selector */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>

@@ -78,6 +78,7 @@ export const WORKFLOW_REFINE_PROMPT = `你是 Lumos 工作流编辑助手。用�
     "prompt": "<本步骤任务描述，不要把上游数据写入 prompt>",
     "context": { "<变量名>": "steps.<上游ID>.output.summary" },
     "outputMode": "plain-text",
+    "expectedOutput": "<可选的验收说明，见下>",
     "knowledge": {
       "enabled": true,
       "defaultTagNames": ["<标签名1>", "<标签名2>"],
@@ -89,10 +90,28 @@ export const WORKFLOW_REFINE_PROMPT = `你是 Lumos 工作流编辑助手。用�
 - preset 必须使用【可用 Agent】列表中已有的 id
 - 有 dependsOn 时，必须在 input.context 中引用上游输出
 - prompt 只描述本步骤自身任务，上游数据通过 context 自动传入
+- **涉及文件产出的步骤（下载、截图、生成报表/图片等）**：prompt 里**只描述子目录结构**（例如"主图保存到 main 子目录,详情图保存到 detail 子目录"），不要写绝对路径（禁止 \`/tmp/...\`、\`~/...\` 这种）。执行时 Lumos 会自动把文件放进该步骤的产出目录并在"本步产出"里支持预览下载;硬编码绝对路径会让产出游离、查看不到
 - **outputMode 说明**：
   - "plain-text"（默认）：agent 自由文本输出，结果在 steps.<ID>.output.summary
   - "structured"：agent 必须输出 JSON，系统会自动解析 JSON 字段并挂载到 steps.<ID>.output.<字段名>。例如 agent 输出 \`{"run_dir": "/path/to/dir", "count": 5}\`，下游可通过 \`steps.<ID>.output.run_dir\` 和 \`steps.<ID>.output.count\` 引用
   - 使用 structured 模式时，prompt 里必须明确告知 agent 输出哪些 JSON 字段（字段名、类型、含义）
+- **expectedOutput 说明（验收说明，可选字段）**：
+  - 作用：用自然语言写"怎样算这一步做完了"。运行时有个独立的"判分老师"LLM 会拿这段话对照 agent 的实际输出 + 工具调用事实打分，不达标就把步骤判为 failed。
+  - 留空 / 不写这个字段 → 跳过判分，只看 SDK 执行是否成功（推荐在验收边界模糊的步骤用）
+  - 写了 → 判分老师**只读这段文字**，完全看不到 prompt，所以别指望它从 prompt 里推理任务意图
+  - 只写验收要求，不写任务指令；只写看得见的交付物，不写内部执行过程
+  - 有硬性工具调用需求（必须出图 / 必须写文件 / 必须发消息）就明确写出来——判分老师能看到工具调用次数和工具名列表
+  - 纯文本分析、纯思考、纯汇总类任务，要在验收说明里写明"不需要调用任何工具"，否则判分老师可能默认"没调工具 = 没干活"
+  - 不要所有步骤都硬塞验收说明；边界不清的情况就留空，空比错写好
+  - 示例：
+    - \`"expectedOutput": "必须调用 generate_image 生成至少 1 张图片，输出里包含图片链接"\`
+    - \`"expectedOutput": "纯文本竞品分析，输出包含至少 3 个竞品的价格对比；不需要调用任何工具"\`
+    - \`"expectedOutput": "必须把报告写入 /tmp/report.md，agent 在输出里报告文件路径"\`
+    - \`"expectedOutput": "输出必须包含 summary、pros、cons 三段；不需要调用任何工具"\`
+- **用户何时要求你填/改 expectedOutput**：
+  - 用户说"这一步老被误判成失败"、"判分太严格"、"让判分老师别看我 prompt" → 加/改验收说明
+  - 用户说"不要校验 / 跳过判分" → 删掉 expectedOutput 字段
+  - 用户说"必须出图 / 必须调某个工具" → 往 expectedOutput 写硬性要求
 - **knowledge 字段可选，默认不启用**。仅当该步骤需要检索本地知识库（RAG）时才添加：
   - enabled: true 启用；false 或省略整个 knowledge 字段即为禁用
   - defaultTagNames: 默认标签名数组（使用 kb_tags.name，不是 id），留空表示检索全部条目
@@ -136,10 +155,13 @@ Agent 步骤可以添加 \`code\` 字段，让步骤优先执行固定代码而�
 - \`ctx.upstreamOutputs\` — 上游步骤输出（来自 input.context）
 - \`ctx.stepId\` / \`ctx.workflowRunId\` — 运行时标识
 - \`ctx.workingDirectory\` — 工作目录
+- \`ctx.outputDir\` — **产出目录**（已自动创建）。本步所有要保存/下载的文件必须写到这里,否则执行记录的"本步产出"看不到也不能预览下载。**禁止写 \`/tmp\` 或任何此目录之外的绝对路径。** 支持子目录（会自动创建）
+- \`ctx.saveArtifact(source, name?)\` — 便捷产出写入:source 可以是 Buffer 或源文件路径,name 可含子目录(如 \`"main/img_01.jpg"\`);返回落盘的绝对路径
 - \`ctx.signal\` — AbortSignal（支持取消）
 - \`ctx.browser\` — 浏览器操作 API（navigate/snapshot/click/fill/type/press/waitFor/evaluate/screenshot/pages/newPage/selectPage/closePage）
 - \`fetch\` — HTTP 请求
 - \`console\` — 日志（自动捕获到调试日志）
+- \`fs\` / \`path\` — Node 标准模块,写文件时务必拼 \`ctx.outputDir\`：\`path.join(ctx.outputDir, '子目录', '文件名')\`
 
 **引用上游步骤输出：** 和 agent 步骤一样，在 \`input.context\` 中用 \`"steps.<id>.output.xxx"\` 引用，脚本中通过 \`ctx.upstreamOutputs\` 访问。
 
@@ -240,10 +262,13 @@ export const WORKFLOW_CODIFY_PROMPT = `你是 Lumos 工作流代码固化助手�
 
 - \`ctx.params\` — 用户传入的参数
 - \`ctx.upstreamOutputs\` — 上游步骤输出
+- \`ctx.outputDir\` — **本步产出目录**（已自动创建）。所有下载/生成的文件必须写到这里,否则执行记录里看不到也不能预览下载。**严禁写 \`/tmp\`、\`~/Downloads\`、用户主目录或任何此目录之外的绝对路径。** 支持任意深度子目录
+- \`ctx.saveArtifact(source, name?)\` — 便捷产出写入:source 是 Buffer 或源文件路径,name 可含子目录,返回落盘路径
 - \`ctx.signal\` — AbortSignal（支持取消）
 - \`ctx.browser\` — 浏览器操作（与 Agent 共享同一个浏览器实例和登录态）
 - \`fetch\` — 全局 fetch
 - \`console\` — 日志输出
+- \`fs\` / \`path\` — Node 标准模块,写文件时必须 \`path.join(ctx.outputDir, ...)\` 拼路径
 
 ### ctx.browser API（与 Agent 的 Chrome DevTools MCP 共享同一个浏览器）
 
@@ -320,5 +345,6 @@ return {
 - 代码必须处理常见错误（网络超时、元素未找到等）
 - 检查 ctx.signal?.aborted 以支持取消
 - 参数化可变部分（URL、日期范围等），放入 ctx.params
+- **所有文件产出一律落到 \`ctx.outputDir\` 下**：下载图片/文档、保存截图、生成报表,都用 \`path.join(ctx.outputDir, '子目录', '文件名')\` 或 \`ctx.saveArtifact(buffer, 'main/xxx.jpg')\`;遇到提示词里写了 \`/tmp/xxx\` 这种绝对路径,在生成代码时自动把它映射到 \`ctx.outputDir\` 下的对应子目录(如 \`/tmp/competitor-images/main/\` → \`path.join(ctx.outputDir, 'main')\`)
 - 最后必须 return { success: true/false, output: { summary: '...' } }
 - 只输出代码块，不添加额外解释`;

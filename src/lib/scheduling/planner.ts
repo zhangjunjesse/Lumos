@@ -1,7 +1,7 @@
 import { getSession, getSetting } from '@/lib/db/sessions';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
-import { getProviderModelOptions } from '@/lib/model-metadata';
+import { getProviderModelOptions, resolveProviderModelForRequest } from '@/lib/model-metadata';
 import { generateObjectWithFallback } from '@/lib/text-generator';
 import type { Task } from '@/lib/task-management/types';
 import { getSchedulingPlannerConfig } from '@/lib/workflow/agent-config';
@@ -50,6 +50,10 @@ export interface SchedulingPlanDiagnostics {
   llmErrors: string[];
   llmTimeoutMs?: number;
   llmSkippedReason?: string;
+  providerId?: string;
+  providerName?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
 }
 
 export class SchedulingPlannerError extends Error {
@@ -124,6 +128,10 @@ export async function resolveSchedulingPlan(task: Task): Promise<SchedulingPlan>
             llmAttempts: attempt + 1,
             llmErrors,
             llmTimeoutMs: plannerConfig.plannerTimeoutMs,
+            providerId: llmContext.provider.id,
+            providerName: llmContext.provider.name,
+            ...(llmContext.requestedModel ? { requestedModel: llmContext.requestedModel } : {}),
+            resolvedModel: llmContext.model,
           },
         };
       }
@@ -140,6 +148,10 @@ export async function resolveSchedulingPlan(task: Task): Promise<SchedulingPlan>
           llmAttempts: attempt + 1,
           llmErrors,
           llmTimeoutMs: plannerConfig.plannerTimeoutMs,
+          providerId: llmContext.provider.id,
+          providerName: llmContext.provider.name,
+          ...(llmContext.requestedModel ? { requestedModel: llmContext.requestedModel } : {}),
+          resolvedModel: llmContext.model,
         },
       };
     } catch (error) {
@@ -160,6 +172,10 @@ export async function resolveSchedulingPlan(task: Task): Promise<SchedulingPlan>
       llmAttempts: plannerConfig.plannerMaxRetries + 1,
       llmErrors,
       llmTimeoutMs: plannerConfig.plannerTimeoutMs,
+      providerId: llmContext.provider.id,
+      providerName: llmContext.provider.name,
+      ...(llmContext.requestedModel ? { requestedModel: llmContext.requestedModel } : {}),
+      resolvedModel: llmContext.model,
     },
   );
 }
@@ -209,7 +225,8 @@ function resolvePlannerModelContext(task: Task): PlannerModelContext | null {
     || ''
   ).trim();
   const fallbackModel = getProviderModelOptions(provider)[0]?.value?.trim() || '';
-  const model = configuredModel || fallbackModel;
+  const requestedModel = configuredModel || undefined;
+  const model = resolveProviderModelForRequest(provider, configuredModel || fallbackModel);
 
   if (!model) {
     return null;
@@ -217,6 +234,7 @@ function resolvePlannerModelContext(task: Task): PlannerModelContext | null {
 
   return {
     provider: provider as ApiProvider,
+    requestedModel,
     model,
     workingDirectory: session?.sdk_cwd || session?.working_directory || undefined,
   };

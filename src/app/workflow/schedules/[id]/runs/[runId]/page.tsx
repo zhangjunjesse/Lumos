@@ -7,6 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { RunOutputRenderer } from '@/components/workflow/RunOutputRenderer';
 import { OutputFilesSection } from '@/components/workflow/OutputFilesSection';
+import { WorkflowDslGraph, type WorkflowDslStepOverlay } from '@/components/workflow/WorkflowDslGraph';
+import { WorkflowStepDetailPanel } from '@/components/workflow/WorkflowStepDetailPanel';
+import type { WorkflowDSL } from '@/lib/workflow/types';
 
 interface RunRecord {
   id: string;
@@ -40,6 +43,10 @@ interface RunDetailResponse {
   run?: RunRecord;
   messages?: DbMessage[];
   outputFiles?: OutputFile[];
+  workflowDsl?: WorkflowDSL | null;
+  workflowDslSource?: 'snapshot' | 'live' | 'none';
+  stepOverlays?: Record<string, WorkflowDslStepOverlay>;
+  presetNames?: Record<string, string>;
   error?: string;
 }
 
@@ -104,6 +111,11 @@ export default function RunDetailPage() {
   const [run, setRun] = useState<RunRecord | null>(null);
   const [messages, setMessages] = useState<DbMessage[]>([]);
   const [outputFiles, setOutputFiles] = useState<OutputFile[]>([]);
+  const [workflowDsl, setWorkflowDsl] = useState<WorkflowDSL | null>(null);
+  const [workflowDslSource, setWorkflowDslSource] = useState<'snapshot' | 'live' | 'none'>('none');
+  const [stepOverlays, setStepOverlays] = useState<Record<string, WorkflowDslStepOverlay>>({});
+  const [presetNames, setPresetNames] = useState<Record<string, string>>({});
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState('');
@@ -119,6 +131,10 @@ export default function RunDetailPage() {
       if (data.run) setRun(data.run);
       if (data.messages) setMessages(data.messages);
       if (data.outputFiles) setOutputFiles(data.outputFiles);
+      if (data.workflowDsl !== undefined) setWorkflowDsl(data.workflowDsl);
+      if (data.workflowDslSource) setWorkflowDslSource(data.workflowDslSource);
+      if (data.stepOverlays) setStepOverlays(data.stepOverlays);
+      if (data.presetNames) setPresetNames(data.presetNames);
     } catch (e) {
       setError(e instanceof Error ? e.message : '网络错误');
     } finally { setLoading(false); }
@@ -156,7 +172,14 @@ export default function RunDetailPage() {
   const cfg = STATUS_CFG[run.status] ?? STATUS_CFG.running;
   const assistantCount = messages.filter(m => m.role === 'assistant').length;
   const hasOutputFiles = outputFiles.length > 0;
-  const defaultTab = hasOutputFiles ? 'results' : 'process';
+  const hasWorkflow = Boolean(workflowDsl && workflowDsl.steps && workflowDsl.steps.length > 0);
+  const defaultTab = run.status === 'error'
+    ? 'process'
+    : hasWorkflow
+      ? 'workflow'
+      : hasOutputFiles
+        ? 'results'
+        : 'process';
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 space-y-6">
@@ -214,9 +237,17 @@ export default function RunDetailPage() {
         )}
       </div>
 
-      {/* Tabs: results / execution process */}
+      {/* Tabs: workflow / results / execution process */}
       <Tabs defaultValue={defaultTab}>
         <TabsList>
+          <TabsTrigger value="workflow" disabled={!hasWorkflow}>
+            工作流结构
+            {hasWorkflow && (
+              <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
+                {workflowDsl?.steps?.length ?? 0}
+              </Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="results" disabled={!hasOutputFiles}>
             结果文件
             {hasOutputFiles && (
@@ -232,6 +263,47 @@ export default function RunDetailPage() {
             </Badge>
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="workflow">
+          {hasWorkflow && workflowDsl ? (
+            <div className="space-y-3">
+              {workflowDslSource === 'live' && (
+                <div className="text-[11px] px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                  注意：此执行记录未保存配置快照，下方展示的是工作流的当前定义，与实际执行时可能不同。
+                </div>
+              )}
+              <WorkflowDslGraph
+                steps={workflowDsl.steps as Parameters<typeof WorkflowDslGraph>[0]['steps']}
+                presetNames={presetNames}
+                stepOverlays={stepOverlays}
+                selectedStepId={selectedStepId}
+                onStepClick={(stepId) => setSelectedStepId(prev => prev === stepId ? null : stepId)}
+              />
+              {selectedStepId && (() => {
+                const selectedStep = workflowDsl.steps?.find(s => s.id === selectedStepId);
+                if (!selectedStep) return null;
+                return (
+                  <WorkflowStepDetailPanel
+                    step={selectedStep}
+                    presetNames={presetNames}
+                    overlay={stepOverlays[selectedStepId]}
+                    outputFiles={outputFiles}
+                    onClose={() => setSelectedStepId(null)}
+                  />
+                );
+              })()}
+              {!selectedStepId && (
+                <div className="text-center py-3 text-[11px] text-muted-foreground">
+                  点击任一节点查看该步骤的配置与执行详情
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-16 text-sm text-muted-foreground rounded-xl border border-dashed border-border/50">
+              无可用工作流配置
+            </div>
+          )}
+        </TabsContent>
 
         <TabsContent value="results">
           {hasOutputFiles ? (

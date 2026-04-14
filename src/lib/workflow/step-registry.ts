@@ -34,6 +34,9 @@ const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   context: z.record(z.string(), z.unknown()).optional(),
   code: codeConfigSchema.optional(),
   knowledge: knowledgeConfigSchema.optional(),
+  // 用户写的"验收说明" — Phase 2 判分老师只读这个字段（不再看 prompt）。
+  // 留空 → 跳过 Phase 2，直接信任 Phase 1 outcome。
+  expectedOutput: z.string().optional(),
 }).strict();
 
 const notificationStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({

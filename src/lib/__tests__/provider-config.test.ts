@@ -14,6 +14,7 @@ describe('provider-config capability defaults', () => {
 
   test('keeps gemini-image restricted to image-gen by default', () => {
     expect(parseProviderCapabilities(undefined, 'gemini-image')).toEqual(['image-gen']);
+    expect(parseProviderCapabilities(undefined, 'toapis-image')).toEqual(['image-gen']);
   });
 
   test('allows explicit agent-chat capability to persist for chat providers', () => {

@@ -31,6 +31,13 @@ jest.mock('@/lib/db/workflow-agent-presets', () => ({
   getWorkflowAgentPreset: jest.fn().mockReturnValue(undefined),
 }));
 
+jest.mock('@/lib/claude/builtin-agent-context', () => ({
+  buildBuiltinAgentContext: jest.fn(() => ({
+    inProcessMcpServers: undefined,
+    systemPromptSuffix: undefined,
+  })),
+}));
+
 import { StageWorker } from '@/lib/team-run/stage-worker';
 import {
   cancelWorkflowAgentExecution,
@@ -140,11 +147,13 @@ describe('executeWorkflowAgentStep', () => {
     expect(payload.stage.outputContract).toEqual({
       primaryFormat: 'markdown',
       mustProduceSummary: true,
-      mayProduceArtifacts: false,
+      mayProduceArtifacts: true,
       artifactKinds: [],
     });
-    expect(payload.stage.acceptanceCriteria).toContain(
-      'Return summary text only; keep the artifacts array empty for workflow agent steps.',
+    expect(payload.stage.acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('mcp__lumos-image__generate_image'),
+      ]),
     );
 
     expect(result).toMatchObject({

@@ -17,4 +17,13 @@ describe('provider-presets', () => {
     expect(presetIds).not.toContain('claude-local-auth');
     expect(presetIds).not.toContain('anthropic-compatible-agent');
   });
+
+  test('image module exposes ToAPIs nano banana2 preset', () => {
+    const presetIds = listProviderPresets({
+      capability: 'image-gen',
+      moduleKey: 'image',
+    }).map((preset) => preset.id);
+
+    expect(presetIds).toContain('toapis-nano-banana2');
+  });
 });

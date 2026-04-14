@@ -409,15 +409,63 @@ async function resolveTargetTabId(
   return tabId;
 }
 
+function normalizeDomain(raw: string): string {
+  return String(raw || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+}
+
+function hostnameMatchesDomain(hostname: string, domain: string): boolean {
+  const h = hostname.toLowerCase();
+  const d = domain.toLowerCase();
+  return h === d || h.endsWith('.' + d);
+}
+
 export class BrowserBridgeServer {
   private server: http.Server | null = null;
   private readonly token: string;
   private port = 0;
   private readonly context: BridgeContext;
+  /** domain → pageId for persistent per-site hidden tabs used by /v1/site-pages/* */
+  private readonly siteTabs = new Map<string, string>();
 
   constructor(context: BridgeContext) {
     this.context = context;
     this.token = crypto.randomBytes(24).toString('hex');
+  }
+
+  private async ensureSiteTab(
+    manager: BrowserManager,
+    domain: string,
+    initialUrl?: string,
+  ): Promise<string> {
+    const landingUrl = initialUrl || `https://${domain.startsWith('www.') ? domain : 'www.' + domain}/`;
+    const tabs = manager.getTabs();
+
+    const existing = this.siteTabs.get(domain);
+    if (existing && tabs.some((tab) => tab.id === existing)) {
+      const currentUrl = tabs.find((tab) => tab.id === existing)?.url || '';
+      let currentHost = '';
+      try { currentHost = new URL(currentUrl).hostname; } catch { /* ignore */ }
+      if (currentHost && hostnameMatchesDomain(currentHost, domain)) {
+        manager.ensureViewRenderable(existing);
+        if (!manager.isCDPConnected(existing)) await manager.connectCDP(existing);
+        return existing;
+      }
+      // Tab drifted — navigate it back to landing
+      try {
+        await manager.navigate(existing, { url: landingUrl, waitUntil: 'domcontentloaded' });
+      } catch { /* fall through to waitForPageStable */ }
+      await waitForPageStable(manager, existing, { timeoutMs: 12_000, background: true });
+      return existing;
+    }
+
+    // Create a fresh background tab for this domain.
+    const pageId = await manager.createTab(landingUrl);
+    manager.ensureViewRenderable(pageId);
+    try {
+      await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: true });
+    } catch { /* ignore — subsequent evaluate may still work */ }
+    this.siteTabs.set(domain, pageId);
+    return pageId;
   }
 
   getToken(): string {
@@ -699,6 +747,62 @@ export class BrowserBridgeServer {
         },
       );
       sendJson(res, 200, { ok: true, closed: true, pageId: body.pageId });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/v1/site-pages/evaluate') {
+      const body = (await parseJsonBody(req)) as {
+        domain?: string;
+        script?: string;
+        initialUrl?: string;
+        navigateTo?: string;
+      };
+      const domain = normalizeDomain(body?.domain || '');
+      const script = typeof body?.script === 'string' ? body.script : '';
+      if (!domain || !script) {
+        sendJson(res, 400, { ok: false, error: 'MISSING_DOMAIN_OR_SCRIPT' });
+        return;
+      }
+
+      // Self-heal if the recorded pageId has disappeared.
+      const stored = this.siteTabs.get(domain);
+      if (stored && !manager.getTabs().some((tab) => tab.id === stored)) {
+        this.siteTabs.delete(domain);
+      }
+
+      const pageId = await withAiActivity(
+        manager,
+        {
+          action: 'AI prepared a persistent site tab',
+          details: domain,
+        },
+        () => this.ensureSiteTab(manager, domain, body?.initialUrl),
+      );
+
+      try {
+        if (typeof body?.navigateTo === 'string' && body.navigateTo) {
+          let targetHost = '';
+          try { targetHost = new URL(body.navigateTo).hostname; } catch { /* ignore */ }
+          if (!targetHost || !hostnameMatchesDomain(targetHost, domain)) {
+            sendJson(res, 400, { ok: false, error: 'NAVIGATE_TO_DOMAIN_MISMATCH' });
+            return;
+          }
+          const current = manager.getTabs().find((tab) => tab.id === pageId)?.url || '';
+          if (normalizeNavigationUrl(current) !== normalizeNavigationUrl(body.navigateTo)) {
+            try {
+              await manager.navigate(pageId, { url: body.navigateTo, waitUntil: 'domcontentloaded' });
+            } catch { /* fall through to waitForPageStable */ }
+            await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: true });
+          }
+        }
+
+        await ensureTabReady(manager, pageId, { background: true });
+        const value = await evalInTab(manager, pageId, script, true);
+        const currentUrl = manager.getTabs().find((tab) => tab.id === pageId)?.url || '';
+        sendJson(res, 200, { ok: true, pageId, value, url: currentUrl });
+      } catch (error) {
+        sendJson(res, 500, { ok: false, error: 'SITE_EVAL_FAILED', message: getErrorMessage(error) });
+      }
       return;
     }
 

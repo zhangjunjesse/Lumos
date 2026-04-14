@@ -76,4 +76,52 @@ describe('text-generator', () => {
       baseURL: 'https://proxy.example.com/anthropic/v1',
     });
   });
+
+  test('maps requested model onto provider catalog before creating the language model', async () => {
+    getProviderMock.mockReturnValue({
+      id: 'provider-lumos-cloud',
+      name: 'Lumos Cloud',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["text-gen"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215' },
+      ]),
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-10 00:00:00',
+      updated_at: '2026-04-10 00:00:00',
+    });
+
+    await expect(generateTextFromProvider({
+      providerId: 'provider-lumos-cloud',
+      model: 'doubao-seed-2.0-lite',
+      system: '',
+      prompt: 'hello',
+    })).resolves.toBe('ok');
+
+    expect(createAnthropicMock).toHaveBeenCalledTimes(1);
+    expect(createAnthropicMock.mock.results[0].value).toBeInstanceOf(Function);
+    const anthropicFactory = createAnthropicMock.mock.results[0].value as (modelId: string) => unknown;
+    expect(anthropicFactory('doubao-seed-2-0-lite-260215')).toEqual({
+      provider: 'anthropic',
+      modelId: 'doubao-seed-2-0-lite-260215',
+    });
+    expect(generateTextMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: {
+        provider: 'anthropic',
+        modelId: 'doubao-seed-2-0-lite-260215',
+      },
+    }));
+  });
 });

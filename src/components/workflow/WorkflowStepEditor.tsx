@@ -71,6 +71,9 @@ export function WorkflowStepEditor({
   const [prompt, setPrompt] = useState(
     typeof step.input?.prompt === 'string' ? step.input.prompt : '',
   );
+  const [expectedOutput, setExpectedOutput] = useState(
+    typeof step.input?.expectedOutput === 'string' ? step.input.expectedOutput : '',
+  );
   const [dependsOn, setDependsOn] = useState(
     (step.dependsOn ?? []).join(', '),
   );
@@ -101,6 +104,12 @@ export function WorkflowStepEditor({
   const [timeoutMin, setTimeoutMin] = useState(
     step.policy?.timeoutMs ? String(step.policy.timeoutMs / 60_000) : '10',
   );
+  // 用户视角：0 次 = 不重试（底层 maximumAttempts=1 或未设置）；N 次 = 底层 maximumAttempts=N+1
+  const [retryCount, setRetryCount] = useState(() => {
+    const attempts = step.policy?.retry?.maximumAttempts;
+    if (typeof attempts !== 'number' || attempts <= 1) return '0';
+    return String(attempts - 1);
+  });
   const initCode = step.input?.code as { handler?: string; script?: string; strategy?: string } | undefined;
   const [codeEnabled, setCodeEnabled] = useState(Boolean(initCode?.script || initCode?.handler));
   const [codeScript, setCodeScript] = useState(initCode?.script ?? '');
@@ -138,6 +147,12 @@ export function WorkflowStepEditor({
       const input: Record<string, unknown> = { ...step.input };
       if (preset) input.preset = preset;
       if (prompt) input.prompt = prompt;
+      const trimmedExpected = expectedOutput.trim();
+      if (trimmedExpected) {
+        input.expectedOutput = trimmedExpected;
+      } else {
+        delete input.expectedOutput;
+      }
       if (codeEnabled && codeScript.trim()) {
         input.code = { script: codeScript, strategy: codeStrategy };
       } else {
@@ -183,16 +198,20 @@ export function WorkflowStepEditor({
 
     if (step.when) base.when = step.when;
     const tMin = Number(timeoutMin);
-    if (tMin > 0) {
-      base.policy = { ...step.policy, timeoutMs: Math.round(tMin * 60_000) };
-    } else if (step.policy) {
-      base.policy = step.policy;
+    const retries = Math.max(0, Math.floor(Number(retryCount) || 0));
+    const nextPolicy: NonNullable<DslStep['policy']> = { ...step.policy };
+    if (tMin > 0) nextPolicy.timeoutMs = Math.round(tMin * 60_000);
+    if (retries > 0) {
+      nextPolicy.retry = { maximumAttempts: retries + 1 };
+    } else {
+      delete nextPolicy.retry;
     }
+    if (Object.keys(nextPolicy).length > 0) base.policy = nextPolicy;
     onSave(base);
   }, [
-    step, stepId, preset, prompt, dependsOn,
+    step, stepId, preset, prompt, expectedOutput, dependsOn,
     thenSteps, elseSteps, bodySteps, collection, itemVar,
-    maxIterations, conditionJson, timeoutMin, onSave,
+    maxIterations, conditionJson, timeoutMin, retryCount, onSave,
     codeEnabled, codeScript, codeStrategy,
     knowledge,
   ]);
@@ -281,6 +300,19 @@ export function WorkflowStepEditor({
                 ))}
               </p>
             )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">验收说明（可选）</Label>
+            <Textarea
+              value={expectedOutput}
+              onChange={e => setExpectedOutput(e.target.value)}
+              className="min-h-[60px] text-xs"
+              placeholder={'描述"怎样算这一步做完了"，判分老师只读这段文字。\n留空则跳过判分，直接信任执行结果。\n例：必须调用 generate_image 工具生成至少一张图片\n例：纯文本分析任务，不需要调用任何工具'}
+            />
+            <p className="text-[10px] text-muted-foreground">
+              留空 = 跳过判分。填了 = 判分老师会拿这段话对照 agent 输出和工具调用事实来打分。
+            </p>
           </div>
 
           <CodeModeEditor
@@ -382,6 +414,23 @@ export function WorkflowStepEditor({
           step={1}
         />
         <p className="text-[10px] text-muted-foreground">节点执行超时时间，默认 10 分钟</p>
+      </div>
+
+      {/* Retry */}
+      <div className="space-y-1.5">
+        <Label className="text-xs">重试次数</Label>
+        <Input
+          type="number"
+          value={retryCount}
+          onChange={e => setRetryCount(e.target.value)}
+          className="h-8 text-xs w-32"
+          min={0}
+          max={10}
+          step={1}
+        />
+        <p className="text-[10px] text-muted-foreground">
+          节点失败或验收不通过时重新执行的次数，默认 0（不重试）。重试之间有指数退避（1s/2s/4s…最多 30s）。
+        </p>
       </div>
 
       {/* Actions */}

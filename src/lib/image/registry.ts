@@ -57,10 +57,12 @@ export async function ensureProvidersRegistered(): Promise<void> {
   state.initialized = true
 
   const { createGeminiProvider } = await import('./providers/gemini')
+  const { createToApisProvider } = await import('./providers/toapis')
   const { createVolcengineProvider } = await import('./providers/volcengine')
   const { createDashScopeProvider } = await import('./providers/dashscope')
 
   registerImageProvider('gemini-image', createGeminiProvider)
+  registerImageProvider('toapis-image', createToApisProvider)
   registerImageProvider('volcengine', createVolcengineProvider)
   registerImageProvider('dashscope', createDashScopeProvider)
 }

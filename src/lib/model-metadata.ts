@@ -70,6 +70,13 @@ const REQUESTED_MODEL_TARGET_PREFIXES: Record<string, string> = {
   haiku: 'claude-haiku-',
 };
 
+function normalizeModelLookupKey(value?: string | null): string {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 function normalizeProviderBaseUrl(baseUrl?: string | null): string {
   return (baseUrl || '').trim().toLowerCase().replace(/\/+$/, '');
 }
@@ -297,7 +304,83 @@ export function findProviderModelOption(
   const alias = inferRequestedModelAlias(normalized);
   if (!alias) return null;
 
-  return options.find((option) => inferRequestedModelAlias(option.value) === alias) || null;
+  const aliasMatch = options.find((option) => inferRequestedModelAlias(option.value) === alias);
+  if (aliasMatch) {
+    return aliasMatch;
+  }
+
+  const normalizedLookup = normalizeModelLookupKey(normalized);
+  if (!normalizedLookup) {
+    return null;
+  }
+
+  const fuzzyMatches = options.filter((option) => {
+    const valueKey = normalizeModelLookupKey(option.value);
+    const labelKey = normalizeModelLookupKey(option.label);
+    return (
+      valueKey === normalizedLookup
+      || labelKey === normalizedLookup
+      || valueKey.startsWith(normalizedLookup)
+      || labelKey.startsWith(normalizedLookup)
+    );
+  });
+
+  return fuzzyMatches[0] || null;
+}
+
+function isClaudeStyleModelRequest(value?: string | null): boolean {
+  const normalized = value?.trim().toLowerCase() || '';
+  if (!normalized) return false;
+  if (normalized.startsWith('claude-')) return true;
+
+  const alias = inferRequestedModelAlias(normalized);
+  return alias === 'sonnet' || alias === 'opus' || alias === 'haiku';
+}
+
+function hasNonClaudeConfiguredModel(options: ProviderModelOption[]): boolean {
+  return options.some((model) => !isClaudeStyleModelRequest(model.value));
+}
+
+export function resolveProviderModelForRequest(
+  provider: Pick<
+    ApiProvider,
+    'provider_type' | 'api_protocol' | 'base_url' | 'capabilities' | 'model_catalog' | 'model_catalog_source' | 'model_catalog_updated_at'
+  > | null | undefined,
+  requestedModel?: string | null,
+  fallback: BuiltinClaudeModelAlias = 'sonnet',
+): string | undefined {
+  const requested = requestedModel?.trim() || '';
+  const configuredModels = getProviderModelOptions(provider);
+
+  if (requested) {
+    const matchedProviderModel = findProviderModelOption(requested, configuredModels);
+    if (matchedProviderModel) {
+      return matchedProviderModel.value;
+    }
+
+    if (provider?.api_protocol === 'anthropic-messages' && isClaudeStyleModelRequest(requested)) {
+      if (hasNonClaudeConfiguredModel(configuredModels)) {
+        return configuredModels[0]?.value;
+      }
+      return resolveBuiltInClaudeModelId(requested, fallback);
+    }
+
+    if (provider?.api_protocol === 'openai-compatible' && isClaudeStyleModelRequest(requested)) {
+      return configuredModels[0]?.value || requested;
+    }
+
+    return requested;
+  }
+
+  if (configuredModels.length > 0) {
+    return configuredModels[0].value;
+  }
+
+  if (provider?.api_protocol === 'anthropic-messages') {
+    return resolveBuiltInClaudeModelId(undefined, fallback);
+  }
+
+  return undefined;
 }
 
 export function getRequestedModelLabel(

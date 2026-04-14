@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { buildClaudeSdkRuntimeBootstrap } from '../sdk-runtime'
+import { buildClaudeSdkInvocationContext, buildClaudeSdkRuntimeBootstrap } from '../sdk-runtime'
 
 const mockGetDefaultProvider = jest.fn()
 const mockGetProvider = jest.fn()
@@ -130,7 +130,7 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(runtime.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     expect(runtime.env.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(runtime.settingSources).toEqual([])
+    expect(runtime.settingSources).toEqual(['project'])
     expect(runtime.pathToClaudeCodeExecutable).toBe('/usr/local/bin/claude')
   })
 
@@ -267,5 +267,40 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(() => buildClaudeSdkRuntimeBootstrap({
       sessionId: 'session-002',
     })).toThrow('原服务商已删除，请重新选择配置开启新会话')
+  })
+
+  test('builds invocation context with the provider-resolved model id', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-lumos-cloud',
+      name: 'Lumos Cloud',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215' },
+      ]),
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-10 00:00:00',
+      updated_at: '2026-04-10 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkInvocationContext({
+      requestedModel: 'doubao-seed-2.0-lite',
+    })
+
+    expect(runtime.activeProvider?.id).toBe('provider-lumos-cloud')
+    expect(runtime.requestedModel).toBe('doubao-seed-2.0-lite')
+    expect(runtime.resolvedModel).toBe('doubao-seed-2-0-lite-260215')
   })
 })

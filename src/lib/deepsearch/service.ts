@@ -153,6 +153,11 @@ const DEEPSEARCH_SITE_PROBE_CONFIG: Record<string, DeepSearchSiteProbeConfig> = 
     cookieDomains: ['.xiaohongshu.com', 'www.xiaohongshu.com'],
     requiredCookieNames: ['web_session', 'a1'],
     loginUrl: 'https://www.xiaohongshu.com/',
+    validation: {
+      validationUrl: 'https://www.xiaohongshu.com/',
+      loginUrlPatterns: [/xiaohongshu\.com\/(?:login|mobile-login|passport)/i],
+      loggedOutTextHints: ['手机号登录', '扫码登录', '登录 小红书', '登录小红书'],
+    },
   },
   juejin: {
     cookieDomains: ['.juejin.cn', 'juejin.cn'],

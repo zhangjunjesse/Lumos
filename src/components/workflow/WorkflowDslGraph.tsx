@@ -115,14 +115,46 @@ function timeoutLabel(step: DslStep): string | null {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
 }
 
+export interface WorkflowDslStepOverlay {
+  status: 'pending' | 'running' | 'success' | 'error' | 'skipped';
+  durationMs: number | null;
+  outputFileCount: number;
+  outputSummary: string;
+  error: string;
+}
+
 interface WorkflowDslGraphProps {
   steps: DslStep[];
   presetNames?: Record<string, string>;
   selectedStepId?: string | null;
   onStepClick?: (stepId: string) => void;
+  stepOverlays?: Record<string, WorkflowDslStepOverlay>;
 }
 
-export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onStepClick }: WorkflowDslGraphProps) {
+const STATUS_DOT: Record<WorkflowDslStepOverlay['status'], string> = {
+  pending: 'bg-slate-400',
+  running: 'bg-blue-500 animate-pulse',
+  success: 'bg-emerald-500',
+  error: 'bg-red-500',
+  skipped: 'bg-slate-300',
+};
+
+const STATUS_LABEL: Record<WorkflowDslStepOverlay['status'], string> = {
+  pending: '待执行',
+  running: '运行中',
+  success: '成功',
+  error: '失败',
+  skipped: '跳过',
+};
+
+function fmtDuration(ms: number | null): string | null {
+  if (typeof ms !== 'number' || ms <= 0) return null;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onStepClick, stepOverlays }: WorkflowDslGraphProps) {
   const graph = useMemo(() => {
     if (steps.length === 0) return null;
     const stepMap = new Map(steps.map(s => [s.id, s]));
@@ -130,8 +162,15 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
     const topLevel = steps.filter(s => !bodyIds.has(s.id));
     const layers = buildLayers(topLevel);
 
+    const overlayFooterH = 22;
+    const calcHeightWithOverlay = (s: DslStep): number => {
+      const base = calcHeight(s, stepMap);
+      const hasOverlay = Boolean(stepOverlays?.[s.id]);
+      return hasOverlay ? base + overlayFooterH : base;
+    };
+
     const colGap = 56; const rowGap = 16; const padX = 20; const padTop = 40; const padBottom = 20;
-    const layerHeights = layers.map(l => l.reduce((sum, s) => sum + calcHeight(s, stepMap) + rowGap, 0) - rowGap);
+    const layerHeights = layers.map(l => l.reduce((sum, s) => sum + calcHeightWithOverlay(s) + rowGap, 0) - rowGap);
     const innerH = Math.max(...layerHeights, NODE_H);
     const totalW = padX * 2 + layers.length * NODE_W + Math.max(0, layers.length - 1) * colGap;
     const totalH = padTop + padBottom + innerH;
@@ -140,10 +179,10 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
     const nodeMap = new Map<string, NodeLayout>();
     layers.forEach((layer, col) => {
       const x = padX + col * (NODE_W + colGap);
-      const layerH = layer.reduce((sum, s) => sum + calcHeight(s, stepMap) + rowGap, 0) - rowGap;
+      const layerH = layer.reduce((sum, s) => sum + calcHeightWithOverlay(s) + rowGap, 0) - rowGap;
       let cy = padTop + (innerH - layerH) / 2;
       layer.forEach(step => {
-        const h = calcHeight(step, stepMap);
+        const h = calcHeightWithOverlay(step);
         const n = { step, x, y: cy, height: h };
         nodes.push(n); nodeMap.set(step.id, n);
         cy += h + rowGap;
@@ -166,7 +205,7 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
     }));
 
     return { totalW, totalH, nodes, edges, layerLabels, stepMap };
-  }, [steps]);
+  }, [steps, stepOverlays]);
 
   if (!graph) return null;
 
@@ -202,6 +241,8 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
           const isCont = CONTAINERS.has(step.type);
           const body = isCont ? getBodySteps(step, graph.stepMap) : [];
           const tl = timeoutLabel(step);
+          const overlay = stepOverlays?.[step.id];
+          const runDuration = overlay ? fmtDuration(overlay.durationMs) : null;
 
           return (
             <div
@@ -217,9 +258,19 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
               {/* Header */}
               <div className={`px-3 py-2 ${isCont && body.length > 0 ? `border-b ${st.divider ?? 'border-border/30'}` : ''}`}>
                 <div className="flex items-center gap-1.5">
+                  {overlay && (
+                    <span
+                      title={STATUS_LABEL[overlay.status]}
+                      className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[overlay.status]}`}
+                    />
+                  )}
                   <Badge variant="outline" className={`text-[9px] px-1 py-0 h-3.5 shrink-0 ${st.cls}`}>{st.badge}</Badge>
                   <span className="text-xs font-semibold text-foreground truncate flex-1">{label}</span>
-                  {tl && <span className="text-[9px] text-muted-foreground shrink-0">{tl}</span>}
+                  {runDuration ? (
+                    <span className="text-[9px] text-muted-foreground shrink-0 font-mono">{runDuration}</span>
+                  ) : (
+                    tl && <span className="text-[9px] text-muted-foreground shrink-0">{tl}</span>
+                  )}
                 </div>
                 {isCont && body.length > 0 ? (
                   <div className="text-[9px] text-muted-foreground mt-0.5 truncate">{containerDetail(step)}</div>
@@ -253,6 +304,31 @@ export function WorkflowDslGraph({ steps, presetNames = {}, selectedStepId, onSt
                       </div>
                     );
                   })}
+                </div>
+              )}
+
+              {/* Overlay footer — output files / error summary for this run */}
+              {overlay && (
+                <div
+                  className={[
+                    'absolute left-0 right-0 bottom-0 px-3 py-1 border-t text-[9px] flex items-center gap-2',
+                    overlay.status === 'error'
+                      ? 'border-red-500/20 bg-red-500/5 text-red-700 dark:text-red-400'
+                      : 'border-border/30 bg-muted/20 text-muted-foreground',
+                  ].join(' ')}
+                  style={{ height: '22px' }}
+                  title={overlay.error || overlay.outputSummary || undefined}
+                >
+                  {overlay.outputFileCount > 0 && (
+                    <span className="shrink-0">📄 {overlay.outputFileCount}</span>
+                  )}
+                  <span className="truncate flex-1">
+                    {overlay.error
+                      ? overlay.error
+                      : overlay.outputSummary
+                        ? overlay.outputSummary
+                        : STATUS_LABEL[overlay.status]}
+                  </span>
                 </div>
               )}
             </div>

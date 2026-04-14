@@ -6,6 +6,8 @@ interface GenerateRequest {
   model?: string;
   aspectRatio?: string;
   imageSize?: string;
+  count?: number;
+  providerOptions?: Record<string, unknown>;
   referenceImages?: { mimeType: string; data: string }[];
   referenceImagePaths?: string[];
   sessionId?: string;
@@ -31,6 +33,8 @@ export async function POST(request: NextRequest) {
       model: body.model,
       aspectRatio: body.aspectRatio,
       imageSize: body.imageSize,
+      n: body.count,
+      providerOptions: body.providerOptions,
       referenceImages: body.referenceImages,
       referenceImagePaths: body.referenceImagePaths,
       sessionId: body.sessionId,
@@ -41,7 +45,7 @@ export async function POST(request: NextRequest) {
         id: result.mediaGenerationId,
         text: '',
         images: result.images,
-        model: body.model || 'gemini-3-pro-image-preview',
+        model: result.model,
         imageSize: body.imageSize || '1K',
         elapsedMs: result.elapsedMs,
       }),

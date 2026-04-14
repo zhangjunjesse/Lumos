@@ -1,20 +1,26 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { ImageGenCard } from './ImageGenCard';
+import {
+  buildDefaultAdvancedValues,
+  ImageGenOptionsFields,
+  type ImageProviderUiConfigResponse,
+} from './ImageGenOptionsFields';
 import { useTranslation } from '@/hooks/useTranslation';
 import { usePanel } from '@/hooks/usePanel';
 import type { TranslationKey } from '@/i18n';
 import type { ReferenceImage } from '@/types';
 import type { ImageGenResult } from '@/hooks/useImageGen';
 
-const ASPECT_RATIOS = [
+const FALLBACK_ASPECT_RATIOS = [
   '1:1', '16:9', '9:16', '3:2', '2:3', '4:3', '3:4', '4:5', '5:4', '21:9',
-] as const;
+] as const satisfies readonly string[];
 
-const RESOLUTIONS = ['1K', '2K', '4K'] as const;
+const FALLBACK_RESOLUTIONS = ['1K', '2K', '4K'] as const satisfies readonly string[];
 
 interface ImageGenConfirmationProps {
   messageId?: string;
@@ -26,7 +32,6 @@ interface ImageGenConfirmationProps {
 
 type Status = 'idle' | 'generating' | 'completed' | 'error';
 
-/** Stable key for persisting generation results in localStorage */
 function storageKey(prompt: string, sessionId?: string): string {
   const prefix = sessionId ? `${sessionId}:` : '';
   return `imggen:${prefix}${prompt.slice(0, 80)}`;
@@ -43,21 +48,36 @@ export function ImageGenConfirmation({
   const { sessionId } = usePanel();
   const [prompt, setPrompt] = useState(initialPrompt);
   const [aspectRatio, setAspectRatio] = useState(
-    ASPECT_RATIOS.includes(initialAspectRatio as typeof ASPECT_RATIOS[number])
+    (FALLBACK_ASPECT_RATIOS as readonly string[]).includes(initialAspectRatio)
       ? initialAspectRatio
       : '1:1'
   );
   const [resolution, setResolution] = useState(
-    RESOLUTIONS.includes(initialResolution as typeof RESOLUTIONS[number])
+    (FALLBACK_RESOLUTIONS as readonly string[]).includes(initialResolution)
       ? initialResolution
       : '1K'
   );
+  const [count, setCount] = useState(1);
   const [status, setStatus] = useState<Status>('idle');
   const [result, setResult] = useState<ImageGenResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [providerConfig, setProviderConfig] = useState<ImageProviderUiConfigResponse | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedValues, setAdvancedValues] = useState<Record<string, unknown>>({});
   const abortRef = useRef<AbortController | null>(null);
 
-  // Restore completed result from localStorage on mount
+  const supportedAspectRatios: readonly string[] = providerConfig?.uiConfig.supportedAspectRatios?.length
+    ? providerConfig.uiConfig.supportedAspectRatios
+    : FALLBACK_ASPECT_RATIOS;
+  const supportedResolutions: readonly string[] = providerConfig?.uiConfig.supportedResolutions?.length
+    ? providerConfig.uiConfig.supportedResolutions
+    : FALLBACK_RESOLUTIONS;
+  const advancedSchema = useMemo(
+    () => providerConfig?.uiConfig.advancedOptions ?? {},
+    [providerConfig],
+  );
+  const maxCount = providerConfig?.uiConfig.maxCount ?? 4;
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey(initialPrompt, sessionId));
@@ -71,7 +91,51 @@ export function ImageGenConfirmation({
     } catch {
       // ignore
     }
-  }, [initialPrompt]);
+  }, [initialPrompt, sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProviderConfig = async () => {
+      try {
+        const res = await fetch('/api/media/provider-config', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as ImageProviderUiConfigResponse;
+        if (cancelled) return;
+        setProviderConfig(data);
+        setAspectRatio(data.defaults?.aspectRatio || initialAspectRatio || '1:1');
+        setResolution(data.defaults?.resolution || initialResolution || '1K');
+        setCount(data.defaults?.count || 1);
+        setAdvancedValues(buildDefaultAdvancedValues(
+          data.uiConfig.advancedOptions ?? {},
+          data.defaults?.providerOptions,
+        ));
+      } catch {
+        // ignore
+      }
+    };
+
+    loadProviderConfig();
+    return () => { cancelled = true; };
+  }, [initialAspectRatio, initialResolution]);
+
+  useEffect(() => {
+    if (!supportedAspectRatios.includes(aspectRatio)) {
+      setAspectRatio(supportedAspectRatios[0] || '1:1');
+    }
+  }, [aspectRatio, supportedAspectRatios]);
+
+  useEffect(() => {
+    if (!supportedResolutions.includes(resolution)) {
+      setResolution(supportedResolutions[0] || '1K');
+    }
+  }, [resolution, supportedResolutions]);
+
+  useEffect(() => {
+    if (count > maxCount) {
+      setCount(maxCount);
+    }
+  }, [count, maxCount]);
 
   const handleStop = useCallback(() => {
     if (abortRef.current) {
@@ -88,7 +152,41 @@ export function ImageGenConfirmation({
     setError(null);
 
     try {
-      // Split unified ReferenceImage[] back into base64 data vs file paths for the API
+      const providerOptions: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(advancedValues)) {
+        const def = advancedSchema[key];
+        if (!def) continue;
+
+        if (def.type === 'json') {
+          if (typeof value !== 'string' || !value.trim()) continue;
+          try {
+            providerOptions[key] = JSON.parse(value);
+          } catch {
+            throw new Error(`高级参数“${def.label}”不是合法 JSON`);
+          }
+          continue;
+        }
+
+        if (def.type === 'number') {
+          if (value === '' || value === null || value === undefined) continue;
+          const parsed = Number(value);
+          if (!Number.isFinite(parsed)) {
+            throw new Error(`高级参数“${def.label}”不是合法数字`);
+          }
+          providerOptions[key] = parsed;
+          continue;
+        }
+
+        if (def.type === 'boolean') {
+          if (typeof value === 'boolean') providerOptions[key] = value;
+          continue;
+        }
+
+        if (typeof value === 'string' && value.trim()) {
+          providerOptions[key] = value.trim();
+        }
+      }
+
       const refData = referenceImages?.filter(r => r.data).map(r => ({ mimeType: r.mimeType, data: r.data! }));
       const refPaths = referenceImages?.filter(r => r.localPath).map(r => r.localPath!);
 
@@ -99,13 +197,11 @@ export function ImageGenConfirmation({
           prompt,
           aspectRatio,
           imageSize: resolution,
+          count,
           sessionId,
-          ...(refData && refData.length > 0
-            ? { referenceImages: refData }
-            : {}),
-          ...(refPaths && refPaths.length > 0
-            ? { referenceImagePaths: refPaths }
-            : {}),
+          ...(Object.keys(providerOptions).length > 0 ? { providerOptions } : {}),
+          ...(refData && refData.length > 0 ? { referenceImages: refData } : {}),
+          ...(refPaths && refPaths.length > 0 ? { referenceImagePaths: refPaths } : {}),
         }),
         signal: controller.signal,
       });
@@ -126,7 +222,6 @@ export function ImageGenConfirmation({
         setResult(genResult);
         setStatus('completed');
 
-        // Store lightweight version in localStorage
         try {
           const storable = {
             id: genResult.id,
@@ -139,41 +234,39 @@ export function ImageGenConfirmation({
           };
           localStorage.setItem(storageKey(initialPrompt, sessionId), JSON.stringify(storable));
         } catch {
-          // storage full
+          // ignore
         }
 
-        // Persist result to DB by replacing image-gen-request with image-gen-result
-        {
-          const resultBlock = JSON.stringify({
-            status: 'completed',
-            prompt,
-            aspectRatio,
-            resolution,
-            images: genResult.images.map(img => ({
-              mimeType: img.mimeType,
-              localPath: img.localPath,
-            })),
-          });
-          fetch('/api/chat/messages', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              message_id: messageId || '',
-              content: '```image-gen-result\n' + resultBlock + '\n```',
-              session_id: sessionId,
-              prompt_hint: initialPrompt,
-            }),
-          }).catch(() => {});
-        }
+        const resultBlock = JSON.stringify({
+          status: 'completed',
+          prompt,
+          aspectRatio,
+          resolution,
+          count,
+          provider: providerConfig?.provider.name || null,
+          images: genResult.images.map(img => ({
+            mimeType: img.mimeType,
+            localPath: img.localPath,
+          })),
+        });
+        fetch('/api/chat/messages', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message_id: messageId || '',
+            content: '```image-gen-result\n' + resultBlock + '\n```',
+            session_id: sessionId,
+            prompt_hint: initialPrompt,
+          }),
+        }).catch(() => {});
 
-        // Defer event dispatch so React commits setResult/setStatus before
-        // ChatView's handler calls sendMessage and triggers a re-render
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('image-gen-completed', {
             detail: {
               prompt,
               aspectRatio,
               resolution,
+              count,
               id: genResult.id,
               images: genResult.images,
             },
@@ -193,7 +286,19 @@ export function ImageGenConfirmation({
     } finally {
       abortRef.current = null;
     }
-  }, [prompt, aspectRatio, resolution, initialPrompt, sessionId, referenceImages]);
+  }, [
+    prompt,
+    aspectRatio,
+    resolution,
+    count,
+    initialPrompt,
+    sessionId,
+    referenceImages,
+    advancedValues,
+    advancedSchema,
+    messageId,
+    providerConfig?.provider.name,
+  ]);
 
   const handleRegenerate = useCallback(() => {
     setResult(null);
@@ -203,9 +308,8 @@ export function ImageGenConfirmation({
     } catch {
       // ignore
     }
-  }, [initialPrompt]);
+  }, [initialPrompt, sessionId]);
 
-  // ── Completed: show result only ──
   if (status === 'completed' && result && result.images.length > 0) {
     return (
       <div className="my-2">
@@ -221,109 +325,45 @@ export function ImageGenConfirmation({
     );
   }
 
-  // ── Idle / Generating / Error: show params card ──
   return (
     <div className="rounded-lg border border-border/50 bg-card overflow-hidden my-2">
-      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/30 bg-muted/30">
         <span className="text-sm font-medium">{t('imageGen.confirmTitle' as TranslationKey)}</span>
       </div>
 
       <div className="p-4 space-y-3">
-        {/* Reference images preview — unified loop over all reference images */}
-        {referenceImages && referenceImages.length > 0 && (
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-              {t('imageGen.referenceImages' as TranslationKey)}
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {referenceImages.map((img, i) => (
-                <div key={i} className="w-16 h-16 rounded-md border border-border/30 overflow-hidden bg-muted/30">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={img.data
-                      ? `data:${img.mimeType};base64,${img.data}`
-                      : `/api/uploads?path=${encodeURIComponent(img.localPath!)}`}
-                    alt={`Reference ${i + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Prompt textarea */}
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1 block">
             {t('imageGen.prompt' as TranslationKey)}
           </label>
-          <textarea
+          <Textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             disabled={status === 'generating'}
             rows={3}
             className={cn(
-              'w-full rounded-md border border-border bg-background px-3 py-2 text-sm',
               'resize-none focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30',
               'disabled:opacity-60 disabled:cursor-not-allowed'
             )}
           />
         </div>
 
-        {/* Aspect Ratio */}
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-            {t('imageGen.aspectRatio' as TranslationKey)}
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {ASPECT_RATIOS.map((ratio) => (
-              <button
-                key={ratio}
-                type="button"
-                disabled={status === 'generating'}
-                onClick={() => setAspectRatio(ratio)}
-                className={cn(
-                  'px-2.5 py-1 text-xs font-medium rounded-md border transition-colors',
-                  'disabled:opacity-60 disabled:cursor-not-allowed',
-                  aspectRatio === ratio
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                    : 'border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/30'
-                )}
-              >
-                {ratio}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ImageGenOptionsFields
+          providerConfig={providerConfig}
+          aspectRatio={aspectRatio}
+          resolution={resolution}
+          count={count}
+          disabled={status === 'generating'}
+          advancedOpen={advancedOpen}
+          advancedValues={advancedValues}
+          referenceImages={referenceImages}
+          onAspectRatioChange={setAspectRatio}
+          onResolutionChange={setResolution}
+          onCountChange={setCount}
+          onAdvancedOpenChange={setAdvancedOpen}
+          onAdvancedValueChange={(key, value) => setAdvancedValues((prev) => ({ ...prev, [key]: value }))}
+        />
 
-        {/* Resolution */}
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-            {t('imageGen.resolution' as TranslationKey)}
-          </label>
-          <div className="flex items-center gap-1.5">
-            {RESOLUTIONS.map((res) => (
-              <button
-                key={res}
-                type="button"
-                disabled={status === 'generating'}
-                onClick={() => setResolution(res)}
-                className={cn(
-                  'px-3 py-1 text-xs font-medium rounded-md border transition-colors',
-                  'disabled:opacity-60 disabled:cursor-not-allowed',
-                  resolution === res
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                    : 'border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/30'
-                )}
-              >
-                {res}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Generate button */}
         {status === 'idle' && (
           <div className="pt-1">
             <Button
@@ -337,7 +377,6 @@ export function ImageGenConfirmation({
           </div>
         )}
 
-        {/* Generating: spinner + stop */}
         {status === 'generating' && (
           <div className="pt-1">
             <div className="flex items-center gap-3">
@@ -354,7 +393,6 @@ export function ImageGenConfirmation({
           </div>
         )}
 
-        {/* Error */}
         {status === 'error' && error && (
           <div className="space-y-2">
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>

@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
+import os from 'os';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
 import type { StepResult } from '@/lib/workflow/types';
@@ -45,6 +49,9 @@ export async function POST(request: NextRequest) {
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), timeoutMs);
 
+    const debugOutputDir = path.join(os.tmpdir(), 'lumos-code-debug', `run-${Date.now()}`);
+    try { mkdirSync(debugOutputDir, { recursive: true }); } catch { /* ignore */ }
+
     const ctx: CodeHandlerContext = {
       params: input.params,
       stepId: '__debug__',
@@ -57,6 +64,22 @@ export async function POST(request: NextRequest) {
       },
       signal: abortController.signal,
       browser: createBrowserBridgeApi(),
+      outputDir: debugOutputDir,
+      saveArtifact: async (source, name) => {
+        const relName = name ?? (typeof source === 'string' ? path.basename(source) : undefined);
+        if (!relName) throw new Error('saveArtifact: name is required when source is a Buffer');
+        if (path.isAbsolute(relName) || relName.split(/[\\/]+/).includes('..')) {
+          throw new Error(`saveArtifact: name must be a relative path: ${relName}`);
+        }
+        const target = path.join(debugOutputDir, relName);
+        await mkdir(path.dirname(target), { recursive: true });
+        if (typeof source === 'string') {
+          await copyFile(source, target);
+        } else {
+          await writeFile(target, source);
+        }
+        return target;
+      },
     };
 
     const startMs = Date.now();

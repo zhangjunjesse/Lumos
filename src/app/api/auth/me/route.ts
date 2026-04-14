@@ -3,6 +3,7 @@ import {
   getUserBySession,
   refreshUserBalance,
 } from '@/lib/auth/user-service';
+import { canUseCustomProviders } from '@/lib/edition-runtime';
 
 /**
  * GET /api/auth/me  -- Get current authenticated user
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
         role: user.role || 'user',
         balance: balance.remainQuota,
         used_quota: balance.usedQuota,
+        allow_custom_providers: canUseCustomProviders(),
         // backward compat fields
         username: user.email,
         display_name: user.nickname || user.email,

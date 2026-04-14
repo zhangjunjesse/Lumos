@@ -504,10 +504,11 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
     implicitDeps.set(step.id, allOwned);
     // Parent's transitive deps: everything the control flow step can reach
     const parentDeps = collectTransitiveDependencies(step.id, stepMap);
-    // Each body step can reference prior siblings + parent's transitive deps
+    // Each body step can reference prior siblings + parent control flow step + parent's transitive deps
     for (const body of bodies) {
       for (let i = 0; i < body.length; i++) {
         const allowed = implicitDeps.get(body[i]) ?? new Set<string>();
+        allowed.add(step.id); // body steps implicitly depend on their parent control flow step
         for (let j = 0; j < i; j++) allowed.add(body[j]);
         for (const dep of parentDeps) allowed.add(dep);
         implicitDeps.set(body[i], allowed);

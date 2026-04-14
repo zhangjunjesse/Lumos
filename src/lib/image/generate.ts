@@ -13,6 +13,11 @@ import { ensureProvidersRegistered, resolveImageProvider } from './registry'
 import { saveBase64Images, copyToSessionDirectory, createMediaRecord, MEDIA_DIR, DATA_DIR } from './persist'
 import type { ImageGenRequest, ImageInput, ImageSize } from './types'
 import type { SavedImage } from './persist'
+import {
+  getImageProviderDefaults,
+  mergeImageProviderOptions,
+  parseProviderExtraEnvObject,
+} from './provider-defaults'
 
 /* ── Public I/O types (backward-compatible with old generateSingleImage) ── */
 
@@ -41,15 +46,6 @@ export interface GenerateImagesResult {
 }
 
 /* ── Helpers ─────────────────────────────────────────────── */
-
-function parseExtraEnv(raw: string | undefined): Record<string, string> {
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return parsed as Record<string, string>
-  } catch { return {} }
-}
 
 function validateAndCollectImages(
   params: GenerateImagesParams,
@@ -95,19 +91,31 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
   await ensureProvidersRegistered()
 
   // 1. Resolve provider from settings
-  const provider = resolveProviderForCapability({
-    moduleKey: 'image', capability: 'image-gen', allowDefault: false,
-  })
+  let provider
+  try {
+    provider = resolveProviderForCapability({
+      moduleKey: 'image', capability: 'image-gen', allowDefault: false,
+    })
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(`图片生成服务商解析失败 (settings.provider_override:image): ${detail}`)
+  }
   if (!provider) {
-    throw new Error('未配置图片生成服务商。请先在设置中为图片生成选择一个 provider。')
+    throw new Error(
+      '未配置图片生成服务商：settings.provider_override:image 为空。'
+      + '请在「设置 → 图片生成」中指定一个支持 image-gen 能力的服务商。',
+    )
   }
 
-  const providerEnv = parseExtraEnv(provider.extra_env)
-  const apiKey = provider.api_key || providerEnv.API_KEY || ''
+  const providerEnv = parseProviderExtraEnvObject(provider.extra_env)
+  const apiKey = provider.api_key || (typeof providerEnv.API_KEY === 'string' ? providerEnv.API_KEY : '') || ''
   const baseUrl = provider.base_url || undefined
   if (!apiKey) {
-    throw new Error(`图片生成服务商"${provider.name}"未配置可用的 API Key。`)
+    throw new Error(
+      `图片生成服务商"${provider.name}" (id=${provider.id}, type=${provider.provider_type}) 未配置 API Key。`,
+    )
   }
+  const providerDefaults = getImageProviderDefaults(provider)
 
   // 2. Build image inputs (with path security validation)
   const images = validateAndCollectImages(params)
@@ -125,11 +133,11 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
     prompt: params.prompt,
     model,
     images: images.length > 0 ? images : undefined,
-    n: params.n,
-    size: (params.imageSize || '1K') as ImageSize,
-    aspectRatio: params.aspectRatio || '1:1',
+    n: params.n ?? providerDefaults.count,
+    size: (params.imageSize || providerDefaults.resolution || '1K') as ImageSize,
+    aspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
     seed: params.seed,
-    providerOptions: params.providerOptions,
+    providerOptions: mergeImageProviderOptions(providerDefaults.providerOptions, params.providerOptions),
     abortSignal: params.abortSignal,
     onProgress: params.onProgress,
   })
@@ -147,7 +155,11 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
 
   // 7. Save reference images for gallery display
   const metadata: Record<string, unknown> = {
-    imageCount: savedImages.length, elapsedMs: elapsed, model: result.model,
+    imageCount: savedImages.length,
+    elapsedMs: elapsed,
+    model: result.model,
+    appliedAspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
+    appliedResolution: params.imageSize || providerDefaults.resolution || '1K',
   }
   if (images.length > 0) {
     const refSaved = saveRefImagesForGallery(images)
@@ -161,8 +173,8 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
     providerType: provider.provider_type,
     model: result.model,
     prompt: params.prompt,
-    aspectRatio: params.aspectRatio || '1:1',
-    imageSize: params.imageSize || '1K',
+    aspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
+    imageSize: params.imageSize || providerDefaults.resolution || '1K',
     localPath: savedImages[0]?.localPath || '',
     sessionId: params.sessionId,
     metadata,

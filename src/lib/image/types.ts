@@ -16,6 +16,9 @@ export type ImageCapability =
   | 'region-editing'
   | 'sequential-group'
   | 'upscale'
+  | 'multi-reference'
+  | 'safety-control'
+  | 'negative-prompt'
 
 /* ── Image Input ────────────────────────────────────────── */
 

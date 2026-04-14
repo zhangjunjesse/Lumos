@@ -62,6 +62,28 @@ function getPublicDir(): string {
 // Import Skills
 // ==========================================
 
+/**
+ * Resolve each skill entry in public/skills/ to an absolute SKILL.md path.
+ * Supports two layouts:
+ *  - `<skillsDir>/foo.md`  (single-file skill)
+ *  - `<skillsDir>/foo/SKILL.md`  (folder skill, may include scripts/assets)
+ */
+function listSkillFiles(skillsDir: string): string[] {
+  const paths: string[] = [];
+  const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      paths.push(path.join(skillsDir, entry.name));
+      continue;
+    }
+    if (entry.isDirectory()) {
+      const skillMd = path.join(skillsDir, entry.name, 'SKILL.md');
+      if (fs.existsSync(skillMd)) paths.push(skillMd);
+    }
+  }
+  return paths;
+}
+
 function importSkills(): number {
   const skillsDir = path.join(getPublicDir(), 'skills');
 
@@ -70,16 +92,20 @@ function importSkills(): number {
     return 0;
   }
 
-  const files = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
+  const files = listSkillFiles(skillsDir);
   let imported = 0;
   const currentNames = new Set<string>();
 
-  for (const file of files) {
-    const filePath = path.join(skillsDir, file);
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const { data } = matter(content);
-
-    const metadata = data as SkillMetadata;
+  for (const filePath of files) {
+    const file = path.basename(filePath);
+    let metadata: SkillMetadata;
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      metadata = matter(content).data as SkillMetadata;
+    } catch (err) {
+      console.warn(`[init-builtin-resources] Skipping skill with malformed frontmatter (${filePath}):`, err instanceof Error ? err.message : err);
+      continue;
+    }
     if (!metadata.name || !metadata.description) {
       console.warn('[init-builtin-resources] Invalid skill metadata in:', file);
       continue;

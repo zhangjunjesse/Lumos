@@ -10,7 +10,12 @@ import { hashPassword } from './password';
 import { createSession, validateSession } from './session';
 import { verifyCode } from './email';
 import { createNewApiToken, getTokenQuota } from './newapi-admin';
-import { provisionCloudProvider } from '@/lib/lumos-cloud-auth';
+import {
+  provisionCloudProvider,
+  provisionImageProvider,
+  persistAllowCustomProviders,
+  type CloudImageProviderConfig,
+} from '@/lib/lumos-cloud-auth';
 import type { LumosUser } from './types';
 
 export type { LumosUser } from './types';
@@ -107,44 +112,36 @@ function extractWebSessionToken(res: Response): string {
   return match ? match[1] : '';
 }
 
-/**
- * Login with email or nickname and password.
- * Authenticates against lumos-web website (not local DB).
- * On success, upserts the user into local DB and provisions the Lumos Cloud provider.
- */
-export async function loginUser(
-  emailOrNickname: string,
-  password: string,
-): Promise<AuthResult> {
+interface RemoteUser {
+  id: string;
+  email: string;
+  nickname: string;
+  role: 'admin' | 'user';
+  membership: 'free' | 'monthly' | 'yearly';
+  status: string;
+  image_quota_monthly: number;
+  newapi_token_key: string | null;
+  newapi_token_id: number | null;
+  image_provider: CloudImageProviderConfig | null;
+  allow_custom_providers?: boolean;
+}
+
+async function fetchRemoteLogin(account: string, password: string): Promise<{ user: RemoteUser; response: Response }> {
   const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
-  const res = await fetch(`${webBase}/api/auth/login`, {
+  const response = await fetch(`${webBase}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ account: emailOrNickname, password }),
+    body: JSON.stringify({ account, password }),
   });
-  const data = await res.json();
+  const data = await response.json();
   if (!data.success || !data.data) {
     throw new Error(data.error || '账号或密码错误');
   }
+  return { user: data.data as RemoteUser, response };
+}
 
-  const remoteUser = data.data as {
-    id: string;
-    email: string;
-    nickname: string;
-    role: 'admin' | 'user';
-    membership: 'free' | 'monthly' | 'yearly';
-    status: string;
-    image_quota_monthly: number;
-    newapi_token_key: string | null;
-    newapi_token_id: number | null;
-  };
-
-  const webSessionToken = extractWebSessionToken(res);
-
+function upsertLocalUser(remoteUser: RemoteUser, webSessionToken: string, now: string): void {
   const db = getDb();
-  const now = nowISO();
-
-  // Upsert user into local DB using the remote user's ID
   const existing = db.prepare('SELECT id FROM lumos_users WHERE id = ?').get(remoteUser.id);
   if (existing) {
     db.prepare(
@@ -158,26 +155,47 @@ export async function loginUser(
       remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
       webSessionToken, now, now, remoteUser.id,
     );
-  } else {
-    db.prepare(
-      `INSERT INTO lumos_users
-       (id, email, password_hash, nickname, role, membership, newapi_token_key, newapi_token_id, image_quota_monthly, web_session_token, created_at, updated_at, last_login_at)
-       VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      remoteUser.id, remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
-      remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
-      webSessionToken, now, now, now,
-    );
+    return;
   }
+  db.prepare(
+    `INSERT INTO lumos_users
+     (id, email, password_hash, nickname, role, membership, newapi_token_key, newapi_token_id, image_quota_monthly, web_session_token, created_at, updated_at, last_login_at)
+     VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    remoteUser.id, remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
+    remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
+    webSessionToken, now, now, now,
+  );
+}
 
-  // Provision Lumos Cloud provider with full token key
+async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
   if (remoteUser.newapi_token_key) {
     await provisionCloudProvider(`sk-${remoteUser.newapi_token_key}`);
   }
+  try {
+    await provisionImageProvider(remoteUser.image_provider ?? null);
+  } catch (e) {
+    console.warn('[login] Failed to provision image provider:', e);
+  }
+  await persistAllowCustomProviders(remoteUser.allow_custom_providers === true);
+}
+
+/**
+ * Login with email or nickname and password.
+ * Authenticates against lumos-web website (not local DB).
+ * On success, upserts the user into local DB and provisions the Lumos Cloud provider.
+ */
+export async function loginUser(
+  emailOrNickname: string,
+  password: string,
+): Promise<AuthResult> {
+  const { user: remoteUser, response } = await fetchRemoteLogin(emailOrNickname, password);
+  const webSessionToken = extractWebSessionToken(response);
+  upsertLocalUser(remoteUser, webSessionToken, nowISO());
+  await provisionUserServices(remoteUser);
 
   const session = createSession(remoteUser.id);
   const user = getUserById(remoteUser.id)!;
-
   return { user, token: session.token };
 }
 
@@ -203,7 +221,9 @@ export function getUserBySession(token: string): LumosUser | null {
 /**
  * Seed the initial admin user if lumos_users table is empty.
  * Called during app startup. Uses ADMIN_EMAIL / ADMIN_PASSWORD / ADMIN_NICKNAME env vars.
- * Falls back to nickname 'admin' with password 'lumos123456' if not configured.
+ * If ADMIN_PASSWORD is unset, a random password is generated and printed once —
+ * we refuse to ship a hardcoded default so a forgotten env var cannot leave
+ * a well-known password in production.
  */
 export function seedAdminUser(): void {
   const db = getDb();
@@ -211,8 +231,9 @@ export function seedAdminUser(): void {
   if (count.c > 0) return;
 
   const email = process.env.ADMIN_EMAIL || 'admin@lumos.local';
-  const password = process.env.ADMIN_PASSWORD || 'lumos123456';
   const nickname = process.env.ADMIN_NICKNAME || 'admin';
+  const envPassword = process.env.ADMIN_PASSWORD;
+  const password = envPassword || crypto.randomBytes(18).toString('base64url');
 
   const userId = crypto.randomUUID();
   const now = nowISO();
@@ -224,7 +245,40 @@ export function seedAdminUser(): void {
      VALUES (?, ?, ?, ?, 'admin', 'monthly', 999, ?, ?)`,
   ).run(userId, email, passwordHash, nickname, now, now);
 
-  console.log(`[auth] Seeded admin user: ${nickname} (${email})`);
+  if (envPassword) {
+    console.log(`[auth] Seeded admin user: ${nickname} (${email})`);
+  } else {
+    console.warn(
+      `[auth] Seeded admin user with RANDOM password (ADMIN_PASSWORD not set).\n`
+      + `       nickname=${nickname} email=${email}\n`
+      + `       initial password: ${password}\n`
+      + `       Copy it now — it will NOT be shown again. Set ADMIN_PASSWORD to override.`,
+    );
+  }
+}
+
+/**
+ * Desktop is a single-user local app. Workflow execution has no HTTP request
+ * context to read a session cookie from, so we resolve the currently active
+ * user by picking the most recent unexpired session.
+ *
+ * Used by stage-worker so workflow agents attribute image generation quota
+ * to the logged-in user (otherwise image-gen-tool skips consumeRemoteQuota
+ * and lumos_image_usage on the website never increments).
+ */
+export function getActiveUserId(): string | undefined {
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT user_id FROM lumos_user_sessions
+       WHERE expires_at > datetime('now')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    ).get() as { user_id: string } | undefined;
+    return row?.user_id;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

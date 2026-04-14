@@ -39,6 +39,12 @@ interface BridgePageScreenshotResponse extends BrowserBridgeResponse {
   filePath?: string;
 }
 
+interface BridgeSiteEvaluateResponse extends BrowserBridgeResponse {
+  pageId: string;
+  value?: unknown;
+  url?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -110,6 +116,20 @@ export function createAdapterContext(config: BrowserBridgeRuntimeConfig): Adapte
           // Best-effort cleanup
         }
       }
+    },
+
+    async siteEvaluate(domain, script, options) {
+      const resp = await postToBrowserBridge<BridgeSiteEvaluateResponse>(config, '/v1/site-pages/evaluate', {
+        domain,
+        script,
+        initialUrl: options?.initialUrl,
+        navigateTo: options?.navigateTo,
+      });
+      return {
+        value: resp.value,
+        url: resp.url || '',
+        pageId: resp.pageId,
+      };
     },
   };
 }

@@ -339,6 +339,16 @@ export interface ScheduleRunRecord {
   error: string;
   startedAt: string;
   completedAt: string | null;
+  workflowDslSnapshot: WorkflowDSL | null;
+}
+
+function parseDslSnapshot(raw: unknown): WorkflowDSL | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    return JSON.parse(raw) as WorkflowDSL;
+  } catch {
+    return null;
+  }
 }
 
 function hasHistoryTable(): boolean {
@@ -347,13 +357,18 @@ function hasHistoryTable(): boolean {
   return row?.name === 'schedule_run_history';
 }
 
-export function insertRunHistory(scheduleId: string, sessionId: string | null): string {
+export function insertRunHistory(
+  scheduleId: string,
+  sessionId: string | null,
+  dsl?: WorkflowDSL | null,
+): string {
   const id = randomUUID();
   const now = new Date().toISOString();
   if (!hasHistoryTable()) return id;
+  const snapshot = dsl ? JSON.stringify(dsl) : null;
   getDb().prepare(
-    'INSERT INTO schedule_run_history (id, schedule_id, session_id, status, started_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, scheduleId, sessionId, 'running', now);
+    'INSERT INTO schedule_run_history (id, schedule_id, session_id, status, started_at, workflow_dsl_snapshot) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, scheduleId, sessionId, 'running', now, snapshot);
   return id;
 }
 
@@ -376,6 +391,7 @@ export function listRunHistory(scheduleId: string, limit = 30): ScheduleRunRecor
     error: String(r['error'] ?? ''),
     startedAt: String(r['started_at']),
     completedAt: r['completed_at'] ? String(r['completed_at']) : null,
+    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
   }));
 }
 
@@ -393,6 +409,7 @@ export function getRunHistory(runId: string): ScheduleRunRecord | null {
     error: String(r['error'] ?? ''),
     startedAt: String(r['started_at']),
     completedAt: r['completed_at'] ? String(r['completed_at']) : null,
+    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
   };
 }
 

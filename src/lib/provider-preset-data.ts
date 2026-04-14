@@ -278,7 +278,7 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
   {
     id: 'gemini-image',
     name: 'Gemini 图片生成',
-    description: '用于图片生成能力，不会进入主聊天模型列表。',
+    description: 'Google 官方 Gemini 图片生成接口，用于图片生成能力，不会进入主聊天模型列表。',
     provider_type: 'gemini-image',
     api_protocol: 'openai-compatible',
     capabilities: ['image-gen'],
@@ -288,6 +288,23 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
     notes: '可选填写自定义 Gemini 兼容地址；留空则走 SDK 默认地址。',
     tags: ['图片', '补充能力'],
     supported_modules: ['image'],
+  },
+  {
+    id: 'toapis-nano-banana2',
+    name: 'Nano banana2（ToAPIs）',
+    description: 'ToAPIs 异步图片网关，支持 Gemini 3.1 Flash Image Preview（Nano banana2）的文生图、图生图、多参考图与极端宽高比。',
+    provider_type: 'toapis-image',
+    api_protocol: 'openai-compatible',
+    capabilities: ['image-gen'],
+    provider_origin: 'preset',
+    auth_mode: 'api_key',
+    base_url: 'https://toapis.com',
+    notes: '使用 ToAPIs Bearer Token。该服务商走“上传图片 → 创建任务 → 轮询状态”的异步协议，不等同于 Google 官方 Gemini 原生端点。',
+    tags: ['图片', '补充能力', '异步任务'],
+    supported_modules: ['image'],
+    default_models: [
+      { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview（Nano banana2）' },
+    ],
   },
 ];
 

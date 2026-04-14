@@ -41,6 +41,10 @@ export interface SchedulingPlanDiagnostics {
   llmErrors: string[];
   llmTimeoutMs?: number;
   llmSkippedReason?: string;
+  providerId?: string;
+  providerName?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
 }
 
 export class SchedulingPlannerError extends Error {
@@ -74,6 +78,7 @@ export interface CodeCapabilityPlanningContext {
 
 export interface PlannerModelContext {
   provider: ApiProvider;
+  requestedModel?: string;
   model: string;
   workingDirectory?: string;
 }

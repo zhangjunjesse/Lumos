@@ -7,20 +7,56 @@ import Database from 'better-sqlite3'
 import { migrateTeamRunTables } from '../../db/migrations-team-run'
 
 const mockQuery = jest.fn()
-const mockBuildClaudeSdkRuntimeBootstrap = jest.fn(() => ({
+const mockBuildClaudeSdkRuntimeBootstrap = jest.fn((options?: { provider?: unknown; requestedModel?: string }) => ({
   env: {
     ANTHROPIC_AUTH_TOKEN: 'runtime-secret',
   },
   settingSources: ['project'],
   pathToClaudeCodeExecutable: '/tmp/claude-agent-sdk/cli.js',
+  activeProvider: options?.provider,
+  requestedModel: options?.requestedModel,
+  resolvedModel: options?.requestedModel === 'doubao-seed-2.0-lite' || options?.requestedModel === 'claude-sonnet-4-6'
+    ? 'doubao-seed-2-0-lite-260215'
+    : options?.requestedModel,
 }))
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
 }))
 
+jest.mock('@/lib/claude/local-auth', () => ({
+  ensureClaudeLocalAuthReady: jest.fn(async () => undefined),
+}))
+
 jest.mock('@/lib/claude/sdk-runtime', () => ({
   buildClaudeSdkRuntimeBootstrap: (...args: unknown[]) => mockBuildClaudeSdkRuntimeBootstrap(...args),
+  buildClaudeSdkInvocationContext: (...args: unknown[]) => mockBuildClaudeSdkRuntimeBootstrap(...args),
+}))
+
+jest.mock('@/lib/mcp-resolver', () => ({
+  resolveEnabledMcpServers: jest.fn(() => undefined),
+  toSdkMcpConfig: jest.fn(() => undefined),
+}))
+
+jest.mock('@/lib/knowledge/workflow-knowledge-tool', () => ({
+  createKnowledgeMcpServer: jest.fn(() => ({})),
+}))
+
+jest.mock('@/lib/knowledge/workflow-prompt-section', () => ({
+  buildKnowledgePromptSection: jest.fn(() => ''),
+  KNOWLEDGE_MCP_SERVER_NAME: 'knowledge',
+}))
+
+jest.mock('@/lib/knowledge/tag-resolver', () => ({
+  resolveTagNames: jest.fn(() => ({ tags: [], missing: [] })),
+  listTagCatalog: jest.fn(() => []),
+}))
+
+jest.mock('@/lib/claude/builtin-agent-context', () => ({
+  buildBuiltinAgentContext: jest.fn(() => ({
+    inProcessMcpServers: undefined,
+    systemPromptSuffix: undefined,
+  })),
 }))
 
 function buildPayload(tempDir: string): StageExecutionPayloadV1 {
@@ -93,7 +129,7 @@ function buildPayload(tempDir: string): StageExecutionPayloadV1 {
   }
 }
 
-async function* streamMessages(messages: any[]) {
+async function* streamMessages(messages: unknown[]) {
   for (const message of messages) {
     yield message
   }
@@ -212,6 +248,52 @@ describe('StageWorker', () => {
       })
     })
 
+    test('真实执行分支会把 Claude 风格请求模型映射到 provider catalog 实际模型', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+
+      mockQuery.mockReturnValue(streamMessages([
+        {
+          type: 'result',
+          structured_output: {
+            outcome: 'done',
+            summary: 'Stage completed via SDK.',
+            artifacts: [],
+          },
+        },
+      ]))
+
+      await realWorker.execute(payload, {
+        provider: {
+          id: 'provider-lumos-cloud',
+          name: 'Lumos Cloud',
+          provider_type: 'anthropic',
+          api_protocol: 'anthropic-messages',
+          capabilities: '["agent-chat"]',
+          provider_origin: 'system',
+          auth_mode: 'api_key',
+          base_url: 'http://api.miki.zj.cn',
+          api_key: 'sk-test',
+          is_active: 1,
+          sort_order: 0,
+          extra_env: '{}',
+          model_catalog: JSON.stringify([
+            { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215' },
+          ]),
+          model_catalog_source: 'default',
+          model_catalog_updated_at: null,
+          notes: '',
+          is_builtin: 1,
+          user_modified: 0,
+          created_at: '2026-04-10 00:00:00',
+          updated_at: '2026-04-10 00:00:00',
+        },
+      })
+
+      expect(mockQuery).toHaveBeenCalledTimes(1)
+      expect(mockQuery.mock.calls[0][0]?.options?.model).toBe('doubao-seed-2-0-lite-260215')
+    })
+
     test('真实执行分支缺少 structured_output 时返回 failed 结果', async () => {
       const realWorker = new StageWorker(true)
       const payload = buildPayload(tempDir)
@@ -312,7 +394,7 @@ describe('StageWorker', () => {
         artifacts: [],
         diagnostics: {
           errorName: 'PlainTextDeliveryMode',
-          rawMessage: 'Runtime requested plain-text stage delivery',
+          rawMessage: expect.stringContaining('Runtime requested plain-text stage delivery'),
         },
       })
       expect(mockQuery).toHaveBeenCalledTimes(1)

@@ -1027,6 +1027,14 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_srs_run ON schedule_run_steps(run_id, started_at);
   `);
 
+  // Add workflow_dsl_snapshot to schedule_run_history so run detail page can show
+  // the DSL as it was at execution time (user-edited DSL after the run shouldn't
+  // affect historical record display).
+  const srhCols = db.prepare("PRAGMA table_info(schedule_run_history)").all() as { name: string }[];
+  if (!srhCols.some(c => c.name === 'workflow_dsl_snapshot')) {
+    db.exec("ALTER TABLE schedule_run_history ADD COLUMN workflow_dsl_snapshot TEXT DEFAULT NULL");
+  }
+
   // Add workflow_id column to scheduled_workflows (links to standalone workflows table)
   const swCols = db.prepare("PRAGMA table_info(scheduled_workflows)").all() as { name: string }[];
   if (!swCols.some(c => c.name === 'workflow_id')) {

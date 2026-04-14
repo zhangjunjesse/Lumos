@@ -3,7 +3,7 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { ApiProvider, ChatSession } from '@/types';
 import { getSession } from '@/lib/db/sessions';
-import { buildClaudeSdkRuntimeBootstrap } from './sdk-runtime';
+import { buildClaudeSdkInvocationContext } from './sdk-runtime';
 import { z, type ZodType } from 'zod';
 import { ensureClaudeLocalAuthReady } from './local-auth';
 
@@ -109,11 +109,12 @@ export async function generateObjectWithClaudeSdk<T>(
   params: ClaudeStructuredObjectParams<T>,
 ): Promise<T> {
   const session = resolveRuntimeSession(params.sessionId);
-  const runtimeBootstrap = buildClaudeSdkRuntimeBootstrap({
+  const runtimeContext = buildClaudeSdkInvocationContext({
     provider: params.provider,
     sessionId: params.sessionId,
+    requestedModel: params.model,
   });
-  await ensureClaudeLocalAuthReady(runtimeBootstrap.activeProvider);
+  await ensureClaudeLocalAuthReady(runtimeContext.activeProvider);
   const abortController = new AbortController();
   let streamedTextOutput = '';
   let finalResultTextOutput = '';
@@ -141,11 +142,11 @@ export async function generateObjectWithClaudeSdk<T>(
       }),
       systemPrompt: params.system,
       permissionMode: 'plan',
-      env: runtimeBootstrap.env,
-      settingSources: runtimeBootstrap.settingSources,
-      ...(params.model ? { model: params.model } : {}),
-      ...(runtimeBootstrap.pathToClaudeCodeExecutable
-        ? { pathToClaudeCodeExecutable: runtimeBootstrap.pathToClaudeCodeExecutable }
+      env: runtimeContext.env,
+      settingSources: runtimeContext.settingSources,
+      ...(runtimeContext.resolvedModel ? { model: runtimeContext.resolvedModel } : {}),
+      ...(runtimeContext.pathToClaudeCodeExecutable
+        ? { pathToClaudeCodeExecutable: runtimeContext.pathToClaudeCodeExecutable }
         : {}),
       outputFormat: {
         type: 'json_schema',

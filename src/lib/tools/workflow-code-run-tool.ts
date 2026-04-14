@@ -1,3 +1,7 @@
+import os from 'os';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
@@ -55,6 +59,9 @@ export function createWorkflowCodeRunTool() {
       const abortController = new AbortController();
       const timer = setTimeout(() => abortController.abort(), timeoutMs);
 
+      const debugOutputDir = path.join(os.tmpdir(), 'lumos-code-debug', `run-${Date.now()}`);
+      try { mkdirSync(debugOutputDir, { recursive: true }); } catch { /* ignore */ }
+
       const ctx: CodeHandlerContext = {
         params: args.params ?? {},
         stepId: '__debug__',
@@ -63,6 +70,19 @@ export function createWorkflowCodeRunTool() {
         runtimeContext: { workflowRunId: '__debug__', stepId: '__debug__', stepType: 'agent' },
         signal: abortController.signal,
         browser: createBrowserBridgeApi(),
+        outputDir: debugOutputDir,
+        saveArtifact: async (source, name) => {
+          const relName = name ?? (typeof source === 'string' ? path.basename(source) : undefined);
+          if (!relName) throw new Error('saveArtifact: name is required when source is a Buffer');
+          if (path.isAbsolute(relName) || relName.split(/[\\/]+/).includes('..')) {
+            throw new Error(`saveArtifact: name must be a relative path: ${relName}`);
+          }
+          const target = path.join(debugOutputDir, relName);
+          await mkdir(path.dirname(target), { recursive: true });
+          if (typeof source === 'string') await copyFile(source, target);
+          else await writeFile(target, source);
+          return target;
+        },
       };
 
       const startMs = Date.now();
