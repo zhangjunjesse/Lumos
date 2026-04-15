@@ -11,17 +11,17 @@ describe('deepsearch site routing', () => {
     );
   });
 
-  test('falls back to site base url for non zhihu sites or empty query', () => {
+  test('uses current managed seed url rules for non zhihu sites or empty query', () => {
     expect(resolveSiteSeedUrl('xiaohongshu', 'https://www.xiaohongshu.com/', '笔记')).toBe(
-      'https://www.xiaohongshu.com/',
+      'https://www.xiaohongshu.com/search_result?keyword=%E7%AC%94%E8%AE%B0&source=web_search_result_notes',
     );
     expect(resolveSiteSeedUrl('zhihu', 'https://www.zhihu.com/', '   ')).toBe('https://www.zhihu.com/');
   });
 
-  test('marks zhihu managed search seed as search role', () => {
+  test('marks managed search seeds according to current site rules', () => {
     expect(resolveSiteSeedBindingRole('zhihu', 'deepsearch')).toBe('search');
     expect(resolveSiteSeedBindingRole('zhihu', '   ')).toBe('seed');
-    expect(resolveSiteSeedBindingRole('xiaohongshu', 'note')).toBe('seed');
+    expect(resolveSiteSeedBindingRole('xiaohongshu', 'note')).toBe('search');
   });
 
   test('collects top zhihu detail urls including zhuanlan articles', () => {

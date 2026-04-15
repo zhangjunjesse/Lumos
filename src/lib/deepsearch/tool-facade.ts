@@ -27,6 +27,9 @@ const SITE_ALIASES: Record<string, string[]> = {
   juejin: ['juejin', '掘金'],
   wechat: ['wechat', 'weixin', '微信公众号', '公众号', '微信文章', '微信'],
   x: ['twitter', 'x/twitter', '推特', 'twitter/x'],
+  wikisource_zh: ['wikisource', 'zh-wikisource', 'wikisource zh', '维基文库', '中文维基文库'],
+  ctext: ['ctext', 'chinese text project', '中國哲學書電子化計劃', '中国哲学书电子化计划'],
+  project_gutenberg: ['gutenberg', 'project gutenberg', '古腾堡', '古登堡'],
 };
 
 const deepSearchStartToolSchema = z.object({

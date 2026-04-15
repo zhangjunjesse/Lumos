@@ -112,6 +112,17 @@ interface DeepSearchSiteStateRow {
   updated_at: string;
 }
 
+const BUILTIN_DEEPSEARCH_SITES = [
+  { id: 'deepsearch-site-zhihu', siteKey: 'zhihu', displayName: 'Zhihu', baseUrl: 'https://www.zhihu.com' },
+  { id: 'deepsearch-site-xiaohongshu', siteKey: 'xiaohongshu', displayName: 'Xiaohongshu', baseUrl: 'https://www.xiaohongshu.com' },
+  { id: 'deepsearch-site-juejin', siteKey: 'juejin', displayName: 'Juejin', baseUrl: 'https://juejin.cn' },
+  { id: 'deepsearch-site-wechat', siteKey: 'wechat', displayName: 'WeChat Articles', baseUrl: 'https://mp.weixin.qq.com' },
+  { id: 'deepsearch-site-wikisource-zh', siteKey: 'wikisource_zh', displayName: '中文维基文库', baseUrl: 'https://zh.wikisource.org' },
+  { id: 'deepsearch-site-ctext', siteKey: 'ctext', displayName: 'Chinese Text Project', baseUrl: 'https://ctext.org' },
+  { id: 'deepsearch-site-gutenberg', siteKey: 'project_gutenberg', displayName: 'Project Gutenberg', baseUrl: 'https://www.gutenberg.org' },
+  { id: 'deepsearch-site-x', siteKey: 'x', displayName: 'X / Twitter', baseUrl: 'https://x.com' },
+] as const;
+
 function normalizeTimestamp(value: Date = new Date()): string {
   return value.toISOString().replace('T', ' ').split('.')[0];
 }
@@ -145,6 +156,31 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
     return parsed as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+function ensureBuiltinDeepSearchSites(): void {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO deepsearch_sites (
+      id,
+      site_key,
+      display_name,
+      base_url,
+      cookie_value,
+      cookie_status,
+      cookie_expires_at,
+      last_validated_at,
+      validation_message,
+      notes,
+      min_fetch_count,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, '', 'missing', NULL, NULL, '', '', 3, datetime('now'), datetime('now'))
+  `);
+
+  for (const site of BUILTIN_DEEPSEARCH_SITES) {
+    stmt.run(site.id, site.siteKey, site.displayName, site.baseUrl);
   }
 }
 
@@ -625,6 +661,7 @@ function applyRunPageBindingPatches(params: {
 }
 
 export function listDeepSearchSites(): DeepSearchSiteRecord[] {
+  ensureBuiltinDeepSearchSites();
   const db = getDb();
   const rows = db.prepare('SELECT * FROM deepsearch_sites ORDER BY display_name COLLATE NOCASE ASC').all() as DeepSearchSiteRow[];
   const statesBySiteKey = getSiteStatesByKeys(rows.map((row) => row.site_key));
@@ -632,6 +669,7 @@ export function listDeepSearchSites(): DeepSearchSiteRecord[] {
 }
 
 export function getDeepSearchSite(siteKey: string): DeepSearchSiteRecord | null {
+  ensureBuiltinDeepSearchSites();
   const db = getDb();
   const row = db.prepare('SELECT * FROM deepsearch_sites WHERE site_key = ?').get(siteKey) as DeepSearchSiteRow | undefined;
   if (!row) {
@@ -975,7 +1013,7 @@ export function applyDeepSearchRunAction(id: string, action: DeepSearchRunAction
   const existingBindings = existingBindingsByRunId.get(id) ?? [];
   const now = normalizeTimestamp();
   let nextStatus = existing.status;
-  let nextStartedAt = existing.started_at;
+  const nextStartedAt = existing.started_at;
   let nextCompletedAt = existing.completed_at;
   let nextDecision = buildStatusDecision(siteRows, existing.strictness, siteStatesByKey);
 
