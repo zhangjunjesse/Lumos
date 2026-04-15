@@ -32,7 +32,11 @@ export interface ModuleConfig {
   createTitle: string;
 }
 
-export const MODULE_CONFIGS: ModuleConfig[] = [
+/**
+ * Text/chat-category module overrides. Gated by the `chat` custom-provider
+ * flag in pro edition since they all consume text-gen capable providers.
+ */
+export const TEXT_MODULE_CONFIGS: ModuleConfig[] = [
   {
     key: 'provider_override:knowledge',
     modelKey: 'model_override:knowledge',
@@ -55,18 +59,24 @@ export const MODULE_CONFIGS: ModuleConfig[] = [
     emptyHint: '未指定时，使用上方「AI 对话」中的服务。支持文本生成能力的服务商均可用于规划。',
     createTitle: '为工作流规划添加服务',
   },
-  {
-    key: 'provider_override:image',
-    modelKey: 'model_override:image',
-    moduleKey: 'image',
-    label: '图片生成',
-    description: '生成图片时使用的 AI 服务。',
-    capability: 'image-gen',
-    emptyValueLabel: '未配置',
-    emptyHint: '图片生成需要单独设置，未配置时此功能不可用。',
-    createTitle: '添加图片生成服务',
-  },
 ];
+
+/**
+ * Image generation module. Gated by the `media` custom-provider flag and
+ * rendered in its own section because it needs dedicated provider management
+ * (edit / delete).
+ */
+export const IMAGE_MODULE_CONFIG: ModuleConfig = {
+  key: 'provider_override:image',
+  modelKey: 'model_override:image',
+  moduleKey: 'image',
+  label: '图片生成',
+  description: '生成图片时使用的 AI 服务。',
+  capability: 'image-gen',
+  emptyValueLabel: '未配置',
+  emptyHint: '图片生成需要单独设置，未配置时此功能不可用。',
+  createTitle: '添加图片生成服务',
+};
 
 export const PLACEHOLDER_VALUE = '__default__';
 

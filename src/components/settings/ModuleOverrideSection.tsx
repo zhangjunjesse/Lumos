@@ -3,16 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Loader2, Plus } from 'lucide-react';
 import {
   Select,
@@ -24,12 +14,7 @@ import {
 import type { ApiProvider } from '@/types';
 import { AddProviderDialog } from './AddProviderDialog';
 import {
-  ProviderEditDialog,
-  type ProviderEditTarget,
-} from './ProviderEditDialog';
-import { ImageProviderDetail } from './ImageProviderDetail';
-import {
-  MODULE_CONFIGS,
+  TEXT_MODULE_CONFIGS,
   PLACEHOLDER_VALUE,
   providerEligibleForModule,
   parseModelCatalog,
@@ -38,6 +23,11 @@ import {
   type ProviderOption,
 } from './module-override-config';
 
+/**
+ * Renders per-module provider overrides for text/chat category modules
+ * (knowledge base, workflow planner). Image generation lives in its own
+ * section because its management surface (edit/delete) is unique.
+ */
 export function ModuleOverrideSection() {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -45,14 +35,6 @@ export function ModuleOverrideSection() {
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [createTarget, setCreateTarget] = useState<ModuleConfig | null>(null);
-
-  // Image provider management state
-  const [editTarget, setEditTarget] = useState<ProviderEditTarget | null>(null);
-  const [editOpen, setEditOpen] = useState(false);
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
-  const [deleteTargetName, setDeleteTargetName] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
@@ -80,7 +62,7 @@ export function ModuleOverrideSection() {
 
       const settings = settingsData.settings || {};
       const resolved: Record<string, string> = {};
-      for (const config of MODULE_CONFIGS) {
+      for (const config of TEXT_MODULE_CONFIGS) {
         resolved[config.key] = settings[config.key] || '';
         resolved[config.modelKey] = settings[config.modelKey] || '';
       }
@@ -123,57 +105,6 @@ export function ModuleOverrideSection() {
     }
   }, [overrides]);
 
-  const openEditDialog = useCallback(async (providerId: string) => {
-    try {
-      const res = await fetch(`/api/providers/${providerId}`, { cache: 'no-store' });
-      const data = await res.json().catch(() => ({})) as { provider?: ProviderEditTarget; error?: string };
-      if (!res.ok || !data.provider) return;
-      setEditTarget(data.provider);
-      setEditOpen(true);
-    } catch { /* ignore */ }
-  }, []);
-
-  const handleEditSaved = useCallback(async () => {
-    await fetchData();
-    window.dispatchEvent(new Event('provider-changed'));
-  }, [fetchData]);
-
-  const handleDeleteProvider = useCallback(async () => {
-    if (!deleteTargetId) return;
-    setDeleting(true);
-    setDeleteError('');
-    try {
-      // Clear the override setting first so deletion is not blocked by reference
-      const imageConfig = MODULE_CONFIGS.find((c) => c.capability === 'image-gen');
-      if (imageConfig) {
-        const settingsRes = await fetch('/api/settings/app', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings: { [imageConfig.key]: '', [imageConfig.modelKey]: '' } }),
-        });
-        if (!settingsRes.ok) throw new Error('清除引用失败');
-      }
-      const res = await fetch(`/api/providers/${deleteTargetId}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      if (!res.ok) {
-        setDeleteError(data.error || '删除失败');
-        return;
-      }
-      setDeleteTargetId(null);
-      setOverrides((prev) => {
-        const next = { ...prev };
-        if (imageConfig) { next[imageConfig.key] = ''; next[imageConfig.modelKey] = ''; }
-        return next;
-      });
-      await fetchData();
-      window.dispatchEvent(new Event('provider-changed'));
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : '删除失败');
-    } finally {
-      setDeleting(false);
-    }
-  }, [deleteTargetId, fetchData]);
-
   const providerMap = useMemo(
     () => new Map(providers.map((p) => [p.id, p])),
     [providers],
@@ -206,9 +137,9 @@ export function ModuleOverrideSection() {
     <>
       <Card className="border-border/50">
         <CardHeader>
-          <CardTitle className="text-base font-semibold">其他 AI 服务</CardTitle>
+          <CardTitle className="text-base font-semibold">其他 AI 对话服务</CardTitle>
           <p className="text-sm text-muted-foreground">
-            为不同功能选择各自的 AI 服务。不设置则统一使用上方的对话服务。
+            为知识库、工作流规划分别选择 AI 服务。不设置则统一使用上方的对话服务。
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -219,7 +150,7 @@ export function ModuleOverrideSection() {
           )}
 
           <div className="space-y-3">
-            {MODULE_CONFIGS.map((config) => {
+            {TEXT_MODULE_CONFIGS.map((config) => {
               const eligible = providers.filter((p) => providerEligibleForModule(p, config));
               const currentId = overrides[config.key] || '';
               const currentProvider = currentId ? providerMap.get(currentId) || null : null;
@@ -298,19 +229,6 @@ export function ModuleOverrideSection() {
                       <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
                     )}
                   </div>
-
-                  {/* Image provider management card */}
-                  {config.capability === 'image-gen' && currentProvider && currentValid && (
-                    <ImageProviderDetail
-                      provider={currentProvider}
-                      onEdit={() => { void openEditDialog(currentProvider.id); }}
-                      onDelete={() => {
-                        setDeleteTargetId(currentProvider.id);
-                        setDeleteTargetName(currentProvider.name);
-                        setDeleteError('');
-                      }}
-                    />
-                  )}
                 </div>
               );
             })}
@@ -328,45 +246,6 @@ export function ModuleOverrideSection() {
         description="创建后自动应用到当前功能，你也可以稍后再修改。"
         onCreated={handleCreatedProvider}
       />
-
-      <ProviderEditDialog
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        provider={editTarget}
-        onSaved={handleEditSaved}
-      />
-
-      <AlertDialog
-        open={!!deleteTargetId}
-        onOpenChange={(open) => { if (!open) { setDeleteTargetId(null); setDeleteError(''); } }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要删除 <strong>{deleteTargetName}</strong> 吗？此操作无法撤销。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteError && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-              <p className="text-xs font-medium text-destructive">删除失败</p>
-              <p className="mt-0.5 text-xs text-destructive/80">{deleteError}</p>
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteProvider}
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }
-

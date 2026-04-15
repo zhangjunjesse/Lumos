@@ -15,6 +15,7 @@ import { useProAuth } from "@/hooks/useProAuth";
 import { GeneralSection } from "./GeneralSection";
 import { ChatProvidersCard } from "./ChatProvidersCard";
 import { ModuleOverrideSection } from "./ModuleOverrideSection";
+import { ImageProviderSection } from "./ImageProviderSection";
 import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
@@ -155,14 +156,21 @@ interface ProvidersSectionProps {
 /**
  * Provider settings composition. Sections appear independently so that an
  * admin can grant only one of {chat, media} and the user still sees a useful
- * settings screen. The Lumos Cloud card is always shown in pro edition as
- * the baseline built-in provider.
+ * settings screen.
+ *
+ * - Pro edition baseline: Lumos Cloud card.
+ * - `chat` flag → text/chat-category: ChatProvidersCard + ModuleOverrideSection
+ *   (knowledge base, workflow planner — all text-gen consumers).
+ * - `media` flag → ImageProviderSection (image generation only).
  */
 function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
   const cards: Array<{ key: string; node: React.ReactNode }> = [];
   if (isPro()) cards.push({ key: 'cloud', node: <LumosCloudSection /> });
-  if (allowChat) cards.push({ key: 'chat', node: <ChatProvidersCard /> });
-  if (allowMedia) cards.push({ key: 'media', node: <ModuleOverrideSection /> });
+  if (allowChat) {
+    cards.push({ key: 'chat', node: <ChatProvidersCard /> });
+    cards.push({ key: 'text-modules', node: <ModuleOverrideSection /> });
+  }
+  if (allowMedia) cards.push({ key: 'image', node: <ImageProviderSection /> });
 
   return (
     <div className="flex flex-col gap-10">
