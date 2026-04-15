@@ -4,6 +4,8 @@ import { createWorkflowAgentStepRunTool } from './workflow-agent-step-run-tool';
 import {
   createListWorkflowAgentsTool,
   createGetWorkflowAgentTool,
+  createCreateWorkflowAgentTool,
+  createUpdateWorkflowAgentTool,
 } from './workflow-agents-tool';
 
 export const WORKFLOW_MCP_SERVER_NAME = 'lumos-workflow';
@@ -16,6 +18,8 @@ export function createWorkflowMcpServer() {
       createWorkflowAgentStepRunTool(),
       createListWorkflowAgentsTool(),
       createGetWorkflowAgentTool(),
+      createCreateWorkflowAgentTool(),
+      createUpdateWorkflowAgentTool(),
     ],
   });
 }

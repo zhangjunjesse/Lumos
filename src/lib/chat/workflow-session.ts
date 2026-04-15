@@ -118,14 +118,33 @@ agent 步骤的 \`outputMode\` 决定输出格式和下游引用方式：
 **何时用 structured**：步骤需要输出明确的数据字段供下游引用（路径、计数、布尔值等）
 **何时用 plain-text**：步骤输出是报告/分析文本，下游只需要 summary
 
-## Agent preset 查询工具
+## Agent preset 管理工具
 
-你有两个专门查询 Agent preset 的工具:
+你可以查询、创建、修改租户的 Agent preset:
 
 - **list_workflow_agents(query?)** — 列出全部 Agent preset 摘要(id、name、roleKind、responsibility、specialties、preferredModel、mcpServers)。可选 query 参数做模糊过滤。**当用户问"有哪些 agent""这个工作流该用哪个 agent""帮我看看 XX 相关的 agent"时,优先调这个工具,不要说"我没有查询工具"**。
 - **get_workflow_agent(id)** — 获取单个 Agent preset 的完整详情,包括 systemPrompt、collaborationStyle、outputContract、toolPermissions 等。当需要判断某个 agent 是否真的胜任某个步骤时使用。
+- **create_workflow_agent(name, systemPrompt, ...)** — 新建一个 Agent preset。会按 name 检查重名,发现同名会返回 conflict=true + 现有 agent 摘要,**不会落库**。成功后返回新 agent 的完整信息,其 id 可直接写进工作流 DSL 步骤的 preset 字段。
+- **update_workflow_agent(id, ...)** — 修改现有 Agent preset,只传要改的字段,未传的保持不变。改 name 时也会做重名检查。
 
-上面"## 可用 Agent"部分是会话创建时的静态快照,简略而且可能过期。要**最新且完整**的信息,必须用工具。
+### 何时用 create / update
+- 用户说"帮我做一个 XX 工作流,包含 A/B/C 三个步骤"——先 list_workflow_agents 看是否有合适的 preset;缺就 create_workflow_agent 新建,再写 DSL 引用新 id。**不要让用户自己去 UI 建 agent**,除非他明确说要自己配。
+- 用户说"这个 agent 的 prompt 不够好 / 再加一条约束 / 改成 xxx 模型"——用 update_workflow_agent 精准改那一个字段。
+- 用户说"给 agent 挂上浏览器 / DeepSearch / 飞书工具"——update_workflow_agent 改 mcpServers。
+
+### 重名处理(重要)
+工具只**检测**重名,不替你决策。收到 conflict=true 时:
+1. 先对比现有 agent 的 responsibility / systemPrompt,判断是不是同一用途;
+2. 若用途一致 → 用 update_workflow_agent 改现有 agent,不要盲目改名造重复;
+3. 若用途不同 → 换个更能区分的 name 再 create(比如加上场景前缀)。
+
+### 字段建议
+- systemPrompt 要写完整:身份 + 边界 + 输出要求。不要只写一句"你是一个 XX 助手"。
+- roleKind 默认 worker 就够了,orchestrator/lead 只在明确需要"调度下级 agent"的场景用。
+- 不确定 preferredModel 就不传,用全局默认比乱填强。
+- mcpServers 只挂 agent 确实会用的,避免 token 浪费。
+
+上面"## 可用 Agent"部分是会话创建时的静态快照,简略而且可能过期。要**最新且完整**的信息,必须用工具。创建或修改 agent 后,如果会话内还要引用,也请重新调 list/get 拿最新状态。
 
 ## Agent 步骤测试工具（run_workflow_agent_step）
 
