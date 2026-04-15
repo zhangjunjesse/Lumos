@@ -8,8 +8,7 @@ import crypto from 'crypto';
 import { getDb } from '@/lib/db/connection';
 import { hashPassword } from './password';
 import { createSession, validateSession } from './session';
-import { verifyCode } from './email';
-import { createNewApiToken, getTokenQuota } from './newapi-admin';
+import { getTokenQuota } from './newapi-admin';
 import {
   provisionCloudProvider,
   provisionImageProvider,
@@ -20,8 +19,6 @@ import type { CustomProviderFlags } from './custom-provider-capabilities';
 import type { LumosUser } from './types';
 
 export type { LumosUser } from './types';
-
-const DEFAULT_FREE_QUOTA = 5_000_000; // ~= 10 RMB
 
 interface RegisterParams {
   email: string;
@@ -39,11 +36,6 @@ function nowISO(): string {
   return new Date().toISOString().replace('T', ' ').split('.')[0];
 }
 
-function getFreeQuota(): number {
-  const env = process.env.REGISTER_FREE_QUOTA;
-  return env ? Number(env) : DEFAULT_FREE_QUOTA;
-}
-
 function stripPasswordHash(row: LumosUser & { password_hash?: string }): LumosUser {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password_hash: _, ...user } = row;
@@ -51,50 +43,34 @@ function stripPasswordHash(row: LumosUser & { password_hash?: string }): LumosUs
 }
 
 /**
- * Register a new user.
- * 1. Verify email code
- * 2. Check duplicate email
- * 3. Hash password
- * 4. Create new-api token with free quota
- * 5. Insert user record
- * 6. Provision local cloud provider
- * 7. Create session
+ * Register a new user via lumos-web.
+ * Desktop has no SMTP / no new-api admin credentials — registration, email
+ * verification, and token provisioning all happen server-side. Desktop only
+ * mirrors the resulting user into local DB and opens a local session.
  */
 export async function registerUser(params: RegisterParams): Promise<AuthResult> {
-  const { email, code, password, nickname } = params;
+  const { user: remoteUser, response } = await fetchRemoteRegister(params);
+  const webSessionToken = extractWebSessionToken(response);
+  upsertLocalUser(remoteUser, webSessionToken, nowISO());
+  await provisionUserServices(remoteUser);
 
-  if (!verifyCode(email, code, 'register')) {
-    throw new Error('验证码无效或已过期');
-  }
-
-  const db = getDb();
-  const existing = db.prepare(
-    'SELECT id FROM lumos_users WHERE email = ?',
-  ).get(email);
-  if (existing) {
-    throw new Error('该邮箱已注册');
-  }
-
-  const passwordHash = hashPassword(password);
-  const quota = getFreeQuota();
-  const { tokenId, tokenKey } = await createNewApiToken(`lumos-${email}`, quota);
-
-  const userId = crypto.randomUUID();
-  const now = nowISO();
-
-  db.prepare(
-    `INSERT INTO lumos_users
-     (id, email, password_hash, nickname, newapi_token_key, newapi_token_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(userId, email, passwordHash, nickname || '', tokenKey, tokenId, now, now);
-
-  // Provision a Lumos Cloud provider with the new-api key
-  await provisionCloudProvider(tokenKey);
-
-  const session = createSession(userId);
-  const user = getUserById(userId)!;
-
+  const session = createSession(remoteUser.id);
+  const user = getUserById(remoteUser.id)!;
   return { user, token: session.token };
+}
+
+async function fetchRemoteRegister(params: RegisterParams): Promise<{ user: RemoteUser; response: Response }> {
+  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const response = await fetch(`${webBase}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await response.json();
+  if (!data.success || !data.data) {
+    throw new Error(data.error || data.message || '注册失败');
+  }
+  return { user: (data.data.user ?? data.data) as RemoteUser, response };
 }
 
 /**

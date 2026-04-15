@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendVerificationCode } from '@/lib/auth/email';
+
+const WEB_BASE = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
 
 /**
- * POST /api/auth/send-code  -- Send email verification code
+ * POST /api/auth/send-code — Pass-through proxy to lumos-web.
+ * Email sending lives on lumos-web; desktop has no SMTP config.
  */
 export async function POST(req: NextRequest) {
   try {
-    const { email, purpose = 'register' } = await req.json();
-    if (!email) {
-      return NextResponse.json(
-        { success: false, message: '请输入邮箱地址' },
-        { status: 400 },
-      );
-    }
-
-    await sendVerificationCode(email, purpose);
-    return NextResponse.json({ success: true });
+    const body = await req.text();
+    const upstream = await fetch(`${WEB_BASE}/api/email/send-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const data = await upstream.json();
+    return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : '发送验证码失败';
-    return NextResponse.json({ success: false, message }, { status: 400 });
+    return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
