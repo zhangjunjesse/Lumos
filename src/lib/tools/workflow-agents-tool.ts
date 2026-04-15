@@ -14,6 +14,7 @@ import {
   createAgentPreset,
   updateAgentPreset,
 } from '@/lib/db/agent-presets';
+import { getDepartment } from '@/lib/db/team-departments';
 import type { AgentPresetDirectoryItem } from '@/types';
 
 interface CallToolResult {
@@ -120,7 +121,31 @@ const mutableAgentFields = {
   position: z.string().max(200).optional().describe('员工身份:职位。'),
   interests: z.string().max(500).optional().describe('员工身份:兴趣。'),
   specialties: z.string().max(500).optional().describe('员工身份:专长。'),
+  departmentId: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      '所属部门 id(先 list_workflow_departments 拿)。传 null 表示从部门移除/无部门;不传则保持现值(update)或默认无部门(create)。',
+    ),
 } as const;
+
+/** 校验 departmentId 存在性。undefined 或 null 视为不校验(前者=不变,后者=清空)。 */
+function validateDepartmentId(departmentId: string | null | undefined): CallToolResult | null {
+  if (!departmentId) return null;
+  const dept = getDepartment(departmentId);
+  if (dept) return null;
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        success: false,
+        error: `部门 "${departmentId}" 不存在。请先 list_workflow_departments 拿正确 id,或 create_workflow_department 新建。`,
+      }, null, 2),
+    }],
+    isError: true,
+  };
+}
 
 /**
  * Case-insensitive + trim-aware 重名查找,在工具层做防御,不改底层 DB 行为。
@@ -156,6 +181,8 @@ export function createCreateWorkflowAgentTool() {
     schema,
     async (args): Promise<CallToolResult> => {
       try {
+        const deptError = validateDepartmentId(args.departmentId);
+        if (deptError) return deptError;
         const existing = findExistingByName(args.name);
         if (existing) {
           return {
@@ -215,6 +242,10 @@ export function createUpdateWorkflowAgentTool() {
             }],
             isError: true,
           };
+        }
+        if (updates.departmentId !== undefined) {
+          const deptError = validateDepartmentId(updates.departmentId);
+          if (deptError) return deptError;
         }
         if (updates.name && updates.name.trim().toLowerCase() !== existing.name.trim().toLowerCase()) {
           const conflict = findExistingByName(updates.name);

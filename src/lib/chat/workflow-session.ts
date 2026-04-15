@@ -143,8 +143,27 @@ agent 步骤的 \`outputMode\` 决定输出格式和下游引用方式：
 - roleKind 默认 worker 就够了,orchestrator/lead 只在明确需要"调度下级 agent"的场景用。
 - 不确定 preferredModel 就不传,用全局默认比乱填强。
 - mcpServers 只挂 agent 确实会用的,避免 token 浪费。
+- 想把 agent 放到某个部门下,传 departmentId(见下面"部门管理"小节)。
 
 上面"## 可用 Agent"部分是会话创建时的静态快照,简略而且可能过期。要**最新且完整**的信息,必须用工具。创建或修改 agent 后,如果会话内还要引用,也请重新调 list/get 拿最新状态。
+
+## 部门管理工具
+
+Agent 可归属到部门,方便 UI 分组。你可以自己管理部门:
+
+- **list_workflow_departments()** — 列出全部部门(id、name、description、sortOrder)。**创建或修改带 departmentId 的 agent 前,先调这个拿 id**。
+- **create_workflow_department(name, description?)** — 新建部门。会做 case-insensitive + trim 重名检测,命中返回 conflict=true 不落库。成功后返回新部门 id。
+- **update_workflow_department(id, name?, description?, sortOrder?)** — 修改部门。改 name 也做重名检测。
+
+### 典型流程
+1. 用户说"帮我建一个内容团队,包含选题、写稿、审稿三个 agent"——先 list_workflow_departments 看有没有"内容"相关部门;缺就 create_workflow_department({ name: "内容团队", description: "..." }) 拿到 deptId;再 create_workflow_agent 三个 agent 时把 departmentId 都设成 deptId。
+2. 用户说"把 xxx agent 归到营销部门"——list_workflow_departments 找营销部门 id;update_workflow_agent(agentId, { departmentId: deptId })。
+3. 用户说"把 xxx agent 从部门里拿出来"——update_workflow_agent(agentId, { departmentId: null }),传 null 表示清空。
+4. 用户问"有哪些部门 / 团队怎么分的"——直接 list_workflow_departments,不要回答"我不知道部门信息"。
+
+### 注意
+- departmentId 要先存在,工具会校验;传不存在的 id 会报错让你去 list/create。
+- 部门目前不支持删除,这是有意的:避免误删导致下属 agent 批量脱离分组。用户若要"合并部门",让他手动去 UI 操作,或用 update_workflow_agent 把成员改到目标部门。
 
 ## Agent 步骤测试工具（run_workflow_agent_step）
 
