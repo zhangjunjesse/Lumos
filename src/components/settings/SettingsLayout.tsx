@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useSyncExternalStore } from "react";
+import { Fragment, useState, useCallback, useSyncExternalStore } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { IconSvgElement } from "@hugeicons/react";
 import {
@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 import { isPro } from "@/lib/edition";
 import { useProAuth } from "@/hooks/useProAuth";
 import { GeneralSection } from "./GeneralSection";
-import { ClaudeConfigSection } from "./ClaudeConfigSection";
+import { ChatProvidersCard } from "./ChatProvidersCard";
+import { ModuleOverrideSection } from "./ModuleOverrideSection";
 import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
@@ -68,7 +69,11 @@ export function SettingsLayout() {
 
   const { t } = useTranslation();
   const { user: proUser } = useProAuth();
-  const allowCustomProviders = proUser?.allow_custom_providers === true;
+  // In open edition users fully manage their own providers; in pro edition the
+  // admin grants per-category permissions which we read from the auth payload.
+  const customFlags = isPro()
+    ? { chat: proUser?.allow_custom_providers?.chat === true, media: proUser?.allow_custom_providers?.media === true }
+    : { chat: true, media: true };
 
   const settingsLabelKeys: Record<string, TranslationKey> = {
     'General': 'settings.general',
@@ -119,19 +124,10 @@ export function SettingsLayout() {
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "knowledge" && <KnowledgeSection />}
           {activeSection === "providers" && (
-            isPro() ? (
-              allowCustomProviders ? (
-                <div className="flex flex-col gap-10">
-                  <LumosCloudSection />
-                  <div className="h-px bg-border/50" />
-                  <ClaudeConfigSection />
-                </div>
-              ) : (
-                <LumosCloudSection />
-              )
-            ) : (
-              <ClaudeConfigSection />
-            )
+            <ProvidersSection
+              allowChat={customFlags.chat}
+              allowMedia={customFlags.media}
+            />
           )}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
@@ -147,6 +143,35 @@ export function SettingsLayout() {
           {activeSection === "usage" && <UsageStatsSection />}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface ProvidersSectionProps {
+  allowChat: boolean;
+  allowMedia: boolean;
+}
+
+/**
+ * Provider settings composition. Sections appear independently so that an
+ * admin can grant only one of {chat, media} and the user still sees a useful
+ * settings screen. The Lumos Cloud card is always shown in pro edition as
+ * the baseline built-in provider.
+ */
+function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
+  const cards: Array<{ key: string; node: React.ReactNode }> = [];
+  if (isPro()) cards.push({ key: 'cloud', node: <LumosCloudSection /> });
+  if (allowChat) cards.push({ key: 'chat', node: <ChatProvidersCard /> });
+  if (allowMedia) cards.push({ key: 'media', node: <ModuleOverrideSection /> });
+
+  return (
+    <div className="flex flex-col gap-10">
+      {cards.map(({ key, node }, i) => (
+        <Fragment key={key}>
+          {i > 0 && <div className="h-px bg-border/50" />}
+          {node}
+        </Fragment>
+      ))}
     </div>
   );
 }

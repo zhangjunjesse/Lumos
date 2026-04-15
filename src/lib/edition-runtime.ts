@@ -9,19 +9,33 @@
 
 import { isOpen } from '@/lib/edition';
 import { getSetting } from '@/lib/db/sessions';
-import { PRO_ALLOW_CUSTOM_PROVIDERS_KEY } from '@/lib/lumos-cloud-auth';
+import {
+  CUSTOM_PROVIDER_CAPABILITIES,
+  CUSTOM_PROVIDER_SETTING_KEYS,
+  emptyCustomProviderFlags,
+  type CustomProviderCapability,
+  type CustomProviderFlags,
+} from '@/lib/auth/custom-provider-capabilities';
 
 /**
  * Pro edition: whether the admin allows users to configure and use custom
- * providers (their own API keys / endpoints). When false, only the built-in
- * Lumos Cloud provider is usable — previously configured custom providers
- * are ignored at resolve time.
+ * providers for a given category (e.g. chat, media). When false for a
+ * category, the resolver force-routes that category to the built-in Lumos
+ * Cloud / admin-managed provider and the UI hides the customization surface.
  *
  * Open edition: always true (users fully manage their own providers).
  *
- * The flag is refreshed on every login from lumos-web; default false.
+ * The flags are refreshed on every login from lumos-web; default false.
  */
-export function canUseCustomProviders(): boolean {
+export function canUseCustomProvider(cap: CustomProviderCapability): boolean {
   if (isOpen()) return true;
-  return getSetting(PRO_ALLOW_CUSTOM_PROVIDERS_KEY) === '1';
+  return getSetting(CUSTOM_PROVIDER_SETTING_KEYS[cap]) === '1';
+}
+
+export function getCustomProviderFlags(): CustomProviderFlags {
+  const flags = emptyCustomProviderFlags();
+  for (const cap of CUSTOM_PROVIDER_CAPABILITIES) {
+    flags[cap] = canUseCustomProvider(cap);
+  }
+  return flags;
 }

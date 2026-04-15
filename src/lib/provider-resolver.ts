@@ -3,7 +3,8 @@ import { getDefaultProvider, getProvider } from '@/lib/db/providers';
 import { getSetting } from '@/lib/db/sessions';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { isPro } from '@/lib/edition';
-import { canUseCustomProviders } from '@/lib/edition-runtime';
+import { canUseCustomProvider } from '@/lib/edition-runtime';
+import { customProviderCapFor } from '@/lib/auth/custom-provider-capabilities';
 import type { ApiProvider, ProviderCapability } from '@/types';
 
 export type ProviderModuleKey = 'chat' | 'knowledge' | 'workflow' | 'image';
@@ -83,17 +84,30 @@ function resolveProviderById(
   return ensureProviderSupportsCapability(provider, capability, sourceLabel);
 }
 
+/**
+ * Pro-edition lockdown: when admin has disabled customization for a category,
+ * the user's preferred/default provider choices are ignored for that
+ * capability. Chat has no admin-managed override, so it is force-routed to
+ * the system Lumos Cloud provider. Media (image-gen) is admin-managed via
+ * `provider_override:image`, so it falls through to the override chain with
+ * the user's preferred id stripped.
+ */
+function isCustomProviderLocked(capability: ProviderCapability): boolean {
+  if (!isPro()) return false;
+  const cap = customProviderCapFor(capability);
+  if (!cap) return false;
+  return !canUseCustomProvider(cap);
+}
+
 export function resolveProviderForCapability(options: {
   moduleKey: ProviderModuleKey;
   capability: ProviderCapability;
   preferredProviderId?: string | null;
   allowDefault?: boolean;
 }): ApiProvider | undefined {
-  // Pro-edition lockdown: when admin has disabled custom providers, ignore any
-  // user-configured preferred/override/default and force the system Lumos
-  // Cloud provider. image-gen is routed via provider_override:image (admin-
-  // managed) so it falls through to the normal path below.
-  if (isPro() && !canUseCustomProviders() && options.capability !== 'image-gen') {
+  const locked = isCustomProviderLocked(options.capability);
+
+  if (locked && options.capability === 'agent-chat') {
     const cloud = getLumosCloudSystemProvider();
     if (!cloud) {
       throw new ProviderResolutionError(
@@ -103,7 +117,7 @@ export function resolveProviderForCapability(options: {
     return ensureProviderSupportsCapability(cloud, options.capability, 'Lumos Cloud');
   }
 
-  const preferredProviderId = options.preferredProviderId?.trim() || '';
+  const preferredProviderId = locked ? '' : (options.preferredProviderId?.trim() || '');
   if (preferredProviderId) {
     return resolveProviderById(preferredProviderId, options.capability, '指定服务商');
   }

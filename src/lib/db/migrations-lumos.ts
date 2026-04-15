@@ -220,6 +220,9 @@ export function migrateLumosTables(db: Database.Database): void {
       ('deepsearch-site-xiaohongshu', 'xiaohongshu', 'Xiaohongshu', 'https://www.xiaohongshu.com'),
       ('deepsearch-site-juejin', 'juejin', 'Juejin', 'https://juejin.cn'),
       ('deepsearch-site-wechat', 'wechat', 'WeChat Articles', 'https://mp.weixin.qq.com'),
+      ('deepsearch-site-wikisource-zh', 'wikisource_zh', '中文维基文库', 'https://zh.wikisource.org'),
+      ('deepsearch-site-ctext', 'ctext', 'Chinese Text Project', 'https://ctext.org'),
+      ('deepsearch-site-gutenberg', 'project_gutenberg', 'Project Gutenberg', 'https://www.gutenberg.org'),
       ('deepsearch-site-x', 'x', 'X / Twitter', 'https://x.com');
   `);
 
@@ -1169,8 +1172,27 @@ export function migrateLumosTables(db: Database.Database): void {
     db.exec("ALTER TABLE lumos_users ADD COLUMN web_session_token TEXT NOT NULL DEFAULT ''");
   }
 
+  // One-off migration: split the legacy single "allow custom providers" flag
+  // into per-capability flags (chat / media). Safe to run repeatedly because
+  // the legacy key is deleted after copy.
+  migrateCustomProviderFlagKeys(db);
+
   // Seed built-in data on first run
   seedBuiltinProviders(db);
   seedBuiltinSkills(db);
   seedBuiltinMcpServers(db);
+}
+
+function migrateCustomProviderFlagKeys(db: Database.Database): void {
+  const LEGACY_KEY = 'pro_allow_custom_providers';
+  const legacyRow = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(LEGACY_KEY) as { value: string } | undefined;
+  if (!legacyRow) return;
+
+  const upsert = db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  );
+  upsert.run('pro_allow_custom_chat_provider', legacyRow.value);
+  upsert.run('pro_allow_custom_media_provider', legacyRow.value);
+  db.prepare('DELETE FROM settings WHERE key = ?').run(LEGACY_KEY);
 }

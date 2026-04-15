@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import type { CustomProviderFlags } from "@/lib/auth/custom-provider-capabilities";
 
 export interface ProAuthUser {
   id: string;
@@ -12,8 +13,8 @@ export interface ProAuthUser {
   role: "admin" | "user";
   balance: number;
   used_quota: number;
-  /** Pro-edition admin toggle: if false, only Lumos Cloud provider is usable */
-  allow_custom_providers: boolean;
+  /** Pro-edition admin toggles per custom-provider category */
+  allow_custom_providers: CustomProviderFlags;
   // 向后兼容（sidebar-user-section / Header 等旧代码使用）
   username: string;
   display_name: string;

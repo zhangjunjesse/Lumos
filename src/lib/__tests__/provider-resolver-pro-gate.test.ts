@@ -1,10 +1,10 @@
 /**
  * Pro-edition lockdown tests for provider-resolver.
- * Covers the branch: isPro() && !canUseCustomProviders() → force Lumos Cloud.
+ * Covers per-capability gating via canUseCustomProvider(cap).
  */
 
 jest.mock('@/lib/edition', () => ({ isPro: jest.fn() }));
-jest.mock('@/lib/edition-runtime', () => ({ canUseCustomProviders: jest.fn() }));
+jest.mock('@/lib/edition-runtime', () => ({ canUseCustomProvider: jest.fn() }));
 jest.mock('@/lib/db/connection', () => ({ getDb: jest.fn() }));
 jest.mock('@/lib/db/providers', () => ({
   getDefaultProvider: jest.fn(),
@@ -14,16 +14,17 @@ jest.mock('@/lib/db/sessions', () => ({ getSetting: jest.fn() }));
 jest.mock('@/lib/provider-config', () => ({ providerSupportsCapability: jest.fn() }));
 
 import { isPro } from '@/lib/edition';
-import { canUseCustomProviders } from '@/lib/edition-runtime';
+import { canUseCustomProvider } from '@/lib/edition-runtime';
 import { getDb } from '@/lib/db/connection';
 import { getDefaultProvider, getProvider } from '@/lib/db/providers';
 import { getSetting } from '@/lib/db/sessions';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
+import type { CustomProviderCapability } from '@/lib/auth/custom-provider-capabilities';
 import type { ApiProvider } from '@/types';
 
 const mIsPro = isPro as jest.MockedFunction<typeof isPro>;
-const mAllow = canUseCustomProviders as jest.MockedFunction<typeof canUseCustomProviders>;
+const mCanUse = canUseCustomProvider as jest.MockedFunction<typeof canUseCustomProvider>;
 const mGetDb = getDb as jest.MockedFunction<typeof getDb>;
 const mGetDefault = getDefaultProvider as jest.MockedFunction<typeof getDefaultProvider>;
 const mGetProvider = getProvider as jest.MockedFunction<typeof getProvider>;
@@ -52,45 +53,46 @@ function stubCloudLookup(found: boolean): void {
   mSupports.mockReturnValue(true);
 }
 
-describe('resolveProviderForCapability — pro-gate', () => {
+function setFlags(flags: Partial<Record<CustomProviderCapability, boolean>>): void {
+  mCanUse.mockImplementation((cap: CustomProviderCapability) => flags[cap] === true);
+}
+
+describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mGetSetting.mockReturnValue('');
     mGetDefault.mockReturnValue(undefined);
   });
 
-  test('pro + !allow + agent-chat → ignores preferredProviderId, forces Lumos Cloud', () => {
+  test('chat locked → ignores preferredProviderId, forces Lumos Cloud', () => {
     mIsPro.mockReturnValue(true);
-    mAllow.mockReturnValue(false);
+    setFlags({ chat: false, media: true });
     stubCloudLookup(true);
 
     const result = resolveProviderForCapability({
       moduleKey: 'chat',
       capability: 'agent-chat',
-      preferredProviderId: 'user-id', // user's custom provider — must be ignored
+      preferredProviderId: 'user-id',
     });
 
     expect(result).toBe(cloudProvider);
     expect(mGetProvider).not.toHaveBeenCalledWith('user-id');
   });
 
-  test('pro + !allow + no Lumos Cloud in DB → throws', () => {
+  test('chat locked + no Lumos Cloud in DB → throws', () => {
     mIsPro.mockReturnValue(true);
-    mAllow.mockReturnValue(false);
+    setFlags({ chat: false, media: true });
     stubCloudLookup(false);
 
     expect(() =>
-      resolveProviderForCapability({
-        moduleKey: 'chat',
-        capability: 'agent-chat',
-      }),
+      resolveProviderForCapability({ moduleKey: 'chat', capability: 'agent-chat' }),
     ).toThrow(ProviderResolutionError);
   });
 
-  test('pro + !allow + image-gen → bypasses gate (image uses provider_override:image path)', () => {
+  test('media locked + image-gen → strips preferredProviderId, falls through to provider_override:image', () => {
     mIsPro.mockReturnValue(true);
-    mAllow.mockReturnValue(false);
-    // Pretend user configured provider_override:image pointing at the custom provider.
+    setFlags({ chat: true, media: false });
+    // Admin-managed override points at the custom provider.
     mGetSetting.mockImplementation(key => (key === 'provider_override:image' ? customProvider.id : ''));
     mGetProvider.mockImplementation(id => (id === customProvider.id ? customProvider : undefined));
     mSupports.mockReturnValue(true);
@@ -98,14 +100,16 @@ describe('resolveProviderForCapability — pro-gate', () => {
     const result = resolveProviderForCapability({
       moduleKey: 'image',
       capability: 'image-gen',
+      preferredProviderId: 'some-user-pick', // must be ignored
     });
 
     expect(result).toBe(customProvider);
+    expect(mGetProvider).not.toHaveBeenCalledWith('some-user-pick');
   });
 
-  test('pro + allow → normal resolution honors preferredProviderId', () => {
+  test('chat unlocked → honors preferredProviderId', () => {
     mIsPro.mockReturnValue(true);
-    mAllow.mockReturnValue(true);
+    setFlags({ chat: true, media: true });
     mGetProvider.mockImplementation(id => (id === customProvider.id ? customProvider : undefined));
     mSupports.mockReturnValue(true);
 
@@ -118,9 +122,9 @@ describe('resolveProviderForCapability — pro-gate', () => {
     expect(result).toBe(customProvider);
   });
 
-  test('open edition (not pro) → gate never applies', () => {
+  test('open edition (not pro) → gate never applies regardless of flags', () => {
     mIsPro.mockReturnValue(false);
-    mAllow.mockReturnValue(false); // even if allow=false, open edition ignores the gate
+    setFlags({ chat: false, media: false });
     mGetProvider.mockImplementation(id => (id === customProvider.id ? customProvider : undefined));
     mSupports.mockReturnValue(true);
 

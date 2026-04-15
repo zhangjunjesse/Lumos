@@ -6,12 +6,16 @@
  */
 
 import { fetchCloudAvailableModels } from '@/lib/lumos-cloud-models';
+import {
+  CUSTOM_PROVIDER_CAPABILITIES,
+  CUSTOM_PROVIDER_SETTING_KEYS,
+  type CustomProviderFlags,
+} from '@/lib/auth/custom-provider-capabilities';
 
 const CLOUD_WEB_BASE = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
 const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'http://api.miki.zj.cn';
 const CLOUD_PROVIDER_NAME = 'Lumos Cloud';
 const CLOUD_IMAGE_PROVIDER_ID_SETTING = 'lumos_cloud_image_provider_id';
-export const PRO_ALLOW_CUSTOM_PROVIDERS_KEY = 'pro_allow_custom_providers';
 
 /**
  * Fallback model list for the very first login when /v1/models is unreachable.
@@ -35,21 +39,24 @@ export interface CloudUserInfo {
   status: string;
   newapi_token_key: string | null;
   image_provider?: CloudImageProviderConfig | null;
-  /** Pro edition: admin-controlled global flag. Undefined = not sent by server (treat as false). */
-  allow_custom_providers?: boolean;
+  /** Per-capability admin toggles. Absent fields are treated as false. */
+  allow_custom_providers?: Partial<CustomProviderFlags>;
 }
 
 /**
- * Persist the pro-edition "allow custom providers" flag.
- * Stored as '1'/'0' in the settings table so the runtime resolver and the
- * /api/auth/me endpoint can read it synchronously.
+ * Persist the pro-edition per-capability "allow custom provider" flags.
+ * Stored as '1'/'0' under one settings key per capability so the runtime
+ * resolver and `/api/auth/me` can read them synchronously.
  */
-export async function persistAllowCustomProviders(allow: boolean): Promise<void> {
+export async function persistCustomProviderFlags(flags: Partial<CustomProviderFlags>): Promise<void> {
   const { getDb } = await import('@/lib/db/connection');
   const db = getDb();
-  db.prepare(
+  const stmt = db.prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(PRO_ALLOW_CUSTOM_PROVIDERS_KEY, allow ? '1' : '0');
+  );
+  for (const cap of CUSTOM_PROVIDER_CAPABILITIES) {
+    stmt.run(CUSTOM_PROVIDER_SETTING_KEYS[cap], flags[cap] === true ? '1' : '0');
+  }
 }
 
 export interface CloudImageProviderModel {

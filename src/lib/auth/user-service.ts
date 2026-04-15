@@ -13,9 +13,10 @@ import { createNewApiToken, getTokenQuota } from './newapi-admin';
 import {
   provisionCloudProvider,
   provisionImageProvider,
-  persistAllowCustomProviders,
+  persistCustomProviderFlags,
   type CloudImageProviderConfig,
 } from '@/lib/lumos-cloud-auth';
+import type { CustomProviderFlags } from './custom-provider-capabilities';
 import type { LumosUser } from './types';
 
 export type { LumosUser } from './types';
@@ -123,7 +124,7 @@ interface RemoteUser {
   newapi_token_key: string | null;
   newapi_token_id: number | null;
   image_provider: CloudImageProviderConfig | null;
-  allow_custom_providers?: boolean;
+  allow_custom_providers?: Partial<CustomProviderFlags>;
 }
 
 async function fetchRemoteLogin(account: string, password: string): Promise<{ user: RemoteUser; response: Response }> {
@@ -177,7 +178,7 @@ async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
   } catch (e) {
     console.warn('[login] Failed to provision image provider:', e);
   }
-  await persistAllowCustomProviders(remoteUser.allow_custom_providers === true);
+  await persistCustomProviderFlags(remoteUser.allow_custom_providers ?? {});
 }
 
 /**
