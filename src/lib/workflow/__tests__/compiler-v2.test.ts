@@ -205,6 +205,126 @@ describe('v2 compiler — control flow', () => {
     expect(result.manifest.stepTypes).toEqual(['agent', 'if-else', 'agent']);
   });
 
+  test('do-while with state emits initial, update, and final state in output', () => {
+    const dsl: WorkflowDSLV2 = {
+      version: 'v2',
+      name: 'state-loop',
+      steps: [
+        {
+          id: 'loop', type: 'while',
+          input: {
+            mode: 'do-while',
+            condition: { op: 'lt', left: 'state.score', right: 0.9 },
+            body: ['work', 'judge'],
+            maxIterations: 5,
+            state: {
+              initial: { score: 0, lastFeedback: null },
+              update: {
+                score: 'steps.judge.output.score',
+                lastFeedback: 'steps.judge.output.feedback',
+              },
+            },
+          },
+        },
+        { id: 'work', type: 'agent', input: { prompt: 'work', context: { prev: 'state.lastFeedback' } } },
+        { id: 'judge', type: 'agent', dependsOn: ['work'], input: { prompt: 'judge {{steps.work.output.result}}' } },
+      ],
+    };
+
+    const result = generateWorkflowFromDsl(dsl);
+    expect(result.validation.valid).toBe(true);
+    expect(result.code).toContain('let __state_loop = __resolveValue(');
+    expect(result.code).toContain('"score":0');
+    expect(result.code).toContain('__mergeState(__state_loop,');
+    expect(result.code).toContain('state: __state_loop');
+    expect(result.code).toContain('__evaluateCondition(');
+    expect(result.code).toContain('__state_loop)'); // condition uses state
+  });
+
+  test('while without state emits undefined state initialization', () => {
+    const dsl: WorkflowDSLV2 = {
+      version: 'v2',
+      name: 'stateless-loop',
+      steps: [
+        { id: 'init', type: 'agent', input: { prompt: 'init' } },
+        {
+          id: 'loop', type: 'while',
+          dependsOn: ['init'],
+          input: {
+            condition: { op: 'exists', ref: 'steps.init.output.hasMore' },
+            body: ['step'],
+            maxIterations: 3,
+          },
+        },
+        { id: 'step', type: 'agent', input: { prompt: 'do work' } },
+      ],
+    };
+
+    const result = generateWorkflowFromDsl(dsl);
+    expect(result.validation.valid).toBe(true);
+    expect(result.code).toContain('let __state_loop = undefined;');
+    expect(result.code).not.toContain('__mergeState(__state_loop,');
+  });
+
+  test('nested while: inner body uses inner state variable (shadowing)', () => {
+    const dsl: WorkflowDSLV2 = {
+      version: 'v2',
+      name: 'nested-loops',
+      steps: [
+        {
+          id: 'outer', type: 'while',
+          input: {
+            mode: 'do-while',
+            condition: { op: 'lt', left: 'state.n', right: 3 },
+            body: ['inner'],
+            state: { initial: { n: 0 }, update: { n: 'steps.inner.output.state.m' } },
+          },
+        },
+        {
+          id: 'inner', type: 'while',
+          input: {
+            mode: 'do-while',
+            condition: { op: 'lt', left: 'state.m', right: 2 },
+            body: ['leaf'],
+            state: { initial: { m: 0 } },
+          },
+        },
+        { id: 'leaf', type: 'agent', input: { prompt: 'leaf', context: { local: 'state.m' } } },
+      ],
+    };
+
+    const result = generateWorkflowFromDsl(dsl);
+    expect(result.validation.valid).toBe(true);
+    expect(result.code).toContain('let __state_outer');
+    expect(result.code).toContain('let __state_inner');
+    // leaf's __resolveValue call must use __state_inner, not __state_outer
+    expect(result.code).toMatch(/__resolveValue\([^)]+,\s*__state_inner\)/);
+  });
+
+  test('body step state reference compiles into __resolveValue call with state var', () => {
+    const dsl: WorkflowDSLV2 = {
+      version: 'v2',
+      name: 'body-state-ref',
+      steps: [
+        {
+          id: 'loop', type: 'while',
+          input: {
+            mode: 'do-while',
+            condition: { op: 'lt', left: 'state.count', right: 3 },
+            body: ['work'],
+            state: { initial: { count: 0, last: null } },
+          },
+        },
+        { id: 'work', type: 'agent', input: { prompt: 'work', context: { prev: 'state.last' } } },
+      ],
+    };
+
+    const result = generateWorkflowFromDsl(dsl);
+    expect(result.validation.valid).toBe(true);
+    // Body step emits __resolveValue(<inputLit>, input, stepOutputs, __state_loop)
+    expect(result.code).toMatch(/__resolveValue\([^)]+"state\.last"[^)]+__state_loop\)/);
+  });
+
   test('compiled module binds dedicated runtime handlers for non-agent steps', () => {
     const dsl: WorkflowDSLV2 = {
       version: 'v2',

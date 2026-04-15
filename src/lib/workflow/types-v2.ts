@@ -15,6 +15,20 @@ export interface ForEachStepInput {
   maxIterations?: number;
 }
 
+/**
+ * Cross-iteration state for while/do-while loops.
+ * - `initial` is the state value before the first iteration (must be an object).
+ * - `update` declares how each field of the state is recomputed at the end of
+ *   each iteration; unspecified fields carry over (shallow merge). Each value
+ *   is a reference string (e.g. "steps.x.output.y", "state.z", "input.w") or a
+ *   literal/templated value resolved via the standard value resolver.
+ * Body steps read the current iteration's state via `state.<path>` refs.
+ */
+export interface LoopState {
+  initial: Record<string, unknown>;
+  update?: Record<string, unknown>;
+}
+
 export interface WhileStepInput {
   condition: ConditionExpr;
   body: string[];
@@ -22,6 +36,7 @@ export interface WhileStepInput {
   /** 'while' (default): evaluate condition before first iteration.
    *  'do-while': execute body once first, then evaluate condition. */
   mode?: 'while' | 'do-while';
+  state?: LoopState;
 }
 
 // ── V2 step definition (union of all step types) ────────────────────────────

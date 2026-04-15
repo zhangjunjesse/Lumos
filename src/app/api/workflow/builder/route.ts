@@ -89,7 +89,7 @@ condition 支持的操作：
   }
 }
 
-### 4. 条件循环 while — 条件成立时重复执行
+### 4. 条件循环 while / do-while — 条件成立时重复执行
 {
   "id": "<唯一步骤ID>",
   "type": "while",
@@ -97,9 +97,46 @@ condition 支持的操作：
   "input": {
     "condition": { "op": "exists", "ref": "steps.<步骤ID>.output.hasMore" },
     "body": ["<循环体内执行的步骤ID列表>"],
-    "maxIterations": 20
+    "maxIterations": 20,
+    "mode": "while"
   }
 }
+- mode："while"（默认，先判断后执行）或 "do-while"（先执行一次再判断）。**当 condition 依赖循环体内部步骤输出或 state 时必须用 do-while**，否则首轮条件为 null，永远不会执行
+- 循环需要**跨迭代共享数据**时加 state 字段（反馈循环、累计计数、上轮结果作为本轮输入）：
+\`\`\`json
+"state": {
+  "initial": { "lastScore": 0, "lastFeedback": null },
+  "update":  { "lastScore": "steps.<body-id>.output.score", "lastFeedback": "steps.<body-id>.output.feedback" }
+}
+\`\`\`
+  - initial 是首轮进入前的值（必须对象），body 步骤通过 \`state.<字段>\` 读取本轮开始时的值
+  - update 在每轮结束后重算 state 字段（浅合并，未写的字段保留）
+  - state.xxx 引用**只能**出现在 while/do-while 的 body 步骤或 condition 里，别处写会报错
+  - 循环外部通过 \`steps.<while-id>.output.state\` 读最终状态
+- **反馈循环示例**（跑到 QC 打分 ≥ 0.9 为止）：
+\`\`\`json
+{ "id": "refine", "type": "while",
+  "input": {
+    "mode": "do-while",
+    "condition": { "op": "lt", "left": "state.lastQC.score", "right": 0.9 },
+    "body": ["work", "qc"],
+    "maxIterations": 5,
+    "state": { "initial": { "lastQC": null }, "update": { "lastQC": "steps.qc.output" } }
+  }
+},
+{ "id": "work", "type": "agent", "input": { "preset": "...", "prompt": "...", "context": { "prev": "state.lastQC" } } },
+{ "id": "qc",   "type": "agent", "dependsOn": ["work"], "input": { "preset": "...", "prompt": "打分", "outputMode": "structured" } }
+\`\`\`
+
+## 控制流封装原则与对外 output 约定
+if-else / for-each / while 都是**封装节点**，外部步骤**禁止**在 dependsOn 或 \`steps.<body-id>.output.xxx\` 里引用循环体 / then / else 内的子步骤；要消费数据只能读控制流自身的 output。
+
+三种控制流的 output 结构：
+- **while / do-while** → \`{ state, iterations, errors }\`。要让外部拿到 body 产生的结果，**必须**通过 \`state.update\` 把结果搬进 state；外部读 \`steps.<while-id>.output.state.<字段>\`
+- **for-each** → \`{ results, count }\`。\`results\` 是数组，每元素是该轮**最后一个** body 步骤的完整 stepResult；外部读 \`steps.<for-id>.output.results[N].output.<字段>\`（两层 output）
+- **if-else** → \`{ branch: "then" | "else" }\`，**没有数据通道**。要消费 then/else 内步骤的结果：把消费步骤也放进同一分支，或让分支内步骤写文件落盘
+
+同一父容器下的兄弟 body 步骤按定义顺序可互相引用（内部视图）。跨迭代的"上一轮结果"用 state，不要用 \`steps.<body-id>.output\` 引用下一轮才执行的步骤。
 
 ## 规则
 - 步骤 ID 使用 kebab-case，全局唯一

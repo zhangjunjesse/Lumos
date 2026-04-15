@@ -212,12 +212,82 @@ return { success: false, output: null, error: "操作失败原因" };
     "condition": <条件表达式>,
     "body": ["<循环体步骤ID>"],
     "maxIterations": 20,
-    "mode": "while"
+    "mode": "while",
+    "state": {
+      "initial": { "<字段名>": <初始值> },
+      "update": { "<字段名>": "steps.<body步骤ID>.output.<字段>" }
+    }
   }
 }
 - mode 可选值："while"（默认）或 "do-while"
-- **do-while**：先执行一次循环体，再判断条件。当条件依赖循环体内步骤的输出时必须使用此模式（否则首轮条件值为 null，循环永远不会执行）
-- **while**：先判断条件再执行。适用于条件不依赖循环体内部状态的场景
+- **do-while**：先执行一次循环体，再判断条件。反馈循环、或条件依赖循环体产出时使用
+- **while**：先判断条件再执行。适用于条件完全由外部/初始 state 决定的场景
+
+**跨迭代状态 state（可选）：** 当循环需要在两次迭代之间共享数据（如上一轮的评分、反馈、累计计数）时使用。
+- \`initial\`：首次进入循环前的初始值，必须是对象；body 第一次读 \`state.xxx\` 就是这里的值
+- \`update\`：声明每次迭代**结束后**如何重算 state 字段；值可以是引用（\`steps.<body-id>.output.<字段>\`、\`input.xxx\`、\`state.xxx\`）或字面量；未声明的字段保持不变（浅合并）
+- body 步骤通过 \`state.<字段>\` 读取**本轮开始时**的 state（即上一轮 update 之后的值）
+- condition 也可以引用 \`state.<字段>\`，每次判断时读到最新值
+- \`state.xxx\` 引用**只在 while/do-while 内部合法**（body 步骤、自身 condition）；for-each、if-else、顶层步骤里写 \`state.xxx\` 会被校验拒绝
+- 循环结束后，外部步骤可通过 \`steps.<while步骤ID>.output.state\` 读到最终状态
+
+**示例 — 反馈循环（抠图 + QC 打分，打到 0.9 分才退出）：**
+\`\`\`json
+{
+  "id": "refine-loop", "type": "while",
+  "input": {
+    "mode": "do-while",
+    "condition": { "op": "lt", "left": "state.lastQC.score", "right": 0.9 },
+    "body": ["do-cutout", "cutout-qc"],
+    "maxIterations": 5,
+    "state": {
+      "initial": { "lastQC": null },
+      "update": { "lastQC": "steps.cutout-qc.output" }
+    }
+  }
+},
+{ "id": "do-cutout", "type": "agent",
+  "input": { "preset": "worker", "prompt": "根据上一轮 QC 反馈改抠图",
+             "context": { "previousQC": "state.lastQC" } } },
+{ "id": "cutout-qc", "type": "agent", "dependsOn": ["do-cutout"],
+  "input": { "preset": "worker", "prompt": "为抠图打分，输出 score 和 feedback",
+             "context": { "image": "steps.do-cutout.output.image" },
+             "outputMode": "structured" } }
+\`\`\`
+
+## 控制流封装原则（重要）
+
+\`if-else\` / \`for-each\` / \`while\` / \`do-while\` 都是**单个封装节点**，有自己的输入和输出：
+- **外部步骤不得直接引用控制流 body / then / else 内部的子步骤**（不能出现在顶层步骤的 \`dependsOn\`，也不能出现在 \`steps.<body-id>.output.xxx\` 这种引用里）。需要消费子步骤结果时，请改为依赖整个控制流步骤，并从它的 \`output\` 读
+- **同一父容器下的兄弟 body 步骤**可以按定义顺序互相引用（前向依赖），这是控制流内部的正常数据流
+- **控制流自己的 condition / collection** 可以引用 body 步骤的输出（内部视图，不违反封装）
+- **跨迭代的"上一轮结果"不是兄弟依赖，而是状态传递**——必须用 \`state\` 表达，禁止用 \`steps.<后续body>.output\` 去引用"下一次才会执行"的步骤
+
+**控制流步骤的 output 约定（外部只能读这些，不能读 body 步骤的 output）：**
+
+- **while / do-while** → \`{ state, iterations, errors }\`
+  - 要让外部消费 body 步骤产生的数据，**必须在 state.update 里把数据搬进 state**，否则外部读不到（循环结束后 stepOutputs 里 body 步骤的值被视为"黑盒内部状态"）
+  - 外部读：\`steps.<while-id>.output.state.<字段>\`
+- **for-each** → \`{ results, count }\`
+  - \`results\` 是数组，每个元素是该轮**最后一个** body 步骤的完整 stepResult（含 output 子对象）
+  - 外部读某轮最后一步的产物：\`steps.<for-id>.output.results[N].output.<字段>\`（注意两层 output）
+  - 想读中间 body 步骤的产物：必须让它写文件落盘，外部读文件；或改成单个 body 步骤把结果塞进自己的 output
+- **if-else** → \`{ branch: "then" | "else" }\`
+  - **没有数据通道**，外部只知道走了哪条分支，拿不到分支内步骤的输出
+  - 要外部消费 then/else 内步骤的结果：把消费步骤也放进同一分支，或让分支内步骤写文件落盘
+
+## dependsOn vs state（何时用哪个）
+- **dependsOn / steps.xxx.output**：表达同一次执行（单轮 body 内部 / 跨步骤 DAG）里"A 做完 B 才能开始"的**顺序依赖**
+- **state**：表达同一 while/do-while 里**跨迭代**的数据流——本轮 body 执行完 → update → 下一轮 body 读到
+
+什么时候要用 do-while + state：
+- 循环要跑到某个质量指标达标为止（QC 分数、置信度、接口成功）——把指标放 \`state\`
+- 本轮行为要参考上一轮的反馈 / 失败原因 / 已累计结果——反馈内容放 \`state\`
+- 循环退出后外部还要读最终指标——读 \`steps.<while-id>.output.state.<字段>\`
+
+反例（不要这么写）：
+- ❌ body 步骤 A 里写 \`"prev": "steps.B.output.xxx"\`，其中 B 是 A 后面的兄弟步骤（下一轮才会执行）→ 用 state
+- ❌ 顶层步骤 X 写 \`"dependsOn": ["body-step"]\` 或 \`"ctx": "steps.body-step.output.xxx"\` → 改成依赖整个 while 步骤，读它的 output.state
 
 ## 条件表达式
 - { "op": "exists", "ref": "steps.xxx.output.yyy" }

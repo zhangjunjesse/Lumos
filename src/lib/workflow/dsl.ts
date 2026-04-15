@@ -99,11 +99,17 @@ const forEachStepInputSchema = z.object({
   maxIterations: z.number().int().positive().max(200).optional(),
 }).strict();
 
+const loopStateSchema = z.object({
+  initial: z.record(z.string(), z.unknown()),
+  update: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
 const whileStepInputSchema = z.object({
   condition: conditionExprSchema,
   body: z.array(safeStepId).min(1),
   maxIterations: z.number().int().positive().max(100).optional(),
   mode: z.enum(['while', 'do-while']).optional(),
+  state: loopStateSchema.optional(),
 }).strict();
 
 const workflowStepV2Schema = z.discriminatedUnion('type', [
@@ -178,6 +184,7 @@ const workflowDslV2Schema: z.ZodType<WorkflowDSLV2> = z.object({
 }) as z.ZodType<WorkflowDSLV2>;
 
 const STEP_OUTPUT_REF_PATTERN = /^steps\.([A-Za-z0-9_-]+)\.output(?:\.(.+))?$/;
+const STATE_REF_PATTERN = /^state(?:\.(.+))?$/;
 
 export function validateWorkflowDsl(spec: WorkflowDSL): GenerateWorkflowValidation {
   const errors: string[] = [];
@@ -491,6 +498,15 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
     stepMap.set(step.id, step);
   }
 
+  // Track parent ownership: parentOf[childId] = controlFlowStepId that owns it.
+  // This lets us walk up the ancestor chain for a given step.
+  const parentOf = new Map<string, string>();
+  for (const step of steps) {
+    for (const body of getControlFlowBodies(step)) {
+      for (const id of body) parentOf.set(id, step.id);
+    }
+  }
+
   // Build implicit dependency sets:
   // - Control flow steps can reference their owned body steps
   // - Body steps can reference prior siblings in the same body (sequential execution order)
@@ -520,8 +536,18 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
     const references = collectStepOutputReferences(step);
     const allowedDependencies = collectTransitiveDependencies(step.id, stepMap);
     const implicitAllowed = implicitDeps.get(step.id);
+    const insideWhile = isInsideWhileLoop(step.id, stepMap, parentOf);
 
     for (const ref of references) {
+      if (ref.kind === 'state') {
+        if (!insideWhile) {
+          errors.push(
+            `${ref.path}: uses "state" reference but step is not inside a while/do-while loop`
+          );
+        }
+        continue;
+      }
+
       if (ref.stepId === step.id) {
         errors.push(`steps.${step.id}: cannot reference its own output`);
         continue;
@@ -541,6 +567,23 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
   }
 
   return errors;
+}
+
+/** Walk ancestor chain. Step itself counts — a while step can use state in its own input. */
+function isInsideWhileLoop(
+  stepId: string,
+  stepMap: ReadonlyMap<string, WorkflowStep>,
+  parentOf: ReadonlyMap<string, string>
+): boolean {
+  let current: string | undefined = stepId;
+  const visited = new Set<string>();
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const step = stepMap.get(current);
+    if (step && step.type === 'while') return true;
+    current = parentOf.get(current);
+  }
+  return false;
 }
 
 function collectTransitiveDependencies(
@@ -571,10 +614,12 @@ function collectTransitiveDependencies(
   return result;
 }
 
-function collectStepOutputReferences(
-  step: WorkflowStep
-): Array<{ stepId: string; path: string }> {
-  const refs: Array<{ stepId: string; path: string }> = [];
+type CollectedRef =
+  | { kind: 'step'; stepId: string; path: string }
+  | { kind: 'state'; path: string };
+
+function collectStepOutputReferences(step: WorkflowStep): CollectedRef[] {
+  const refs: CollectedRef[] = [];
 
   collectReferencesFromValue(step.input, [`steps.${step.id}.input`], refs);
 
@@ -588,7 +633,7 @@ function collectStepOutputReferences(
 function collectReferencesFromCondition(
   condition: ConditionExpr,
   path: string[],
-  refs: Array<{ stepId: string; path: string }>
+  refs: CollectedRef[]
 ) {
   if (condition.op === 'exists') {
     validateReferenceSyntax(condition.ref, [...path, 'ref'], refs);
@@ -615,7 +660,7 @@ function collectReferencesFromCondition(
 function collectReferencesFromValue(
   value: unknown,
   path: string[],
-  refs: Array<{ stepId: string; path: string }>
+  refs: CollectedRef[]
 ) {
   if (typeof value === 'string') {
     validateReferenceSyntax(value, path, refs);
@@ -641,18 +686,21 @@ function collectReferencesFromValue(
 function validateReferenceSyntax(
   value: string,
   path: string[],
-  refs: Array<{ stepId: string; path: string }>
+  refs: CollectedRef[]
 ) {
   if (value === 'input' || value.startsWith('input.')) {
     return;
   }
 
+  const stateRef = STATE_REF_PATTERN.exec(value);
+  if (stateRef) {
+    refs.push({ kind: 'state', path: path.join('.') });
+    return;
+  }
+
   const stepRef = STEP_OUTPUT_REF_PATTERN.exec(value);
   if (stepRef) {
-    refs.push({
-      stepId: stepRef[1],
-      path: path.join('.'),
-    });
+    refs.push({ kind: 'step', stepId: stepRef[1], path: path.join('.') });
   }
 }
 

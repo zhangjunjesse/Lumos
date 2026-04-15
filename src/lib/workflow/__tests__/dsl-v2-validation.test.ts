@@ -128,3 +128,121 @@ describe('validateWorkflowDslV2 — body step dependency rules', () => {
     expect(result.errors.some(e => e.includes('without declaring dependency'))).toBe(true);
   });
 });
+
+describe('validateWorkflowDslV2 — loop state', () => {
+  test('do-while body step can read state.xxx without dependsOn (feedback loop)', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'refine-loop', type: 'while',
+        input: {
+          mode: 'do-while',
+          condition: { op: 'lt', left: 'state.lastQC.score', right: 0.9 },
+          body: ['do-cutout', 'cutout-qc'],
+          maxIterations: 5,
+          state: {
+            initial: { lastQC: null },
+            update: { lastQC: 'steps.cutout-qc.output' },
+          },
+        },
+      },
+      { id: 'do-cutout', type: 'agent', input: { prompt: 'cutout', context: { previousQC: 'state.lastQC' } } },
+      { id: 'cutout-qc', type: 'agent', dependsOn: ['do-cutout'], input: { prompt: 'qc', context: { image: 'steps.do-cutout.output.image' } } },
+    ]));
+    expect(result.valid).toBe(true);
+  });
+
+  test('state reference outside a while loop is rejected', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      { id: 'a', type: 'agent', input: { prompt: 'read state', context: { s: 'state.foo' } } },
+    ]));
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('not inside a while/do-while loop'))).toBe(true);
+  });
+
+  test('state reference inside for-each (but no while ancestor) is rejected', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'loop', type: 'for-each',
+        input: { collection: 'input.items', itemVar: 'item', body: ['a'] },
+      },
+      { id: 'a', type: 'agent', input: { prompt: 'read state', context: { s: 'state.foo' } } },
+    ]));
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('not inside a while/do-while loop'))).toBe(true);
+  });
+
+  test('while without state still validates (state ref from body fails cleanly if used)', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'w', type: 'while',
+        input: {
+          condition: { op: 'lt', left: 'input.i', right: 3 },
+          body: ['a'],
+          maxIterations: 5,
+        },
+      },
+      { id: 'a', type: 'agent', input: { prompt: 'step A' } },
+    ]));
+    expect(result.valid).toBe(true);
+  });
+
+  test('while condition can reference state', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'w', type: 'while',
+        input: {
+          condition: { op: 'lt', left: 'state.score', right: 0.9 },
+          body: ['a'],
+          maxIterations: 5,
+          state: { initial: { score: 0 }, update: { score: 'steps.a.output.score' } },
+        },
+      },
+      { id: 'a', type: 'agent', input: { prompt: 'score' } },
+    ]));
+    expect(result.valid).toBe(true);
+  });
+
+  test('state.initial must be an object', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'w', type: 'while',
+        input: {
+          condition: { op: 'lt', left: 'input.i', right: 3 },
+          body: ['a'],
+          maxIterations: 5,
+          // @ts-expect-error invalid shape (testing runtime validation)
+          state: { initial: 'not-an-object' },
+        },
+      },
+      { id: 'a', type: 'agent', input: { prompt: 'a' } },
+    ]));
+    expect(result.valid).toBe(false);
+  });
+
+  test('nested while: inner body sees inner state, outer body sees outer state', () => {
+    const result = validateWorkflowDslV2(makeDsl([
+      {
+        id: 'outer', type: 'while',
+        input: {
+          mode: 'do-while',
+          condition: { op: 'lt', left: 'state.outerCount', right: 3 },
+          body: ['outer-step', 'inner'],
+          state: { initial: { outerCount: 0 } },
+        },
+      },
+      { id: 'outer-step', type: 'agent', input: { prompt: 'outer', context: { c: 'state.outerCount' } } },
+      {
+        id: 'inner', type: 'while',
+        dependsOn: ['outer-step'],
+        input: {
+          mode: 'do-while',
+          condition: { op: 'lt', left: 'state.innerCount', right: 2 },
+          body: ['inner-step'],
+          state: { initial: { innerCount: 0 } },
+        },
+      },
+      { id: 'inner-step', type: 'agent', input: { prompt: 'inner', context: { c: 'state.innerCount' } } },
+    ]));
+    expect(result.valid).toBe(true);
+  });
+});
