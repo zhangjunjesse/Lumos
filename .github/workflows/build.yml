@@ -23,6 +23,12 @@ concurrency:
 permissions:
   contents: write
 
+# Default edition for all CI-produced artifacts. Baked into NEXT_PUBLIC_ client
+# bundle at `next build` time, so this must be set before verify-source + both
+# build-* jobs run. Override locally via `NEXT_PUBLIC_LUMOS_EDITION=open npm run build`.
+env:
+  NEXT_PUBLIC_LUMOS_EDITION: pro
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
