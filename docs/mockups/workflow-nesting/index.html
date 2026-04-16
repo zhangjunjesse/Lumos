@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>工作流嵌套可视化 · 三方案预览</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif; color: #1e293b; background: #f8fafc; padding: 48px 24px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .sub { color: #64748b; font-size: 14px; margin-bottom: 32px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; text-decoration: none; color: inherit; transition: all 0.15s; display: flex; flex-direction: column; }
+  .card:hover { border-color: #2563eb; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(37,99,235,0.10); }
+  .card h2 { font-size: 18px; margin: 0 0 4px; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-bottom: 10px; font-weight: 500; }
+  .tag.a { background: #fef3c7; color: #92400e; }
+  .tag.b { background: #dcfce7; color: #166534; }
+  .tag.c { background: #dbeafe; color: #1e40af; }
+  .card p { font-size: 13px; color: #475569; line-height: 1.55; margin: 0 0 12px; }
+  .card ul { font-size: 12px; color: #64748b; padding-left: 18px; margin: 0 0 16px; line-height: 1.7; }
+  .card .cta { margin-top: auto; font-size: 12px; color: #2563eb; font-weight: 500; }
+
+  .meta { margin-top: 32px; padding: 16px 20px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; color: #475569; }
+  .meta h3 { font-size: 14px; margin: 0 0 10px; color: #1e293b; }
+  .meta code { background: #f1f5f9; padding: 1px 6px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, monospace; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 13px; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+  th { background: #f8fafc; font-weight: 600; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  td.ok { color: #059669; font-weight: 500; }
+  td.no { color: #dc2626; }
+  td.mid { color: #d97706; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>工作流嵌套控制流 · 可视化方案预览</h1>
+  <p class="sub">
+    针对「电商一键出商品图」工作流（19 步 · 嵌套深度 4）提供三种可视化方案。当前生产版本只展开首层控制流的 body，方案目标是让 `scene-refine-loop` 内的 `refine-subloop` 和 `check-final-result` 的 `then/else` 分支也能被看到。
+  </p>
+
+  <div class="cards">
+    <a class="card" href="./plan-a-drawer.html">
+      <span class="tag a">方案 A · 最轻</span>
+      <h2>抽屉下钻</h2>
+      <p>顶层 DAG 保持现状；容器内嵌套子容器显示为可点"胶囊"，点击从右侧抽屉打开独立 DAG 视图，支持递归钻进任意深度。</p>
+      <ul>
+        <li>复用现有布局组件，改动最小</li>
+        <li>面包屑导航，深度不限</li>
+        <li>同屏只看一层，无法并列比较</li>
+      </ul>
+      <div class="cta">打开预览 →</div>
+    </a>
+
+    <a class="card" href="./plan-b-inline.html">
+      <span class="tag b">方案 B · 中等</span>
+      <h2>Inline 就地展开</h2>
+      <p>容器 body 内的嵌套容器以 chevron 原地展开，支持两层 inline，再深的层级自动 fallback 到抽屉；顶栏提供"全部展开 / 收起"工具按钮。</p>
+      <ul>
+        <li>不跳页，一屏看多层</li>
+        <li>深层嵌套时卡片高度会变高</li>
+        <li>inline 内难画 DAG 边（只能纵向列）</li>
+      </ul>
+      <div class="cta">打开预览 →</div>
+    </a>
+
+    <a class="card" href="./plan-c-reactflow.html">
+      <span class="tag c">方案 C · 最重</span>
+      <h2>React Flow 子图</h2>
+      <p>使用 @xyflow/react 的 parent/group 机制，每个容器成为真正的分组节点，内部画独立 DAG 并保留依赖边；原生支持缩放、平移、小地图。</p>
+      <ul>
+        <li>一次性呈现所有嵌套层级的完整拓扑</li>
+        <li>能正确展现 if-else 双分支、while body 内部并行</li>
+        <li>需要完整替换现有 WorkflowDslGraph 组件</li>
+      </ul>
+      <div class="cta">打开预览 →</div>
+    </a>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>对比维度</th>
+        <th>方案 A · 抽屉</th>
+        <th>方案 B · Inline</th>
+        <th>方案 C · React Flow</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>同屏信息密度</td>
+        <td class="mid">低（只看一层）</td>
+        <td class="ok">中（可多层展开）</td>
+        <td class="ok">高（完整拓扑）</td>
+      </tr>
+      <tr>
+        <td>深层嵌套支持</td>
+        <td class="ok">任意深度</td>
+        <td class="mid">inline 2 层 + 抽屉兜底</td>
+        <td class="ok">任意深度</td>
+      </tr>
+      <tr>
+        <td>body 内部 DAG 边</td>
+        <td class="ok">抽屉里有</td>
+        <td class="no">inline 只能列清单</td>
+        <td class="ok">原生支持</td>
+      </tr>
+      <tr>
+        <td>if-else 双分支布局</td>
+        <td class="ok">抽屉里并列显示</td>
+        <td class="mid">纵向 THEN/ELSE 分隔</td>
+        <td class="ok">并列两列 + 标签</td>
+      </tr>
+      <tr>
+        <td>缩放 / 平移</td>
+        <td class="no">无</td>
+        <td class="no">无</td>
+        <td class="ok">原生支持</td>
+      </tr>
+      <tr>
+        <td>运行时 overlay 兼容</td>
+        <td class="ok">直接复用</td>
+        <td class="ok">直接复用</td>
+        <td class="mid">需迁移</td>
+      </tr>
+      <tr>
+        <td>开发工作量</td>
+        <td class="ok">~ 1-2 天</td>
+        <td class="mid">~ 2-3 天</td>
+        <td class="no">~ 5-7 天 + 回归</td>
+      </tr>
+      <tr>
+        <td>破坏性</td>
+        <td class="ok">增量</td>
+        <td class="ok">增量</td>
+        <td class="no">替换 WorkflowDslGraph</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="meta">
+    <h3>本地打开方式</h3>
+    <p>
+      浏览器直接打开任一 HTML 即可，无需构建 / 服务器。数据来自共享的 <code>_data.js</code>（19 步真实 DSL）。方案 C 需要联网加载
+      <code>esm.sh</code> 的 React + @xyflow/react CDN。
+    </p>
+  </div>
+</div>
+</body>
+</html>

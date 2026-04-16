@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>方案 A · 抽屉下钻 — 电商一键出商品图</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif; color: #1e293b; background: #f8fafc; }
+  header { padding: 20px 32px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: #64748b; font-size: 13px; }
+  .nav a { font-size: 12px; color: #2563eb; text-decoration: none; margin-left: 12px; }
+  .canvas { padding: 32px; overflow-x: auto; }
+  .stage { background: linear-gradient(135deg, rgba(139,92,246,0.04), #fff 40%, rgba(14,165,233,0.04)); border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; position: relative; }
+  .dag { position: relative; min-height: 200px; }
+
+  /* Node card */
+  .node { position: absolute; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); overflow: hidden; width: 220px; }
+  .node .header { padding: 10px 12px; }
+  .node .label-row { display: flex; align-items: center; gap: 6px; }
+  .node .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500; line-height: 16px; border: 1px solid; }
+  .node .label { font-size: 12px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .detail { font-size: 10px; color: #64748b; margin-top: 3px; font-family: ui-monospace, SF Mono, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node.container { background: rgba(248,250,252,0.8); }
+  .node.container .header { border-bottom: 1px solid rgba(0,0,0,0.05); }
+  .node .body { padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+  .body-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; cursor: pointer; }
+  .body-row:hover { border-color: #94a3b8; }
+  .body-row .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .body-row .name { font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .body-row .id { font-size: 9px; color: #94a3b8; font-family: ui-monospace, monospace; flex-shrink: 0; }
+
+  /* Nested container row — the key difference for Plan A */
+  .nested-pill { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px dashed; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+  .nested-pill:hover { background: rgba(255,255,255,0.9); transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .nested-pill .badge { font-size: 10px; padding: 1px 5px; border-radius: 4px; font-weight: 500; }
+  .nested-pill .name { font-size: 11px; flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nested-pill .count { font-size: 10px; color: #64748b; flex-shrink: 0; }
+  .nested-pill .drill { font-size: 12px; color: #2563eb; margin-left: auto; flex-shrink: 0; padding: 0 4px; }
+
+  /* Branch section for if-else */
+  .branch-label { font-size: 9px; font-weight: 600; color: #64748b; padding: 6px 8px 2px; letter-spacing: 0.05em; }
+
+  /* Edges */
+  .edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .edge { fill: none; stroke: #cbd5e1; stroke-width: 1.5; }
+
+  /* Drawer */
+  .drawer-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.4); display: none; z-index: 50; }
+  .drawer-backdrop.open { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(900px, 90vw); background: #f8fafc; border-left: 1px solid #cbd5e1; box-shadow: -12px 0 32px rgba(0,0,0,0.12); z-index: 51; transform: translateX(100%); transition: transform 0.28s ease; display: flex; flex-direction: column; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-header { padding: 14px 20px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: center; gap: 12px; }
+  .breadcrumbs { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
+  .breadcrumbs span.crumb { color: #2563eb; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .breadcrumbs span.crumb.current { color: #1e293b; font-weight: 600; cursor: default; background: #e2e8f0; }
+  .breadcrumbs .sep { color: #cbd5e1; }
+  .drawer-close { background: none; border: 1px solid #e2e8f0; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; color: #64748b; }
+  .drawer-body { flex: 1; overflow: auto; padding: 24px; }
+
+  .legend { display: flex; gap: 12px; margin-top: 12px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  .hint { position: absolute; top: 8px; right: 16px; font-size: 11px; color: #64748b; }
+  .hint kbd { background: #e2e8f0; border-radius: 3px; padding: 1px 4px; font-size: 10px; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>方案 A · 抽屉下钻</h1>
+  <span class="sub">「电商一键出商品图」· 19 步 · 嵌套深度 4</span>
+  <span class="nav">
+    <a href="./index.html">← 索引</a>
+    <a href="./plan-b-inline.html">方案 B</a>
+    <a href="./plan-c-reactflow.html">方案 C</a>
+  </span>
+</header>
+<div class="canvas">
+  <div class="stage">
+    <div class="hint">点击容器里的 <span style="border:1px dashed #d97706;padding:1px 6px;border-radius:4px;">嵌套胶囊</span> → 抽屉下钻 · <kbd>Esc</kbd> 关闭</div>
+    <div id="dag" class="dag"></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:#8b5cf6"></i>agent</span>
+      <span><i class="swatch" style="background:#d97706"></i>if-else</span>
+      <span><i class="swatch" style="background:#0284c7"></i>while / do-while</span>
+      <span><i class="swatch" style="background:#059669"></i>for-each</span>
+    </div>
+  </div>
+</div>
+
+<div id="backdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
+<aside id="drawer" class="drawer">
+  <div class="drawer-header">
+    <div id="breadcrumbs" class="breadcrumbs"></div>
+    <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  </div>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+
+<script src="./_data.js"></script>
+<script>
+const U = window.WFUtil;
+const STEPS = window.WORKFLOW_DATA.steps;
+
+// ---------- Render a DAG of given step set (recursive via drawer) ----------
+function renderDag(targetEl, stepList, options = {}) {
+  const { onNestedClick } = options;
+  targetEl.innerHTML = '';
+
+  const layers = U.buildLayers(stepList);
+  const NODE_W = 220;
+  const COL_GAP = 60;
+  const ROW_GAP = 20;
+  const PAD_X = 16;
+  const PAD_Y = 40;
+
+  // Compute node heights (container = header + body rows)
+  function heightOf(step) {
+    if (!U.isContainer(step)) return 64;
+    const bodyIds = U.getBodyIds(step);
+    // Base: header 56 + top padding
+    const HEADER = 58;
+    // For if-else we have branch labels (THEN/ELSE)
+    const BRANCH_LABEL = step.type === 'if-else' ? 24 : 0;
+    const branches = step.type === 'if-else' ? 2 : 1;
+    const rows = bodyIds.length * 34 + (bodyIds.length - 1) * 4;
+    return HEADER + BRANCH_LABEL * branches + rows + 14;
+  }
+
+  const positions = new Map();
+  let maxHeight = 0;
+  layers.forEach((layer, col) => {
+    const x = PAD_X + col * (NODE_W + COL_GAP);
+    const totalH = layer.reduce((s, step) => s + heightOf(step) + ROW_GAP, 0) - ROW_GAP;
+    maxHeight = Math.max(maxHeight, totalH);
+    let y = PAD_Y;
+    layer.forEach(step => {
+      const h = heightOf(step);
+      positions.set(step.id, { x, y, h, w: NODE_W });
+      y += h + ROW_GAP;
+    });
+  });
+  // center each layer vertically
+  layers.forEach((layer) => {
+    const total = layer.reduce((s, step) => s + heightOf(step) + ROW_GAP, 0) - ROW_GAP;
+    const offset = (maxHeight - total) / 2;
+    layer.forEach(step => { positions.get(step.id).y += offset; });
+  });
+
+  const totalW = PAD_X * 2 + layers.length * NODE_W + Math.max(0, layers.length - 1) * COL_GAP;
+  const totalH = PAD_Y * 2 + maxHeight;
+  targetEl.style.minWidth = totalW + 'px';
+  targetEl.style.height = totalH + 'px';
+
+  // SVG edges
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'edges');
+  svg.setAttribute('viewBox', `0 0 ${totalW} ${totalH}`);
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `<marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/></marker>`;
+  svg.appendChild(defs);
+
+  const ids = new Set(stepList.map(s => s.id));
+  stepList.forEach(step => {
+    (step.dependsOn || []).forEach(depId => {
+      if (!ids.has(depId)) return;
+      const src = positions.get(depId), tgt = positions.get(step.id);
+      if (!src || !tgt) return;
+      const fx = src.x + src.w, fy = src.y + src.h / 2;
+      const tx = tgt.x, ty = tgt.y + tgt.h / 2;
+      const c = Math.max(24, (tx - fx) * 0.4);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${fx} ${fy} C ${fx + c} ${fy}, ${tx - c} ${ty}, ${tx} ${ty}`);
+      path.setAttribute('class', 'edge');
+      path.setAttribute('marker-end', 'url(#arr)');
+      svg.appendChild(path);
+    });
+  });
+  targetEl.appendChild(svg);
+
+  // Nodes
+  stepList.forEach(step => {
+    const pos = positions.get(step.id);
+    const el = renderNode(step, onNestedClick);
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    el.style.width = pos.w + 'px';
+    el.style.height = pos.h + 'px';
+    targetEl.appendChild(el);
+  });
+}
+
+function renderNode(step, onNestedClick) {
+  const node = document.createElement('div');
+  const style = U.getStyle(step.type);
+  const isContainer = U.isContainer(step);
+  node.className = 'node' + (isContainer ? ' container' : '');
+  if (isContainer) {
+    node.style.background = style.bg;
+    node.style.borderColor = style.border;
+  }
+
+  const header = document.createElement('div');
+  header.className = 'header';
+  header.innerHTML = `
+    <div class="label-row">
+      <span class="badge" style="color:${style.color}; border-color:${style.border}; background:rgba(255,255,255,0.6)">${style.badge}</span>
+      <span class="label">${U.getLabel(step)}</span>
+    </div>
+    <div class="detail">${isContainer ? U.containerDetail(step) : step.id}</div>
+  `;
+  node.appendChild(header);
+
+  if (isContainer) {
+    const body = document.createElement('div');
+    body.className = 'body';
+    if (step.type === 'if-else') {
+      appendBranch(body, 'THEN', step.then || [], onNestedClick);
+      appendBranch(body, 'ELSE', step.else || [], onNestedClick);
+    } else {
+      (U.getBodyIds(step) || []).forEach(id => {
+        body.appendChild(renderBodyRow(id, onNestedClick));
+      });
+    }
+    node.appendChild(body);
+  }
+  return node;
+}
+
+function appendBranch(container, label, ids, onNestedClick) {
+  const lbl = document.createElement('div');
+  lbl.className = 'branch-label';
+  lbl.textContent = label;
+  container.appendChild(lbl);
+  ids.forEach(id => container.appendChild(renderBodyRow(id, onNestedClick)));
+}
+
+function renderBodyRow(stepId, onNestedClick) {
+  const step = U.stepById[stepId];
+  if (!step) { const d = document.createElement('div'); d.textContent = '?'; return d; }
+  const style = U.getStyle(step.type);
+  if (U.isContainer(step)) {
+    const pill = document.createElement('div');
+    pill.className = 'nested-pill';
+    pill.style.borderColor = style.border;
+    pill.style.background = style.bg;
+    const count = U.getBodyIds(step).length;
+    pill.innerHTML = `
+      <span class="badge" style="color:${style.color}; background:rgba(255,255,255,0.7)">${style.badge}</span>
+      <span class="name">${U.getLabel(step)}</span>
+      <span class="count">${count} 步</span>
+      <span class="drill">↗</span>
+    `;
+    pill.onclick = (e) => { e.stopPropagation(); onNestedClick && onNestedClick(step); };
+    return pill;
+  } else {
+    const row = document.createElement('div');
+    row.className = 'body-row';
+    row.innerHTML = `
+      <span class="dot" style="background:${style.color}"></span>
+      <span class="name">${U.getLabel(step)}</span>
+      <span class="id">${step.id}</span>
+    `;
+    return row;
+  }
+}
+
+// ---------- Drawer stack ----------
+let drawerStack = []; // array of steps (containers)
+function openDrawer(step) {
+  drawerStack.push(step);
+  renderDrawer();
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('backdrop').classList.add('open');
+}
+function closeDrawer() {
+  drawerStack = [];
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('backdrop').classList.remove('open');
+}
+function gotoDrawerLevel(index) {
+  drawerStack = drawerStack.slice(0, index + 1);
+  renderDrawer();
+}
+function renderDrawer() {
+  const crumbs = document.getElementById('breadcrumbs');
+  crumbs.innerHTML = '';
+  const root = document.createElement('span');
+  root.className = 'crumb';
+  root.textContent = '工作流全图';
+  root.onclick = () => closeDrawer();
+  crumbs.appendChild(root);
+  drawerStack.forEach((s, i) => {
+    const sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = '›'; crumbs.appendChild(sep);
+    const c = document.createElement('span');
+    c.className = 'crumb' + (i === drawerStack.length - 1 ? ' current' : '');
+    c.textContent = `${U.getLabel(s)} · ${s.id}`;
+    c.onclick = () => gotoDrawerLevel(i);
+    crumbs.appendChild(c);
+  });
+
+  const body = document.getElementById('drawer-body');
+  body.innerHTML = '';
+  const current = drawerStack[drawerStack.length - 1];
+  if (!current) return;
+
+  // Build child step list for the drawer
+  if (current.type === 'if-else') {
+    // Two columns side-by-side
+    const wrap = document.createElement('div');
+    wrap.style.display = 'grid';
+    wrap.style.gridTemplateColumns = '1fr 1fr';
+    wrap.style.gap = '20px';
+    ['then', 'else'].forEach(key => {
+      const col = document.createElement('div');
+      col.innerHTML = `<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:10px;letter-spacing:0.05em">${key.toUpperCase()}</div>`;
+      const dag = document.createElement('div');
+      dag.className = 'dag';
+      dag.style.position = 'relative';
+      col.appendChild(dag);
+      wrap.appendChild(col);
+      const ids = current[key] || [];
+      const steps = ids.map(id => U.stepById[id]).filter(Boolean);
+      renderDag(dag, steps, { onNestedClick: openDrawer });
+    });
+    body.appendChild(wrap);
+  } else {
+    const dag = document.createElement('div');
+    dag.className = 'dag';
+    dag.style.position = 'relative';
+    body.appendChild(dag);
+    const ids = U.getBodyIds(current);
+    const steps = ids.map(id => U.stepById[id]).filter(Boolean);
+    renderDag(dag, steps, { onNestedClick: openDrawer });
+  }
+}
+
+// ---------- Mount top-level ----------
+renderDag(document.getElementById('dag'), U.topLevel(), { onNestedClick: openDrawer });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+</script>
+</body>
+</html>

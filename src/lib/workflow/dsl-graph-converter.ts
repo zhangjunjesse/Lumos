@@ -1,6 +1,20 @@
-import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
 import { sanitizeDslStepReferences } from './dsl-sanitize';
+import { buildEdges } from './dsl-graph-edges';
+import {
+  layoutStep,
+  layoutSubDag,
+  isContainer,
+  getThenIds,
+  buildParentMap,
+  hasNestedContainers,
+  CONT_HEADER_H,
+  CONT_PAD_X,
+  BRANCH_LABEL_H,
+  BRANCH_GAP,
+  type LayoutStep,
+  type StepLayout,
+} from './dsl-graph-layout';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -29,48 +43,28 @@ export interface StepNodeData {
   dependsOn: string[];
   isContainer?: boolean;
   policy?: { timeoutMs?: number; retry?: { maximumAttempts?: number } };
+  /** for if-else children: which branch they belong to */
+  branch?: 'then' | 'else';
+  /** for if-else containers: px height of the THEN region — used to place ELSE banner */
+  thenBlockH?: number;
+  /** transient UI flag set by the canvas while a drag is hovering this container */
+  isDropTarget?: boolean;
   [key: string]: unknown;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const NODE_W = 190;
-const NODE_H = 60;
-const HEADER_H = 46;
-const BODY_H = 56;
-const BODY_GAP = 8;
-const BODY_PAD_X = 10;
-const BODY_PAD_B = 12;
-
-const DEDICATED = new Set(['agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability']);
-const CONTAINERS = new Set(['if-else', 'for-each', 'while']);
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function getBodyIds(step: DslStep): string[] {
-  if (!step.input) return [];
-  return [
-    ...((step.input.body as string[] | undefined) ?? []),
-    ...((step.input.then as string[] | undefined) ?? []),
-    ...((step.input.else as string[] | undefined) ?? []),
-  ];
-}
-
-function buildBodyMap(steps: DslStep[]): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const s of steps) {
-    if (!CONTAINERS.has(s.type)) continue;
-    for (const id of getBodyIds(s)) m.set(id, s.id);
-  }
-  return m;
-}
-
-function containerDims(n: number): { w: number; h: number } {
-  return { w: NODE_W + BODY_PAD_X * 2, h: HEADER_H + n * (BODY_H + BODY_GAP) - BODY_GAP + BODY_PAD_B };
-}
+const DEDICATED = new Set([
+  'agent', 'if-else', 'for-each', 'while', 'wait', 'notification', 'capability',
+]);
+const CONTAINER_TYPES = new Set(['if-else', 'for-each', 'while']);
 
 export function stepTypeToNodeType(t: string): string {
   return DEDICATED.has(t) ? t : 'agent';
+}
+
+function toLayoutStep(s: DslStep): LayoutStep {
+  return { id: s.id, type: s.type, dependsOn: s.dependsOn, input: s.input };
 }
 
 function stepLabel(step: DslStep, names: Record<string, string>): string {
@@ -92,65 +86,122 @@ function stepLabel(step: DslStep, names: Record<string, string>): string {
   return step.id;
 }
 
+// ── Position computation ───────────────────────────────────────────────────
+
+function computePositions(
+  spec: DslSpec,
+  layoutSteps: LayoutStep[],
+  stepMap: Map<string, LayoutStep>,
+  parentMap: Map<string, string>,
+  sizes: Map<string, StepLayout>,
+): Map<string, { x: number; y: number }> {
+  // Preserve manual positions only for pure flat workflows (no containers at all).
+  // When any container exists, children's positions depend on body order, so we
+  // must re-layout to keep things in sync.
+  const hasAnyContainer = layoutSteps.some(isContainer);
+  const canPreserve = !hasAnyContainer && spec.steps.every(s => s.metadata?.position);
+  const positions = new Map<string, { x: number; y: number }>();
+
+  if (canPreserve) {
+    for (const s of spec.steps) positions.set(s.id, s.metadata!.position!);
+    return positions;
+  }
+
+  const topIds = spec.steps.filter(s => !parentMap.get(s.id)).map(s => s.id);
+  layoutSubDag(topIds, stepMap).positions.forEach((p, id) => positions.set(id, p));
+
+  for (const s of layoutSteps) {
+    if (!isContainer(s)) continue;
+    const sz = sizes.get(s.id)!;
+    if (s.type === 'if-else') {
+      if (sz.thenLayout) {
+        const dy = CONT_HEADER_H + BRANCH_LABEL_H;
+        sz.thenLayout.positions.forEach((p, id) => {
+          positions.set(id, { x: p.x + CONT_PAD_X, y: p.y + dy });
+        });
+      }
+      if (sz.elseLayout) {
+        const dy = CONT_HEADER_H + BRANCH_LABEL_H + (sz.thenLayout?.h ?? 0) + BRANCH_GAP + BRANCH_LABEL_H;
+        sz.elseLayout.positions.forEach((p, id) => {
+          positions.set(id, { x: p.x + CONT_PAD_X, y: p.y + dy });
+        });
+      }
+    } else if (sz.innerLayout) {
+      sz.innerLayout.positions.forEach((p, id) => {
+        positions.set(id, { x: p.x + CONT_PAD_X, y: p.y + CONT_HEADER_H });
+      });
+    }
+  }
+  return positions;
+}
+
+// ── Node building ──────────────────────────────────────────────────────────
+
+function buildNode(
+  step: DslStep,
+  stepMap: Map<string, LayoutStep>,
+  parentMap: Map<string, string>,
+  sizes: Map<string, StepLayout>,
+  positions: Map<string, { x: number; y: number }>,
+  presetNames: Record<string, string>,
+): Node<StepNodeData> {
+  const layoutS = stepMap.get(step.id)!;
+  const parentId = parentMap.get(step.id);
+  const cont = isContainer(layoutS);
+  const sz = sizes.get(step.id)!;
+
+  let branch: 'then' | 'else' | undefined;
+  if (parentId) {
+    const parent = stepMap.get(parentId);
+    if (parent?.type === 'if-else') {
+      branch = new Set(getThenIds(parent)).has(step.id) ? 'then' : 'else';
+    }
+  }
+
+  return {
+    id: step.id,
+    type: stepTypeToNodeType(step.type),
+    position: positions.get(step.id) ?? { x: 0, y: 0 },
+    ...(parentId ? { parentId, extent: 'parent' as const } : {}),
+    ...(cont ? { style: { width: sz.w, height: sz.h } } : {}),
+    data: {
+      stepId: step.id,
+      stepType: step.type,
+      label: stepLabel(step, presetNames),
+      input: step.input ?? {},
+      dependsOn: step.dependsOn ?? [],
+      isContainer: cont,
+      ...(branch ? { branch } : {}),
+      ...(step.type === 'if-else' && sz.thenLayout ? { thenBlockH: sz.thenLayout.h } : {}),
+      ...(step.policy ? { policy: step.policy as StepNodeData['policy'] } : {}),
+    },
+  };
+}
+
 // ── DSL → Graph ────────────────────────────────────────────────────────────
 
 export function dslToGraph(
   spec: DslSpec,
   presetNames: Record<string, string> = {},
 ): { nodes: Node<StepNodeData>[]; edges: Edge[] } {
-  const bodyMap = buildBodyMap(spec.steps);
-  const stepMap = new Map(spec.steps.map(s => [s.id, s]));
-  const nodes: Node<StepNodeData>[] = [];
-  const edges: Edge[] = [];
+  void hasNestedContainers; // kept as exported utility
+  const layoutSteps = spec.steps.map(toLayoutStep);
+  const stepMap = new Map(layoutSteps.map(s => [s.id, s]));
+  const parentMap = buildParentMap(layoutSteps);
+  const sizes = new Map(layoutSteps.map(s => [s.id, layoutStep(s, stepMap)]));
+  const positions = computePositions(spec, layoutSteps, stepMap, parentMap, sizes);
 
-  for (const step of spec.steps) {
-    const parentId = bodyMap.get(step.id);
-    const isCont = CONTAINERS.has(step.type);
-    const bodyIds = isCont ? getBodyIds(step).filter(id => stepMap.has(id)) : [];
-    const dims = isCont && bodyIds.length > 0 ? containerDims(bodyIds.length) : null;
-
-    nodes.push({
-      id: step.id,
-      type: stepTypeToNodeType(step.type),
-      position: step.metadata?.position ?? (parentId ? { x: BODY_PAD_X, y: HEADER_H } : { x: 0, y: 0 }),
-      ...(parentId ? { parentId, extent: 'parent' as const } : {}),
-      ...(dims ? { style: { width: dims.w, height: dims.h } } : {}),
-      data: {
-        stepId: step.id, stepType: step.type,
-        label: stepLabel(step, presetNames),
-        input: step.input ?? {}, dependsOn: step.dependsOn ?? [],
-        isContainer: isCont && bodyIds.length > 0,
-        ...(step.policy ? { policy: step.policy as StepNodeData['policy'] } : {}),
-      },
-    });
-
-    for (const dep of step.dependsOn ?? []) {
-      edges.push({ id: `dep-${dep}-${step.id}`, source: dep, target: step.id });
-    }
-  }
-
-  // Auto-layout when positions are missing
-  if (!spec.steps.every(s => s.metadata?.position)) {
-    const topNodes = nodes.filter(n => !n.parentId);
-    const topNodeIds = new Set(topNodes.map(n => n.id));
-    const topEdges = edges.filter(e => topNodeIds.has(e.source) && topNodeIds.has(e.target));
-    applyDagreLayout(topNodes, topEdges);
-
-    // Position body steps inside their containers
-    for (const step of spec.steps) {
-      if (!CONTAINERS.has(step.type)) continue;
-      const ids = getBodyIds(step).filter(id => stepMap.has(id));
-      ids.forEach((id, i) => {
-        const n = nodes.find(nd => nd.id === id);
-        if (n) n.position = { x: BODY_PAD_X, y: HEADER_H + i * (BODY_H + BODY_GAP) };
-      });
-    }
-  }
+  const nodes = spec.steps.map(s => buildNode(s, stepMap, parentMap, sizes, positions, presetNames));
+  const edges = buildEdges(spec.steps, layoutSteps, parentMap);
 
   return { nodes, edges };
 }
 
 // ── Graph → DSL ────────────────────────────────────────────────────────────
+
+function sortKids(kids: Node<StepNodeData>[]): Node<StepNodeData>[] {
+  return kids.slice().sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x));
+}
 
 export function graphToDsl(
   nodes: Node<StepNodeData>[],
@@ -162,7 +213,7 @@ export function graphToDsl(
   for (const n of nodes) {
     if (!n.parentId) continue;
     const arr = kidsByParent.get(n.parentId) ?? [];
-    arr.push(n as Node<StepNodeData>);
+    arr.push(n);
     kidsByParent.set(n.parentId, arr);
   }
 
@@ -172,19 +223,29 @@ export function graphToDsl(
     const deps = edges.filter(e => e.target === node.id && e.id.startsWith('dep-')).map(e => e.source);
 
     let input = d.input;
-    if (CONTAINERS.has(d.stepType) && kidsByParent.has(node.id)) {
-      const kids = kidsByParent.get(node.id)!.slice().sort((a, b) => a.position.y - b.position.y);
-      const kidIds = kids.map(k => (k as Node<StepNodeData>).data.stepId);
+    if (CONTAINER_TYPES.has(d.stepType) && kidsByParent.has(node.id)) {
+      const kids = kidsByParent.get(node.id)!;
       if (d.stepType === 'while' || d.stepType === 'for-each') {
-        input = { ...input, body: kidIds };
+        input = { ...input, body: sortKids(kids).map(k => k.data.stepId) };
       } else if (d.stepType === 'if-else') {
-        const thenSet = new Set((orig?.input?.then as string[] | undefined) ?? []);
-        input = { ...input, then: kidIds.filter(id => thenSet.has(id)), else: kidIds.filter(id => !thenSet.has(id)) };
+        const origThen = new Set((orig?.input?.then as string[] | undefined) ?? []);
+        const thenKids: Node<StepNodeData>[] = [];
+        const elseKids: Node<StepNodeData>[] = [];
+        for (const k of kids) {
+          const b = k.data.branch ?? (origThen.has(k.data.stepId) ? 'then' : 'else');
+          (b === 'then' ? thenKids : elseKids).push(k);
+        }
+        input = {
+          ...input,
+          then: sortKids(thenKids).map(k => k.data.stepId),
+          else: sortKids(elseKids).map(k => k.data.stepId),
+        };
       }
     }
 
     return {
-      id: d.stepId, type: d.stepType,
+      id: d.stepId,
+      type: d.stepType,
       ...(deps.length > 0 ? { dependsOn: deps } : {}),
       ...(orig?.when ? { when: orig.when } : {}),
       input,
@@ -198,27 +259,6 @@ export function graphToDsl(
 
 export function removeStepFromDsl(spec: DslSpec, stepId: string): DslSpec {
   return sanitizeDslStepReferences({ ...spec, steps: spec.steps.filter(s => s.id !== stepId) });
-}
-
-// ── Dagre auto-layout ──────────────────────────────────────────────────────
-
-function applyDagreLayout(nodes: Node[], edges: Edge[]): void {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80 });
-  for (const n of nodes) {
-    const w = (n.style?.width as number | undefined) ?? NODE_W;
-    const h = (n.style?.height as number | undefined) ?? NODE_H;
-    g.setNode(n.id, { width: w, height: h });
-  }
-  for (const e of edges) g.setEdge(e.source, e.target);
-  dagre.layout(g);
-  for (const n of nodes) {
-    const pos = g.node(n.id);
-    const w = (n.style?.width as number | undefined) ?? NODE_W;
-    const h = (n.style?.height as number | undefined) ?? NODE_H;
-    if (pos) n.position = { x: pos.x - w / 2, y: pos.y - h / 2 };
-  }
 }
 
 export { sanitizeDslStepReferences } from './dsl-sanitize';

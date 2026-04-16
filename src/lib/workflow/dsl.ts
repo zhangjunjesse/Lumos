@@ -512,22 +512,27 @@ function validateDependencyReferences(steps: WorkflowStep[]): string[] {
   // - Body steps can reference prior siblings in the same body (sequential execution order)
   // - Body steps inherit their parent control flow step's transitive dependencies
   const implicitDeps = new Map<string, Set<string>>();
+  const ensureAllowed = (id: string): Set<string> => {
+    let s = implicitDeps.get(id);
+    if (!s) { s = new Set<string>(); implicitDeps.set(id, s); }
+    return s;
+  };
   for (const step of steps) {
     const bodies = getControlFlowBodies(step);
     if (bodies.length === 0) continue;
-    // Control flow step itself can reference all its body steps
-    const allOwned = new Set(bodies.flat());
-    implicitDeps.set(step.id, allOwned);
+    // Control flow step itself can reference all its body steps (merge, don't overwrite —
+    // a nested control flow step is also a body member of its parent).
+    const ownAllowed = ensureAllowed(step.id);
+    for (const ownedId of bodies.flat()) ownAllowed.add(ownedId);
     // Parent's transitive deps: everything the control flow step can reach
     const parentDeps = collectTransitiveDependencies(step.id, stepMap);
     // Each body step can reference prior siblings + parent control flow step + parent's transitive deps
     for (const body of bodies) {
       for (let i = 0; i < body.length; i++) {
-        const allowed = implicitDeps.get(body[i]) ?? new Set<string>();
+        const allowed = ensureAllowed(body[i]);
         allowed.add(step.id); // body steps implicitly depend on their parent control flow step
         for (let j = 0; j < i; j++) allowed.add(body[j]);
         for (const dep of parentDeps) allowed.add(dep);
-        implicitDeps.set(body[i], allowed);
       }
     }
   }

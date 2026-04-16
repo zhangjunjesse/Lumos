@@ -120,6 +120,8 @@ const BUILTIN_DEEPSEARCH_SITES = [
   { id: 'deepsearch-site-wikisource-zh', siteKey: 'wikisource_zh', displayName: '中文维基文库', baseUrl: 'https://zh.wikisource.org' },
   { id: 'deepsearch-site-ctext', siteKey: 'ctext', displayName: 'Chinese Text Project', baseUrl: 'https://ctext.org' },
   { id: 'deepsearch-site-gutenberg', siteKey: 'project_gutenberg', displayName: 'Project Gutenberg', baseUrl: 'https://www.gutenberg.org' },
+  { id: 'deepsearch-site-europe-pmc', siteKey: 'europe_pmc', displayName: 'Europe PMC', baseUrl: 'https://europepmc.org' },
+  { id: 'deepsearch-site-pmc-bioc', siteKey: 'pmc_bioc', displayName: 'PMC BioC', baseUrl: 'https://pmc.ncbi.nlm.nih.gov' },
   { id: 'deepsearch-site-x', siteKey: 'x', displayName: 'X / Twitter', baseUrl: 'https://x.com' },
 ] as const;
 

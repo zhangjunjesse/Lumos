@@ -6,7 +6,7 @@ import type {
 export const DEEPSEARCH_PAGE_VALIDATION_BLOCKED = 'PAGE_VALIDATION_BLOCKED';
 
 /** Site keys that work without any login or cookie configuration */
-const LOGIN_FREE_SITES = new Set(['wechat', 'wikisource_zh', 'ctext', 'project_gutenberg']);
+const LOGIN_FREE_SITES = new Set(['wechat', 'wikisource_zh', 'ctext', 'project_gutenberg', 'europe_pmc', 'pmc_bioc']);
 
 export function isDeepSearchSiteLoginFree(siteKey: string): boolean {
   return LOGIN_FREE_SITES.has(siteKey);

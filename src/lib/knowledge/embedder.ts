@@ -51,6 +51,18 @@ function shouldUsePortableEmbeddingRuntime(): boolean {
   return Boolean(process.versions.electron) || process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
 }
 
+function resolvePortableEmbeddingDevice(): 'cpu' {
+  // `transformers.web.js` still runs inside Electron's Node environment.
+  // In that environment, transformers validates devices against the Node list
+  // (`cpu` / `dml` on Windows), so passing `wasm` fails before the portable
+  // onnxruntime-web backend even gets a chance to initialize.
+  //
+  // Keep using the portable web runtime, but ask transformers for the `cpu`
+  // device. In onnxruntime-web this still routes through the bundled WASM
+  // backend, while avoiding the Electron/Node device validation failure.
+  return 'cpu';
+}
+
 function buildOnnxruntimeWebDistCandidates(): string[] {
   const roots = new Set<string>();
 
@@ -105,7 +117,7 @@ function getExtractor(): Promise<unknown> {
 
       (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
-        ? { device: 'wasm', dtype: 'q8' }
+        ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8' }
         : { dtype: 'fp16' };
 
       console.log('[embedding] Loading model:', MODEL_NAME, {
@@ -114,6 +126,7 @@ function getExtractor(): Promise<unknown> {
         arch: process.arch,
         electron: process.versions.electron || null,
         runtime: usePortableRuntime ? 'transformers.web.js + onnxruntime-web' : '@huggingface/transformers',
+        device: usePortableRuntime ? resolvePortableEmbeddingDevice() : 'auto',
       });
       const p = await transformers.pipeline('feature-extraction', MODEL_NAME, pipelineOptions);
       console.log('[embedding] Model loaded');

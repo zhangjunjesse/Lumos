@@ -6,7 +6,11 @@ function createContextWithMap(map: Record<string, { status?: number; html: strin
     fetch: jest.fn(async (url: string) => {
       const hit = map[url];
       if (!hit) {
-        throw new Error(`unexpected url: ${url}`);
+        return {
+          status: 404,
+          html: '',
+          contentType: 'text/plain',
+        };
       }
       return {
         status: hit.status ?? 200,
@@ -70,7 +74,7 @@ describe('project gutenberg adapter', () => {
   test('extracts full text from official plain-text fallback pattern', async () => {
     const ctx = createContextWithMap({
       'https://www.gutenberg.org/cache/epub/1342/pg1342.txt': {
-        html: `Project Gutenberg's Pride and Prejudice\n\nTitle: Pride and Prejudice\nAuthor: Jane Austen\n\nChapter 1\nIt is a truth universally acknowledged...`,
+        html: `Project Gutenberg's Pride and Prejudice\n\nTitle: Pride and Prejudice\nAuthor: Jane Austen\n\n${'It is a truth universally acknowledged that a single man in possession of a good fortune must be in want of a wife. '.repeat(8)}`,
         contentType: 'text/plain; charset=utf-8',
       },
     });

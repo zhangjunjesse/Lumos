@@ -30,6 +30,8 @@ const SITE_ALIASES: Record<string, string[]> = {
   wikisource_zh: ['wikisource', 'zh-wikisource', 'wikisource zh', '维基文库', '中文维基文库'],
   ctext: ['ctext', 'chinese text project', '中國哲學書電子化計劃', '中国哲学书电子化计划'],
   project_gutenberg: ['gutenberg', 'project gutenberg', '古腾堡', '古登堡'],
+  europe_pmc: ['europe pmc', 'europepmc', 'pmc europe', '欧州pmc', '欧洲pmc'],
+  pmc_bioc: ['pmc bioc', 'pmc', 'bioc', 'pubmed central', 'pubmed central bioc'],
 };
 
 const deepSearchStartToolSchema = z.object({

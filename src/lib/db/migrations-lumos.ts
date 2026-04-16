@@ -223,6 +223,8 @@ export function migrateLumosTables(db: Database.Database): void {
       ('deepsearch-site-wikisource-zh', 'wikisource_zh', '中文维基文库', 'https://zh.wikisource.org'),
       ('deepsearch-site-ctext', 'ctext', 'Chinese Text Project', 'https://ctext.org'),
       ('deepsearch-site-gutenberg', 'project_gutenberg', 'Project Gutenberg', 'https://www.gutenberg.org'),
+      ('deepsearch-site-europe-pmc', 'europe_pmc', 'Europe PMC', 'https://europepmc.org'),
+      ('deepsearch-site-pmc-bioc', 'pmc_bioc', 'PMC BioC', 'https://pmc.ncbi.nlm.nih.gov'),
       ('deepsearch-site-x', 'x', 'X / Twitter', 'https://x.com');
   `);
 

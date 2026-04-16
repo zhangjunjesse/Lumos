@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>方案 C · React Flow 子图 — 电商一键出商品图</title>
+<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.10.2/dist/style.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif; color: #1e293b; background: #f8fafc; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  header { padding: 20px 32px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: baseline; gap: 16px; flex-shrink: 0; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: #64748b; font-size: 13px; }
+  .nav a { font-size: 12px; color: #2563eb; text-decoration: none; margin-left: 12px; }
+  .hint { padding: 10px 32px; background: #fef3c7; border-bottom: 1px solid #fcd34d; font-size: 12px; color: #78350f; flex-shrink: 0; }
+  .hint kbd { background: #fff; border: 1px solid #cbd5e1; border-radius: 3px; padding: 1px 4px; font-size: 11px; font-family: ui-monospace, monospace; }
+  #app { flex: 1; min-height: 0; position: relative; }
+
+  /* Custom node visuals */
+  .agent-node { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 10px; font-size: 11px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .agent-node .row { display: flex; align-items: center; gap: 6px; }
+  .agent-node .badge { font-size: 9px; padding: 1px 5px; border-radius: 999px; font-weight: 500; border: 1px solid; }
+  .agent-node .label { font-weight: 600; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-node .id { font-size: 9px; color: #94a3b8; font-family: ui-monospace, monospace; margin-top: 3px; }
+
+  .group-node { border-radius: 12px; padding: 0; position: relative; }
+  .group-node .head { padding: 10px 14px; border-bottom: 1px solid rgba(0,0,0,0.05); background: rgba(255,255,255,0.5); border-radius: 12px 12px 0 0; }
+  .group-node .head .row { display: flex; align-items: center; gap: 6px; }
+  .group-node .head .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500; border: 1px solid; }
+  .group-node .head .label { font-weight: 600; font-size: 12px; }
+  .group-node .head .detail { font-size: 10px; color: #64748b; margin-top: 3px; font-family: ui-monospace, monospace; }
+  .group-node .branch-banner { position: absolute; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; color: #64748b; padding: 2px 8px; background: rgba(255,255,255,0.85); border-radius: 0 0 6px 6px; top: 54px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>方案 C · React Flow 子图</h1>
+  <span class="sub">「电商一键出商品图」· 19 步 · 嵌套深度 4</span>
+  <span class="nav">
+    <a href="./index.html">← 索引</a>
+    <a href="./plan-a-drawer.html">方案 A</a>
+    <a href="./plan-b-inline.html">方案 B</a>
+  </span>
+</header>
+<div class="hint">
+  <b>React Flow</b> · 每个容器是真正的分组节点，内部包含自己的子节点和边 ·
+  <kbd>滚轮</kbd>缩放 · <kbd>拖拽</kbd>平移 · 右下小地图 · 左下缩放控件 · 全部嵌套层级一次展示
+</div>
+<div id="app"></div>
+
+<script src="./_data.js"></script>
+<script type="module">
+import React from 'https://esm.sh/react@18.3.1';
+import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client';
+import { ReactFlow, Background, Controls, MiniMap, Handle, Position } from 'https://esm.sh/@xyflow/react@12.10.2?deps=react@18.3.1,react-dom@18.3.1';
+
+const U = window.WFUtil;
+const STEPS = window.WORKFLOW_DATA.steps;
+
+// ---------- Recursive layout ----------
+const NODE_W = 200, NODE_H = 70;
+const GAP_X = 30, GAP_Y = 24;
+const CONT_PAD_X = 16, CONT_PAD_TOP = 64, CONT_PAD_BOTTOM = 16;
+const BRANCH_GAP = 28;
+const BRANCH_LABEL_H = 20;
+
+function buildSubDag(stepList) {
+  return U.buildLayers(stepList);
+}
+
+function layoutSteps(stepList) {
+  // Returns { layout: Map<id, {x, y, w, h}>, totalW, totalH }
+  const layers = buildSubDag(stepList);
+  // Layout each step recursively first
+  const sizes = new Map();
+  stepList.forEach(s => sizes.set(s.id, layoutStep(s)));
+
+  let x = 0;
+  let maxH = 0;
+  const columns = [];
+  layers.forEach(layer => {
+    const colW = Math.max(...layer.map(s => sizes.get(s.id).w));
+    const colH = layer.reduce((sum, s) => sum + sizes.get(s.id).h + GAP_Y, 0) - GAP_Y;
+    columns.push({ x, w: colW, layer, colH });
+    x += colW + GAP_X;
+    if (colH > maxH) maxH = colH;
+  });
+  const layout = new Map();
+  columns.forEach(col => {
+    let y = (maxH - col.colH) / 2;
+    col.layer.forEach(s => {
+      const size = sizes.get(s.id);
+      layout.set(s.id, { x: col.x + (col.w - size.w) / 2, y, w: size.w, h: size.h });
+      y += size.h + GAP_Y;
+    });
+  });
+  return { layout, totalW: x - GAP_X, totalH: maxH, sizes };
+}
+
+function layoutStep(step) {
+  if (!U.isContainer(step)) return { w: NODE_W, h: NODE_H };
+  if (step.type === 'if-else') {
+    const thenSteps = (step.then || []).map(id => U.stepById[id]).filter(Boolean);
+    const elseSteps = (step.else || []).map(id => U.stepById[id]).filter(Boolean);
+    const thenL = thenSteps.length ? layoutSteps(thenSteps) : { totalW: 0, totalH: 0 };
+    const elseL = elseSteps.length ? layoutSteps(elseSteps) : { totalW: 0, totalH: 0 };
+    const innerW = Math.max(thenL.totalW, elseL.totalW);
+    const innerH = thenL.totalH + elseL.totalH + BRANCH_GAP + BRANCH_LABEL_H * 2;
+    return {
+      w: innerW + CONT_PAD_X * 2,
+      h: innerH + CONT_PAD_TOP + CONT_PAD_BOTTOM,
+      _kind: 'if-else', thenL, elseL, innerW,
+    };
+  }
+  const children = U.getBodyIds(step).map(id => U.stepById[id]).filter(Boolean);
+  const inner = layoutSteps(children);
+  return {
+    w: inner.totalW + CONT_PAD_X * 2,
+    h: inner.totalH + CONT_PAD_TOP + CONT_PAD_BOTTOM,
+    _kind: 'loop', inner,
+  };
+}
+
+// ---------- Build React Flow nodes & edges ----------
+function buildFlow() {
+  const rfNodes = [];
+  const rfEdges = [];
+
+  function walk(stepList, parentId, parentLayout /* layout from layoutSteps */) {
+    // Add edges from dependsOn within this scope
+    const ids = new Set(stepList.map(s => s.id));
+    stepList.forEach(s => {
+      (s.dependsOn || []).forEach(d => {
+        if (!ids.has(d)) return;
+        rfEdges.push({
+          id: `${d}->${s.id}`, source: d, target: s.id,
+          type: 'smoothstep',
+          style: { stroke: '#94a3b8', strokeWidth: 1.5 },
+          markerEnd: { type: 'arrowclosed', color: '#94a3b8' },
+        });
+      });
+    });
+
+    stepList.forEach(step => {
+      const pos = parentLayout.layout.get(step.id);
+      const size = parentLayout.sizes.get(step.id);
+      const common = {
+        id: step.id,
+        position: { x: pos.x, y: pos.y },
+        parentId: parentId || undefined,
+        extent: parentId ? 'parent' : undefined,
+        draggable: false,
+        selectable: true,
+      };
+      if (!U.isContainer(step)) {
+        rfNodes.push({
+          ...common,
+          type: 'agent',
+          data: { step },
+          style: { width: size.w, height: size.h },
+        });
+      } else if (step.type === 'if-else') {
+        rfNodes.push({
+          ...common,
+          type: 'group-ifelse',
+          data: { step },
+          style: { width: size.w, height: size.h, background: U.getStyle(step.type).bg, border: `1px solid ${U.getStyle(step.type).border}`, borderRadius: 12 },
+        });
+        // Then / else children
+        const thenSteps = (step.then || []).map(id => U.stepById[id]).filter(Boolean);
+        const elseSteps = (step.else || []).map(id => U.stepById[id]).filter(Boolean);
+        // Offset inside container
+        const thenParentLayout = {
+          layout: new Map(),
+          sizes: size.thenL.sizes || new Map(),
+          totalW: size.thenL.totalW, totalH: size.thenL.totalH,
+        };
+        (size.thenL.layout || new Map()).forEach((v, k) => {
+          thenParentLayout.layout.set(k, { ...v, x: v.x + CONT_PAD_X, y: v.y + CONT_PAD_TOP + BRANCH_LABEL_H });
+        });
+        walk(thenSteps, step.id, thenParentLayout);
+
+        const elseOffsetY = CONT_PAD_TOP + BRANCH_LABEL_H + size.thenL.totalH + BRANCH_GAP + BRANCH_LABEL_H;
+        const elseParentLayout = {
+          layout: new Map(),
+          sizes: size.elseL.sizes || new Map(),
+          totalW: size.elseL.totalW, totalH: size.elseL.totalH,
+        };
+        (size.elseL.layout || new Map()).forEach((v, k) => {
+          elseParentLayout.layout.set(k, { ...v, x: v.x + CONT_PAD_X, y: v.y + elseOffsetY });
+        });
+        walk(elseSteps, step.id, elseParentLayout);
+      } else {
+        rfNodes.push({
+          ...common,
+          type: 'group-loop',
+          data: { step },
+          style: { width: size.w, height: size.h, background: U.getStyle(step.type).bg, border: `1px solid ${U.getStyle(step.type).border}`, borderRadius: 12 },
+        });
+        const children = U.getBodyIds(step).map(id => U.stepById[id]).filter(Boolean);
+        const innerLayout = {
+          layout: new Map(),
+          sizes: size.inner.sizes || new Map(),
+          totalW: size.inner.totalW, totalH: size.inner.totalH,
+        };
+        (size.inner.layout || new Map()).forEach((v, k) => {
+          innerLayout.layout.set(k, { ...v, x: v.x + CONT_PAD_X, y: v.y + CONT_PAD_TOP });
+        });
+        walk(children, step.id, innerLayout);
+      }
+    });
+  }
+
+  const top = U.topLevel();
+  const topLayout = layoutSteps(top);
+  walk(top, null, topLayout);
+  return { nodes: rfNodes, edges: rfEdges };
+}
+
+// ---------- Custom node components ----------
+function AgentNode({ data }) {
+  const step = data.step;
+  const style = U.getStyle(step.type);
+  return React.createElement('div', { className: 'agent-node', style: { width: '100%', height: '100%' } },
+    React.createElement(Handle, { type: 'target', position: Position.Left }),
+    React.createElement('div', { className: 'row' },
+      React.createElement('span', { className: 'badge', style: { color: style.color, borderColor: style.border, background: 'rgba(255,255,255,0.8)' } }, style.badge),
+      React.createElement('span', { className: 'label' }, U.getLabel(step)),
+    ),
+    React.createElement('div', { className: 'id' }, step.id),
+    React.createElement(Handle, { type: 'source', position: Position.Right }),
+  );
+}
+
+function LoopGroupNode({ data }) {
+  const step = data.step;
+  const style = U.getStyle(step.type);
+  return React.createElement('div', { className: 'group-node', style: { width: '100%', height: '100%' } },
+    React.createElement(Handle, { type: 'target', position: Position.Left }),
+    React.createElement('div', { className: 'head' },
+      React.createElement('div', { className: 'row' },
+        React.createElement('span', { className: 'badge', style: { color: style.color, borderColor: style.border, background: 'rgba(255,255,255,0.8)' } }, style.badge),
+        React.createElement('span', { className: 'label' }, U.getLabel(step)),
+      ),
+      React.createElement('div', { className: 'detail' }, U.containerDetail(step) || step.id),
+    ),
+    React.createElement(Handle, { type: 'source', position: Position.Right }),
+  );
+}
+
+function IfElseGroupNode({ data }) {
+  const step = data.step;
+  const style = U.getStyle(step.type);
+  return React.createElement('div', { className: 'group-node', style: { width: '100%', height: '100%' } },
+    React.createElement(Handle, { type: 'target', position: Position.Left }),
+    React.createElement('div', { className: 'head' },
+      React.createElement('div', { className: 'row' },
+        React.createElement('span', { className: 'badge', style: { color: style.color, borderColor: style.border, background: 'rgba(255,255,255,0.8)' } }, style.badge),
+        React.createElement('span', { className: 'label' }, U.getLabel(step)),
+      ),
+      React.createElement('div', { className: 'detail' }, U.containerDetail(step)),
+    ),
+    React.createElement('div', { className: 'branch-banner', style: { left: 16 } }, 'THEN'),
+    React.createElement('div', {
+      className: 'branch-banner',
+      style: { left: 16, top: `calc(${CONT_PAD_TOP + BRANCH_LABEL_H}px + ${getThenH(step)}px + 4px)` },
+    }, 'ELSE'),
+    React.createElement(Handle, { type: 'source', position: Position.Right }),
+  );
+}
+function getThenH(step) {
+  const thenSteps = (step.then || []).map(id => U.stepById[id]).filter(Boolean);
+  if (!thenSteps.length) return 0;
+  return layoutSteps(thenSteps).totalH;
+}
+
+const nodeTypes = { agent: AgentNode, 'group-loop': LoopGroupNode, 'group-ifelse': IfElseGroupNode };
+
+function App() {
+  const { nodes, edges } = React.useMemo(() => buildFlow(), []);
+  return React.createElement(ReactFlow, {
+    nodes, edges,
+    nodeTypes,
+    fitView: true,
+    minZoom: 0.2,
+    maxZoom: 2,
+    proOptions: { hideAttribution: true },
+    nodesDraggable: false,
+  },
+    React.createElement(Background, { color: '#cbd5e1', gap: 20 }),
+    React.createElement(Controls, { showInteractive: false }),
+    React.createElement(MiniMap, { nodeStrokeColor: '#64748b', nodeColor: (n) => {
+      const step = n.data && n.data.step;
+      return step ? U.getStyle(step.type).color : '#94a3b8';
+    }, pannable: true, zoomable: true }),
+  );
+}
+
+createRoot(document.getElementById('app')).render(React.createElement(App));
+</script>
+</body>
+</html>

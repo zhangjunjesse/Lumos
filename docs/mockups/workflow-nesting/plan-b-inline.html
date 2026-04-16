@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>方案 B · Inline 就地展开 — 电商一键出商品图</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif; color: #1e293b; background: #f8fafc; }
+  header { padding: 20px 32px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: #64748b; font-size: 13px; }
+  .nav a { font-size: 12px; color: #2563eb; text-decoration: none; margin-left: 12px; }
+
+  .toolbar { padding: 12px 32px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; display: flex; gap: 8px; align-items: center; }
+  .toolbar button { font-size: 12px; padding: 6px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; }
+  .toolbar button:hover { background: #f8fafc; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .hint { font-size: 11px; color: #64748b; }
+  .canvas { padding: 32px; overflow: auto; }
+  .stage { background: linear-gradient(135deg, rgba(139,92,246,0.04), #fff 40%, rgba(14,165,233,0.04)); border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; }
+  .dag { position: relative; min-height: 200px; }
+
+  /* Node card */
+  .node { position: absolute; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); overflow: hidden; width: 240px; }
+  .node .header { padding: 10px 12px; }
+  .node .label-row { display: flex; align-items: center; gap: 6px; }
+  .node .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500; line-height: 16px; border: 1px solid; }
+  .node .label { font-size: 12px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .detail { font-size: 10px; color: #64748b; margin-top: 3px; font-family: ui-monospace, SF Mono, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node.container { background: rgba(248,250,252,0.8); }
+  .node.container > .header { border-bottom: 1px solid rgba(0,0,0,0.05); }
+  .body-group { padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+  .body-group.nested { border-left: 2px solid; border-radius: 0; margin-left: 8px; padding-left: 8px; margin-top: 4px; }
+  .body-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; cursor: pointer; font-size: 11px; }
+  .body-row:hover { border-color: #94a3b8; }
+  .body-row .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .body-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .body-row .id { font-size: 9px; color: #94a3b8; font-family: ui-monospace, monospace; flex-shrink: 0; }
+  .branch-label { font-size: 9px; font-weight: 600; color: #64748b; padding: 4px 4px 2px; letter-spacing: 0.05em; }
+
+  /* Expand row - container inside body */
+  .expand-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px dashed; border-radius: 8px; cursor: pointer; font-size: 11px; transition: background 0.1s; user-select: none; }
+  .expand-row:hover { background: rgba(255,255,255,0.9); }
+  .expand-row .chev { font-size: 10px; color: #64748b; transition: transform 0.15s; display: inline-block; flex-shrink: 0; width: 10px; }
+  .expand-row.open .chev { transform: rotate(90deg); }
+  .expand-row .badge-mini { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 500; flex-shrink: 0; }
+  .expand-row .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .expand-row .count { font-size: 10px; color: #64748b; flex-shrink: 0; }
+  .expand-row .to-drawer { font-size: 10px; color: #2563eb; padding: 1px 4px; border: 1px solid #bfdbfe; border-radius: 3px; flex-shrink: 0; background: #fff; }
+  .expand-row .to-drawer:hover { background: #eff6ff; }
+
+  /* Depth-exceeded pill (pure drawer) */
+  .drawer-only { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px dashed; border-radius: 8px; cursor: pointer; font-size: 11px; background: rgba(255,255,255,0.4); }
+  .drawer-only:hover { background: rgba(255,255,255,0.95); }
+
+  /* Edges */
+  .edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .edge { fill: none; stroke: #cbd5e1; stroke-width: 1.5; }
+
+  /* Drawer */
+  .drawer-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.4); display: none; z-index: 50; }
+  .drawer-backdrop.open { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(900px, 90vw); background: #f8fafc; border-left: 1px solid #cbd5e1; box-shadow: -12px 0 32px rgba(0,0,0,0.12); z-index: 51; transform: translateX(100%); transition: transform 0.28s ease; display: flex; flex-direction: column; }
+  .drawer.open { transform: translateX(0); }
+  .drawer-header { padding: 14px 20px; border-bottom: 1px solid #e2e8f0; background: #fff; display: flex; align-items: center; gap: 12px; }
+  .breadcrumbs { flex: 1; font-size: 12px; }
+  .breadcrumbs .crumb { color: #2563eb; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .breadcrumbs .crumb.current { color: #1e293b; font-weight: 600; cursor: default; background: #e2e8f0; }
+  .breadcrumbs .sep { color: #cbd5e1; padding: 0 4px; }
+  .drawer-close { background: none; border: 1px solid #e2e8f0; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .drawer-body { flex: 1; overflow: auto; padding: 24px; }
+
+  .legend { display: flex; gap: 12px; margin-top: 12px; font-size: 11px; color: #64748b; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>方案 B · Inline 就地展开</h1>
+  <span class="sub">「电商一键出商品图」· 19 步 · 嵌套深度 4</span>
+  <span class="nav">
+    <a href="./index.html">← 索引</a>
+    <a href="./plan-a-drawer.html">方案 A</a>
+    <a href="./plan-c-reactflow.html">方案 C</a>
+  </span>
+</header>
+<div class="toolbar">
+  <button onclick="expandAll()">全部展开（2 层内）</button>
+  <button onclick="collapseAll()">全部收起</button>
+  <span class="spacer"></span>
+  <span class="hint">容器胶囊点 <b>▶</b> 就地展开；超过 2 层的点 <b>↗</b> 进抽屉</span>
+</div>
+<div class="canvas">
+  <div class="stage">
+    <div id="dag" class="dag"></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:#8b5cf6"></i>agent</span>
+      <span><i class="swatch" style="background:#d97706"></i>if-else</span>
+      <span><i class="swatch" style="background:#0284c7"></i>while / do-while</span>
+      <span><i class="swatch" style="background:#059669"></i>for-each</span>
+    </div>
+  </div>
+</div>
+
+<div id="backdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
+<aside id="drawer" class="drawer">
+  <div class="drawer-header">
+    <div id="breadcrumbs" class="breadcrumbs"></div>
+    <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  </div>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+
+<script src="./_data.js"></script>
+<script>
+const U = window.WFUtil;
+const STEPS = window.WORKFLOW_DATA.steps;
+
+// Expand state (stepId -> true/false)
+const expanded = new Set();
+const MAX_INLINE_DEPTH = 2;  // from the *inside* of the top-level container
+
+const NODE_W = 240;
+const COL_GAP = 70;
+const ROW_GAP = 20;
+const PAD_X = 16;
+const PAD_Y = 40;
+const HEADER_H = 58;
+
+function rowHeight(step, depth) {
+  // Returns the height of a body-section (rows + nested expand contents)
+  if (U.isContainer(step)) {
+    // expand-row itself is ~34
+    let h = 34;
+    if (expanded.has(step.id)) {
+      const nestedDepth = depth + 1;
+      const canInline = nestedDepth <= MAX_INLINE_DEPTH;
+      if (canInline) {
+        h += 4; // gap
+        if (step.type === 'if-else') {
+          (step.then || []).forEach(id => { h += 22 + rowHeight(U.stepById[id], nestedDepth) + 4; });
+          (step.else || []).forEach(id => { h += 22 + rowHeight(U.stepById[id], nestedDepth) + 4; });
+          h += 8; // branch labels × 2
+        } else {
+          U.getBodyIds(step).forEach(id => { h += rowHeight(U.stepById[id], nestedDepth) + 4; });
+        }
+        h += 10; // padding
+      }
+    }
+    return h;
+  }
+  return 34; // normal body row
+}
+
+function containerNodeHeight(step) {
+  if (!U.isContainer(step)) return 64;
+  let h = HEADER_H + 14;
+  if (step.type === 'if-else') {
+    h += 22; // THEN label
+    (step.then || []).forEach(id => { h += rowHeight(U.stepById[id], 1) + 4; });
+    h += 22; // ELSE label
+    (step.else || []).forEach(id => { h += rowHeight(U.stepById[id], 1) + 4; });
+  } else {
+    U.getBodyIds(step).forEach(id => { h += rowHeight(U.stepById[id], 1) + 4; });
+  }
+  return h;
+}
+
+// ---------- Render ----------
+function render() {
+  const dag = document.getElementById('dag');
+  dag.innerHTML = '';
+  const topLevel = U.topLevel();
+  const layers = U.buildLayers(topLevel);
+
+  const positions = new Map();
+  let maxHeight = 0;
+  layers.forEach((layer, col) => {
+    const x = PAD_X + col * (NODE_W + COL_GAP);
+    const totalH = layer.reduce((s, step) => s + containerNodeHeight(step) + ROW_GAP, 0) - ROW_GAP;
+    maxHeight = Math.max(maxHeight, totalH);
+    let y = PAD_Y;
+    layer.forEach(step => {
+      const h = containerNodeHeight(step);
+      positions.set(step.id, { x, y, h, w: NODE_W });
+      y += h + ROW_GAP;
+    });
+  });
+  layers.forEach((layer) => {
+    const total = layer.reduce((s, step) => s + containerNodeHeight(step) + ROW_GAP, 0) - ROW_GAP;
+    const offset = (maxHeight - total) / 2;
+    layer.forEach(step => { positions.get(step.id).y += offset; });
+  });
+
+  const totalW = PAD_X * 2 + layers.length * NODE_W + Math.max(0, layers.length - 1) * COL_GAP;
+  const totalH = PAD_Y * 2 + maxHeight;
+  dag.style.minWidth = totalW + 'px';
+  dag.style.height = totalH + 'px';
+
+  // SVG edges
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'edges');
+  svg.setAttribute('viewBox', `0 0 ${totalW} ${totalH}`);
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `<marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#94a3b8"/></marker>`;
+  svg.appendChild(defs);
+  const ids = new Set(topLevel.map(s => s.id));
+  topLevel.forEach(step => {
+    (step.dependsOn || []).forEach(depId => {
+      if (!ids.has(depId)) return;
+      const src = positions.get(depId), tgt = positions.get(step.id);
+      if (!src || !tgt) return;
+      const fx = src.x + src.w, fy = src.y + src.h / 2;
+      const tx = tgt.x, ty = tgt.y + tgt.h / 2;
+      const c = Math.max(24, (tx - fx) * 0.4);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${fx} ${fy} C ${fx + c} ${fy}, ${tx - c} ${ty}, ${tx} ${ty}`);
+      path.setAttribute('class', 'edge');
+      path.setAttribute('marker-end', 'url(#arr)');
+      svg.appendChild(path);
+    });
+  });
+  dag.appendChild(svg);
+
+  // Nodes
+  topLevel.forEach(step => {
+    const pos = positions.get(step.id);
+    const el = renderNode(step);
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    el.style.width = pos.w + 'px';
+    el.style.height = pos.h + 'px';
+    dag.appendChild(el);
+  });
+}
+
+function renderNode(step) {
+  const style = U.getStyle(step.type);
+  const isContainer = U.isContainer(step);
+  const node = document.createElement('div');
+  node.className = 'node' + (isContainer ? ' container' : '');
+  if (isContainer) {
+    node.style.background = style.bg;
+    node.style.borderColor = style.border;
+  }
+  const header = document.createElement('div');
+  header.className = 'header';
+  header.innerHTML = `
+    <div class="label-row">
+      <span class="badge" style="color:${style.color}; border-color:${style.border}; background:rgba(255,255,255,0.6)">${style.badge}</span>
+      <span class="label">${U.getLabel(step)}</span>
+    </div>
+    <div class="detail">${isContainer ? U.containerDetail(step) : step.id}</div>
+  `;
+  node.appendChild(header);
+
+  if (isContainer) {
+    const body = document.createElement('div');
+    body.className = 'body-group';
+    renderBodyInto(body, step, 1);
+    node.appendChild(body);
+  }
+  return node;
+}
+
+function renderBodyInto(target, parentStep, depth) {
+  if (parentStep.type === 'if-else') {
+    const thenLbl = document.createElement('div');
+    thenLbl.className = 'branch-label'; thenLbl.textContent = 'THEN';
+    target.appendChild(thenLbl);
+    (parentStep.then || []).forEach(id => target.appendChild(renderBodyItem(id, depth)));
+    const elseLbl = document.createElement('div');
+    elseLbl.className = 'branch-label'; elseLbl.textContent = 'ELSE';
+    target.appendChild(elseLbl);
+    (parentStep.else || []).forEach(id => target.appendChild(renderBodyItem(id, depth)));
+  } else {
+    U.getBodyIds(parentStep).forEach(id => target.appendChild(renderBodyItem(id, depth)));
+  }
+}
+
+function renderBodyItem(stepId, depth) {
+  const step = U.stepById[stepId];
+  if (!step) return document.createTextNode('?');
+  const style = U.getStyle(step.type);
+
+  if (!U.isContainer(step)) {
+    const row = document.createElement('div');
+    row.className = 'body-row';
+    row.innerHTML = `
+      <span class="dot" style="background:${style.color}"></span>
+      <span class="name">${U.getLabel(step)}</span>
+      <span class="id">${step.id}</span>
+    `;
+    return row;
+  }
+
+  const wrap = document.createElement('div');
+  const canInline = (depth + 1) <= MAX_INLINE_DEPTH;
+  const isOpen = expanded.has(step.id);
+  const bodyCount = U.getBodyIds(step).length;
+
+  const row = document.createElement('div');
+  row.className = 'expand-row' + (isOpen ? ' open' : '');
+  row.style.borderColor = style.border;
+  row.style.background = style.bg;
+
+  if (canInline) {
+    row.innerHTML = `
+      <span class="chev">▶</span>
+      <span class="badge-mini" style="color:${style.color}; background:rgba(255,255,255,0.7)">${style.badge}</span>
+      <span class="name">${U.getLabel(step)}</span>
+      <span class="count">${bodyCount} 步</span>
+      <button class="to-drawer" title="在抽屉里打开，独立 DAG 视图">↗</button>
+    `;
+    row.onclick = (e) => {
+      if (e.target.closest('.to-drawer')) { openDrawer(step); return; }
+      if (isOpen) expanded.delete(step.id); else expanded.add(step.id);
+      render();
+    };
+  } else {
+    // depth exceeded - only drawer
+    row.className = 'drawer-only';
+    row.style.borderColor = style.border;
+    row.style.background = style.bg;
+    row.innerHTML = `
+      <span class="badge-mini" style="color:${style.color}; background:rgba(255,255,255,0.7)">${style.badge}</span>
+      <span class="name">${U.getLabel(step)}</span>
+      <span class="count">${bodyCount} 步</span>
+      <span style="font-size:10px;color:#2563eb">↗ 抽屉</span>
+    `;
+    row.onclick = () => openDrawer(step);
+  }
+  wrap.appendChild(row);
+
+  if (canInline && isOpen) {
+    const nested = document.createElement('div');
+    nested.className = 'body-group nested';
+    nested.style.borderColor = style.border;
+    renderBodyInto(nested, step, depth + 1);
+    wrap.appendChild(nested);
+  }
+  return wrap;
+}
+
+function expandAll() {
+  STEPS.forEach(s => { if (U.isContainer(s)) expanded.add(s.id); });
+  render();
+}
+function collapseAll() { expanded.clear(); render(); }
+
+// ---------- Drawer (reuse Plan-A idea for depth > 2) ----------
+let drawerStack = [];
+function openDrawer(step) { drawerStack.push(step); renderDrawer(); document.getElementById('drawer').classList.add('open'); document.getElementById('backdrop').classList.add('open'); }
+function closeDrawer() { drawerStack = []; document.getElementById('drawer').classList.remove('open'); document.getElementById('backdrop').classList.remove('open'); }
+function renderDrawer() {
+  const crumbs = document.getElementById('breadcrumbs');
+  crumbs.innerHTML = '<span class="crumb" onclick="closeDrawer()">工作流全图</span>';
+  drawerStack.forEach((s, i) => {
+    crumbs.innerHTML += `<span class="sep">›</span><span class="crumb ${i === drawerStack.length - 1 ? 'current' : ''}" onclick="gotoDrawerLevel(${i})">${U.getLabel(s)} · ${s.id}</span>`;
+  });
+  const body = document.getElementById('drawer-body');
+  body.innerHTML = '';
+  const current = drawerStack[drawerStack.length - 1];
+  if (!current) return;
+  // Show the container contents in drawer using a simple flat-listed preview (not DAG)
+  // For Plan B drawer is the "escape hatch" — we list sub-steps with further drill-down available
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex';
+  wrap.style.flexDirection = 'column';
+  wrap.style.gap = '16px';
+  function section(label, ids) {
+    if (!ids.length) return;
+    const sec = document.createElement('div');
+    sec.innerHTML = `<div style="font-size:12px;font-weight:600;color:#64748b;margin-bottom:8px;letter-spacing:0.05em">${label}</div>`;
+    ids.forEach(id => {
+      const s = U.stepById[id];
+      if (!s) return;
+      const st = U.getStyle(s.type);
+      const row = document.createElement('div');
+      row.style.cssText = `display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid ${st.border};border-radius:8px;background:${st.bg};margin-bottom:6px;cursor:${U.isContainer(s) ? 'pointer' : 'default'};`;
+      const bodyCount = U.isContainer(s) ? U.getBodyIds(s).length : 0;
+      row.innerHTML = `
+        <span style="font-size:10px;padding:1px 6px;border-radius:4px;font-weight:500;color:${st.color};background:rgba(255,255,255,0.7);">${st.badge}</span>
+        <span style="font-size:13px;font-weight:600;flex:1;">${U.getLabel(s)}</span>
+        <span style="font-size:11px;color:#64748b;font-family:ui-monospace,monospace;">${s.id}</span>
+        ${U.isContainer(s) ? `<span style="font-size:11px;color:#2563eb;">${bodyCount} 步 ↗</span>` : ''}
+      `;
+      if (U.isContainer(s)) row.onclick = () => openDrawer(s);
+      sec.appendChild(row);
+    });
+    wrap.appendChild(sec);
+  }
+  if (current.type === 'if-else') { section('THEN', current.then || []); section('ELSE', current.else || []); }
+  else { section('BODY', U.getBodyIds(current)); }
+  body.appendChild(wrap);
+}
+function gotoDrawerLevel(i) { drawerStack = drawerStack.slice(0, i + 1); renderDrawer(); }
+
+render();
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+</script>
+</body>
+</html>

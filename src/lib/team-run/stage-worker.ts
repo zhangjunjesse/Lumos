@@ -20,6 +20,8 @@ import {
 import { resolveTagNames, listTagCatalog } from '@/lib/knowledge/tag-resolver'
 import { buildBuiltinAgentContext } from '@/lib/claude/builtin-agent-context'
 import { getActiveUserId } from '@/lib/auth/user-service'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { collectContextImages, buildMultimodalPrompt } from './context-image-injector'
 
 interface WorkerStatus {
   stageId: string
@@ -572,6 +574,8 @@ export class StageWorker {
         : {}),
     }
 
+    const contextImages = collectContextImages(payload)
+
     try {
       if (prefersPlainTextStageResult(payload)) {
         const plainTextResult = await this.executePlainTextMode({
@@ -582,6 +586,7 @@ export class StageWorker {
           startedAt,
           startTime,
           onTraceEvent,
+          contextImages,
         })
 
         if (!plainTextResult) {
@@ -594,7 +599,7 @@ export class StageWorker {
       }
 
       const queryResult = query({
-        prompt,
+        prompt: buildMultimodalPrompt(prompt, contextImages, payload.sessionId),
         options: {
           ...baseQueryOptions,
           outputFormat: {
@@ -678,13 +683,14 @@ export class StageWorker {
   }
 
   private async executePlainTextMode(input: {
-    query: (params: { prompt: string; options: Record<string, unknown> }) => AsyncIterable<unknown>
+    query: (params: { prompt: string | AsyncIterable<SDKUserMessage>; options: Record<string, unknown> }) => AsyncIterable<unknown>
     payload: StageExecutionPayloadV1
     prompt: string
     baseQueryOptions: Record<string, unknown>
     startedAt: string
     startTime: number
     onTraceEvent?: (event: unknown) => void
+    contextImages: import('./context-image-injector').ContextImage[]
   }): Promise<StageExecutionResultV1 | null> {
     const {
       query,
@@ -694,6 +700,7 @@ export class StageWorker {
       startedAt,
       startTime,
       onTraceEvent,
+      contextImages,
     } = input
 
     let output = ''
@@ -720,7 +727,7 @@ export class StageWorker {
 
     try {
       const queryResult = query({
-        prompt: plainTextPrompt,
+        prompt: buildMultimodalPrompt(plainTextPrompt, contextImages, payload.sessionId),
         options: {
           ...baseQueryOptions,
           stderr: (data: string) => {

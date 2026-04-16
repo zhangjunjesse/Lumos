@@ -12,6 +12,7 @@ import {
   type WorkflowKnowledgeConfigDraft,
 } from '@/components/workflow/WorkflowKnowledgePanel';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
+import { BodyManager, type BodyChildInfo } from './body-manager';
 
 interface AgentPreset { id: string; name: string; description?: string }
 
@@ -31,9 +32,17 @@ interface PropertiesPanelProps {
   onUpdate: (data: StepNodeData) => void;
   onDelete: () => void;
   onClose: () => void;
+  /** id → label/type for every step; used by body manager */
+  childNodes?: Record<string, BodyChildInfo>;
+  /** id pool that can be added into a container body (typically unparented steps) */
+  availableChildIds?: string[];
+  onReorderBody?: (order: { body?: string[]; then?: string[]; else?: string[] }) => void;
 }
 
-export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose }: PropertiesPanelProps) {
+export function PropertiesPanel({
+  data, allStepIds, onUpdate, onDelete, onClose,
+  childNodes, availableChildIds, onReorderBody,
+}: PropertiesPanelProps) {
   const [input, setInput] = useState(data.input);
   const [stepId, setStepId] = useState(data.stepId);
   const [deps, setDeps] = useState(data.dependsOn.join(', '));
@@ -170,6 +179,18 @@ export function PropertiesPanel({ data, allStepIds, onUpdate, onDelete, onClose 
             className="h-7 text-xs font-mono"
           />
         </div>
+      )}
+
+      {onReorderBody && childNodes && (data.stepType === 'if-else' || data.stepType === 'for-each' || data.stepType === 'while') && (
+        <BodyManager
+          stepType={data.stepType}
+          body={Array.isArray(input.body) ? (input.body as string[]) : []}
+          thenIds={Array.isArray(input.then) ? (input.then as string[]) : []}
+          elseIds={Array.isArray(input.else) ? (input.else as string[]) : []}
+          childNodes={childNodes}
+          availableIds={availableChildIds ?? []}
+          onReorder={onReorderBody}
+        />
       )}
 
       {data.stepType === 'wait' && (
