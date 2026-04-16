@@ -35,15 +35,19 @@ import {
   genId,
   type DslSpec,
 } from './canvas-helpers';
+import { NodeOverlayProvider } from './node-overlay-context';
+import { useCanvasDebug } from './use-canvas-debug';
+import { useBodyReorder } from './use-body-reorder';
 
 interface WorkflowCanvasProps {
   dsl: DslSpec;
   presetNames?: Record<string, string>;
   onChange: (dsl: DslSpec) => void;
   height?: number;
+  workflowId?: string | null;
 }
 
-function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: WorkflowCanvasProps) {
+function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480, workflowId = null }: WorkflowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -183,6 +187,8 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId) as Node<StepNodeData> | undefined;
 
+  const dbg = useCanvasDebug(workflowId ?? null);
+
   const handleNodeUpdate = useCallback(
     (data: StepNodeData) => {
       const nextNodes = nodes.map(n => n.id === selectedNodeId ? { ...n, data } : n) as Node<StepNodeData>[];
@@ -192,29 +198,7 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
     [edges, emitDsl, nodes, selectedNodeId, setNodes],
   );
 
-  const handleReorderBody = useCallback(
-    (order: { body?: string[]; then?: string[]; else?: string[] }) => {
-      if (!selectedNodeId) return;
-      const newSpec: DslSpec = {
-        ...dslRef.current,
-        steps: dslRef.current.steps.map(s => {
-          if (s.id !== selectedNodeId) return s;
-          const curInput = (s.input ?? {}) as Record<string, unknown>;
-          return {
-            ...s,
-            input: {
-              ...curInput,
-              ...(order.body !== undefined ? { body: order.body } : {}),
-              ...(order.then !== undefined ? { then: order.then } : {}),
-              ...(order.else !== undefined ? { else: order.else } : {}),
-            },
-          };
-        }),
-      };
-      onChange(newSpec);
-    },
-    [selectedNodeId, onChange],
-  );
+  const handleReorderBody = useBodyReorder(dslRef, selectedNodeId, onChange);
 
   const childNodes = useMemo<Record<string, BodyChildInfo>>(() => {
     const m: Record<string, BodyChildInfo> = {};
@@ -249,46 +233,55 @@ function WorkflowCanvasInner({ dsl, presetNames = {}, onChange, height = 480 }: 
   const { showRefs, refEdgeCount, displayEdges, toggle: toggleRefs } = useRefEdgeToggle(edges);
 
   return (
-    <div className="flex rounded-xl border border-border/60 overflow-hidden" style={{ height }}>
-      <NodePalette />
-      <div ref={reactFlowWrapper} className="flex-1 relative">
-        <ReactFlow
-          nodes={renderedNodes}
-          edges={displayEdges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onNodeDrag={onNodeDrag}
-          onNodeDragStop={onNodeDragStop}
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          onNodeClick={onNodeClick}
-          onPaneClick={onPaneClick}
-          nodeTypes={NODE_TYPES}
-          fitView
-          proOptions={{ hideAttribution: true }}
-          className="bg-gradient-to-br from-violet-500/5 via-background to-sky-500/5"
-        >
-          <Background gap={16} size={1} />
-          <Controls showInteractive={false} className="!shadow-sm" />
-          <MiniMap className="!shadow-sm !border-border/40" pannable zoomable />
-          <RefEdgeToggle show={showRefs} count={refEdgeCount} onToggle={toggleRefs} />
-        </ReactFlow>
+    <NodeOverlayProvider
+      debugEnabled={dbg.enabled}
+      debugCache={dbg.cache}
+      debugRunningStepId={dbg.runningStepId}
+    >
+      <div className="flex rounded-xl border border-border/60 overflow-hidden" style={{ height }}>
+        <NodePalette />
+        <div ref={reactFlowWrapper} className="flex-1 relative">
+          <ReactFlow
+            nodes={renderedNodes}
+            edges={displayEdges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            onNodeContextMenu={dbg.onNodeContextMenu}
+            nodeTypes={NODE_TYPES}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            className="bg-gradient-to-br from-violet-500/5 via-background to-sky-500/5"
+          >
+            <Background gap={16} size={1} />
+            <Controls showInteractive={false} className="!shadow-sm" />
+            <MiniMap className="!shadow-sm !border-border/40" pannable zoomable />
+            <RefEdgeToggle show={showRefs} count={refEdgeCount} onToggle={toggleRefs} />
+          </ReactFlow>
+          {dbg.renderDetail()}
+        </div>
+        {selectedNode && (
+          <PropertiesPanel
+            data={selectedNode.data}
+            allStepIds={nodes.map(n => n.id)}
+            onUpdate={handleNodeUpdate}
+            onDelete={handleNodeDelete}
+            onClose={() => setSelectedNodeId(null)}
+            childNodes={childNodes}
+            availableChildIds={availableChildIds}
+            onReorderBody={handleReorderBody}
+          />
+        )}
       </div>
-      {selectedNode && (
-        <PropertiesPanel
-          data={selectedNode.data}
-          allStepIds={nodes.map(n => n.id)}
-          onUpdate={handleNodeUpdate}
-          onDelete={handleNodeDelete}
-          onClose={() => setSelectedNodeId(null)}
-          childNodes={childNodes}
-          availableChildIds={availableChildIds}
-          onReorderBody={handleReorderBody}
-        />
-      )}
-    </div>
+      {dbg.renderMenu()}
+    </NodeOverlayProvider>
   );
 }
 

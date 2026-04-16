@@ -28,6 +28,7 @@ import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
 import { getSupportedStepTypes } from './step-registry';
 import { cancelWorkflowAgentExecution } from './subagent';
 import { taskEventBus } from '@/lib/task-event-bus';
+import type { DebugRuntimeContext } from './debug-types';
 import type {
   CompiledWorkflowManifest,
   SubmitWorkflowRequest,
@@ -157,7 +158,8 @@ export async function shutdownWorker() {
 
 export async function submitWorkflow(
   request: SubmitWorkflowRequest,
-  callbacks?: WorkflowCallbacks
+  callbacks?: WorkflowCallbacks,
+  debugContext?: DebugRuntimeContext | null,
 ): Promise<SubmitWorkflowResponse> {
   const manifestErrors = validateCompiledWorkflowManifest(request.workflowManifest);
   if (manifestErrors.length > 0) {
@@ -173,7 +175,8 @@ export async function submitWorkflow(
 
     const workflow = await loadWorkflowDefinition(
       request.workflowCode,
-      request.workflowManifest
+      request.workflowManifest,
+      debugContext ?? null,
     );
     const registered = ensureWorkflowRegistered(ow, workflow);
     await getOrCreateWorker(ow, registered);
@@ -218,7 +221,8 @@ export async function submitWorkflow(
 
 async function loadWorkflowDefinition(
   code: string,
-  manifest: CompiledWorkflowManifest
+  manifest: CompiledWorkflowManifest,
+  debugContext: DebugRuntimeContext | null = null,
 ): Promise<Workflow<unknown, unknown, unknown>> {
   if (!code.trim()) {
     throw new Error('Compiled workflow code is empty');
@@ -241,6 +245,7 @@ async function loadWorkflowDefinition(
   }
 
   const workflow = buildWorkflow(createInstrumentedWorkflowRuntimeBindings({
+    debugContext,
     onStepStarted: async (event) => {
       const projection = markWorkflowStepStarted(event.workflowRunId, event.stepId);
       if (projection) {

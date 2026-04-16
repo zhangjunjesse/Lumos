@@ -4,12 +4,13 @@ import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
 import { CONT_HEADER_H } from '@/lib/workflow/dsl-graph-layout';
-import { useNodeAggregate, useNodeOverlay } from '../node-overlay-context';
-import { AggregateBadge, OverlayFooter, StatusDot } from './overlay-parts';
+import { useNodeAggregate, useNodeDebug, useNodeOverlay } from '../node-overlay-context';
+import { AggregateBadge, DebugBadge, OverlayFooter, StatusDot } from './overlay-parts';
 
 function ForEachNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) {
   const overlay = useNodeOverlay(data.stepId);
   const aggregate = useNodeAggregate(data.stepId);
+  const debug = useNodeDebug(data.stepId);
   const collection = typeof data.input?.collection === 'string' ? data.input.collection : '?';
 
   if (data.isContainer) {
@@ -21,6 +22,7 @@ function ForEachNodeInner({ data, selected }: NodeProps & { data: StepNodeData }
           : selected ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-emerald-500/40',
       ].join(' ')}>
         <Handle type="target" position={Position.Left} style={{ top: CONT_HEADER_H / 2 }} className="!w-2 !h-2 !bg-emerald-500" />
+        <DebugBadge debug={debug} />
         <div className="px-3 py-2.5" style={{ height: CONT_HEADER_H }}>
           <div className="flex items-center gap-1.5">
             <StatusDot overlay={overlay} />

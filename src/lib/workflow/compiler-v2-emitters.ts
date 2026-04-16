@@ -114,6 +114,7 @@ function emitIfElse(
   lines.push(
     `${pad}}`,
     `${pad}stepOutputs[${sid}] = { output: { branch: __branch_${safe} ? "then" : "else" } };`,
+    `${pad}await onStepOutput?.({ workflowRunId: run.id, stepId: ${sid}, stepType: "if-else", output: stepOutputs[${sid}].output });`,
     `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
   );
   return lines.join('\n');
@@ -148,6 +149,7 @@ function emitForEach(
     lastBodyId ? `${pad}  __results_${safe}.push(stepOutputs[${emitLiteral(lastBodyId)}]);` : '',
     `${pad}}`,
     `${pad}stepOutputs[${sid}] = { output: { results: __results_${safe}, count: __results_${safe}.length } };`,
+    `${pad}await onStepOutput?.({ workflowRunId: run.id, stepId: ${sid}, stepType: "for-each", output: stepOutputs[${sid}].output });`,
     `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
   ].filter(Boolean).join('\n');
 }
@@ -189,6 +191,7 @@ function emitWhile(
 
   const commonTail = [
     `${pad}stepOutputs[${sid}] = { output: { state: ${stateVar}, iterations: __iter_${safe}, errors: ${iterErrorVar} } };`,
+    `${pad}await onStepOutput?.({ workflowRunId: run.id, stepId: ${sid}, stepType: "while", output: stepOutputs[${sid}].output });`,
     `${pad}await onStepCompleted?.({ workflowRunId: run.id, stepId: ${sid} });`,
   ];
 

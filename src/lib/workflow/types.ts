@@ -105,7 +105,7 @@ export interface CapabilityStepInput extends WorkflowStepRuntimeCarrier {
   input: unknown;
 }
 
-export interface WaitStepInput {
+export interface WaitStepInput extends WorkflowStepRuntimeCarrier {
   durationMs: number;
 }
 
@@ -191,6 +191,13 @@ export interface WorkflowStepLifecycleEvent {
   stepId: string;
 }
 
+export interface WorkflowStepOutputEvent extends WorkflowStepLifecycleEvent {
+  /** Synthetic aggregated output the container emitter wrote to stepOutputs. */
+  output: unknown;
+  /** Step type that produced the output — emitters set this to 'if-else' / 'for-each' / 'while'. */
+  stepType: WorkflowStepType;
+}
+
 export interface WorkflowRuntimeBindings {
   agentStep: (input: AgentStepInput) => Promise<StepResult>;
   notificationStep: (input: NotificationStepInput) => Promise<StepResult>;
@@ -199,6 +206,12 @@ export interface WorkflowRuntimeBindings {
   onStepStarted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepCompleted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepSkipped?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
+  /**
+   * Fires after container steps (if-else / for-each / while) emit their
+   * aggregated output. Regular steps persist via agentStep/etc. wrappers, so
+   * this hook only fires for container emitters in compiler-v2-emitters.ts.
+   */
+  onStepOutput?: (event: WorkflowStepOutputEvent) => Promise<void> | void;
 }
 
 export interface WorkflowFactoryModule {

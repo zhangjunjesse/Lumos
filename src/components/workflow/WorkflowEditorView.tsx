@@ -7,8 +7,10 @@ import { WorkflowDslViewer } from './WorkflowDslViewer';
 import { WorkflowResultToolbar } from './WorkflowResultToolbar';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { WorkflowParamManager } from './WorkflowParamManager';
+import { DebugRunHistory } from './DebugRunHistory';
 import { removeStepFromDsl } from '@/lib/workflow/dsl-graph-converter';
 import type { WorkflowParamDef } from '@/lib/workflow/types';
+import { useWorkflowDebugStore } from '@/stores/workflow-debug-store';
 
 const WorkflowCanvas = dynamic(
   () => import('./visual-editor/workflow-canvas').then(m => ({ default: m.WorkflowCanvas })),
@@ -68,6 +70,14 @@ export function WorkflowEditorView({
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [dslEditMode, setDslEditMode] = useState(false);
 
+  const debugEnabled = useWorkflowDebugStore(s => s.enabled);
+  const debugRunning = useWorkflowDebugStore(s => s.running);
+  const debugError = useWorkflowDebugStore(s => s.error);
+  const debugSnapshot = useWorkflowDebugStore(s => s.snapshot);
+  const toggleDebug = useWorkflowDebugStore(s => s.setEnabled);
+  const clearAllDebug = useWorkflowDebugStore(s => s.clearAllCache);
+  const cachedCount = debugSnapshot ? Object.keys(debugSnapshot.cachedSteps).length : 0;
+
   const unusedParams = (() => {
     const params = dsl.params ?? [];
     if (params.length === 0) return [];
@@ -121,21 +131,78 @@ export function WorkflowEditorView({
       )}
 
       {/* Compact tab bar */}
-      <div className="flex gap-1">
-        {(['graph', 'visual', 'json'] as const).map(mode => (
-          <button
-            key={mode}
-            onClick={() => { setViewMode(mode); setSelectedStepId(null); }}
-            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-              viewMode === mode
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-            }`}
-          >
-            {mode === 'graph' ? '图表' : mode === 'visual' ? '可视化编辑' : 'JSON'}
-          </button>
-        ))}
+      <div className="flex items-center gap-2">
+        <div className="flex gap-1">
+          {(['graph', 'visual', 'json'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => { setViewMode(mode); setSelectedStepId(null); }}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                viewMode === mode
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+              }`}
+            >
+              {mode === 'graph' ? '图表' : mode === 'visual' ? '可视化编辑' : 'JSON'}
+            </button>
+          ))}
+        </div>
+
+        {(viewMode === 'visual' || viewMode === 'graph') && savedWorkflowId && (
+          <div className="flex items-center gap-1 ml-auto">
+            <button
+              type="button"
+              onClick={() => {
+                if (viewMode === 'graph') {
+                  setViewMode('visual');
+                  setSelectedStepId(null);
+                  if (!debugEnabled) toggleDebug(true);
+                } else {
+                  toggleDebug(!debugEnabled);
+                }
+              }}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors border ${
+                debugEnabled
+                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent border-border/50'
+              }`}
+              title={viewMode === 'graph'
+                ? '切换到可视化编辑并开启调试模式(右键节点选择运行到此处 / 重跑 / 从此处继续)'
+                : '开启后右键节点可选择运行到此处 / 重跑 / 从此处继续'}
+            >
+              调试模式{debugEnabled && cachedCount > 0 ? ` · ${cachedCount}` : ''}
+            </button>
+            {viewMode === 'visual' && debugEnabled && (
+              <>
+                {debugRunning && (
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400">运行中…</span>
+                )}
+                {cachedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm(`清空全部 ${cachedCount} 个节点缓存?`)) void clearAllDebug();
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] text-red-600 dark:text-red-400 hover:bg-red-500/10 border border-red-500/30"
+                  >
+                    清空缓存
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {debugEnabled && debugError && (
+        <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded bg-destructive/10 text-destructive">
+          调试失败: {debugError}
+        </div>
+      )}
+
+      {viewMode === 'visual' && debugEnabled && savedWorkflowId && (
+        <DebugRunHistory workflowId={savedWorkflowId} refreshToken={debugSnapshot} />
+      )}
 
       {/* Editor content — no Card wrapper, full width */}
       {viewMode === 'graph' && (
@@ -147,7 +214,13 @@ export function WorkflowEditorView({
         />
       )}
       {viewMode === 'visual' && (
-        <WorkflowCanvas dsl={dsl} presetNames={presetNames} onChange={handleVisualChange} height={canvasHeight} />
+        <WorkflowCanvas
+          dsl={dsl}
+          presetNames={presetNames}
+          onChange={handleVisualChange}
+          height={canvasHeight}
+          workflowId={savedWorkflowId}
+        />
       )}
       {viewMode === 'json' && (
         <WorkflowDslViewer

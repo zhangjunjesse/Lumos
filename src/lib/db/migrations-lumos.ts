@@ -1039,6 +1039,13 @@ export function migrateLumosTables(db: Database.Database): void {
   if (!srhCols.some(c => c.name === 'workflow_dsl_snapshot')) {
     db.exec("ALTER TABLE schedule_run_history ADD COLUMN workflow_dsl_snapshot TEXT DEFAULT NULL");
   }
+  // Tag runs with execution mode (production vs debug) + link to debug session
+  if (!srhCols.some(c => c.name === 'mode')) {
+    db.exec("ALTER TABLE schedule_run_history ADD COLUMN mode TEXT NOT NULL DEFAULT 'production'");
+  }
+  if (!srhCols.some(c => c.name === 'debug_session_id')) {
+    db.exec("ALTER TABLE schedule_run_history ADD COLUMN debug_session_id TEXT DEFAULT NULL");
+  }
 
   // Add workflow_id column to scheduled_workflows (links to standalone workflows table)
   const swCols = db.prepare("PRAGMA table_info(scheduled_workflows)").all() as { name: string }[];
@@ -1178,6 +1185,36 @@ export function migrateLumosTables(db: Database.Database): void {
   // into per-capability flags (chat / media). Safe to run repeatedly because
   // the legacy key is deleted after copy.
   migrateCustomProviderFlagKeys(db);
+
+  // ── Workflow debug sessions ────────────────────────────────────────────────
+  // One workflow ↔ one persistent debug session. Each executed step is cached
+  // (keyed by step_id + config_hash) so users can iteratively tweak a long
+  // workflow without re-running upstream steps. See src/lib/workflow/debug-types.ts.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_debug_sessions (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'idle'
+        CHECK(status IN ('idle','running','error')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_debug_step_outputs (
+      session_id TEXT NOT NULL REFERENCES workflow_debug_sessions(id) ON DELETE CASCADE,
+      step_id TEXT NOT NULL,
+      output_json TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL CHECK(status IN ('success','error')),
+      error TEXT NOT NULL DEFAULT '',
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      config_hash TEXT NOT NULL,
+      output_blob_path TEXT DEFAULT NULL,
+      completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (session_id, step_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_debug_outputs_session ON workflow_debug_step_outputs(session_id);
+  `);
 
   // Seed built-in data on first run
   seedBuiltinProviders(db);

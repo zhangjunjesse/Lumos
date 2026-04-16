@@ -3,11 +3,12 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
-import { useNodeOverlay } from '../node-overlay-context';
-import { OverlayFooter, RunDurationLabel, StatusDot } from './overlay-parts';
+import { useNodeDebug, useNodeOverlay } from '../node-overlay-context';
+import { DebugBadge, OverlayFooter, RunDurationLabel, StatusDot } from './overlay-parts';
 
 function CapabilityNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) {
   const overlay = useNodeOverlay(data.stepId);
+  const debug = useNodeDebug(data.stepId);
   const capabilityId = typeof data.input?.capabilityId === 'string' ? data.input.capabilityId : '';
 
   return (
@@ -18,6 +19,7 @@ function CapabilityNodeInner({ data, selected }: NodeProps & { data: StepNodeDat
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-teal-500" />
+      <DebugBadge debug={debug} />
       <div className="flex items-center gap-1.5">
         <StatusDot overlay={overlay} />
         <span className="inline-block w-2 h-2 rounded-full bg-teal-500 shrink-0" />

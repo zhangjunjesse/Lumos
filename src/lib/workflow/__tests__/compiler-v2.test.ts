@@ -338,7 +338,7 @@ describe('v2 compiler — control flow', () => {
 
     const result = generateWorkflowFromDsl(dsl);
     expect(result.validation.valid).toBe(true);
-    expect(result.code).toContain('const { agentStep, notificationStep, capabilityStep, waitStep, onStepStarted, onStepCompleted, onStepSkipped } = runtime;');
+    expect(result.code).toContain('const { agentStep, notificationStep, capabilityStep, waitStep, onStepStarted, onStepCompleted, onStepSkipped, onStepOutput } = runtime;');
     expect(result.code).toContain('notificationStep(');
     expect(result.code).toContain('waitStep(');
     expect(result.code).toContain('capabilityStep(');

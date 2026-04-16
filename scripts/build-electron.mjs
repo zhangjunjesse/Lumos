@@ -23,6 +23,36 @@ function resolveStandaloneSymlinks() {
   }
 }
 
+// Next standalone sometimes traces only `package.json` for
+// `onnxruntime-web/node_modules/onnxruntime-common`, but omits its `dist/`.
+// In packaged Electron builds this breaks the Node entry of `onnxruntime-web`
+// before the knowledge embedder can initialize.
+function hydrateOnnxruntimeWebDependency() {
+  const standaloneRoot = '.next/standalone/node_modules';
+  const rootCommonDir = path.join(standaloneRoot, 'onnxruntime-common');
+  const nestedCommonDir = path.join(
+    standaloneRoot,
+    'onnxruntime-web',
+    'node_modules',
+    'onnxruntime-common',
+  );
+
+  const sourceDist = path.join(rootCommonDir, 'dist');
+  const nestedDist = path.join(nestedCommonDir, 'dist');
+
+  if (!fs.existsSync(sourceDist) || !fs.existsSync(nestedCommonDir)) {
+    return;
+  }
+
+  if (fs.existsSync(path.join(nestedDist, 'cjs', 'index.js'))) {
+    return;
+  }
+
+  fs.mkdirSync(nestedCommonDir, { recursive: true });
+  fs.cpSync(sourceDist, nestedDist, { recursive: true });
+  console.log('Hydrated onnxruntime-web nested onnxruntime-common dist');
+}
+
 async function buildElectron() {
   const shared = {
     bundle: true,
@@ -49,6 +79,7 @@ async function buildElectron() {
 
   // Fix standalone symlinks after next build
   resolveStandaloneSymlinks();
+  hydrateOnnxruntimeWebDependency();
 }
 
 buildElectron().catch((err) => {

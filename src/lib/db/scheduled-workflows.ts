@@ -395,6 +395,22 @@ export function listRunHistory(scheduleId: string, limit = 30): ScheduleRunRecor
   }));
 }
 
+export function listDebugRuns(workflowId: string, limit = 30): ScheduleRunRecord[] {
+  if (!hasHistoryTable()) return [];
+  return (getDb().prepare(
+    "SELECT * FROM schedule_run_history WHERE schedule_id = ? AND mode = 'debug' ORDER BY started_at DESC LIMIT ?",
+  ).all(workflowId, limit) as Array<Record<string, unknown>>).map(r => ({
+    id: String(r['id']),
+    scheduleId: String(r['schedule_id']),
+    sessionId: r['session_id'] ? String(r['session_id']) : null,
+    status: String(r['status']) as ScheduleRunRecord['status'],
+    error: String(r['error'] ?? ''),
+    startedAt: String(r['started_at']),
+    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
+    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
+  }));
+}
+
 export function getRunHistory(runId: string): ScheduleRunRecord | null {
   if (!hasHistoryTable()) return null;
   const r = getDb().prepare(

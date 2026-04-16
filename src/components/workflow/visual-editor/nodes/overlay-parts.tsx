@@ -8,6 +8,45 @@ import {
   type StepAggregateOverlay,
   type WorkflowDslStepOverlay,
 } from '@/lib/workflow/step-overlay';
+import type { NodeDebugInfo } from '../node-overlay-context';
+
+export function DebugBadge({ debug }: { debug: NodeDebugInfo | null }) {
+  if (!debug) return null;
+  const { meta, running } = debug;
+  if (running) {
+    return (
+      <span
+        title="调试运行中"
+        className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-background animate-pulse"
+      />
+    );
+  }
+  if (!meta) {
+    return (
+      <span
+        title="无缓存"
+        className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-muted-foreground/40 ring-2 ring-background"
+      />
+    );
+  }
+  if (meta.status === 'error') {
+    return (
+      <span
+        title={`失败缓存 · ${formatDuration(meta.durationMs) || ''}`}
+        className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-background"
+      />
+    );
+  }
+  const stale = meta.stale;
+  const color = stale ? 'bg-amber-500' : 'bg-emerald-500';
+  const tooltip = `${stale ? '缓存陈旧(配置已改) · ' : '已缓存 · '}${formatDuration(meta.durationMs) || ''} · ${meta.completedAt}`;
+  return (
+    <span
+      title={tooltip}
+      className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full ${color} ring-2 ring-background`}
+    />
+  );
+}
 
 export function StatusDot({ overlay }: { overlay: WorkflowDslStepOverlay | undefined }) {
   if (!overlay) return null;
