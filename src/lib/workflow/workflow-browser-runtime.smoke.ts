@@ -123,49 +123,66 @@ async function main() {
   }
   fs.closeSync(fs.openSync(path.join(tempDir, 'lumos.db'), 'w'));
 
-  const { createSession, getMessages } = await import('@/lib/db/sessions');
-  const { generateWorkflow } = await import('./compiler.js');
+  const { generateWorkflowFromDsl } = await import('./compiler');
   const {
     getWorkflowStatus,
     resetWorkflowEngineForTests,
     shutdownWorker,
     submitWorkflow,
-  } = await import('./engine.js');
+  } = await import('./engine');
 
   try {
     await resetWorkflowEngineForTests();
-    const session = createSession('Workflow Browser Runtime Smoke');
+    const artifact = generateWorkflowFromDsl({
+      version: 'v3',
+      name: 'browser-runtime-smoke',
+      nodes: [
+        {
+          id: 'browse',
+          type: 'agent',
+          input: {
+            prompt: `Open ${targetUrl} with ctx.browser, capture page details and save a screenshot artifact.`,
+            code: {
+              strategy: 'code-only',
+              params: {
+                targetUrl,
+              },
+              script: `
+                const targetUrl = String(ctx.params.targetUrl || '');
+                if (!targetUrl) {
+                  return { success: false, output: null, error: 'targetUrl is required' };
+                }
 
-    const artifact = generateWorkflow({
-      spec: {
-        version: 'v1',
-        name: 'browser-runtime-smoke',
-        steps: [
-          {
-            id: 'draft',
-            type: 'agent',
-            input: {
-              prompt: 'Draft a browser smoke-test plan',
-              role: 'worker',
+                await ctx.browser.navigate(targetUrl);
+                const current = await ctx.browser.currentPage();
+                const snapshot = await ctx.browser.snapshot();
+                const screenshotSource = await ctx.browser.screenshot();
+                const savedScreenshotPath = await ctx.saveArtifact(screenshotSource, 'browser-smoke/browser-smoke.png');
+
+                return {
+                  success: true,
+                  output: {
+                    summary: \`Visited \${targetUrl}\`,
+                    pageTitle: snapshot.title || current.title || '',
+                    pageUrl: snapshot.url || current.url || '',
+                    snapshotHasContent: typeof snapshot.content === 'string' && snapshot.content.trim().length > 0,
+                    screenshotPath: savedScreenshotPath,
+                  },
+                };
+              `,
             },
           },
-          {
-            id: 'notify',
-            type: 'notification',
-            dependsOn: ['draft'],
-            input: {
-              message: 'Workflow browser runtime smoke complete',
-              level: 'info',
-              channel: 'system',
-              sessionId: session.id,
-            },
-          },
-        ],
-      },
+        },
+      ],
+      edges: [],
     });
 
     if (!artifact.validation.valid) {
       throw new Error(`Workflow generation failed: ${artifact.validation.errors.join('; ')}`);
+    }
+
+    if (artifact.manifest.stepIds.join(',') !== 'browse') {
+      throw new Error(`Workflow browser smoke manifest is unexpected: ${JSON.stringify(artifact.manifest.stepIds)}`);
     }
 
     const submitResult = await submitWorkflow({
@@ -188,41 +205,52 @@ async function main() {
       throw new Error(`Workflow finished with unexpected status: ${status?.status}`);
     }
 
+    if (status.completedSteps.join(',') !== 'browse') {
+      throw new Error(`Workflow browser smoke completedSteps are unexpected: ${JSON.stringify(status.completedSteps)}`);
+    }
+
     const result = status.result as Record<string, {
       success?: boolean;
       output?: Record<string, unknown>;
       metadata?: Record<string, unknown>;
     } | null> | undefined;
 
-    if (!result?.browse?.success || !result?.capture?.success || !result?.notify?.success) {
-      throw new Error(`Browser runtime outputs are incomplete: ${JSON.stringify(status.result)}`);
+    if (!result?.browse?.success) {
+      throw new Error(`Workflow runtime outputs are incomplete: ${JSON.stringify(status.result)}`);
     }
 
-    if (result.browse.metadata?.executionMode !== 'browser-bridge') {
-      throw new Error(`Browser navigate did not use browser bridge: ${JSON.stringify(result.browse)}`);
+    if (result.browse.metadata?.executedVia !== 'code') {
+      throw new Error(`Workflow browser step did not execute via code path: ${JSON.stringify(result.browse)}`);
     }
 
-    if (result.capture.metadata?.executionMode !== 'browser-bridge') {
-      throw new Error(`Browser screenshot did not use browser bridge: ${JSON.stringify(result.capture)}`);
+    const debugLogPath = result.browse.metadata?.debugLogPath;
+    if (typeof debugLogPath !== 'string' || !fs.existsSync(debugLogPath)) {
+      throw new Error(`Workflow browser step debug log is missing: ${JSON.stringify(result.browse)}`);
     }
 
-    const screenshotPath = result.capture.output?.screenshotPath;
+    const debugLog = fs.readFileSync(debugLogPath, 'utf-8');
+    if (!debugLog.includes('browser:navigate') || !debugLog.includes('browser:snapshot') || !debugLog.includes('browser:screenshot')) {
+      throw new Error(`Workflow browser step debug log is missing bridge actions: ${debugLog}`);
+    }
+
+    const pageTitle = result.browse.output?.pageTitle;
+    if (typeof pageTitle !== 'string' || pageTitle.trim().length === 0) {
+      throw new Error(`Workflow browser step pageTitle is missing: ${JSON.stringify(result.browse)}`);
+    }
+
+    const pageUrl = result.browse.output?.pageUrl;
+    if (typeof pageUrl !== 'string' || pageUrl.trim().length === 0) {
+      throw new Error(`Workflow browser step pageUrl is missing: ${JSON.stringify(result.browse)}`);
+    }
+
+    const snapshotHasContent = result.browse.output?.snapshotHasContent;
+    if (snapshotHasContent !== true) {
+      throw new Error(`Workflow browser step snapshot content is empty: ${JSON.stringify(result.browse)}`);
+    }
+
+    const screenshotPath = result.browse.output?.screenshotPath;
     if (typeof screenshotPath !== 'string' || !fs.existsSync(screenshotPath)) {
-      throw new Error(`Browser screenshot artifact is missing: ${JSON.stringify(result.capture)}`);
-    }
-
-    const screenshotBase64 = result.capture.output?.screenshotBase64;
-    if (typeof screenshotBase64 !== 'string' || screenshotBase64.length < 32) {
-      throw new Error(`Browser screenshot base64 is missing: ${JSON.stringify(result.capture)}`);
-    }
-
-    if (result.notify.metadata?.deliveryMode !== 'session-message') {
-      throw new Error(`Notification step did not write session message: ${JSON.stringify(result.notify)}`);
-    }
-
-    const messages = getMessages(session.id).messages;
-    if (!messages.some((message) => message.content.includes('Workflow browser runtime smoke complete'))) {
-      throw new Error(`Notification message was not written to session: ${JSON.stringify(messages)}`);
+      throw new Error(`Workflow browser screenshot artifact is missing: ${JSON.stringify(result.browse)}`);
     }
 
     console.log(JSON.stringify({
@@ -236,9 +264,11 @@ async function main() {
       manifest: artifact.manifest,
       workflowId: submitResult.workflowId,
       status,
-      sessionId: session.id,
-      messageCount: messages.length,
+      debugLogPath,
+      pageTitle,
+      pageUrl,
       screenshotPath,
+      bridgeReady: true,
     }, null, 2));
   } finally {
     await shutdownWorker();

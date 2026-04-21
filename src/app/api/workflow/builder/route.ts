@@ -16,142 +16,136 @@ const requestSchema = z.object({
 });
 
 const DSL_BASE_PROMPT = `你是 Lumos 工作流 DSL 生成器。
-根据用户的自然语言描述和可用 Agent 列表，输出合法的 Workflow DSL v2 JSON 对象。
+根据用户的自然语言描述和可用 Agent 列表，输出合法的 Workflow DSL v3 JSON 对象。
 
-## DSL 结构
+## DSL 结构 (v3 — 边优先)
 {
-  "version": "v2",
+  "version": "v3",
   "name": "<工作流名称>",
-  "steps": [<步骤对象>]
+  "nodes": [<节点对象>],
+  "edges": [<边对象>]
 }
 
-## 步骤类型
+v3 与旧版本的关键区别：
+- 不再有 steps[] + dependsOn；改用 nodes[] + edges[]
+- 结构（顺序、分支、循环）完全由 edges 描述
+- 每条边形如: { "from": "<源>", "to": "<目标>", "kind": "next" | "then" | "else" | "body" }
+- 入口节点唯一（只有它没有非 on-error 入边）
+- 分支必须在同一"汇合点"重新并合（SESE）
 
-### 1. Agent 步骤 — 必须从下方【可用 Agent】列表中选择
+## 节点类型
+
+### 1. agent — 必须从下方【可用 Agent】列表中选择
 {
-  "id": "<唯一步骤ID>",
+  "id": "<唯一节点 ID>",
   "type": "agent",
-  "dependsOn": ["<依赖的步骤ID>"],
   "input": {
     "preset": "<来自可用 Agent 列表的 agent id>",
-    "prompt": "<该步骤自身的任务描述，不包含上游数据>",
-    "context": { "<上游步骤ID>": "steps.<上游步骤ID>.output.summary" },
+    "prompt": "<该节点自身的任务描述，不包含上游数据>",
+    "context": { "<上游节点ID>": "steps.<上游节点ID>.output.summary" },
     "outputMode": "plain-text" | "structured",
     "expectedOutput": "<可选的验收说明，见下>"
-  }
+  },
+  "outputContract": <可选: JSON Schema，声明 agent 输出结构>
 }
 
 **expectedOutput（验收说明，可选）**
 用自然语言写"怎样算这一步做完了"，判分老师会拿这段话去对照 agent 的实际输出 + 工具调用事实打分。
 - 留空 / 不写这个字段 → 系统跳过判分，只看 SDK 执行成功与否
-- 写了 → 判分老师只读这段文字，**不会**看 prompt，所以别指望它从 prompt 里推理
-- 只写验收要求，不写任务指令；只写看得见的交付物，不写内部步骤
-- 有硬性工具调用需求（必须出图/必须写文件/必须发消息），就明确写出来——判分老师能看到工具调用次数和工具名
-- 纯文本分析/纯思考类任务，写明"不需要调用工具"，避免判分老师误判
-- 如果用户需求里没有明显的验收边界（比如只是"总结一下"），就留空，不要硬凑
-示例：
-  "expectedOutput": "必须调用 generate_image 工具生成至少 1 张图片，输出里包含图片链接"
-  "expectedOutput": "纯文本竞品分析，输出包含至少 3 个竞品的价格对比；不需要调用任何工具"
-  "expectedOutput": "必须把报告写入 /tmp/report.md，agent 在输出里报告文件路径"
+- 写了 → 判分老师只读这段文字，**不会**看 prompt
+- 有硬性工具调用需求（出图/写文件/发消息），明确写出来
+- 纯文本任务写明"不需要调用工具"；无明显验收边界就留空
 
-### 2. 条件分支 if-else — 根据上游步骤输出决定走哪条分支
-{
-  "id": "<唯一步骤ID>",
-  "type": "if-else",
-  "dependsOn": ["<依赖的步骤ID>"],
-  "input": {
-    "condition": { "op": "gt", "left": "steps.<步骤ID>.output.<字段>", "right": <值> },
-    "then": ["<条件为真时执行的步骤ID列表>"],
-    "else": ["<条件为假时执行的步骤ID列表，可选>"]
-  }
-}
-condition 支持的操作：
+### 2. if-else — 条件分支
+{ "id": "<节点ID>", "type": "if-else", "input": { "condition": <ConditionExpr> } }
+出边：必须恰好 1 条 then + 1 条 else，且 then/else 分支的所有路径必须汇合到同一节点（merge）。
+merge 节点是 if-else 之后的下一个"公共后继"。
+
+condition 支持:
 - { "op": "exists", "ref": "steps.xxx.output.yyy" }
 - { "op": "eq"|"neq"|"gt"|"lt", "left": "<引用>", "right": <值> }
 - { "op": "and"|"or", "conditions": [<子条件>] }
 - { "op": "not", "condition": <子条件> }
 
-检测步骤执行是否成功（常用于 if-else）：
-- 推荐：{ "op": "eq", "left": "steps.<ID>.output.outcome", "right": "done" }
-- 简写：{ "op": "eq", "left": "steps.<ID>.success", "right": true }
-⚠️ 禁止使用 steps.<ID>.output.success（该字段不存在），应使用 steps.<ID>.success 或 steps.<ID>.output.outcome
+检测步骤执行成功: { "op": "eq", "left": "steps.<ID>.success", "right": true }
 
-### 3. 遍历循环 for-each — 遍历集合中的每一项
-{
-  "id": "<唯一步骤ID>",
-  "type": "for-each",
-  "dependsOn": ["<产生集合的步骤ID>"],
-  "input": {
-    "collection": "steps.<步骤ID>.output.<数组字段>",
-    "itemVar": "item",
-    "body": ["<循环体内执行的步骤ID列表>"],
-    "maxIterations": 50
-  }
-}
+### 3. for-each — 遍历集合
+{ "id": "<ID>", "type": "for-each", "input": {
+  "collection": "steps.<ID>.output.<数组字段>",
+  "itemVar": "item",
+  "maxIterations": 50
+}}
+出边：1 条 body (指向 body 起点) + 1 条 next (指向循环退出后继)。
+body 内用 "{{ itemVar }}" 引用当前元素，不要在 body 外引用。
+**不同的 for-each 节点 itemVar 名必须全局唯一**（V3 校验器按名字判定作用域）。
 
-### 4. 条件循环 while / do-while — 条件成立时重复执行
-{
-  "id": "<唯一步骤ID>",
-  "type": "while",
-  "dependsOn": ["<依赖的步骤ID>"],
-  "input": {
-    "condition": { "op": "exists", "ref": "steps.<步骤ID>.output.hasMore" },
-    "body": ["<循环体内执行的步骤ID列表>"],
-    "maxIterations": 20,
-    "mode": "while"
-  }
-}
-- mode："while"（默认，先判断后执行）或 "do-while"（先执行一次再判断）。**当 condition 依赖循环体内部步骤输出或 state 时必须用 do-while**，否则首轮条件为 null，永远不会执行
-- 循环需要**跨迭代共享数据**时加 state 字段（反馈循环、累计计数、上轮结果作为本轮输入）：
+### 4. while / do-while — 条件循环
+{ "id": "<ID>", "type": "while", "input": {
+  "condition": <ConditionExpr>,
+  "maxIterations": 20,
+  "mode": "while" | "do-while",
+  "state": { "initial": {...}, "update": {...} }
+}}
+出边：1 条 body + 1 条 next。
+- mode: while 先判断后执行；do-while 先执行再判断
+- **condition 如果依赖 body 输出或 state，必须用 do-while**
+- condition 的引用必须是该循环的**拓扑前驱**或 state 字段；不能直接引用 body 内节点（V3 拒绝）
+- 跨迭代数据用 state: initial (首轮值) + update (每轮末更新规则)
+
+### 5. parallel + join — 并发分支
+parallel 节点出 N≥2 条 next 边到各分支起点（可带 branchIndex 排序），
+所有分支最终汇到同一个 join 节点，join 再接后续。
+{ "id": "fan", "type": "parallel", "input": { "onBranchFail": "wait-all" } }
+{ "id": "sync", "type": "join", "input": {} }
+
+### 6. wait / notification / capability / approval
+wait: { "type": "wait", "input": { "durationMs": 1000 } }
+notification / capability: 输入由 preset 提供
+approval: 人工审批门（需要 approvers 配置）
+
+## 边 (edges) 示例
 \`\`\`json
-"state": {
-  "initial": { "lastScore": 0, "lastFeedback": null },
-  "update":  { "lastScore": "steps.<body-id>.output.score", "lastFeedback": "steps.<body-id>.output.feedback" }
-}
-\`\`\`
-  - initial 是首轮进入前的值（必须对象），body 步骤通过 \`state.<字段>\` 读取本轮开始时的值
-  - update 在每轮结束后重算 state 字段（浅合并，未写的字段保留）
-  - state.xxx 引用**只能**出现在 while/do-while 的 body 步骤或 condition 里，别处写会报错
-  - 循环外部通过 \`steps.<while-id>.output.state\` 读最终状态
-- **反馈循环示例**（跑到 QC 打分 ≥ 0.9 为止）：
-\`\`\`json
-{ "id": "refine", "type": "while",
-  "input": {
-    "mode": "do-while",
-    "condition": { "op": "lt", "left": "state.lastQC.score", "right": 0.9 },
-    "body": ["work", "qc"],
-    "maxIterations": 5,
-    "state": { "initial": { "lastQC": null }, "update": { "lastQC": "steps.qc.output" } }
-  }
-},
-{ "id": "work", "type": "agent", "input": { "preset": "...", "prompt": "...", "context": { "prev": "state.lastQC" } } },
-{ "id": "qc",   "type": "agent", "dependsOn": ["work"], "input": { "preset": "...", "prompt": "打分", "outputMode": "structured" } }
+// 线性: a → b → c
+{ "from": "a", "to": "b", "kind": "next" }
+{ "from": "b", "to": "c", "kind": "next" }
+
+// if-else (head → then/else → merge)
+{ "from": "gate", "to": "yes", "kind": "then" }
+{ "from": "gate", "to": "no",  "kind": "else" }
+{ "from": "yes",  "to": "merge", "kind": "next" }
+{ "from": "no",   "to": "merge", "kind": "next" }
+
+// for-each
+{ "from": "loop", "to": "step-in-body", "kind": "body" }
+{ "from": "loop", "to": "after-loop",   "kind": "next" }
+// body 内最后一个节点可不出边（V3 runtime 自动迭代）
+
+// parallel
+{ "from": "fan", "to": "branch-1", "kind": "next", "branchIndex": 0 }
+{ "from": "fan", "to": "branch-2", "kind": "next", "branchIndex": 1 }
+{ "from": "branch-1", "to": "sync", "kind": "next" }
+{ "from": "branch-2", "to": "sync", "kind": "next" }
 \`\`\`
 
-## 控制流封装原则与对外 output 约定
-if-else / for-each / while 都是**封装节点**，外部步骤**禁止**在 dependsOn 或 \`steps.<body-id>.output.xxx\` 里引用循环体 / then / else 内的子步骤；要消费数据只能读控制流自身的 output。
+## 对外 output 约定
+- **while / do-while** → { state, iterations, errors } — 外部读 \`steps.<id>.output.state.<字段>\`
+- **for-each** → { results, count } — 外部读 \`steps.<id>.output.results[N].output.<字段>\`
+- **if-else** → { branch: "then"|"else" } — 没有数据通道，要消费分支内结果就把消费节点放进同一分支
+- **agent** → 字段 summary（主要文本）、outcome ("done"|"error"|"failed")；不要引用 content/text/result
 
-三种控制流的 output 结构：
-- **while / do-while** → \`{ state, iterations, errors }\`。要让外部拿到 body 产生的结果，**必须**通过 \`state.update\` 把结果搬进 state；外部读 \`steps.<while-id>.output.state.<字段>\`
-- **for-each** → \`{ results, count }\`。\`results\` 是数组，每元素是该轮**最后一个** body 步骤的完整 stepResult；外部读 \`steps.<for-id>.output.results[N].output.<字段>\`（两层 output）
-- **if-else** → \`{ branch: "then" | "else" }\`，**没有数据通道**。要消费 then/else 内步骤的结果：把消费步骤也放进同一分支，或让分支内步骤写文件落盘
-
-同一父容器下的兄弟 body 步骤按定义顺序可互相引用（内部视图）。跨迭代的"上一轮结果"用 state，不要用 \`steps.<body-id>.output\` 引用下一轮才执行的步骤。
+## 引用规则
+- \`{{ steps.X.output.yyy }}\` 或 \`steps.X.output.yyy\` — X 必须是引用节点的**拓扑前驱**（即 X 能通过边路径到达当前节点）
+- \`{{ itemVar }}\` — 仅在对应 for-each 的 body 内使用
+- \`state.xxx\` — 仅在对应 while 的 body 或 condition 中使用
 
 ## 规则
-- 步骤 ID 使用 kebab-case，全局唯一
-- dependsOn 引用必须在前面已定义的步骤 ID，无公共依赖的步骤自动并行
-- **有 dependsOn 的 agent 步骤，必须在 input 中加 context 字段**，把所有上游步骤的输出引用进来
-- prompt 只描述本步骤自身的任务，不要把上游数据直接写进 prompt
-- 上游数据通过 context 传递，Agent 运行时会自动获得上游的完整输出
-- agent 步骤的输出字段只有：summary（主要文本输出）、outcome（"done"|"error"|"failed"）——不要引用 content、text、result 等不存在的字段
-- 每个步骤只负责自己的工作边界
-- agent 步骤只能使用【可用 Agent】列表中的 preset id，不得自造 id
-- if-else/for-each/while 的 then/else/body 引用的步骤 ID 也必须定义在 steps 数组中
-- 优先用简单的线性流程；只有当用户描述明确包含条件判断、循环遍历等逻辑时才使用控制流步骤
-- 如果现有 Agent 不足以完成任务，返回如下 JSON：
-  { "insufficient_agents": true, "suggestion": "<说明需要补充哪类 Agent>" }
-- 只输出合法 JSON，不添加 markdown 格式和任何解释文字`;
+- 节点 ID 用 kebab-case，首字母必须为字母
+- 入口节点唯一（没有非 on-error 入边）
+- 控制流节点（if-else / for-each / while / parallel）**必须有出边**，不能做尾节点
+- agent 节点只能用【可用 Agent】里的 preset id
+- 优先线性结构，只有用户明确描述分支/循环时才使用控制流
+- Agent 不足时返回: { "insufficient_agents": true, "suggestion": "<说明>" }
+- 只输出合法 JSON，不要 markdown 标记或解释文字`;
 
 function buildAgentListBlock(agents: AgentPresetDirectoryItem[]): string {
   if (agents.length === 0) {
@@ -164,22 +158,27 @@ function buildAgentListBlock(agents: AgentPresetDirectoryItem[]): string {
 }
 
 function validateAgentPresets(dsl: unknown, validIds: Set<string>): string[] {
-  if (!dsl || typeof dsl !== 'object' || !('steps' in dsl)) return [];
-  const steps = (dsl as { steps: unknown }).steps;
-  if (!Array.isArray(steps)) return [];
+  if (!dsl || typeof dsl !== 'object') return [];
+  const container = dsl as { steps?: unknown; nodes?: unknown };
+  const items = Array.isArray(container.nodes)
+    ? container.nodes
+    : Array.isArray(container.steps)
+      ? container.steps
+      : null;
+  if (!items) return [];
 
   const errors: string[] = [];
-  for (const step of steps) {
-    if (!step || typeof step !== 'object') continue;
-    const s = step as { id?: unknown; type?: unknown; input?: unknown };
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const s = item as { id?: unknown; type?: unknown; input?: unknown };
     if (s.type !== 'agent') continue;
     const input = s.input as Record<string, unknown> | undefined;
     if (!input) continue;
     const preset = input.preset;
     if (typeof preset !== 'string' || !preset.trim()) {
-      errors.push(`Agent step "${String(s.id)}" is missing required "preset" field`);
+      errors.push(`Agent node "${String(s.id)}" is missing required "preset" field`);
     } else if (!validIds.has(preset)) {
-      errors.push(`Agent step "${String(s.id)}" references unknown preset "${preset}" — only use IDs from the available agents list`);
+      errors.push(`Agent node "${String(s.id)}" references unknown preset "${preset}" — only use IDs from the available agents list`);
     }
   }
   return errors;

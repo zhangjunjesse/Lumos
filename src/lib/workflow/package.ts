@@ -19,7 +19,8 @@ import {
   createAgentPreset,
 } from '@/lib/db/agent-presets';
 import { getDb } from '@/lib/db/connection';
-import type { AnyWorkflowDSL, WorkflowStep } from './types';
+import type { WorkflowDSLV3 } from './types';
+import type { WorkflowNode } from './types-v3';
 
 // ---------------------------------------------------------------------------
 // Package format
@@ -59,7 +60,7 @@ export interface WorkflowPackageAgent {
 export interface WorkflowPackage {
   format: typeof PACKAGE_FORMAT;
   exportedAt: string;
-  workflow: AnyWorkflowDSL;
+  workflow: WorkflowDSLV3;
   agents: Record<string, WorkflowPackageAgent>;
 }
 
@@ -74,13 +75,13 @@ const BUILTIN_PREFIX = 'builtin-';
  * Resolves each non-builtin agent step's preset into the `agents` map.
  * Checks both workflow-agent and conversation presets (same order as runtime).
  */
-export function exportWorkflowPackage(dsl: AnyWorkflowDSL): WorkflowPackage {
+export function exportWorkflowPackage(dsl: WorkflowDSLV3): WorkflowPackage {
   const agents: Record<string, WorkflowPackageAgent> = {};
   const missing: string[] = [];
 
-  for (const step of dsl.steps) {
-    if (step.type !== 'agent') continue;
-    const presetId = (step.input as Record<string, unknown> | undefined)?.preset as string | undefined;
+  for (const node of dsl.nodes) {
+    if (node.type !== 'agent') continue;
+    const presetId = (node.input as Record<string, unknown> | undefined)?.preset as string | undefined;
     if (!presetId || presetId.startsWith(BUILTIN_PREFIX)) continue;
     if (agents[presetId]) continue;
 
@@ -88,7 +89,7 @@ export function exportWorkflowPackage(dsl: AnyWorkflowDSL): WorkflowPackage {
     if (agent) {
       agents[presetId] = agent;
     } else {
-      missing.push(`step "${step.id}" 引用的 preset ${presetId}`);
+      missing.push(`node "${node.id}" 引用的 preset ${presetId}`);
     }
   }
 
@@ -152,7 +153,7 @@ function resolvePresetToPackageAgent(presetId: string): WorkflowPackageAgent | n
 // ---------------------------------------------------------------------------
 
 export interface ImportResult {
-  dsl: AnyWorkflowDSL;
+  dsl: WorkflowDSLV3;
   createdPresets: Array<{ id: string; name: string }>;
 }
 
@@ -220,16 +221,16 @@ export function importWorkflowPackage(pkg: WorkflowPackage): ImportResult {
       createdPresets.push({ id: newId, name });
     }
 
-    // Rewrite DSL step preset IDs
-    const steps = pkg.workflow.steps.map((step): WorkflowStep => {
-      if (step.type !== 'agent') return step;
-      const input = step.input as Record<string, unknown> | undefined;
+    // Rewrite DSL node preset IDs
+    const nodes = pkg.workflow.nodes.map((node): WorkflowNode => {
+      if (node.type !== 'agent') return node;
+      const input = node.input as Record<string, unknown> | undefined;
       const oldPresetId = input?.preset as string | undefined;
-      if (!oldPresetId || !idMapping.has(oldPresetId)) return step;
-      return { ...step, input: { ...input, preset: idMapping.get(oldPresetId) } };
+      if (!oldPresetId || !idMapping.has(oldPresetId)) return node;
+      return { ...node, input: { ...input, preset: idMapping.get(oldPresetId) } };
     });
 
-    return { dsl: { ...pkg.workflow, steps }, createdPresets };
+    return { dsl: { ...pkg.workflow, nodes }, createdPresets };
   })();
 }
 
@@ -250,7 +251,8 @@ export function isValidWorkflowPackage(data: unknown): data is WorkflowPackage {
   if (obj.format !== PACKAGE_FORMAT) return false;
   if (!obj.workflow || typeof obj.workflow !== 'object') return false;
   const wf = obj.workflow as Record<string, unknown>;
-  if (!wf.version || !Array.isArray(wf.steps)) return false;
+  if (wf.version !== 'v3') return false;
+  if (!Array.isArray(wf.nodes) || !Array.isArray(wf.edges)) return false;
   if (obj.agents !== undefined && typeof obj.agents !== 'object') return false;
   return true;
 }

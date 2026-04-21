@@ -36,7 +36,7 @@ export function useCanvasDebug(workflowId: string | null) {
       setMenuTarget({
         stepId: n.id,
         stepType: n.data.stepType,
-        inContainer: !!n.parentId,
+        inContainer: !!n.data.containerId,
         x: event.clientX,
         y: event.clientY,
       });
@@ -50,6 +50,8 @@ export function useCanvasDebug(workflowId: string | null) {
   const renderDetail = () => (enabled && detailStepId ? (
     <DebugOutputPanel
       stepId={detailStepId}
+      workflowId={workflowId}
+      latestRunId={snapshot?.latestRunId ?? null}
       output={detailOutput}
       loading={detailLoading}
       stale={detailStale}

@@ -44,7 +44,13 @@ function extractDslFromText(text: string): Record<string, unknown> | null {
 function tryParseDsl(json: string): Record<string, unknown> | null {
   try {
     const obj = JSON.parse(json);
-    if (obj && typeof obj === 'object' && 'steps' in obj && Array.isArray(obj.steps)) {
+    if (
+      obj &&
+      typeof obj === 'object' &&
+      (obj as { version?: unknown }).version === 'v3' &&
+      Array.isArray((obj as { nodes?: unknown }).nodes) &&
+      Array.isArray((obj as { edges?: unknown }).edges)
+    ) {
       return obj as Record<string, unknown>;
     }
   } catch { /* not valid JSON */ }

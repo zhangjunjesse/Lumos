@@ -57,6 +57,8 @@ export interface DebugSessionSnapshot {
   session: DebugSession | null;
   /** stepId → 缓存元数据（不含 output payload，避免一次拉满） */
   cachedSteps: Record<string, DebugStepCacheMeta>;
+  /** 最近一次 debug run 的 schedule_run_history.id，用于跳转到完整执行记录页 */
+  latestRunId: string | null;
 }
 
 export interface DebugStepCacheMeta {

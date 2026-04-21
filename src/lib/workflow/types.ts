@@ -1,5 +1,8 @@
 import type { Workflow } from 'openworkflow';
 import type { AgentStepCodeConfig } from './code-handler-types';
+import type { WorkflowDSLV3 } from './types-v3';
+
+export type { WorkflowDSLV3 } from './types-v3';
 
 export type JsonPrimitive = string | number | boolean | null;
 
@@ -9,8 +12,6 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 export type WorkflowStepType = 'agent' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
-export type WorkflowStepTypeV1 = 'agent' | 'notification' | 'capability';
-export type WorkflowStepTypeV2Control = 'if-else' | 'for-each' | 'while';
 export const WORKFLOW_AGENT_ROLES = ['worker', 'researcher', 'coder', 'integration'] as const;
 export type WorkflowAgentRole = (typeof WORKFLOW_AGENT_ROLES)[number];
 export type WorkflowAgentExecutionMode = 'auto' | 'claude' | 'synthetic';
@@ -109,6 +110,21 @@ export interface WaitStepInput extends WorkflowStepRuntimeCarrier {
   durationMs: number;
 }
 
+export interface ApprovalStepInput extends WorkflowStepRuntimeCarrier {
+  prompt: string;
+  approvers: {
+    mode: 'any' | 'all' | 'quorum';
+    users: string[];
+    quorum?: number;
+  };
+  formSchema?: Record<string, unknown>;
+  timeout?: {
+    duration: string;
+    onTimeout: 'approve' | 'reject' | 'goto';
+    target?: string;
+  };
+}
+
 export type ConditionExpr =
   | { op: 'exists'; ref: string }
   | { op: 'eq'; left: string; right: unknown }
@@ -151,35 +167,16 @@ export interface WorkflowParamDef {
   required?: boolean;
 }
 
-export interface WorkflowDSL {
-  version: 'v1';
-  name: string;
-  params?: WorkflowParamDef[];
-  /** Maximum total workflow execution time in milliseconds */
-  maxDurationMs?: number;
-  steps: WorkflowStep[];
-}
-
-export interface WorkflowDSLV2 {
-  version: 'v2';
-  name: string;
-  description?: string;
-  params?: WorkflowParamDef[];
-  /** Maximum total workflow execution time in milliseconds */
-  maxDurationMs?: number;
-  steps: WorkflowStep[];
-}
-
-export type AnyWorkflowDSL = WorkflowDSL | WorkflowDSLV2;
+export type AnyWorkflowDSL = WorkflowDSLV3;
 
 export interface CompiledWorkflowManifest {
-  dslVersion: 'v1' | 'v2';
+  dslVersion: 'v3';
   artifactKind: 'workflow-factory-module';
   exportedSymbol: 'buildWorkflow';
   workflowName: string;
   workflowVersion: string;
   stepIds: string[];
-  stepTypes: WorkflowStepType[];
+  stepTypes: (WorkflowStepType | 'parallel' | 'join' | 'approval')[];
   stepTimeoutsMs?: number[];
   /** Max total workflow execution time from DSL (milliseconds) */
   maxDurationMs?: number;
@@ -189,6 +186,10 @@ export interface CompiledWorkflowManifest {
 export interface WorkflowStepLifecycleEvent {
   workflowRunId: string;
   stepId: string;
+  /** 1-based attempt number within a retry loop; only set by `__executeStep`. */
+  attempt?: number;
+  /** Total attempts allowed (retryPolicy.maximumAttempts ?? 1). */
+  maxAttempts?: number;
 }
 
 export interface WorkflowStepOutputEvent extends WorkflowStepLifecycleEvent {
@@ -203,13 +204,14 @@ export interface WorkflowRuntimeBindings {
   notificationStep: (input: NotificationStepInput) => Promise<StepResult>;
   capabilityStep: (input: CapabilityStepInput) => Promise<StepResult>;
   waitStep: (input: WaitStepInput) => Promise<StepResult>;
+  approvalStep?: (input: ApprovalStepInput) => Promise<StepResult>;
   onStepStarted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepCompleted?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   onStepSkipped?: (event: WorkflowStepLifecycleEvent) => Promise<void> | void;
   /**
-   * Fires after container steps (if-else / for-each / while) emit their
-   * aggregated output. Regular steps persist via agentStep/etc. wrappers, so
-   * this hook only fires for container emitters in compiler-v2-emitters.ts.
+   * Fires after container nodes (if-else / for-each / while) emit their
+   * aggregated output. Regular nodes persist via agentStep/etc. wrappers,
+   * so this hook only fires for container emitters in compiler-v3.
    */
   onStepOutput?: (event: WorkflowStepOutputEvent) => Promise<void> | void;
 }

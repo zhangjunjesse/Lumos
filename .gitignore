@@ -78,3 +78,5 @@ resources/python-runtime/
 /search-ai-*.ts
 /simple-ai-search.js
 /test-deepsearch.ts
+/verify-*.mjs
+/repro-*.mjs

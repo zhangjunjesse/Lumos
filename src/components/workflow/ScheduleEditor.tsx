@@ -15,9 +15,10 @@ import {
 } from '@/components/ui/dialog';
 import { INTERVALS, type ScheduledWorkflow } from './ScheduleList';
 import { WorkflowParamForm } from './WorkflowParamForm';
-import type { WorkflowDSL, WorkflowParamDef } from '@/lib/workflow/types';
+import type { WorkflowParamDef } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 
-const EMPTY_DSL = JSON.stringify({ version: 'v2', name: '', steps: [] }, null, 2);
+const EMPTY_DSL = JSON.stringify({ version: 'v3', name: '', nodes: [], edges: [] }, null, 2);
 
 type RunMode = 'scheduled' | 'once';
 
@@ -199,8 +200,8 @@ export function ScheduleEditor({
 
   const parsedDsl = (() => {
     try {
-      const parsed = JSON.parse(form.dslText) as WorkflowDSL;
-      return parsed?.steps?.length > 0 ? parsed : null;
+      const parsed = JSON.parse(form.dslText) as WorkflowDSLV3;
+      return (parsed?.nodes?.length ?? 0) > 0 ? parsed : null;
     } catch { return null; }
   })();
 
@@ -346,7 +347,7 @@ export function ScheduleEditor({
             {parsedDsl ? (
               <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                 {parsedDsl.name && <span className="font-medium text-foreground mr-2">{parsedDsl.name}</span>}
-                {parsedDsl.steps.length} 个步骤
+                {parsedDsl.nodes.length} 个节点
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-border/40 py-3 text-center text-xs text-muted-foreground">

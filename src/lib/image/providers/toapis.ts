@@ -27,7 +27,10 @@ const SUBMIT_PATH = '/v1/images/generations'
 const UPLOAD_PATH = '/v1/uploads/images'
 const INITIAL_WAIT_MS = 2000
 const POLL_INTERVAL_MS = 3000
-const MAX_WAIT_MS = 300_000
+// toapis 单任务实测最长 ~6 分钟，留 ~40% 余量
+const MAX_WAIT_MS = 900_000
+// 连续 N 次 poll 全部失败才放弃，否则视为网络抖动继续轮询
+const MAX_CONSECUTIVE_POLL_ERRORS = 5
 
 type ToApisTaskStatus = 'queued' | 'in_progress' | 'completed' | 'failed'
 
@@ -396,12 +399,38 @@ export function createToApisProvider(config: ImageProviderConfig): ImageProvider
 
       const deadline = Date.now() + MAX_WAIT_MS
       let latest = submitResult
+      // 单次 poll 网络抖动（TLS 断开、5xx、429）不应杀死整个 generation。
+      // 累计连续失败到阈值才放弃，避免 agent 误判失败重新 submit 导致 toapis 后台任务堆积。
+      let consecutiveErrors = 0
 
       while (Date.now() < deadline) {
         checkAbort(request.abortSignal)
-        latest = await getTaskStatus(baseUrl, config.apiKey, taskId, request.abortSignal)
+
+        try {
+          latest = await getTaskStatus(baseUrl, config.apiKey, taskId, request.abortSignal)
+          consecutiveErrors = 0
+        } catch (err) {
+          // 非 retryable 的 ImageGenError（取消/401/402/404/422）立即上抛，不要重试
+          if (err instanceof ImageGenError && !err.retryable) {
+            throw err
+          }
+          consecutiveErrors += 1
+          console.warn(
+            `[toapis] poll transient error (${consecutiveErrors}/${MAX_CONSECUTIVE_POLL_ERRORS}) taskId=${taskId}:`,
+            err instanceof Error ? err.message : String(err),
+          )
+          if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+            throw new ImageGenError(
+              'provider_unavailable',
+              `ToAPIs 轮询连续失败 ${MAX_CONSECUTIVE_POLL_ERRORS} 次，放弃任务 (taskId=${taskId})`,
+              true,
+            )
+          }
+          await sleep(POLL_INTERVAL_MS, request.abortSignal)
+          continue
+        }
+
         const status = latest.status
-        const progress = typeof latest.progress === 'number' ? latest.progress : undefined
 
         if (status === 'completed') {
           const urls = (latest.result?.data ?? [])
@@ -429,11 +458,13 @@ export function createToApisProvider(config: ImageProviderConfig): ImageProvider
           })
         }
 
-        request.onProgress?.({ phase: 'polling', percent: progress })
+        // toapis 的 progress 字段会长时间谎报（比如一直卡在 10 直到完成瞬间跳到 100），
+        // 不透传避免 UI 展示错误数值。
+        request.onProgress?.({ phase: 'polling' })
         await sleep(POLL_INTERVAL_MS, request.abortSignal)
       }
 
-      throw new ImageGenError('timeout', 'ToAPIs 图片生成超时（300 秒）', true)
+      throw new ImageGenError('timeout', 'ToAPIs 图片生成超时（15 分钟）', true)
     },
 
     optionsSchema(): ProviderOptionsSchema {

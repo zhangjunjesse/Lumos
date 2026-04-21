@@ -5,8 +5,8 @@ import { getProviderModelOptions, resolveProviderModelForRequest } from '@/lib/m
 import { generateObjectWithFallback } from '@/lib/text-generator';
 import type { Task } from '@/lib/task-management/types';
 import { getSchedulingPlannerConfig } from '@/lib/workflow/agent-config';
-import { validateWorkflowDsl } from '@/lib/workflow/dsl';
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import { validateDsl as validateWorkflowDslV3 } from '@/lib/workflow/validate-dsl-v3';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 import type { ApiProvider } from '@/types';
 import {
   type SchedulingPlanAnalysis,
@@ -38,7 +38,7 @@ export interface SchedulingPlan {
   source: SchedulingPlanSource;
   reason: string;
   estimatedDurationSeconds: number;
-  workflowDsl?: WorkflowDSL;
+  workflowDsl?: WorkflowDSLV3;
   analysis: SchedulingPlanAnalysis;
   model?: string;
   diagnostics?: SchedulingPlanDiagnostics;
@@ -105,9 +105,12 @@ export async function resolveSchedulingPlan(task: Task): Promise<SchedulingPlan>
           throw new Error('Planner selected workflow but did not provide workflowDsl');
         }
 
-        const validation = validateWorkflowDsl(parsed.workflowDsl);
+        const validation = validateWorkflowDslV3(parsed.workflowDsl);
         if (!validation.valid) {
-          throw new Error(`Planner returned invalid workflow DSL: ${validation.errors.join('; ')}`);
+          const messages = validation.issues
+            .filter((issue) => issue.severity === 'error')
+            .map((issue) => `${issue.code} ${issue.jsonPath}: ${issue.message}`);
+          throw new Error(`Planner returned invalid workflow DSL: ${messages.join('; ')}`);
         }
 
         const semanticErrors = validatePlannerWorkflowSemantics(parsed.workflowDsl);

@@ -1,4 +1,4 @@
-import { generateWorkflow } from './compiler';
+import { generateWorkflowFromDsl } from './compiler';
 import {
   submitWorkflow,
   getWorkflowStatus,
@@ -6,20 +6,19 @@ import {
   shutdownWorker,
 } from './engine';
 
-const testWorkflowArtifact = generateWorkflow({
-  spec: {
-    version: 'v1',
-    name: 'test-workflow',
-    steps: [
-      {
-        id: 'step1',
-        type: 'agent',
-        input: {
-          prompt: 'Run smoke workflow',
-        },
+const testWorkflowArtifact = generateWorkflowFromDsl({
+  version: 'v3',
+  name: 'test-workflow',
+  nodes: [
+    {
+      id: 'step1',
+      type: 'agent',
+      input: {
+        prompt: 'Run smoke workflow',
       },
-    ],
-  },
+    },
+  ],
+  edges: [],
 });
 
 async function testSubmitWorkflow() {

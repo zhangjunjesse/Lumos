@@ -14,7 +14,17 @@ export const TOOLS = [
   },
   {
     name: 'write_spreadsheet',
-    description: 'Create or overwrite an Excel (.xlsx) file with data, formulas, and styles.',
+    description: [
+      'Create or overwrite an Excel (.xlsx) file with data, formulas, and styles.',
+      '',
+      'Example styles (apply bold+yellow bg to A1, right-align B2):',
+      '  styles: [',
+      '    { cell: "A1", style: { bold: true, bgColor: "#FFFF00" } },',
+      '    { cell: "B2", style: { alignment: "right" } }',
+      '  ]',
+      '',
+      'IMPORTANT: each style entry MUST be { cell: "<A1-style address>", style: { ...attrs } }. Do NOT use flat keys like { row: 0, bold: true } — that will be rejected.',
+    ].join('\n'),
     inputSchema: {
       type: 'object',
       properties: {
@@ -27,8 +37,43 @@ export const TOOLS = [
               name: { type: 'string' },
               headers: { type: 'array', items: { type: 'string' } },
               rows: { type: 'array', items: { type: 'array' } },
-              formulas: { type: 'array', items: { type: 'object', properties: { cell: { type: 'string' }, formula: { type: 'string' } }, required: ['cell', 'formula'] } },
-              styles: { type: 'array', items: { type: 'object' } },
+              formulas: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    cell: { type: 'string', pattern: '^[A-Za-z]+[0-9]+$', description: 'A1-style cell address, e.g. "B11"' },
+                    formula: { type: 'string', description: 'Excel formula without leading "=", e.g. "SUM(A1:A10)"' },
+                  },
+                  required: ['cell', 'formula'],
+                  additionalProperties: false,
+                },
+              },
+              styles: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    cell: { type: 'string', pattern: '^[A-Za-z]+[0-9]+$', description: 'A1-style cell address, e.g. "A1"' },
+                    style: {
+                      type: 'object',
+                      properties: {
+                        bold: { type: 'boolean' },
+                        italic: { type: 'boolean' },
+                        fontSize: { type: 'number' },
+                        fontColor: { type: 'string', description: 'Hex color like "#RRGGBB"' },
+                        bgColor: { type: 'string', description: 'Hex color like "#RRGGBB"' },
+                        numFmt: { type: 'string', description: 'Excel number format, e.g. "0.00%"' },
+                        alignment: { type: 'string', enum: ['left', 'center', 'right'] },
+                        wrapText: { type: 'boolean' },
+                      },
+                      additionalProperties: false,
+                    },
+                  },
+                  required: ['cell', 'style'],
+                  additionalProperties: false,
+                },
+              },
               columnWidths: { type: 'array', items: { type: 'number' } },
             },
             required: ['name', 'rows'],

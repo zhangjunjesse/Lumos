@@ -5,12 +5,14 @@
  * Provider logic is in providers/*.ts; persistence in persist.ts.
  */
 
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { resolveProviderForCapability } from '@/lib/provider-resolver'
-import { getSetting, getSession } from '@/lib/db/sessions'
+import { getSetting } from '@/lib/db/sessions'
+import type { ApiProvider } from '@/types'
 import { ensureProvidersRegistered, resolveImageProvider } from './registry'
-import { saveBase64Images, copyToSessionDirectory, createMediaRecord, MEDIA_DIR, DATA_DIR } from './persist'
+import { saveBase64Images, copyToSessionDirectory, createMediaRecord } from './persist'
 import type { ImageGenRequest, ImageInput, ImageSize } from './types'
 import type { SavedImage } from './persist'
 import {
@@ -47,32 +49,59 @@ export interface GenerateImagesResult {
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
+/**
+ * Validate reference image paths and build provider inputs.
+ *
+ * Fails LOUD: if the caller passed N paths and any of them can't be used
+ * (missing, not a file, unreadable), we throw with the specific path and
+ * reason. Silently dropping paths was a bug — the agent got a success
+ * response while the provider received zero references, producing a
+ * hallucinated result indistinguishable from a correct one.
+ *
+ * No path allowlist: the agent already has unrestricted filesystem access
+ * via Read/Bash/workspace.read tools, so gating image-gen on a narrow
+ * MEDIA_DIR/uploads allowlist never bought real security — it only blocked
+ * legitimate workflow use cases where paths live in `~/Downloads/...` or
+ * any other user directory.
+ */
 function validateAndCollectImages(
   params: GenerateImagesParams,
 ): ImageInput[] {
   const images: ImageInput[] = []
 
   if (params.referenceImagePaths?.length) {
-    const allowedRoots = [MEDIA_DIR, path.join(DATA_DIR, '.lumos-uploads')]
-    if (params.sessionId) {
-      try {
-        const sess = getSession(params.sessionId)
-        if (sess?.working_directory) {
-          allowedRoots.push(path.join(sess.working_directory, '.lumos-images'))
-          allowedRoots.push(path.join(sess.working_directory, '.lumos-uploads'))
-        }
-      } catch { /* best effort */ }
-    }
+    const rejections: Array<{ path: string; reason: string }> = []
     for (const filePath of params.referenceImagePaths) {
       const resolved = path.resolve(filePath)
-      const allowed = allowedRoots.some(root => resolved.startsWith(path.resolve(root)))
-      if (!allowed) {
-        console.warn('[image/generate] Blocked path outside allowed dirs:', filePath)
+      let stat: fs.Stats | undefined
+      try {
+        stat = fs.statSync(resolved)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        rejections.push({
+          path: filePath,
+          reason: code === 'ENOENT' ? 'file does not exist' : `stat failed (${code || 'unknown'})`,
+        })
         continue
       }
-      if (fs.existsSync(resolved)) {
-        images.push({ type: 'path', filePath: resolved })
+      if (!stat.isFile()) {
+        rejections.push({ path: filePath, reason: 'path is not a regular file' })
+        continue
       }
+      try {
+        fs.accessSync(resolved, fs.constants.R_OK)
+      } catch {
+        rejections.push({ path: filePath, reason: 'file is not readable' })
+        continue
+      }
+      images.push({ type: 'path', filePath: resolved })
+    }
+    if (rejections.length > 0) {
+      const summary = rejections.map(r => `  - ${r.path} (${r.reason})`).join('\n')
+      throw new Error(
+        `reference_image_paths 中有 ${rejections.length}/${params.referenceImagePaths.length} 个路径无法使用，`
+        + `已中止生成以避免 provider 收到不完整的参考图集合。被拒路径：\n${summary}`,
+      )
     }
   }
 
@@ -85,13 +114,61 @@ function validateAndCollectImages(
   return images
 }
 
+/* ── In-flight dedupe ────────────────────────────────────── */
+
+/**
+ * Concurrent identical generation requests (same prompt + refs + params) share
+ * a single in-flight Promise. This prevents agent retries — triggered e.g. by
+ * client SSE idle abort while the old tool handler is still awaiting a long
+ * toapis poll — from submitting a second task with the same content and
+ * piling up work on the provider backend.
+ *
+ * Entries are evicted when the underlying promise settles (success or
+ * failure); a TTL sweep guards against any edge case where settlement is
+ * missed.
+ */
+interface InFlightEntry {
+  promise: Promise<GenerateImagesResult>
+  startedAt: number
+}
+const INFLIGHT_TTL_MS = 15 * 60 * 1000
+const inFlight = new Map<string, InFlightEntry>()
+
+function sweepExpired(now = Date.now()): void {
+  for (const [key, entry] of inFlight) {
+    if (now - entry.startedAt > INFLIGHT_TTL_MS) inFlight.delete(key)
+  }
+}
+
+function computeDedupeKey(params: GenerateImagesParams, providerId: string): string {
+  const referenceFingerprints = [
+    ...(params.referenceImagePaths || []).map((p) => `path:${p}`),
+    ...(params.referenceImages || []).map(
+      (r) => `b64:${r.mimeType}:${r.data.length}:${r.data.slice(0, 32)}`,
+    ),
+  ].sort()
+  const parts = [
+    providerId,
+    params.model || '',
+    params.prompt,
+    params.imageSize || '',
+    params.aspectRatio || '',
+    String(params.n ?? 1),
+    String(params.seed ?? ''),
+    referenceFingerprints.join('|'),
+    JSON.stringify(params.providerOptions ?? {}),
+  ]
+  return crypto.createHash('sha256').update(parts.join('\x00')).digest('hex').slice(0, 32)
+}
+
 /* ── Main entry ──────────────────────────────────────────── */
 
 export async function generateImages(params: GenerateImagesParams): Promise<GenerateImagesResult> {
   await ensureProvidersRegistered()
 
-  // 1. Resolve provider from settings
-  let provider
+  // Resolve provider up front — needed both for the actual call and for the
+  // dedupe key (so identical params but different providers still split).
+  let provider: ApiProvider | undefined
   try {
     provider = resolveProviderForCapability({
       moduleKey: 'image', capability: 'image-gen', allowDefault: false,
@@ -107,6 +184,25 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
     )
   }
 
+  sweepExpired()
+  const dedupeKey = computeDedupeKey(params, provider.id)
+  const existing = inFlight.get(dedupeKey)
+  if (existing) {
+    console.log(`[image/generate] dedupe hit: joining in-flight request (key=${dedupeKey})`)
+    return existing.promise
+  }
+
+  const promise = executeGenerate(params, provider)
+  inFlight.set(dedupeKey, { promise, startedAt: Date.now() })
+  const cleanup = () => { inFlight.delete(dedupeKey) }
+  promise.then(cleanup, cleanup)
+  return promise
+}
+
+async function executeGenerate(
+  params: GenerateImagesParams,
+  provider: ApiProvider,
+): Promise<GenerateImagesResult> {
   const providerEnv = parseProviderExtraEnvObject(provider.extra_env)
   const apiKey = provider.api_key || (typeof providerEnv.API_KEY === 'string' ? providerEnv.API_KEY : '') || ''
   const baseUrl = provider.base_url || undefined

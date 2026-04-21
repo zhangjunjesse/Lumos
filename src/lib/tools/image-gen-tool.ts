@@ -13,6 +13,21 @@ const IMAGE_GEN_TOOL_NAME = 'generate_image';
 const MAX_GENERATIONS_PER_SESSION = 10;
 const MAX_TRACKED_SESSIONS = 256;
 const QUOTA_REQUEST_TIMEOUT_MS = 8_000;
+const QUOTA_MAX_ATTEMPTS = 2;
+const QUOTA_RETRY_BACKOFF_MS = 600;
+
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: unknown }).cause;
+  const causeCode = cause && typeof cause === 'object' && 'code' in cause
+    ? String((cause as { code: unknown }).code)
+    : undefined;
+  const causeMsg = cause instanceof Error ? cause.message : undefined;
+  const parts = [`${err.name}: ${err.message}`];
+  if (causeCode) parts.push(`cause.code=${causeCode}`);
+  if (causeMsg && causeMsg !== err.message) parts.push(`cause=${causeMsg}`);
+  return parts.join(' | ');
+}
 
 /** Module-level counter keyed by sessionId, persists across requests within the same process. */
 const sessionGenerationCounts = new Map<string, number>();
@@ -60,20 +75,35 @@ async function consumeRemoteQuota(
   }
 
   const url = `${getWebBase()}/api/quota/image/consume`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ count, model, action: 'consume' }),
-      signal: AbortSignal.timeout(QUOTA_REQUEST_TIMEOUT_MS),
-    });
-  } catch (err) {
-    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-    return { ok: false, error: `Lumos 云配额接口不可达 (${url}): ${detail}` };
+  const body = JSON.stringify({ count, model, action: 'consume' });
+  let res: Response | undefined;
+  const attemptErrors: string[] = [];
+  for (let attempt = 1; attempt <= QUOTA_MAX_ATTEMPTS; attempt++) {
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body,
+        signal: AbortSignal.timeout(QUOTA_REQUEST_TIMEOUT_MS),
+      });
+      break;
+    } catch (err) {
+      const detail = describeFetchError(err);
+      attemptErrors.push(`#${attempt} ${detail}`);
+      console.warn(`[image-gen-tool] quota fetch attempt ${attempt}/${QUOTA_MAX_ATTEMPTS} failed: ${detail}`);
+      if (attempt < QUOTA_MAX_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, QUOTA_RETRY_BACKOFF_MS * attempt));
+      }
+    }
+  }
+  if (!res) {
+    return {
+      ok: false,
+      error: `Lumos 云配额接口不可达 (${url})，${QUOTA_MAX_ATTEMPTS} 次尝试均失败：${attemptErrors.join(' ; ')}`,
+    };
   }
 
   const rawText = await res.text().catch(() => '');
@@ -127,7 +157,10 @@ async function refundRemoteQuota(
 const inputSchema = {
   prompt: z.string().describe(
     'Detailed English description of the image to generate. '
-    + 'For editing tasks, describe only the requested changes.',
+    + 'For editing tasks, describe only the requested changes. '
+    + 'IMPORTANT: Do NOT embed absolute file paths (e.g. `/Users/.../foo.jpg`) in this field. '
+    + 'If the task references local image files, pass every path via `reference_image_paths` '
+    + 'and describe them here by position only (e.g. "Image 1", "Image 2").',
   ),
   aspect_ratio: z.enum(['1:1', '16:9', '9:16', '3:2', '2:3', '4:3', '3:4'])
     .optional()
@@ -140,7 +173,12 @@ const inputSchema = {
     .describe('Number of images to generate (1-4). Defaults to 1. Use with enable_sequential for consistent multi-image sets.'),
   reference_image_paths: z.array(z.string())
     .optional()
-    .describe('Local file paths of reference images for editing or style transfer.'),
+    .describe(
+      'Local file paths of reference images (absolute paths, .jpg/.png/.webp/.gif/.bmp). '
+      + 'Use for editing, style transfer, multi-reference composition, or any time the task '
+      + 'refers to specific local images. '
+      + 'REQUIRED whenever the task mentions absolute image paths — the paths go HERE, not in `prompt`.',
+    ),
   enable_sequential: z.boolean()
     .optional()
     .describe('Enable sequential group mode for character/style-consistent multi-image generation. Set count>1 when using this.'),
@@ -220,6 +258,26 @@ function buildProviderOptions(args: ImageGenArgs): Record<string, unknown> | und
   return Object.keys(opts).length > 0 ? opts : undefined;
 }
 
+/**
+ * Detect absolute local image file paths embedded in the prompt text.
+ *
+ * Catches the common agent mistake of copying reference-image paths into the
+ * natural-language `prompt` field instead of populating `reference_image_paths`.
+ * Only flags paths that (a) look absolute, (b) have a known image extension,
+ * (c) don't contain newlines or shell metachars that would indicate prose.
+ */
+const PROMPT_EMBEDDED_IMAGE_PATH_RE =
+  /(?:^|[\s([{"'`,])((?:\/|[a-zA-Z]:[\\/])[^\s()[\]{}"'`,<>]+\.(?:jpg|jpeg|png|webp|gif|bmp|heic|heif|avif))(?=$|[\s)\]}"'`,.;:!?])/gi;
+
+function findEmbeddedImagePaths(prompt: string): string[] {
+  if (!prompt) return [];
+  const found = new Set<string>();
+  for (const m of prompt.matchAll(PROMPT_EMBEDDED_IMAGE_PATH_RE)) {
+    found.add(m[1]);
+  }
+  return [...found];
+}
+
 async function runGeneration(args: ImageGenArgs, sessionId: string | undefined, count: number): Promise<CallToolResult> {
   const result = await generateImages({
     prompt: args.prompt,
@@ -257,6 +315,35 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
     + 'generate, draw, create, edit, restyle, or transform images.',
     inputSchema,
     async (args): Promise<CallToolResult> => {
+      // Fail-loud guard: absolute image paths must NEVER appear in `prompt`
+      // text, regardless of whether `reference_image_paths` is populated.
+      // This catches both:
+      //   (a) the silent-hallucination failure (agent inlines all paths into
+      //       prompt and sends zero refs to the provider), and
+      //   (b) the half-right failure (agent populates refs but also copies
+      //       some paths into prompt, which the provider ignores).
+      // Merges paths from prompt with already-passed refs so the agent gets
+      // a single, correct suggested payload. Runs BEFORE quota consumption
+      // so a malformed call doesn't burn the user's quota.
+      const embedded = findEmbeddedImagePaths(args.prompt);
+      if (embedded.length > 0) {
+        const existingRefs = args.reference_image_paths ?? [];
+        const merged = [...new Set([...existingRefs, ...embedded])];
+        return textResult({
+          success: false,
+          error:
+            `Detected ${embedded.length} absolute image path(s) embedded in the prompt text. `
+            + `Absolute paths belong in reference_image_paths, never in prompt. `
+            + `Retry this call with reference_image_paths=${JSON.stringify(merged)} `
+            + `and rewrite the prompt so it refers to them positionally (Image 1, Image 2, …) `
+            + `with NO absolute paths in the prompt string.`,
+          error_source: 'image_generation_input_shape',
+          detected_paths: embedded,
+          suggested_reference_image_paths: merged,
+          hint: '把 detected_paths 里的所有路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
+        }, true);
+      }
+
       const count = bumpSessionCount(key);
       if (count > MAX_GENERATIONS_PER_SESSION) {
         return textResult({

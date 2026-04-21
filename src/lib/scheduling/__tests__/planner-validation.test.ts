@@ -6,23 +6,23 @@ jest.mock('@/lib/db/workflow-agent-presets', () => ({
 
 import {
   validatePlannerWorkflowSemantics,
-  isLongFormSynthesisAgentStep,
+  isLongFormSynthesisAgentNode,
   promptRequestsFileWrite,
   estimateDurationSeconds,
-  dependsOnPlainTextAgentStep,
+  dependsOnPlainTextAgentNode,
 } from '../planner-validation';
-import type { WorkflowDSL, WorkflowStep } from '@/lib/workflow/types';
+import type { AgentNode, WorkflowDSLV3, WorkflowNode, WorkflowEdge } from '@/lib/workflow/types-v3';
 
-function agentStep(
+function agentNode(
   id: string,
   input: Record<string, unknown>,
-  extra?: Partial<WorkflowStep>,
-): WorkflowStep {
+  extra?: Partial<AgentNode>,
+): AgentNode {
   return { id, type: 'agent', input, ...extra };
 }
 
-function dsl(steps: WorkflowStep[]): WorkflowDSL {
-  return { version: 'v1', name: 'test', steps };
+function dsl(nodes: WorkflowNode[], edges: WorkflowEdge[] = []): WorkflowDSLV3 {
+  return { version: 'v3', name: 'test', nodes, edges };
 }
 
 beforeEach(() => {
@@ -36,23 +36,23 @@ beforeEach(() => {
 describe('validatePlannerWorkflowSemantics — researcher check via role', () => {
   test('no error when researcher prompt does not write files', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { role: 'researcher', prompt: 'Summarize the codebase.' }),
+      agentNode('s', { role: 'researcher', prompt: 'Summarize the codebase.' }),
     ]));
     expect(errors).toHaveLength(0);
   });
 
   test('error when researcher prompt requests file write', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { role: 'researcher', prompt: 'Write the report to file /tmp/out.md' }),
+      agentNode('s', { role: 'researcher', prompt: 'Write the report to file /tmp/out.md' }),
     ]));
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('steps.s');
+    expect(errors[0]).toContain('nodes.s');
     expect(errors[0]).toContain('read-only');
   });
 
   test('worker role is allowed to reference file writes', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { role: 'worker', prompt: 'Write the report to file /tmp/out.md' }),
+      agentNode('s', { role: 'worker', prompt: 'Write the report to file /tmp/out.md' }),
     ]));
     expect(errors).toHaveLength(0);
   });
@@ -70,7 +70,7 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
     });
 
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { preset: 'builtin-researcher', prompt: 'Analyze evidence.' }),
+      agentNode('s', { preset: 'builtin-researcher', prompt: 'Analyze evidence.' }),
     ]));
     expect(errors).toHaveLength(0);
     expect(mockGetWorkflowAgentPreset).toHaveBeenCalledWith('builtin-researcher');
@@ -83,7 +83,7 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
     });
 
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { preset: 'builtin-researcher', prompt: 'Write the report content to file /tmp/report.md' }),
+      agentNode('s', { preset: 'builtin-researcher', prompt: 'Write the report content to file /tmp/report.md' }),
     ]));
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('read-only');
@@ -96,7 +96,7 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
     });
 
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { preset: 'builtin-worker', prompt: 'Write the report to file /tmp/out.md' }),
+      agentNode('s', { preset: 'builtin-worker', prompt: 'Write the report to file /tmp/out.md' }),
     ]));
     expect(errors).toHaveLength(0);
   });
@@ -105,7 +105,7 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
     mockGetWorkflowAgentPreset.mockReturnValue(undefined);
 
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { preset: 'unknown-preset', prompt: 'Write output to /tmp/output.md' }),
+      agentNode('s', { preset: 'unknown-preset', prompt: 'Write output to /tmp/output.md' }),
     ]));
     // unknown preset → effectiveRole empty → no researcher check
     expect(errors).toHaveLength(0);
@@ -119,7 +119,7 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
     // Should not throw; resolvePresetRole catches and returns undefined
     expect(() =>
       validatePlannerWorkflowSemantics(dsl([
-        agentStep('s', { preset: 'broken', prompt: 'Summarize.' }),
+        agentNode('s', { preset: 'broken', prompt: 'Summarize.' }),
       ])),
     ).not.toThrow();
   });
@@ -132,14 +132,14 @@ describe('validatePlannerWorkflowSemantics — researcher check via preset', () 
 describe('validatePlannerWorkflowSemantics — timeoutMs', () => {
   test('no error when timeoutMs is omitted', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { role: 'worker', prompt: 'Do something.' }),
+      agentNode('s', { role: 'worker', prompt: 'Do something.' }),
     ]));
     expect(errors).toHaveLength(0);
   });
 
   test('error when timeoutMs is below minimum', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep('s', { role: 'worker', prompt: 'Do something.' }, { policy: { timeoutMs: 1000 } }),
+      agentNode('s', { role: 'worker', prompt: 'Do something.' }, { policy: { timeoutMs: 1000 } }),
     ]));
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('timeoutMs');
@@ -147,7 +147,7 @@ describe('validatePlannerWorkflowSemantics — timeoutMs', () => {
 
   test('no error for long-form synthesis with sufficient timeoutMs', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep(
+      agentNode(
         'synthesize',
         { role: 'integration', prompt: 'Write the final Markdown report.', outputMode: 'plain-text' },
         { policy: { timeoutMs: 240_000 } },
@@ -158,7 +158,7 @@ describe('validatePlannerWorkflowSemantics — timeoutMs', () => {
 
   test('error for long-form synthesis with insufficient timeoutMs', () => {
     const errors = validatePlannerWorkflowSemantics(dsl([
-      agentStep(
+      agentNode(
         'synthesize',
         { role: 'integration', prompt: 'Write the final Markdown report.', outputMode: 'plain-text' },
         { policy: { timeoutMs: 30_000 } },
@@ -171,29 +171,29 @@ describe('validatePlannerWorkflowSemantics — timeoutMs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// isLongFormSynthesisAgentStep
+// isLongFormSynthesisAgentNode
 // ---------------------------------------------------------------------------
 
-describe('isLongFormSynthesisAgentStep', () => {
-  function step(id: string): WorkflowStep {
+describe('isLongFormSynthesisAgentNode', () => {
+  function node(id: string): AgentNode {
     return { id, type: 'agent', input: {} };
   }
 
   test('false when outputMode is not plain-text', () => {
-    expect(isLongFormSynthesisAgentStep(step('s'), { outputMode: 'structured', prompt: 'Write a report' })).toBe(false);
+    expect(isLongFormSynthesisAgentNode(node('s'), { outputMode: 'structured', prompt: 'Write a report' })).toBe(false);
   });
 
   test('true when outputMode=plain-text and prompt contains "report"', () => {
-    expect(isLongFormSynthesisAgentStep(step('s'), { outputMode: 'plain-text', prompt: 'Write the full report.' })).toBe(true);
+    expect(isLongFormSynthesisAgentNode(node('s'), { outputMode: 'plain-text', prompt: 'Write the full report.' })).toBe(true);
   });
 
-  test('true when stepId contains "synth"', () => {
-    expect(isLongFormSynthesisAgentStep(step('synthesis'), { outputMode: 'plain-text', prompt: 'Complete the task.' })).toBe(true);
+  test('true when nodeId contains "synth"', () => {
+    expect(isLongFormSynthesisAgentNode(node('synthesis'), { outputMode: 'plain-text', prompt: 'Complete the task.' })).toBe(true);
   });
 
   test('true for Chinese prompt keywords', () => {
-    expect(isLongFormSynthesisAgentStep(step('s'), { outputMode: 'plain-text', prompt: '生成研究报告' })).toBe(true);
-    expect(isLongFormSynthesisAgentStep(step('s'), { outputMode: 'plain-text', prompt: '输出总结' })).toBe(true);
+    expect(isLongFormSynthesisAgentNode(node('s'), { outputMode: 'plain-text', prompt: '生成研究报告' })).toBe(true);
+    expect(isLongFormSynthesisAgentNode(node('s'), { outputMode: 'plain-text', prompt: '输出总结' })).toBe(true);
   });
 });
 
@@ -232,58 +232,60 @@ describe('promptRequestsFileWrite', () => {
 describe('estimateDurationSeconds', () => {
   const baseAnalysis = {
     complexity: 'moderate' as const,
-    needsWebInteraction: false,
+    needsBrowser: false,
     needsNotification: false,
     needsMultipleSteps: false,
     needsParallel: false,
   };
 
   test('returns WORKFLOW_ESTIMATED_DURATION_SECONDS when no browser', () => {
-    const result = estimateDurationSeconds(dsl([agentStep('s', { role: 'worker', prompt: 'x' })]), baseAnalysis);
+    const result = estimateDurationSeconds(dsl([agentNode('s', { role: 'worker', prompt: 'x' })]), baseAnalysis);
     expect(result).toBeGreaterThan(0);
     expect(typeof result).toBe('number');
   });
 
-  test('returns estimate when needsWebInteraction is true', () => {
-    const result = estimateDurationSeconds(dsl([agentStep('s', { role: 'worker', prompt: 'navigate to site' })]), { ...baseAnalysis, needsWebInteraction: true });
+  test('returns estimate when needsBrowser is true', () => {
+    const result = estimateDurationSeconds(dsl([agentNode('s', { role: 'worker', prompt: 'navigate to site' })]), { ...baseAnalysis, needsBrowser: true });
     expect(result).toBeGreaterThan(0);
   });
 
   test('returns estimate for parallel with multiple URLs', () => {
-    const wf = dsl([agentStep('s', { role: 'worker', prompt: 'navigate to sites' })]);
+    const wf = dsl([agentNode('s', { role: 'worker', prompt: 'navigate to sites' })]);
     const parallel = estimateDurationSeconds(wf, {
       ...baseAnalysis,
-      needsWebInteraction: true,
+      needsBrowser: true,
       needsParallel: true,
       detectedUrls: ['https://a.com', 'https://b.com', 'https://c.com'],
     });
-    const single = estimateDurationSeconds(wf, { ...baseAnalysis, needsWebInteraction: true });
+    const single = estimateDurationSeconds(wf, { ...baseAnalysis, needsBrowser: true });
     expect(parallel).toBeGreaterThanOrEqual(single);
   });
 });
 
 // ---------------------------------------------------------------------------
-// dependsOnPlainTextAgentStep
+// dependsOnPlainTextAgentNode
 // ---------------------------------------------------------------------------
 
-describe('dependsOnPlainTextAgentStep', () => {
-  test('returns false when step has no dependencies', () => {
-    const step: WorkflowStep = { id: 'x', type: 'capability', input: {} };
-    const map = new Map<string, WorkflowStep>();
-    expect(dependsOnPlainTextAgentStep(step, map)).toBe(false);
+describe('dependsOnPlainTextAgentNode', () => {
+  test('returns false when node has no predecessors', () => {
+    const node: WorkflowNode = { id: 'x', type: 'capability', input: {} };
+    const map = new Map<string, WorkflowNode>();
+    expect(dependsOnPlainTextAgentNode(node, map, [])).toBe(false);
   });
 
-  test('returns true when a dependency is an agent step with plain-text outputMode', () => {
-    const upstream: WorkflowStep = { id: 'up', type: 'agent', input: { outputMode: 'plain-text' } };
-    const step: WorkflowStep = { id: 'x', type: 'capability', input: {}, dependsOn: ['up'] };
-    const map = new Map([['up', upstream]]);
-    expect(dependsOnPlainTextAgentStep(step, map)).toBe(true);
+  test('returns true when a predecessor is an agent node with plain-text outputMode', () => {
+    const upstream: WorkflowNode = { id: 'up', type: 'agent', input: { outputMode: 'plain-text' } };
+    const node: WorkflowNode = { id: 'x', type: 'capability', input: {} };
+    const map = new Map([['up', upstream], ['x', node]]);
+    const edges: WorkflowEdge[] = [{ from: 'up', to: 'x', kind: 'next' }];
+    expect(dependsOnPlainTextAgentNode(node, map, edges)).toBe(true);
   });
 
-  test('returns false when dependency is agent but not plain-text', () => {
-    const upstream: WorkflowStep = { id: 'up', type: 'agent', input: { outputMode: 'structured' } };
-    const step: WorkflowStep = { id: 'x', type: 'capability', input: {}, dependsOn: ['up'] };
-    const map = new Map([['up', upstream]]);
-    expect(dependsOnPlainTextAgentStep(step, map)).toBe(false);
+  test('returns false when predecessor is agent but not plain-text', () => {
+    const upstream: WorkflowNode = { id: 'up', type: 'agent', input: { outputMode: 'structured' } };
+    const node: WorkflowNode = { id: 'x', type: 'capability', input: {} };
+    const map = new Map([['up', upstream], ['x', node]]);
+    const edges: WorkflowEdge[] = [{ from: 'up', to: 'x', kind: 'next' }];
+    expect(dependsOnPlainTextAgentNode(node, map, edges)).toBe(false);
   });
 });

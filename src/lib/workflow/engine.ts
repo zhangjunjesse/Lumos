@@ -25,6 +25,8 @@ import {
 } from './openworkflow-client';
 import { DEFAULT_AGENT_STEP_TIMEOUT_MS } from './compiler-helpers';
 import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
+import { clearDebugContext, registerDebugContext } from './debug-cache';
+import { clearRunAttempts, clearStepAttempt, recordStepAttempt } from './step-attempts';
 import { getSupportedStepTypes } from './step-registry';
 import { cancelWorkflowAgentExecution } from './subagent';
 import { taskEventBus } from '@/lib/task-event-bus';
@@ -72,10 +74,10 @@ export interface WorkflowFailedEvent {
 const MIN_WORKFLOW_RESULT_TIMEOUT_MS = 15 * 60 * 1000;
 const WORKFLOW_RESULT_TIMEOUT_GRACE_MS = 2 * 60 * 1000;
 const registeredWorkflows = new Set<string>();
-const supportedStepTypes = new Set([
+const supportedStepTypes = new Set<string>([
   ...getSupportedStepTypes(),
-  // v2 control-flow step types — handled by compiler-v2, not the step registry
-  'if-else', 'for-each', 'while',
+  // Control-flow node types — emitted by compiler-v3, not backed by the step registry
+  'if-else', 'for-each', 'while', 'parallel', 'join', 'approval',
 ]);
 let globalWorker: Worker | null = null;
 
@@ -176,13 +178,20 @@ export async function submitWorkflow(
     const workflow = await loadWorkflowDefinition(
       request.workflowCode,
       request.workflowManifest,
-      debugContext ?? null,
     );
     const registered = ensureWorkflowRegistered(ow, workflow);
     await getOrCreateWorker(ow, registered);
 
     const runHandle = await ow.runWorkflow(workflow.spec, request.inputs);
     const workflowId = runHandle.workflowRun.id;
+
+    // Debug state is per-run; bind it here AFTER we know the runId and BEFORE
+    // any step fires. The step bindings resolve it on each call via
+    // `input.__runtime.workflowRunId`, and `waitForWorkflowCompletion` clears
+    // the registration in its finally block.
+    if (debugContext) {
+      registerDebugContext(workflowId, debugContext);
+    }
 
     persistWorkflowDefinition(request.workflowManifest, request.workflowCode);
     persistWorkflowTaskMapping(request.workflowManifest, request.taskId, workflowId);
@@ -222,7 +231,6 @@ export async function submitWorkflow(
 async function loadWorkflowDefinition(
   code: string,
   manifest: CompiledWorkflowManifest,
-  debugContext: DebugRuntimeContext | null = null,
 ): Promise<Workflow<unknown, unknown, unknown>> {
   if (!code.trim()) {
     throw new Error('Compiled workflow code is empty');
@@ -245,8 +253,8 @@ async function loadWorkflowDefinition(
   }
 
   const workflow = buildWorkflow(createInstrumentedWorkflowRuntimeBindings({
-    debugContext,
     onStepStarted: async (event) => {
+      recordStepAttempt(event.workflowRunId, event.stepId, event.attempt, event.maxAttempts);
       const projection = markWorkflowStepStarted(event.workflowRunId, event.stepId);
       if (projection) {
         syncExecutionStateFromProjection(projection);
@@ -254,6 +262,7 @@ async function loadWorkflowDefinition(
       }
     },
     onStepCompleted: async (event) => {
+      clearStepAttempt(event.workflowRunId, event.stepId);
       const projection = markWorkflowStepCompleted(event.workflowRunId, event.stepId);
       if (projection) {
         syncExecutionStateFromProjection(projection);
@@ -307,6 +316,7 @@ async function waitForWorkflowCompletion(
     }
 
     const duration = Date.now() - startTime;
+    clearRunAttempts(workflowId);
     const completedProjection = completeWorkflowProjection(workflowId, result);
 
     workflowExecutions.set(workflowId, {
@@ -341,6 +351,7 @@ async function waitForWorkflowCompletion(
       message: error instanceof Error ? error.message : String(error),
       stepName: err && typeof err === 'object' && 'stepName' in err ? String(err.stepName) : undefined,
     };
+    clearRunAttempts(workflowId);
     const failedProjection = failWorkflowProjection(workflowId, failure);
 
     workflowExecutions.set(workflowId, {
@@ -361,6 +372,10 @@ async function waitForWorkflowCompletion(
       taskId,
       error: failure
     });
+  } finally {
+    // Always release the per-run debug registration so the next run of this
+    // spec (debug or production) starts from a clean slate.
+    clearDebugContext(workflowId);
   }
 }
 
@@ -387,7 +402,7 @@ function getWorkflowRegistryKey(workflow: Workflow<unknown, unknown, unknown>): 
 function validateCompiledWorkflowManifest(manifest: CompiledWorkflowManifest): string[] {
   const errors: string[] = [];
 
-  if (manifest.dslVersion !== 'v1' && manifest.dslVersion !== 'v2') {
+  if (manifest.dslVersion !== 'v3') {
     errors.push(`Unsupported DSL version: ${manifest.dslVersion}`);
   }
 
@@ -500,6 +515,7 @@ export async function cancelWorkflow(workflowId: string): Promise<boolean> {
 
   const ow = await getWorkflowEngine();
   await ow.cancelWorkflowRun(workflowId);
+  clearRunAttempts(workflowId);
   const cancelledProjection = cancelWorkflowProjection(workflowId);
 
   if (execution) {

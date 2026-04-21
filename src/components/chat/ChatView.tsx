@@ -753,7 +753,9 @@ export function ChatView({
       let autoRetryPrompt: string | null = null;
       const streamStartMs = Date.now();
 
-      const STREAM_IDLE_TIMEOUT_MS = 330_000;
+      // 对齐到 chat/route.ts 的 toolTimeoutSeconds 默认值，避免合法的长任务
+      // (如图片生成 ~6 分钟) 被客户端 idle 检查提前杀掉。
+      const STREAM_IDLE_TIMEOUT_MS = 900_000;
       let lastEventTime = Date.now();
       let isIdleTimeout = false;
       const idleCheckTimer = setInterval(() => {

@@ -1,47 +1,57 @@
-import type { Node } from '@xyflow/react';
-import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
+import type { WorkflowDSLV3, WorkflowNode, WorkflowNodeType } from '@/lib/workflow/types-v3';
 
-export interface DslStep {
-  id: string;
-  type: string;
-  dependsOn?: string[];
-  input?: Record<string, unknown>;
-  metadata?: { position?: { x: number; y: number } };
-}
-
-export interface DslSpec {
-  version: string;
-  name: string;
-  description?: string;
-  steps: DslStep[];
-}
+/**
+ * Canvas 对外的 DSL 形状 —— 直接复用 V3 DSL,
+ * 不再保留编辑器旧的 steps/dependsOn 影子模型。
+ */
+export type DslSpec = WorkflowDSLV3;
 
 export function genId(type: string): string {
   return `${type}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-export function defaultInputForType(type: string): Record<string, unknown> {
-  switch (type) {
-    case 'agent': return { prompt: '', role: 'worker' };
-    case 'if-else': return { condition: { op: 'exists', ref: 'input.flag' }, then: [] };
-    case 'for-each': return { collection: 'input.items', itemVar: 'item', body: [] };
-    case 'while': return { condition: { op: 'exists', ref: 'input.hasMore' }, body: [], maxIterations: 20 };
-    case 'wait': return { durationMs: 5000 };
-    default: return {};
-  }
-}
+type NewNodeSeed = Omit<WorkflowNode, 'id'>;
 
 /**
- * Merge a transient `isDropTarget` flag into node data for the container currently
- * receiving a drag hover (used to draw the green dashed highlight).
+ * 画布拖拽创建节点时的默认骨架 (input 默认值 / 默认 policy)。
+ * 返回值不含 id —— 调用方通过 `genId(type)` 生成并补齐。
  */
-export function applyDropTargetFlag(
-  nodes: Node<StepNodeData>[],
-  dropTargetId: string | null,
-): Node<StepNodeData>[] {
-  return nodes.map(n => {
-    const flag = n.id === dropTargetId;
-    if ((n.data.isDropTarget ?? false) === flag) return n;
-    return { ...n, data: { ...n.data, isDropTarget: flag } };
-  });
+export function defaultNodeForType(type: WorkflowNodeType): NewNodeSeed {
+  switch (type) {
+    case 'agent':
+      return { type: 'agent', input: { prompt: '', role: 'worker' } };
+    case 'if-else':
+      return {
+        type: 'if-else',
+        input: { condition: { op: 'exists', ref: 'input.flag' } as never },
+      };
+    case 'for-each':
+      return {
+        type: 'for-each',
+        input: { collection: 'input.items', itemVar: 'item' },
+      };
+    case 'while':
+      return {
+        type: 'while',
+        input: { condition: { op: 'exists', ref: 'input.hasMore' } as never, maxIterations: 20 },
+      };
+    case 'wait':
+      return { type: 'wait', input: { durationMs: 5000 } };
+    case 'notification':
+      return { type: 'notification', input: {} };
+    case 'capability':
+      return { type: 'capability', input: {} };
+    case 'parallel':
+      return { type: 'parallel', input: { onBranchFail: 'wait-all' } };
+    case 'join':
+      return { type: 'join', input: {} };
+    case 'approval':
+      return {
+        type: 'approval',
+        input: {
+          prompt: '请审批这一步',
+          approvers: { mode: 'any', users: [] },
+        },
+      };
+  }
 }

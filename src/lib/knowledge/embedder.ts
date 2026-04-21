@@ -48,7 +48,7 @@ function addCandidateRoot(roots: Set<string>, root?: string | null): void {
 }
 
 function shouldUsePortableEmbeddingRuntime(): boolean {
-  return Boolean(process.versions.electron) || process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
+  return process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
 }
 
 function resolvePortableEmbeddingDevice(): 'cpu' {
@@ -118,7 +118,9 @@ function getExtractor(): Promise<unknown> {
       (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
         ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8' }
-        : { dtype: 'fp16' };
+        : Boolean(process.versions.electron)
+          ? { device: 'cpu', dtype: 'q8' }
+          : { dtype: 'fp16' };
 
       console.log('[embedding] Loading model:', MODEL_NAME, {
         portableRuntime: usePortableRuntime,
@@ -126,7 +128,9 @@ function getExtractor(): Promise<unknown> {
         arch: process.arch,
         electron: process.versions.electron || null,
         runtime: usePortableRuntime ? 'transformers.web.js + onnxruntime-web' : '@huggingface/transformers',
-        device: usePortableRuntime ? resolvePortableEmbeddingDevice() : 'auto',
+        device: usePortableRuntime
+          ? resolvePortableEmbeddingDevice()
+          : (Boolean(process.versions.electron) ? 'cpu' : 'auto'),
       });
       const p = await transformers.pipeline('feature-extraction', MODEL_NAME, pipelineOptions);
       console.log('[embedding] Model loaded');

@@ -78,7 +78,7 @@ async function main() {
       throw new Error(`Unhandled fetch in workflow MCP smoke: ${url}`);
     }
 
-    return originalFetch(input as any, init);
+    return originalFetch(input as Parameters<typeof fetch>[0], init);
   };
 
   try {
@@ -119,15 +119,16 @@ async function main() {
         name: 'generate_workflow',
         arguments: {
           spec: {
-            version: 'v1',
+            version: 'v3',
             name: 'invalid-agent',
-            steps: [
+            nodes: [
               {
                 id: 'bad',
                 type: 'agent',
                 input: {},
               },
             ],
+            edges: [],
           },
         },
       },
@@ -155,9 +156,9 @@ async function main() {
         name: 'generate_workflow',
         arguments: {
           spec: {
-            version: 'v1',
+            version: 'v3',
             name: 'agent-mcp-smoke',
-            steps: [
+            nodes: [
               {
                 id: 'draft',
                 type: 'agent',
@@ -167,6 +168,7 @@ async function main() {
                 },
               },
             ],
+            edges: [],
           },
         },
       },

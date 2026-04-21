@@ -36,7 +36,7 @@ async function main() {
   process.env.NODE_ENV = 'test';
   fs.closeSync(fs.openSync(path.join(tempDir, 'lumos.db'), 'w'));
 
-  const { generateWorkflow } = await import('./compiler');
+  const { generateWorkflowFromDsl } = await import('./compiler');
   const {
     getWorkflowStatus,
     resetWorkflowEngineForTests,
@@ -47,38 +47,38 @@ async function main() {
   try {
     await resetWorkflowEngineForTests();
 
-    const artifact = generateWorkflow({
-      spec: {
-        version: 'v1',
-        name: 'runtime-smoke',
-        steps: [
-          {
-            id: 'draft',
-            type: 'agent',
-            input: {
-              prompt: 'Draft a smoke-test plan',
-              role: 'coder',
-            },
+    const artifact = generateWorkflowFromDsl({
+      version: 'v3',
+      name: 'runtime-smoke',
+      nodes: [
+        {
+          id: 'draft',
+          type: 'agent',
+          input: {
+            prompt: 'Draft a smoke-test plan',
+            role: 'coder',
           },
-          {
-            id: 'notify',
-            type: 'notification',
-            dependsOn: ['draft'],
-            input: {
-              message: 'Workflow runtime smoke complete',
-              level: 'info',
-              channel: 'system',
-            },
+        },
+        {
+          id: 'notify',
+          type: 'notification',
+          input: {
+            message: 'Workflow runtime smoke complete',
+            level: 'info',
+            channel: 'system',
           },
-        ],
-      },
+        },
+      ],
+      edges: [
+        { from: 'draft', to: 'notify', kind: 'next' },
+      ],
     });
 
     if (!artifact.validation.valid) {
       throw new Error(`Workflow generation failed: ${artifact.validation.errors.join('; ')}`);
     }
 
-    if (artifact.manifest.stepIds.join(',') !== 'draft,browse,notify') {
+    if (artifact.manifest.stepIds.join(',') !== 'draft,notify') {
       throw new Error(`Manifest stepIds are not stable: ${JSON.stringify(artifact.manifest.stepIds)}`);
     }
 
@@ -104,7 +104,7 @@ async function main() {
       throw new Error(`Workflow finished with unexpected status: ${status?.status}`);
     }
 
-    if (status.completedSteps.join(',') !== 'draft,browse,notify') {
+    if (status.completedSteps.join(',') !== 'draft,notify') {
       throw new Error(`Workflow completedSteps are unexpected: ${JSON.stringify(status.completedSteps)}`);
     }
 
@@ -113,8 +113,8 @@ async function main() {
       output?: Record<string, unknown>;
       metadata?: Record<string, unknown>;
     } | null> | undefined;
-    if (!result?.browse?.success || !result?.notify?.success) {
-      throw new Error(`Runtime outputs are missing browser/notification results: ${JSON.stringify(status.result)}`);
+    if (!result?.notify?.success) {
+      throw new Error(`Runtime outputs are missing notification result: ${JSON.stringify(status.result)}`);
     }
 
     if (!result?.draft?.success) {

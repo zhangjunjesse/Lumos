@@ -73,7 +73,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     console.info('[workflow-definition:update:success]', {
       workflowId: id,
-      stepCount: updated.workflowDsl.steps?.length ?? 0,
+      stepCount: updated.workflowDsl.nodes.length,
       name: updated.name,
       validationValid: validation?.valid ?? true,
     });

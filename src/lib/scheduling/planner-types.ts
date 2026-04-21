@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 import type { ApiProvider } from '@/types';
 import type {
   PublishedCodeCapabilitySummary,
@@ -29,7 +29,7 @@ export interface SchedulingPlan {
   source: SchedulingPlanSource;
   reason: string;
   estimatedDurationSeconds: number;
-  workflowDsl?: WorkflowDSL;
+  workflowDsl?: WorkflowDSLV3;
   analysis: SchedulingPlanAnalysis;
   model?: string;
   diagnostics?: SchedulingPlanDiagnostics;
@@ -169,7 +169,7 @@ export const plannerConditionExprSchema = z.union([
   }).strict(),
 ]);
 
-export const plannerAgentStepInputSchema = z.object({
+export const plannerAgentNodeInputSchema = z.object({
   prompt: z.string().min(1),
   preset: z.string().min(1).optional(),
   role: z.enum(['worker', 'researcher', 'coder', 'integration', 'general']).optional(),
@@ -179,22 +179,25 @@ export const plannerAgentStepInputSchema = z.object({
   context: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
-export const plannerWorkflowBaseStepSchema = z.object({
+export const plannerAgentNodeSchema = z.object({
   id: z.string().min(1),
-  dependsOn: z.array(z.string().min(1)).optional(),
-  when: plannerConditionExprSchema.optional(),
-  policy: plannerStepPolicySchema,
-});
-
-export const plannerWorkflowStepSchema = plannerWorkflowBaseStepSchema.extend({
   type: z.literal('agent'),
-  input: plannerAgentStepInputSchema,
-});
+  input: plannerAgentNodeInputSchema,
+  policy: plannerStepPolicySchema,
+}).strict();
+
+export const plannerEdgeSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  kind: z.literal('next'),
+}).strict();
 
 export const plannerWorkflowDslSchema = z.object({
-  version: z.literal('v1'),
+  version: z.literal('v3'),
   name: z.string().min(1),
-  steps: z.array(plannerWorkflowStepSchema).min(1).max(20),
+  description: z.string().optional(),
+  nodes: z.array(plannerAgentNodeSchema).min(1).max(20),
+  edges: z.array(plannerEdgeSchema),
 }).strict();
 
 export interface WorkflowAgentPresetSummary {

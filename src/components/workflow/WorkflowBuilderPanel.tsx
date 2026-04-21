@@ -4,21 +4,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkflowEditorView } from './WorkflowEditorView';
-import type { WorkflowParamDef } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 
-interface WorkflowStep {
-  id: string;
-  type: string;
-  dependsOn?: string[];
-  input?: Record<string, unknown>;
+function isWorkflowDslV3(value: unknown): value is WorkflowDSLV3 {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    (value as { version?: string }).version === 'v3' &&
+    Array.isArray((value as { nodes?: unknown }).nodes) &&
+    Array.isArray((value as { edges?: unknown }).edges),
+  );
 }
 
-interface WorkflowDslResult {
-  version: string;
-  name: string;
-  description?: string;
-  params?: WorkflowParamDef[];
-  steps: WorkflowStep[];
+function parseLoadedDsl(raw: unknown): WorkflowDSLV3 {
+  if (isWorkflowDslV3(raw)) return raw;
+  throw new Error('工作流 DSL 格式无效');
 }
 
 interface ValidationResult {
@@ -33,25 +33,23 @@ const EXAMPLES = [
 ];
 
 interface WorkflowBuilderPanelProps {
-  onSaveToSchedule?: (dsl: WorkflowDslResult) => void;
-  onSaveAsTemplate?: (dsl: WorkflowDslResult) => void;
+  onSaveToSchedule?: (dsl: WorkflowDSLV3) => void;
+  onSaveAsTemplate?: (dsl: WorkflowDSLV3) => void;
   onSaved?: (id: string) => void;
 }
 
 export function WorkflowBuilderPanel({ onSaveToSchedule, onSaveAsTemplate, onSaved }: WorkflowBuilderPanelProps) {
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
-  const [dsl, setDsl] = useState<WorkflowDslResult | null>(null);
+  const [dsl, setDsl] = useState<WorkflowDSLV3 | null>(null);
   const [dslText, setDslText] = useState('');
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [error, setError] = useState('');
   const [presetNames, setPresetNames] = useState<Record<string, string>>({});
 
-  // Save/load state
   const [savedWorkflowId, setSavedWorkflowId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
-
 
   useEffect(() => {
     fetch('/api/workflow/agent-presets')
@@ -80,22 +78,31 @@ export function WorkflowBuilderPanel({ onSaveToSchedule, onSaveAsTemplate, onSav
       });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error || '生成失败，请重试'); return; }
-      setDsl(data.workflowDsl);
-      setDslText(JSON.stringify(data.workflowDsl, null, 2));
+      const nextDsl = parseLoadedDsl(data.workflowDsl);
+      setDsl(nextDsl);
+      setDslText(JSON.stringify(nextDsl, null, 2));
       setValidation(data.validation);
     } catch { setError('网络错误，请重试'); } finally { setLoading(false); }
   }, [description, loading]);
 
   const handleDslEdit = useCallback((text: string) => {
     setDslText(text);
-    try { setDsl(JSON.parse(text) as WorkflowDslResult); setValidation(null); } catch { /* typing */ }
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      const nextDsl = parseLoadedDsl(parsed);
+      setDsl(nextDsl);
+      setValidation(null);
+    } catch { /* typing */ }
   }, []);
 
   const handleValidate = useCallback(async () => {
     if (!dslText) return;
     let parsed: unknown;
     try { parsed = JSON.parse(dslText); } catch { setValidation({ valid: false, errors: ['JSON 格式有误'] }); return; }
-    const res = await fetch('/api/workflow/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec: parsed }) });
+    let spec: WorkflowDSLV3;
+    try { spec = parseLoadedDsl(parsed); }
+    catch { setValidation({ valid: false, errors: ['工作流 DSL 结构无效'] }); return; }
+    const res = await fetch('/api/workflow/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spec }) });
     const data = await res.json();
     setValidation({ valid: data.validation?.valid ?? false, errors: data.validation?.errors ?? [] });
   }, [dslText]);
@@ -137,7 +144,7 @@ export function WorkflowBuilderPanel({ onSaveToSchedule, onSaveAsTemplate, onSav
     }
   }, [dsl, savedWorkflowId, onSaved]);
 
-  const handleDslChange = useCallback((newDsl: WorkflowDslResult, text: string) => {
+  const handleDslChange = useCallback((newDsl: WorkflowDSLV3, text: string) => {
     setDsl(newDsl);
     setDslText(text);
     setValidation(null);

@@ -20,32 +20,24 @@ import {
   type StepNodeData,
 } from '@/lib/workflow/dsl-graph-converter';
 import {
-  getBodyIds,
-  isContainer,
-  NODE_W,
-} from '@/lib/workflow/dsl-graph-layout';
+  computeContainerOwnership,
+  isContainerNodeType,
+} from '@/lib/workflow/dsl-graph-v3-helpers';
+import { NODE_W } from '@/lib/workflow/dsl-graph-layout';
 import {
   aggregateOf,
   type StepAggregateOverlay,
   type WorkflowDslStepOverlay,
 } from '@/lib/workflow/step-overlay';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 
 // ── Re-export for backwards compatibility ─────────────────────────────────
 export type { WorkflowDslStepOverlay } from '@/lib/workflow/step-overlay';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface DslStep {
-  id: string;
-  type: string;
-  dependsOn?: string[];
-  input?: Record<string, unknown>;
-  policy?: { timeoutMs?: number };
-  metadata?: { position?: { x: number; y: number } };
-}
-
 interface WorkflowDslGraphProps {
-  steps: DslStep[];
+  dsl: WorkflowDSLV3;
   presetNames?: Record<string, string>;
   selectedStepId?: string | null;
   onStepClick?: (stepId: string) => void;
@@ -55,34 +47,37 @@ interface WorkflowDslGraphProps {
 
 // ── Aggregate computation ──────────────────────────────────────────────────
 
-function collectDescendants(
-  stepId: string,
-  stepMap: Map<string, DslStep>,
-): string[] {
-  const s = stepMap.get(stepId);
-  if (!s) return [];
-  const ls = { id: s.id, type: s.type, input: s.input };
-  if (!isContainer(ls)) return [];
-  const result: string[] = [];
-  for (const id of getBodyIds(ls)) {
-    result.push(id);
-    result.push(...collectDescendants(id, stepMap));
-  }
-  return result;
-}
-
+/**
+ * 容器(if-else/for-each/while)对应的所有嵌套后代节点集合。
+ * V3 下通过边归属推导,不再依赖 input.body/then/else 数组。
+ */
 function computeAggregates(
-  steps: DslStep[],
+  dsl: WorkflowDSLV3,
   overlays: Record<string, WorkflowDslStepOverlay> | undefined,
 ): Record<string, StepAggregateOverlay> {
   if (!overlays) return {};
-  const stepMap = new Map(steps.map(s => [s.id, s]));
+  const ownership = computeContainerOwnership(dsl.nodes, dsl.edges);
   const out: Record<string, StepAggregateOverlay> = {};
-  for (const s of steps) {
-    const ls = { id: s.id, type: s.type, input: s.input };
-    if (!isContainer(ls)) continue;
-    const agg = aggregateOf(collectDescendants(s.id, stepMap), overlays);
-    if (agg) out[s.id] = agg;
+
+  const collectDescendants = (containerId: string, acc: Set<string>): void => {
+    const owned = ownership.childrenByContainer.get(containerId);
+    if (!owned) return;
+    const chains = [owned.then ?? [], owned.else ?? [], owned.body ?? []];
+    for (const chain of chains) {
+      for (const childId of chain) {
+        if (acc.has(childId)) continue;
+        acc.add(childId);
+        collectDescendants(childId, acc);
+      }
+    }
+  };
+
+  for (const node of dsl.nodes) {
+    if (!isContainerNodeType(node.type)) continue;
+    const descendants = new Set<string>();
+    collectDescendants(node.id, descendants);
+    const agg = aggregateOf(Array.from(descendants), overlays);
+    if (agg) out[node.id] = agg;
   }
   return out;
 }
@@ -92,12 +87,10 @@ function computeAggregates(
 interface LayerChip { key: string; label: string }
 
 function computeLayerChips(nodes: RFNode<StepNodeData>[]): LayerChip[] {
-  const top = nodes.filter(n => !n.parentId);
-  if (top.length === 0) return [];
+  if (nodes.length === 0) return [];
   const cols = new Map<number, number>();
-  for (const n of top) {
-    const w = (n.style?.width as number | undefined) ?? NODE_W;
-    const mid = Math.round((n.position.x + w / 2) / 20) * 20;
+  for (const n of nodes) {
+    const mid = Math.round((n.position.x + NODE_W / 2) / 20) * 20;
     cols.set(mid, (cols.get(mid) ?? 0) + 1);
   }
   const sorted = Array.from(cols.entries()).sort((a, b) => a[0] - b[0]);
@@ -110,7 +103,7 @@ function computeLayerChips(nodes: RFNode<StepNodeData>[]): LayerChip[] {
 // ── Component ─────────────────────────────────────────────────────────────
 
 function WorkflowDslGraphInner({
-  steps,
+  dsl,
   presetNames = {},
   selectedStepId,
   onStepClick,
@@ -118,11 +111,10 @@ function WorkflowDslGraphInner({
   height = 480,
 }: WorkflowDslGraphProps) {
   const { nodes, edges, layerChips } = useMemo(() => {
-    if (steps.length === 0) return { nodes: [], edges: [], layerChips: [] };
-    const spec = { version: '2.0.0', name: '', steps };
-    const g = dslToGraph(spec, presetNames);
+    if (dsl.nodes.length === 0) return { nodes: [], edges: [], layerChips: [] };
+    const g = dslToGraph(dsl, presetNames);
     return { nodes: g.nodes, edges: g.edges, layerChips: computeLayerChips(g.nodes) };
-  }, [steps, presetNames]);
+  }, [dsl, presetNames]);
 
   const { showRefs, refEdgeCount, displayEdges, toggle: toggleRefs } = useRefEdgeToggle(edges);
 
@@ -132,15 +124,15 @@ function WorkflowDslGraphInner({
   );
 
   const aggregates = useMemo(
-    () => computeAggregates(steps, stepOverlays),
-    [steps, stepOverlays],
+    () => computeAggregates(dsl, stepOverlays),
+    [dsl, stepOverlays],
   );
 
   const handleNodeClick = useCallback((_: unknown, node: RFNode) => {
     onStepClick?.(node.id);
   }, [onStepClick]);
 
-  if (steps.length === 0) return null;
+  if (dsl.nodes.length === 0) return null;
 
   return (
     <NodeOverlayProvider overlays={stepOverlays} aggregates={aggregates}>

@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => { ipcRenderer.removeListener('bridge:event', listener); };
     },
   },
+  notifications: {
+    notify: (options: { title: string; body: string; silent?: boolean }) =>
+      ipcRenderer.invoke('notifications:notify', options),
+  },
   browser: {
     createTab: (url?: string) => ipcRenderer.invoke('browser:create-tab', url),
     closeTab: (tabId: string) => ipcRenderer.invoke('browser:close-tab', tabId),

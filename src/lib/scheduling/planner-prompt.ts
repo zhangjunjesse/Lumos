@@ -59,19 +59,20 @@ export function buildPlannerUserPrompt(
     })),
     plannerRules: {
       agentUsage: [
-        '工作流只包含 agent 步骤，每个步骤必须使用 availableWorkflowAgents 中的 preset id。',
-        '如果某步骤没有完全匹配的 preset，选择能力最接近的 agent，并在 prompt 中说明具体任务。',
+        '工作流只包含 agent 节点，每个节点必须使用 availableWorkflowAgents 中的 preset id。',
+        '如果某节点没有完全匹配的 preset，选择能力最接近的 agent，并在 prompt 中说明具体任务。',
         '不要使用 role 字段；不要引用不在 availableWorkflowAgents 列表中的 preset id。',
       ],
       promptCapabilityUsage: [
-        '如果已发布的提示词能力与任务匹配，可以通过 input.tools 附加到 agent 步骤。',
+        '如果已发布的提示词能力与任务匹配，可以通过 input.tools 附加到 agent 节点。',
         '只使用上方列表中的 capability id，不要创造不存在的 id。',
       ],
       workflowDslConstraints: [
-        '工作流 DSL v1 只支持 agent 步骤类型。',
-        'agent 步骤 input 只支持：prompt、preset、model、tools、outputMode、context。',
-        '步骤 ID 用 kebab-case；dependsOn 引用其他步骤 ID；无共同依赖的步骤自动并行。',
-        'agent 的 prompt 只能是字面字符串或精确引用，如 steps.someStep.output.summary。',
+        '工作流 DSL v3 — planner 只输出 agent 节点和 kind="next" 的边；控制流（if-else/for-each/while/parallel/join/approval）由高级编辑器产出，planner 不使用。',
+        'agent 节点 input 只支持：prompt、preset、model、tools、outputMode、context。',
+        '节点 ID 用 kebab-case。按执行顺序在 nodes[] 列出，并在 edges[] 用 kind="next" 将前一个节点连到下一个节点（线性链，不产出分叉/并发）。',
+        '最后一个 agent 节点不需要出边。只有一个 agent 时 edges 为空数组。',
+        'agent 的 prompt 只能是字面字符串或精确引用，如 steps.someNode.output.summary。',
       ],
     },
     responseSchema: {
@@ -87,13 +88,12 @@ export function buildPlannerUserPrompt(
         detectedUrls: 'optional string[] of urls; omit the field when there are no urls, do not use [] or null',
       },
       workflowDsl: {
-        version: 'v1',
+        version: 'v3',
         name: 'string',
-        steps: [
+        nodes: [
           {
             id: 'string',
             type: 'agent',
-            dependsOn: ['string'],
             input: {
               preset: 'preset id from availableWorkflowAgents',
               prompt: 'string',
@@ -105,6 +105,9 @@ export function buildPlannerUserPrompt(
               retry: { maximumAttempts: 2 },
             },
           },
+        ],
+        edges: [
+          { from: 'previousNodeId', to: 'nextNodeId', kind: 'next' },
         ],
       },
     },

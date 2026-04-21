@@ -584,20 +584,20 @@ function resolveCurrentExecutionRole(execution: SchedulingExecutionState): strin
     return 'worker';
   }
 
-  const currentStep = execution.workflowDsl?.steps.find((step) => step.id === execution.currentStep);
-  if (!currentStep) {
+  const currentNode = execution.workflowDsl?.nodes.find((node) => node.id === execution.currentStep);
+  if (!currentNode) {
     return undefined;
   }
 
-  if (currentStep.type === 'agent') {
-    const rawRole = currentStep.input?.role;
+  if (currentNode.type === 'agent') {
+    const rawRole = (currentNode.input as { role?: unknown } | undefined)?.role;
     if (typeof rawRole === 'string' && rawRole.trim().length > 0) {
       return rawRole.trim();
     }
     return 'worker';
   }
 
-  return currentStep.type;
+  return currentNode.type;
 }
 
 function buildMetadataSnapshot(

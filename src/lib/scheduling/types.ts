@@ -1,5 +1,5 @@
 import type { Task, UpdateTaskStatusRequest } from '@/lib/task-management/types';
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 import type {
   SchedulingPlanAnalysis,
   SchedulingPlanDiagnostics,
@@ -13,7 +13,7 @@ export interface SchedulingPreview {
   analysis: SchedulingPlanAnalysis;
   model?: string;
   diagnostics?: SchedulingPlanDiagnostics;
-  workflowDsl?: WorkflowDSL;
+  workflowDsl?: WorkflowDSLV3;
 }
 
 export interface AcceptTaskRequest {

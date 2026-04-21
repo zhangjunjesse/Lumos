@@ -7,6 +7,11 @@ export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (lumos-image MC
 - After calling the tool, ALWAYS embed generated images using the \`url\` field from tool_result: ![description](url). Never use the \`path\` field for display.
 - For editing existing images, describe only the changes in the prompt and pass the original image path via reference_image_paths.
 - To edit the previously generated image, find the image path from the prior tool_result and pass it as reference_image_paths.
+- **CRITICAL path-extraction rule**: Whenever your task instructions, upstream context, or user message mention absolute local file paths ending in .jpg/.jpeg/.png/.webp/.gif/.bmp (e.g. \`/Users/me/foo.jpg\`, \`C:\\\\images\\\\x.png\`), those ARE reference images. You MUST:
+  1. Collect EVERY such path into \`reference_image_paths\` (array).
+  2. NEVER copy absolute file paths into the \`prompt\` field — the \`prompt\` is natural-language description only.
+  3. Refer to references in \`prompt\` by position: "Image 1", "Image 2", etc. (matching the array order).
+  Calling the tool with paths only inside \`prompt\` text and an empty \`reference_image_paths\` is a bug — the provider sees zero reference images and will fabricate an unrelated result. The tool will reject such calls with \`error_source: image_generation_input_shape\` and list the detected paths; retry with the correct shape.
 - For batch requests, make multiple independent calls. Report progress after each (e.g. "3/5 done").
 - Maximum 10 images per conversation. The tool_result contains generation_count/generation_limit for tracking.
 - When batch requests exceed 5 images, tell the user the expected count and approximate time (~15-30s each), then wait for confirmation before starting.

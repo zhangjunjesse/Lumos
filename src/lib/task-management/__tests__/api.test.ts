@@ -406,7 +406,7 @@ describe('task-management createTask', () => {
       workflowId: 'wf-runtime-001',
       taskId: 'task-runtime-001',
       workflowName: 'runtime-check',
-      workflowVersion: 'dsl-v1-runtime-check',
+      workflowVersion: 'dsl-v3-runtime-check',
       status: 'running',
       progress: 67,
       currentStep: 'browse_2',
@@ -436,7 +436,7 @@ describe('task-management createTask', () => {
       startedAt: '2026-03-21T10:01:02.000Z',
       updatedAt: '2026-03-21T10:02:40.000Z',
       workflowName: 'runtime-check',
-      workflowVersion: 'dsl-v1-runtime-check',
+      workflowVersion: 'dsl-v3-runtime-check',
       simpleExecutionId: 'simple-task-runtime-001',
       cancelReason: 'user-requested-from-ui',
     });

@@ -1,5 +1,5 @@
 // Task Management 类型定义
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 
 export enum TaskStatus {
   PENDING = 'pending',
@@ -145,7 +145,7 @@ export interface SubmitTaskResponse {
       fallbackUsed?: 'heuristic-preview';
       fallbackReason?: string;
     };
-    workflowDsl?: WorkflowDSL;
+    workflowDsl?: WorkflowDSLV3;
   };
   message?: string;
 }

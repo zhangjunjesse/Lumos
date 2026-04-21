@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { WorkflowDslGraph } from '@/components/workflow/WorkflowDslGraph';
 import { ScheduleRunList } from '@/components/workflow/ScheduleRunList';
 import { ScheduleEditor } from '@/components/workflow/ScheduleEditor';
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 
 interface Schedule {
   id: string;
@@ -22,7 +22,20 @@ interface Schedule {
   runCount: number;
   lastRunStatus: 'success' | 'error' | '';
   lastError: string;
-  workflowDsl: WorkflowDSL;
+  workflowDsl: WorkflowDSLV3;
+}
+
+function normalizeScheduleDsl(raw: unknown): WorkflowDSLV3 {
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    (raw as { version?: string }).version === 'v3' &&
+    Array.isArray((raw as { nodes?: unknown }).nodes) &&
+    Array.isArray((raw as { edges?: unknown }).edges)
+  ) {
+    return raw as WorkflowDSLV3;
+  }
+  throw new Error('工作流 DSL 格式无效');
 }
 
 const INTERVAL_LABELS: Record<number, string> = {
@@ -67,8 +80,12 @@ export default function ScheduleDetailPage() {
     setLoading(true);
     try {
       const res = await fetch(`/api/workflow/schedules/${scheduleId}`);
-      const data = await res.json() as { schedule?: Schedule };
-      if (data.schedule) setSchedule(data.schedule);
+      const data = await res.json() as { schedule?: Omit<Schedule, 'workflowDsl'> & { workflowDsl: unknown } };
+      if (data.schedule) {
+        try {
+          setSchedule({ ...data.schedule, workflowDsl: normalizeScheduleDsl(data.schedule.workflowDsl) });
+        } catch { /* 忽略无效 DSL */ }
+      }
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [scheduleId]);
 
@@ -138,7 +155,7 @@ export default function ScheduleDetailPage() {
     );
   }
 
-  const steps = schedule.workflowDsl?.steps ?? [];
+  const nodes = schedule.workflowDsl?.nodes ?? [];
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 space-y-6">
@@ -184,16 +201,16 @@ export default function ScheduleDetailPage() {
       )}
 
       {/* 工作流结构（可折叠） */}
-      {steps.length > 0 && (
+      {nodes.length > 0 && (
         <div className="rounded-xl border border-border/60 overflow-hidden bg-card">
           <button
             className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted/30 transition-colors"
             onClick={() => setShowGraph(v => !v)}
           >
-            <span>工作流结构 ({steps.length} 个步骤)</span>
+            <span>工作流结构 ({nodes.length} 个节点)</span>
             <span className="text-xs">{showGraph ? '收起' : '展开'}</span>
           </button>
-          {showGraph && <WorkflowDslGraph steps={steps} presetNames={presetNames} />}
+          {showGraph && <WorkflowDslGraph dsl={schedule.workflowDsl} presetNames={presetNames} />}
         </div>
       )}
 

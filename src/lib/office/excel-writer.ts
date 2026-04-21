@@ -49,9 +49,18 @@ function applyStyle(cell: ExcelJS.Cell, style: CellStyle): void {
   }
 }
 
-function parseCellAddress(addr: string): { row: number; col: number } {
+function parseCellAddress(addr: unknown, context: string): { row: number; col: number } {
+  if (typeof addr !== 'string') {
+    throw new Error(
+      `${context}: cell address must be a string like "A1", got ${addr === undefined ? 'undefined' : JSON.stringify(addr)}`,
+    );
+  }
   const match = addr.match(/^([A-Z]+)(\d+)$/i);
-  if (!match) return { row: 1, col: 1 };
+  if (!match) {
+    throw new Error(
+      `${context}: cell address "${addr}" is not a valid A1-style reference (expected pattern like "A1", "B12", "AA3")`,
+    );
+  }
   const colStr = match[1].toUpperCase();
   let col = 0;
   for (let i = 0; i < colStr.length; i++) {
@@ -94,15 +103,36 @@ export async function writeExcel(options: WriteExcelOptions): Promise<string> {
     }
 
     if (sheetData.formulas) {
-      for (const f of sheetData.formulas) {
-        const { row, col } = parseCellAddress(f.cell);
+      for (let i = 0; i < sheetData.formulas.length; i++) {
+        const f = sheetData.formulas[i];
+        const ctx = `sheets["${sheetData.name}"].formulas[${i}]`;
+        if (!f || typeof f !== 'object') {
+          throw new Error(`${ctx}: expected { cell, formula }, got ${JSON.stringify(f)}`);
+        }
+        if (typeof f.formula !== 'string') {
+          throw new Error(`${ctx}.formula must be a string, got ${typeof f.formula}`);
+        }
+        const { row, col } = parseCellAddress(f.cell, `${ctx}.cell`);
         ws.getCell(row, col).value = { formula: f.formula } as ExcelJS.CellValue;
       }
     }
 
     if (sheetData.styles) {
-      for (const s of sheetData.styles) {
-        const { row, col } = parseCellAddress(s.cell);
+      for (let i = 0; i < sheetData.styles.length; i++) {
+        const s = sheetData.styles[i];
+        const ctx = `sheets["${sheetData.name}"].styles[${i}]`;
+        if (!s || typeof s !== 'object') {
+          throw new Error(
+            `${ctx}: expected { cell: "A1", style: { bold, italic, ... } }, got ${JSON.stringify(s)}`,
+          );
+        }
+        if (!s.style || typeof s.style !== 'object') {
+          throw new Error(
+            `${ctx}.style must be an object of style attributes (bold/italic/fontSize/fontColor/bgColor/numFmt/alignment/wrapText). `
+            + `Received ${JSON.stringify(s)}. Note: flat shapes like { row: 0, bold: true } are NOT accepted — wrap attributes under a "style" key and use an A1-style "cell" address.`,
+          );
+        }
+        const { row, col } = parseCellAddress(s.cell, `${ctx}.cell`);
         applyStyle(ws.getCell(row, col), s.style);
       }
     }

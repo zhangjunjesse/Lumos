@@ -32,6 +32,13 @@ export async function GET(request: NextRequest, { params }: Params) {
       dsl = workflow.workflowDsl as AnyWorkflowDSL;
     }
 
+    if (!dsl) {
+      return NextResponse.json({ error: '工作流 DSL 缺失' }, { status: 404 });
+    }
+    if (dsl.version !== 'v3') {
+      return NextResponse.json({ error: `不支持导出 v${dsl.version} 格式工作流` }, { status: 400 });
+    }
+
     const pkg = exportWorkflowPackage(dsl);
     return NextResponse.json(pkg);
   } catch (error) {

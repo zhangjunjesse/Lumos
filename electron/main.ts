@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain, shell, safeStorage, Notification } from 'electron';
 import path from 'path';
 import { execFileSync, spawn, ChildProcess } from 'child_process';
 import crypto from 'crypto';
@@ -1248,6 +1248,31 @@ app.whenReady().then(async () => {
       token: browserBridgeToken,
     };
   });
+
+  ipcMain.handle(
+    'notifications:notify',
+    async (
+      _event: Electron.IpcMainInvokeEvent,
+      options: { title?: string; body?: string; silent?: boolean },
+    ) => {
+      if (!Notification.isSupported()) return false;
+      const title = typeof options?.title === 'string' ? options.title : '';
+      const body = typeof options?.body === 'string' ? options.body : '';
+      if (!title && !body) return false;
+      try {
+        new Notification({
+          title,
+          body,
+          silent: options?.silent === true,
+          icon: getIconPath(),
+        }).show();
+        return true;
+      } catch (err) {
+        console.warn('[notifications] failed to show:', err);
+        return false;
+      }
+    },
+  );
 
   // Native folder picker dialog
   ipcMain.handle('dialog:open-folder', async (_event, options?: { defaultPath?: string; title?: string }) => {

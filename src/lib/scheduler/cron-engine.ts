@@ -16,8 +16,9 @@ import { createSession } from '@/lib/db/sessions';
 import { getMessages } from '@/lib/db';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { submitWorkflow } from '@/lib/workflow/api';
+import { startApprovalTimeoutSweeper, stopApprovalTimeoutSweeper } from '@/lib/workflow/approval-timeout-sweeper';
 import { taskEventBus } from '@/lib/task-event-bus';
-import type { WorkflowDSL, WorkflowDSLV2 } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -26,6 +27,8 @@ let initialized = false;
 export function initScheduler(): void {
   if (initialized) return;
   initialized = true;
+
+  startApprovalTimeoutSweeper();
 
   // Run first tick after 10s to allow server to fully start
   setTimeout(() => {
@@ -41,6 +44,7 @@ export function stopScheduler(): void {
     clearInterval(tickTimer);
     tickTimer = null;
   }
+  stopApprovalTimeoutSweeper();
   initialized = false;
 }
 
@@ -165,7 +169,7 @@ function checkSessionForFailedSteps(sessionId: string): boolean {
 
 /** Merge DSL param defaults into effective params — fills in missing keys only */
 function mergeParamDefaults(
-  dsl: WorkflowDSL | WorkflowDSLV2,
+  dsl: WorkflowDSLV3,
   params: Record<string, unknown>,
 ): Record<string, unknown> {
   const dslParams = (dsl as { params?: Array<{ name: string; default?: unknown }> }).params;

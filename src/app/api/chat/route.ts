@@ -329,6 +329,45 @@ function persistTeamPlanFromAssistantContent(
   });
 }
 
+/**
+ * Emit SSE comment frames at a regular interval so long-running tool calls
+ * (e.g. 15-minute image generation) don't let the upstream stream idle out —
+ * keeps the TCP connection / any intermediate proxy from giving up even when
+ * no real SSE events flow. Client-side idle timeout is a separate defense.
+ */
+function withSseKeepAlive(
+  stream: ReadableStream<string>,
+  intervalMs = 10_000,
+): ReadableStream<string> {
+  return new ReadableStream<string>({
+    start(controller) {
+      let closed = false
+      const tick = setInterval(() => {
+        if (closed) return
+        try { controller.enqueue(': keep-alive\n\n') } catch { closed = true }
+      }, intervalMs)
+
+      const reader = stream.getReader()
+      ;(async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            controller.enqueue(value)
+          }
+          controller.close()
+        } catch (err) {
+          controller.error(err)
+        } finally {
+          closed = true
+          clearInterval(tick)
+          try { reader.releaseLock() } catch { /* already released */ }
+        }
+      })()
+    },
+  })
+}
+
 function prependMemoryEvent(
   stream: ReadableStream<string>,
   memory: import('@/lib/db/memories').MemoryRecord,
@@ -880,7 +919,7 @@ export async function POST(request: NextRequest) {
       abortController,
       permissionMode,
       files: fileAttachments,
-      toolTimeoutSeconds: toolTimeout || 300,
+      toolTimeoutSeconds: toolTimeout || 900,
       provider: resolvedProvider,
       knowledgeOptions: {
         enabled: knowledge_enabled === true,
@@ -915,7 +954,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return new Response(streamForClient, {
+    return new Response(withSseKeepAlive(streamForClient), {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',

@@ -8,30 +8,14 @@ import { WorkflowResultToolbar } from './WorkflowResultToolbar';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { WorkflowParamManager } from './WorkflowParamManager';
 import { DebugRunHistory } from './DebugRunHistory';
-import { removeStepFromDsl } from '@/lib/workflow/dsl-graph-converter';
-import type { WorkflowParamDef } from '@/lib/workflow/types';
+import { removeNodeFromDsl } from '@/lib/workflow/dsl-graph-converter';
+import type { WorkflowDSLV3, WorkflowNode } from '@/lib/workflow/types-v3';
 import { useWorkflowDebugStore } from '@/stores/workflow-debug-store';
 
 const WorkflowCanvas = dynamic(
   () => import('./visual-editor/workflow-canvas').then(m => ({ default: m.WorkflowCanvas })),
   { ssr: false, loading: () => <div className="h-[480px] rounded-xl border border-border/40 animate-pulse bg-muted/20" /> },
 );
-
-interface WorkflowStep {
-  id: string;
-  type: string;
-  dependsOn?: string[];
-  input?: Record<string, unknown>;
-  policy?: { timeoutMs?: number; retry?: { maximumAttempts?: number } };
-}
-
-interface WorkflowDslResult {
-  version: string;
-  name: string;
-  description?: string;
-  params?: WorkflowParamDef[];
-  steps: WorkflowStep[];
-}
 
 interface ValidationResult {
   valid: boolean;
@@ -41,14 +25,14 @@ interface ValidationResult {
 type ViewMode = 'graph' | 'visual' | 'json';
 
 interface WorkflowEditorViewProps {
-  dsl: WorkflowDslResult;
+  dsl: WorkflowDSLV3;
   dslText: string;
   validation: ValidationResult | null;
   presetNames: Record<string, string>;
   savedWorkflowId: string | null;
   saving: boolean;
   saveMsg: string;
-  onDslChange: (dsl: WorkflowDslResult, text: string) => void;
+  onDslChange: (dsl: WorkflowDSLV3, text: string) => void;
   onDslTextEdit: (text: string) => void;
   onValidate: () => void;
   onSave: () => void;
@@ -56,6 +40,12 @@ interface WorkflowEditorViewProps {
   onSaveToSchedule?: () => void;
   hideToolbar?: boolean;
   canvasHeight?: number;
+}
+
+function readAgentPrompt(node: WorkflowNode): string {
+  if (node.type !== 'agent') return '';
+  const input = node.input as Record<string, unknown>;
+  return typeof input.prompt === 'string' ? input.prompt : '';
 }
 
 export function WorkflowEditorView({
@@ -81,35 +71,35 @@ export function WorkflowEditorView({
   const unusedParams = (() => {
     const params = dsl.params ?? [];
     if (params.length === 0) return [];
-    const allPrompts = dsl.steps
-      .map(s => (typeof s.input?.prompt === 'string' ? s.input.prompt : ''))
-      .join('\n');
+    const allPrompts = dsl.nodes.map(readAgentPrompt).join('\n');
     return params.filter(p => !allPrompts.includes(`{{input.${p.name}`));
   })();
 
-  const handleStepSave = useCallback((updated: WorkflowStep) => {
-    const newSteps = dsl.steps.map(s => s.id === selectedStepId ? updated : s);
-    const newDsl = { ...dsl, steps: newSteps };
-    onDslChange(newDsl, JSON.stringify(newDsl, null, 2));
+  const handleNodeSave = useCallback((updated: WorkflowNode) => {
+    const newNodes = dsl.nodes.map(n => n.id === selectedStepId ? updated : n);
+    const nextDsl: WorkflowDSLV3 = { ...dsl, nodes: newNodes };
+    onDslChange(nextDsl, JSON.stringify(nextDsl, null, 2));
     setSelectedStepId(null);
   }, [dsl, selectedStepId, onDslChange]);
 
-  const handleStepDelete = useCallback((stepId: string) => {
-    const newDsl = removeStepFromDsl(dsl, stepId);
-    onDslChange(newDsl, JSON.stringify(newDsl, null, 2));
+  const handleNodeDelete = useCallback((nodeId: string) => {
+    const nextDsl = removeNodeFromDsl(dsl, nodeId);
+    onDslChange(nextDsl, JSON.stringify(nextDsl, null, 2));
     setSelectedStepId(null);
   }, [dsl, onDslChange]);
 
-  const handleVisualChange = useCallback((newDsl: WorkflowDslResult) => {
+  const handleVisualChange = useCallback((newDsl: WorkflowDSLV3) => {
     onDslChange(newDsl, JSON.stringify(newDsl, null, 2));
   }, [onDslChange]);
+
+  const selectedNode = selectedStepId ? dsl.nodes.find(n => n.id === selectedStepId) : undefined;
 
   return (
     <div className="space-y-2">
       {!hideToolbar && (
         <WorkflowResultToolbar
           name={dsl.name}
-          stepCount={dsl.steps.length}
+          stepCount={dsl.nodes.length}
           savedWorkflowId={savedWorkflowId}
           saving={saving}
           saveMsg={saveMsg}
@@ -207,7 +197,7 @@ export function WorkflowEditorView({
       {/* Editor content — no Card wrapper, full width */}
       {viewMode === 'graph' && (
         <WorkflowDslGraph
-          steps={dsl.steps}
+          dsl={dsl}
           presetNames={presetNames}
           selectedStepId={selectedStepId}
           onStepClick={setSelectedStepId}
@@ -233,15 +223,14 @@ export function WorkflowEditorView({
         />
       )}
 
-      {viewMode === 'graph' && selectedStepId && dsl.steps.find(s => s.id === selectedStepId) && (
+      {viewMode === 'graph' && selectedNode && (
         <WorkflowStepEditor
-          key={selectedStepId}
-          step={dsl.steps.find(s => s.id === selectedStepId)!}
-          allStepIds={dsl.steps.map(s => s.id)}
+          key={selectedNode.id}
+          node={selectedNode}
           workflowParams={dsl.params ?? []}
-          onSave={handleStepSave}
+          onSave={handleNodeSave}
           onCancel={() => setSelectedStepId(null)}
-          onDelete={handleStepDelete}
+          onDelete={handleNodeDelete}
         />
       )}
 
@@ -257,7 +246,11 @@ export function WorkflowEditorView({
           <WorkflowParamManager
             params={dsl.params ?? []}
             onChange={params => {
-              const newDsl = { ...dsl, params: params.length > 0 ? params : undefined };
+              const newDsl: WorkflowDSLV3 = {
+                ...dsl,
+                ...(params.length > 0 ? { params } : {}),
+              };
+              if (params.length === 0) delete (newDsl as { params?: unknown }).params;
               onDslChange(newDsl, JSON.stringify(newDsl, null, 2));
             }}
           />

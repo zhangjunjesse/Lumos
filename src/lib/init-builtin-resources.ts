@@ -11,7 +11,9 @@ import {
   deleteSkill,
   createMcpServer,
   getMcpServerByNameAndScope,
+  getMcpServersByScope,
   updateMcpServer,
+  deleteMcpServer,
   setSetting,
   getBuiltinProvider,
 } from './db';
@@ -169,6 +171,7 @@ function importMcpServers(): number {
 
   const files = fs.readdirSync(mcpDir).filter(f => f.endsWith('.json'));
   let imported = 0;
+  const currentNames = new Set<string>();
 
   for (const file of files) {
     const filePath = path.join(mcpDir, file);
@@ -179,6 +182,8 @@ function importMcpServers(): number {
       console.warn('[init-builtin-resources] Invalid MCP config in:', file);
       continue;
     }
+
+    currentNames.add(config.name);
 
     // Keep placeholders (e.g. [RUNTIME_PATH]) in DB config.
     // They are resolved at request-time in chat route where full context
@@ -215,7 +220,8 @@ function importMcpServers(): number {
         || config.name === 'workflow'
         || config.name === 'deepsearch'
         || config.name === 'office-docs'
-        || config.name === 'chrome-devtools';
+        || config.name === 'chrome-devtools'
+        || config.name === 'image-reader';
       createMcpServer({
         name: config.name,
         scope: 'builtin',
@@ -230,6 +236,18 @@ function importMcpServers(): number {
       console.log('[init-builtin-resources] Imported MCP server:', config.name);
       imported++;
     }
+  }
+
+  // Remove builtin MCP servers whose JSON config no longer exists (e.g. filesystem was removed).
+  const existingBuiltin = getMcpServersByScope('builtin');
+  const removed: string[] = [];
+  for (const server of existingBuiltin) {
+    if (!currentNames.has(server.name)) {
+      if (deleteMcpServer(server.id)) removed.push(server.name);
+    }
+  }
+  if (removed.length > 0) {
+    console.log(`[init-builtin-resources] Removed builtin MCP servers: ${removed.join(', ')}`);
   }
 
   return imported;

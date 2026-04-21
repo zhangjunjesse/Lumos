@@ -53,11 +53,11 @@ describe('workflow projection terminal state handling', () => {
     } = await import('../projection');
     const workflowId = 'wf-cancel-projection-001';
     initializeWorkflowProjection(workflowId, 'task-cancel-projection-001', {
-      dslVersion: 'v1',
+      dslVersion: 'v3',
       artifactKind: 'workflow-factory-module',
       exportedSymbol: 'buildWorkflow',
       workflowName: 'cancel-projection-test',
-      workflowVersion: 'dsl-v1-cancel-projection',
+      workflowVersion: 'dsl-v3-cancel-projection',
       stepIds: ['draft'],
       stepTypes: ['agent'],
       warnings: [],

@@ -164,6 +164,27 @@ export function loadCachedStep(
   return row ? rowToStepOutput(row) : null;
 }
 
+/**
+ * 找到 run 时间窗内所有 status='error' 的 step output,用于失败定位。
+ * `endIso` 为 null 时用当前时间作为上界(run 还没 updateRunHistory 时的竞态兜底)。
+ */
+export function loadFailedStepsInWindow(
+  sessionId: string,
+  startIso: string,
+  endIso: string | null,
+): DebugStepOutput[] {
+  const upper = endIso ?? new Date(Date.now() + 60_000).toISOString();
+  const rows = getDb()
+    .prepare(`
+      SELECT * FROM workflow_debug_step_outputs
+      WHERE session_id = ? AND status = 'error'
+        AND completed_at >= ? AND completed_at <= ?
+      ORDER BY completed_at ASC
+    `)
+    .all(sessionId, startIso, upper) as DebugStepOutputRow[];
+  return rows.map(rowToStepOutput);
+}
+
 export function loadStepCacheMetas(sessionId: string): DebugStepCacheMeta[] {
   const rows = getDb()
     .prepare(`

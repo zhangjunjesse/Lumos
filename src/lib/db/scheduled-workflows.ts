@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { getDb } from './index';
 
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types';
 
 export type RunMode = 'scheduled' | 'once';
 
@@ -30,7 +30,7 @@ export interface ScheduledWorkflowRow {
 export interface ScheduledWorkflow {
   id: string;
   name: string;
-  workflowDsl: WorkflowDSL;
+  workflowDsl: WorkflowDSLV3;
   workflowId: string | null;
   runMode: RunMode;
   intervalMinutes: number;
@@ -53,7 +53,7 @@ export interface ScheduledWorkflow {
 
 export interface CreateScheduledWorkflowInput {
   name: string;
-  workflowDsl: WorkflowDSL;
+  workflowDsl: WorkflowDSLV3;
   workflowId?: string;
   runMode?: RunMode;
   intervalMinutes: number;
@@ -66,7 +66,7 @@ export interface CreateScheduledWorkflowInput {
 
 export type UpdateScheduledWorkflowInput = Partial<{
   name: string;
-  workflowDsl: WorkflowDSL;
+  workflowDsl: WorkflowDSLV3;
   workflowId: string | null;
   runMode: RunMode;
   intervalMinutes: number;
@@ -79,11 +79,11 @@ export type UpdateScheduledWorkflowInput = Partial<{
 }>;
 
 function rowToSchedule(row: ScheduledWorkflowRow): ScheduledWorkflow {
-  let dsl: WorkflowDSL;
+  let dsl: WorkflowDSLV3;
   try {
-    dsl = JSON.parse(row.workflow_dsl) as WorkflowDSL;
+    dsl = JSON.parse(row.workflow_dsl) as WorkflowDSLV3;
   } catch {
-    dsl = { version: 'v1', name: row.name, steps: [] };
+    dsl = { version: 'v3', name: row.name, nodes: [], edges: [] };
   }
   let runParams: Record<string, unknown> = {};
   try {
@@ -339,13 +339,13 @@ export interface ScheduleRunRecord {
   error: string;
   startedAt: string;
   completedAt: string | null;
-  workflowDslSnapshot: WorkflowDSL | null;
+  workflowDslSnapshot: WorkflowDSLV3 | null;
 }
 
-function parseDslSnapshot(raw: unknown): WorkflowDSL | null {
+function parseDslSnapshot(raw: unknown): WorkflowDSLV3 | null {
   if (!raw || typeof raw !== 'string') return null;
   try {
-    return JSON.parse(raw) as WorkflowDSL;
+    return JSON.parse(raw) as WorkflowDSLV3;
   } catch {
     return null;
   }
@@ -360,7 +360,7 @@ function hasHistoryTable(): boolean {
 export function insertRunHistory(
   scheduleId: string,
   sessionId: string | null,
-  dsl?: WorkflowDSL | null,
+  dsl?: WorkflowDSLV3 | null,
 ): string {
   const id = randomUUID();
   const now = new Date().toISOString();

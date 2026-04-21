@@ -126,11 +126,11 @@ describe('workflow engine running cancel', () => {
       result: () => runResult.promise,
     };
     const workflowManifest = {
-      dslVersion: 'v1' as const,
+      dslVersion: 'v3' as const,
       artifactKind: 'workflow-factory-module' as const,
       exportedSymbol: 'buildWorkflow' as const,
       workflowName: 'cancel-resolve-test',
-      workflowVersion: 'dsl-v1-cancel-resolve',
+      workflowVersion: 'dsl-v3-cancel-resolve',
       stepIds: ['main'],
       stepTypes: ['agent'] as const,
       warnings: [],
@@ -200,11 +200,11 @@ describe('workflow engine running cancel', () => {
       result: () => runResult.promise,
     };
     const workflowManifest = {
-      dslVersion: 'v1' as const,
+      dslVersion: 'v3' as const,
       artifactKind: 'workflow-factory-module' as const,
       exportedSymbol: 'buildWorkflow' as const,
       workflowName: 'cancel-reject-test',
-      workflowVersion: 'dsl-v1-cancel-reject',
+      workflowVersion: 'dsl-v3-cancel-reject',
       stepIds: ['main'],
       stepTypes: ['agent'] as const,
       warnings: [],
@@ -272,11 +272,11 @@ describe('workflow engine running cancel', () => {
       result: () => runResult.promise,
     };
     const workflowManifest = {
-      dslVersion: 'v1' as const,
+      dslVersion: 'v3' as const,
       artifactKind: 'workflow-factory-module' as const,
       exportedSymbol: 'buildWorkflow' as const,
       workflowName: 'cancel-race-test',
-      workflowVersion: 'dsl-v1-cancel-race',
+      workflowVersion: 'dsl-v3-cancel-race',
       stepIds: ['main'],
       stepTypes: ['agent'] as const,
       warnings: [],

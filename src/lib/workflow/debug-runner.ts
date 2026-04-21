@@ -17,6 +17,7 @@ import {
   deleteCachedStepsAndDownstream,
   clearDebugSession,
   deleteCachedStep,
+  loadFailedStepsInWindow,
 } from '@/lib/db/debug-session';
 import { insertRunHistory, updateRunHistory } from '@/lib/db/scheduled-workflows';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
@@ -26,6 +27,8 @@ import {
   buildDebugRuntimeContext,
   computeTransitiveDownstream,
 } from './debug-cache';
+import { formatWorkflowError } from './error-format';
+import { extractFailureDetail, type StepFailureDetail } from './debug-failure-extract';
 import type {
   DebugRunRequest,
   DebugSessionSnapshot,
@@ -53,7 +56,15 @@ export function buildDebugSessionSnapshot(workflowId: string): DebugSessionSnaps
     cachedSteps[m.stepId] = { ...m, stale: cachedHash !== current };
   }
 
-  return { session, cachedSteps };
+  const latestRunId = getLatestDebugRunId(workflowId);
+  return { session, cachedSteps, latestRunId };
+}
+
+function getLatestDebugRunId(workflowId: string): string | null {
+  const row = getDb().prepare(
+    "SELECT id FROM schedule_run_history WHERE schedule_id = ? AND mode = 'debug' ORDER BY started_at DESC LIMIT 1",
+  ).get(workflowId) as { id?: string } | undefined;
+  return row?.id ?? null;
 }
 
 // ── Delete cache entries ────────────────────────────────────────────────────
@@ -70,6 +81,50 @@ export function getDebugStepOutput(
   const session = getDebugSessionByWorkflow(workflowId);
   if (!session) return null;
   return loadCachedStep(session.id, stepId);
+}
+
+export type DebugRunFailure = StepFailureDetail;
+
+export interface DebugRunFailureReport {
+  runError: string;
+  failures: DebugRunFailure[];
+}
+
+/**
+ * 给 runId 定位到失败的 step:
+ *   1. 读 schedule_run_history 拿到 debug_session_id 和时间窗
+ *   2. 查 session 下时间窗内 status='error' 的 step outputs
+ *   3. 清洗 run 级 error + 每个 step 的 error,提取 summary
+ */
+export function getDebugRunFailures(runId: string): DebugRunFailureReport {
+  const row = getDb().prepare(
+    "SELECT error, started_at, completed_at, debug_session_id FROM schedule_run_history WHERE id = ? AND mode = 'debug'",
+  ).get(runId) as {
+    error?: string;
+    started_at?: string;
+    completed_at?: string | null;
+    debug_session_id?: string | null;
+  } | undefined;
+  if (!row) return { runError: '执行记录不存在', failures: [] };
+
+  const runError = formatWorkflowError(row.error ?? '');
+  if (!row.debug_session_id || !row.started_at) {
+    return { runError, failures: [] };
+  }
+
+  const steps = loadFailedStepsInWindow(
+    row.debug_session_id,
+    row.started_at,
+    row.completed_at ?? null,
+  );
+  const failures = steps.map(s => extractFailureDetail({
+    stepId: s.stepId,
+    output: s.output,
+    error: s.error,
+    durationMs: s.durationMs,
+    completedAt: s.completedAt,
+  }));
+  return { runError, failures };
 }
 
 export function deleteDebugStep(
@@ -142,8 +197,7 @@ export async function runDebugWorkflow(
     undefined,
     'workflow',
   );
-  // insertRunHistory is typed for v1 DSL, but only JSON-stringifies the value.
-  // Cast to align with AnyWorkflowDSL (covers both v1 and v2).
+  // insertRunHistory only JSON-stringifies the DSL value; cast keeps the type loose.
   const runId = insertRunHistory(
     request.workflowId,
     chatSession.id,
@@ -172,7 +226,7 @@ export async function runDebugWorkflow(
         setDebugSessionStatus(session.id, 'idle');
       },
       onFailed: (event) => {
-        updateRunHistory(runId, 'error', event.error.message);
+        updateRunHistory(runId, 'error', formatWorkflowError(event.error?.message));
         setDebugSessionStatus(session.id, 'error');
       },
     },
@@ -181,7 +235,7 @@ export async function runDebugWorkflow(
 
   if (submitResult.status === 'rejected') {
     setDebugSessionStatus(session.id, 'error');
-    const err = (submitResult.errors || []).join('; ');
+    const err = formatWorkflowError((submitResult.errors || []).join('; '));
     updateRunHistory(runId, 'error', err);
     throw new Error(`Workflow rejected: ${err}`);
   }

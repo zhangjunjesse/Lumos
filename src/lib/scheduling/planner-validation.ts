@@ -1,4 +1,4 @@
-import type { WorkflowDSL, WorkflowStep } from '@/lib/workflow/types';
+import type { WorkflowDSLV3, WorkflowNode, AgentNode } from '@/lib/workflow/types-v3';
 import { getWorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import {
   type SchedulingPlanAnalysis,
@@ -48,39 +48,37 @@ export function normalizeAnalysis(
   };
 }
 
-export function validatePlannerWorkflowSemantics(spec: WorkflowDSL): string[] {
+export function validatePlannerWorkflowSemantics(spec: WorkflowDSLV3): string[] {
   const errors: string[] = [];
-  const stepById = new Map(spec.steps.map((step) => [step.id, step] as const));
 
-  for (const step of spec.steps) {
-    if (step.type === 'agent') {
-      const input = isRecord(step.input) ? step.input : {};
-      const timeoutMs = step.policy?.timeoutMs;
+  for (const node of spec.nodes) {
+    if (node.type === 'agent') {
+      const input = isRecord(node.input) ? node.input : {};
+      const timeoutMs = node.policy?.timeoutMs;
       const role = typeof input.role === 'string' ? input.role.trim().toLowerCase() : '';
       const presetRole = typeof input.preset === 'string' ? resolvePresetRole(input.preset) : undefined;
       const effectiveRole = role || presetRole || '';
       const prompt = typeof input.prompt === 'string' ? input.prompt : '';
 
       if (typeof timeoutMs === 'number' && timeoutMs < AGENT_STEP_TIMEOUT_MS) {
-        errors.push(`steps.${step.id}.policy.timeoutMs: agent steps must use timeoutMs >= ${AGENT_STEP_TIMEOUT_MS} or omit timeoutMs`);
+        errors.push(`nodes.${node.id}.policy.timeoutMs: agent nodes must use timeoutMs >= ${AGENT_STEP_TIMEOUT_MS} or omit timeoutMs`);
       }
 
-      if (typeof timeoutMs === 'number' && isLongFormSynthesisAgentStep(step, input) && timeoutMs < REPORT_SYNTHESIS_TIMEOUT_MS) {
-        errors.push(`steps.${step.id}.policy.timeoutMs: long-form plain-text report synthesis agent steps must use timeoutMs >= ${REPORT_SYNTHESIS_TIMEOUT_MS} or omit timeoutMs`);
+      if (typeof timeoutMs === 'number' && isLongFormSynthesisAgentNode(node, input) && timeoutMs < REPORT_SYNTHESIS_TIMEOUT_MS) {
+        errors.push(`nodes.${node.id}.policy.timeoutMs: long-form plain-text report synthesis agent nodes must use timeoutMs >= ${REPORT_SYNTHESIS_TIMEOUT_MS} or omit timeoutMs`);
       }
 
       if (effectiveRole === 'researcher' && promptRequestsFileWrite(prompt)) {
-        errors.push(`steps.${step.id}.input.prompt: researcher steps are read-only and must not be instructed to write files; return the report text in output.summary instead`);
+        errors.push(`nodes.${node.id}.input.prompt: researcher nodes are read-only and must not be instructed to write files; return the report text in output.summary instead`);
       }
     }
-
   }
 
   return errors;
 }
 
-export function isLongFormSynthesisAgentStep(
-  step: WorkflowStep,
+export function isLongFormSynthesisAgentNode(
+  node: AgentNode,
   input: Record<string, unknown>,
 ): boolean {
   if (input.outputMode !== 'plain-text') {
@@ -88,7 +86,7 @@ export function isLongFormSynthesisAgentStep(
   }
 
   const prompt = typeof input.prompt === 'string' ? input.prompt.toLowerCase() : '';
-  const stepId = step.id.toLowerCase();
+  const nodeId = node.id.toLowerCase();
 
   return matchesAny(prompt, [
     'report',
@@ -103,7 +101,7 @@ export function isLongFormSynthesisAgentStep(
     '汇总',
     '整改',
     '缓解',
-  ]) || matchesAny(stepId, [
+  ]) || matchesAny(nodeId, [
     'report',
     'synth',
     'summarize',
@@ -122,17 +120,18 @@ export function isAbsolutePathLike(value: string): boolean {
   return trimmed.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(trimmed);
 }
 
-export function dependsOnPlainTextAgentStep(
-  step: WorkflowStep,
-  stepById: ReadonlyMap<string, WorkflowStep>,
+export function dependsOnPlainTextAgentNode(
+  node: WorkflowNode,
+  nodeById: ReadonlyMap<string, WorkflowNode>,
+  edges: readonly { from: string; to: string; kind: string }[],
 ): boolean {
-  return (step.dependsOn ?? []).some((dependencyId) => {
-    const dependency = stepById.get(dependencyId);
-    if (!dependency || dependency.type !== 'agent' || !isRecord(dependency.input)) {
-      return false;
-    }
+  const predecessors = edges
+    .filter((edge) => edge.to === node.id && edge.kind === 'next')
+    .map((edge) => nodeById.get(edge.from));
 
-    return dependency.input.outputMode === 'plain-text';
+  return predecessors.some((pred) => {
+    if (!pred || pred.type !== 'agent' || !isRecord(pred.input)) return false;
+    return pred.input.outputMode === 'plain-text';
   });
 }
 
@@ -155,8 +154,10 @@ export function extractJsonObject(raw: string): string | null {
 }
 
 export function estimateDurationSeconds(
-  workflowDsl: WorkflowDSL,
-  analysis: SchedulingPlanAnalysis,
+  _workflowDsl: WorkflowDSLV3,
+  _analysis: SchedulingPlanAnalysis,
 ): number {
+  void _workflowDsl;
+  void _analysis;
   return WORKFLOW_ESTIMATED_DURATION_SECONDS;
 }

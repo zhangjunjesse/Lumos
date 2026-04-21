@@ -5,67 +5,107 @@ import {
   computeTransitiveDownstream,
   computeUpstreamClosure,
 } from '../debug-cache';
-import type { AnyWorkflowDSL, WorkflowStep } from '../types';
 import type { DebugStepOutput } from '../debug-types';
+import type {
+  IfElseNode,
+  WorkflowDSLV3,
+  WorkflowEdge,
+  WorkflowNode,
+  WhileNode,
+} from '../types-v3';
 
-const agent = (id: string, extras: Partial<WorkflowStep> = {}): WorkflowStep => ({
-  id,
-  type: 'agent',
-  input: { prompt: `p-${id}` },
-  ...extras,
-});
+// ── Helpers (V3-native DSL builders) ────────────────────────────────────────
 
-const container = (id: string, type: 'if-else' | 'while' | 'for-each', input: Record<string, unknown>): WorkflowStep => ({
-  id, type, input,
-});
-
-function linear(): AnyWorkflowDSL {
+function agent(id: string, extras: Partial<WorkflowNode> = {}): WorkflowNode {
   return {
-    version: 'v2', name: 'linear',
-    steps: [
-      agent('a'),
-      agent('b', { dependsOn: ['a'] }),
-      agent('c', { dependsOn: ['b'] }),
-      agent('d', { dependsOn: ['c'] }),
-    ],
+    id,
+    type: 'agent',
+    input: { prompt: `p-${id}` },
+    ...extras,
+  } as WorkflowNode;
+}
+
+function ifElse(id: string, extras: Partial<IfElseNode> = {}): IfElseNode {
+  return {
+    id,
+    type: 'if-else',
+    input: { condition: { op: 'exists', ref: 'input.flag' } },
+    ...extras,
   };
 }
 
-function dslWithIfElse(): AnyWorkflowDSL {
+function whileNode(id: string, extras: Partial<WhileNode> = {}): WhileNode {
   return {
-    version: 'v2', name: 'if-else nested',
-    steps: [
+    id,
+    type: 'while',
+    input: { condition: { op: 'exists', ref: 'state.x' } },
+    ...extras,
+  };
+}
+
+function edge(
+  from: string,
+  to: string,
+  kind: WorkflowEdge['kind'],
+): WorkflowEdge {
+  return { from, to, kind };
+}
+
+function v3(nodes: WorkflowNode[], edges: WorkflowEdge[], name: string): WorkflowDSLV3 {
+  return { version: 'v3', name, nodes, edges };
+}
+
+// a → b → c → d (linear next chain)
+function linear(): WorkflowDSLV3 {
+  return v3(
+    [agent('a'), agent('b'), agent('c'), agent('d')],
+    [edge('a', 'b', 'next'), edge('b', 'c', 'next'), edge('c', 'd', 'next')],
+    'linear',
+  );
+}
+
+// setup → gate(if-else) → then[work-a → work-b] / else[fallback] → finish
+function dslWithIfElse(): WorkflowDSLV3 {
+  return v3(
+    [
       agent('setup'),
-      container('gate', 'if-else', {
-        condition: { op: 'exists', ref: 'input.flag' },
-        then: ['work-a', 'work-b'],
-        else: ['fallback'],
-      }),
+      ifElse('gate'),
       agent('work-a'),
       agent('work-b'),
       agent('fallback'),
-      agent('finish', { dependsOn: ['gate'] }),
+      agent('finish'),
     ],
-  };
+    [
+      edge('setup', 'gate', 'next'),
+      edge('gate', 'work-a', 'then'),
+      edge('work-a', 'work-b', 'next'),
+      edge('work-b', 'finish', 'next'),
+      edge('gate', 'fallback', 'else'),
+      edge('fallback', 'finish', 'next'),
+    ],
+    'if-else nested',
+  );
 }
 
-function dslWithNestedWhile(): AnyWorkflowDSL {
-  return {
-    version: 'v2', name: 'nested',
-    steps: [
+// prep → outer-if → then[loop(while, body=[inner])] → end; else branch goes to end.
+function dslWithNestedWhile(): WorkflowDSLV3 {
+  return v3(
+    [
       agent('prep'),
-      container('outer-if', 'if-else', {
-        condition: { op: 'exists', ref: 'input.go' },
-        then: ['loop'],
-      }),
-      container('loop', 'while', {
-        condition: { op: 'exists', ref: 'state.x' },
-        body: ['inner'],
-      }),
+      ifElse('outer-if'),
+      whileNode('loop'),
       agent('inner'),
-      agent('end', { dependsOn: ['outer-if'] }),
+      agent('end'),
     ],
-  };
+    [
+      edge('prep', 'outer-if', 'next'),
+      edge('outer-if', 'loop', 'then'),
+      edge('loop', 'end', 'next'),
+      edge('outer-if', 'end', 'else'),
+      edge('loop', 'inner', 'body'),
+    ],
+    'nested',
+  );
 }
 
 function stubCache(stepId: string, configHash: string): DebugStepOutput {
@@ -81,8 +121,10 @@ function stubCache(stepId: string, configHash: string): DebugStepOutput {
   };
 }
 
+// ── Tests ───────────────────────────────────────────────────────────────────
+
 describe('computeConfigHash', () => {
-  it('returns the same hash for identical (input/when/policy) config', () => {
+  it('returns the same hash for identical (input/policy) config', () => {
     const a = agent('x', { input: { prompt: 'hi' }, policy: { timeoutMs: 1000 } });
     const b = agent('x', { input: { prompt: 'hi' }, policy: { timeoutMs: 1000 } });
     expect(computeConfigHash(a)).toBe(computeConfigHash(b));
@@ -102,7 +144,7 @@ describe('computeConfigHash', () => {
 });
 
 describe('computeUpstreamClosure', () => {
-  it('collects transitive dependsOn chain in a linear DSL', () => {
+  it('collects transitive chain in a linear DSL', () => {
     const upstream = computeUpstreamClosure('c', linear());
     expect(upstream).toEqual(new Set(['a', 'b']));
   });
@@ -119,10 +161,8 @@ describe('computeUpstreamClosure', () => {
 
   it('walks prior siblings inside an if-else then-branch and includes the container', () => {
     const upstream = computeUpstreamClosure('work-b', dslWithIfElse());
-    // work-a is a prior sibling in `then`; `gate` is the enclosing container; `setup` is its dep-free prior sibling.
     expect(upstream.has('work-a')).toBe(true);
     expect(upstream.has('gate')).toBe(true);
-    // setup is a top-level prior sibling of gate
     expect(upstream.has('setup')).toBe(true);
     expect(upstream.has('fallback')).toBe(false);
     expect(upstream.has('finish')).toBe(false);
@@ -137,14 +177,13 @@ describe('computeUpstreamClosure', () => {
 });
 
 describe('computeTransitiveDownstream', () => {
-  it('collects dependsOn descendants + later siblings', () => {
+  it('collects forward chain', () => {
     const ds = computeTransitiveDownstream('b', linear());
     expect(ds.sort()).toEqual(['c', 'd']);
   });
 
   it('container downstream includes body subtree as a unit + siblings after', () => {
     const ds = computeTransitiveDownstream('outer-if', dslWithNestedWhile());
-    // body subtree of outer-if is [loop], and loop's body is [inner]
     expect(ds).toEqual(expect.arrayContaining(['loop', 'inner', 'end']));
   });
 
@@ -197,12 +236,12 @@ describe('buildDebugRuntimeContext', () => {
     })).toThrow(/continue-from/);
   });
 
-  it('configHashes map has one entry per step', () => {
+  it('configHashes map has one entry per node', () => {
     const ctx = buildDebugRuntimeContext({
       sessionId: 's', mode: 'run-to', targetStepId: 'c',
       dsl, cachedSteps: [],
     });
-    expect(ctx.configHashes.size).toBe(dsl.steps.length);
+    expect(ctx.configHashes.size).toBe(dsl.nodes.length);
   });
 
   it('container scenario: run-to on a step inside if-else includes the container + prior sibling', () => {
@@ -211,10 +250,10 @@ describe('buildDebugRuntimeContext', () => {
       sessionId: 's', mode: 'run-to', targetStepId: 'work-b',
       dsl: d, cachedSteps: [],
     });
-    expect(ctx.skipSet.has('work-a')).toBe(false); // upstream (prior sibling)
-    expect(ctx.skipSet.has('gate')).toBe(false); // upstream (parent container)
-    expect(ctx.skipSet.has('setup')).toBe(false); // upstream
-    expect(ctx.skipSet.has('fallback')).toBe(true); // unrelated branch
-    expect(ctx.skipSet.has('finish')).toBe(true); // downstream
+    expect(ctx.skipSet.has('work-a')).toBe(false);
+    expect(ctx.skipSet.has('gate')).toBe(false);
+    expect(ctx.skipSet.has('setup')).toBe(false);
+    expect(ctx.skipSet.has('fallback')).toBe(true);
+    expect(ctx.skipSet.has('finish')).toBe(true);
   });
 });

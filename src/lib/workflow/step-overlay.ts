@@ -6,6 +6,13 @@ export interface WorkflowDslStepOverlay {
   outputFileCount: number;
   outputSummary: string;
   error: string;
+  /**
+   * Current retry attempt in a live run (1-based). Only populated while a step
+   * is actively retrying — cleared on completion. Pair with `maxAttempts` to
+   * render the "N/M" indicator.
+   */
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export interface StepAggregateOverlay {

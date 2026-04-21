@@ -3,13 +3,19 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
-import { useNodeDebug, useNodeOverlay } from '../node-overlay-context';
-import { DebugBadge, OverlayFooter, RunDurationLabel, StatusDot } from './overlay-parts';
+import { useNodeDebug, useNodeFlash, useNodeOverlay, useNodeValidation } from '../node-overlay-context';
+import {
+  ContainerBadge, DebugBadge, FailureAccentBar, FlashRing, NodeValidationBadge,
+  OverlayFooter, RetryRing, RunDurationLabel, StatusDot,
+} from './overlay-parts';
 
 function NotificationNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) {
   const overlay = useNodeOverlay(data.stepId);
   const debug = useNodeDebug(data.stepId);
-  const message = typeof data.input?.message === 'string' ? data.input.message : '';
+  const validation = useNodeValidation(data.stepId);
+  const flash = useNodeFlash(data.stepId);
+  const input = (data.node.type === 'notification' ? data.node.input : {}) as Record<string, unknown>;
+  const message = typeof input.message === 'string' ? input.message : '';
 
   return (
     <div
@@ -19,7 +25,12 @@ function NotificationNodeInner({ data, selected }: NodeProps & { data: StepNodeD
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-blue-500" />
+      <FlashRing active={flash} />
+      <FailureAccentBar overlay={overlay} />
+      <ContainerBadge containerId={data.containerId} />
       <DebugBadge debug={debug} />
+      <NodeValidationBadge validation={validation} />
+      <RetryRing overlay={overlay} />
       <div className="flex items-center gap-1.5">
         <StatusDot overlay={overlay} />
         <span className="inline-block w-2 h-2 rounded-full bg-blue-500 shrink-0" />

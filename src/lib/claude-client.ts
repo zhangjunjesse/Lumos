@@ -382,8 +382,6 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       try {
         const sdkEnv: Record<string, string> = {
           ...runtimeContext.env,
-          // Extend MCP tool timeout for long-running tools like image generation (~300s)
-          CLAUDE_CODE_STREAM_CLOSE_TIMEOUT: '360',
         };
 
         if (isClaudeLocalAuthProvider(activeProvider)) {

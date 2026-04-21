@@ -9,7 +9,23 @@ import { RunOutputRenderer } from '@/components/workflow/RunOutputRenderer';
 import { OutputFilesSection } from '@/components/workflow/OutputFilesSection';
 import { WorkflowDslGraph, type WorkflowDslStepOverlay } from '@/components/workflow/WorkflowDslGraph';
 import { WorkflowStepDetailPanel } from '@/components/workflow/WorkflowStepDetailPanel';
-import type { WorkflowDSL } from '@/lib/workflow/types';
+import { RunDetailHeader } from '@/components/workflow/RunDetailHeader';
+import { RunningStepsLivePanel } from '@/components/workflow/RunningStepsLivePanel';
+import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
+import type { StepTraceEvent } from '@/lib/workflow/step-trace-stream';
+
+function normalizeRunDsl(raw: unknown): WorkflowDSLV3 | null {
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    (raw as { version?: string }).version === 'v3' &&
+    Array.isArray((raw as { nodes?: unknown }).nodes) &&
+    Array.isArray((raw as { edges?: unknown }).edges)
+  ) {
+    return raw as WorkflowDSLV3;
+  }
+  return null;
+}
 
 interface RunRecord {
   id: string;
@@ -43,35 +59,13 @@ interface RunDetailResponse {
   run?: RunRecord;
   messages?: DbMessage[];
   outputFiles?: OutputFile[];
-  workflowDsl?: WorkflowDSL | null;
+  workflowDsl?: unknown;
   workflowDslSource?: 'snapshot' | 'live' | 'none';
   stepOverlays?: Record<string, WorkflowDslStepOverlay>;
   presetNames?: Record<string, string>;
+  stepInputSnapshots?: Record<string, unknown>;
+  stepLiveTraces?: Record<string, StepTraceEvent[]>;
   error?: string;
-}
-
-const STATUS_CFG = {
-  success: { label: '执行成功', cls: 'bg-green-500/10 text-green-700 border-green-500/20' },
-  error: { label: '执行失败', cls: 'bg-red-500/10 text-red-700 border-red-500/20' },
-  running: { label: '执行中', cls: 'bg-blue-500/10 text-blue-700 border-blue-500/20 animate-pulse' },
-} as const;
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
-}
-
-function durationLabel(start: string, end: string | null): string {
-  if (!end) return '进行中...';
-  const ms = new Date(end).getTime() - new Date(start).getTime();
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.floor((ms % 60000) / 1000);
-  if (mins < 60) return `${mins}m${secs}s`;
-  return `${Math.floor(mins / 60)}h${mins % 60}m`;
 }
 
 function extractParam(val: string | string[] | undefined): string {
@@ -111,10 +105,12 @@ export default function RunDetailPage() {
   const [run, setRun] = useState<RunRecord | null>(null);
   const [messages, setMessages] = useState<DbMessage[]>([]);
   const [outputFiles, setOutputFiles] = useState<OutputFile[]>([]);
-  const [workflowDsl, setWorkflowDsl] = useState<WorkflowDSL | null>(null);
+  const [workflowDsl, setWorkflowDsl] = useState<WorkflowDSLV3 | null>(null);
   const [workflowDslSource, setWorkflowDslSource] = useState<'snapshot' | 'live' | 'none'>('none');
   const [stepOverlays, setStepOverlays] = useState<Record<string, WorkflowDslStepOverlay>>({});
   const [presetNames, setPresetNames] = useState<Record<string, string>>({});
+  const [stepInputSnapshots, setStepInputSnapshots] = useState<Record<string, unknown>>({});
+  const [stepLiveTraces, setStepLiveTraces] = useState<Record<string, StepTraceEvent[]>>({});
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -131,10 +127,12 @@ export default function RunDetailPage() {
       if (data.run) setRun(data.run);
       if (data.messages) setMessages(data.messages);
       if (data.outputFiles) setOutputFiles(data.outputFiles);
-      if (data.workflowDsl !== undefined) setWorkflowDsl(data.workflowDsl);
+      if (data.workflowDsl !== undefined) setWorkflowDsl(normalizeRunDsl(data.workflowDsl));
       if (data.workflowDslSource) setWorkflowDslSource(data.workflowDslSource);
       if (data.stepOverlays) setStepOverlays(data.stepOverlays);
       if (data.presetNames) setPresetNames(data.presetNames);
+      if (data.stepInputSnapshots) setStepInputSnapshots(data.stepInputSnapshots);
+      if (data.stepLiveTraces) setStepLiveTraces(data.stepLiveTraces);
     } catch (e) {
       setError(e instanceof Error ? e.message : '网络错误');
     } finally { setLoading(false); }
@@ -145,7 +143,7 @@ export default function RunDetailPage() {
   const isRunning = run?.status === 'running';
   useEffect(() => {
     if (!isRunning) return;
-    pollRef.current = setInterval(() => { void load(); }, 4000);
+    pollRef.current = setInterval(() => { void load(); }, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [isRunning, load]);
 
@@ -169,10 +167,9 @@ export default function RunDetailPage() {
     );
   }
 
-  const cfg = STATUS_CFG[run.status] ?? STATUS_CFG.running;
   const assistantCount = messages.filter(m => m.role === 'assistant').length;
   const hasOutputFiles = outputFiles.length > 0;
-  const hasWorkflow = Boolean(workflowDsl && workflowDsl.steps && workflowDsl.steps.length > 0);
+  const hasWorkflow = Boolean(workflowDsl && workflowDsl.nodes.length > 0);
   const defaultTab = run.status === 'error'
     ? 'process'
     : hasWorkflow
@@ -196,46 +193,7 @@ export default function RunDetailPage() {
         <span className="text-foreground">执行记录</span>
       </div>
 
-      {/* Run header */}
-      <div className="rounded-xl border border-border/60 bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2.5">
-              <Badge className={`border text-xs px-2 py-0.5 ${cfg.cls}`}>{cfg.label}</Badge>
-              <span className="text-xs text-muted-foreground font-mono">{run.id.slice(0, 8)}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm">
-              <div>
-                <span className="text-muted-foreground">开始时间</span>
-                <div className="font-medium">{formatDateTime(run.startedAt)}</div>
-              </div>
-              <div>
-                <span className="text-muted-foreground">完成时间</span>
-                <div className="font-medium">{run.completedAt ? formatDateTime(run.completedAt) : '--'}</div>
-              </div>
-              <div>
-                <span className="text-muted-foreground">总耗时</span>
-                <div className="font-medium">{durationLabel(run.startedAt, run.completedAt)}</div>
-              </div>
-              <div>
-                <span className="text-muted-foreground">会话 ID</span>
-                <div className="font-mono text-xs">{run.sessionId ? `${run.sessionId.slice(0, 12)}...` : '--'}</div>
-              </div>
-            </div>
-          </div>
-
-          <Button variant="outline" size="sm" onClick={() => void load()} className="shrink-0">
-            刷新
-          </Button>
-        </div>
-
-        {run.error && (
-          <div className="mt-3 text-sm text-destructive bg-destructive/5 rounded-lg px-3 py-2 break-words">
-            {run.error}
-          </div>
-        )}
-      </div>
+      <RunDetailHeader run={run} onRefresh={() => void load()} />
 
       {/* Tabs: workflow / results / execution process */}
       <Tabs defaultValue={defaultTab}>
@@ -244,7 +202,7 @@ export default function RunDetailPage() {
             工作流结构
             {hasWorkflow && (
               <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0 h-4">
-                {workflowDsl?.steps?.length ?? 0}
+                {workflowDsl?.nodes.length ?? 0}
               </Badge>
             )}
           </TabsTrigger>
@@ -273,21 +231,23 @@ export default function RunDetailPage() {
                 </div>
               )}
               <WorkflowDslGraph
-                steps={workflowDsl.steps as Parameters<typeof WorkflowDslGraph>[0]['steps']}
+                dsl={workflowDsl}
                 presetNames={presetNames}
                 stepOverlays={stepOverlays}
                 selectedStepId={selectedStepId}
                 onStepClick={(stepId) => setSelectedStepId(prev => prev === stepId ? null : stepId)}
               />
               {selectedStepId && (() => {
-                const selectedStep = workflowDsl.steps?.find(s => s.id === selectedStepId);
-                if (!selectedStep) return null;
+                const selectedNode = workflowDsl.nodes.find(n => n.id === selectedStepId);
+                if (!selectedNode) return null;
                 return (
                   <WorkflowStepDetailPanel
-                    step={selectedStep}
+                    node={selectedNode}
                     presetNames={presetNames}
                     overlay={stepOverlays[selectedStepId]}
                     outputFiles={outputFiles}
+                    inputSnapshot={stepInputSnapshots[selectedStepId]}
+                    liveTrace={stepLiveTraces[selectedStepId]}
                     onClose={() => setSelectedStepId(null)}
                   />
                 );
@@ -316,11 +276,12 @@ export default function RunDetailPage() {
         </TabsContent>
 
         <TabsContent value="process">
-          {isRunning && assistantCount === 0 && (
-            <div className="text-center py-12 text-sm text-muted-foreground rounded-xl border border-dashed border-border/50">
-              <div className="inline-block w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin mb-2" />
-              <div>正在执行，等待步骤输出...</div>
-            </div>
+          {isRunning && (
+            <RunningStepsLivePanel
+              stepLiveTraces={stepLiveTraces}
+              stepOverlays={stepOverlays}
+              workflowDsl={workflowDsl}
+            />
           )}
           <RunOutputRenderer messages={messages} />
         </TabsContent>

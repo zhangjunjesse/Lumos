@@ -7,16 +7,31 @@ import { validateAnyWorkflowDsl } from '@/lib/workflow/dsl';
 import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 import { listAgentPresets } from '@/lib/db/agent-presets';
 import { WORKFLOW_REFINE_PROMPT } from '@/lib/workflow/default-prompts';
+import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
 
 const historyItemSchema = z.object({
   role: z.enum(['user', 'assistant']),
   content: z.string(),
 });
 
+const issueSchema = z.object({
+  severity: z.enum(['error', 'warning']),
+  code: z.string(),
+  nodeId: z.string().optional(),
+  edgeId: z.string().optional(),
+  jsonPath: z.string(),
+  message: z.string(),
+  expected: z.unknown().optional(),
+  actual: z.unknown().optional(),
+  hint: z.string().optional(),
+});
+
 const requestSchema = z.object({
   instruction: z.string().trim().min(1).max(2000),
   currentDsl: z.record(z.string(), z.unknown()),
   history: z.array(historyItemSchema).max(20).optional(),
+  /** 可选:传入校验 issues,后端会拼接成修复说明送给 LLM。W3-A "让 AI 修这些" 链路。 */
+  issues: z.array(issueSchema).max(100).optional(),
 });
 
 function buildAgentList(): string {
@@ -57,9 +72,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Final user message: current DSL + instruction
-    const userMsg = `## 当前工作流 DSL\n${JSON.stringify(input.currentDsl, null, 2)}\n\n## 修改指令\n${input.instruction}`;
-    messages.push({ role: 'user', content: userMsg });
+    // Final user message: current DSL + instruction + (optional) issues
+    const parts = [
+      `## 当前工作流 DSL\n${JSON.stringify(input.currentDsl, null, 2)}`,
+      `## 修改指令\n${input.instruction}`,
+    ];
+    if (input.issues && input.issues.length > 0) {
+      parts.push(formatIssuesForLlm(input.issues));
+    }
+    messages.push({ role: 'user', content: parts.join('\n\n') });
 
     const raw = await generateTextFromProvider({
       providerId: provider.id,

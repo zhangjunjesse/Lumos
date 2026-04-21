@@ -18,9 +18,10 @@ const updateSchema = z.object({
   notifyOnComplete: z.boolean().optional(),
   workflowId: z.string().nullable().optional(),
   workflowDsl: z.object({
-    version: z.string(),
+    version: z.literal('v3'),
     name: z.string(),
-    steps: z.array(z.record(z.string(), z.unknown())),
+    nodes: z.array(z.record(z.string(), z.unknown())),
+    edges: z.array(z.record(z.string(), z.unknown())),
   }).passthrough().optional(),
   runParams: z.record(z.string(), z.unknown()).optional(),
 });

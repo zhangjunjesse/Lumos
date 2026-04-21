@@ -1,17 +1,14 @@
 /**
  * Pure-function utilities for building a {@link DebugRuntimeContext}:
  *
- *   - compute a stable hash of a step's user-editable config (so we can detect
- *     "the cache is stale because the user changed the step")
- *   - given a target step + mode, derive the skip set (steps that should be
+ *   - compute a stable hash of a node's user-editable config (so we can detect
+ *     "the cache is stale because the user changed the node")
+ *   - given a target node + mode, derive the skip set (nodes that should be
  *     replaced with a no-op during this debug run)
- *   - given a changed step, enumerate its transitive downstream (so the caller
+ *   - given a changed node, enumerate its transitive downstream (so the caller
  *     can invalidate those cache entries before running)
  *
- * Container semantics (matches UI contract): each control-flow container
- * (if-else / for-each / while) is cached as a whole; its body children are
- * considered part of the container. Graph traversal logic lives in
- * {@link ./debug-cache-graph} to keep this file under 300 lines.
+ * V3-native:直接吃 `WorkflowDSLV3.nodes / edges`,不再经 EditorStep。
  */
 import crypto from 'crypto';
 import { upsertCachedStep } from '@/lib/db/debug-session';
@@ -23,31 +20,31 @@ import type {
   DebugRuntimeContext,
   DebugStepOutput,
 } from './debug-types';
-import type { AnyWorkflowDSL, StepResult, WorkflowStep } from './types';
+import type { StepResult } from './types';
+import type { WorkflowDSLV3, WorkflowNode } from './types-v3';
 
 export { computeUpstreamClosure, computeTransitiveDownstream };
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
 
 /**
- * Stable sha256 over the step's user-editable config surface.
+ * Stable sha256 over the node's user-editable config surface.
  * Changes to cosmetic-only fields (metadata.position) do NOT invalidate cache.
  */
-export function computeConfigHash(step: WorkflowStep): string {
+export function computeConfigHash(node: WorkflowNode): string {
   const payload = {
-    input: step.input ?? null,
-    when: step.when ?? null,
-    policy: step.policy ?? null,
+    input: 'input' in node ? node.input ?? null : null,
+    policy: node.policy ?? null,
   };
   return crypto.createHash('sha256')
     .update(JSON.stringify(payload))
     .digest('hex');
 }
 
-/** Hash every step in a DSL; returns a Map keyed by step id. */
-export function buildConfigHashes(dsl: AnyWorkflowDSL): Map<string, string> {
+/** Hash every node in a DSL; returns a Map keyed by node id. */
+export function buildConfigHashes(dsl: WorkflowDSLV3): Map<string, string> {
   const m = new Map<string, string>();
-  for (const s of dsl.steps) m.set(s.id, computeConfigHash(s));
+  for (const node of dsl.nodes) m.set(node.id, computeConfigHash(node));
   return m;
 }
 
@@ -57,14 +54,14 @@ export interface BuildDebugRuntimeContextArgs {
   sessionId: string;
   mode: DebugRuntimeContext['mode'];
   targetStepId: string;
-  dsl: AnyWorkflowDSL;
+  dsl: WorkflowDSLV3;
   cachedSteps: DebugStepOutput[];
 }
 
 /**
  * Build the in-memory {@link DebugRuntimeContext} handed to the engine.
  *
- * The target step is never in `skipSet`. For `run-to` and `rerun-only` modes,
+ * The target node is never in `skipSet`. For `run-to` and `rerun-only` modes,
  * `skipSet` contains everything that is NOT an upstream of the target. For
  * `continue-from`, we skip the target and all of its upstream (the target
  * must already be cached).
@@ -79,7 +76,7 @@ export function buildDebugRuntimeContext(
 
   const configHashes = buildConfigHashes(dsl);
 
-  const allIds = new Set(dsl.steps.map(s => s.id));
+  const allIds = new Set(dsl.nodes.map((n) => n.id));
   const upstream = computeUpstreamClosure(targetStepId, dsl);
 
   const skipSet = new Set<string>();
@@ -103,6 +100,35 @@ export function buildDebugRuntimeContext(
 }
 
 // ── Runtime persistence ─────────────────────────────────────────────────────
+
+// ── Run-scoped runtime context registry ─────────────────────────────────────
+//
+// Workflow definitions (the `fn` we hand to OpenWorkflow via `implementWorkflow`)
+// are registered once per `name@version` and reused across every run of that
+// spec. They must therefore be pure: no per-run state baked into the closure.
+//
+// Debug runs are per-run state (skip sets, caches, config hashes), so we keep
+// them in a module-level map keyed by `workflowRunId` and the step bindings
+// look them up at call time via `input.__runtime.workflowRunId`.
+//
+// `submitWorkflow` registers on entry; `waitForWorkflowCompletion` clears on
+// exit. Production runs never register, so their bindings fall through to the
+// real implementation.
+
+const debugContextByRunId = new Map<string, DebugRuntimeContext>();
+
+export function registerDebugContext(runId: string, ctx: DebugRuntimeContext): void {
+  debugContextByRunId.set(runId, ctx);
+}
+
+export function getDebugContext(runId: string | undefined): DebugRuntimeContext | undefined {
+  if (!runId) return undefined;
+  return debugContextByRunId.get(runId);
+}
+
+export function clearDebugContext(runId: string): void {
+  debugContextByRunId.delete(runId);
+}
 
 /**
  * Called by runtime.ts after each real step execution inside a debug run.

@@ -11,9 +11,10 @@ import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 initScheduler();
 
 const workflowDslSchema = z.object({
-  version: z.string(),
+  version: z.literal('v3'),
   name: z.string(),
-  steps: z.array(z.record(z.string(), z.unknown())),
+  nodes: z.array(z.record(z.string(), z.unknown())),
+  edges: z.array(z.record(z.string(), z.unknown())),
 }).passthrough();
 
 const createSchema = z.object({

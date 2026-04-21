@@ -60,9 +60,9 @@ function buildWorkflowPlan(taskId: string): SchedulingPlan {
       needsParallel: false,
     },
     workflowDsl: {
-      version: 'v1',
+      version: 'v3',
       name: `task-${taskId}`,
-      steps: [
+      nodes: [
         {
           id: 'main',
           type: 'agent',
@@ -72,6 +72,7 @@ function buildWorkflowPlan(taskId: string): SchedulingPlan {
           },
         },
       ],
+      edges: [],
     },
   };
 }
@@ -155,18 +156,18 @@ describe('scheduling execution without silent fallback', () => {
     mockHandleGenerateWorkflowTool.mockReturnValue({
       code: '',
       manifest: {
-        dslVersion: 'v1',
+        dslVersion: 'v3',
         artifactKind: 'workflow-factory-module',
         exportedSymbol: 'buildWorkflow',
         workflowName: 'task-validation-fallback',
-        workflowVersion: 'dsl-v1-invalid',
+        workflowVersion: 'dsl-v3-invalid',
         stepIds: ['main'],
         stepTypes: ['agent'],
         warnings: [],
       },
       validation: {
         valid: false,
-        errors: ['steps.main.input.prompt: Required'],
+        errors: ['nodes.main.input.prompt: Required'],
       },
     });
     const submitResult = acceptTask(
@@ -193,7 +194,7 @@ describe('scheduling execution without silent fallback', () => {
     expect(failedUpdate.errors).toEqual([
       expect.objectContaining({
         code: 'WORKFLOW_VALIDATION_FAILED',
-        message: 'steps.main.input.prompt: Required',
+        message: 'nodes.main.input.prompt: Required',
       }),
     ]);
     expect(failedUpdate.metadata).toMatchObject({
@@ -287,11 +288,11 @@ describe('scheduling execution without silent fallback', () => {
     mockHandleGenerateWorkflowTool.mockReturnValue({
       code: 'export function buildWorkflow() {}',
       manifest: {
-        dslVersion: 'v1',
+        dslVersion: 'v3',
         artifactKind: 'workflow-factory-module',
         exportedSymbol: 'buildWorkflow',
         workflowName: 'task-submit-fallback',
-        workflowVersion: 'dsl-v1-ok',
+        workflowVersion: 'dsl-v3-ok',
         stepIds: ['main'],
         stepTypes: ['agent'],
         warnings: [],

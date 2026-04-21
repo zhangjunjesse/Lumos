@@ -26,6 +26,8 @@ import type {
 } from './types';
 import { executeCodeHandler } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
+import { sanitizeResolvedInput, writeStepInputSnapshot } from './step-input-snapshot';
+import { appendStepTraceFromSdkEvent } from './step-trace-stream';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildPromptCapabilitiesSystemPrompt(_tools?: unknown): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
@@ -1079,6 +1081,25 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
 
   try {
     payload = await buildWorkflowAgentPayload(input, runtimeContext, definition);
+    // Dump the fully-resolved input/runtime/agent/payload to disk so the run
+    // detail UI can show the user exactly what this step received. Written
+    // before worker.execute so even a crashed/timed-out step leaves evidence.
+    await writeStepInputSnapshot(payload.workspace.stageWorkspace, {
+      capturedAt: new Date().toISOString(),
+      workflowRunId: runtimeContext.workflowRunId,
+      stepId: runtimeContext.stepId,
+      timeoutMs: typeof runtimeContext.timeoutMs === 'number' ? runtimeContext.timeoutMs : null,
+      executionMode,
+      requestedModel: requestedModel ?? null,
+      resolvedInput: sanitizeResolvedInput(input),
+      runtime: runtimeContext,
+      agent: {
+        role: definition.role,
+        binding: definition.binding as unknown as Record<string, unknown>,
+        ignoredToolRequests: definition.ignoredToolRequests,
+      },
+      payload,
+    });
     updateActiveWorkflowAgentExecution(activeExecutionKey, {
       lifecycleState: 'running',
       sessionId: payload.sessionId,
@@ -1106,6 +1127,11 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       // can use them. Only the full trace event buffer is gated by persist.
       onTraceEvent: (event) => {
         collectBehaviorSignalsFromEvent(event, behaviorSignals);
+        // Stream each message to disk immediately so the run detail UI can
+        // show the agent's live progress without waiting for step completion.
+        if (payload) {
+          appendStepTraceFromSdkEvent(payload.workspace.stageWorkspace, event);
+        }
         if (shouldPersist) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const type = (event as any).type;

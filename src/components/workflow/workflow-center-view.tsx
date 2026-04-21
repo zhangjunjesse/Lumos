@@ -119,7 +119,9 @@ interface WorkflowTaskDetail extends WorkflowTaskListItem {
       validation?: WorkflowSchedulingValidation;
       workflowManifest?: WorkflowSchedulingManifest;
       workflowDsl?: {
-        steps?: WorkflowStepPlan[];
+        version?: string;
+        nodes?: WorkflowStepPlan[];
+        edges?: Array<{ from: string; to: string; kind: string }>;
       };
     };
     workflow?: {
@@ -974,8 +976,8 @@ export function WorkflowCenterView() {
   }, [tasks]);
 
   const plannedSteps = useMemo(
-    () => selectedTask?.metadata?.scheduling?.workflowDsl?.steps || [],
-    [selectedTask?.metadata?.scheduling?.workflowDsl?.steps],
+    () => selectedTask?.metadata?.scheduling?.workflowDsl?.nodes ?? [],
+    [selectedTask?.metadata?.scheduling?.workflowDsl],
   );
   const schedulingInfo = selectedTask?.metadata?.scheduling;
   const plannerInfo = schedulingInfo?.planner;

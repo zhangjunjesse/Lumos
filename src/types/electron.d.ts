@@ -47,6 +47,10 @@ interface ElectronBridgeAPI {
   onEvent: (callback: (event: string, data: unknown) => void) => () => void;
 }
 
+interface ElectronNotificationAPI {
+  notify: (options: { title: string; body: string; silent?: boolean }) => Promise<boolean>;
+}
+
 interface ElectronAPI {
   versions: {
     electron: string;
@@ -79,6 +83,7 @@ interface ElectronAPI {
   updater: ElectronUpdaterAPI;
   bridge: ElectronBridgeAPI;
   browser: ElectronBrowserAPI;
+  notifications?: ElectronNotificationAPI;
 }
 
 declare global {

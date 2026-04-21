@@ -1,21 +1,23 @@
 import { isBlankWorkflowDraft } from '../dsl';
 
 describe('isBlankWorkflowDraft', () => {
-  test('returns true for workflows with no steps', () => {
+  test('returns true for workflows with no nodes', () => {
     expect(isBlankWorkflowDraft({
-      version: 'v2',
+      version: 'v3',
       name: 'Blank workflow',
-      steps: [],
+      nodes: [],
+      edges: [],
     })).toBe(true);
   });
 
-  test('returns false for workflows that still contain steps', () => {
+  test('returns false for workflows that still contain nodes', () => {
     expect(isBlankWorkflowDraft({
-      version: 'v2',
+      version: 'v3',
       name: 'Non blank workflow',
-      steps: [
+      nodes: [
         { id: 'stepA', type: 'agent', input: { prompt: 'hello' } },
       ],
+      edges: [],
     })).toBe(false);
   });
 });

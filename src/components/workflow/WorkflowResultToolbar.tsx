@@ -40,13 +40,26 @@ export function WorkflowResultToolbar({
           {saving ? '保存中...' : savedWorkflowId ? '更新' : '保存工作流'}
         </Button>
         {saveMsg && <span className="text-xs text-muted-foreground">{saveMsg}</span>}
-        {onSaveAsTemplate && validForActions && (
-          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onSaveAsTemplate}>
+        {onSaveAsTemplate && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onSaveAsTemplate}
+            disabled={!validForActions}
+            title={validForActions ? undefined : '修复校验错误后才能保存模板'}
+          >
             保存为模板
           </Button>
         )}
-        {onSaveToSchedule && validForActions && (
-          <Button size="sm" className="h-7 text-xs" onClick={onSaveToSchedule}>
+        {onSaveToSchedule && (
+          <Button
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onSaveToSchedule}
+            disabled={!validForActions}
+            title={validForActions ? undefined : '修复校验错误后才能创建定时任务'}
+          >
             创建定时任务
           </Button>
         )}

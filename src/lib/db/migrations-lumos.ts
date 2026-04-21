@@ -970,7 +970,7 @@ export function migrateLumosTables(db: Database.Database): void {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       tags TEXT NOT NULL DEFAULT '[]',
-      dsl_version TEXT NOT NULL DEFAULT 'v2',
+      dsl_version TEXT NOT NULL DEFAULT 'v3',
       workflow_dsl TEXT NOT NULL DEFAULT '{}',
       is_template INTEGER NOT NULL DEFAULT 0,
       created_by TEXT NOT NULL DEFAULT 'user',
@@ -1214,6 +1214,40 @@ export function migrateLumosTables(db: Database.Database): void {
       PRIMARY KEY (session_id, step_id)
     );
     CREATE INDEX IF NOT EXISTS idx_debug_outputs_session ON workflow_debug_step_outputs(session_id);
+
+    CREATE TABLE IF NOT EXISTS workflow_approval_requests (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      approvers_json TEXT NOT NULL DEFAULT '{}',
+      form_schema_json TEXT NOT NULL DEFAULT '',
+      timeout_config_json TEXT NOT NULL DEFAULT '',
+      timeout_at TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','approved','rejected','timeout','cancelled')),
+      final_note TEXT NOT NULL DEFAULT '',
+      final_payload_json TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_at TEXT,
+      UNIQUE(workflow_run_id, step_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_approval_workflow_run ON workflow_approval_requests(workflow_run_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_status ON workflow_approval_requests(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_approval_timeout ON workflow_approval_requests(status, timeout_at);
+
+    CREATE TABLE IF NOT EXISTS workflow_approval_decisions (
+      id TEXT PRIMARY KEY,
+      approval_id TEXT NOT NULL,
+      decided_by TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
+      note TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '',
+      decided_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(approval_id, decided_by),
+      FOREIGN KEY (approval_id) REFERENCES workflow_approval_requests(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_approval_decisions_approval ON workflow_approval_decisions(approval_id);
   `);
 
   // Seed built-in data on first run

@@ -3,8 +3,11 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { StepNodeData } from '@/lib/workflow/dsl-graph-converter';
-import { useNodeDebug, useNodeOverlay } from '../node-overlay-context';
-import { DebugBadge, OverlayFooter, RunDurationLabel, StatusDot } from './overlay-parts';
+import { useNodeDebug, useNodeFlash, useNodeOverlay, useNodeValidation } from '../node-overlay-context';
+import {
+  ContainerBadge, DebugBadge, FailureAccentBar, FlashRing, NodeValidationBadge,
+  OverlayFooter, RetryRing, RunDurationLabel, StatusDot,
+} from './overlay-parts';
 
 function formatTimeoutLabel(ms: number | undefined): string | null {
   if (typeof ms !== 'number' || ms <= 0) return null;
@@ -15,9 +18,12 @@ function formatTimeoutLabel(ms: number | undefined): string | null {
 function AgentNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) {
   const overlay = useNodeOverlay(data.stepId);
   const debug = useNodeDebug(data.stepId);
-  const prompt = typeof data.input?.prompt === 'string' ? data.input.prompt : '';
-  const timeoutLabel = formatTimeoutLabel(data.policy?.timeoutMs);
-  const codeConfig = data.input?.code as { script?: string; handler?: string; strategy?: string } | undefined;
+  const validation = useNodeValidation(data.stepId);
+  const flash = useNodeFlash(data.stepId);
+  const input = (data.node.type === 'agent' ? data.node.input : {}) as Record<string, unknown>;
+  const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+  const timeoutLabel = formatTimeoutLabel(data.node.policy?.timeoutMs);
+  const codeConfig = input.code as { script?: string; handler?: string; strategy?: string } | undefined;
   const hasCode = Boolean(codeConfig?.script || codeConfig?.handler);
 
   return (
@@ -28,7 +34,12 @@ function AgentNodeInner({ data, selected }: NodeProps & { data: StepNodeData }) 
       ].join(' ')}
     >
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-violet-500" />
+      <FlashRing active={flash} />
+      <FailureAccentBar overlay={overlay} />
+      <ContainerBadge containerId={data.containerId} />
       <DebugBadge debug={debug} />
+      <NodeValidationBadge validation={validation} />
+      <RetryRing overlay={overlay} />
       <div className="flex items-center gap-1.5">
         <StatusDot overlay={overlay} />
         <span className="inline-block w-2 h-2 rounded-full bg-violet-500 shrink-0" />

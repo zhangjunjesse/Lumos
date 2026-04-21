@@ -15,7 +15,7 @@ interface WorkflowItem {
   description: string;
   dslVersion: string;
   groupName: string;
-  workflowDsl: { steps?: unknown[] };
+  workflowDsl: { nodes?: unknown[] };
   updatedAt: string;
 }
 
@@ -78,7 +78,7 @@ export default function WorkflowPage() {
     const name = newName.trim() || '新工作流';
     setCreating(true);
     try {
-      const blank = { version: '2', name, steps: [] };
+      const blank = { version: 'v3', name, nodes: [], edges: [] };
       const res = await fetch('/api/workflow/definitions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,7 +140,7 @@ export default function WorkflowPage() {
     name: w.name,
     description: w.description,
     dslVersion: w.dslVersion,
-    stepCount: Array.isArray(w.workflowDsl?.steps) ? w.workflowDsl.steps.length : 0,
+    stepCount: Array.isArray(w.workflowDsl?.nodes) ? w.workflowDsl.nodes.length : 0,
     updatedAt: w.updatedAt,
     groupName: w.groupName,
     existingGroups,

@@ -58,7 +58,7 @@ function rowToRecord(row: WorkflowRow): WorkflowRecord {
   try {
     dsl = JSON.parse(row.workflow_dsl) as AnyWorkflowDSL;
   } catch {
-    dsl = { version: 'v2', name: row.name, steps: [] };
+    dsl = { version: 'v3', name: row.name, nodes: [], edges: [] };
   }
 
   let tags: string[];
@@ -123,7 +123,7 @@ export function createWorkflow(input: CreateWorkflowInput): WorkflowRecord {
   const db = getDb();
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const dslVersion = input.workflowDsl.version || 'v2';
+  const dslVersion = input.workflowDsl.version || 'v3';
 
   db.prepare(`
     INSERT INTO workflows

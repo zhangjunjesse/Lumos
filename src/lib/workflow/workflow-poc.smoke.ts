@@ -36,7 +36,7 @@ async function main() {
   process.env.NODE_ENV = 'test';
   fs.closeSync(fs.openSync(path.join(tempDir, 'lumos.db'), 'w'));
 
-  const { generateWorkflow } = await import('./compiler');
+  const { generateWorkflowFromDsl } = await import('./compiler');
   const {
     getWorkflowStatus,
     resetWorkflowEngineForTests,
@@ -47,21 +47,20 @@ async function main() {
   try {
     await resetWorkflowEngineForTests();
 
-    const artifact = generateWorkflow({
-      spec: {
-        version: 'v1',
-        name: 'agent-smoke',
-        steps: [
-          {
-            id: 'draft',
-            type: 'agent',
-            input: {
-              prompt: 'Write a smoke-test reply',
-              role: 'coder',
-            },
+    const artifact = generateWorkflowFromDsl({
+      version: 'v3',
+      name: 'agent-smoke',
+      nodes: [
+        {
+          id: 'draft',
+          type: 'agent',
+          input: {
+            prompt: 'Write a smoke-test reply',
+            role: 'coder',
           },
-        ],
-      },
+        },
+      ],
+      edges: [],
     });
 
     if (!artifact.validation.valid) {
