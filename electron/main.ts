@@ -471,6 +471,11 @@ function startServer(port: number): Electron.UtilityProcess {
     PATH: constructedPath,
     // Sandbox: isolate CLI config into app's own directory
     LUMOS_CLAUDE_CONFIG_DIR: claudeConfigDir,
+    // Default to the portable onnxruntime-web (WASM) embedder so knowledge-base
+    // indexing does not depend on the user's VC++ runtime / DirectML stack.
+    // The native onnxruntime-node path remains selectable via explicit override.
+    LUMOS_FORCE_PORTABLE_EMBEDDER:
+      process.env.LUMOS_FORCE_PORTABLE_EMBEDDER || userShellEnv.LUMOS_FORCE_PORTABLE_EMBEDDER || '1',
     ...(browserBridgeUrl ? { LUMOS_BROWSER_BRIDGE_URL: browserBridgeUrl } : {}),
     ...(browserBridgeToken ? { LUMOS_BROWSER_BRIDGE_TOKEN: browserBridgeToken } : {}),
     ...(bridgeRuntimeToken ? { LUMOS_BRIDGE_RUNTIME_TOKEN: bridgeRuntimeToken } : {}),
