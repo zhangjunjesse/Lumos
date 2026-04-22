@@ -26,6 +26,13 @@ function createConfig(phase: string): NextConfig {
       '/*': [
         'node_modules/@huggingface/transformers/dist/transformers.web.js',
         'node_modules/onnxruntime-web/dist/**/*',
+        // Force-include onnxruntime-node's full bin tree — nft only auto-captures
+        // the `.node` binding, missing the sibling `onnxruntime.dll` /
+        // `DirectML.dll` (win) and `libonnxruntime.*.dylib` (mac) that the
+        // binding LoadLibrarys at runtime. Absent those, Windows reports the
+        // binding as "not a valid Win32 application" (misleading — actually a
+        // dependency-chain failure).
+        'node_modules/onnxruntime-node/bin/**/*',
       ],
     },
     serverExternalPackages: [
