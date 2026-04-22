@@ -13,6 +13,9 @@ import { getDb } from '@/lib/db';
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
 
+const MODEL_RESOURCE_SUBPATH = path.join('Xenova', 'bge-small-zh-v1.5');
+const MODEL_FINGERPRINT_FILE = 'config.json';
+
 interface OnnxruntimeWebModule {
   env: {
     wasm: {
@@ -33,6 +36,11 @@ const ONNXRUNTIME_WEB_DIST_CANDIDATES = [
   path.join('.next', 'standalone', '.next', 'node_modules', 'onnxruntime-web', 'dist'),
 ];
 const ONNXRUNTIME_WEB_WASM_ENTRY = 'ort-wasm-simd-threaded.mjs';
+
+const LOCAL_MODEL_ROOT_CANDIDATES = [
+  path.join('resources', 'models'),
+  'models',
+];
 
 function addCandidateRoot(roots: Set<string>, root?: string | null): void {
   if (!root) {
@@ -95,6 +103,37 @@ function resolveOnnxruntimeWebDir(): string {
   );
 }
 
+function buildLocalModelRootCandidates(): string[] {
+  const roots = new Set<string>();
+
+  addCandidateRoot(roots, process.cwd());
+  addCandidateRoot(roots, process.env.INIT_CWD);
+  addCandidateRoot(roots, process.resourcesPath);
+  addCandidateRoot(roots, path.dirname(process.execPath));
+  addCandidateRoot(roots, process.execPath ? path.join(path.dirname(process.execPath), '..', 'Resources') : null);
+
+  const candidates = new Set<string>();
+  for (const root of roots) {
+    for (const relativePath of LOCAL_MODEL_ROOT_CANDIDATES) {
+      candidates.add(path.join(root, relativePath));
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function resolveLocalModelRoot(): string {
+  for (const candidate of buildLocalModelRootCandidates()) {
+    if (fs.existsSync(path.join(candidate, MODEL_RESOURCE_SUBPATH, MODEL_FINGERPRINT_FILE))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `local embedding model (${MODEL_NAME}) not found; checked ${buildLocalModelRootCandidates().join(', ')}`,
+  );
+}
+
 async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
   const onnxruntimeWebDistDir = resolveOnnxruntimeWebDir();
 
@@ -115,7 +154,15 @@ function getExtractor(): Promise<unknown> {
         ? await loadPortableTransformers()
         : await import('@huggingface/transformers');
 
-      (transformers.env as Record<string, unknown>).remoteHost = 'https://hf-mirror.com/';
+      // Always load from bundled local weights — the app ships the quantized
+      // bge-small-zh-v1.5 ONNX under resources/models/, so indexing never
+      // depends on the user's network reaching hf-mirror / huggingface.
+      const transformersEnv = transformers.env as Record<string, unknown>;
+      const localModelRoot = resolveLocalModelRoot();
+      transformersEnv.localModelPath = localModelRoot;
+      transformersEnv.allowRemoteModels = false;
+      transformersEnv.allowLocalModels = true;
+
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
         ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8' }
         : Boolean(process.versions.electron)
@@ -131,6 +178,7 @@ function getExtractor(): Promise<unknown> {
         device: usePortableRuntime
           ? resolvePortableEmbeddingDevice()
           : (Boolean(process.versions.electron) ? 'cpu' : 'auto'),
+        localModelRoot,
       });
       const p = await transformers.pipeline('feature-extraction', MODEL_NAME, pipelineOptions);
       console.log('[embedding] Model loaded');

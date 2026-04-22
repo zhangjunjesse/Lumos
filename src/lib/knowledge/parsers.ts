@@ -73,6 +73,7 @@ const MIME_MAP: Record<string, string> = {
 };
 
 const FULL_PARSE_EXTS = new Set([
+  '.doc',
   '.docx',
   '.xlsx',
   '.xls',
@@ -149,7 +150,6 @@ const FULL_PARSE_EXTS = new Set([
 ]);
 
 const REFERENCE_ONLY_EXTS = new Set([
-  '.doc',
   '.docm',
   '.ppt',
   '.pptx',
@@ -252,7 +252,6 @@ const LIKELY_BINARY_EXTS = new Set([
 ]);
 
 const OFFICE_OR_ZIP_PROMOTION_EXTS = new Set([
-  '.doc',
   '.docm',
   '.ppt',
   '.pptx',
@@ -551,18 +550,6 @@ function extractWithTextutil(filePath: string): string {
   return normalizeExtractedText(output);
 }
 
-function extractLegacyDocText(filePath: string): string {
-  const antiwordOutput = runCommand('antiword', [filePath], { timeoutMs: 90_000 });
-  const antiwordText = normalizeExtractedText(antiwordOutput);
-  if (antiwordText.length >= 20) return antiwordText;
-
-  const catdocOutput = runCommand('catdoc', [filePath], { timeoutMs: 90_000 });
-  const catdocText = normalizeExtractedText(catdocOutput);
-  if (catdocText.length >= 20) return catdocText;
-
-  return '';
-}
-
 function extractWithMdls(filePath: string): string {
   if (process.platform !== 'darwin') return '';
   const output = runCommand('/usr/bin/mdls', ['-name', 'kMDItemTextContent', '-raw', filePath]);
@@ -656,13 +643,6 @@ async function tryAdaptiveExtraction(filePath: string, baseName: string, ext: st
     const zipText = extractZipEntriesText(filePath, zipPatterns);
     if (zipText) {
       return { title: baseName, content: zipText, extra: {} };
-    }
-  }
-
-  if (ext === '.doc') {
-    const legacyDocText = extractLegacyDocText(filePath);
-    if (legacyDocText) {
-      return { title: baseName, content: legacyDocText, extra: {} };
     }
   }
 
@@ -906,6 +886,8 @@ export async function parseDocument(filePath: string): Promise<ParsedDocument> {
 
   if (ext === '.docx') {
     result = await parseDocx(filePath, baseName);
+  } else if (ext === '.doc') {
+    result = await parseDoc(filePath, baseName);
   } else if (ext === '.xlsx' || ext === '.xls' || ext === '.xlsm' || ext === '.ods') {
     result = await parseExcel(filePath, baseName);
   } else if (ext === '.pdf') {
@@ -948,6 +930,37 @@ async function parseDocx(filePath: string, baseName: string): Promise<ParseResul
   const result = await mammoth.extractRawText({ buffer: fileBuf });
   const content = result.value;
   return { title: baseName, content, extra: {} };
+}
+
+interface WordExtractedDocument {
+  getBody(): string;
+  getHeaders?(options?: { includeFooters?: boolean }): string;
+  getFootnotes?(): string;
+}
+
+interface WordExtractorCtor {
+  new (): { extract(source: string | Buffer): Promise<WordExtractedDocument> };
+}
+
+async function parseDoc(filePath: string, baseName: string): Promise<ParseResult> {
+  // word-extractor ships no type declarations; narrow shape via WordExtractorCtor above.
+  // @ts-expect-error dynamic import of CommonJS module without types
+  const mod = await import('word-extractor');
+  const WordExtractor = ((mod as unknown) as { default?: WordExtractorCtor }).default
+    ?? (mod as unknown as WordExtractorCtor);
+  const extractor = new WordExtractor();
+  const fileBuf = fs.readFileSync(filePath);
+  const extracted = await extractor.extract(fileBuf);
+
+  const body = normalizeExtractedText(extracted.getBody() || '');
+  const footnotes = extracted.getFootnotes ? normalizeExtractedText(extracted.getFootnotes() || '') : '';
+
+  const parts = [body];
+  if (footnotes) {
+    parts.push('\n\n---\n脚注:\n' + footnotes);
+  }
+
+  return { title: baseName, content: parts.join(''), extra: {} };
 }
 
 async function parseExcel(filePath: string, baseName: string): Promise<ParseResult> {

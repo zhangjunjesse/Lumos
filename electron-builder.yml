@@ -60,6 +60,9 @@ extraResources:
   - from: resources/mcp-servers/
     to: mcp-servers/
     filter: ["**/*"]
+  - from: resources/models/
+    to: models/
+    filter: ["**/*"]
   - from: build/
     to: .
     filter: ["icon.*"]
