@@ -11,8 +11,10 @@ import { createSession, validateSession } from './session';
 import {
   provisionCloudProvider,
   provisionImageProviders,
+  provisionChatProviders,
   persistCustomProviderFlags,
   type CloudImageProviderConfig,
+  type CloudChatProviderConfig,
 } from '@/lib/lumos-cloud-auth';
 import type { CustomProviderFlags } from './custom-provider-capabilities';
 import type { LumosUser } from './types';
@@ -98,6 +100,12 @@ interface RemoteUser {
   newapi_token_key: string | null;
   newapi_token_id: number | null;
   image_providers?: CloudImageProviderConfig[];
+  /**
+   * 新版 lumos-web 会下发 chat_providers；旧版本不含此字段。
+   * 字段存在（含空数组）→ 以此为权威，全量同步；字段缺失 → 回退到
+   * 旧的单一 Lumos Cloud provisioner，保证老服务器兼容。
+   */
+  chat_providers?: CloudChatProviderConfig[];
   allow_custom_providers?: Partial<CustomProviderFlags>;
 }
 
@@ -144,7 +152,14 @@ function upsertLocalUser(remoteUser: RemoteUser, webSessionToken: string, now: s
 }
 
 async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
-  if (remoteUser.newapi_token_key) {
+  if (remoteUser.chat_providers !== undefined) {
+    try {
+      await provisionChatProviders(remoteUser.chat_providers);
+    } catch (e) {
+      console.warn('[login] Failed to provision chat providers:', e);
+    }
+  } else if (remoteUser.newapi_token_key) {
+    // 老服务器未下发 chat_providers，维持旧的单 Lumos Cloud provisioner 兜底。
     await provisionCloudProvider(`sk-${remoteUser.newapi_token_key}`);
   }
   try {

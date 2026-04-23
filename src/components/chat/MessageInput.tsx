@@ -138,6 +138,17 @@ const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
 const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
 const IMAGE_REQUEST_HINT_REGEX = /(生成图片|生成一张图|做图|改图|出图|海报|主图|banner|封面|插画|渲染|画一张|render|draw|generate image|image poster|image banner)/i;
 
+// 500000 quota units = ¥1；价格字段以“每 1M tokens 的 quota units”为单位。
+const QUOTA_UNITS_PER_YUAN = 500_000;
+
+function formatYuanPerMtok(units: number | undefined): string | null {
+  if (!units || !Number.isFinite(units) || units <= 0) return null;
+  const yuan = units / QUOTA_UNITS_PER_YUAN;
+  if (yuan >= 10) return `¥${yuan.toFixed(0)}`;
+  if (yuan >= 1) return `¥${yuan.toFixed(1).replace(/\.0$/, '')}`;
+  return `¥${yuan.toFixed(2)}`;
+}
+
 interface ChatDraftPayload {
   text: string;
   mode?: 'replace' | 'append';
@@ -1762,6 +1773,9 @@ export function MessageInput({
                                 <div className="py-0.5">
                                   {group.models.map((opt) => {
                                     const isActive = opt.value === currentModelValue && isCurrent;
+                                    const inputPrice = formatYuanPerMtok(opt.input_price_per_mtok);
+                                    const outputPrice = formatYuanPerMtok(opt.output_price_per_mtok);
+                                    const hasPricing = Boolean(inputPrice || outputPrice);
                                     return (
                                       <button
                                         key={`${group.provider_id}-${opt.value}`}
@@ -1778,7 +1792,15 @@ export function MessageInput({
                                           setModelMenuOpen(false);
                                         }}
                                       >
-                                        <span className="truncate font-mono text-xs">{opt.label}</span>
+                                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                          <span className="truncate font-mono text-xs">{opt.label}</span>
+                                          {hasPricing && (
+                                            <span className="text-[10px] text-muted-foreground leading-none">
+                                              输入 {inputPrice ?? '—'} <span className="text-muted-foreground/50">·</span> 输出 {outputPrice ?? '—'}
+                                              <span className="text-muted-foreground/50"> / 1M tokens</span>
+                                            </span>
+                                          )}
+                                        </div>
                                         {isActive && (
                                           <span className="text-primary text-xs flex-shrink-0">&#10003;</span>
                                         )}

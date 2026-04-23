@@ -111,7 +111,14 @@ function normalizeProviderModelOption(entry: unknown): ProviderModelOption | nul
 
   if (!entry || typeof entry !== 'object') return null;
 
-  const candidate = entry as { value?: unknown; label?: unknown; id?: unknown; name?: unknown };
+  const candidate = entry as {
+    value?: unknown;
+    label?: unknown;
+    id?: unknown;
+    name?: unknown;
+    input_price_per_mtok?: unknown;
+    output_price_per_mtok?: unknown;
+  };
   const rawValue = typeof candidate.value === 'string'
     ? candidate.value
     : typeof candidate.id === 'string'
@@ -127,7 +134,12 @@ function normalizeProviderModelOption(entry: unknown): ProviderModelOption | nul
       : '';
   const label = rawLabel.trim() || value;
 
-  return { value, label };
+  const option: ProviderModelOption = { value, label };
+  const inputPrice = Number(candidate.input_price_per_mtok);
+  if (Number.isFinite(inputPrice) && inputPrice > 0) option.input_price_per_mtok = Math.round(inputPrice);
+  const outputPrice = Number(candidate.output_price_per_mtok);
+  if (Number.isFinite(outputPrice) && outputPrice > 0) option.output_price_per_mtok = Math.round(outputPrice);
+  return option;
 }
 
 function normalizeProviderModelCatalogSource(source?: string | null): ProviderModelCatalogSource {

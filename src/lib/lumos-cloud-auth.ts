@@ -16,13 +16,17 @@ import {
 export type {
   CloudImageProviderConfig,
   CloudImageProviderModel,
+  CloudChatProviderConfig,
+  CloudChatProviderModel,
   CloudUserInfo,
 } from './cloud/types';
 export {
   ensureDefaultProviderFallback,
   provisionCloudProvider,
   provisionImageProviders,
+  provisionChatProviders,
   getRemoteImageProviderId,
+  getRemoteChatProviderId,
 } from './cloud/provisioner';
 
 /**

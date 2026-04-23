@@ -748,6 +748,10 @@ export type ProviderModelCatalogSource = 'default' | 'manual' | 'detected';
 export interface ProviderModelOption {
   value: string;
   label: string;
+  /** 可选展示单价（每 1,000,000 输入 token 的额度单位，500000 = ¥1）。由云端下发，仅用于展示。 */
+  input_price_per_mtok?: number;
+  /** 可选展示单价（每 1,000,000 输出 token 的额度单位）。 */
+  output_price_per_mtok?: number;
 }
 
 export interface ProviderModelGroup {

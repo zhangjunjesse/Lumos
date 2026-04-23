@@ -54,9 +54,21 @@ function ensureProviderSupportsCapability(
 
 function getLumosCloudSystemProvider(): ApiProvider | undefined {
   const db = getDb();
+  // 首选 admin 在云端标为默认的 chat provider —— 登录时 provisionChatProviders
+  // 会把它写入 default_provider_id。
+  const defaultId = (db.prepare("SELECT value FROM settings WHERE key = 'default_provider_id'")
+    .get() as { value?: string } | undefined)?.value?.trim();
+  if (defaultId) {
+    const provider = getProvider(defaultId);
+    if (provider && provider.provider_origin === 'system'
+        && providerSupportsCapability(provider, 'agent-chat')) {
+      return provider;
+    }
+  }
+  // 其次任意一条 system-origin chat provider（含 legacy Lumos Cloud）。
   const row = db
     .prepare(
-      "SELECT id FROM api_providers WHERE name = 'Lumos Cloud' AND provider_origin = 'system' LIMIT 1",
+      "SELECT id FROM api_providers WHERE provider_origin = 'system' AND capabilities LIKE '%agent-chat%' ORDER BY sort_order ASC, created_at ASC LIMIT 1",
     )
     .get() as { id: string } | undefined;
   return row ? getProvider(row.id) : undefined;

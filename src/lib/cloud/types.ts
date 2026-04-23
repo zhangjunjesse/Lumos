@@ -16,6 +16,12 @@ export interface CloudUserInfo {
    * 桌面端按 `id` (remote) 做一对一 upsert 本地 provider。
    */
   image_providers?: CloudImageProviderConfig[];
+  /**
+   * Admin 下发的对话服务商列表（虚拟服务商）。`api_key` 由 lumos-web 在请求时
+   * 注入为当前用户的 `sk-<newapi_token_key>`，因此下游 new-api 按本用户计费。
+   * 桌面端按 `id` (remote) 做一对一 upsert 本地 provider。
+   */
+  chat_providers?: CloudChatProviderConfig[];
   /** Per-capability admin toggles. Absent fields are treated as false. */
   allow_custom_providers?: Partial<CustomProviderFlags>;
 }
@@ -37,4 +43,27 @@ export interface CloudImageProviderConfig {
   api_key: string;
   default_model: string;
   model_catalog: CloudImageProviderModel[];
+}
+
+export interface CloudChatProviderModel {
+  value: string;
+  label: string;
+  /** 每 1,000,000 输入 token 的额度单位（500000 = ¥1）。仅用于展示。 */
+  input_price_per_mtok: number;
+  /** 每 1,000,000 输出 token 的额度单位（500000 = ¥1）。仅用于展示。 */
+  output_price_per_mtok: number;
+}
+
+export interface CloudChatProviderConfig {
+  /** Remote provider id from lumos-web (stable identity across renames). */
+  id: string;
+  is_default: boolean;
+  name: string;
+  provider_type: string;
+  api_protocol: string;
+  base_url: string;
+  /** 每次请求传给 new-api 的 sk-…，来自当前登录用户的 newapi_token_key。 */
+  api_key: string;
+  default_model: string;
+  model_catalog: CloudChatProviderModel[];
 }

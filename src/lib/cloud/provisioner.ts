@@ -6,7 +6,7 @@
  * 因此不需要任何 `any`。
  */
 import { fetchCloudAvailableModels } from '@/lib/lumos-cloud-models';
-import type { CloudImageProviderConfig } from './types';
+import type { CloudChatProviderConfig, CloudImageProviderConfig } from './types';
 
 const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'http://api.miki.zj.cn';
 const CLOUD_PROVIDER_NAME = 'Lumos Cloud';
@@ -16,6 +16,9 @@ const CLOUD_IMAGE_PROVIDERS_MAP_SETTING = 'lumos_cloud_image_providers_map';
 /** settings key: remote provider id → local provider id for the single-provider era. */
 const LEGACY_IMAGE_PROVIDER_ID_SETTING = 'lumos_cloud_image_provider_id';
 const PROVIDER_OVERRIDE_IMAGE_KEY = 'provider_override:image';
+
+/** settings key: JSON map from remote chat provider id → local api_providers id. */
+const CLOUD_CHAT_PROVIDERS_MAP_SETTING = 'lumos_cloud_chat_providers_map';
 
 /**
  * 首次登录且 /v1/models 不可达时的兜底模型清单。成功拉取一次后会被
@@ -293,6 +296,148 @@ export function getRemoteImageProviderId(db: DbLike, localProviderId: string): s
   const map = readProvidersMap(db);
   for (const [remoteId, localId] of Object.entries(map)) {
     if (localId === localProviderId && remoteId !== '__legacy__') return remoteId;
+  }
+  return null;
+}
+
+// ── 对话服务商 provision (多条) ───────────────────────────────────────────
+
+interface ChatProviderUpsertFields {
+  name: string;
+  provider_type: string;
+  api_protocol: 'anthropic-messages' | 'openai-compatible';
+  capabilities: string;
+  provider_origin: 'system';
+  auth_mode: 'api_key';
+  base_url: string;
+  api_key: string;
+  model_catalog: string;
+  notes: string;
+}
+
+function buildChatProviderFields(config: CloudChatProviderConfig): ChatProviderUpsertFields {
+  const apiProtocol = config.api_protocol === 'anthropic-messages' ? 'anthropic-messages' : 'openai-compatible';
+  const catalog = (config.model_catalog || []).map((m) => ({
+    value: m.value,
+    label: m.label,
+    input_price_per_mtok: m.input_price_per_mtok,
+    output_price_per_mtok: m.output_price_per_mtok,
+  }));
+  return {
+    name: config.name,
+    provider_type: config.provider_type,
+    api_protocol: apiProtocol,
+    capabilities: JSON.stringify(['agent-chat']),
+    provider_origin: 'system',
+    auth_mode: 'api_key',
+    base_url: config.base_url,
+    api_key: config.api_key,
+    model_catalog: JSON.stringify(catalog),
+    notes: `Lumos Cloud 内置对话服务商 (remote_id=${config.id})。默认模型: ${config.default_model || '(未指定)'}`,
+  };
+}
+
+function readChatProvidersMap(db: DbLike): ProviderMap {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(CLOUD_CHAT_PROVIDERS_MAP_SETTING) as { value: string } | undefined;
+  if (!row?.value) return {};
+  try {
+    const parsed = JSON.parse(row.value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ProviderMap;
+    }
+  } catch { /* fall through */ }
+  return {};
+}
+
+function writeChatProvidersMap(db: DbLike, map: ProviderMap): void {
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(CLOUD_CHAT_PROVIDERS_MAP_SETTING, JSON.stringify(map));
+}
+
+async function upsertOneChatProvider(
+  db: DbLike,
+  config: CloudChatProviderConfig,
+  existingLocalId: string | undefined,
+): Promise<string> {
+  const { createProvider, updateProvider } = await import('@/lib/db/providers');
+  const fields = buildChatProviderFields(config);
+  if (existingLocalId) {
+    const exists = db.prepare('SELECT id FROM api_providers WHERE id = ?').get(existingLocalId);
+    if (exists) {
+      updateProvider(existingLocalId, fields);
+      return existingLocalId;
+    }
+  }
+  const created = createProvider({ ...fields, model_catalog_source: 'detected' });
+  return created.id;
+}
+
+/**
+ * 全量同步 Lumos Cloud 下发的对话服务商列表到本地 api_providers。
+ *
+ * - 入参空 → 删除所有已 provision 的云对话 provider，清 map。
+ * - 入参非空 → 按 `remote_id` 一对一 upsert。旧的 / 不在新列表里的 → 删除。
+ * - 每个 provider 用 `provider_origin='system'`，桌面端 UI 据此锁定为只读。
+ * - default_provider_id 只在缺失 / 已失效时才指向"标为默认"的那条；
+ *   已生效的用户选择保留不动。
+ */
+export async function provisionChatProviders(
+  configs: CloudChatProviderConfig[],
+): Promise<string[]> {
+  const { getDb } = await import('@/lib/db/connection');
+  const db = getDb();
+
+  const map = readChatProvidersMap(db);
+
+  if (configs.length === 0) {
+    await removeStaleProviders(db, Object.values(map));
+    writeChatProvidersMap(db, {});
+    return [];
+  }
+
+  const incomingRemoteIds = new Set(configs.map((c) => c.id));
+  const staleLocalIds: string[] = [];
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (!incomingRemoteIds.has(remoteId)) staleLocalIds.push(localId);
+  }
+  await removeStaleProviders(db, staleLocalIds);
+
+  const nextMap: ProviderMap = {};
+  let defaultLocalId: string | undefined;
+  for (const config of configs) {
+    const existingLocalId = map[config.id];
+    const localId = await upsertOneChatProvider(db, config, existingLocalId);
+    nextMap[config.id] = localId;
+    if (config.is_default) defaultLocalId = localId;
+  }
+  writeChatProvidersMap(db, nextMap);
+
+  if (defaultLocalId) {
+    const currentDefaultRow = db.prepare("SELECT value FROM settings WHERE key = 'default_provider_id'")
+      .get() as { value?: string } | undefined;
+    const currentId = currentDefaultRow?.value?.trim() ?? '';
+    const stillValid = currentId
+      && db.prepare('SELECT 1 FROM api_providers WHERE id = ?').get(currentId);
+    if (!stillValid) {
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES ('default_provider_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      ).run(defaultLocalId);
+    }
+  }
+
+  return Object.values(nextMap);
+}
+
+/**
+ * Resolve remote chat-provider id given a local api_provider id. Returns null
+ * if the local provider isn't one of our cloud-provisioned chat rows.
+ */
+export function getRemoteChatProviderId(db: DbLike, localProviderId: string): string | null {
+  const map = readChatProvidersMap(db);
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (localId === localProviderId) return remoteId;
   }
   return null;
 }
