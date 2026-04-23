@@ -72,7 +72,7 @@ export function buildPlannerUserPrompt(
         'agent 节点 input 只支持：prompt、preset、model、tools、outputMode、context。',
         '节点 ID 用 kebab-case。按执行顺序在 nodes[] 列出，并在 edges[] 用 kind="next" 将前一个节点连到下一个节点（线性链，不产出分叉/并发）。',
         '最后一个 agent 节点不需要出边。只有一个 agent 时 edges 为空数组。',
-        'agent 的 prompt 只能是字面字符串或精确引用，如 steps.someNode.output.summary。',
+        'agent 的 prompt 只能是字面字符串或精确引用，如 steps.someNode.output；只有明确只消费最终纯文本时才使用 steps.someNode.output.summary。',
       ],
     },
     responseSchema: {

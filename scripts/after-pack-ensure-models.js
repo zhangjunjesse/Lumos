@@ -42,7 +42,16 @@ module.exports = async function afterPackEnsureModels(context) {
   const projectDir = process.cwd();
   const sourceModelsRoot = path.join(projectDir, 'resources', 'models');
   const packagedResourcesDir = resolvePackagedResourcesDir(context.appOutDir);
-  const packagedModelsRoot = path.join(packagedResourcesDir, 'models');
+  const packagedTargets = [
+    {
+      label: 'primary',
+      root: path.join(packagedResourcesDir, 'models'),
+    },
+    {
+      label: 'standalone-backup',
+      root: path.join(packagedResourcesDir, 'standalone', 'resources', 'models'),
+    },
+  ];
 
   if (!hasCompleteModel(sourceModelsRoot)) {
     throw new Error(
@@ -50,19 +59,23 @@ module.exports = async function afterPackEnsureModels(context) {
     );
   }
 
-  if (!hasCompleteModel(packagedModelsRoot)) {
-    console.warn('[afterPack:models] Packaged embedding model missing files; copying bundled model directory');
-    fs.mkdirSync(packagedModelsRoot, { recursive: true });
-    fs.cpSync(sourceModelsRoot, packagedModelsRoot, { recursive: true, force: true });
-  }
+  for (const target of packagedTargets) {
+    if (!hasCompleteModel(target.root)) {
+      console.warn(
+        `[afterPack:models] Packaged embedding model missing files in ${target.label}; copying bundled model directory`,
+      );
+      fs.mkdirSync(target.root, { recursive: true });
+      fs.cpSync(sourceModelsRoot, target.root, { recursive: true, force: true });
+    }
 
-  if (!hasCompleteModel(packagedModelsRoot)) {
-    throw new Error(
-      `[afterPack:models] Packaged embedding model is still incomplete after copy: ${listMissingFiles(packagedModelsRoot).join(', ')}`,
+    if (!hasCompleteModel(target.root)) {
+      throw new Error(
+        `[afterPack:models] Packaged embedding model is still incomplete after copy (${target.label}): ${listMissingFiles(target.root).join(', ')}`,
+      );
+    }
+
+    console.log(
+      `[afterPack:models] Verified embedding model (${target.label}) at ${path.join(target.root, MODEL_RELATIVE_DIR)}`,
     );
   }
-
-  console.log(
-    `[afterPack:models] Verified embedding model at ${path.join(packagedModelsRoot, MODEL_RELATIVE_DIR)}`,
-  );
 };

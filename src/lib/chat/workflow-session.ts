@@ -1,7 +1,7 @@
 import type { AgentPresetDirectoryItem, ChatSession } from '@/types';
 import { getSetting } from '@/lib/db/sessions';
 import { listAgentPresets } from '@/lib/db/agent-presets';
-import { WORKFLOW_REFINE_PROMPT } from '@/lib/workflow/default-prompts';
+import { WORKFLOW_REFINE_PROMPT, WORKFLOW_STABILITY_RULES } from '@/lib/workflow/default-prompts';
 
 export const WORKFLOW_CHAT_TITLE = '工作流 AI 助手';
 export const WORKFLOW_CHAT_MARKER = '__LUMOS_WORKFLOW_CHAT__';
@@ -101,7 +101,7 @@ while 步骤支持两种模式，通过 input.mode 字段切换：
 
 agent 步骤的 \`outputMode\` 决定输出格式和下游引用方式：
 
-- **\`"plain-text"\`**（默认）：agent 自由文本输出。下游引用 \`steps.<ID>.output.summary\` 拿到完整文本。
+- **\`"plain-text"\`**（默认）：agent 自由文本输出。真正只需要最终文本时，下游再引用 \`steps.<ID>.output.summary\`；如果只是把上游结果传给下一步的 \`context\`，优先直接传 \`steps.<ID>.output\`。
 - **\`"structured"\`**：agent 必须输出 JSON。系统会**自动解析**JSON 字段并挂载到 \`steps.<ID>.output.<字段名>\`。
 
 **structured 模式示例**：
@@ -320,6 +320,7 @@ export function buildWorkflowChatSystemPrompt(dslJson?: string): string {
   return [
     WORKFLOW_CHAT_MARKER,
     basePrompt,
+    WORKFLOW_STABILITY_RULES,
     WORKFLOW_CAPABILITIES_HINT,
     agentBlock,
     dslBlock,

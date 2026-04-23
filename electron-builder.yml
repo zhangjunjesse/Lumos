@@ -63,6 +63,9 @@ extraResources:
   - from: resources/models/
     to: models/
     filter: ["**/*"]
+  - from: resources/models/
+    to: standalone/resources/models/
+    filter: ["**/*"]
   - from: build/
     to: .
     filter: ["icon.*"]

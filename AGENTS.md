@@ -102,6 +102,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 成果：已收紧 workflow agent step 的输出合同，默认只交付结构化文本结果，不再允许虚报未落盘的 artifact 文件，减少多步代理工作流的伪失败。
   - 成果：已为文本型 stage 补上结构化输出失败兜底；当 Claude Code 连续无法收敛到 JSON schema 时，运行时会退到纯文本交付模式并安全包装为 stage 结果，避免主链卡死在格式层。
   - 成果：已修正 Workflow DSL 编译产物中的 step output 引用语义；`steps.someStep.output.summary` 现在会正确读取上一步 `output.summary`，不再把下游步骤喂成空输入。
+  - 成果：正式 `Workflow AI 助手 / Builder` 已补上“稳定工作流”收口；当前生成与修改 DSL 时会强制追加稳定性规则、对 `shared/*_output.md` 猜路径 / `context` 直挂 `steps.x.output.summary` / 代码节点绝对路径 / 非结构化字段下游直读等高风险模式做正式校验，并在返回 DSL 前自动带着校验问题自修一轮，减少 AI 写出“能解析但运行脆弱”的工作流。
   - 成果：主 Agent 对话里的任务完成通知已改为直接写入真实执行结果；浏览器截图/文件路径不再经过模型改写，聊天区可直接识别并预览。
   - 成果：正式 `Workflow` 页面已新增只读工作流流程图，能按层展示步骤依赖、并行分支与当前状态，复杂流程不再只能靠文字列表理解。
   - 成果：已修正复杂并行浏览器工作流的两处主链问题：中文标点分隔的多 URL 现在能被稳定识别为独立分支；并行浏览器分支也已补上独立 pageId 绑定，不再共用活动页。

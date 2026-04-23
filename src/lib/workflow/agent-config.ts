@@ -148,7 +148,7 @@ const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, Work
       '- 工作流只包含 agent 步骤',
       '- 每个步骤必须通过 preset 字段引用 availableWorkflowAgents 中的 Agent id',
       '- 不使用 role 字段；不引用列表之外的 preset id',
-      '- agent 的 prompt 只能是字面字符串，或精确引用上游输出如 steps.someStep.output.summary',
+      '- agent 的 prompt 只能是字面字符串，或精确引用上游输出如 steps.someStep.output / steps.someStep.output.summary（只有明确只消费纯文本结果时才用 summary）',
       '- 步骤 ID 用 kebab-case；无公共依赖的步骤自动并行',
       '- 如可用 Agent 不足以完成任务，在 reason 中说明需要补充哪类 Agent，strategy 选 simple',
       '',

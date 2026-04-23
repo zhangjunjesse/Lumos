@@ -3,11 +3,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDefaultProvider, getProvider } from '@/lib/db';
 import { getSetting } from '@/lib/db/sessions';
 import { generateTextFromProvider, type ChatMessage } from '@/lib/text-generator';
-import { validateAnyWorkflowDsl } from '@/lib/workflow/dsl';
-import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 import { listAgentPresets } from '@/lib/db/agent-presets';
-import { WORKFLOW_REFINE_PROMPT } from '@/lib/workflow/default-prompts';
+import { WORKFLOW_REFINE_PROMPT, WORKFLOW_STABILITY_RULES } from '@/lib/workflow/default-prompts';
 import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
+import {
+  buildRepairTurn,
+  parseWorkflowDslFromText,
+  shouldAutoRepair,
+  summarizeValidation,
+  validateWorkflowBuilderDsl,
+} from '@/lib/workflow/builder-llm';
 
 const historyItemSchema = z.object({
   role: z.enum(['user', 'assistant']),
@@ -60,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     const customPrompt = getSetting('workflow_builder_system_prompt') || '';
-    const systemPrompt = (customPrompt || WORKFLOW_REFINE_PROMPT) + buildAgentList();
+    const systemPrompt = (customPrompt || WORKFLOW_REFINE_PROMPT) + '\n\n' + WORKFLOW_STABILITY_RULES + buildAgentList();
 
     // Build multi-turn messages
     const messages: ChatMessage[] = [];
@@ -90,19 +95,38 @@ export async function POST(request: NextRequest) {
       maxTokens: 4000,
     });
 
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return NextResponse.json({ error: 'AI 未返回有效 JSON，请重试', rawResponse: raw }, { status: 422 });
+    const parsedInitial = parseWorkflowDslFromText(raw);
+    if (parsedInitial.error) {
+      return NextResponse.json({ error: parsedInitial.error, rawResponse: raw }, { status: 422 });
     }
 
-    let dsl: unknown;
-    try { dsl = JSON.parse(jsonMatch[0]); } catch {
-      return NextResponse.json({ error: 'AI 返回的 JSON 无法解析', rawResponse: raw }, { status: 422 });
+    let dsl = parsedInitial.dsl;
+    let rawResponse = raw;
+    let report = validateWorkflowBuilderDsl(dsl);
+
+    if (shouldAutoRepair(report)) {
+      const repairedRaw = await generateTextFromProvider({
+        providerId: provider.id,
+        model,
+        system: systemPrompt,
+        messages: [
+          ...messages,
+          { role: 'assistant', content: JSON.stringify(dsl, null, 2) },
+          ...buildRepairTurn(input.instruction, dsl, formatIssuesForLlm(report.issues)).slice(2),
+        ],
+        maxTokens: 4000,
+      });
+      const repairedParsed = parseWorkflowDslFromText(repairedRaw);
+      if (!repairedParsed.error) {
+        dsl = repairedParsed.dsl;
+        rawResponse = repairedRaw;
+        report = validateWorkflowBuilderDsl(dsl);
+      }
     }
 
-    const validation = validateAnyWorkflowDsl(dsl as AnyWorkflowDSL);
+    const validation = summarizeValidation(report);
 
-    return NextResponse.json({ workflowDsl: dsl, validation, rawResponse: raw });
+    return NextResponse.json({ workflowDsl: dsl, validation, rawResponse });
   } catch (error) {
     const message = error instanceof Error ? error.message : '修改失败';
     return NextResponse.json({ error: message }, { status: 500 });

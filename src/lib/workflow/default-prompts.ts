@@ -3,6 +3,14 @@
  * Shared between builder-config API (for display) and refine/builder routes (for execution).
  */
 
+export const WORKFLOW_STABILITY_RULES = `## 稳定性优先规则
+- 默认把上游上下文写成 \`steps.<上游ID>.output\`，不要默认写成 \`steps.<上游ID>.output.summary\`。只有当前节点真的只消费最终纯文本时才使用 summary。
+- 只要下游需要路径、数组、布尔、对象等机器可读字段，上游 agent 就应使用 \`outputMode: "structured"\`，并在 prompt 里明确 JSON 字段；最好同时声明 \`outputContract\`。
+- 禁止在 prompt、context、code 里猜测 shared 目录或 \`*_output.md\` 文件名。shared summary 是运行时内部实现，不是稳定接口。
+- 当上游步骤已经产出结构化的候选路径/图片列表/分析结果时，下游节点必须直接消费这些字段；不要再扫描整个工作目录“自己选文件”。缺值时应 fail-fast，而不是偷偷回退到重新搜索。
+- 代码节点写文件只允许用 \`ctx.outputDir\` 或 \`ctx.saveArtifact(...)\`；不要硬编码 \`/tmp\`、\`~/Downloads\`、\`/Users/... \`、盘符路径等绝对路径。
+- 如果上游返回的是相对文件路径，代码里必须先基于已知 stage output 目录或 \`ctx.outputDir\` 做解析，再调用 \`fs.existsSync/statSync\`；不要直接把 \`img.path\` 之类字段当成绝对路径。`;
+
 export const WORKFLOW_REFINE_PROMPT = `你是 Lumos 工作流编辑助手。用户会给你一个 Workflow DSL v3 JSON 和一条修改指令。
 根据指令修改 DSL 并返回**完整的**修改后 JSON。
 
@@ -75,6 +83,8 @@ v3 与旧版本的关键区别：
 - 给参数起可读的 name 和 description，description 是用户填参数时唯一的提示
 - 参数值在 UI 的"运行工作流"对话框里填写，不要把它们硬编码进 prompt
 
+${WORKFLOW_STABILITY_RULES}
+
 ## 节点类型
 
 ### 1. Agent 节点
@@ -84,7 +94,7 @@ v3 与旧版本的关键区别：
   "input": {
     "preset": "<必须来自【可用 Agent】列表的 id>",
     "prompt": "<本节点任务描述，不要把上游数据写入 prompt>",
-    "context": { "<变量名>": "steps.<上游ID>.output.summary" },
+    "context": { "<变量名>": "steps.<上游ID>.output" },
     "outputMode": "plain-text",
     "expectedOutput": "<可选的验收说明，见下>",
     "knowledge": {
@@ -102,7 +112,7 @@ v3 与旧版本的关键区别：
 - context 引用必须是本节点的**拓扑前驱**（即 X 能通过边路径到达当前节点），否则校验失败
 - **涉及文件产出的节点（下载、截图、生成报表/图片等）**：prompt 里**只描述子目录结构**（例如"主图保存到 main 子目录,详情图保存到 detail 子目录"），不要写绝对路径（禁止 \`/tmp/...\`、\`~/...\` 这种）。执行时 Lumos 会自动把文件放进该节点的产出目录并在"本步产出"里支持预览下载;硬编码绝对路径会让产出游离、查看不到
 - **outputMode 说明**：
-  - "plain-text"（默认）：agent 自由文本输出，结果在 steps.<ID>.output.summary
+  - "plain-text"（默认）：agent 自由文本输出，主要文本在 \`steps.<ID>.output.summary\`。如果只是把上游结果透传给下游的 \`context\`，优先传整个 \`steps.<ID>.output\` 对象而不是只传 summary。
   - "structured"：agent 必须输出 JSON，系统会自动解析 JSON 字段并挂载到 steps.<ID>.output.<字段名>。例如 agent 输出 \`{"run_dir": "/path/to/dir", "count": 5}\`，下游可通过 \`steps.<ID>.output.run_dir\` 和 \`steps.<ID>.output.count\` 引用
   - 使用 structured 模式时，prompt 里必须明确告知 agent 输出哪些 JSON 字段（字段名、类型、含义）
 - **expectedOutput 说明（验收说明，可选字段）**：
@@ -116,7 +126,7 @@ v3 与旧版本的关键区别：
   - 示例：
     - \`"expectedOutput": "必须调用 generate_image 生成至少 1 张图片，输出里包含图片链接"\`
     - \`"expectedOutput": "纯文本竞品分析，输出包含至少 3 个竞品的价格对比；不需要调用任何工具"\`
-    - \`"expectedOutput": "必须把报告写入 /tmp/report.md，agent 在输出里报告文件路径"\`
+    - \`"expectedOutput": "必须把报告写入本步产出目录中的 report/report.md，并在输出里报告相对路径"\`
     - \`"expectedOutput": "输出必须包含 summary、pros、cons 三段；不需要调用任何工具"\`
 - **用户何时要求你填/改 expectedOutput**：
   - 用户说"这一步老被误判成失败"、"判分太严格"、"让判分老师别看我 prompt" → 加/改验收说明

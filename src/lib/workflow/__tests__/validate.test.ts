@@ -26,7 +26,7 @@ describe('validateWorkflowDsl (unified dispatcher)', () => {
       name: 'ok',
       nodes: [
         { id: 'a', type: 'agent', input: { prompt: 'hi' } },
-        { id: 'b', type: 'agent', input: { prompt: '{{ steps.a.output.text }}' } },
+        { id: 'b', type: 'agent', input: { prompt: '{{ steps.a.output.summary }}' } },
       ],
       edges: [{ from: 'a', to: 'b', kind: 'next' }],
     });

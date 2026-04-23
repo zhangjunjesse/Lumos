@@ -3,6 +3,7 @@
  * Ported from demo/local-server/services/knowledge/embedder.js
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 // @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
@@ -14,6 +15,7 @@ const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
 
 const MODEL_RESOURCE_SUBPATH = path.join('Xenova', 'bge-small-zh-v1.5');
+const MODEL_CACHE_RELATIVE_DIR = path.join('runtime', 'embedding-models');
 const REQUIRED_MODEL_FILES = [
   'config.json',
   'tokenizer.json',
@@ -22,6 +24,7 @@ const REQUIRED_MODEL_FILES = [
   'vocab.txt',
   path.join('onnx', 'model_quantized.onnx'),
 ] as const;
+const LOCAL_MODEL_NOT_FOUND_ERROR_FRAGMENT = 'file was not found locally at';
 
 interface OnnxruntimeWebModule {
   env: {
@@ -47,7 +50,29 @@ const ONNXRUNTIME_WEB_WASM_ENTRY = 'ort-wasm-simd-threaded.mjs';
 const LOCAL_MODEL_ROOT_CANDIDATES = [
   path.join('resources', 'models'),
   'models',
+  path.join('standalone', 'resources', 'models'),
+  path.join('standalone', 'models'),
 ];
+
+interface ModelFileInspection {
+  relativePath: string;
+  exists: boolean;
+  size: number | null;
+}
+
+interface ModelRootInspection {
+  modelRoot: string;
+  baseDir: string;
+  missing: string[];
+  files: ModelFileInspection[];
+}
+
+interface PreparedLocalModel {
+  cacheRoot: string;
+  modelDir: string;
+  sourceRoot: string;
+  copiedToCache: boolean;
+}
 
 function addCandidateRoot(roots: Set<string>, root?: string | null): void {
   if (!root) {
@@ -64,6 +89,10 @@ function addCandidateRoot(roots: Set<string>, root?: string | null): void {
 
 function shouldUsePortableEmbeddingRuntime(): boolean {
   return process.env.LUMOS_FORCE_PORTABLE_EMBEDDER === '1';
+}
+
+function getConfiguredDataDir(): string {
+  return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
 }
 
 function resolvePortableEmbeddingDevice(): 'cpu' {
@@ -129,21 +158,128 @@ function buildLocalModelRootCandidates(): string[] {
   return Array.from(candidates);
 }
 
-function resolveLocalModelRoot(): string {
-  for (const candidate of buildLocalModelRootCandidates()) {
-    if (hasCompleteLocalModel(candidate)) {
-      return candidate;
-    }
-  }
+function getLocalModelCacheRoot(): string {
+  return path.join(getConfiguredDataDir(), MODEL_CACHE_RELATIVE_DIR);
+}
 
-  throw new Error(
-    `local embedding model (${MODEL_NAME}) not found or incomplete; checked ${buildLocalModelRootCandidates().join(', ')}`,
-  );
+function inspectModelRoot(modelRoot: string): ModelRootInspection {
+  const baseDir = path.join(modelRoot, MODEL_RESOURCE_SUBPATH);
+  const files = REQUIRED_MODEL_FILES.map((relativePath) => {
+    const absolutePath = path.join(baseDir, relativePath);
+    try {
+      const stats = fs.statSync(absolutePath);
+      return { relativePath, exists: true, size: stats.size };
+    } catch {
+      return { relativePath, exists: false, size: null };
+    }
+  });
+
+  return {
+    modelRoot,
+    baseDir,
+    missing: files.filter((entry) => !entry.exists).map((entry) => entry.relativePath),
+    files,
+  };
 }
 
 function hasCompleteLocalModel(modelRoot: string): boolean {
-  const baseDir = path.join(modelRoot, MODEL_RESOURCE_SUBPATH);
-  return REQUIRED_MODEL_FILES.every((relativePath) => fs.existsSync(path.join(baseDir, relativePath)));
+  return inspectModelRoot(modelRoot).missing.length === 0;
+}
+
+function buildModelInspectionSummary(modelRoot: string): string {
+  const inspection = inspectModelRoot(modelRoot);
+  const present = inspection.files
+    .filter((entry) => entry.exists)
+    .map((entry) => `${entry.relativePath}(${entry.size}B)`)
+    .join(', ');
+  const missing = inspection.missing.length ? inspection.missing.join(', ') : 'none';
+  return `${inspection.modelRoot} -> missing=[${missing}] present=[${present || 'none'}]`;
+}
+
+function buildModelDiagnostics(modelRoots: string[]): string {
+  return Array.from(new Set(modelRoots)).map(buildModelInspectionSummary).join(' | ');
+}
+
+function copyModelIntoCache(sourceRoot: string, cacheRoot: string): void {
+  const sourceDir = path.join(sourceRoot, MODEL_RESOURCE_SUBPATH);
+  const targetDir = path.join(cacheRoot, MODEL_RESOURCE_SUBPATH);
+  const stagingRoot = path.join(cacheRoot, `.staging-${process.pid}-${Date.now()}`);
+  const stagingDir = path.join(stagingRoot, MODEL_RESOURCE_SUBPATH);
+
+  fs.rmSync(stagingRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(stagingDir), { recursive: true });
+  fs.cpSync(sourceDir, stagingDir, { recursive: true, force: true });
+
+  if (!hasCompleteLocalModel(stagingRoot)) {
+    throw new Error(
+      `staged embedding model cache is incomplete; source=${sourceRoot}; staged=${buildModelInspectionSummary(stagingRoot)}`,
+    );
+  }
+
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+  fs.rmSync(targetDir, { recursive: true, force: true });
+  fs.renameSync(stagingDir, targetDir);
+  fs.rmSync(stagingRoot, { recursive: true, force: true });
+}
+
+function prepareLocalModel(options?: { forceRefresh?: boolean }): PreparedLocalModel {
+  const cacheRoot = getLocalModelCacheRoot();
+  const sourceCandidates = buildLocalModelRootCandidates().filter((candidate) => {
+    return path.resolve(candidate) !== path.resolve(cacheRoot);
+  });
+
+  if (!options?.forceRefresh && hasCompleteLocalModel(cacheRoot)) {
+    return {
+      cacheRoot,
+      modelDir: path.join(cacheRoot, MODEL_RESOURCE_SUBPATH),
+      sourceRoot: cacheRoot,
+      copiedToCache: false,
+    };
+  }
+
+  const sourceRoot = sourceCandidates.find((candidate) => hasCompleteLocalModel(candidate));
+  if (!sourceRoot) {
+    throw new Error(
+      `local embedding model (${MODEL_NAME}) not found or incomplete; diagnostics: ${buildModelDiagnostics([
+        cacheRoot,
+        ...sourceCandidates,
+      ])}`,
+    );
+  }
+
+  copyModelIntoCache(sourceRoot, cacheRoot);
+
+  if (!hasCompleteLocalModel(cacheRoot)) {
+    throw new Error(
+      `local embedding model cache refresh failed; source=${sourceRoot}; diagnostics: ${buildModelDiagnostics([
+        cacheRoot,
+        sourceRoot,
+      ])}`,
+    );
+  }
+
+  return {
+    cacheRoot,
+    modelDir: path.join(cacheRoot, MODEL_RESOURCE_SUBPATH),
+    sourceRoot,
+    copiedToCache: true,
+  };
+}
+
+function shouldRetryModelLoad(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(LOCAL_MODEL_NOT_FOUND_ERROR_FRAGMENT);
+}
+
+function buildModelLoadError(error: unknown, preparedModel: PreparedLocalModel): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `embedding model initialization failed: ${message}; diagnostics: ${buildModelDiagnostics([
+      preparedModel.cacheRoot,
+      preparedModel.sourceRoot,
+      ...buildLocalModelRootCandidates(),
+    ])}`,
+  );
 }
 
 async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
@@ -167,19 +303,21 @@ function getExtractor(): Promise<unknown> {
         : await import('@huggingface/transformers');
 
       // Always load from bundled local weights — the app ships the quantized
-      // bge-small-zh-v1.5 ONNX under resources/models/, so indexing never
-      // depends on the user's network reaching hf-mirror / huggingface.
+      // bge-small-zh-v1.5 ONNX under the packaged resources. Before loading,
+      // copy a complete model bundle into the app's writable data dir so
+      // runtime indexing does not directly depend on the install directory
+      // staying intact across Windows installer / updater edge cases.
       const transformersEnv = transformers.env as Record<string, unknown>;
-      const localModelRoot = resolveLocalModelRoot();
-      transformersEnv.localModelPath = localModelRoot;
+      let preparedModel = prepareLocalModel();
+      transformersEnv.localModelPath = preparedModel.cacheRoot;
       transformersEnv.allowRemoteModels = false;
       transformersEnv.allowLocalModels = true;
 
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
-        ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8' }
+        ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8', local_files_only: true }
         : Boolean(process.versions.electron)
-          ? { device: 'cpu', dtype: 'q8' }
-          : { dtype: 'fp16' };
+          ? { device: 'cpu', dtype: 'q8', local_files_only: true }
+          : { dtype: 'fp16', local_files_only: true };
 
       console.log('[embedding] Loading model:', MODEL_NAME, {
         portableRuntime: usePortableRuntime,
@@ -190,23 +328,42 @@ function getExtractor(): Promise<unknown> {
         device: usePortableRuntime
           ? resolvePortableEmbeddingDevice()
           : (Boolean(process.versions.electron) ? 'cpu' : 'auto'),
-        localModelRoot,
+        localModelRoot: preparedModel.cacheRoot,
+        localModelDir: preparedModel.modelDir,
+        modelSourceRoot: preparedModel.sourceRoot,
+        copiedToCache: preparedModel.copiedToCache,
       });
-      const p = await transformers.pipeline('feature-extraction', MODEL_NAME, pipelineOptions);
+      let p: unknown;
+      try {
+        p = await transformers.pipeline('feature-extraction', preparedModel.modelDir, pipelineOptions);
+      } catch (error) {
+        try {
+          if (!shouldRetryModelLoad(error)) {
+            throw error;
+          }
+
+          console.warn('[embedding] Initial local model load failed; refreshing cache and retrying once');
+          preparedModel = prepareLocalModel({ forceRefresh: true });
+          transformersEnv.localModelPath = preparedModel.cacheRoot;
+          p = await transformers.pipeline('feature-extraction', preparedModel.modelDir, pipelineOptions);
+        } catch (retryError) {
+          throw buildModelLoadError(retryError, preparedModel);
+        }
+      }
       console.log('[embedding] Model loaded');
       return p;
     })().catch((error) => {
       _pipelinePromise = null;
-      const message = error instanceof Error ? error.message : String(error);
+      const enrichedError = error instanceof Error ? error : new Error(String(error));
       console.error('[embedding] Failed to initialize embedding runtime:', {
         model: MODEL_NAME,
         platform: process.platform,
         arch: process.arch,
         electron: process.versions.electron || null,
         portableRuntime: shouldUsePortableEmbeddingRuntime(),
-        message,
+        message: enrichedError.message,
       });
-      throw error;
+      throw enrichedError;
     });
   }
   return _pipelinePromise;

@@ -4,9 +4,18 @@ import { getDefaultProvider, getProvider } from '@/lib/db';
 import { getSetting } from '@/lib/db/sessions';
 import { generateTextFromProvider } from '@/lib/text-generator';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
-import { validateAnyWorkflowDsl } from '@/lib/workflow/dsl';
+import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
 import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 import { listAgentPresets, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
+import {
+  buildRepairTurn,
+  hasInsufficientAgentsSignal,
+  parseWorkflowDslFromText,
+  shouldAutoRepair,
+  summarizeValidation,
+  validateWorkflowBuilderDsl,
+} from '@/lib/workflow/builder-llm';
+import { WORKFLOW_STABILITY_RULES } from '@/lib/workflow/default-prompts';
 
 const requestSchema = z.object({
   description: z.string().trim().min(1).max(2000),
@@ -42,7 +51,7 @@ v3 与旧版本的关键区别：
   "input": {
     "preset": "<来自可用 Agent 列表的 agent id>",
     "prompt": "<该节点自身的任务描述，不包含上游数据>",
-    "context": { "<上游节点ID>": "steps.<上游节点ID>.output.summary" },
+    "context": { "<上游节点ID>": "steps.<上游节点ID>.output" },
     "outputMode": "plain-text" | "structured",
     "expectedOutput": "<可选的验收说明，见下>"
   },
@@ -218,44 +227,58 @@ export async function POST(request: NextRequest) {
     const validIds = new Set(agents.map(a => a.id));
     const configuredPrompt = getSetting('workflow_builder_system_prompt') || '';
     const basePrompt = configuredPrompt || DSL_BASE_PROMPT;
-    const systemPrompt = basePrompt + buildAgentListBlock(agents);
+    const systemPrompt = basePrompt + '\n\n' + WORKFLOW_STABILITY_RULES + buildAgentListBlock(agents);
+    const originalRequest = `Generate a Workflow DSL for the following task:\n\n${input.description}${input.workingDirectory ? `\n\nWorking directory: ${input.workingDirectory}` : ''}`;
 
     const raw = await generateTextFromProvider({
       providerId,
       model,
       system: systemPrompt,
-      prompt: `Generate a Workflow DSL for the following task:\n\n${input.description}${input.workingDirectory ? `\n\nWorking directory: ${input.workingDirectory}` : ''}`,
+      prompt: originalRequest,
       maxTokens: 2000,
     });
 
-    // Extract JSON from the response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const parsedInitial = parseWorkflowDslFromText(raw);
+    if (parsedInitial.error) {
       return NextResponse.json(
-        { error: 'LLM 未返回有效 JSON，请重试或手动编辑 DSL' },
+        { error: parsedInitial.error },
         { status: 422 },
       );
     }
 
-    let dsl: unknown;
-    try {
-      dsl = JSON.parse(jsonMatch[0]);
-    } catch {
-      return NextResponse.json(
-        { error: 'LLM 返回的 JSON 无法解析，请重试' },
-        { status: 422 },
-      );
-    }
+    let dsl = parsedInitial.dsl;
+    let rawResponse = raw;
+    let report = validateWorkflowBuilderDsl(dsl);
 
     // Check if LLM signalled insufficient agents
-    if (dsl && typeof dsl === 'object' && 'insufficient_agents' in dsl) {
-      const d = dsl as { insufficient_agents: boolean; suggestion?: string };
+    if (hasInsufficientAgentsSignal(dsl)) {
+      const d = dsl;
       if (d.insufficient_agents) {
         const suggestion = d.suggestion || '请创建更多 Agent 后重试';
         return NextResponse.json(
           { error: `可用 Agent 不足，无法完成该工作流。${suggestion}` },
           { status: 422 },
         );
+      }
+    }
+
+    if (shouldAutoRepair(report)) {
+      const repairedRaw = await generateTextFromProvider({
+        providerId,
+        model,
+        system: systemPrompt,
+        messages: buildRepairTurn(
+          originalRequest,
+          dsl,
+          formatIssuesForLlm(report.issues),
+        ),
+        maxTokens: 3000,
+      });
+      const repairedParsed = parseWorkflowDslFromText(repairedRaw);
+      if (!repairedParsed.error) {
+        dsl = repairedParsed.dsl;
+        rawResponse = repairedRaw;
+        report = validateWorkflowBuilderDsl(dsl);
       }
     }
 
@@ -268,13 +291,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate DSL structure first
-    const structureValidation = validateAnyWorkflowDsl(dsl as AnyWorkflowDSL);
+    const structureValidation = summarizeValidation(report);
     if (!structureValidation.valid) {
       return NextResponse.json({
         workflowDsl: dsl,
         validation: structureValidation,
-        rawResponse: raw,
+        rawResponse,
       });
     }
 
@@ -284,7 +306,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       workflowDsl: dsl,
       validation: compiled.validation,
-      rawResponse: raw,
+      rawResponse,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to generate workflow';
