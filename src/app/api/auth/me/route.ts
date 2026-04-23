@@ -20,10 +20,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, message: '会话已过期' });
     }
 
-    const balance = await refreshUserBalance(user.id).catch(() => ({
-      remainQuota: 0,
-      usedQuota: 0,
-    }));
+    let remainQuota = 0;
+    let usedQuota = 0;
+    let balanceError: string | undefined;
+    try {
+      const balance = await refreshUserBalance(user.id);
+      remainQuota = balance.remainQuota;
+      usedQuota = balance.usedQuota;
+    } catch (e) {
+      balanceError = e instanceof Error ? e.message : String(e);
+      console.warn('[auth/me] refreshUserBalance failed:', balanceError);
+    }
 
     return NextResponse.json({
       success: true,
@@ -34,13 +41,14 @@ export async function GET(req: NextRequest) {
         membership: user.membership,
         membership_expires_at: user.membership_expires_at,
         role: user.role || 'user',
-        balance: balance.remainQuota,
-        used_quota: balance.usedQuota,
+        balance: remainQuota,
+        used_quota: usedQuota,
+        balance_error: balanceError,
         allow_custom_providers: getCustomProviderFlags(),
         // backward compat fields
         username: user.email,
         display_name: user.nickname || user.email,
-        quota: balance.remainQuota,
+        quota: remainQuota,
         group: user.membership,
       },
     });

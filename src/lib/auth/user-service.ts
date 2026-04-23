@@ -8,7 +8,6 @@ import crypto from 'crypto';
 import { getDb } from '@/lib/db/connection';
 import { hashPassword } from './password';
 import { createSession, validateSession } from './session';
-import { getTokenQuota } from './newapi-admin';
 import {
   provisionCloudProvider,
   provisionImageProviders,
@@ -257,20 +256,47 @@ export function getActiveUserId(): string | undefined {
   }
 }
 
+const WEB_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
+const BALANCE_TIMEOUT_MS = 5_000;
+
 /**
- * Refresh user balance from new-api in real time.
+ * Refresh user balance by proxying through lumos-web (the only node with
+ * server-side new-api admin credentials). Desktop must never hold those
+ * credentials — they'd be packaged into the client binary.
  */
 export async function refreshUserBalance(
   userId: string,
 ): Promise<{ remainQuota: number; usedQuota: number }> {
   const db = getDb();
   const row = db.prepare(
-    'SELECT newapi_token_id FROM lumos_users WHERE id = ?',
-  ).get(userId) as { newapi_token_id: number | null } | undefined;
+    'SELECT web_session_token FROM lumos_users WHERE id = ?',
+  ).get(userId) as { web_session_token: string } | undefined;
 
-  if (!row?.newapi_token_id) {
-    throw new Error('用户未关联 API token');
+  const webToken = row?.web_session_token || '';
+  if (!webToken) {
+    throw new Error('未登录 Lumos 云账户，无法查询余额');
+  }
+  if (!WEB_TOKEN_PATTERN.test(webToken)) {
+    throw new Error('Web 会话 token 格式异常');
   }
 
-  return getTokenQuota(row.newapi_token_id);
+  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const res = await fetch(`${webBase}/api/auth/me`, {
+    headers: { Cookie: `lumos_session=${webToken}` },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(BALANCE_TIMEOUT_MS),
+  });
+
+  if (!res.ok) {
+    throw new Error(`lumos-web 返回 ${res.status}`);
+  }
+  const data = await res.json();
+  if (!data.success || !data.data) {
+    throw new Error(data.message || '查询余额失败');
+  }
+
+  return {
+    remainQuota: Number(data.data.balance ?? 0),
+    usedQuota: Number(data.data.used_quota ?? 0),
+  };
 }

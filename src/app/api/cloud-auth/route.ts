@@ -13,7 +13,12 @@ export async function GET(req: NextRequest) {
     const user = await getUserBySession(token);
     if (!user) return NextResponse.json({ success: false, message: '会话已过期' });
 
-    const balance = await refreshUserBalance(user.id).catch(() => null);
+    let balance: { remainQuota: number; usedQuota: number } | null = null;
+    try {
+      balance = await refreshUserBalance(user.id);
+    } catch (e) {
+      console.warn('[cloud-auth] refreshUserBalance failed:', e instanceof Error ? e.message : e);
+    }
     return NextResponse.json({ success: true, data: mapToLegacyFormat(user, balance) });
   } catch {
     return NextResponse.json({ success: false, message: '获取用户信息失败' });

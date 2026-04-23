@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import { verifySign } from './zpay';
 import { createPaymentUrl } from './zpay';
-import { addTokenQuota } from '../auth/newapi-admin';
 import { getDb } from '@/lib/db/connection';
 
 export interface RechargePlan {
@@ -115,15 +114,9 @@ async function applyPlanBenefits(
   userId: string,
   plan: RechargePlan
 ): Promise<void> {
-  if (plan.quotaYuan > 0) {
-    const user = db.prepare(
-      'SELECT newapi_token_id FROM lumos_users WHERE id = ?'
-    ).get(userId) as { newapi_token_id: number | null } | undefined;
-    if (user?.newapi_token_id) {
-      const quota = plan.quotaYuan * 500000;
-      await addTokenQuota(user.newapi_token_id, quota);
-    }
-  }
+  // Quota top-up lives on lumos-web: it owns new-api admin credentials and
+  // the authoritative lumos_image_usage ledger. Desktop must not touch
+  // new-api directly, so plan.quotaYuan is intentionally not applied here.
   if (plan.membership) {
     db.prepare(`
       UPDATE lumos_users
