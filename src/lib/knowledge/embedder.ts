@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 // @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
 import * as onnxruntimeWebRuntime from 'onnxruntime-web';
 import * as portableTransformersRuntime from './transformers-web-runtime';
@@ -33,6 +33,19 @@ interface OnnxruntimeWebModule {
       proxy?: boolean;
     };
   };
+}
+
+interface TransformersLikeEnv {
+  localModelPath?: string;
+  allowRemoteModels?: boolean;
+  allowLocalModels?: boolean;
+  useCustomCache?: boolean;
+  customCache?: {
+    match(request: string | URL): Promise<Response | undefined>;
+    put(request: string | URL, response: Response): Promise<void>;
+  } | null;
+  useBrowserCache?: boolean;
+  useFSCache?: boolean;
 }
 
 const onnxruntimeWeb = onnxruntimeWebRuntime as OnnxruntimeWebModule;
@@ -73,6 +86,12 @@ interface PreparedLocalModel {
   sourceRoot: string;
   copiedToCache: boolean;
 }
+
+const PORTABLE_CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  json: 'application/json',
+  txt: 'text/plain',
+  onnx: 'application/octet-stream',
+};
 
 function addCandidateRoot(roots: Set<string>, root?: string | null): void {
   if (!root) {
@@ -282,6 +301,68 @@ function buildModelLoadError(error: unknown, preparedModel: PreparedLocalModel):
   );
 }
 
+function createPortableLocalModelCache() {
+  const ephemeralEntries = new Map<string, Response>();
+
+  function normalizePortableRequestPath(request: string | URL): string | null {
+    let raw = request instanceof URL
+      ? (request.protocol === 'file:' ? fileURLToPath(request) : request.toString())
+      : String(request);
+
+    if (/^(https?|blob):/i.test(raw)) {
+      return null;
+    }
+
+    if (/^file:/i.test(raw)) {
+      try {
+        raw = fileURLToPath(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    if (process.platform === 'win32') {
+      raw = raw.replace(/\//g, '\\');
+    }
+
+    return path.normalize(raw);
+  }
+
+  function buildLocalFileResponse(filePath: string): Response | undefined {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return undefined;
+    }
+
+    const extension = path.extname(filePath).replace(/^\./, '').toLowerCase();
+    const headers = new Headers({
+      'content-length': String(fs.statSync(filePath).size),
+      'content-type': PORTABLE_CONTENT_TYPE_BY_EXTENSION[extension] || 'application/octet-stream',
+    });
+
+    return new Response(fs.readFileSync(filePath), { status: 200, headers });
+  }
+
+  return {
+    async match(request: string | URL): Promise<Response | undefined> {
+      const normalized = normalizePortableRequestPath(request);
+      if (normalized) {
+        const fileResponse = buildLocalFileResponse(normalized);
+        if (fileResponse) {
+          return fileResponse;
+        }
+      }
+
+      const cacheKey = request instanceof URL ? request.toString() : String(request);
+      const cached = ephemeralEntries.get(cacheKey);
+      return cached ? cached.clone() : undefined;
+    },
+    async put(request: string | URL, response: Response): Promise<void> {
+      const cacheKey = request instanceof URL ? request.toString() : String(request);
+      ephemeralEntries.set(cacheKey, response.clone());
+    },
+  };
+}
+
 async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
   const onnxruntimeWebDistDir = resolveOnnxruntimeWebDir();
 
@@ -307,11 +388,19 @@ function getExtractor(): Promise<unknown> {
       // copy a complete model bundle into the app's writable data dir so
       // runtime indexing does not directly depend on the install directory
       // staying intact across Windows installer / updater edge cases.
-      const transformersEnv = transformers.env as Record<string, unknown>;
+      const transformersEnv = transformers.env as TransformersLikeEnv;
       let preparedModel = prepareLocalModel();
       transformersEnv.localModelPath = preparedModel.cacheRoot;
       transformersEnv.allowRemoteModels = false;
       transformersEnv.allowLocalModels = true;
+      if (usePortableRuntime) {
+        // `transformers.web.js` runs with `env.useFS=false`, so local model files
+        // must be surfaced through a custom cache bridge backed by Node's fs.
+        transformersEnv.useCustomCache = true;
+        transformersEnv.customCache = createPortableLocalModelCache();
+        transformersEnv.useBrowserCache = false;
+        transformersEnv.useFSCache = false;
+      }
 
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
         ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8', local_files_only: true }
