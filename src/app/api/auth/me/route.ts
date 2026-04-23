@@ -33,7 +33,6 @@ export async function GET(req: NextRequest) {
         nickname: user.nickname,
         membership: user.membership,
         membership_expires_at: user.membership_expires_at,
-        image_quota_monthly: user.image_quota_monthly,
         role: user.role || 'user',
         balance: balance.remainQuota,
         used_quota: balance.usedQuota,

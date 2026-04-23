@@ -24,7 +24,7 @@ import type {
   WorkflowAgentRole,
   WorkflowStepRuntimeContext,
 } from './types';
-import { executeCodeHandler } from './code-executor';
+import { executeCodeHandler, shouldExecuteCode } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { sanitizeResolvedInput, writeStepInputSnapshot } from './step-input-snapshot';
 import { appendStepTraceFromSdkEvent } from './step-trace-stream';
@@ -194,6 +194,36 @@ function extractPreferredContextSummary(value: unknown): string | null {
     return null;
   }
 
+  const systemKeys = new Set([
+    'summary',
+    'outcome',
+    'role',
+    'roleName',
+    'agentType',
+    'detailArtifactPath',
+    'artifacts',
+    'diagnostics',
+    'memoryAppend',
+    'metrics',
+  ]);
+  const structuredEntries = Object.entries(value).filter(([key, nested]) => {
+    if (systemKeys.has(key)) return false;
+    if (nested === undefined || nested === null) return false;
+    if (typeof nested === 'string' && !nested.trim()) return false;
+    return true;
+  });
+  if (structuredEntries.length > 0) {
+    const summary = typeof value.summary === 'string' && value.summary.trim()
+      ? value.summary.trim()
+      : undefined;
+    const structuredValue = Object.fromEntries(structuredEntries);
+    try {
+      return JSON.stringify(summary ? { summary, ...structuredValue } : structuredValue, null, 2);
+    } catch {
+      // Fall through to simpler string extraction below.
+    }
+  }
+
   for (const key of ['summary', 'message', 'result', 'content', 'text', 'title', 'url', 'screenshotPath']) {
     const candidate = value[key];
     if (typeof candidate === 'string' && candidate.trim()) {
@@ -269,6 +299,45 @@ function sanitizePathSegment(value: string, fallback: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
   return normalized || fallback;
+}
+
+async function writeStepSummaryToSharedDir(
+  runId: string,
+  stepId: string,
+  sharedReadDir: string,
+  summary: string,
+): Promise<void> {
+  if (!summary.trim()) return;
+  const safeRunId = sanitizePathSegment(runId, 'run');
+  const safeStageId = sanitizePathSegment(stepId, 'step');
+  const outputFileName = `${safeRunId}_${safeStageId}_output.md`;
+  await writeFile(path.join(sharedReadDir, outputFileName), summary.trim(), 'utf-8');
+}
+
+async function writeStepSummaryArtifact(
+  runId: string,
+  stepId: string,
+  artifactOutputDir: string,
+  summary: string,
+): Promise<void> {
+  if (!summary.trim()) return;
+  const safeRunId = sanitizePathSegment(runId, 'run');
+  const safeStageId = sanitizePathSegment(stepId, 'step');
+  const outputFileName = `${safeRunId}_${safeStageId}_summary.md`;
+  await writeFile(path.join(artifactOutputDir, outputFileName), summary.trim(), 'utf-8');
+}
+
+function extractStepResultSummary(result: StepResult): string {
+  if (typeof result.output === 'string') {
+    return result.output.trim();
+  }
+  if (result.output && typeof result.output === 'object') {
+    const summary = (result.output as Record<string, unknown>).summary;
+    if (typeof summary === 'string' && summary.trim()) {
+      return summary.trim();
+    }
+  }
+  return result.error?.trim() || '';
 }
 
 function getWorkflowAgentRootDir(): string {
@@ -997,7 +1066,31 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   const runtimeContext = input.__runtime ?? getDefaultRuntimeContext();
 
   // 代码模式拦截：优先执行固定代码，失败可回退到 agent
-  const hasCodeConfig = Boolean(input.code?.script?.trim() || input.code?.handler);
+  const shouldAttemptCode = shouldExecuteCode(input.code);
+  const codeWorkspace = shouldAttemptCode
+    ? await prepareWorkflowAgentWorkspace(runtimeContext, input.context)
+    : null;
+  if (codeWorkspace) {
+    await writeStepInputSnapshot(codeWorkspace.stageWorkspace, {
+      capturedAt: new Date().toISOString(),
+      workflowRunId: runtimeContext.workflowRunId,
+      stepId: runtimeContext.stepId,
+      timeoutMs: typeof runtimeContext.timeoutMs === 'number' ? runtimeContext.timeoutMs : null,
+      executionMode: 'code',
+      requestedModel: input.model || runtimeContext.requestedModel || null,
+      resolvedInput: sanitizeResolvedInput(input),
+      runtime: runtimeContext,
+      code: {
+        strategy: input.code?.strategy ?? 'code-first',
+        handler: input.code?.handler ?? null,
+        hasInlineScript: Boolean(input.code?.script?.trim()),
+        params: input.code?.params ?? {},
+      },
+      workspace: codeWorkspace,
+      agent: null,
+      payload: null,
+    });
+  }
   const codeOutcome = await executeCodeHandler(input, runtimeContext);
   if (codeOutcome) {
     // 在结果中标记执行路径，方便用户区分
@@ -1024,10 +1117,29 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       }
     }
 
+    if (codeWorkspace) {
+      try {
+        await writeStepSummaryToSharedDir(
+          runtimeContext.workflowRunId,
+          runtimeContext.stepId,
+          codeWorkspace.sharedReadDir,
+          extractStepResultSummary(result),
+        );
+        await writeStepSummaryArtifact(
+          runtimeContext.workflowRunId,
+          runtimeContext.stepId,
+          codeWorkspace.artifactOutputDir,
+          extractStepResultSummary(result),
+        );
+      } catch (writeErr) {
+        console.warn('[subagent] Failed to write code-step output to shared dir:', writeErr instanceof Error ? writeErr.message : writeErr);
+      }
+    }
+
     return result;
   }
   // codeOutcome === null: 代码配置不存在，或代码失败已回退到 agent
-  const codeFellBackToAgent = hasCodeConfig;
+  const codeFellBackToAgent = shouldAttemptCode;
 
   const requestedModel = input.model || runtimeContext.requestedModel;
   const definition = resolveWorkflowAgentDefinition(input);
@@ -1093,11 +1205,13 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       requestedModel: requestedModel ?? null,
       resolvedInput: sanitizeResolvedInput(input),
       runtime: runtimeContext,
+      workspace: payload.workspace,
       agent: {
         role: definition.role,
         binding: definition.binding as unknown as Record<string, unknown>,
         ignoredToolRequests: definition.ignoredToolRequests,
       },
+      code: null,
       payload,
     });
     updateActiveWorkflowAgentExecution(activeExecutionKey, {
@@ -1155,12 +1269,11 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     );
 
     // Write step output to shared dir so downstream agents can read it as a file.
-    if (result.outcome === 'done' && result.summary?.trim()) {
+    const stepSummary = result.summary?.trim() || result.error?.message?.trim() || '';
+    if (stepSummary) {
       try {
-        const safeRunId = sanitizePathSegment(payload.runId, 'run');
-        const safeStageId = sanitizePathSegment(payload.stageId, 'step');
-        const outputFileName = `${safeRunId}_${safeStageId}_output.md`;
-        await writeFile(path.join(payload.workspace.sharedReadDir, outputFileName), result.summary.trim(), 'utf-8');
+        await writeStepSummaryToSharedDir(payload.runId, payload.stageId, payload.workspace.sharedReadDir, stepSummary);
+        await writeStepSummaryArtifact(payload.runId, payload.stageId, payload.workspace.artifactOutputDir, stepSummary);
       } catch (writeErr) {
         console.warn('[subagent] Failed to write step output to shared dir:', writeErr instanceof Error ? writeErr.message : writeErr);
       }

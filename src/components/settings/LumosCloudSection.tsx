@@ -75,12 +75,6 @@ export function LumosCloudSection() {
           </div>
         </div>
 
-        {user.image_quota_monthly > 0 && (
-          <div className="text-xs text-muted-foreground">
-            本月图片配额: {user.image_quota_monthly} 张
-          </div>
-        )}
-
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
           已连接 Lumos Cloud 服务

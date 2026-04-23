@@ -10,7 +10,12 @@ import type { CloudImageProviderConfig } from './types';
 
 const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'http://api.miki.zj.cn';
 const CLOUD_PROVIDER_NAME = 'Lumos Cloud';
-const CLOUD_IMAGE_PROVIDER_ID_SETTING = 'lumos_cloud_image_provider_id';
+
+/** settings key: JSON map from remote provider id → local provider id. */
+const CLOUD_IMAGE_PROVIDERS_MAP_SETTING = 'lumos_cloud_image_providers_map';
+/** settings key: remote provider id → local provider id for the single-provider era. */
+const LEGACY_IMAGE_PROVIDER_ID_SETTING = 'lumos_cloud_image_provider_id';
+const PROVIDER_OVERRIDE_IMAGE_KEY = 'provider_override:image';
 
 /**
  * 首次登录且 /v1/models 不可达时的兜底模型清单。成功拉取一次后会被
@@ -112,7 +117,7 @@ export async function provisionCloudProvider(apiKey: string): Promise<string> {
   return provider.id;
 }
 
-// ── 图片服务商 provision ──────────────────────────────────────────────────
+// ── 图片服务商 provision (多条) ───────────────────────────────────────────
 
 interface ImageProviderUpsertFields {
   name: string;
@@ -139,62 +144,155 @@ function buildImageProviderFields(config: CloudImageProviderConfig): ImageProvid
     base_url: config.base_url,
     api_key: config.api_key,
     model_catalog: JSON.stringify(config.model_catalog || []),
-    notes: `Lumos Cloud 内置图片服务商, 由登录自动配置。默认模型: ${config.default_model}`,
+    notes: `Lumos Cloud 内置图片服务商 (remote_id=${config.id})。默认模型: ${config.default_model || '(未指定)'}`,
   };
 }
 
-async function cleanupProvisionedImageProvider(db: DbLike, storedId: string): Promise<void> {
-  const { deleteProvider } = await import('@/lib/db/providers');
-  try { deleteProvider(storedId); } catch { /* already gone */ }
-  db.prepare('DELETE FROM settings WHERE key = ?').run(CLOUD_IMAGE_PROVIDER_ID_SETTING);
-  db.prepare("DELETE FROM settings WHERE key = 'provider_override:image'").run();
+interface ProviderMap {
+  [remoteId: string]: string;
+}
+
+function readProvidersMap(db: DbLike): ProviderMap {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(CLOUD_IMAGE_PROVIDERS_MAP_SETTING) as { value: string } | undefined;
+  if (!row?.value) return {};
+  try {
+    const parsed = JSON.parse(row.value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ProviderMap;
+    }
+  } catch { /* fall through */ }
+  return {};
+}
+
+function writeProvidersMap(db: DbLike, map: ProviderMap): void {
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(CLOUD_IMAGE_PROVIDERS_MAP_SETTING, JSON.stringify(map));
 }
 
 /**
- * 按管理端配置 provision / update / 删除云端图片 provider。
- *
- * - `config=null` → 删除之前配好的图片 provider, 并清掉 `provider_override:image`。
- * - `config` 存在 → upsert (system origin, image-gen 能力),
- *   并把 `provider_override:image` 指向它。
- * Identity: 本地 provider id 持久化在 settings.lumos_cloud_image_provider_id,
- * 所以管理端改名不会丢失对应关系。
+ * 吸收旧版 (单条 provider) 遗留的 settings：把 `lumos_cloud_image_provider_id`
+ * 合并进新 map 后删除。只在 map 为空时生效，避免覆盖新逻辑。
  */
-export async function provisionImageProvider(
-  config: CloudImageProviderConfig | null,
-): Promise<string | null> {
-  const { getDb } = await import('@/lib/db/connection');
+function absorbLegacySingleProviderSetting(db: DbLike, map: ProviderMap): ProviderMap {
+  if (Object.keys(map).length > 0) return map;
+  const legacyRow = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(LEGACY_IMAGE_PROVIDER_ID_SETTING) as { value: string } | undefined;
+  const legacyLocalId = legacyRow?.value?.trim();
+  if (legacyLocalId) {
+    // We don't know its remote id (legacy didn't track it). Key it with a
+    // sentinel so the normal sync-pass can detect "not in new list" and
+    // delete it cleanly. No upstream config will ever use this sentinel.
+    map['__legacy__'] = legacyLocalId;
+  }
+  db.prepare('DELETE FROM settings WHERE key = ?').run(LEGACY_IMAGE_PROVIDER_ID_SETTING);
+  return map;
+}
+
+async function upsertOneImageProvider(
+  db: DbLike,
+  config: CloudImageProviderConfig,
+  existingLocalId: string | undefined,
+): Promise<string> {
   const { createProvider, updateProvider } = await import('@/lib/db/providers');
+  const fields = buildImageProviderFields(config);
+  if (existingLocalId) {
+    const exists = db.prepare('SELECT id FROM api_providers WHERE id = ?').get(existingLocalId);
+    if (exists) {
+      updateProvider(existingLocalId, fields);
+      return existingLocalId;
+    }
+  }
+  const created = createProvider({ ...fields, model_catalog_source: 'default' });
+  return created.id;
+}
+
+async function removeStaleProviders(
+  db: DbLike,
+  staleLocalIds: string[],
+): Promise<void> {
+  if (staleLocalIds.length === 0) return;
+  const { deleteProvider } = await import('@/lib/db/providers');
+  for (const id of staleLocalIds) {
+    try { deleteProvider(id); } catch { /* already gone */ }
+  }
+}
+
+/**
+ * 全量同步 Lumos Cloud 下发的图片服务商列表到本地。
+ *
+ * - 入参空数组 → 删除所有已 provision 的云图片 provider, 清掉 map 和 override。
+ * - 入参非空 → 按 `remote_id` 一对一 upsert 本地 provider; 原来在 map 中但
+ *   新列表里没有的 → 删除。
+ * - `provider_override:image` 的维护:
+ *    - 如果入参里有 `is_default=true` → 指向它的 local id。
+ *    - 否则若旧值还指向现有 local provider → 保留, 让用户的手动选择生效。
+ *    - 否则 → 清空, 让 `resolveProviderForCapability` 报错提醒用户去选择。
+ */
+export async function provisionImageProviders(
+  configs: CloudImageProviderConfig[],
+): Promise<string[]> {
+  const { getDb } = await import('@/lib/db/connection');
   const db = getDb();
 
-  const storedIdRow = db.prepare('SELECT value FROM settings WHERE key = ?')
-    .get(CLOUD_IMAGE_PROVIDER_ID_SETTING) as { value: string } | undefined;
-  const storedId = storedIdRow?.value || null;
+  let map = readProvidersMap(db);
+  map = absorbLegacySingleProviderSetting(db, map);
 
-  if (!config) {
-    if (storedId) await cleanupProvisionedImageProvider(db, storedId);
-    return null;
+  if (configs.length === 0) {
+    await removeStaleProviders(db, Object.values(map));
+    writeProvidersMap(db, {});
+    db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_IMAGE_KEY);
+    return [];
   }
 
-  const fields = buildImageProviderFields(config);
-  const existing = storedId
-    ? (db.prepare('SELECT id FROM api_providers WHERE id = ?').get(storedId) as { id: string } | undefined)
-    : undefined;
+  const incomingRemoteIds = new Set(configs.map((c) => c.id));
+  const staleLocalIds: string[] = [];
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (!incomingRemoteIds.has(remoteId)) staleLocalIds.push(localId);
+  }
+  await removeStaleProviders(db, staleLocalIds);
 
-  let providerId: string;
-  if (existing) {
-    updateProvider(existing.id, fields);
-    providerId = existing.id;
-  } else {
-    const provider = createProvider({ ...fields, model_catalog_source: 'default' });
-    providerId = provider.id;
+  const nextMap: ProviderMap = {};
+  let defaultLocalId: string | undefined;
+  for (const config of configs) {
+    const existingLocalId = map[config.id];
+    const localId = await upsertOneImageProvider(db, config, existingLocalId);
+    nextMap[config.id] = localId;
+    if (config.is_default) defaultLocalId = localId;
+  }
+  writeProvidersMap(db, nextMap);
+
+  const currentOverrideRow = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(PROVIDER_OVERRIDE_IMAGE_KEY) as { value: string } | undefined;
+  const currentOverride = currentOverrideRow?.value?.trim() ?? '';
+  const overrideStillValid = currentOverride
+    && Object.values(nextMap).includes(currentOverride);
+
+  if (defaultLocalId) {
     db.prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-    ).run(CLOUD_IMAGE_PROVIDER_ID_SETTING, providerId);
+    ).run(PROVIDER_OVERRIDE_IMAGE_KEY, defaultLocalId);
+  } else if (!overrideStillValid) {
+    // 没有系统默认, 旧 override 也已失效 → 清空, 让用户重新选择。
+    db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_IMAGE_KEY);
   }
 
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES ('provider_override:image', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(providerId);
+  return Object.values(nextMap);
+}
 
-  return providerId;
+/**
+ * Resolve the remote provider id (lumos-web `lumos_image_providers.id`) for
+ * a local api_provider id. Used by image-gen-tool to attribute billing.
+ * Returns null if the local provider isn't one of our cloud-provisioned rows.
+ *
+ * Takes an explicit `DbLike` so callers don't have to bridge the async-only
+ * `getDb` dynamic import into a sync hot path.
+ */
+export function getRemoteImageProviderId(db: DbLike, localProviderId: string): string | null {
+  const map = readProvidersMap(db);
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (localId === localProviderId && remoteId !== '__legacy__') return remoteId;
+  }
+  return null;
 }

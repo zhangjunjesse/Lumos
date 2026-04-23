@@ -1,5 +1,3 @@
-import * as fs from 'fs'
-import * as path from 'path'
 import { ErrorSanitizer } from './security/error-sanitizer'
 import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime'
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth'
@@ -165,17 +163,6 @@ function makeEmptyStreamStats(): StreamDiagnosticStats {
     toolsUsed: [],
     hasThinkLeakage: false,
     truncated: false,
-  }
-}
-
-function listDirFilesSync(dirPath: string): string[] {
-  try {
-    return fs.readdirSync(dirPath, { withFileTypes: true })
-      .filter(e => e.isFile() && !e.name.startsWith('.'))
-      .map(e => e.name)
-      .sort()
-  } catch {
-    return []
   }
 }
 
@@ -886,23 +873,19 @@ export class StageWorker {
         ? [
             '- Upstream stage outputs:',
             ...payload.dependencies.flatMap((dep) => {
-              const summaryFile = `${payload.workspace.sharedReadDir}/${runId}_${dep.stageId}_output.md`
               const lines = [
-                `  • **${dep.stageId}**: ${dep.summary.slice(0, 200)}${dep.summary.length > 200 ? '…' : ''}`,
-                `    Summary file: ${summaryFile}`,
+                `  • **${dep.title}**: ${dep.summary.slice(0, 200)}${dep.summary.length > 200 ? '…' : ''}`,
               ]
-              const upstreamOutputDir = path.join(payload.workspace.runWorkspace, 'stages', dep.stageId, 'output')
-              const artifactFiles = listDirFilesSync(upstreamOutputDir)
-              if (artifactFiles.length > 0) {
-                lines.push(`    **完整产出物文件（优先读取这些文件获取完整内容，不要只依赖 summary）**:`)
-                for (const f of artifactFiles) {
-                  lines.push(`      - ${path.join(upstreamOutputDir, f)}`)
+              if (dep.artifactRefs.length > 0) {
+                lines.push('    **已解析到的真实产出物文件（优先读取这些文件获取完整内容）**:')
+                for (const ref of dep.artifactRefs) {
+                  lines.push(`      - ${ref}`)
                 }
               }
               return lines
             }),
             '',
-            '**重要：如果上游步骤有产出物文件，必须读取这些文件获取完整原始内容进行分析，不要仅依赖 summary 摘要。**',
+            '**重要：优先使用下面 Dependencies (full context) 中已经传入的完整内容；只有在上面明确列出真实文件路径时，才去读取文件。不要自行猜测 shared 目录中的 summary 文件名。**',
           ]
         : ['- No upstream dependencies']),
       '',

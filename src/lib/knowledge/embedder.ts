@@ -14,7 +14,14 @@ const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
 
 const MODEL_RESOURCE_SUBPATH = path.join('Xenova', 'bge-small-zh-v1.5');
-const MODEL_FINGERPRINT_FILE = 'config.json';
+const REQUIRED_MODEL_FILES = [
+  'config.json',
+  'tokenizer.json',
+  'tokenizer_config.json',
+  'special_tokens_map.json',
+  'vocab.txt',
+  path.join('onnx', 'model_quantized.onnx'),
+] as const;
 
 interface OnnxruntimeWebModule {
   env: {
@@ -124,14 +131,19 @@ function buildLocalModelRootCandidates(): string[] {
 
 function resolveLocalModelRoot(): string {
   for (const candidate of buildLocalModelRootCandidates()) {
-    if (fs.existsSync(path.join(candidate, MODEL_RESOURCE_SUBPATH, MODEL_FINGERPRINT_FILE))) {
+    if (hasCompleteLocalModel(candidate)) {
       return candidate;
     }
   }
 
   throw new Error(
-    `local embedding model (${MODEL_NAME}) not found; checked ${buildLocalModelRootCandidates().join(', ')}`,
+    `local embedding model (${MODEL_NAME}) not found or incomplete; checked ${buildLocalModelRootCandidates().join(', ')}`,
   );
+}
+
+function hasCompleteLocalModel(modelRoot: string): boolean {
+  const baseDir = path.join(modelRoot, MODEL_RESOURCE_SUBPATH);
+  return REQUIRED_MODEL_FILES.every((relativePath) => fs.existsSync(path.join(baseDir, relativePath)));
 }
 
 async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {

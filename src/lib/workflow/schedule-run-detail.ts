@@ -81,6 +81,37 @@ function buildStepAgentNameMap(messages: Array<{ role: string; content: string }
   return map;
 }
 
+function buildStepMessageMap(messages: Array<{ role: string; content: string }>): Map<string, { status: ScheduleRunStep['status']; summary: string }> {
+  const map = new Map<string, { status: ScheduleRunStep['status']; summary: string }>();
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
+    let markdown = msg.content;
+    try {
+      const blocks = JSON.parse(markdown) as Array<{ type: string; text?: string }>;
+      if (Array.isArray(blocks)) {
+        markdown = blocks
+          .filter((block) => block.type === 'text' && block.text)
+          .map((block) => block.text as string)
+          .join('\n');
+      }
+    } catch {
+      // Use raw markdown when the message content is not structured JSON.
+    }
+    const parsed = parseStepHeader(markdown);
+    if (!parsed?.stepId) continue;
+    const summary = parsed.body.split('\n---\n')[0]?.trim() ?? '';
+    const status: ScheduleRunStep['status'] = (
+      parsed.outcome === 'done'
+        ? 'success'
+        : parsed.outcome === 'failed' || parsed.outcome === 'blocked'
+          ? 'error'
+          : 'running'
+    );
+    map.set(parsed.stepId, { status, summary });
+  }
+  return map;
+}
+
 function resolveWorkflowDsl(
   run: ScheduleRunRecord,
 ): { dsl: WorkflowDSLV3 | null; source: 'snapshot' | 'live' | 'none' } {
@@ -98,6 +129,7 @@ function buildStepOverlays(
   steps: ScheduleRunStep[],
   outputFiles: ScheduleRunOutputFile[],
   workflowRunId: string | null,
+  stepMessages: Map<string, { status: ScheduleRunStep['status']; summary: string }>,
 ): Record<string, ScheduleStepOverlay> {
   const fileCounts = new Map<string, number>();
   for (const f of outputFiles) {
@@ -112,23 +144,36 @@ function buildStepOverlays(
   const overlays: Record<string, ScheduleStepOverlay> = {};
   for (const s of steps) {
     const retry = attemptsByStep.get(s.stepId);
+    const message = stepMessages.get(s.stepId);
     overlays[s.stepId] = {
       status: s.status,
       durationMs: s.durationMs,
       outputFileCount: fileCounts.get(s.stepId) ?? 0,
-      outputSummary: s.outputSummary,
+      outputSummary: s.outputSummary || message?.summary || '',
       error: s.error,
       ...(retry ? { attempt: retry.attempt, maxAttempts: retry.maxAttempts } : {}),
     };
   }
+  for (const [stepId, message] of stepMessages) {
+    if (!overlays[stepId]) {
+      overlays[stepId] = {
+        status: message.status,
+        durationMs: null,
+        outputFileCount: fileCounts.get(stepId) ?? 0,
+        outputSummary: message.summary,
+        error: '',
+      };
+    }
+  }
   // Steps with files but no run-step row (e.g. legacy runs) still get a minimal overlay.
   for (const [stepId, count] of fileCounts) {
     if (!overlays[stepId]) {
+      const message = stepMessages.get(stepId);
       overlays[stepId] = {
-        status: 'success',
+        status: message?.status ?? 'success',
         durationMs: null,
         outputFileCount: count,
-        outputSummary: '',
+        outputSummary: message?.summary ?? '',
         error: '',
       };
     }
@@ -185,6 +230,7 @@ export async function getScheduleRunDetail(
   }
 
   const agentNameMap = buildStepAgentNameMap(messages);
+  const stepMessages = buildStepMessageMap(messages);
 
   let outputFiles: ScheduleRunOutputFile[] = [];
   let stepInputSnapshots: Record<string, StepInputSnapshotFile> = {};
@@ -202,7 +248,7 @@ export async function getScheduleRunDetail(
   const steps = listRunSteps(runId);
   const { dsl, source } = resolveWorkflowDsl(run);
   const workflowRunId = run.sessionId ? getWorkflowExecutionId(run.sessionId) : null;
-  const stepOverlays = buildStepOverlays(steps, outputFiles, workflowRunId);
+  const stepOverlays = buildStepOverlays(steps, outputFiles, workflowRunId, stepMessages);
   const presetNames = buildPresetNameMap(dsl);
 
   return {

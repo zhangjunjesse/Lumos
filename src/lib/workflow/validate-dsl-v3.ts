@@ -90,7 +90,21 @@ function checkOutputContractReferences(dsl: WorkflowDSLV3): ValidationIssue[] {
       const target = agents.get(ref.nodeId);
       if (!target) continue; // 非 agent 节点不走 contract 校验
       const declared = getContractProps(target);
-      if (!declared) continue; // 未声明 contract = 允许所有字段
+      const targetInput = (target.input ?? {}) as Record<string, unknown>;
+      const outputMode = typeof targetInput.outputMode === 'string' ? targetInput.outputMode : 'plain-text';
+      if (!declared) {
+        if (ref.field !== 'summary' && outputMode !== 'structured') {
+          issues.push({
+            severity: 'warning',
+            code: 'W_NON_STRUCTURED_FIELD_REF',
+            nodeId: node.id,
+            jsonPath: `nodes[${node.id}].input`,
+            message: `reference "steps.${ref.nodeId}.output.${ref.field}" targets "${ref.nodeId}" without an explicit structured output contract`,
+            hint: 'Prefer outputMode="structured" plus outputContract when downstream steps read machine-structured fields.',
+          });
+        }
+        continue; // 未声明 contract = 允许所有字段
+      }
       if (!declared.has(ref.field)) {
         issues.push({
           severity: 'error',

@@ -32,6 +32,7 @@ import {
   checkGotoAcrossLoop,
   checkGotoRuntimeSupport,
 } from './dsl-validator-goto';
+import { checkStabilityAntiPatterns } from './dsl-validator-stability';
 
 export type {
   IssueEmit,
@@ -60,6 +61,7 @@ export function validateDslStructure(dsl: WorkflowDSLV3): import('./dsl-validato
   checkLoopVarScope(index, emit);
   checkGotoAcrossLoop(index, emit);
   checkGotoRuntimeSupport(index, emit);
+  checkStabilityAntiPatterns(index, emit);
 
   return { valid: issues.every((i) => i.severity !== 'error'), issues };
 }

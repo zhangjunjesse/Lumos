@@ -9,6 +9,7 @@ import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { getActiveUserId } from '@/lib/auth/user-service';
 import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -129,8 +130,9 @@ export class ConversationEngine {
     });
     const hints: string[] = [];
 
-    // In-process image gen tool replaces the external gemini-image MCP hint
-    const lumosMcpServer = createLumosMcpServer(sessionId);
+    // In-process image gen tool. userId lets image-gen-tool bill generation
+    // against the active desktop user (Feishu bridge has no HTTP auth context).
+    const lumosMcpServer = createLumosMcpServer(sessionId, getActiveUserId());
     hints.push(IMAGE_GEN_IN_PROCESS_HINT);
     if (hasFeishuMcp(loadedMcpServers)) {
       hints.push(FEISHU_MCP_SYSTEM_HINT);

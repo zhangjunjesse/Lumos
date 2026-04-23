@@ -9,7 +9,6 @@ export interface ProAuthUser {
   nickname: string;
   membership: "free" | "monthly" | "yearly";
   membership_expires_at: string | null;
-  image_quota_monthly: number;
   role: "admin" | "user";
   balance: number;
   used_quota: number;

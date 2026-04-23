@@ -235,6 +235,8 @@ export interface GenerateWorkflowResult {
 
 export interface SubmitWorkflowRequest {
   taskId: string;
+  /** Optional schedule/debug run-history row used by the run detail UI. */
+  runHistoryId?: string;
   workflowCode: string;
   workflowManifest: CompiledWorkflowManifest;
   inputs: Record<string, unknown>;

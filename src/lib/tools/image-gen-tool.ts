@@ -1,7 +1,12 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
-import { getDb } from '@/lib/db/connection';
+import {
+  consumeRemoteQuota,
+  refundRemoteQuota,
+  resolveBillingTarget,
+} from './image-gen-billing';
 
 /** Minimal CallToolResult compatible with MCP SDK types used by the Claude Agent SDK. */
 interface CallToolResult {
@@ -12,22 +17,6 @@ interface CallToolResult {
 const IMAGE_GEN_TOOL_NAME = 'generate_image';
 const MAX_GENERATIONS_PER_SESSION = 10;
 const MAX_TRACKED_SESSIONS = 256;
-const QUOTA_REQUEST_TIMEOUT_MS = 8_000;
-const QUOTA_MAX_ATTEMPTS = 2;
-const QUOTA_RETRY_BACKOFF_MS = 600;
-
-function describeFetchError(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
-  const cause = (err as { cause?: unknown }).cause;
-  const causeCode = cause && typeof cause === 'object' && 'code' in cause
-    ? String((cause as { code: unknown }).code)
-    : undefined;
-  const causeMsg = cause instanceof Error ? cause.message : undefined;
-  const parts = [`${err.name}: ${err.message}`];
-  if (causeCode) parts.push(`cause.code=${causeCode}`);
-  if (causeMsg && causeMsg !== err.message) parts.push(`cause=${causeMsg}`);
-  return parts.join(' | ');
-}
 
 /** Module-level counter keyed by sessionId, persists across requests within the same process. */
 const sessionGenerationCounts = new Map<string, number>();
@@ -35,123 +24,12 @@ const sessionGenerationCounts = new Map<string, number>();
 function bumpSessionCount(key: string): number {
   const current = sessionGenerationCounts.get(key) ?? 0;
   const next = current + 1;
-  // Bound memory: evict oldest entry when over cap. Map iteration is insertion order.
   if (!sessionGenerationCounts.has(key) && sessionGenerationCounts.size >= MAX_TRACKED_SESSIONS) {
     const oldest = sessionGenerationCounts.keys().next().value;
     if (oldest !== undefined) sessionGenerationCounts.delete(oldest);
   }
   sessionGenerationCounts.set(key, next);
   return next;
-}
-
-function getWebBase(): string {
-  return process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
-}
-
-function getWebSessionToken(userId: string): string | null {
-  const db = getDb();
-  const row = db.prepare(
-    'SELECT web_session_token FROM lumos_users WHERE id = ?',
-  ).get(userId) as { web_session_token: string } | undefined;
-  return row?.web_session_token || null;
-}
-
-/**
- * Atomically consume image quota via lumos-web. Returns detailed error text
- * (including remote HTTP status and body snippet) on failure so callers and
- * the UI can surface the real cause instead of a generic fallback.
- */
-async function consumeRemoteQuota(
-  userId: string,
-  count: number,
-  model: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const token = getWebSessionToken(userId);
-  if (!token) {
-    return {
-      ok: false,
-      error: `未登录 Lumos 云账户，无法使用图片生成功能 (userId=${userId}，lumos_users.web_session_token 为空)`,
-    };
-  }
-
-  const url = `${getWebBase()}/api/quota/image/consume`;
-  const body = JSON.stringify({ count, model, action: 'consume' });
-  let res: Response | undefined;
-  const attemptErrors: string[] = [];
-  for (let attempt = 1; attempt <= QUOTA_MAX_ATTEMPTS; attempt++) {
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body,
-        signal: AbortSignal.timeout(QUOTA_REQUEST_TIMEOUT_MS),
-      });
-      break;
-    } catch (err) {
-      const detail = describeFetchError(err);
-      attemptErrors.push(`#${attempt} ${detail}`);
-      console.warn(`[image-gen-tool] quota fetch attempt ${attempt}/${QUOTA_MAX_ATTEMPTS} failed: ${detail}`);
-      if (attempt < QUOTA_MAX_ATTEMPTS) {
-        await new Promise(resolve => setTimeout(resolve, QUOTA_RETRY_BACKOFF_MS * attempt));
-      }
-    }
-  }
-  if (!res) {
-    return {
-      ok: false,
-      error: `Lumos 云配额接口不可达 (${url})，${QUOTA_MAX_ATTEMPTS} 次尝试均失败：${attemptErrors.join(' ; ')}`,
-    };
-  }
-
-  const rawText = await res.text().catch(() => '');
-  let data: Record<string, unknown> = {};
-  try { data = rawText ? JSON.parse(rawText) : {}; } catch { /* non-JSON body */ }
-
-  if (res.status === 401) {
-    const detail = typeof data.error === 'string' ? data.error : (rawText.slice(0, 200) || '无返回');
-    return { ok: false, error: `Lumos 云会话已过期，请重新登录 (HTTP 401: ${detail})` };
-  }
-  if (res.status === 402) {
-    const detail = typeof data.error === 'string' ? data.error : '本月图片额度已用完';
-    return { ok: false, error: `Lumos 云图片额度已用完 (HTTP 402: ${detail})` };
-  }
-  if (!res.ok || !data.success) {
-    const serverMsg = typeof data.error === 'string' ? data.error : rawText.slice(0, 300);
-    return {
-      ok: false,
-      error: `Lumos 云配额检查失败 (HTTP ${res.status} ${res.statusText || ''}): ${serverMsg || '<空>'}`,
-    };
-  }
-  return { ok: true };
-}
-
-/**
- * Refund previously consumed quota (e.g., when generation fails).
- * Best-effort — logs errors but does not throw.
- */
-async function refundRemoteQuota(
-  userId: string,
-  count: number,
-  model: string,
-): Promise<void> {
-  const token = getWebSessionToken(userId);
-  if (!token) return;
-  try {
-    await fetch(`${getWebBase()}/api/quota/image/consume`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ count, model, action: 'refund' }),
-      signal: AbortSignal.timeout(QUOTA_REQUEST_TIMEOUT_MS),
-    });
-  } catch (e) {
-    console.warn('[image-gen-tool] Failed to refund quota:', e);
-  }
 }
 
 const inputSchema = {
@@ -162,37 +40,28 @@ const inputSchema = {
     + 'If the task references local image files, pass every path via `reference_image_paths` '
     + 'and describe them here by position only (e.g. "Image 1", "Image 2").',
   ),
-  aspect_ratio: z.enum(['1:1', '16:9', '9:16', '3:2', '2:3', '4:3', '3:4'])
-    .optional()
+  aspect_ratio: z.enum(['1:1', '16:9', '9:16', '3:2', '2:3', '4:3', '3:4']).optional()
     .describe('Aspect ratio. Defaults to 1:1.'),
-  image_size: z.enum(['1K', '2K', '4K'])
-    .optional()
+  image_size: z.enum(['1K', '2K', '4K']).optional()
     .describe('Resolution. 1K=1024px, 2K=2048px, 4K=4096px (pro model only). Defaults to 1K.'),
-  count: z.number().int().min(1).max(4)
-    .optional()
+  count: z.number().int().min(1).max(4).optional()
     .describe('Number of images to generate (1-4). Defaults to 1. Use with enable_sequential for consistent multi-image sets.'),
-  reference_image_paths: z.array(z.string())
-    .optional()
+  reference_image_paths: z.array(z.string()).optional()
     .describe(
       'Local file paths of reference images (absolute paths, .jpg/.png/.webp/.gif/.bmp). '
       + 'Use for editing, style transfer, multi-reference composition, or any time the task '
       + 'refers to specific local images. '
       + 'REQUIRED whenever the task mentions absolute image paths — the paths go HERE, not in `prompt`.',
     ),
-  enable_sequential: z.boolean()
-    .optional()
+  enable_sequential: z.boolean().optional()
     .describe('Enable sequential group mode for character/style-consistent multi-image generation. Set count>1 when using this.'),
-  color_palette: z.string()
-    .optional()
+  color_palette: z.string().optional()
     .describe("Hex color palette to control image colors, e.g. '#FF5733,#33FF57,#3357FF'."),
-  region_edit_bbox: z.array(z.array(z.number()))
-    .optional()
+  region_edit_bbox: z.array(z.array(z.number())).optional()
     .describe('Bounding boxes for region editing: [[x1,y1,x2,y2], ...]. Only modify specified regions of the reference image.'),
-  thinking_mode: z.boolean()
-    .optional()
+  thinking_mode: z.boolean().optional()
     .describe('Enable thinking mode for better prompt understanding and creative quality. Defaults to true. (DashScope only)'),
-  negative_prompt: z.string()
-    .optional()
+  negative_prompt: z.string().optional()
     .describe('Describe what to EXCLUDE from the image, e.g. "no text, no watermark, no blur". (Gemini only — synthesized into prompt)'),
   safety_settings: z.array(z.object({
     category: z.enum([
@@ -206,8 +75,7 @@ const inputSchema = {
       'BLOCK_LOW_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE',
       'BLOCK_ONLY_HIGH', 'BLOCK_NONE', 'OFF',
     ]),
-  })).optional()
-    .describe('Gemini safety threshold overrides. Use sparingly — most defaults are sensible.'),
+  })).optional().describe('Gemini safety threshold overrides. Use sparingly — most defaults are sensible.'),
 };
 
 type ImageGenArgs = {
@@ -260,11 +128,8 @@ function buildProviderOptions(args: ImageGenArgs): Record<string, unknown> | und
 
 /**
  * Detect absolute local image file paths embedded in the prompt text.
- *
  * Catches the common agent mistake of copying reference-image paths into the
  * natural-language `prompt` field instead of populating `reference_image_paths`.
- * Only flags paths that (a) look absolute, (b) have a known image extension,
- * (c) don't contain newlines or shell metachars that would indicate prose.
  */
 const PROMPT_EMBEDDED_IMAGE_PATH_RE =
   /(?:^|[\s([{"'`,])((?:\/|[a-zA-Z]:[\\/])[^\s()[\]{}"'`,<>]+\.(?:jpg|jpeg|png|webp|gif|bmp|heic|heif|avif))(?=$|[\s)\]}"'`,.;:!?])/gi;
@@ -278,9 +143,15 @@ function findEmbeddedImagePaths(prompt: string): string[] {
   return [...found];
 }
 
-async function runGeneration(args: ImageGenArgs, sessionId: string | undefined, count: number): Promise<CallToolResult> {
+async function runGeneration(
+  args: ImageGenArgs,
+  sessionId: string | undefined,
+  count: number,
+  model: string,
+): Promise<CallToolResult> {
   const result = await generateImages({
     prompt: args.prompt,
+    model: model || undefined,
     aspectRatio: args.aspect_ratio || '1:1',
     imageSize: args.image_size || '1K',
     n: args.count,
@@ -307,7 +178,6 @@ async function runGeneration(args: ImageGenArgs, sessionId: string | undefined, 
 
 export function createImageGenTool(sessionId?: string, userId?: string) {
   const key = sessionId ?? '';
-  const placeholderModel = 'pending';
 
   return tool(
     IMAGE_GEN_TOOL_NAME,
@@ -315,16 +185,6 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
     + 'generate, draw, create, edit, restyle, or transform images.',
     inputSchema,
     async (args): Promise<CallToolResult> => {
-      // Fail-loud guard: absolute image paths must NEVER appear in `prompt`
-      // text, regardless of whether `reference_image_paths` is populated.
-      // This catches both:
-      //   (a) the silent-hallucination failure (agent inlines all paths into
-      //       prompt and sends zero refs to the provider), and
-      //   (b) the half-right failure (agent populates refs but also copies
-      //       some paths into prompt, which the provider ignores).
-      // Merges paths from prompt with already-passed refs so the agent gets
-      // a single, correct suggested payload. Runs BEFORE quota consumption
-      // so a malformed call doesn't burn the user's quota.
       const embedded = findEmbeddedImagePaths(args.prompt);
       if (embedded.length > 0) {
         const existingRefs = args.reference_image_paths ?? [];
@@ -353,19 +213,46 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
         }, true);
       }
 
+      const target = resolveBillingTarget();
+      if ('error' in target) return textResult({ success: false, error: target.error }, true);
+      if (!target.model) {
+        return textResult({
+          success: false,
+          error:
+            `图片服务商"${target.provider.name}"没有可用模型 (model_catalog 为空, 且 model_override:image 未设置)。`
+            + `请先在管理端或本地 model_catalog 配置至少一个模型。`,
+        }, true);
+      }
+
       const imageCount = args.count ?? 1;
+      const idempotencyKey = crypto.randomUUID();
       let quotaConsumed = false;
+
       if (userId) {
-        const check = await consumeRemoteQuota(userId, imageCount, placeholderModel);
+        if (!target.remoteProviderId) {
+          return textResult({
+            success: false,
+            error:
+              `图片服务商"${target.provider.name}"不是由 Lumos Cloud 登录下发的云端服务商，`
+              + `无法走中心计费。请在管理端配置并重新登录，或改用自建 provider (需要自付 API 费用)。`,
+          }, true);
+        }
+        const check = await consumeRemoteQuota({
+          userId,
+          providerId: target.remoteProviderId,
+          model: target.model,
+          count: imageCount,
+          idempotencyKey,
+        });
         if (!check.ok) return textResult({ success: false, error: check.error }, true);
         quotaConsumed = true;
       }
 
       try {
-        return await runGeneration(args, sessionId, count);
+        return await runGeneration(args, sessionId, count, target.model);
       } catch (error) {
         if (userId && quotaConsumed) {
-          await refundRemoteQuota(userId, imageCount, placeholderModel);
+          await refundRemoteQuota(userId, idempotencyKey);
         }
         const detail = formatGenerationError(error);
         console.error('[image-gen-tool] generation failed:', error);

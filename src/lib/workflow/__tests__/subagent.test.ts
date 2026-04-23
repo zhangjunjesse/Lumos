@@ -266,6 +266,36 @@ describe('executeWorkflowAgentStep', () => {
     );
   });
 
+  test('writes a visible step summary artifact into the stage output directory', async () => {
+    stageWorkerExecuteSpy.mockResolvedValue(buildStageExecutionResult({
+      stageId: 'analyze-images',
+      summary: '已完成商品图分析。',
+    }));
+
+    await executeWorkflowAgentStep({
+      prompt: '分析图片。',
+      role: 'researcher',
+      __runtime: {
+        workflowRunId: 'wf-006',
+        stepId: 'analyze-images',
+        stepType: 'agent',
+      },
+    });
+
+    const summaryPath = path.join(
+      tempDataDir,
+      'workflow-agent-runs',
+      'wf-006',
+      'stages',
+      'analyze-images',
+      'output',
+      'wf-006_analyze-images_summary.md',
+    );
+
+    expect(fs.existsSync(summaryPath)).toBe(true);
+    expect(fs.readFileSync(summaryPath, 'utf-8')).toContain('已完成商品图分析。');
+  });
+
   test('successful plain-text delivery diagnostics do not populate the step error field', async () => {
     stageWorkerExecuteSpy.mockResolvedValue(buildStageExecutionResult({
       stageId: 'finalize',

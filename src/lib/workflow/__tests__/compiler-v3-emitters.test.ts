@@ -36,6 +36,7 @@ describe('emitBlock', () => {
     const code = compile(mk([agent('a')], []));
     expect(code).toContain('agentStep(');
     expect(code).toContain('stepOutputs["a"]');
+    expect(code).toContain('await onStepOutput?.({ workflowRunId: run.id, stepId: "a", stepType: "agent", output: __result_a.output });');
   });
 
   test('linear sequence emits two successive agent steps', () => {

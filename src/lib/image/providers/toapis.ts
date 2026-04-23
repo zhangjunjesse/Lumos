@@ -330,13 +330,32 @@ async function downloadAsBase64(url: string, signal?: AbortSignal): Promise<Gene
   }
 }
 
+/**
+ * gpt-image-* 家族走的是 OpenAI 风格的 size(像素尺寸)参数,不认 "1:1" 这种
+ * 比例字符串,也不认 metadata.resolution。把统一层的 aspectRatio 映射到它支持
+ * 的三档尺寸,其他字段跳过,避免 "不合法的size" 报错。
+ */
+const GPT_IMAGE_LANDSCAPE_RATIOS = new Set(['16:9', '3:2', '4:3'])
+const GPT_IMAGE_PORTRAIT_RATIOS = new Set(['9:16', '2:3', '3:4'])
+
+function isGptImageModel(model: string): boolean {
+  return /^gpt-image-/i.test(model)
+}
+
+function ratioToGptImagePixelSize(ratio: string | undefined): string {
+  if (ratio && GPT_IMAGE_LANDSCAPE_RATIOS.has(ratio)) return '1536x1024'
+  if (ratio && GPT_IMAGE_PORTRAIT_RATIOS.has(ratio)) return '1024x1536'
+  return '1024x1024'
+}
+
 function buildMetadata(
   request: ImageGenRequest,
   providerOptions: Record<string, unknown>,
+  includeResolution: boolean,
 ): Record<string, unknown> | undefined {
   const metadata: Record<string, unknown> = {}
 
-  if (request.size) {
+  if (includeResolution && request.size) {
     metadata.resolution = request.size
   }
 
@@ -354,12 +373,17 @@ function buildRequestBody(
   imageUrls: string[],
 ): Record<string, unknown> {
   const providerOptions = request.providerOptions ?? {}
-  const metadata = buildMetadata(request, providerOptions)
+  const gptImage = isGptImageModel(model)
+  const metadata = buildMetadata(request, providerOptions, !gptImage)
+
+  const size = gptImage
+    ? ratioToGptImagePixelSize(request.aspectRatio)
+    : request.aspectRatio
 
   const body: Record<string, unknown> = {
     model,
     prompt: request.prompt,
-    ...(request.aspectRatio ? { size: request.aspectRatio } : {}),
+    ...(size ? { size } : {}),
     ...(typeof request.n === 'number' ? { n: request.n } : {}),
   }
 

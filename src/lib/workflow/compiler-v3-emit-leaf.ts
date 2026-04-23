@@ -72,6 +72,7 @@ function emitRegistryStep(node: WorkflowNode, stateExpr: string, indent: number)
     `${pad}  onStepStarted, onStepCompleted, retryPolicy: ${configLit}.retryPolicy`,
     `${pad}}));`,
     `${pad}stepOutputs[${sid}] = ${bind};`,
+    `${pad}await onStepOutput?.({ workflowRunId: run.id, stepId: ${sid}, stepType: ${stype}, output: ${bind}.output });`,
   ];
   return wrapForGotoReplay(node, wrapOnError(node, core.join('\n'), indent), indent);
 }
@@ -116,6 +117,7 @@ function emitApproval(node: WorkflowNode, stateExpr: string, indent: number): st
     `${pad}  onStepStarted, onStepCompleted, retryPolicy: ${configLit}.retryPolicy`,
     `${pad}}));`,
     `${pad}stepOutputs[${sid}] = ${bind};`,
+    `${pad}await onStepOutput?.({ workflowRunId: run.id, stepId: ${sid}, stepType: ${stype}, output: ${bind}.output });`,
   ];
   return wrapForGotoReplay(node, wrapOnError(node, core.join('\n'), indent), indent);
 }

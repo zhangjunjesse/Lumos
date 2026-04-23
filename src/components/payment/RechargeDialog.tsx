@@ -11,10 +11,9 @@ import {
 } from "@/components/ui/dialog";
 
 const PLANS = [
-  { id: "monthly_basic", name: "基础月卡", price: 99, desc: "¥50 对话额度 + 30 张图片/月", tag: "" },
-  { id: "monthly_pro", name: "专业月卡", price: 199, desc: "¥120 对话额度 + 80 张图片/月", tag: "推荐" },
+  { id: "monthly_basic", name: "基础月卡", price: 99, desc: "¥50 对话额度", tag: "" },
+  { id: "monthly_pro", name: "专业月卡", price: 199, desc: "¥120 对话额度", tag: "推荐" },
   { id: "topup_50", name: "额度充值", price: 50, desc: "¥25 对话额度", tag: "" },
-  { id: "image_pack", name: "图片加油包", price: 19.9, desc: "50 张图片", tag: "" },
 ];
 
 type PayType = "alipay" | "wxpay";

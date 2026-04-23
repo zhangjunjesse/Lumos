@@ -11,7 +11,6 @@ export interface LumosUser {
   membership_expires_at: string | null;
   newapi_token_key: string;
   newapi_token_id: number | null;
-  image_quota_monthly: number;
   role: 'admin' | 'user';
   status: 'active' | 'disabled' | 'deleted';
   last_login_at: string | null;

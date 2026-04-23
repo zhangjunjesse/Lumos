@@ -11,7 +11,7 @@ import { createSession, validateSession } from './session';
 import { getTokenQuota } from './newapi-admin';
 import {
   provisionCloudProvider,
-  provisionImageProvider,
+  provisionImageProviders,
   persistCustomProviderFlags,
   type CloudImageProviderConfig,
 } from '@/lib/lumos-cloud-auth';
@@ -96,10 +96,9 @@ interface RemoteUser {
   role: 'admin' | 'user';
   membership: 'free' | 'monthly' | 'yearly';
   status: string;
-  image_quota_monthly: number;
   newapi_token_key: string | null;
   newapi_token_id: number | null;
-  image_provider: CloudImageProviderConfig | null;
+  image_providers?: CloudImageProviderConfig[];
   allow_custom_providers?: Partial<CustomProviderFlags>;
 }
 
@@ -124,23 +123,23 @@ function upsertLocalUser(remoteUser: RemoteUser, webSessionToken: string, now: s
     db.prepare(
       `UPDATE lumos_users SET
         email = ?, nickname = ?, role = ?, membership = ?,
-        newapi_token_key = ?, newapi_token_id = ?, image_quota_monthly = ?,
+        newapi_token_key = ?, newapi_token_id = ?,
         web_session_token = ?, last_login_at = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
-      remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
+      remoteUser.newapi_token_key, remoteUser.newapi_token_id,
       webSessionToken, now, now, remoteUser.id,
     );
     return;
   }
   db.prepare(
     `INSERT INTO lumos_users
-     (id, email, password_hash, nickname, role, membership, newapi_token_key, newapi_token_id, image_quota_monthly, web_session_token, created_at, updated_at, last_login_at)
-     VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, email, password_hash, nickname, role, membership, newapi_token_key, newapi_token_id, web_session_token, created_at, updated_at, last_login_at)
+     VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     remoteUser.id, remoteUser.email, remoteUser.nickname, remoteUser.role, remoteUser.membership,
-    remoteUser.newapi_token_key, remoteUser.newapi_token_id, remoteUser.image_quota_monthly,
+    remoteUser.newapi_token_key, remoteUser.newapi_token_id,
     webSessionToken, now, now, now,
   );
 }
@@ -150,9 +149,9 @@ async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
     await provisionCloudProvider(`sk-${remoteUser.newapi_token_key}`);
   }
   try {
-    await provisionImageProvider(remoteUser.image_provider ?? null);
+    await provisionImageProviders(remoteUser.image_providers ?? []);
   } catch (e) {
-    console.warn('[login] Failed to provision image provider:', e);
+    console.warn('[login] Failed to provision image providers:', e);
   }
   await persistCustomProviderFlags(remoteUser.allow_custom_providers ?? {});
 }
@@ -218,8 +217,8 @@ export function seedAdminUser(): void {
 
   db.prepare(
     `INSERT INTO lumos_users
-     (id, email, password_hash, nickname, role, membership, image_quota_monthly, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'admin', 'monthly', 999, ?, ?)`,
+     (id, email, password_hash, nickname, role, membership, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'admin', 'monthly', ?, ?)`,
   ).run(userId, email, passwordHash, nickname, now, now);
 
   if (envPassword) {

@@ -170,6 +170,24 @@ describe('StageWorker', () => {
       expect(result.contractVersion).toBe('stage-execution-result/v1')
     }, 30000)
 
+    test('依赖提示不再伪造 shared summary 文件路径', () => {
+      const payload = buildPayload(tempDir)
+      payload.dependencies = [
+        {
+          stageId: 'analyzeResult',
+          title: 'analyzeResult',
+          summary: 'parsed summary text',
+          artifactRefs: [],
+        },
+      ]
+
+      const prompt = (worker as unknown as { buildPrompt: (p: StageExecutionPayloadV1) => string }).buildPrompt(payload)
+
+      expect(prompt).toContain('parsed summary text')
+      expect(prompt).not.toContain('Summary file:')
+      expect(prompt).toContain('不要自行猜测 shared 目录中的 summary 文件名')
+    })
+
     test('真实执行分支会消费 structured_output 并归一化 artifacts', async () => {
       const realWorker = new StageWorker(true)
       const payload = buildPayload(tempDir)

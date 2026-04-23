@@ -9,15 +9,13 @@ export interface RechargePlan {
   name: string;
   price: number;
   quotaYuan: number;
-  imageQuota: number;
   membership: 'monthly' | null;
 }
 
 export const RECHARGE_PLANS: readonly RechargePlan[] = [
-  { id: 'monthly_basic', name: '基础月卡', price: 99, quotaYuan: 50, imageQuota: 30, membership: 'monthly' },
-  { id: 'monthly_pro', name: '专业月卡', price: 199, quotaYuan: 120, imageQuota: 80, membership: 'monthly' },
-  { id: 'topup_50', name: '额度充值 ¥50', price: 50, quotaYuan: 25, imageQuota: 0, membership: null },
-  { id: 'image_pack', name: '图片加油包', price: 19.9, quotaYuan: 0, imageQuota: 50, membership: null },
+  { id: 'monthly_basic', name: '基础月卡', price: 99, quotaYuan: 50, membership: 'monthly' },
+  { id: 'monthly_pro', name: '专业月卡', price: 199, quotaYuan: 120, membership: 'monthly' },
+  { id: 'topup_50', name: '额度充值 ¥50', price: 50, quotaYuan: 25, membership: null },
 ] as const;
 
 export interface Order {
@@ -125,11 +123,6 @@ async function applyPlanBenefits(
       const quota = plan.quotaYuan * 500000;
       await addTokenQuota(user.newapi_token_id, quota);
     }
-  }
-  if (plan.imageQuota > 0) {
-    db.prepare(
-      'UPDATE lumos_users SET image_quota_monthly = image_quota_monthly + ? WHERE id = ?'
-    ).run(plan.imageQuota, userId);
   }
   if (plan.membership) {
     db.prepare(`

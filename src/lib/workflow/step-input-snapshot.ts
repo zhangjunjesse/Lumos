@@ -26,13 +26,22 @@ export interface StepInputSnapshotFile {
   /** Runtime fields the compiler injected via `__runtime` (taskId, sessionId, workingDirectory, ...). */
   runtime: WorkflowStepRuntimeContext;
   /** Resolved agent role + binding (roleName / model / allowedTools / systemPrompt / ...). */
-  agent: {
+  agent?: {
     role: string;
     binding: Record<string, unknown>;
     ignoredToolRequests: string[];
-  };
-  /** The exact payload object passed to `StageWorker.execute`. */
-  payload: StageExecutionPayloadV1;
+  } | null;
+  /** Code execution metadata for code-only / code-first steps. */
+  code?: {
+    strategy: string | null;
+    handler: string | null;
+    hasInlineScript: boolean;
+    params: Record<string, unknown>;
+  } | null;
+  /** Workspace paths available to the step even when there is no StageWorker payload. */
+  workspace?: StageExecutionPayloadV1['workspace'] | null;
+  /** The exact payload object passed to `StageWorker.execute` when applicable. */
+  payload?: StageExecutionPayloadV1 | null;
 }
 
 const SNAPSHOT_FILE_NAME = '_lumos_step_input.json';

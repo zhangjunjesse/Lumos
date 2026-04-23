@@ -126,6 +126,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --config electron-builder.yml --publish always
 
+      - name: Verify packaged embedding model (Windows)
+        run: node scripts/verify-packaged-embedding-model.mjs release/win-unpacked
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -177,6 +180,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --mac --arm64 --config electron-builder.yml --publish always
+
+      - name: Verify packaged embedding model (macOS)
+        run: node scripts/verify-packaged-embedding-model.mjs release/mac-arm64/Lumos.app
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

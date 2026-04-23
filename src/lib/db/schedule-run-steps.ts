@@ -21,12 +21,40 @@ function hasTable(): boolean {
   return row?.name === 'schedule_run_steps';
 }
 
+interface ExistingRunStepRow {
+  id: string;
+  output_summary: string | null;
+  started_at: string | null;
+}
+
+function getExistingRunStep(runId: string, stepId: string): ExistingRunStepRow | null {
+  if (!hasTable()) return null;
+  const row = getDb().prepare(
+    'SELECT id, output_summary, started_at FROM schedule_run_steps WHERE run_id = ? AND step_id = ? LIMIT 1',
+  ).get(runId, stepId) as ExistingRunStepRow | undefined;
+  return row ?? null;
+}
+
 export function insertRunStep(runId: string, stepId: string, presetName = ''): string {
+  if (!hasTable()) return '';
+  const existing = getExistingRunStep(runId, stepId);
+  const now = new Date().toISOString();
+  if (existing) {
+    getDb().prepare(`
+      UPDATE schedule_run_steps
+      SET preset_name = CASE WHEN ? <> '' THEN ? ELSE preset_name END,
+          status = 'running',
+          error = '',
+          completed_at = NULL,
+          started_at = COALESCE(started_at, ?)
+      WHERE id = ?
+    `).run(presetName, presetName, now, existing.id);
+    return existing.id;
+  }
   const id = randomUUID();
-  if (!hasTable()) return id;
   getDb().prepare(
     'INSERT INTO schedule_run_steps (id, run_id, step_id, preset_name, status, started_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, runId, stepId, presetName, 'running', new Date().toISOString());
+  ).run(id, runId, stepId, presetName, 'running', now);
   return id;
 }
 
@@ -36,9 +64,24 @@ export function updateRunStep(
   status: ScheduleRunStep['status'],
   error = '',
   durationMs?: number,
-  outputSummary = '',
+  outputSummary?: string,
 ): void {
   if (!hasTable()) return;
+  const existing = getExistingRunStep(runId, stepId);
+  if (!existing) {
+    insertRunStep(runId, stepId);
+  }
+  const row = existing ?? getExistingRunStep(runId, stepId);
+  const resolvedDurationMs = (
+    typeof durationMs === 'number'
+      ? durationMs
+      : row?.started_at
+        ? Math.max(0, Date.now() - Date.parse(row.started_at))
+        : null
+  );
+  const resolvedSummary = typeof outputSummary === 'string'
+    ? outputSummary
+    : row?.output_summary ?? '';
   getDb().prepare(`
     UPDATE schedule_run_steps
     SET status = ?, error = ?, duration_ms = ?, output_summary = ?, completed_at = ?
@@ -46,12 +89,22 @@ export function updateRunStep(
   `).run(
     status,
     error,
-    durationMs ?? null,
-    outputSummary.slice(0, 2000),
+    resolvedDurationMs,
+    resolvedSummary.slice(0, 2000),
     new Date().toISOString(),
     runId,
     stepId,
   );
+}
+
+export function setRunStepOutputSummary(runId: string, stepId: string, outputSummary: string): void {
+  if (!hasTable()) return;
+  if (!getExistingRunStep(runId, stepId)) {
+    insertRunStep(runId, stepId);
+  }
+  getDb().prepare(
+    'UPDATE schedule_run_steps SET output_summary = ? WHERE run_id = ? AND step_id = ?',
+  ).run(outputSummary.slice(0, 2000), runId, stepId);
 }
 
 export function listRunSteps(runId: string): ScheduleRunStep[] {

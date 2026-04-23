@@ -81,7 +81,7 @@ extraResources:
   - from: resources/git-bash/
     to: git-bash/
     filter: ["**/*"]
-# afterPack: scripts/after-pack.js  # Disabled: rebuild handled in CI workflow
+afterPack: scripts/after-pack-ensure-models.js
 asarUnpack:
   - "**/*.node"
   - "**/better-sqlite3/**"

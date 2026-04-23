@@ -82,6 +82,7 @@ async function runSchedule(
   try {
     const result = await submitWorkflow({
       taskId: session.id,
+      runHistoryId: runId,
       workflowCode: artifact.code,
       workflowManifest: artifact.manifest,
       inputs: {

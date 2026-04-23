@@ -1108,7 +1108,6 @@ export function migrateLumosTables(db: Database.Database): void {
       membership_expires_at TEXT DEFAULT NULL,
       newapi_token_key TEXT NOT NULL DEFAULT '',
       newapi_token_id INTEGER DEFAULT NULL,
-      image_quota_monthly INTEGER NOT NULL DEFAULT 0,
       role TEXT NOT NULL DEFAULT 'user'
         CHECK(role IN ('admin','user')),
       status TEXT NOT NULL DEFAULT 'active'
@@ -1179,6 +1178,15 @@ export function migrateLumosTables(db: Database.Database): void {
   // Add web_session_token column for calling lumos-web APIs (quota, orders, etc.)
   if (userCols.length > 0 && !userCols.some(c => c.name === 'web_session_token')) {
     db.exec("ALTER TABLE lumos_users ADD COLUMN web_session_token TEXT NOT NULL DEFAULT ''");
+  }
+  // Drop legacy monthly image quota column — billing is now per-image against
+  // the user's new-api balance. Safe on SQLite ≥ 3.35 (shipped with better-sqlite3).
+  if (userCols.some(c => c.name === 'image_quota_monthly')) {
+    try {
+      db.exec("ALTER TABLE lumos_users DROP COLUMN image_quota_monthly");
+    } catch (e) {
+      console.warn('[migrations-lumos] failed to drop image_quota_monthly column:', e);
+    }
   }
 
   // One-off migration: split the legacy single "allow custom providers" flag

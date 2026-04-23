@@ -102,7 +102,7 @@ export function StepInputSnapshotSection({ snapshot }: { snapshot: unknown }) {
         className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
       >
         <span className="inline-block w-3">{expanded ? '▼' : '▶'}</span>
-        <span>完整输入上下文（本步 agent 实际收到的 resolved input / runtime / agent / payload · {kb}KB）</span>
+        <span>完整输入上下文（本步实际收到的 resolved input / runtime / code 或 agent 上下文 · {kb}KB）</span>
       </button>
       {expanded && (
         <pre className="max-h-[520px] overflow-auto text-[11px] leading-[1.55] bg-muted/30 rounded-lg p-3 font-mono whitespace-pre-wrap break-all border border-border/40">

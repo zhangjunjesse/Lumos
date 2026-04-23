@@ -23,6 +23,11 @@ import {
   getWorkflowEngine,
   resetWorkflowClientForTests,
 } from './openworkflow-client';
+import {
+  insertRunStep,
+  setRunStepOutputSummary,
+  updateRunStep,
+} from '@/lib/db/schedule-run-steps';
 import { DEFAULT_AGENT_STEP_TIMEOUT_MS } from './compiler-helpers';
 import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
 import { clearDebugContext, registerDebugContext } from './debug-cache';
@@ -103,6 +108,7 @@ function computeWorkflowTimeout(manifest: CompiledWorkflowManifest): number {
 
 interface WorkflowExecutionState {
   taskId: string;
+  runHistoryId?: string | null;
   status: WorkflowExecutionStatus;
   progress: number;
   currentStep?: string;
@@ -158,6 +164,30 @@ export async function shutdownWorker() {
   }
 }
 
+function summarizeWorkflowStepOutput(output: unknown): string {
+  if (typeof output === 'string') {
+    return output.trim();
+  }
+  if (typeof output === 'number' || typeof output === 'boolean') {
+    return String(output);
+  }
+  if (!output || typeof output !== 'object') {
+    return '';
+  }
+  const record = output as Record<string, unknown>;
+  for (const key of ['summary', 'message', 'text', 'content', 'result']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return String(output);
+  }
+}
+
 export async function submitWorkflow(
   request: SubmitWorkflowRequest,
   callbacks?: WorkflowCallbacks,
@@ -199,6 +229,7 @@ export async function submitWorkflow(
 
     workflowExecutions.set(workflowId, {
       taskId: request.taskId,
+      runHistoryId: request.runHistoryId ?? null,
       status: 'pending',
       progress: 0,
       completedSteps: [],
@@ -254,6 +285,10 @@ async function loadWorkflowDefinition(
 
   const workflow = buildWorkflow(createInstrumentedWorkflowRuntimeBindings({
     onStepStarted: async (event) => {
+      const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
+      if (runHistoryId) {
+        insertRunStep(runHistoryId, event.stepId);
+      }
       recordStepAttempt(event.workflowRunId, event.stepId, event.attempt, event.maxAttempts);
       const projection = markWorkflowStepStarted(event.workflowRunId, event.stepId);
       if (projection) {
@@ -261,7 +296,20 @@ async function loadWorkflowDefinition(
         emitProgressFromProjection(projection);
       }
     },
+    onStepOutput: async (event) => {
+      const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
+      if (runHistoryId) {
+        const summary = summarizeWorkflowStepOutput(event.output);
+        if (summary) {
+          setRunStepOutputSummary(runHistoryId, event.stepId, summary);
+        }
+      }
+    },
     onStepCompleted: async (event) => {
+      const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
+      if (runHistoryId) {
+        updateRunStep(runHistoryId, event.stepId, 'success');
+      }
       clearStepAttempt(event.workflowRunId, event.stepId);
       const projection = markWorkflowStepCompleted(event.workflowRunId, event.stepId);
       if (projection) {
@@ -270,6 +318,11 @@ async function loadWorkflowDefinition(
       }
     },
     onStepSkipped: async (event) => {
+      const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
+      if (runHistoryId) {
+        insertRunStep(runHistoryId, event.stepId);
+        updateRunStep(runHistoryId, event.stepId, 'skipped');
+      }
       const projection = markWorkflowStepSkipped(event.workflowRunId, event.stepId);
       if (projection) {
         syncExecutionStateFromProjection(projection);
@@ -352,6 +405,11 @@ async function waitForWorkflowCompletion(
       stepName: err && typeof err === 'object' && 'stepName' in err ? String(err.stepName) : undefined,
     };
     clearRunAttempts(workflowId);
+    const runHistoryId = currentExecution?.runHistoryId;
+    if (runHistoryId && failure.stepName) {
+      insertRunStep(runHistoryId, failure.stepName);
+      updateRunStep(runHistoryId, failure.stepName, 'error', failure.message);
+    }
     const failedProjection = failWorkflowProjection(workflowId, failure);
 
     workflowExecutions.set(workflowId, {

@@ -210,6 +210,7 @@ export async function runDebugWorkflow(
   const submitResult = await submitWorkflow(
     {
       taskId: chatSession.id,
+      runHistoryId: runId,
       workflowCode: artifact.code,
       workflowManifest: artifact.manifest,
       inputs: {
