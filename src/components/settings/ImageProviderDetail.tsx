@@ -8,11 +8,15 @@ interface ImageProviderDetailProps {
   provider: ProviderOption;
   onEdit: () => void;
   onDelete: () => void;
+  /** When true (either admin disabled custom media or provider is system-origin),
+   *  hide edit/delete controls. */
+  readOnly?: boolean;
 }
 
-export function ImageProviderDetail({ provider, onEdit, onDelete }: ImageProviderDetailProps) {
+export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = false }: ImageProviderDetailProps) {
   const modelCount = parseModelCatalog(provider.model_catalog).length;
   const hasKey = provider.auth_mode !== 'local_auth';
+  const locked = readOnly || provider.provider_origin === 'system';
 
   return (
     <div className="mt-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5">
@@ -32,20 +36,22 @@ export function ImageProviderDetail({ provider, onEdit, onDelete }: ImageProvide
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onEdit}>
-            <Edit2 className="h-3 w-3 mr-1" />
-            编辑
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </div>
+        {!locked && (
+          <div className="flex items-center gap-1 shrink-0">
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onEdit}>
+              <Edit2 className="h-3 w-3 mr-1" />
+              编辑
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

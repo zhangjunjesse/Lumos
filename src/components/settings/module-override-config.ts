@@ -12,6 +12,7 @@ export interface ProviderOption {
   capabilities: string;
   provider_type: string;
   auth_mode: ApiProvider['auth_mode'];
+  provider_origin: string;
   model_catalog: string;
 }
 

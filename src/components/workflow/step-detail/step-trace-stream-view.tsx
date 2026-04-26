@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import type { StepTraceEvent } from '@/lib/workflow/step-trace-stream';
 
-const KIND_CFG: Record<StepTraceEvent['kind'], { label: string; cls: string }> = {
+const KIND_CFG: Record<Exclude<StepTraceEvent['kind'], 'meta'>, { label: string; cls: string }> = {
   text:        { label: '输出',   cls: 'bg-slate-500/10 text-slate-700 border-slate-500/20' },
   thinking:    { label: '思考',   cls: 'bg-purple-500/10 text-purple-700 border-purple-500/20' },
   tool_use:    { label: '调用',   cls: 'bg-blue-500/10 text-blue-700 border-blue-500/20' },
@@ -21,7 +21,38 @@ function fmtTime(iso: string): string {
   } catch { return '--:--:--'; }
 }
 
+function MetaRow({ event }: { event: StepTraceEvent }) {
+  return (
+    <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-muted-foreground">{fmtTime(event.t)}</span>
+        <Badge className="border text-[10px] px-1.5 py-0 bg-primary/10 text-primary border-primary/20">
+          执行环境
+        </Badge>
+      </div>
+      {event.providerName && (
+        <span className="inline-flex items-center gap-1">
+          <span className="text-muted-foreground">服务商</span>
+          <span className="font-medium">{event.providerName}</span>
+        </span>
+      )}
+      {event.model && (
+        <span className="inline-flex items-center gap-1">
+          <span className="text-muted-foreground">模型</span>
+          <span className="font-medium font-mono">{event.model}</span>
+        </span>
+      )}
+      {!event.providerName && !event.model && (
+        <span className="text-muted-foreground italic">未解析到服务商或模型</span>
+      )}
+    </div>
+  );
+}
+
 function TraceRow({ event }: { event: StepTraceEvent }) {
+  if (event.kind === 'meta') {
+    return <MetaRow event={event} />;
+  }
   const cfg = KIND_CFG[event.kind];
   const errorCls = event.kind === 'tool_result' && event.isError
     ? 'border-red-500/30 bg-red-500/5'

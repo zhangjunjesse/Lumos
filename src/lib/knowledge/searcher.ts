@@ -243,7 +243,14 @@ function getDefaultRetrievalMode(): 'reference' | 'enhanced' {
     : 'reference';
 }
 
-function getCandidatePoolSize(mode: 'reference' | 'enhanced', topK: number): number {
+function getCandidatePoolSize(
+  mode: 'reference' | 'enhanced',
+  topK: number,
+  override?: number,
+): number {
+  if (Number.isFinite(override) && (override as number) > 0) {
+    return clamp(Math.floor(override as number), MIN_CANDIDATE_POOL, MAX_CANDIDATE_POOL);
+  }
   const fromSetting = Number(getSetting('kb_candidate_pool_size') || '');
   if (Number.isFinite(fromSetting) && fromSetting > 0) {
     return clamp(Math.floor(fromSetting), MIN_CANDIDATE_POOL, MAX_CANDIDATE_POOL);
@@ -688,7 +695,7 @@ export async function searchWithMeta(
     allowedIds,
   );
 
-  const candidatePool = getCandidatePoolSize(retrievalMode, topK);
+  const candidatePool = getCandidatePoolSize(retrievalMode, topK, opts.candidatePool);
   const candidateItemIds = pickCandidateItemIds(
     summaryItemScores,
     bm25ItemScores,
@@ -763,12 +770,13 @@ export function buildContext(
       `${i + 1}. 《${r.item_title}》 (相关度 ${r.score}%)\n`
       + `   kb_uri: ${r.kb_uri}\n`
       + `   source: ${r.source_path || r.source_type}\n`
-      + `   摘要: ${r.chunk_content}`
+      + `   预览: ${r.chunk_content}`
     );
     return [
       '[知识库命中 - 路径优先模式]',
       queryVariantLine,
-      '说明: 优先根据 source 路径做二次读取与分析；摘要仅用于快速定位。',
+      '说明: 下方是初筛预览,可能是摘要或正文片段,不是完整正文。',
+      '需要总结整篇、核对细节或引用证据时,调用 `mcp__lumos-knowledge__read_knowledge_item` 按 kb_uri 读取正文;长文可用 next_offset 分段读取。',
       ...lines,
     ].filter(Boolean).join('\n');
   }
@@ -782,6 +790,7 @@ export function buildContext(
   return [
     '[知识库命中 - 增强模式]',
     queryVariantLine,
+    '说明: 下方是命中的正文片段。需要完整上下文时,调用 `mcp__lumos-knowledge__read_knowledge_item` 按 kb_uri 读取正文;长文可用 next_offset 分段读取。',
     ...lines,
   ].filter(Boolean).join('\n');
 }

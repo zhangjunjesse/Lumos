@@ -11,7 +11,7 @@ import {
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { isPro } from "@/lib/edition";
-import { useProAuth } from "@/hooks/useProAuth";
+import { useProAuthSelector } from "@/hooks/useProAuth";
 import { GeneralSection } from "./GeneralSection";
 import { ChatProvidersCard } from "./ChatProvidersCard";
 import { ModuleOverrideSection } from "./ModuleOverrideSection";
@@ -69,11 +69,15 @@ export function SettingsLayout() {
   const activeSection = overrideSection ?? hashSection;
 
   const { t } = useTranslation();
-  const { user: proUser } = useProAuth();
+  // 分别 selector 取两个 boolean —— 各自用 Object.is 比较,balance 等无关字段
+  // 变化不再触发 SettingsLayout 重渲染。注意:不要在 selector 里组装对象返回,
+  // 否则每次都是新引用,Object.is 永远不等。
+  const allowChat = useProAuthSelector((s) => s.user?.allow_custom_providers?.chat === true);
+  const allowMedia = useProAuthSelector((s) => s.user?.allow_custom_providers?.media === true);
   // In open edition users fully manage their own providers; in pro edition the
   // admin grants per-category permissions which we read from the auth payload.
   const customFlags = isPro()
-    ? { chat: proUser?.allow_custom_providers?.chat === true, media: proUser?.allow_custom_providers?.media === true }
+    ? { chat: allowChat, media: allowMedia }
     : { chat: true, media: true };
 
   const settingsLabelKeys: Record<string, TranslationKey> = {
@@ -159,18 +163,24 @@ interface ProvidersSectionProps {
  * settings screen.
  *
  * - Pro edition baseline: Lumos Cloud card.
- * - `chat` flag → text/chat-category: ChatProvidersCard + ModuleOverrideSection
- *   (knowledge base, workflow planner — all text-gen consumers).
- * - `media` flag → ImageProviderSection (image generation only).
+ * - chat category: always shown in pro so the user can see admin-provisioned
+ *   system providers and switch between them. When `allowChat=false` the
+ *   ChatProvidersCard renders read-only (no add/edit/delete buttons) and
+ *   ModuleOverrideSection (text-gen module routing) is hidden because custom
+ *   routing requires custom providers.
+ * - media category: always shown in pro so the user can see and switch between
+ *   admin-provisioned system image providers. When `allowMedia=false` the
+ *   ImageProviderSection renders read-only (no add/edit/delete buttons) and
+ *   only system-origin providers are listed.
  */
 function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
   const cards: Array<{ key: string; node: React.ReactNode }> = [];
   if (isPro()) cards.push({ key: 'cloud', node: <LumosCloudSection /> });
+  cards.push({ key: 'chat', node: <ChatProvidersCard readOnly={!allowChat} /> });
   if (allowChat) {
-    cards.push({ key: 'chat', node: <ChatProvidersCard /> });
     cards.push({ key: 'text-modules', node: <ModuleOverrideSection /> });
   }
-  if (allowMedia) cards.push({ key: 'image', node: <ImageProviderSection /> });
+  cards.push({ key: 'image', node: <ImageProviderSection readOnly={!allowMedia} /> });
 
   return (
     <div className="flex flex-col gap-10">

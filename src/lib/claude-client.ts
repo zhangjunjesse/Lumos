@@ -27,7 +27,7 @@ import path from 'path';
 import { searchWithMeta, buildContext } from '@/lib/knowledge/searcher';
 import { sanitizeEnv } from './claude/utils';
 import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
-import { isClaudeLocalAuthProvider } from './claude/provider-env';
+import { getClaudeProviderRoutingSnapshot, isClaudeLocalAuthProvider } from './claude/provider-env';
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
 import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
 
@@ -196,6 +196,49 @@ function emitStatus(
       ...extra,
     }),
   }));
+}
+
+function writeProviderRoutingDebug(params: {
+  sessionId?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
+  activeProvider?: ApiProvider;
+  env: Record<string, string>;
+}): void {
+  const debugEnabled = process.env.NODE_ENV !== 'production'
+    || process.env.LUMOS_PROVIDER_ROUTING_DEBUG === 'true';
+  if (!debugEnabled) {
+    return;
+  }
+
+  const routing = getClaudeProviderRoutingSnapshot(params.activeProvider);
+  const runtimeHeaders = params.env.ANTHROPIC_CUSTOM_HEADERS?.trim() || '';
+  if (!routing?.upstreamChannelId && !runtimeHeaders) {
+    return;
+  }
+
+  try {
+    const dataDir = process.env.LUMOS_DATA_DIR
+      || process.env.CLAUDE_GUI_DATA_DIR
+      || path.join(os.homedir(), '.lumos');
+    const logDir = path.join(dataDir, 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const payload = {
+      timestamp: new Date().toISOString(),
+      sessionId: params.sessionId,
+      requestedModel: params.requestedModel,
+      resolvedModel: params.resolvedModel,
+      ...routing,
+      runtimeAnthropicCustomHeaders: runtimeHeaders || undefined,
+    };
+    fs.appendFileSync(
+      path.join(logDir, 'provider-routing-debug.jsonl'),
+      `${JSON.stringify(payload)}\n`,
+      'utf-8',
+    );
+  } catch (error) {
+    console.warn('[claude-client] Failed to write provider routing debug log:', error);
+  }
 }
 
 // Unique per server process. Ensures MCP signatures never match across restarts,
@@ -383,6 +426,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const sdkEnv: Record<string, string> = {
           ...runtimeContext.env,
         };
+        writeProviderRoutingDebug({
+          sessionId,
+          requestedModel: model,
+          resolvedModel: runtimeContext.resolvedModel,
+          activeProvider,
+          env: sdkEnv,
+        });
+        if (process.env.NODE_ENV !== 'production' || process.env.LUMOS_PROVIDER_ROUTING_DEBUG === 'true') {
+          console.log('[claude-client] providerRouting:', {
+            sessionId,
+            providerId: activeProvider?.id,
+            providerName: activeProvider?.name,
+            apiProtocol: activeProvider?.api_protocol,
+            upstreamChannelHeader: sdkEnv.ANTHROPIC_CUSTOM_HEADERS || '',
+          });
+        }
 
         if (isClaudeLocalAuthProvider(activeProvider)) {
           await ensureClaudeLocalAuthReady(activeProvider);
@@ -426,16 +485,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           emitStatus(controller, 'Searching knowledge context...', { phase: 'knowledge' });
           try {
             console.time('[perf] KB search');
-            const kbTopK = Math.max(1, Math.min(Number(getSetting('kb_context_top_k') || '4') || 4, 10));
-            const kbMode = (getSetting('kb_retrieval_mode') || '').trim().toLowerCase() === 'enhanced'
-              ? 'enhanced'
-              : 'reference';
-            const rewriteDisabled = getSetting('kb_query_rewrite_enabled') === 'false';
+            const overrides = options.knowledgeOptions?.overrides;
+            const kbTopK = overrides?.topK !== undefined
+              ? Math.max(1, Math.min(Math.floor(overrides.topK), 10))
+              : Math.max(1, Math.min(Number(getSetting('kb_context_top_k') || '4') || 4, 10));
+            const kbMode: 'reference' | 'enhanced' = overrides?.retrievalMode
+              ? overrides.retrievalMode
+              : ((getSetting('kb_retrieval_mode') || '').trim().toLowerCase() === 'enhanced'
+                ? 'enhanced'
+                : 'reference');
+            const rewriteDisabled = overrides?.rewriteEnabled !== undefined
+              ? !overrides.rewriteEnabled
+              : getSetting('kb_query_rewrite_enabled') === 'false';
             const kbRun = await searchWithMeta(prompt, {
               topK: kbTopK,
               retrievalMode: kbMode,
               disableRewrite: rewriteDisabled,
               tagIds: options.knowledgeOptions?.tagIds,
+              candidatePool: overrides?.candidatePool,
             });
             kbContext = buildContext(kbRun.results, {
               retrievalMode: kbRun.meta.retrievalMode,
@@ -561,8 +628,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
-          // Auto-approve built-in MCP server tools (e.g. feishu, lumos-image)
-          if (toolName.startsWith('mcp__feishu__') || toolName.startsWith('mcp__lumos-image__')) {
+          // Auto-approve built-in in-process MCP server tools (read-only or fully owned by Lumos).
+          if (
+            toolName.startsWith('mcp__feishu__')
+            || toolName.startsWith('mcp__lumos-image__')
+            || toolName.startsWith('mcp__lumos-knowledge__')
+          ) {
             return { behavior: 'allow' as const, updatedInput: input };
           }
           const permissionRequestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

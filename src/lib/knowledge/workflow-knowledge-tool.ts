@@ -7,6 +7,8 @@
 import { z } from 'zod';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { searchWithMeta } from './searcher';
+import { createReadKnowledgeItemTool } from './knowledge-read-tool';
+import { CHAT_KNOWLEDGE_MCP_SERVER_NAME } from './chat-knowledge-mcp';
 import { resolveTagNames, listTagCatalog } from './tag-resolver';
 import type { WorkflowKnowledgeConfig } from '@/lib/workflow/types';
 
@@ -23,9 +25,10 @@ export function createKnowledgeMcpServer(config: WorkflowKnowledgeConfig) {
   const { ids: defaultTagIds } = resolveTagNames(config.defaultTagNames ?? []);
 
   return createSdkMcpServer({
-    name: 'lumos-knowledge',
+    name: CHAT_KNOWLEDGE_MCP_SERVER_NAME,
     tools: [
       createSearchKnowledgeTool(config, defaultTagIds, defaultTopK),
+      createReadKnowledgeItemTool(),
       createListKnowledgeTagsTool(),
     ],
   });
@@ -58,7 +61,7 @@ function createSearchKnowledgeTool(
   return tool(
     'search_knowledge',
     '检索 Lumos 本地知识库(BM25+向量混合召回)。' +
-    '返回匹配的文档片段,包含 kb_uri、标题、来源路径、分数、内容片段。' +
+    '返回匹配的文档片段,包含 kb_uri、标题、来源路径、分数、内容片段。需要完整正文时,继续调用 read_knowledge_item。' +
     '适用于需要查阅既有资料再回答的场景。',
     schema,
     async (args): Promise<CallToolResult> => {

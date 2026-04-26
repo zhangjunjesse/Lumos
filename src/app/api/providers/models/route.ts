@@ -33,6 +33,7 @@ export async function GET() {
         provider_id: provider.id,
         provider_name: provider.name,
         provider_type: provider.provider_type,
+        provider_origin: provider.provider_origin || 'custom',
         models,
         model_catalog_source: catalog.source,
         model_catalog_updated_at: catalog.updatedAt,

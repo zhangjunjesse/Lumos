@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import type {
   ChatKnowledgeOptions,
   Message,
@@ -21,7 +21,6 @@ import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
-import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { useStreamingStore } from '@/stores/streaming-store';
 import { useMessagesStore } from '@/stores/messages-store';
 import {
@@ -31,7 +30,6 @@ import {
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
-import { ProviderSwitchDialog } from './ProviderSwitchDialog';
 
 interface ToolUseInfo {
   id: string;
@@ -128,7 +126,6 @@ export function ChatView({
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
-  const router = useRouter();
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = useMemo(
     () => workingDirectoryOverride || workingDirectory,
@@ -168,8 +165,6 @@ export function ChatView({
     modelName || (typeof window !== 'undefined' ? (localStorage.getItem('lumos:last-model') || localStorage.getItem('codepilot:last-model')) : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
   );
   const [currentProviderId, setCurrentProviderId] = useState(providerId || '');
-  const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
-  const [switchDialogPayload, setSwitchDialogPayload] = useState<{ providerId: string; model: string; providerName?: string } | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(
     () => cachedStreamingState?.pendingPermission || null
@@ -345,69 +340,39 @@ export function ChatView({
     }
   }, [sessionId, setPendingApprovalSessionId, setStreamingSessionId]);
 
-  const executeSwitchProvider = useCallback(async (nextProviderId: string, model: string) => {
-    setSwitchError(null);
-    try {
-      const entry = getSessionEntryFromPath(pathname);
-      const createBody: Record<string, string> = {
-        entry,
-        mode,
-        model,
-        provider_id: nextProviderId,
-      };
-
-      const nextWorkingDirectory = effectiveWorkingDirectory.trim();
-      if (entry !== 'main-agent' && nextWorkingDirectory) {
-        createBody.working_directory = nextWorkingDirectory;
-      }
-
-      const response = await fetch('/api/chat/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createBody),
-      });
-      const data = await response.json().catch(() => ({})) as { error?: string; session?: { id?: string } };
-      if (!response.ok || !data.session?.id) {
-        throw new Error(data.error || '创建新会话失败');
-      }
-
-      window.dispatchEvent(new CustomEvent('session-created'));
-      router.push(`${getSessionEntryBasePath(entry)}/${data.session.id}`);
-    } catch (error) {
-      setSwitchError(error instanceof Error ? error.message : '切换失败');
-    }
-  }, [effectiveWorkingDirectory, mode, pathname, router]);
-
   const handleProviderModelChange = useCallback(async (newProviderId: string, model: string) => {
     const nextProviderId = newProviderId.trim();
     const currentProvider = currentProviderId.trim();
     const providerChanged = Boolean(nextProviderId && currentProvider && nextProviderId !== currentProvider);
-    const canForkSession = pathname === `/chat/${sessionId}` || pathname === `/main-agent/${sessionId}`;
 
-    if (providerChanged && canForkSession) {
-      if (isStreaming) {
-        setSwitchError('AI 回复中，暂时不能切换');
-        return;
-      }
-
-      setSwitchDialogPayload({ providerId: nextProviderId, model });
-      setSwitchDialogOpen(true);
+    if (providerChanged && isStreaming) {
+      setSwitchError('AI 回复中，暂时不能切换');
       return;
     }
 
+    setSwitchError(null);
     setCurrentProviderId(nextProviderId);
     setCurrentModel(model);
     onRequestedModelChange?.(model);
 
-    // 非 fork 场景（如工作流）：直接更新 session 的 provider/model
+    // 所有 provider 都走同一个 new-api 网关（base_url / key 统一），
+    // 切换本质上只是把后续请求挂到不同的 model 上，不需要 fork 会话。
     if (providerChanged && sessionId) {
-      fetch(`/api/chat/sessions/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: nextProviderId, model }),
-      }).catch(() => { /* best-effort */ });
+      try {
+        const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider_id: nextProviderId, model }),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(data.error || '切换失败');
+        }
+      } catch (error) {
+        setSwitchError(error instanceof Error ? error.message : '切换失败');
+      }
     }
-  }, [currentProviderId, isStreaming, onRequestedModelChange, pathname, sessionId]);
+  }, [currentProviderId, isStreaming, onRequestedModelChange, sessionId]);
 
   // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
@@ -787,6 +752,9 @@ export function ChatView({
           provider_id: currentProviderId,
           knowledge_enabled: knowledgeOptions?.enabled === true,
           knowledge_tag_ids: knowledgeOptions?.tagIds ?? [],
+          ...(knowledgeOptions?.overrides && Object.keys(knowledgeOptions.overrides).length > 0
+            ? { knowledge_overrides: knowledgeOptions.overrides }
+            : {}),
           ...(files && files.length > 0 ? { files } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
         };
@@ -1308,22 +1276,6 @@ export function ChatView({
         initialKnowledgeEnabled={initialKnowledgeEnabled}
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
-      />
-
-      <ProviderSwitchDialog
-        open={switchDialogOpen}
-        onOpenChange={(open) => {
-          setSwitchDialogOpen(open);
-          if (!open) setSwitchDialogPayload(null);
-        }}
-        onConfirm={() => {
-          if (switchDialogPayload) {
-            void executeSwitchProvider(switchDialogPayload.providerId, switchDialogPayload.model);
-          }
-          setSwitchDialogOpen(false);
-          setSwitchDialogPayload(null);
-        }}
-        targetProviderName={switchDialogPayload?.providerName}
       />
 
       {switchError && (

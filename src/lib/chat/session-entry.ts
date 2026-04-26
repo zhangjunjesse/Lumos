@@ -6,6 +6,12 @@ export type SessionEntry = 'chat' | 'main-agent';
 
 type SessionPromptCarrier = Pick<ChatSession, 'system_prompt'> | null | undefined;
 
+export function isWorkflowDebugSession(
+  session?: Pick<ChatSession, 'mode'> | null,
+): boolean {
+  return session?.mode === 'workflow';
+}
+
 export function normalizeSessionEntry(value?: string | null): SessionEntry {
   return value === 'main-agent' ? 'main-agent' : 'chat';
 }

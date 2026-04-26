@@ -4,6 +4,7 @@ import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import {
@@ -12,7 +13,7 @@ import {
   getMainAgentTeamConfigurationPrompt,
   upsertTeamPlanTask,
 } from '@/lib/db/tasks';
-import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig } from '@/types';
+import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
   createTeamRunSkeleton,
   isImageFile,
@@ -31,6 +32,7 @@ import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
 import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
 import { linkMessageMemory } from '@/lib/db/message-memories';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
+import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
@@ -155,6 +157,25 @@ function pickNonEmpty(...values: Array<string | undefined>): string {
     }
   }
   return '';
+}
+
+function sanitizeKnowledgeOverrides(raw: unknown): KnowledgeOverrides | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const src = raw as Record<string, unknown>;
+  const out: KnowledgeOverrides = {};
+  if (src.retrievalMode === 'reference' || src.retrievalMode === 'enhanced') {
+    out.retrievalMode = src.retrievalMode;
+  }
+  if (typeof src.rewriteEnabled === 'boolean') {
+    out.rewriteEnabled = src.rewriteEnabled;
+  }
+  if (typeof src.topK === 'number' && Number.isFinite(src.topK) && src.topK > 0) {
+    out.topK = Math.max(1, Math.min(10, Math.floor(src.topK)));
+  }
+  if (typeof src.candidatePool === 'number' && Number.isFinite(src.candidatePool) && src.candidatePool > 0) {
+    out.candidatePool = Math.max(16, Math.min(120, Math.floor(src.candidatePool)));
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function readChromeBridgeEnvFromRequest(request: NextRequest): { url?: string; token?: string } {
@@ -580,13 +601,20 @@ export async function POST(request: NextRequest) {
       systemPromptAppend,
       knowledge_enabled,
       knowledge_tag_ids,
+      knowledge_overrides,
     } = body;
+    const knowledgeEnabledForRequest = knowledge_enabled === true;
+    const selectedKnowledgeTagIds = Array.isArray(knowledge_tag_ids)
+      ? knowledge_tag_ids.map((tagId) => String(tagId).trim()).filter(Boolean)
+      : [];
+    const sanitizedKnowledgeOverrides = sanitizeKnowledgeOverrides(knowledge_overrides);
 
     console.log('[chat API] content length:', content.length, 'first 200 chars:', content.slice(0, 200));
     console.log('[chat API] systemPromptAppend:', systemPromptAppend ? `${systemPromptAppend.length} chars` : 'none');
     console.log('[chat API] knowledge:', {
-      enabled: knowledge_enabled === true,
-      tagCount: Array.isArray(knowledge_tag_ids) ? knowledge_tag_ids.length : 0,
+      enabled: knowledgeEnabledForRequest,
+      tagCount: selectedKnowledgeTagIds.length,
+      overrides: sanitizedKnowledgeOverrides,
     });
 
     if (!session_id || !content) {
@@ -718,7 +746,9 @@ export async function POST(request: NextRequest) {
       updateSessionModel(session_id, effectiveModel);
     }
 
-    // Resolve provider: existing session binding wins. Request/default only fill unbound sessions.
+    // Resolve provider: an explicit picker choice on this request overrides the
+    // older session binding. This keeps the backend aligned with the chat UI
+    // even if the "switch provider" PATCH and the send-message POST race.
     const requestProviderId = provider_id?.trim() || '';
     const sessionProviderId = session.provider_id?.trim() || '';
     let resolvedProvider: import('@/types').ApiProvider | undefined;
@@ -726,7 +756,10 @@ export async function POST(request: NextRequest) {
       resolvedProvider = resolveProviderForCapability({
         moduleKey: 'chat',
         capability: 'agent-chat',
-        preferredProviderId: sessionProviderId || requestProviderId || undefined,
+        preferredProviderId: getPreferredChatProviderId({
+          requestProviderId,
+          sessionProviderId,
+        }),
       });
     } catch (error) {
       if (error instanceof ProviderResolutionError) {
@@ -746,20 +779,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (sessionProviderId && requestProviderId && requestProviderId !== sessionProviderId) {
-      console.warn('[chat API] Ignoring provider override for bound session:', {
-        sessionId: session_id,
-        sessionProviderId,
-        requestProviderId,
-      });
-    }
-
     const effectiveProviderId = resolvedProvider.id;
     const providerName = resolvedProvider.name;
     if (providerName !== (session.provider_name || '')) {
       updateSessionProvider(session_id, providerName);
     }
-    if (!sessionProviderId && effectiveProviderId !== (session.provider_id || '')) {
+    if (shouldPersistChatProviderBinding({
+      requestProviderId,
+      sessionProviderId,
+      resolvedProviderId: effectiveProviderId,
+    })) {
       updateSessionProviderId(session_id, effectiveProviderId);
     }
 
@@ -775,7 +804,7 @@ export async function POST(request: NextRequest) {
         break;
       case 'ask':
         permissionMode = 'default';
-        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not use any tools, do not read or write files, do not execute commands. Only respond with text.`;
+        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not read or write files, do not execute commands.${knowledgeEnabledForRequest ? ' You may use only the read-only Lumos knowledge tools when they are needed to answer from the enabled knowledge base.' : ' Do not use any tools.'} Only respond with text.`;
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
@@ -851,6 +880,9 @@ export async function POST(request: NextRequest) {
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
     }
+    if (knowledgeEnabledForRequest) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + CHAT_KNOWLEDGE_MCP_SYSTEM_HINT;
+    }
     if (permissionMode !== 'default' && hasFeishuMcp(loadedMcpServers)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + FEISHU_MCP_SYSTEM_HINT;
     }
@@ -895,10 +927,17 @@ export async function POST(request: NextRequest) {
     });
 
     // Create in-process MCP servers
-    const inProcessMcpServers: Record<string, ReturnType<typeof createLumosMcpServer>> = {};
+    const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> = {};
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       const lumosMcpServer = createLumosMcpServer(session_id, lumosUserId);
       inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
+    }
+    if (knowledgeEnabledForRequest) {
+      const knowledgeMcpServer = createChatKnowledgeMcpServer({
+        tagIds: selectedKnowledgeTagIds,
+        overrides: sanitizedKnowledgeOverrides,
+      });
+      inProcessMcpServers[knowledgeMcpServer.name] = knowledgeMcpServer;
     }
     // Workflow code runner — only for workflow chat sessions
     if (isWorkflowChatSession(session)) {
@@ -922,10 +961,9 @@ export async function POST(request: NextRequest) {
       toolTimeoutSeconds: toolTimeout || 900,
       provider: resolvedProvider,
       knowledgeOptions: {
-        enabled: knowledge_enabled === true,
-        tagIds: Array.isArray(knowledge_tag_ids)
-          ? knowledge_tag_ids.map((tagId) => String(tagId).trim()).filter(Boolean)
-          : [],
+        enabled: knowledgeEnabledForRequest,
+        tagIds: selectedKnowledgeTagIds,
+        overrides: sanitizedKnowledgeOverrides,
       },
       conversationHistory: historyMsgs,
       onRuntimeStatusChange: (status: string) => {

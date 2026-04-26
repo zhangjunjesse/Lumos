@@ -56,6 +56,7 @@ export function ModuleOverrideSection() {
         (provData.providers || []).map((p) => ({
           id: p.id, name: p.name, capabilities: p.capabilities,
           provider_type: p.provider_type, auth_mode: p.auth_mode,
+          provider_origin: p.provider_origin || 'custom',
           model_catalog: p.model_catalog || '[]',
         })),
       );

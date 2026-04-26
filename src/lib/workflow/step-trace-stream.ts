@@ -15,12 +15,12 @@
 import { appendFile, mkdir, readFile, readdir, stat } from 'fs/promises';
 import path from 'path';
 
-export type TraceKind = 'text' | 'thinking' | 'tool_use' | 'tool_result';
+export type TraceKind = 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'meta';
 
 export interface StepTraceEvent {
   /** ISO timestamp captured when we received the SDK message. */
   t: string;
-  role: 'assistant' | 'user';
+  role: 'assistant' | 'user' | 'system';
   kind: TraceKind;
   /** Tool name for tool_use / tool_result blocks. */
   name?: string;
@@ -30,6 +30,12 @@ export interface StepTraceEvent {
   inputPreview?: string;
   /** tool_result `is_error` flag — only for tool_result. */
   isError?: boolean;
+  /** Provider display name — only for kind='meta'. */
+  providerName?: string;
+  /** Provider id — only for kind='meta'. */
+  providerId?: string;
+  /** Resolved model string passed to the SDK — only for kind='meta'. */
+  model?: string;
 }
 
 const TRACE_FILE = '_lumos_step_trace.jsonl';
@@ -111,6 +117,41 @@ export function appendStepTraceFromSdkEvent(
       await appendFile(filePath, lines, 'utf-8');
     } catch (e) {
       console.warn('[step-trace] append failed:', e instanceof Error ? e.message : e);
+    }
+  });
+  writeChains.set(filePath, next);
+  void next.finally(() => {
+    if (writeChains.get(filePath) === next) writeChains.delete(filePath);
+  });
+}
+
+/**
+ * Emit a one-shot `meta` event at the top of the step's trace file describing
+ * which provider + model the workflow runtime resolved for this agent run.
+ * Called once per step, right before the SDK stream starts — so the UI can
+ * show "服务商 / 模型" alongside the live output.
+ */
+export function appendStepTraceMeta(
+  stageWorkspace: string,
+  meta: { providerName?: string; providerId?: string; model?: string },
+): void {
+  if (!meta.providerName && !meta.providerId && !meta.model) return;
+  const event: StepTraceEvent = {
+    t: new Date().toISOString(),
+    role: 'system',
+    kind: 'meta',
+    ...(meta.providerName ? { providerName: meta.providerName } : {}),
+    ...(meta.providerId ? { providerId: meta.providerId } : {}),
+    ...(meta.model ? { model: meta.model } : {}),
+  };
+  const filePath = path.join(stageWorkspace, TRACE_FILE);
+  const prev = writeChains.get(filePath) ?? Promise.resolve();
+  const next = prev.then(async () => {
+    try {
+      await mkdir(stageWorkspace, { recursive: true });
+      await appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf-8');
+    } catch (e) {
+      console.warn('[step-trace] meta append failed:', e instanceof Error ? e.message : e);
     }
   });
   writeChains.set(filePath, next);

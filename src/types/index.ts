@@ -758,6 +758,10 @@ export interface ProviderModelGroup {
   provider_id: string;       // provider DB id
   provider_name: string;
   provider_type: string;
+  /** 'system' = cloud-provisioned, 'custom' = user-created. Chat dropdown
+   *  filters by this to hide custom providers when admin disallows the chat
+   *  custom-provider category (mirrors ChatProvidersCard readOnly filter). */
+  provider_origin: string;
   models: ProviderModelOption[];
   model_catalog_source: ProviderModelCatalogSource;
   model_catalog_updated_at: string | null;
@@ -853,9 +857,20 @@ export interface CreateSessionRequest {
   folder?: string;
 }
 
+export type KnowledgeRetrievalMode = 'reference' | 'enhanced';
+
+/** Per-conversation overrides for knowledge retrieval params. Any field omitted = follow global default. */
+export interface KnowledgeOverrides {
+  retrievalMode?: KnowledgeRetrievalMode;
+  rewriteEnabled?: boolean;
+  topK?: number;
+  candidatePool?: number;
+}
+
 export interface ChatKnowledgeOptions {
   enabled: boolean;
   tagIds: string[];
+  overrides?: KnowledgeOverrides;
 }
 
 export interface SendMessageRequest {
@@ -866,6 +881,7 @@ export interface SendMessageRequest {
   provider_id?: string;
   knowledge_enabled?: boolean;
   knowledge_tag_ids?: string[];
+  knowledge_overrides?: KnowledgeOverrides;
 }
 
 export interface UpdateMCPConfigRequest {

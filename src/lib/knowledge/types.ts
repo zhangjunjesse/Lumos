@@ -148,4 +148,6 @@ export interface SearchOptions {
   retrievalMode?: 'reference' | 'enhanced';
   disableRewrite?: boolean;
   tagIds?: string[];
+  /** Override candidate pool size; omit to fall back to setting/heuristic. */
+  candidatePool?: number;
 }

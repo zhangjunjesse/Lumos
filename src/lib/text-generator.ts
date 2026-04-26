@@ -7,8 +7,9 @@ import { providerSupportsCapability } from '@/lib/provider-config';
 import {
   parseProviderExtraEnv,
   resolveAnthropicSdkBaseUrl,
-  resolveProviderApiKey,
+  resolveProviderRequestApiKey,
 } from '@/lib/provider-model-discovery';
+import { getUpstreamChannelIdFromExtraEnv } from '@/lib/claude/provider-env';
 import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import type { ApiProvider } from '@/types';
 import type { ZodType } from 'zod';
@@ -70,7 +71,7 @@ function resolveProvider(providerId: string): ApiProvider {
   if (preferredProvider.auth_mode === 'local_auth') {
     throw new Error(`服务商“${preferredProvider.name}”当前使用 local_auth，暂不支持轻量文本生成功能。`);
   }
-  if (!resolveProviderApiKey(preferredProvider)) {
+  if (!resolveProviderRequestApiKey(preferredProvider)) {
     throw new Error(`服务商“${preferredProvider.name}”未配置可用的 API Key。`);
   }
 
@@ -98,10 +99,21 @@ function resolveTextGenerationBaseUrl(provider: ApiProvider): string | undefined
 }
 
 /**
+ * Build per-request HTTP headers that the AI SDK must attach in addition to
+ * its default auth headers. `resolveProviderRequestApiKey()` already applies
+ * new-api's admin-token `-<channelId>` suffix, while this compatibility header
+ * keeps older gateways that still inspect `Specific-Channel-Id` working.
+ */
+function resolveProviderRequestHeaders(provider: ApiProvider): Record<string, string> | undefined {
+  const channelId = getUpstreamChannelIdFromExtraEnv(parseProviderExtraEnv(provider.extra_env));
+  return channelId ? { 'Specific-Channel-Id': channelId } : undefined;
+}
+
+/**
  * Create an AI SDK language model instance from a provider config.
  */
 function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
-  const apiKey = resolveProviderApiKey(provider);
+  const apiKey = resolveProviderRequestApiKey(provider);
   const resolvedModelId = resolveProviderModelForRequest(provider, requestedModelId);
   const modelId = resolvedModelId || requestedModelId.trim();
 
@@ -109,10 +121,13 @@ function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
     throw new Error(`服务商“${provider.name}”未解析出可用模型。`);
   }
 
+  const headers = resolveProviderRequestHeaders(provider);
+
   if (provider.api_protocol === 'anthropic-messages') {
     const anthropic = createAnthropic({
       apiKey,
       baseURL: resolveTextGenerationBaseUrl(provider),
+      headers,
     });
     return anthropic(modelId);
   }
@@ -125,6 +140,7 @@ function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
     const custom = createOpenAI({
       apiKey,
       baseURL,
+      headers,
     });
     return custom(modelId);
   }

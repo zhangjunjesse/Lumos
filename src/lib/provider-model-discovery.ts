@@ -1,5 +1,9 @@
 import type { ApiProvider, ProviderModelOption } from '@/types';
 import { DEFAULT_PROVIDER_MODEL_OPTIONS } from '@/lib/model-metadata';
+import {
+  applyUpstreamChannelIdToApiKey,
+  getUpstreamChannelIdFromExtraEnv,
+} from '@/lib/claude/provider-env';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 const REQUEST_TIMEOUT_MS = 8000;
@@ -61,6 +65,15 @@ export function resolveProviderApiKey(
     || extraEnv.ANTHROPIC_AUTH_TOKEN?.trim()
     || ''
   );
+}
+
+export function resolveProviderRequestApiKey(
+  provider?: Pick<ApiProvider, 'api_key' | 'extra_env'> | null,
+  overrideApiKey?: string,
+): string {
+  const apiKey = resolveProviderApiKey(provider, overrideApiKey);
+  const upstreamChannelId = getUpstreamChannelIdFromExtraEnv(parseProviderExtraEnv(provider?.extra_env));
+  return applyUpstreamChannelIdToApiKey(apiKey, upstreamChannelId);
 }
 
 export function resolveProviderBaseUrl(
@@ -314,7 +327,7 @@ export async function detectProviderModels(params: {
     throw new Error('当前认证方式暂不支持自动探测模型，请在模型列表中手动填写可用模型');
   }
 
-  const apiKey = resolveProviderApiKey(params.provider, params.apiKey);
+  const apiKey = resolveProviderRequestApiKey(params.provider, params.apiKey);
   if (!apiKey) {
     throw new Error('当前配置缺少 API Key，无法探测模型');
   }

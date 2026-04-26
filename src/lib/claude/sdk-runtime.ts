@@ -139,6 +139,12 @@ export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstr
     }
   }
 
+  // 关掉 Claude Code 在 system prompt 里拼的 "version.entrypoint" attribution
+  // 字符串。这段每次跑都带 SDK 版本号和入口名,会让 system prompt prefix 浮动,
+  // 把 Anthropic prompt cache 命中率打穿(经第三方网关/new-api 中转时尤为明显)。
+  // 关掉后 prefix 稳定,缓存正常命中。`=0` 触发 SDK 内 Jz() 的关闭判定。
+  sdkEnv.CLAUDE_CODE_ATTRIBUTION_HEADER = '0'
+
   sdkEnv.CLAUDE_CONFIG_DIR = getClaudeConfigDir()
 
   const activeProvider = injectProviderEnv(sdkEnv, options)

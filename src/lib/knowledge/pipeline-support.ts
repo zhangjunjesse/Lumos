@@ -76,14 +76,53 @@ export function loadFullItemContent(itemId: string, fallbackContent = ''): strin
     'SELECT content FROM kb_chunks WHERE item_id=? ORDER BY chunk_index',
   ).all(itemId) as { content: string }[];
 
-  const chunkContent = chunks
-    .map((chunk) => chunk.content || '')
-    .join('\n\n')
-    .trim();
+  const chunkContents = chunks
+    .map((chunk) => (chunk.content || '').trim())
+    .filter((content) => content.length > 0);
 
-  if (chunkContent) {
-    return chunkContent;
+  const reconstructed = joinChunksDedupOverlap(chunkContents).trim();
+  if (reconstructed) {
+    return reconstructed;
   }
 
   return fallbackContent.trim();
+}
+
+const CHUNK_OVERLAP_PROBE_LIMIT = 200;
+
+/**
+ * Reconstruct a continuous text from RAG chunks, removing the chunker's
+ * sliding overlap so the model does not see repeated phrases. lumos chunker
+ * carries 50-120 chars of suffix into the next chunk; we detect the longest
+ * matching suffix/prefix between adjacent chunks (capped at 200 chars) and
+ * splice only those duplicated chars out. The "\n\n" separators inside chunks
+ * are part of the original text (paragraph breaks) and must be preserved.
+ * When no overlap is detected, fall back to a paragraph join.
+ */
+export function joinChunksDedupOverlap(chunks: readonly string[]): string {
+  if (chunks.length === 0) return '';
+  if (chunks.length === 1) return chunks[0];
+
+  const parts: string[] = [chunks[0]];
+  for (let i = 1; i < chunks.length; i += 1) {
+    const prev = chunks[i - 1];
+    const cur = chunks[i];
+    const overlap = findLongestSuffixPrefixOverlap(prev, cur, CHUNK_OVERLAP_PROBE_LIMIT);
+    if (overlap > 0) {
+      parts.push(cur.slice(overlap));
+    } else {
+      parts.push(`\n\n${cur}`);
+    }
+  }
+  return parts.join('');
+}
+
+function findLongestSuffixPrefixOverlap(prev: string, cur: string, limit: number): number {
+  const max = Math.min(limit, prev.length, cur.length);
+  for (let len = max; len > 0; len -= 1) {
+    if (prev.endsWith(cur.slice(0, len))) {
+      return len;
+    }
+  }
+  return 0;
 }

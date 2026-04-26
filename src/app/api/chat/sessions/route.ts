@@ -4,7 +4,7 @@ import { getAllSessions, createSession } from '@/lib/db';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
 import { isLibraryChatSession } from '@/lib/chat/library-session';
-import { isMainAgentSession, normalizeSessionEntry, withSessionEntryMarker } from '@/lib/chat/session-entry';
+import { isMainAgentSession, isWorkflowDebugSession, normalizeSessionEntry, withSessionEntryMarker } from '@/lib/chat/session-entry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
     const entry = normalizeSessionEntry(request.nextUrl.searchParams.get('entry'));
     const sessions = getAllSessions().filter((session) => {
       if (isLibraryChatSession(session)) return false;
+      if (isWorkflowDebugSession(session)) return false;
       return entry === 'main-agent'
         ? isMainAgentSession(session)
         : !isMainAgentSession(session);

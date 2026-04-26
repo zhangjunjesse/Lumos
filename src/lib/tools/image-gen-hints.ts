@@ -13,10 +13,9 @@ export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (lumos-image MC
   3. Refer to references in \`prompt\` by position: "Image 1", "Image 2", etc. (matching the array order).
   Calling the tool with paths only inside \`prompt\` text and an empty \`reference_image_paths\` is a bug — the provider sees zero reference images and will fabricate an unrelated result. The tool will reject such calls with \`error_source: image_generation_input_shape\` and list the detected paths; retry with the correct shape.
 - For batch requests, make multiple independent calls. Report progress after each (e.g. "3/5 done").
-- Maximum 10 images per conversation. The tool_result contains generation_count/generation_limit for tracking.
+- Pro image generation is billed per generated image. There is no per-conversation image count limit in the tool. Do NOT tell users they have only N images remaining in the current conversation.
+- Some older conversation history may contain legacy tool_result fields named generation_count/generation_limit. Treat those fields as obsolete and never use them to calculate or report remaining image quota.
 - When batch requests exceed 5 images, tell the user the expected count and approximate time (~15-30s each), then wait for confirmation before starting.
-- When approaching the limit (8th-9th image), proactively inform the user about remaining quota.
-- After reaching the limit, suggest starting a new conversation to continue.
 - If the tool returns an error about missing provider config, tell the user to configure it in Settings → Providers → Image Generation.
 - If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.
 

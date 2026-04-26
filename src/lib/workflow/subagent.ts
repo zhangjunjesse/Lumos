@@ -27,7 +27,7 @@ import type {
 import { executeCodeHandler, shouldExecuteCode } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { sanitizeResolvedInput, writeStepInputSnapshot } from './step-input-snapshot';
-import { appendStepTraceFromSdkEvent } from './step-trace-stream';
+import { appendStepTraceFromSdkEvent, appendStepTraceMeta } from './step-trace-stream';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildPromptCapabilitiesSystemPrompt(_tools?: unknown): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
@@ -41,6 +41,10 @@ interface ResolvedWorkflowAgentDefinition {
   role: WorkflowAgentRole;
   binding: AgentExecutionBindingV1;
   ignoredToolRequests: string[];
+  /** Model preference carried from the agent preset / role / inline def. */
+  preferredModel?: string;
+  /** Provider preference carried from the agent preset / role. */
+  preferredProviderId?: string;
 }
 
 interface ActiveWorkflowAgentExecution {
@@ -405,6 +409,9 @@ function buildDefinitionFromConversationPreset(
   const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
   const enhancedSystemPrompt = (preset.systemPrompt ?? '') + capabilityPrompt;
 
+  const preferredModel = preset.preferredModel?.trim() || undefined;
+  const preferredProviderId = preset.providerId?.trim() || undefined;
+
   return {
     role: 'worker',
     binding: {
@@ -419,6 +426,8 @@ function buildDefinitionFromConversationPreset(
       concurrencyLimit: 1,
     },
     ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+    ...(preferredModel ? { preferredModel } : {}),
+    ...(preferredProviderId ? { preferredProviderId } : {}),
   };
 }
 
@@ -459,6 +468,8 @@ function buildDefinitionFromInlineAgentDef(
   const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
   const enhancedSystemPrompt = (agentDef.systemPrompt ?? '') + capabilityPrompt;
 
+  const preferredModel = agentDef.model?.trim() || undefined;
+
   return {
     role,
     binding: {
@@ -473,6 +484,7 @@ function buildDefinitionFromInlineAgentDef(
       concurrencyLimit: agentDef.concurrencyLimit ?? 1,
     },
     ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+    ...(preferredModel ? { preferredModel } : {}),
   };
 }
 
@@ -518,6 +530,8 @@ function resolveWorkflowAgentDefinition(input: AgentStepInput): ResolvedWorkflow
       concurrencyLimit: roleDefinition.concurrencyLimit,
     },
     ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+    ...(roleDefinition.preferredModel ? { preferredModel: roleDefinition.preferredModel } : {}),
+    ...(roleDefinition.preferredProviderId ? { preferredProviderId: roleDefinition.preferredProviderId } : {}),
   };
 }
 
@@ -619,13 +633,22 @@ function resolveSessionProvider(sessionId?: string): ApiProvider | undefined {
   return getProvider(providerId);
 }
 
-async function resolveExecutionMode(runtimeContext?: WorkflowStepRuntimeContext): Promise<ResolvedExecutionMode> {
+async function resolveExecutionMode(
+  runtimeContext?: WorkflowStepRuntimeContext,
+  preferredProviderId?: string,
+): Promise<ResolvedExecutionMode> {
   const configuredMode = parseExecutionMode(process.env.LUMOS_WORKFLOW_AGENT_STEP_MODE);
   if (configuredMode === 'claude' || configuredMode === 'synthetic') {
     return { mode: configuredMode };
   }
 
-  const provider = resolveSessionProvider(runtimeContext?.sessionId) || getDefaultProvider();
+  // Priority: agent preset > session binding > global default. This lets the
+  // team-editor's provider picker actually take effect — otherwise the preset
+  // would be overridden by whatever provider the chat session is using.
+  const presetProvider = preferredProviderId ? getProvider(preferredProviderId) : undefined;
+  const provider = presetProvider
+    || resolveSessionProvider(runtimeContext?.sessionId)
+    || getDefaultProvider();
   if (!provider) {
     return { mode: 'synthetic' };
   }
@@ -687,6 +710,7 @@ async function buildWorkflowAgentPayload(
   input: AgentStepInput,
   runtimeContext: WorkflowStepRuntimeContext,
   definition: ResolvedWorkflowAgentDefinition,
+  requestedModel: string | undefined,
 ): Promise<StageExecutionPayloadV1> {
   const workspace = await prepareWorkflowAgentWorkspace(runtimeContext, input.context);
   const dependencies = buildWorkflowAgentDependencies(input.context);
@@ -695,7 +719,7 @@ async function buildWorkflowAgentPayload(
     contractVersion: 'stage-execution-payload/v1',
     taskId: runtimeContext.taskId || runtimeContext.workflowRunId,
     sessionId: runtimeContext.sessionId || `workflow:${runtimeContext.workflowRunId}`,
-    requestedModel: input.model || runtimeContext.requestedModel,
+    requestedModel,
     runId: runtimeContext.workflowRunId,
     stageId: runtimeContext.stepId,
     attempt: 1,
@@ -1141,9 +1165,15 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   // codeOutcome === null: 代码配置不存在，或代码失败已回退到 agent
   const codeFellBackToAgent = shouldAttemptCode;
 
-  const requestedModel = input.model || runtimeContext.requestedModel;
   const definition = resolveWorkflowAgentDefinition(input);
-  const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(runtimeContext);
+  // Priority: DSL-level `model` field > preset's preferredModel > runtime-context
+  // model. DSL wins so a single workflow step can override the preset; the
+  // preset wins over session defaults so the team-editor's model picker sticks.
+  const requestedModel = input.model || definition.preferredModel || runtimeContext.requestedModel;
+  const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(
+    runtimeContext,
+    definition.preferredProviderId,
+  );
   const worker = new StageWorker(executionMode === 'claude');
   const abortController = new AbortController();
   const activeExecutionKey = buildActiveExecutionKey(runtimeContext);
@@ -1192,7 +1222,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   };
 
   try {
-    payload = await buildWorkflowAgentPayload(input, runtimeContext, definition);
+    payload = await buildWorkflowAgentPayload(input, runtimeContext, definition, requestedModel);
     // Dump the fully-resolved input/runtime/agent/payload to disk so the run
     // detail UI can show the user exactly what this step received. Written
     // before worker.execute so even a crashed/timed-out step leaves evidence.
@@ -1221,6 +1251,15 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       stageId: payload.stageId,
       memoryRefs: payload.memoryRefs,
       workspace: payload.workspace,
+    });
+
+    // Publish the provider/model the engine resolved so the live trace UI can
+    // show "服务商 · 模型" at the top of the execution stream. Written once
+    // before the SDK starts streaming so it appears as the first row.
+    appendStepTraceMeta(payload.workspace.stageWorkspace, {
+      providerName: workflowProvider?.name,
+      providerId: workflowProvider?.id,
+      model: requestedModel,
     });
 
     if (executionMode === 'synthetic') {

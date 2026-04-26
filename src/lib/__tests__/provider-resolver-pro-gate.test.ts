@@ -40,6 +40,14 @@ const cloudProvider: ApiProvider = {
 const customProvider: ApiProvider = {
   id: 'user-id',
   name: 'User Custom',
+  provider_origin: 'custom',
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+} as any;
+
+const systemProviderA: ApiProvider = {
+  id: 'system-a',
+  name: 'LumosProToAPI',
+  provider_origin: 'system',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any;
 
@@ -64,19 +72,48 @@ describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
     mGetDefault.mockReturnValue(undefined);
   });
 
-  test('chat locked → ignores preferredProviderId, forces Lumos Cloud', () => {
+  test('chat locked + custom preferred → falls back to Lumos Cloud', () => {
     mIsPro.mockReturnValue(true);
     setFlags({ chat: false, media: true });
-    stubCloudLookup(true);
+    // Custom-origin preferred must not be honored in locked mode.
+    mGetDb.mockReturnValue({
+      prepare: () => ({ get: () => ({ id: cloudProvider.id }) }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    mGetProvider.mockImplementation(id => {
+      if (id === cloudProvider.id) return cloudProvider;
+      if (id === customProvider.id) return customProvider;
+      return undefined;
+    });
+    mSupports.mockReturnValue(true);
 
     const result = resolveProviderForCapability({
       moduleKey: 'chat',
       capability: 'agent-chat',
-      preferredProviderId: 'user-id',
+      preferredProviderId: customProvider.id,
     });
 
     expect(result).toBe(cloudProvider);
-    expect(mGetProvider).not.toHaveBeenCalledWith('user-id');
+  });
+
+  test('chat locked + system-origin preferred → honors the pick', () => {
+    // Admin curates multiple system-origin chat providers (e.g. LumosProToAPI,
+    // LumosProToFox); user should be able to switch between them in the UI
+    // even under chat-locked mode. Only custom-origin providers are gated.
+    mIsPro.mockReturnValue(true);
+    setFlags({ chat: false, media: true });
+    mGetProvider.mockImplementation(id =>
+      id === systemProviderA.id ? systemProviderA : undefined,
+    );
+    mSupports.mockReturnValue(true);
+
+    const result = resolveProviderForCapability({
+      moduleKey: 'chat',
+      capability: 'agent-chat',
+      preferredProviderId: systemProviderA.id,
+    });
+
+    expect(result).toBe(systemProviderA);
   });
 
   test('chat locked + no Lumos Cloud in DB → throws', () => {

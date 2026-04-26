@@ -2,6 +2,7 @@ import {
   buildProviderAuthHeaders,
   detectProviderModels,
   resolveAnthropicSdkBaseUrl,
+  resolveProviderRequestApiKey,
 } from '@/lib/provider-model-discovery';
 
 describe('provider-model-discovery', () => {
@@ -52,5 +53,14 @@ describe('provider-model-discovery', () => {
       base_url: 'https://api.xiaomimimo.com/anthropic/v1/messages',
       extra_env: '{}',
     })).toBe('https://api.xiaomimimo.com/anthropic/v1');
+  });
+
+  test('appends new-api specific channel suffix onto routed request api keys', () => {
+    expect(resolveProviderRequestApiKey({
+      api_key: 'sk-test',
+      extra_env: JSON.stringify({
+        LUMOS_UPSTREAM_CHANNEL_ID: '3',
+      }),
+    })).toBe('sk-test-3');
   });
 });

@@ -120,6 +120,18 @@ export function resolveProviderForCapability(options: {
   const locked = isCustomProviderLocked(options.capability);
 
   if (locked && options.capability === 'agent-chat') {
+    // 锁定模式的语义应为"不能自建",而非"只能用云端默认"。
+    // 用户在 UI 选的只要是 admin 托管的 (provider_origin='system') 就尊重,
+    // 让 admin 开放的多个托管 provider 之间可以自由切换;
+    // 只有自建的 (custom origin) 才在锁定模式下被拦回 admin 标的默认。
+    const preferredId = options.preferredProviderId?.trim() || '';
+    if (preferredId) {
+      const preferred = getProvider(preferredId);
+      if (preferred && preferred.provider_origin === 'system'
+          && providerSupportsCapability(preferred, 'agent-chat')) {
+        return preferred;
+      }
+    }
     const cloud = getLumosCloudSystemProvider();
     if (!cloud) {
       throw new ProviderResolutionError(

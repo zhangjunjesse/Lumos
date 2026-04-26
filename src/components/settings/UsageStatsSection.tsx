@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -18,72 +18,54 @@ import { useTranslation } from "@/hooks/useTranslation";
 // Types
 // ---------------------------------------------------------------------------
 
+type Granularity = 'minute' | 'hour' | 'day';
+
+interface UsageBucket {
+  bucket: string;
+  provider_id: string;
+  provider_name: string;
+  model_name: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  estimated_cost_usd: number;
+}
+
 interface UsageStatsResponse {
   summary: {
     total_input_tokens: number;
     total_output_tokens: number;
-    total_cost: number;
+    total_cost_usd: number;
+    estimated_cost_usd: number;
     total_sessions: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
   };
-  daily: Array<{
-    date: string;
-    model: string;
-    input_tokens: number;
-    output_tokens: number;
-    cost: number;
-  }>;
+  buckets: UsageBucket[];
+  window_hours: number;
+  granularity: Granularity;
 }
 
 // ---------------------------------------------------------------------------
 // Number formatting helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Format a token count for display.
- *   0          → "0"
- *   999        → "999"
- *   1_234      → "1,234"
- *   9_999      → "9,999"
- *   10_000     → "10.0K"
- *   1_234_567  → "1.23M"
- *   1_200_000_000 → "1.20B"
- */
 function formatTokens(n: number): string {
   if (n === 0) return "0";
   if (n < 0) return "-" + formatTokens(-n);
-
   if (n < 10_000) return n.toLocaleString("en-US");
   if (n < 1_000_000) return (n / 1_000).toFixed(1) + "K";
   if (n < 1_000_000_000) return (n / 1_000_000).toFixed(2) + "M";
   return (n / 1_000_000_000).toFixed(2) + "B";
 }
 
-/**
- * Format a USD cost for display.
- *   0         → "$0.00"
- *   0.00015   → "$0.0002"
- *   0.0052    → "$0.0052"
- *   0.12      → "$0.12"
- *   1.5       → "$1.50"
- *   1234.5    → "$1,234.50"
- */
 function formatCost(n: number): string {
-  if (n === 0) return "$0.00";
+  if (n <= 0) return "$0.00";
   if (n < 0.01) return "$" + n.toFixed(4);
   if (n >= 1000) return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return "$" + n.toFixed(2);
 }
 
-/**
- * Format a percentage.
- *   NaN / undefined → "N/A"
- *   0              → "0%"
- *   0.456          → "0.5%"
- *   12.345         → "12.3%"
- *   100            → "100%"
- */
 function formatPercent(n: number | undefined): string {
   if (n === undefined || isNaN(n)) return "N/A";
   if (n === 0) return "0%";
@@ -91,14 +73,76 @@ function formatPercent(n: number | undefined): string {
   return n.toFixed(1) + "%";
 }
 
-/** Short date for chart x-axis: "2/24" */
-function shortDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+// ---------------------------------------------------------------------------
+// Bucket time helpers — must align with backend strftime output
+// ---------------------------------------------------------------------------
+
+function pad(n: number): string { return String(n).padStart(2, '0'); }
+
+/**
+ * Format a Date in LOCAL timezone matching the backend's
+ * `strftime(..., 'localtime')` output. Using toISOString() here would
+ * silently reintroduce the UTC bug we're fixing.
+ */
+function formatLocalBucket(d: Date, g: Granularity): string {
+  const y = d.getFullYear();
+  const mo = pad(d.getMonth() + 1);
+  const da = pad(d.getDate());
+  if (g === 'day') return `${y}-${mo}-${da}`;
+  const hh = pad(d.getHours());
+  if (g === 'hour') return `${y}-${mo}-${da} ${hh}:00:00`;
+  return `${y}-${mo}-${da} ${hh}:${pad(d.getMinutes())}:00`;
+}
+
+/** Short x-axis label tailored per granularity. */
+function formatAxisLabel(bucket: string, g: Granularity): string {
+  if (g === 'minute') return bucket.slice(11, 16); // 'HH:mm'
+  if (g === 'hour') {
+    const mmdd = bucket.slice(5, 10).replace('-', '/');
+    return `${mmdd} ${bucket.slice(11, 13)}:00`; // 'MM/dd HH:00'
+  }
+  const m = parseInt(bucket.slice(5, 7), 10);
+  const d = parseInt(bucket.slice(8, 10), 10);
+  return `${m}/${d}`;
+}
+
+/** Enumerate a full timeline from N*granularity steps ago up to now (local tz). */
+function enumerateBuckets(windowHours: number, g: Granularity): string[] {
+  const now = new Date();
+  const out: string[] = [];
+  if (g === 'minute') {
+    const end = new Date(now);
+    end.setSeconds(0, 0);
+    const count = Math.max(1, Math.min(Math.ceil(windowHours * 60), 60 * 24));
+    for (let i = count - 1; i >= 0; i--) {
+      const d = new Date(end);
+      d.setMinutes(end.getMinutes() - i);
+      out.push(formatLocalBucket(d, 'minute'));
+    }
+  } else if (g === 'hour') {
+    const end = new Date(now);
+    end.setMinutes(0, 0, 0);
+    const count = Math.max(1, Math.min(Math.ceil(windowHours), 24 * 31));
+    for (let i = count - 1; i >= 0; i--) {
+      const d = new Date(end);
+      d.setHours(end.getHours() - i);
+      out.push(formatLocalBucket(d, 'hour'));
+    }
+  } else {
+    const end = new Date(now);
+    end.setHours(0, 0, 0, 0);
+    const count = Math.max(1, Math.ceil(windowHours / 24));
+    for (let i = count - 1; i >= 0; i--) {
+      const d = new Date(end);
+      d.setDate(end.getDate() - i);
+      out.push(formatLocalBucket(d, 'day'));
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// Stable model → color mapping
+// Series color
 // ---------------------------------------------------------------------------
 
 const COLOR_PALETTE = [
@@ -109,16 +153,12 @@ const COLOR_PALETTE = [
   "var(--color-chart-5)",
 ];
 
-/**
- * Assign a stable color to each unique model key (e.g. "sonnet", "Kimi/sonnet").
- * Uses the index in the sorted model list so each distinct key gets its own color.
- */
-function getModelColor(_model: string, idx: number): string {
+function getSeriesColor(idx: number): string {
   return COLOR_PALETTE[idx % COLOR_PALETTE.length];
 }
 
 // ---------------------------------------------------------------------------
-// Chart tooltip (recharts v3 compatible)
+// Chart tooltip
 // ---------------------------------------------------------------------------
 
 type ChartTooltipValue = number | string | ReadonlyArray<number | string>;
@@ -134,11 +174,7 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps<ChartToolt
         : typeof rawValue === "string"
           ? Number(rawValue)
           : NaN;
-
-    if (!Number.isFinite(numericValue) || numericValue <= 0) {
-      return [];
-    }
-
+    if (!Number.isFinite(numericValue) || numericValue <= 0) return [];
     return [{ entry, numericValue }];
   });
 
@@ -152,10 +188,7 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps<ChartToolt
         const displayColor = entry.color || entry.fill || "var(--color-chart-1)";
         return (
           <div key={displayName + i} className="flex items-center gap-2 text-popover-foreground/80">
-            <span
-              className="inline-block h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: displayColor }}
-            />
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: displayColor }} />
             <span>{displayName}</span>
             <span className="ml-auto font-mono">{formatTokens(numericValue)}</span>
           </div>
@@ -166,14 +199,18 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps<ChartToolt
 }
 
 // ---------------------------------------------------------------------------
-// Day range selector
+// Range selector
 // ---------------------------------------------------------------------------
 
 const RANGE_OPTIONS = [
-  { label: "7D", days: 7 },
-  { label: "30D", days: 30 },
-  { label: "90D", days: 90 },
+  { label: '1H', windowHours: 1, granularity: 'minute' as Granularity },
+  { label: '24H', windowHours: 24, granularity: 'hour' as Granularity },
+  { label: '7D', windowHours: 24 * 7, granularity: 'day' as Granularity },
+  { label: '30D', windowHours: 24 * 30, granularity: 'day' as Granularity },
+  { label: '90D', windowHours: 24 * 90, granularity: 'day' as Granularity },
 ] as const;
+
+const DEFAULT_RANGE_IDX = 3; // 30D
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -181,15 +218,15 @@ const RANGE_OPTIONS = [
 
 export function UsageStatsSection() {
   const { t } = useTranslation();
-  const [days, setDays] = useState(30);
+  const [rangeIdx, setRangeIdx] = useState(DEFAULT_RANGE_IDX);
   const [data, setData] = useState<UsageStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const range = RANGE_OPTIONS[rangeIdx];
 
-  const fetchStats = useCallback(async (d: number) => {
-    // Abort any in-flight request to avoid stale data overwriting fresh data
+  const fetchStats = useCallback(async (windowHours: number, granularity: Granularity) => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -197,7 +234,10 @@ export function UsageStatsSection() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/usage/stats?days=${d}`, { signal: controller.signal });
+      const res = await fetch(
+        `/api/usage/stats?window_hours=${windowHours}&granularity=${granularity}`,
+        { signal: controller.signal },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
@@ -207,41 +247,37 @@ export function UsageStatsSection() {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : String(t('usage.loadError')));
     } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false);
-      }
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [t]);
 
   useEffect(() => {
-    fetchStats(days);
+    fetchStats(range.windowHours, range.granularity);
     return () => abortRef.current?.abort();
-  }, [days, fetchStats]);
+  }, [range.windowHours, range.granularity, fetchStats]);
 
-  // Derive chart data: pivot daily rows into { date, model1: N, model2: N, ... }
-  const { chartData, models } = deriveChartData(data?.daily ?? [], days);
+  const { chartData, series } = useMemo(
+    () => deriveChartData(data?.buckets ?? [], range.windowHours, range.granularity),
+    [data?.buckets, range.windowHours, range.granularity],
+  );
 
   const summary = data?.summary;
-  const totalTokens = summary
-    ? summary.total_input_tokens + summary.total_output_tokens
-    : 0;
-  const cacheTotal = summary
-    ? summary.cache_read_tokens + summary.total_input_tokens
-    : 0;
-  const cacheRate = summary && cacheTotal > 0
-    ? (summary.cache_read_tokens / cacheTotal) * 100
-    : undefined;
+  const totalTokens = summary ? summary.total_input_tokens + summary.total_output_tokens : 0;
+  const cacheTotal = summary ? summary.cache_read_tokens + summary.total_input_tokens : 0;
+  const cacheRate = summary && cacheTotal > 0 ? (summary.cache_read_tokens / cacheTotal) * 100 : undefined;
+  const displayCost = summary ? summary.estimated_cost_usd : 0;
+  const hasEstimate = !!summary && summary.estimated_cost_usd > summary.total_cost_usd + 1e-9;
 
   return (
     <div className="max-w-3xl space-y-6">
-      {/* Day range selector */}
+      {/* Range selector */}
       <div className="flex items-center gap-2">
-        {RANGE_OPTIONS.map((opt) => (
+        {RANGE_OPTIONS.map((opt, i) => (
           <button
-            key={opt.days}
-            onClick={() => setDays(opt.days)}
+            key={opt.label}
+            onClick={() => setRangeIdx(i)}
             className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              days === opt.days
+              rangeIdx === i
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-accent"
             }`}
@@ -264,7 +300,8 @@ export function UsageStatsSection() {
         />
         <StatCard
           label={t('usage.totalCost')}
-          value={loading ? "–" : formatCost(summary?.total_cost ?? 0)}
+          value={loading ? "–" : formatCost(displayCost)}
+          sub={hasEstimate ? t('usage.costHint') : undefined}
         />
         <StatCard
           label={t('usage.sessions')}
@@ -297,7 +334,7 @@ export function UsageStatsSection() {
           </div>
         )}
 
-        {!loading && !error && chartData.length === 0 && (
+        {!loading && !error && series.length === 0 && (
           <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -320,20 +357,16 @@ export function UsageStatsSection() {
           </div>
         )}
 
-        {!loading && !error && chartData.length > 0 && (
+        {!loading && !error && series.length > 0 && (
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={chartData} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="var(--color-border)"
-                opacity={0.5}
-              />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
               <XAxis
-                dataKey="date"
+                dataKey="label"
                 tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }}
                 tickLine={false}
                 axisLine={false}
+                minTickGap={range.granularity === 'minute' ? 20 : 8}
               />
               <YAxis
                 tickFormatter={formatTokens}
@@ -342,23 +375,16 @@ export function UsageStatsSection() {
                 axisLine={false}
                 width={54}
               />
-              <Tooltip
-                content={(props) => <ChartTooltip {...props} />}
-                cursor={{ fill: "var(--color-accent)", opacity: 0.3 }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                iconType="circle"
-                iconSize={8}
-              />
-              {models.map((model, idx) => (
+              <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={{ fill: "var(--color-accent)", opacity: 0.3 }} />
+              <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" iconSize={8} />
+              {series.map((s, idx) => (
                 <Bar
-                  key={model}
-                  name={model}
-                  dataKey={model}
+                  key={s}
+                  name={s}
+                  dataKey={s}
                   stackId="tokens"
-                  fill={getModelColor(model, idx)}
-                  radius={idx === models.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+                  fill={getSeriesColor(idx)}
+                  radius={idx === series.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
                   maxBarSize={40}
                 />
               ))}
@@ -393,58 +419,42 @@ function StatCard({
 }
 
 // ---------------------------------------------------------------------------
-// Data transform: pivot daily array into chart-friendly format
+// Data transform
 // ---------------------------------------------------------------------------
 
-function deriveChartData(daily: UsageStatsResponse["daily"], days: number): {
+function deriveChartData(
+  buckets: UsageBucket[],
+  windowHours: number,
+  granularity: Granularity,
+): {
   chartData: Array<Record<string, string | number>>;
-  models: string[];
+  series: string[];
 } {
-  if (daily.length === 0) return { chartData: [], models: [] };
+  const timeline = enumerateBuckets(windowHours, granularity);
+  const empty = timeline.map((b) => ({ bucket: b, label: formatAxisLabel(b, granularity) }));
+  if (buckets.length === 0) return { chartData: empty, series: [] };
 
-  // Normalise model names: empty string → "unknown"
-  const normalised = daily.map((row) => ({
-    ...row,
-    model: row.model || "unknown",
-  }));
-
-  // Collect all unique models
-  const modelSet = new Set<string>();
-  for (const row of normalised) {
-    modelSet.add(row.model);
-  }
-  const models = Array.from(modelSet).sort();
-
-  // Group by date
-  const byDate = new Map<string, Record<string, number>>();
-  for (const row of normalised) {
-    const total = row.input_tokens + row.output_tokens;
-    if (!byDate.has(row.date)) {
-      byDate.set(row.date, {});
-    }
-    const entry = byDate.get(row.date)!;
-    entry[row.model] = (entry[row.model] || 0) + total;
+  const seriesSet = new Set<string>();
+  const byBucket = new Map<string, Record<string, number>>();
+  for (const row of buckets) {
+    const key = `${row.provider_name} / ${row.model_name}`;
+    seriesSet.add(key);
+    const tokens = row.input_tokens + row.output_tokens;
+    if (!byBucket.has(row.bucket)) byBucket.set(row.bucket, {});
+    const entry = byBucket.get(row.bucket)!;
+    entry[key] = (entry[key] || 0) + tokens;
   }
 
-  // Build a continuous date range covering the full window so x-axis has no gaps
-  const allDates: string[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    allDates.push(d.toISOString().slice(0, 10));
-  }
-
-  // Format for recharts, filling missing dates with zeros
-  const chartData = allDates.map((date) => {
-    const modelTokens = byDate.get(date) || {};
-    const row: Record<string, string | number> = { date: shortDate(date) };
-    for (const m of models) {
-      row[m] = modelTokens[m] || 0;
-    }
+  const series = Array.from(seriesSet).sort();
+  const chartData = timeline.map((b) => {
+    const row: Record<string, string | number> = {
+      bucket: b,
+      label: formatAxisLabel(b, granularity),
+    };
+    const entry = byBucket.get(b) || {};
+    for (const s of series) row[s] = entry[s] || 0;
     return row;
   });
 
-  return { chartData, models };
+  return { chartData, series };
 }

@@ -47,6 +47,8 @@ export interface WorkflowExecutionRoleConfig {
   memoryPolicy: AgentExecutionBindingV1['memoryPolicy'];
   concurrencyLimit: number;
   notes: string[];
+  preferredProviderId?: string;
+  preferredModel?: string;
 }
 
 export type WorkflowAgentRoleConfig =
@@ -364,6 +366,8 @@ function buildRoleProfile(
     memoryPolicy: config.memoryPolicy,
     concurrencyLimit: override?.concurrencyLimit ?? config.concurrencyLimit,
     defaultConcurrencyLimit: config.concurrencyLimit,
+    preferredProviderId: override?.preferredProviderId,
+    preferredModel: override?.preferredModel,
   };
 }
 
@@ -405,6 +409,14 @@ function normalizeOverrideForStorage(
 
   if (typeof input.concurrencyLimit === 'number' && input.concurrencyLimit !== config.concurrencyLimit) {
     nextOverride.concurrencyLimit = input.concurrencyLimit;
+  }
+
+  if (typeof input.preferredProviderId === 'string' && input.preferredProviderId.trim()) {
+    nextOverride.preferredProviderId = input.preferredProviderId.trim();
+  }
+
+  if (typeof input.preferredModel === 'string' && input.preferredModel.trim()) {
+    nextOverride.preferredModel = input.preferredModel.trim();
   }
 
   return workflowAgentRoleOverrideSchema.parse(nextOverride);
@@ -480,5 +492,7 @@ export function getWorkflowExecutionRoleConfig(
     systemPrompt: profile.systemPrompt,
     allowedTools: normalizeExecutionTools(defaultConfig.allowedTools, profile.tools as WorkflowRuntimeCapability[]),
     concurrencyLimit: profile.concurrencyLimit ?? defaultConfig.concurrencyLimit,
+    preferredProviderId: profile.preferredProviderId,
+    preferredModel: profile.preferredModel,
   };
 }

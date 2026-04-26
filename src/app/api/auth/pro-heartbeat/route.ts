@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db/connection';
 import { destroySession } from '@/lib/auth/session';
-import { getUserBySession } from '@/lib/auth/user-service';
+import {
+  getUserById,
+  getUserBySession,
+  provisionUserServices,
+  type RemoteUser,
+} from '@/lib/auth/user-service';
+import { getCustomProviderFlags } from '@/lib/edition-runtime';
+import { composeAuthPayload } from '@/lib/auth/payload';
 
 const LUMOS_WEB_URL = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
 const HEARTBEAT_TIMEOUT_MS = 5_000;
@@ -64,7 +71,33 @@ export async function GET(req: NextRequest) {
     // 5xx / 403 / other → inconclusive, don't log the user out for a server hiccup.
     if (res.ok) {
       const data = await res.json().catch(() => null);
-      if (data && data.success) return NextResponse.json({ valid: true });
+      if (data && data.success) {
+        // Piggyback admin-config sync onto the heartbeat. lumos-web /api/auth/me
+        // returns the same RemoteUser shape as /login, so we can feed it straight
+        // into provisionUserServices to refresh chat providers, image providers,
+        // and custom-provider flags without waiting for the next full login.
+        // Best-effort: a sync failure must not invalidate an otherwise healthy
+        // session, so we swallow and log.
+        let synced = false;
+        const remoteUser = (data.data?.user ?? data.data) as RemoteUser | undefined;
+        if (remoteUser && typeof remoteUser === 'object' && remoteUser.id) {
+          try {
+            await provisionUserServices(remoteUser);
+            synced = true;
+          } catch (e) {
+            console.warn('[heartbeat] provision sync failed:', e);
+          }
+        }
+        // Always return the fresh user payload so the client can refresh
+        // balance / membership / flags without a manual reload. Balance
+        // comes straight from the lumos-web response we just fetched —
+        // no second roundtrip needed.
+        const freshUser = getUserById(user.id) ?? user;
+        const balance = Number(data.data?.balance ?? data.data?.user?.balance ?? 0);
+        const usedQuota = Number(data.data?.used_quota ?? data.data?.user?.used_quota ?? 0);
+        const payload = composeAuthPayload(freshUser, balance, usedQuota, getCustomProviderFlags());
+        return NextResponse.json({ valid: true, synced, user: payload });
+      }
     }
     return NextResponse.json({ valid: true, reason: 'inconclusive' });
   } catch {

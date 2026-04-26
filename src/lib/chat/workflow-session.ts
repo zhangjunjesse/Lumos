@@ -25,8 +25,9 @@ const WORKFLOW_CAPABILITIES_HINT = `
 
 **启用后会发生什么**：
 - 步骤执行时，agent 的 systemPrompt 末尾会自动追加一段知识库使用说明（默认标签、是否允许自选、可用标签清单）
-- agent 获得两个进程内工具：
-  - mcp__lumos-knowledge__search_knowledge(query, tags?, topK?) — 检索知识库，返回 kb_uri / 标题 / 摘要片段 / 分数
+ - agent 获得三个进程内工具：
+  - mcp__lumos-knowledge__search_knowledge(query, tags?, topK?) — 检索知识库，返回 kb_uri / 标题 / 摘要或正文片段 / 分数
+  - mcp__lumos-knowledge__read_knowledge_item(kb_uri, offset?, max_chars?) — 按 kb_uri 读取知识库中保存的正文全文；长文会分页返回
   - mcp__lumos-knowledge__list_knowledge_tags(limit?) — 列出可用标签
 - 未启用的步骤完全看不到这两个工具，也不会增加任何 token 开销
 
@@ -341,4 +342,15 @@ export function isWorkflowChatSession(
   session?: Pick<ChatSession, 'system_prompt'> | null,
 ): boolean {
   return Boolean(session?.system_prompt?.includes(WORKFLOW_CHAT_MARKER));
+}
+
+const WORKFLOW_CHAT_BINDING_KEY_PREFIX = 'workflow_chat_session:';
+
+/**
+ * Settings key that binds a workflow id to its persisted chat session id.
+ * Stored in the SQLite `settings` table so the binding survives Electron
+ * port-fallback (which would otherwise reset per-origin localStorage).
+ */
+export function buildWorkflowChatSessionBindingKey(workflowId: string): string {
+  return `${WORKFLOW_CHAT_BINDING_KEY_PREFIX}${workflowId}`;
 }

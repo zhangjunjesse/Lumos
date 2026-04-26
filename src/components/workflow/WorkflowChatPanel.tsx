@@ -8,20 +8,14 @@ import { useMessagesStore } from '@/stores/messages-store';
 import type { ChatSession, Message, MessagesResponse } from '@/types';
 
 const WORKFLOW_CHAT_MARKER = '__LUMOS_WORKFLOW_CHAT__';
-const STORAGE_KEY_PREFIX = 'lumos:workflow-chat-session:';
-
 const CAPABILITIES_SENTINEL = '## 能力说明';
-
-function isWorkflowChatSession(
-  session?: Pick<ChatSession, 'system_prompt'> | null,
-): boolean {
-  return Boolean(session?.system_prompt?.includes(WORKFLOW_CHAT_MARKER));
-}
 
 function needsCapabilitiesUpgrade(
   session?: Pick<ChatSession, 'system_prompt'> | null,
 ): boolean {
-  return isWorkflowChatSession(session) && !session?.system_prompt?.includes(CAPABILITIES_SENTINEL);
+  const prompt = session?.system_prompt;
+  if (!prompt?.includes(WORKFLOW_CHAT_MARKER)) return false;
+  return !prompt.includes(CAPABILITIES_SENTINEL);
 }
 
 /** Extract valid workflow DSL JSON from a message text. */
@@ -108,7 +102,6 @@ export function WorkflowChatPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const storageKey = STORAGE_KEY_PREFIX + workflowId;
   // Use ref so init effect only runs once per workflow, not on every DSL edit
   const currentDslRef = useRef(currentDsl);
   currentDslRef.current = currentDsl;
@@ -130,40 +123,37 @@ export function WorkflowChatPanel({
       setLoading(true);
       setError('');
 
+      // Binding lives in SQLite (server-side) so it survives Electron port
+      // fallback. The client only knows the workflowId; the server returns
+      // the bound session if any, or null.
       let nextSession: ChatSession | null = null;
-      const cachedId = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
-
-      if (cachedId) {
-        try {
-          const res = await fetch(`/api/chat/sessions/${cachedId}`);
-          if (res.ok) {
-            const data: { session: ChatSession } = await res.json();
-            if (isWorkflowChatSession(data.session)) {
-              nextSession = data.session;
-              // Upgrade old sessions that lack capabilities hint
-              if (needsCapabilitiesUpgrade(nextSession)) {
-                const refreshRes = await fetch('/api/workflow/chat/session/refresh', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sessionId: cachedId, workflowDsl: currentDslRef.current }),
-                });
-                if (refreshRes.ok) {
-                  const refreshData: { session: ChatSession } = await refreshRes.json();
-                  nextSession = refreshData.session;
-                }
-              }
-            } else if (typeof window !== 'undefined') {
-              localStorage.removeItem(storageKey);
-            }
-          } else {
-            // Only clear cache on 404 (session deleted), not on transient errors
-            if (res.status === 404 && typeof window !== 'undefined') {
-              localStorage.removeItem(storageKey);
-            }
-          }
-        } catch {
-          // Network error — don't clear cache, just fall through to create
+      try {
+        const lookupRes = await fetch(
+          `/api/workflow/chat/session?workflowId=${encodeURIComponent(workflowId)}`,
+        );
+        if (!lookupRes.ok) {
+          throw new Error(`Lookup failed (${lookupRes.status})`);
         }
+        const lookupData = await lookupRes.json() as { session: ChatSession | null };
+        nextSession = lookupData.session;
+
+        if (nextSession && needsCapabilitiesUpgrade(nextSession)) {
+          const refreshRes = await fetch('/api/workflow/chat/session/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: nextSession.id, workflowDsl: currentDslRef.current }),
+          });
+          if (refreshRes.ok) {
+            const refreshData: { session: ChatSession } = await refreshRes.json();
+            nextSession = refreshData.session;
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : '加载工作流会话失败,请重试');
+          setLoading(false);
+        }
+        return;
       }
 
       if (!nextSession) {
@@ -171,7 +161,7 @@ export function WorkflowChatPanel({
           const res = await fetch('/api/workflow/chat/session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workflowDsl: currentDslRef.current }),
+            body: JSON.stringify({ workflowId, workflowDsl: currentDslRef.current }),
           });
           if (!res.ok) {
             const body = await res.json().catch(() => ({})) as { error?: string };
@@ -179,9 +169,6 @@ export function WorkflowChatPanel({
           }
           const data: { session: ChatSession } = await res.json();
           nextSession = data.session;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(storageKey, data.session.id);
-          }
         } catch (err) {
           if (!cancelled) {
             setError(err instanceof Error ? err.message : '初始化工作流会话失败');
@@ -203,7 +190,7 @@ export function WorkflowChatPanel({
 
     void init();
     return () => { cancelled = true; };
-  }, [loadMessages, storageKey]);
+  }, [loadMessages, workflowId]);
 
   useEffect(() => {
     if (!sessionId) return;

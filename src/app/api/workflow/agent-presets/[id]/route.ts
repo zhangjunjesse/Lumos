@@ -49,15 +49,17 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const body = await request.json();
     const raw = updateAgentPresetSchema.parse(body);
 
-    // Convert null to undefined for optional fields
+    // null 表示"显式清空"—— 转成空字符串后 buildRecord 的 falsy 分支会把字段
+    // 从持久化记录里剔除,读出来就是 undefined(= 用默认)。undefined 则表示
+    // "未传",走 merge 保留旧值。
     const input = {
       ...raw,
       responsibility: raw.responsibility ?? undefined,
       description: raw.description ?? undefined,
       collaborationStyle: raw.collaborationStyle ?? undefined,
       outputContract: raw.outputContract ?? undefined,
-      preferredModel: raw.preferredModel ?? undefined,
-      providerId: raw.providerId ?? undefined,
+      preferredModel: raw.preferredModel === null ? '' : raw.preferredModel ?? undefined,
+      providerId: raw.providerId === null ? '' : raw.providerId ?? undefined,
       mcpServers: raw.mcpServers ?? undefined,
       toolPermissions: raw.toolPermissions ?? undefined,
       position: raw.position ?? undefined,

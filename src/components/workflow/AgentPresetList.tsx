@@ -48,6 +48,10 @@ function MemberAvatar({ id, name, avatarPath, size = 64 }: {
       style={{ width: s, height: s, fontSize: size * 0.35 }}
     >
       {showImg ? (
+        // Avatar is served from a dynamic API route with arbitrary uploaded
+        // images; sticking with native <img> avoids the next/image loader
+        // contract and remote-pattern config.
+        // eslint-disable-next-line @next/next/no-img-element
         <img src={`/api/workflow/agent-presets/${id}/avatar`} alt={name} className="w-full h-full object-cover" onError={() => setImgError(true)} />
       ) : getInitials(name)}
     </div>
@@ -225,11 +229,13 @@ export function AgentPresetList() {
   }, [load]);
 
   const handleSave = useCallback(async (data: MemberFormData): Promise<string> => {
+    // preferredModel / providerId: 空值必须显式传 null 才能清空，否则 API 的
+    // "undefined 沿用旧值" 规则会让"改回默认"无法落库。
     const body = {
       name: data.name, systemPrompt: data.systemPrompt,
       ...(data.description ? { description: data.description } : {}),
-      ...(data.preferredModel ? { preferredModel: data.preferredModel } : {}),
-      ...(data.providerId ? { providerId: data.providerId } : {}),
+      preferredModel: data.preferredModel ? data.preferredModel : null,
+      providerId: data.providerId ? data.providerId : null,
       ...(data.position ? { position: data.position } : {}),
       departmentId: data.departmentId || null,
     };

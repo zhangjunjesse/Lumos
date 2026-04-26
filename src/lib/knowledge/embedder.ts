@@ -402,11 +402,15 @@ function getExtractor(): Promise<unknown> {
         transformersEnv.useFSCache = false;
       }
 
+      // 三条分支都用 q8 —— 打包产物里只带 `onnx/model_quantized.onnx` 这一份
+      // 权重,之前第三条 fp16 纯属死代码暴露给 dev 模式的坑(next dev 独立 node
+      // 子进程里 process.versions.electron 是 undefined,落到 fp16 分支找不到
+      // model_fp16.onnx)。三路径统一跟磁盘权重对齐,不再分叉。
       const pipelineOptions: Record<string, unknown> = usePortableRuntime
         ? { device: resolvePortableEmbeddingDevice(), dtype: 'q8', local_files_only: true }
         : Boolean(process.versions.electron)
           ? { device: 'cpu', dtype: 'q8', local_files_only: true }
-          : { dtype: 'fp16', local_files_only: true };
+          : { dtype: 'q8', local_files_only: true };
 
       console.log('[embedding] Loading model:', MODEL_NAME, {
         portableRuntime: usePortableRuntime,

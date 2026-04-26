@@ -90,7 +90,9 @@ describe('text-generator', () => {
       api_key: 'sk-test',
       is_active: 1,
       sort_order: 0,
-      extra_env: '{}',
+      extra_env: JSON.stringify({
+        LUMOS_UPSTREAM_CHANNEL_ID: '3',
+      }),
       model_catalog: JSON.stringify([
         { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215' },
       ]),
@@ -111,6 +113,13 @@ describe('text-generator', () => {
     })).resolves.toBe('ok');
 
     expect(createAnthropicMock).toHaveBeenCalledTimes(1);
+    expect(createAnthropicMock).toHaveBeenCalledWith({
+      apiKey: 'sk-test-3',
+      baseURL: 'http://api.miki.zj.cn/v1',
+      headers: {
+        'Specific-Channel-Id': '3',
+      },
+    });
     expect(createAnthropicMock.mock.results[0].value).toBeInstanceOf(Function);
     const anthropicFactory = createAnthropicMock.mock.results[0].value as (modelId: string) => unknown;
     expect(anthropicFactory('doubao-seed-2-0-lite-260215')).toEqual({

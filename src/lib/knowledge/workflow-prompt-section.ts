@@ -9,9 +9,11 @@
  */
 import type { WorkflowKnowledgeConfig } from '@/lib/workflow/types';
 import type { TagCatalogEntry } from './tag-resolver';
+import { CHAT_KNOWLEDGE_MCP_SERVER_NAME } from './chat-knowledge-mcp';
 
-export const KNOWLEDGE_MCP_SERVER_NAME = 'lumos-knowledge';
+export const KNOWLEDGE_MCP_SERVER_NAME = CHAT_KNOWLEDGE_MCP_SERVER_NAME;
 export const KNOWLEDGE_SEARCH_TOOL_NAME = 'search_knowledge';
+export const KNOWLEDGE_READ_TOOL_NAME = 'read_knowledge_item';
 export const KNOWLEDGE_LIST_TAGS_TOOL_NAME = 'list_knowledge_tags';
 
 function scopedTool(name: string): string {
@@ -38,6 +40,7 @@ export function buildKnowledgePromptSection(
   if (!config.enabled) return '';
 
   const searchTool = scopedTool(KNOWLEDGE_SEARCH_TOOL_NAME);
+  const readTool = scopedTool(KNOWLEDGE_READ_TOOL_NAME);
   const listTool = scopedTool(KNOWLEDGE_LIST_TAGS_TOOL_NAME);
 
   const lines: string[] = [];
@@ -45,7 +48,7 @@ export function buildKnowledgePromptSection(
   lines.push('---');
   lines.push('## 知识库访问');
   lines.push('');
-  lines.push(`你可以调用 \`${searchTool}\` 检索知识库内容。`);
+  lines.push(`你可以调用 \`${searchTool}\` 检索知识库内容,并用 \`${readTool}\` 按 kb_uri 读取完整正文。`);
   lines.push('');
 
   if (resolvedTagNames.length > 0) {
@@ -72,6 +75,8 @@ export function buildKnowledgePromptSection(
   lines.push('');
   lines.push('**何时使用**:');
   lines.push('- 用户问题涉及的知识可能存在于知识库时,先检索再回答,不要凭空编造。');
+  lines.push('- 检索结果只是摘要或片段;需要总结整篇、核对细节或引用证据时,用 `read_knowledge_item` 读取相关 `kb_uri` 的正文。');
+  lines.push('- `read_knowledge_item` 对长文会分页返回;如果 `has_more` 为 true,继续用 `next_offset` 读取后续正文。');
   lines.push('- 第一次检索结果不理想时,可以换关键词或换标签再检索(最多 3 次)。');
   lines.push('- 回答中引用到的内容,请用 `kb_uri` 标注来源。');
   lines.push('---');

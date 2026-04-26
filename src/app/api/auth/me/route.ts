@@ -4,6 +4,7 @@ import {
   refreshUserBalance,
 } from '@/lib/auth/user-service';
 import { getCustomProviderFlags } from '@/lib/edition-runtime';
+import { composeAuthPayload } from '@/lib/auth/payload';
 
 /**
  * GET /api/auth/me  -- Get current authenticated user
@@ -34,23 +35,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        id: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        membership: user.membership,
-        membership_expires_at: user.membership_expires_at,
-        role: user.role || 'user',
-        balance: remainQuota,
-        used_quota: usedQuota,
-        balance_error: balanceError,
-        allow_custom_providers: getCustomProviderFlags(),
-        // backward compat fields
-        username: user.email,
-        display_name: user.nickname || user.email,
-        quota: remainQuota,
-        group: user.membership,
-      },
+      data: composeAuthPayload(user, remainQuota, usedQuota, getCustomProviderFlags(), balanceError),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : '获取用户信息失败';

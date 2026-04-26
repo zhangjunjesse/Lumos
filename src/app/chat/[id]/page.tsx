@@ -130,7 +130,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           });
           if (sessionsRes.ok) {
             const data: SessionsResponse = await sessionsRes.json();
-            const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+            const allSessions = Array.isArray(data.sessions) ? data.sessions : [];
+            const projectScope = sessionWorkingDir.trim();
+            const sessions = projectScope
+              ? allSessions.filter((session) => (session.working_directory || '') === projectScope)
+              : allSessions;
             const currentIndex = sessions.findIndex((session) => session.id === id);
 
             if (currentIndex >= 0) {
@@ -139,7 +143,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 || sessions.find((session) => session.id !== id)?.id
                 || '';
             } else {
-              fallbackSessionId = sessions[0]?.id || '';
+              fallbackSessionId = sessions.find((session) => session.id !== id)?.id || '';
             }
           }
         } catch {
@@ -171,6 +175,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     removeCachedMessages,
     routeEntry,
     router,
+    sessionWorkingDir,
     setPanelSessionTitle,
     setSessionId,
   ]);

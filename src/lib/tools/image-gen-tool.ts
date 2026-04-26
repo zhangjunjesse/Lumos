@@ -15,22 +15,6 @@ interface CallToolResult {
 }
 
 const IMAGE_GEN_TOOL_NAME = 'generate_image';
-const MAX_GENERATIONS_PER_SESSION = 10;
-const MAX_TRACKED_SESSIONS = 256;
-
-/** Module-level counter keyed by sessionId, persists across requests within the same process. */
-const sessionGenerationCounts = new Map<string, number>();
-
-function bumpSessionCount(key: string): number {
-  const current = sessionGenerationCounts.get(key) ?? 0;
-  const next = current + 1;
-  if (!sessionGenerationCounts.has(key) && sessionGenerationCounts.size >= MAX_TRACKED_SESSIONS) {
-    const oldest = sessionGenerationCounts.keys().next().value;
-    if (oldest !== undefined) sessionGenerationCounts.delete(oldest);
-  }
-  sessionGenerationCounts.set(key, next);
-  return next;
-}
 
 const inputSchema = {
   prompt: z.string().describe(
@@ -146,7 +130,6 @@ function findEmbeddedImagePaths(prompt: string): string[] {
 async function runGeneration(
   args: ImageGenArgs,
   sessionId: string | undefined,
-  count: number,
   model: string,
 ): Promise<CallToolResult> {
   const result = await generateImages({
@@ -171,14 +154,12 @@ async function runGeneration(
       mime_type: img.mimeType,
     })),
     elapsed_ms: result.elapsedMs,
-    generation_count: count,
-    generation_limit: MAX_GENERATIONS_PER_SESSION,
+    generated_image_count: result.images.length,
+    billing_mode: 'per_image',
   });
 }
 
 export function createImageGenTool(sessionId?: string, userId?: string) {
-  const key = sessionId ?? '';
-
   return tool(
     IMAGE_GEN_TOOL_NAME,
     'Generate images using AI. Call this tool when the user asks to '
@@ -201,15 +182,6 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
           detected_paths: embedded,
           suggested_reference_image_paths: merged,
           hint: '把 detected_paths 里的所有路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
-        }, true);
-      }
-
-      const count = bumpSessionCount(key);
-      if (count > MAX_GENERATIONS_PER_SESSION) {
-        return textResult({
-          success: false,
-          error: `本次对话已生成 ${MAX_GENERATIONS_PER_SESSION} 张图片,已达上限。`
-            + '请开启新对话继续生成,或让用户确认后继续。',
         }, true);
       }
 
@@ -249,7 +221,7 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
       }
 
       try {
-        return await runGeneration(args, sessionId, count, target.model);
+        return await runGeneration(args, sessionId, target.model);
       } catch (error) {
         if (userId && quotaConsumed) {
           await refundRemoteQuota(userId, idempotencyKey);

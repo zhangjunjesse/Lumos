@@ -35,6 +35,7 @@ const CLOUD_FALLBACK_MODEL_CATALOG: ReadonlyArray<{ value: string; label: string
 
 export interface DbStatementLike {
   get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
   run(...params: unknown[]): { changes: number } | unknown;
 }
 export interface DbLike {
@@ -223,6 +224,38 @@ async function removeStaleProviders(
 }
 
 /**
+ * 删除所有 `provider_origin='system'` 且命中 capability 但未被 managed map
+ * 追踪的 row。用于擦除旧版 provisioner（如单条 "Lumos Cloud"）遗留的本地
+ * orphan，以及任何 map-absorb 流程漏掉的残留条目。
+ */
+async function removeOrphanSystemProviders(
+  db: DbLike,
+  capability: 'agent-chat' | 'image-gen',
+  managedLocalIds: Set<string>,
+): Promise<void> {
+  const rows = db.prepare(
+    "SELECT id, capabilities FROM api_providers WHERE provider_origin = 'system'",
+  ).all() as Array<{ id: string; capabilities: string }>;
+  const orphans: string[] = [];
+  for (const row of rows) {
+    if (managedLocalIds.has(row.id)) continue;
+    try {
+      const caps = JSON.parse(row.capabilities);
+      if (Array.isArray(caps) && caps.includes(capability)) orphans.push(row.id);
+    } catch {
+      /* malformed capabilities — skip */
+    }
+  }
+  if (orphans.length === 0) return;
+  const { deleteProvider } = await import('@/lib/db/providers');
+  for (const id of orphans) {
+    try { deleteProvider(id); } catch (e) {
+      console.warn('[cloud-provisioner] failed to delete orphan system provider:', e);
+    }
+  }
+}
+
+/**
  * 全量同步 Lumos Cloud 下发的图片服务商列表到本地。
  *
  * - 入参空数组 → 删除所有已 provision 的云图片 provider, 清掉 map 和 override。
@@ -244,6 +277,7 @@ export async function provisionImageProviders(
 
   if (configs.length === 0) {
     await removeStaleProviders(db, Object.values(map));
+    await removeOrphanSystemProviders(db, 'image-gen', new Set());
     writeProvidersMap(db, {});
     db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_IMAGE_KEY);
     return [];
@@ -265,6 +299,7 @@ export async function provisionImageProviders(
     if (config.is_default) defaultLocalId = localId;
   }
   writeProvidersMap(db, nextMap);
+  await removeOrphanSystemProviders(db, 'image-gen', new Set(Object.values(nextMap)));
 
   const currentOverrideRow = db.prepare('SELECT value FROM settings WHERE key = ?')
     .get(PROVIDER_OVERRIDE_IMAGE_KEY) as { value: string } | undefined;
@@ -311,12 +346,34 @@ interface ChatProviderUpsertFields {
   auth_mode: 'api_key';
   base_url: string;
   api_key: string;
+  extra_env: string;
   model_catalog: string;
   notes: string;
 }
 
+/**
+ * 把云端下发的 newapi_channel_id 注入本地 provider 的 extra_env,以便请求路径
+ * 同时派生 new-api admin-token 后缀和 `Specific-Channel-Id` 兼容头,精确路由
+ * 到对应 channel。无 channel id 时返回空 JSON 对象字符串,避免污染 extra_env。
+ */
+function buildChatProviderExtraEnv(channelId: number | null | undefined): string {
+  if (typeof channelId !== 'number' || !Number.isFinite(channelId) || channelId <= 0) {
+    return '{}';
+  }
+  return JSON.stringify({ LUMOS_UPSTREAM_CHANNEL_ID: String(channelId) });
+}
+
 function buildChatProviderFields(config: CloudChatProviderConfig): ChatProviderUpsertFields {
-  const apiProtocol = config.api_protocol === 'anthropic-messages' ? 'anthropic-messages' : 'openai-compatible';
+  // 兼容 lumos-web 后台填写的多种 anthropic 协议变体:'anthropic-messages'
+  // (规范名)、'anthropic' (历史/简写)、'claude' (按厂牌名)。这三种都意味着
+  // 上游说 anthropic 协议,桌面端 text-generator 应走 createAnthropic 拼
+  // /v1/messages,而不是 fallback 到 createOpenAI 的 /chat/completions
+  // (后者要求 base_url 自带 /v1,跟 new-api 入口不匹配)。其它值统一落到
+  // openai-compatible,跟之前行为一致。
+  const rawProtocol = (config.api_protocol || '').trim().toLowerCase();
+  const apiProtocol = (rawProtocol === 'anthropic-messages' || rawProtocol === 'anthropic' || rawProtocol === 'claude')
+    ? 'anthropic-messages'
+    : 'openai-compatible';
   const catalog = (config.model_catalog || []).map((m) => ({
     value: m.value,
     label: m.label,
@@ -332,6 +389,7 @@ function buildChatProviderFields(config: CloudChatProviderConfig): ChatProviderU
     auth_mode: 'api_key',
     base_url: config.base_url,
     api_key: config.api_key,
+    extra_env: buildChatProviderExtraEnv(config.newapi_channel_id),
     model_catalog: JSON.stringify(catalog),
     notes: `Lumos Cloud 内置对话服务商 (remote_id=${config.id})。默认模型: ${config.default_model || '(未指定)'}`,
   };
@@ -380,8 +438,9 @@ async function upsertOneChatProvider(
  * - 入参空 → 删除所有已 provision 的云对话 provider，清 map。
  * - 入参非空 → 按 `remote_id` 一对一 upsert。旧的 / 不在新列表里的 → 删除。
  * - 每个 provider 用 `provider_origin='system'`，桌面端 UI 据此锁定为只读。
- * - default_provider_id 只在缺失 / 已失效时才指向"标为默认"的那条；
- *   已生效的用户选择保留不动。
+ * - default_provider_id 跟随云端权威：configs 中 is_default 的那条即覆盖。
+ *   对齐 provisionImageProviders 的行为，避免"云端改默认、桌面端永远卡在
+ *   首次登录快照"的死锁。Pro 强制路由依赖这个值反映云端意志才成立。
  */
 export async function provisionChatProviders(
   configs: CloudChatProviderConfig[],
@@ -393,6 +452,7 @@ export async function provisionChatProviders(
 
   if (configs.length === 0) {
     await removeStaleProviders(db, Object.values(map));
+    await removeOrphanSystemProviders(db, 'agent-chat', new Set());
     writeChatProvidersMap(db, {});
     return [];
   }
@@ -413,18 +473,12 @@ export async function provisionChatProviders(
     if (config.is_default) defaultLocalId = localId;
   }
   writeChatProvidersMap(db, nextMap);
+  await removeOrphanSystemProviders(db, 'agent-chat', new Set(Object.values(nextMap)));
 
   if (defaultLocalId) {
-    const currentDefaultRow = db.prepare("SELECT value FROM settings WHERE key = 'default_provider_id'")
-      .get() as { value?: string } | undefined;
-    const currentId = currentDefaultRow?.value?.trim() ?? '';
-    const stillValid = currentId
-      && db.prepare('SELECT 1 FROM api_providers WHERE id = ?').get(currentId);
-    if (!stillValid) {
-      db.prepare(
-        "INSERT INTO settings (key, value) VALUES ('default_provider_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      ).run(defaultLocalId);
-    }
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('default_provider_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(defaultLocalId);
   }
 
   return Object.values(nextMap);

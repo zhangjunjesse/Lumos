@@ -139,6 +139,23 @@ const workflowExecutionGcTimer = setInterval(() => {
 
 workflowExecutionGcTimer.unref?.();
 
+/**
+ * Step 并发上限。每个 agent step 对应一个 Claude Agent SDK CLI 子进程,
+ * 单进程 ≈ 200-300MB。按 64GB 机器留出系统/Electron 开销保守估算,~200 个
+ * 子进程仍在内存安全线内,所以默认放到 200 让用户尽量不被节流;觉得卡就
+ * 自己错开任务。可通过 env LUMOS_WORKFLOW_CONCURRENCY 覆盖,clamp 到
+ * [1, 500],防手抖把数字写离谱。
+ */
+function resolveWorkflowConcurrency(): number {
+  const DEFAULT = 200;
+  const HARD_MAX = 500;
+  const raw = process.env.LUMOS_WORKFLOW_CONCURRENCY;
+  if (!raw) return DEFAULT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT;
+  return Math.min(parsed, HARD_MAX);
+}
+
 // 获取或创建 Worker
 async function getOrCreateWorker(
   ow: OpenWorkflow,
@@ -150,7 +167,7 @@ async function getOrCreateWorker(
   }
 
   if (!globalWorker) {
-    globalWorker = ow.newWorker({ concurrency: 5 });
+    globalWorker = ow.newWorker({ concurrency: resolveWorkflowConcurrency() });
     await globalWorker.start();
   }
   return globalWorker;

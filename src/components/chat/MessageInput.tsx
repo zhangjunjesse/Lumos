@@ -21,6 +21,8 @@ import {
   Globe,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
+import { isPro } from '@/lib/edition';
+import { useProAuthSelector } from '@/hooks/useProAuth';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { TranslationKey } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -44,7 +46,8 @@ import {
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input';
 import type { ChatStatus } from 'ai';
-import type { ChatKnowledgeOptions, FileAttachment, ProviderModelGroup } from '@/types';
+import type { ChatKnowledgeOptions, FileAttachment, KnowledgeOverrides, ProviderModelGroup } from '@/types';
+import { KnowledgeMenuPanel } from './KnowledgeMenuPanel';
 import { nanoid } from 'nanoid';
 
 // Accepted file types for upload
@@ -102,14 +105,6 @@ interface CommandBadge {
   description: string;
   isSkill: boolean;
   installedSource?: "agents" | "claude";
-}
-
-interface KnowledgeTag {
-  id: string;
-  name: string;
-  category: string;
-  color: string;
-  usage_count?: number;
 }
 
 type PopoverMode = 'file' | 'skill' | null;
@@ -384,11 +379,8 @@ export function MessageInput({
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [knowledgeEnabled, setKnowledgeEnabled] = useState(initialKnowledgeEnabled);
   const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
-  const [knowledgeTags, setKnowledgeTags] = useState<KnowledgeTag[]>([]);
-  const [knowledgeTagsLoading, setKnowledgeTagsLoading] = useState(false);
-  const [knowledgeTagsError, setKnowledgeTagsError] = useState<string | null>(null);
-  const [knowledgeTagFilter, setKnowledgeTagFilter] = useState('');
   const [selectedKnowledgeTagIds, setSelectedKnowledgeTagIds] = useState<string[]>([]);
+  const [knowledgeOverrides, setKnowledgeOverrides] = useState<KnowledgeOverrides>({});
   const [imageProviderConfig, setImageProviderConfig] = useState<ImageProviderUiConfigResponse | null>(null);
   const [imageOptionsOpen, setImageOptionsOpen] = useState(false);
   const [imageAspectRatio, setImageAspectRatio] = useState('1:1');
@@ -417,44 +409,6 @@ export function MessageInput({
         setProviderGroups([]);
         setDefaultProviderId('');
       });
-  }, []);
-
-  const fetchKnowledgeTags = useCallback(async () => {
-    setKnowledgeTagsLoading(true);
-    setKnowledgeTagsError(null);
-
-    try {
-      const response = await fetch('/api/knowledge/tags');
-      if (!response.ok) {
-        throw new Error('Failed to load knowledge tags');
-      }
-
-      const data = await response.json();
-      const tags = Array.isArray(data)
-        ? data
-            .map((tag): KnowledgeTag | null => {
-              if (!tag || typeof tag !== 'object') return null;
-              const record = tag as Record<string, unknown>;
-              const id = typeof record.id === 'string' ? record.id.trim() : '';
-              const name = typeof record.name === 'string' ? record.name.trim() : '';
-              if (!id || !name) return null;
-              return {
-                id,
-                name,
-                category: typeof record.category === 'string' ? record.category : 'custom',
-                color: typeof record.color === 'string' && record.color.trim() ? record.color : '#6B7280',
-                usage_count: typeof record.usage_count === 'number' ? record.usage_count : 0,
-              };
-            })
-            .filter((tag): tag is KnowledgeTag => tag !== null)
-        : [];
-
-      setKnowledgeTags(tags);
-    } catch (error) {
-      setKnowledgeTagsError(error instanceof Error ? error.message : 'Failed to load knowledge tags');
-    } finally {
-      setKnowledgeTagsLoading(false);
-    }
   }, []);
 
   // Load models on mount and listen for provider changes
@@ -502,12 +456,6 @@ export function MessageInput({
   }, []);
 
   useEffect(() => {
-    if (!knowledgeMenuOpen) return;
-    if (knowledgeTagsLoading || knowledgeTags.length > 0 || knowledgeTagsError) return;
-    void fetchKnowledgeTags();
-  }, [fetchKnowledgeTags, knowledgeMenuOpen, knowledgeTags.length, knowledgeTagsError, knowledgeTagsLoading]);
-
-  useEffect(() => {
     if (!imageProviderConfig || imageOptionsOpen) return;
     const trimmed = inputValue.trim();
     if (!trimmed) {
@@ -523,16 +471,33 @@ export function MessageInput({
     }
   }, [imageOptionsOpen, imageProviderConfig, inputValue]);
 
+  // When admin disallows the chat custom-provider category in pro edition,
+  // hide custom providers everywhere chat UI consults the model list — the
+  // dropdown, the "current provider" resolution, and default fallback all
+  // need to agree, otherwise a stale selection can keep a hidden custom
+  // provider active. Mirrors the ChatProvidersCard readOnly filter.
+  // selector 直接返回 boolean,余额 / nickname 等其它字段变化时 selector 结果
+  // 不变,组件不会被无意义重渲染 —— 这是修 input 失焦的关键。
+  const chatReadOnly = useProAuthSelector(
+    (s) => isPro() && s.user?.allow_custom_providers?.chat === false,
+  );
+  const visibleProviderGroups = useMemo(
+    () => (chatReadOnly
+      ? providerGroups.filter((g) => g.provider_origin === 'system')
+      : providerGroups),
+    [providerGroups, chatReadOnly],
+  );
+
   // Derive active provider + model for the selector.
-  const hasExplicitProvider = !!providerId && providerGroups.some((group) => group.provider_id === providerId);
-  const hasDefaultProvider = !!defaultProviderId && providerGroups.some((group) => group.provider_id === defaultProviderId);
+  const hasExplicitProvider = !!providerId && visibleProviderGroups.some((group) => group.provider_id === providerId);
+  const hasDefaultProvider = !!defaultProviderId && visibleProviderGroups.some((group) => group.provider_id === defaultProviderId);
   const currentProviderIdValue = hasExplicitProvider
     ? (providerId as string)
     : hasDefaultProvider
       ? defaultProviderId
-      : (providerGroups[0]?.provider_id ?? '');
-  const hasProviders = providerGroups.length > 0;
-  const currentGroup = providerGroups.find(g => g.provider_id === currentProviderIdValue) || providerGroups[0];
+      : (visibleProviderGroups[0]?.provider_id ?? '');
+  const hasProviders = visibleProviderGroups.length > 0;
+  const currentGroup = visibleProviderGroups.find(g => g.provider_id === currentProviderIdValue) || visibleProviderGroups[0];
   const MODEL_OPTIONS = useMemo(
     () => currentGroup?.models || (hasProviders ? DEFAULT_PROVIDER_MODEL_OPTIONS : []),
     [currentGroup, hasProviders],
@@ -970,6 +935,7 @@ export function MessageInput({
       const knowledgeOptions: ChatKnowledgeOptions = {
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
+        ...(Object.keys(knowledgeOverrides).length > 0 ? { overrides: knowledgeOverrides } : {}),
       };
       let imageOverridePrompt: string | undefined;
       try {
@@ -1041,6 +1007,7 @@ export function MessageInput({
       {
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
+        ...(Object.keys(knowledgeOverrides).length > 0 ? { overrides: knowledgeOverrides } : {}),
       },
     );
     setInputValue('');
@@ -1053,6 +1020,7 @@ export function MessageInput({
     inputValue,
     isStreaming,
     knowledgeEnabled,
+    knowledgeOverrides,
     onCommand,
     onSend,
     selectedKnowledgeTagIds,
@@ -1255,14 +1223,6 @@ export function MessageInput({
   const runtimeModelMismatch = hasResolvedModel
     ? !doesResolvedModelMatchRequested(currentModelValue, resolvedModelName)
     : false;
-  const knowledgeTagQuery = knowledgeTagFilter.trim().toLowerCase();
-  const filteredKnowledgeTags = knowledgeTags.filter((tag) => {
-    if (!knowledgeTagQuery) return true;
-    return tag.name.toLowerCase().includes(knowledgeTagQuery)
-      || tag.category.toLowerCase().includes(knowledgeTagQuery);
-  });
-  const selectedKnowledgeTags = knowledgeTags.filter((tag) => selectedKnowledgeTagIds.includes(tag.id));
-
   // Map isStreaming to ChatStatus for PromptInputSubmit
   const chatStatus: ChatStatus = isStreaming ? 'streaming' : 'ready';
 
@@ -1428,148 +1388,14 @@ export function MessageInput({
               ref={knowledgeMenuRef}
               className="absolute bottom-full left-0 mb-2 w-full max-w-sm rounded-xl border bg-popover shadow-lg overflow-hidden z-40"
             >
-              <div className="flex items-start justify-between gap-3 border-b px-3 py-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">{t('messageInput.knowledgeBase')}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {knowledgeEnabled
-                      ? t('messageInput.knowledgeEnabledHint')
-                      : t('messageInput.knowledgeDisabledHint')}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setKnowledgeEnabled((prev) => !prev)}
-                  className={cn(
-                    "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors",
-                    knowledgeEnabled
-                      ? "border-emerald-500/40 bg-emerald-500/20"
-                      : "border-border bg-muted"
-                  )}
-                  aria-pressed={knowledgeEnabled}
-                >
-                  <span
-                    className={cn(
-                      "inline-block h-4 w-4 rounded-full bg-background shadow-sm transition-transform",
-                      knowledgeEnabled ? "translate-x-6" : "translate-x-1"
-                    )}
-                  />
-                </button>
-              </div>
-
-              {knowledgeEnabled && (
-                <>
-                  <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-                    <div>
-                      <div className="text-xs font-medium text-foreground">{t('messageInput.knowledgeTags')}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {selectedKnowledgeTagIds.length > 0
-                          ? t('messageInput.knowledgeTagsSelected').replace('{n}', String(selectedKnowledgeTagIds.length))
-                          : t('messageInput.knowledgeAllTags')}
-                      </div>
-                    </div>
-                    {selectedKnowledgeTagIds.length > 0 && (
-                      <button
-                        type="button"
-                        className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                        onClick={() => setSelectedKnowledgeTagIds([])}
-                      >
-                        {t('messageInput.knowledgeClearTags')}
-                      </button>
-                    )}
-                  </div>
-
-                  {selectedKnowledgeTags.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 border-b px-3 py-2">
-                      {selectedKnowledgeTags.map((tag) => (
-                        <button
-                          key={`selected-${tag.id}`}
-                          type="button"
-                          onClick={() => {
-                            setSelectedKnowledgeTagIds((prev) => prev.filter((id) => id !== tag.id));
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-300"
-                        >
-                          <span
-                            className="h-1.5 w-1.5 rounded-full"
-                            style={{ backgroundColor: tag.color }}
-                          />
-                          <span className="max-w-[140px] truncate">{tag.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="border-b px-3 py-2">
-                    <input
-                      type="text"
-                      value={knowledgeTagFilter}
-                      onChange={(e) => setKnowledgeTagFilter(e.target.value)}
-                      placeholder={t('messageInput.knowledgeFilterPlaceholder')}
-                      className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none transition-colors focus:border-ring"
-                    />
-                  </div>
-
-                  <div className="max-h-52 overflow-y-auto p-2">
-                    {knowledgeTagsLoading ? (
-                      <div className="px-2 py-3 text-xs text-muted-foreground">
-                        {t('messageInput.knowledgeLoadingTags')}
-                      </div>
-                    ) : knowledgeTagsError ? (
-                      <div className="space-y-2 px-2 py-3">
-                        <div className="text-xs text-destructive">{t('messageInput.knowledgeLoadTagsFailed')}</div>
-                        <button
-                          type="button"
-                          className="text-xs text-foreground underline underline-offset-2"
-                          onClick={() => void fetchKnowledgeTags()}
-                        >
-                          {t('install.retry')}
-                        </button>
-                      </div>
-                    ) : filteredKnowledgeTags.length === 0 ? (
-                      <div className="px-2 py-3 text-xs text-muted-foreground">
-                        {knowledgeTags.length === 0
-                          ? t('messageInput.knowledgeNoTags')
-                          : t('messageInput.knowledgeNoFilteredTags')}
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {filteredKnowledgeTags.map((tag) => {
-                          const isSelected = selectedKnowledgeTagIds.includes(tag.id);
-                          return (
-                            <button
-                              key={tag.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedKnowledgeTagIds((prev) => (
-                                  prev.includes(tag.id)
-                                    ? prev.filter((id) => id !== tag.id)
-                                    : [...prev, tag.id]
-                                ));
-                              }}
-                              className={cn(
-                                "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors",
-                                isSelected
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                  : "border-border bg-background text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              <span
-                                className="h-1.5 w-1.5 rounded-full shrink-0"
-                                style={{ backgroundColor: tag.color }}
-                              />
-                              <span className="truncate">{tag.name}</span>
-                              {typeof tag.usage_count === 'number' && tag.usage_count > 0 && (
-                                <span className="text-[10px] opacity-70">{tag.usage_count}</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
+              <KnowledgeMenuPanel
+                enabled={knowledgeEnabled}
+                onEnabledChange={setKnowledgeEnabled}
+                selectedTagIds={selectedKnowledgeTagIds}
+                onSelectedTagIdsChange={setSelectedKnowledgeTagIds}
+                overrides={knowledgeOverrides}
+                onOverridesChange={setKnowledgeOverrides}
+              />
             </div>
           )}
 
@@ -1746,7 +1572,7 @@ export function MessageInput({
 
                       {modelMenuOpen && (
                         <div className="absolute bottom-full left-0 mb-1.5 w-72 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-96 overflow-y-auto">
-                          {providerGroups.map((group, groupIndex) => {
+                          {visibleProviderGroups.map((group, groupIndex) => {
                             const isCurrent = group.provider_id === currentProviderIdValue;
                             return (
                               <div

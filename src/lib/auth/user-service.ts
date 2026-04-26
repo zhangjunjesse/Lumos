@@ -90,7 +90,7 @@ function extractWebSessionToken(res: Response): string {
   return match ? match[1] : '';
 }
 
-interface RemoteUser {
+export interface RemoteUser {
   id: string;
   email: string;
   nickname: string;
@@ -151,7 +151,7 @@ function upsertLocalUser(remoteUser: RemoteUser, webSessionToken: string, now: s
   );
 }
 
-async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
+export async function provisionUserServices(remoteUser: RemoteUser): Promise<void> {
   if (remoteUser.chat_providers !== undefined) {
     try {
       await provisionChatProviders(remoteUser.chat_providers);

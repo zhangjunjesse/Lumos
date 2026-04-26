@@ -56,6 +56,13 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       );
     }
 
+    if (existing.provider_origin === 'system') {
+      return NextResponse.json<ErrorResponse>(
+        { error: '系统下发的服务商不可修改，如需调整请联系管理员在后台更新' },
+        { status: 409 }
+      );
+    }
+
     // If api_key starts with ***, the client sent back a masked value — don't update it
     if (body.api_key && body.api_key.startsWith('***')) {
       delete body.api_key;
@@ -94,6 +101,14 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
 
   try {
+    const existing = getProvider(id);
+    if (existing?.provider_origin === 'system') {
+      return NextResponse.json<ErrorResponse>(
+        { error: '系统下发的服务商不可删除，如需下架请联系管理员在后台操作' },
+        { status: 409 }
+      );
+    }
+
     const deleted = deleteProvider(id);
     if (!deleted) {
       return NextResponse.json<ErrorResponse>(

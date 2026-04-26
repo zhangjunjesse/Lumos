@@ -64,6 +64,13 @@ export interface CloudChatProviderConfig {
   base_url: string;
   /** 每次请求传给 new-api 的 sk-…，来自当前登录用户的 newapi_token_key。 */
   api_key: string;
+  /**
+   * 对应 new-api 的 channel id。桌面端请求时会同时补 admin-token `-channelId`
+   * 后缀，并保留 `Specific-Channel-Id` 兼容头，确保 new-api 精确路由到该
+   * channel，避免与其他共享同 model 的 channel 按 priority/weight 漂移。
+   * null 表示历史遗留、尚未建立 channel 的 provider。
+   */
+  newapi_channel_id: number | null;
   default_model: string;
   model_catalog: CloudChatProviderModel[];
 }

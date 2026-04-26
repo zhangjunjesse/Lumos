@@ -36,13 +36,20 @@ import {
   type ProviderOption,
 } from './module-override-config';
 
+interface ImageProviderSectionProps {
+  /** When true, hide add/edit/delete controls and restrict the provider
+   *  dropdown to `provider_origin='system'` rows. User can still switch
+   *  between admin-provisioned providers. */
+  readOnly?: boolean;
+}
+
 /**
  * Dedicated section for the image generation module. Split from
  * ModuleOverrideSection because its management surface (edit / delete the
  * bound image provider) is unique to this category and it is gated by the
  * `media` custom-provider flag independently of the text modules.
  */
-export function ImageProviderSection() {
+export function ImageProviderSection({ readOnly = false }: ImageProviderSectionProps = {}) {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [providerId, setProviderId] = useState('');
   const [modelId, setModelId] = useState('');
@@ -80,6 +87,7 @@ export function ImageProviderSection() {
         (provData.providers || []).map((p) => ({
           id: p.id, name: p.name, capabilities: p.capabilities,
           provider_type: p.provider_type, auth_mode: p.auth_mode,
+          provider_origin: p.provider_origin || 'custom',
           model_catalog: p.model_catalog || '[]',
         })),
       );
@@ -217,7 +225,9 @@ export function ImageProviderSection() {
     );
   }
 
-  const eligible = providers.filter((p) => providerEligibleForModule(p, config));
+  const eligible = providers.filter(
+    (p) => providerEligibleForModule(p, config) && (!readOnly || p.provider_origin === 'system'),
+  );
   const currentProvider = providerId ? providerMap.get(providerId) || null : null;
   const currentValid = !providerId || eligible.some((p) => p.id === providerId);
   const models = currentProvider ? parseModelCatalog(currentProvider.model_catalog) : [];
@@ -228,7 +238,9 @@ export function ImageProviderSection() {
         <CardHeader>
           <CardTitle className="text-base font-semibold">图片生成服务</CardTitle>
           <p className="text-sm text-muted-foreground">
-            为图片生成选择独立的 AI 服务。
+            {readOnly
+              ? '管理员已关闭自定义服务商，以下是可用的图片生成服务。'
+              : '为图片生成选择独立的 AI 服务。'}
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -285,14 +297,16 @@ export function ImageProviderSection() {
                     </SelectContent>
                   </Select>
                 )}
-                <Button
-                  variant="outline" size="sm"
-                  className="w-full justify-center gap-1.5 text-xs"
-                  onClick={() => setCreateOpen(true)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  添加服务
-                </Button>
+                {!readOnly && (
+                  <Button
+                    variant="outline" size="sm"
+                    className="w-full justify-center gap-1.5 text-xs"
+                    onClick={() => setCreateOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    添加服务
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -302,7 +316,7 @@ export function ImageProviderSection() {
               )}
               {eligible.length === 0 ? (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  还没有可用的服务。{config.emptyHint}
+                  {readOnly ? '管理员尚未配置图片生成服务。' : `还没有可用的服务。${config.emptyHint}`}
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
@@ -312,6 +326,7 @@ export function ImageProviderSection() {
             {currentProvider && currentValid && (
               <ImageProviderDetail
                 provider={currentProvider}
+                readOnly={readOnly}
                 onEdit={() => { void openEditDialog(currentProvider.id); }}
                 onDelete={() => {
                   setDeleteTargetId(currentProvider.id);

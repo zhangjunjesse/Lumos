@@ -82,7 +82,14 @@ export {
 } from './providers';
 
 // Token stats
-export { getTokenUsageStats } from './token-stats';
+export {
+  getTokenUsageStats,
+  type TokenUsageGranularity,
+  type TokenUsageQuery,
+  type TokenUsageSummary,
+  type TokenUsageBucket,
+  type TokenUsageStats,
+} from './token-stats';
 
 // Media
 export {
