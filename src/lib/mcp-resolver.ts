@@ -17,7 +17,7 @@ import type {
 import { getEnabledMcpServersAsConfig, dataDir } from '@/lib/db';
 import type { MCPServerConfig } from '@/types';
 import { ENRICHER_MAP, type McpEnrichContext } from '@/lib/mcp-env-enrichers';
-import { getVenvPythonPath } from '@/lib/python-venv';
+import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
 
 export interface McpResolveOptions {
@@ -48,7 +48,12 @@ export function resolveEnabledMcpServers(
   // Build resolution context (once per call)
   const runtimePath = resolveRuntimePath();
   const workspacePath = options.sessionWorkingDirectory || process.cwd();
-  const pythonPath = resolvePythonBinary() || getVenvPythonPath();
+  // [PYTHON_PATH] must resolve to the lumos venv when it's ready — that's where
+  // pip packages required by Python MCPs (mcp[cli], zstandard, etc.) live.
+  // System python is only the fallback for first-run before venv exists.
+  const pythonPath = isVenvReady()
+    ? getVenvPythonPath()
+    : (resolvePythonBinary() || getVenvPythonPath());
   const enrichContext: McpEnrichContext = {
     sessionWorkingDirectory: options.sessionWorkingDirectory,
     sessionId: options.sessionId,
