@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import {
   DropdownMenu,
@@ -84,6 +85,8 @@ function StatusDot({ status, enabled }: { status: string; enabled: boolean }) {
 
 function ScheduleCard({
   schedule: s,
+  selected,
+  onSelectToggle,
   onEdit,
   onNavigate,
   onToggle,
@@ -91,6 +94,8 @@ function ScheduleCard({
   onTrigger,
 }: {
   schedule: ScheduledWorkflow;
+  selected: boolean;
+  onSelectToggle: (id: string, next: boolean) => void;
   onEdit: (s: ScheduledWorkflow) => void;
   onNavigate: (s: ScheduledWorkflow) => void;
   onToggle: (id: string, enabled: boolean) => void;
@@ -99,10 +104,22 @@ function ScheduleCard({
 }) {
   return (
     <div
-      className={`group relative rounded-lg border border-border/60 bg-card p-4 hover:shadow-md hover:border-border transition-all cursor-pointer ${!s.enabled ? 'opacity-55' : ''}`}
+      className={`group relative rounded-lg border bg-card p-4 hover:shadow-md transition-all cursor-pointer ${
+        selected ? 'border-primary/60 ring-1 ring-primary/30' : 'border-border/60 hover:border-border'
+      } ${!s.enabled ? 'opacity-55' : ''}`}
       onClick={() => onNavigate(s)}
     >
       <div className="flex items-start gap-3">
+        <div
+          className="flex items-center pt-1 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(value) => onSelectToggle(s.id, value === true)}
+            aria-label={`选择任务 ${s.name}`}
+          />
+        </div>
         <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-lg shrink-0">
           {!s.enabled ? '⏸' : s.runMode === 'once' ? '▶' : '⏰'}
         </div>
@@ -179,6 +196,8 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
   const [triggering, setTriggering] = useState<string | null>(null);
   const [triggerMsg, setTriggerMsg] = useState('');
   const [runDialog, setRunDialog] = useState<{ schedule: ScheduledWorkflow; params: WorkflowParamDef[] } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -188,6 +207,20 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
       setSchedules(data.schedules || []);
     } catch { /* ignore */ } finally { setLoading(false); }
   }, []);
+
+  // Drop selections that no longer exist (e.g. deleted out of band) so the
+  // toolbar count never drifts from reality.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const liveIds = new Set(schedules.map((s) => s.id));
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (liveIds.has(id)) next.add(id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [schedules]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -231,6 +264,63 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
     }
   }, [triggering, doTrigger]);
 
+  const toggleSelect = useCallback((id: string, next: boolean) => {
+    setSelectedIds((prev) => {
+      const out = new Set(prev);
+      if (next) out.add(id);
+      else out.delete(id);
+      return out;
+    });
+  }, []);
+
+  const allSelected = useMemo(
+    () => schedules.length > 0 && schedules.every((s) => selectedIds.has(s.id)),
+    [schedules, selectedIds],
+  );
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === schedules.length && schedules.length > 0) return new Set();
+      return new Set(schedules.map((s) => s.id));
+    });
+  }, [schedules]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0 || bulkDeleting) return;
+    if (!confirm(`确认批量删除选中的 ${selectedIds.size} 个任务？正在执行的会一并停止。`)) return;
+    setBulkDeleting(true);
+    setTriggerMsg('');
+    try {
+      const ids = Array.from(selectedIds);
+      const res = await fetch('/api/workflow/schedules/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json() as {
+        error?: string;
+        summary?: { deleted: number; failed: number; cancelledRuns: number };
+      };
+      if (!res.ok || data.error) {
+        setTriggerMsg(`批量删除失败: ${data.error || res.statusText}`);
+      } else if (data.summary) {
+        const { deleted, failed, cancelledRuns } = data.summary;
+        const parts = [`✅ 已删除 ${deleted} 个任务`];
+        if (cancelledRuns > 0) parts.push(`同时停止 ${cancelledRuns} 个执行中的工作流`);
+        if (failed > 0) parts.push(`${failed} 个删除失败`);
+        setTriggerMsg(parts.join('，'));
+      }
+      clearSelection();
+      await load();
+    } catch (err) {
+      setTriggerMsg(`批量删除失败: ${err instanceof Error ? err.message : '未知错误'}`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [selectedIds, bulkDeleting, load, clearSelection]);
+
   return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -244,6 +334,45 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
         {triggerMsg && (
           <div className={`text-sm px-3 py-2 rounded-lg border ${triggerMsg.startsWith('✅') ? 'bg-green-500/10 text-green-700 border-green-500/20' : 'bg-destructive/10 text-destructive border-destructive/20'}`}>
             {triggerMsg}
+          </div>
+        )}
+
+        {schedules.length > 0 && (
+          <div className="sticky top-0 z-10 -mx-1 px-1 py-2 backdrop-blur bg-background/80 border-b border-border/40">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <Checkbox
+                checked={allSelected ? true : selectedIds.size > 0 ? 'indeterminate' : false}
+                onCheckedChange={() => toggleSelectAll()}
+                aria-label="全选"
+              />
+              <span className="text-muted-foreground">
+                {selectedIds.size === 0
+                  ? `共 ${schedules.length} 个任务`
+                  : `已选 ${selectedIds.size} / ${schedules.length}`}
+              </span>
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-8"
+                    disabled={bulkDeleting}
+                    onClick={() => void handleBulkDelete()}
+                  >
+                    {bulkDeleting ? '删除中…' : `🗑 删除 ${selectedIds.size} 个`}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8"
+                    disabled={bulkDeleting}
+                    onClick={clearSelection}
+                  >
+                    取消选择
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -264,6 +393,8 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
               <ScheduleCard
                 key={s.id}
                 schedule={s}
+                selected={selectedIds.has(s.id)}
+                onSelectToggle={toggleSelect}
                 onEdit={onEdit}
                 onNavigate={(s) => router.push(`/workflow/schedules/${s.id}`)}
                 onToggle={handleToggle}

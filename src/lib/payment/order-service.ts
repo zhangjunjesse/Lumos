@@ -8,13 +8,10 @@ export interface RechargePlan {
   name: string;
   price: number;
   quotaYuan: number;
-  membership: 'monthly' | null;
 }
 
 export const RECHARGE_PLANS: readonly RechargePlan[] = [
-  { id: 'monthly_basic', name: '基础月卡', price: 99, quotaYuan: 50, membership: 'monthly' },
-  { id: 'monthly_pro', name: '专业月卡', price: 199, quotaYuan: 120, membership: 'monthly' },
-  { id: 'topup_50', name: '额度充值 ¥50', price: 50, quotaYuan: 25, membership: null },
+  { id: 'topup_50', name: '余额充值 ¥50', price: 50, quotaYuan: 50 },
 ] as const;
 
 export interface Order {
@@ -114,16 +111,12 @@ async function applyPlanBenefits(
   userId: string,
   plan: RechargePlan
 ): Promise<void> {
+  void db;
+  void userId;
+  void plan;
   // Quota top-up lives on lumos-web: it owns new-api admin credentials and
   // the authoritative lumos_image_usage ledger. Desktop must not touch
   // new-api directly, so plan.quotaYuan is intentionally not applied here.
-  if (plan.membership) {
-    db.prepare(`
-      UPDATE lumos_users
-      SET membership = ?, membership_expires_at = datetime('now', '+30 days')
-      WHERE id = ?
-    `).run(plan.membership, userId);
-  }
 }
 
 export function getOrdersByUser(userId: string, limit = 20): Order[] {
