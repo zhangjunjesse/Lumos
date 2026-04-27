@@ -633,6 +633,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             toolName.startsWith('mcp__feishu__')
             || toolName.startsWith('mcp__lumos-image__')
             || toolName.startsWith('mcp__lumos-knowledge__')
+            || toolName.startsWith('mcp__wechat-export__')
           ) {
             return { behavior: 'allow' as const, updatedInput: input };
           }
