@@ -752,6 +752,8 @@ export interface ProviderModelOption {
   input_price_per_mtok?: number;
   /** 可选展示单价（每 1,000,000 输出 token 的额度单位）。 */
   output_price_per_mtok?: number;
+  /** 可选展示单价（每张生成图片消耗的额度单位，500000 = ¥1）。仅图片模型有。 */
+  price_per_image?: number;
 }
 
 export interface ProviderModelGroup {

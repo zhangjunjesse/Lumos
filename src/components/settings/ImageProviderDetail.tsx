@@ -2,8 +2,8 @@
 
 import { Button } from '@/components/ui/button';
 import { Edit2, Trash2 } from 'lucide-react';
-import { formatYuanPerMtok } from '@/lib/pricing';
-import { parseModelCatalog, type ProviderModelItem, type ProviderOption } from './module-override-config';
+import { formatYuanPerImage } from '@/lib/pricing';
+import { parseModelCatalog, type ProviderOption } from './module-override-config';
 
 interface ImageProviderDetailProps {
   provider: ProviderOption;
@@ -14,15 +14,11 @@ interface ImageProviderDetailProps {
   readOnly?: boolean;
 }
 
-function hasModelPricing(model: ProviderModelItem): boolean {
-  return Boolean(model.input_price_per_mtok || model.output_price_per_mtok);
-}
-
 export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = false }: ImageProviderDetailProps) {
   const models = parseModelCatalog(provider.model_catalog);
   const hasKey = provider.auth_mode !== 'local_auth';
   const locked = readOnly || provider.provider_origin === 'system';
-  const anyPriced = models.some(hasModelPricing);
+  const anyPriced = models.some((m) => m.price_per_image && m.price_per_image > 0);
 
   return (
     <div className="mt-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5">
@@ -63,9 +59,7 @@ export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = fal
       {models.length > 0 && (
         <ul className="mt-2.5 space-y-1 border-t border-border/30 pt-2">
           {models.map((model) => {
-            const inputPrice = formatYuanPerMtok(model.input_price_per_mtok);
-            const outputPrice = formatYuanPerMtok(model.output_price_per_mtok);
-            const priced = Boolean(inputPrice || outputPrice);
+            const price = formatYuanPerImage(model.price_per_image);
             return (
               <li
                 key={model.value}
@@ -74,12 +68,10 @@ export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = fal
                 <span className="font-mono text-foreground/90 truncate" title={model.label}>
                   {model.label}
                 </span>
-                {priced ? (
+                {price ? (
                   <span className="shrink-0 text-muted-foreground tabular-nums">
-                    输入 {inputPrice ?? '—'}
-                    <span className="text-muted-foreground/50"> · </span>
-                    输出 {outputPrice ?? '—'}
-                    <span className="text-muted-foreground/50"> / 1M tokens</span>
+                    {price}
+                    <span className="text-muted-foreground/60"> / 张</span>
                   </span>
                 ) : anyPriced ? (
                   // Keep alignment when other models in the list show pricing.

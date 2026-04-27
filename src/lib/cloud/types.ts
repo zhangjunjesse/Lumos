@@ -29,6 +29,12 @@ export interface CloudUserInfo {
 export interface CloudImageProviderModel {
   value: string;
   label: string;
+  /**
+   * Per-image price in new-api quota units (500000 = ¥1). Optional for
+   * backward compatibility with older lumos-web releases that stripped the
+   * field; recent releases include it for display in the settings card.
+   */
+  price_per_image?: number;
 }
 
 export interface CloudImageProviderConfig {

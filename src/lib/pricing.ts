@@ -22,3 +22,16 @@ export function formatYuanPerMtok(units: number | undefined | null): string | nu
   if (yuan >= 1) return `¥${yuan.toFixed(1).replace(/\.0$/, '')}`;
   return `¥${yuan.toFixed(2)}`;
 }
+
+/**
+ * Format a per-image price (in quota units) as a short ¥ string. Image
+ * generation is billed per image rather than per token, so this lives
+ * separately from `formatYuanPerMtok`.
+ */
+export function formatYuanPerImage(units: number | undefined | null): string | null {
+  if (!units || !Number.isFinite(units) || units <= 0) return null;
+  const yuan = units / QUOTA_UNITS_PER_YUAN;
+  if (yuan >= 10) return `¥${yuan.toFixed(0)}`;
+  if (yuan >= 1) return `¥${yuan.toFixed(2).replace(/\.?0+$/, '')}`;
+  return `¥${yuan.toFixed(3).replace(/\.?0+$/, '')}`;
+}
