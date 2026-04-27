@@ -138,7 +138,11 @@ export default function WorkflowPage() {
   const cardProps = (w: WorkflowItem) => ({
     id: w.id,
     name: w.name,
-    description: w.description,
+    // Fallback to DSL-level description so historical workflows (saved before
+    // the editor mirrored description into the workflows column) still render.
+    description: w.description
+      || (w.workflowDsl as { description?: string } | undefined)?.description
+      || '',
     dslVersion: w.dslVersion,
     stepCount: Array.isArray(w.workflowDsl?.nodes) ? w.workflowDsl.nodes.length : 0,
     updatedAt: w.updatedAt,

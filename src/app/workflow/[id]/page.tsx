@@ -189,7 +189,13 @@ export default function WorkflowDetailPage() {
       const res = await fetch(`/api/workflow/definitions/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, workflowDsl: dsl }),
+        body: JSON.stringify({
+          name,
+          // Mirror DSL-level description into the workflows table so the list
+          // card (which reads workflows.description) stays in sync.
+          description: (dsl as { description?: string }).description ?? '',
+          workflowDsl: dsl,
+        }),
       });
       const data = await res.json() as { error?: string; workflow?: { workflowDsl: unknown; name: string } };
       if (!res.ok || data.error) { setSaveMsg(data.error || '保存失败'); return; }
