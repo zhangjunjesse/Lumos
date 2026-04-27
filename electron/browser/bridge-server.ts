@@ -446,6 +446,7 @@ export class BrowserBridgeServer {
       let currentHost = '';
       try { currentHost = new URL(currentUrl).hostname; } catch { /* ignore */ }
       if (currentHost && hostnameMatchesDomain(currentHost, domain)) {
+        manager.markTabBackground(existing, true);
         manager.ensureViewRenderable(existing);
         if (!manager.isCDPConnected(existing)) await manager.connectCDP(existing);
         return existing;
@@ -454,12 +455,13 @@ export class BrowserBridgeServer {
       try {
         await manager.navigate(existing, { url: landingUrl, waitUntil: 'domcontentloaded' });
       } catch { /* fall through to waitForPageStable */ }
+      manager.markTabBackground(existing, true);
       await waitForPageStable(manager, existing, { timeoutMs: 12_000, background: true });
       return existing;
     }
 
     // Create a fresh background tab for this domain.
-    const pageId = await manager.createTab(landingUrl);
+    const pageId = await manager.createTab(landingUrl, { background: true });
     manager.ensureViewRenderable(pageId);
     try {
       await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: true });
@@ -644,7 +646,10 @@ export class BrowserBridgeServer {
           details: body?.url || 'about:blank',
         },
         async () => {
-          const createdPageId = await manager.createTab(body?.url, { incognito: body?.incognito });
+          const createdPageId = await manager.createTab(body?.url, {
+            incognito: body?.incognito,
+            background: body?.background === true,
+          });
           if (body?.background) {
             // Set offscreen bounds so Chromium renders the page content
             manager.ensureViewRenderable(createdPageId);

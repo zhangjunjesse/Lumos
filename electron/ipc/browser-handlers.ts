@@ -133,9 +133,10 @@ export function setupBrowserIPC(getBrowserManager: () => BrowserManager | null):
     try {
       const manager = getBrowserManager();
       if (!manager) throw new Error('Browser manager is not initialized');
-      const tabs = manager.getTabs();
+      const tabs = manager.getTabs().filter((tab) => !tab.isBackground);
       const activeTabId = manager.getActiveTabId();
-      return { success: true, tabs, activeTabId };
+      const visibleActiveTabId = tabs.some((tab) => tab.id === activeTabId) ? activeTabId : null;
+      return { success: true, tabs, activeTabId: visibleActiveTabId };
     } catch (error: unknown) {
       return { success: false, error: formatError(error) };
     }

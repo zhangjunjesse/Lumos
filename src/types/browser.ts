@@ -11,6 +11,7 @@ export interface BrowserTab {
   canGoBack: boolean;
   canGoForward: boolean;
   isPinned: boolean;
+  isBackground?: boolean;
   createdAt: number;
   lastAccessedAt: number;
 }

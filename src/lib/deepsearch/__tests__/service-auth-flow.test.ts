@@ -342,6 +342,16 @@ describe('deepsearch service auth flow', () => {
       '/v1/pages/evaluate',
       '/v1/pages/close',
     ]));
+    expect(mockPostToBrowserBridge).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/pages/new',
+      expect.objectContaining({ background: true }),
+    );
+    expect(mockPostToBrowserBridge).toHaveBeenCalledWith(
+      expect.anything(),
+      '/v1/pages/evaluate',
+      expect.objectContaining({ background: true }),
+    );
   });
 
   it('does not re-import saved cookies during background waiting-login reconciliation', async () => {

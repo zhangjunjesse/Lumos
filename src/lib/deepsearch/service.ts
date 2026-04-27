@@ -353,9 +353,10 @@ async function maybeValidateSiteSessionByPage(params: {
   try {
     const created = await postToBrowserBridge<BrowserBridgePageMutationResponse>(params.config, '/v1/pages/new', {
       url: validationUrl,
+      background: true,
     });
     pageId = created.pageId;
-    const snapshot = await getPageContentCapture(params.config, pageId);
+    const snapshot = await getPageContentCapture(params.config, pageId, true);
     const result = validateDeepSearchSiteSessionFromPage({
       url: snapshot?.url || validationUrl,
       title: snapshot?.title || '',

@@ -494,6 +494,7 @@ export class StageWorker {
     const lumosMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: getStageExecutionCwd(payload),
       sessionId: payload.sessionId,
+      browserBackground: true,
     })
     const stdioMcpServers = lumosMcpServers ? toSdkMcpConfig(lumosMcpServers) : undefined
 

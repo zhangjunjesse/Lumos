@@ -38,6 +38,18 @@ npm run lint           # 代码检查
 
 ---
 
+## DeepSearch / 浏览器运行时规则
+
+- DeepSearch、Workflow code-only 浏览器步骤、站点探测、页面快照、截图、页面校验等自动化浏览器操作默认必须走后台模式，向 browser bridge 传 `background: true`。
+- 自动化任务不得通过 `content-browser:open-url-in-tab` 打开右侧浏览器面板，不得主动切换用户当前可见 tab，也不得把后台自动化页作为用户可见页签持久化。
+- 如果后台自动化页面触发 `target=_blank`、弹窗、重定向新窗口或站点隐藏页复用，派生出的新页也必须继承后台属性。
+- ChatView 收到 `chrome-devtools` / browser MCP tool_use 时不得自动调用 `setContentPanelOpen(true)`；只允许保留用户手动点击的“Open”入口。
+- 普通聊天、桥接会话、StageWorker 加载 browser MCP 时默认应注入 `LUMOS_BROWSER_BACKGROUND=1`，避免模型误用原始浏览器工具时抢占用户界面。
+- 只有用户显式点击“打开登录页”、手动调试、或明确要求接管当前页时，才允许前台打开或切换浏览器页面。
+- 修改 DeepSearch 登录态、adapter、browser bridge 或 BrowserManager 相关代码时，必须检查用户聊天中触发 DeepSearch 的路径是否仍然“不打扰当前 UI”。
+
+---
+
 ## 项目结构
 
 ```

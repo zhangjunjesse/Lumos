@@ -823,6 +823,7 @@ app.whenReady().then(async () => {
       const targetUrl = details.url;
       const isHttpUrl = /^https?:\/\//i.test(targetUrl);
       const forceExternal = details.features.includes('lumos_external=1');
+      const isBackgroundAutomation = browserManager?.isBackgroundWebContents(contents) === true;
 
       if (isDev) {
         console.log('[window-open:global]', {
@@ -838,6 +839,15 @@ app.whenReady().then(async () => {
         if (isHttpUrl) {
           void shell.openExternal(targetUrl);
         }
+        return { action: 'deny' };
+      }
+
+      if (isHttpUrl && isBackgroundAutomation && browserManager && !targetUrl.startsWith(appOriginPrefix)) {
+        void browserManager.createTab(targetUrl, { background: true }).then((tabId) => {
+          browserManager?.ensureViewRenderable(tabId);
+        }).catch((error) => {
+          console.warn('[window-open:global] failed to keep background popup hidden:', error);
+        });
         return { action: 'deny' };
       }
 
@@ -857,6 +867,21 @@ app.whenReady().then(async () => {
         }
         if (candidateUrl.startsWith(appOriginPrefix)) {
           return false;
+        }
+        if (browserManager?.isBackgroundWebContents(contents) === true) {
+          void browserManager.createTab(candidateUrl, { background: true }).then((tabId) => {
+            browserManager?.ensureViewRenderable(tabId);
+          }).catch((error) => {
+            console.warn('[window-open:fallback-forward] failed to keep background popup hidden:', error);
+          });
+          if (!createdWindow.isDestroyed()) {
+            setImmediate(() => {
+              if (!createdWindow.isDestroyed()) {
+                createdWindow.close();
+              }
+            });
+          }
+          return true;
         }
 
         if (isDev) {

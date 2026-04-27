@@ -33,6 +33,7 @@ export interface BrowserTab {
   canGoForward: boolean;
   isPinned: boolean;
   isIncognito?: boolean;
+  isBackground?: boolean;
   createdAt: number;
   lastAccessedAt: number;
 }
@@ -495,7 +496,7 @@ export class BrowserManager extends EventEmitter {
     this.handleWindowResize();
   }
 
-  async createTab(url?: string, options?: { incognito?: boolean }): Promise<string> {
+  async createTab(url?: string, options?: { incognito?: boolean; background?: boolean }): Promise<string> {
     if (this.tabs.size >= this.maxTabs) {
       // Auto-close the oldest non-active, non-pinned tab to make room
       const victim = this.findEvictableTab();
@@ -526,6 +527,7 @@ export class BrowserManager extends EventEmitter {
         canGoForward: false,
         isPinned: false,
         isIncognito: incognito || undefined,
+        isBackground: options?.background || undefined,
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
       };
@@ -565,6 +567,7 @@ export class BrowserManager extends EventEmitter {
     if (!metadata) {
       throw new Error(`Tab ${tabId} not found`);
     }
+    metadata.isBackground = undefined;
 
     let view = this.tabs.get(tabId);
     if (!view) {
@@ -777,6 +780,22 @@ export class BrowserManager extends EventEmitter {
     const bounds = view.getBounds();
     if (bounds.width > 0 && bounds.height > 0) return;
     view.setBounds({ x: -10000, y: -10000, width: 1280, height: 800 });
+  }
+
+  markTabBackground(tabId: string, isBackground = true): void {
+    const metadata = this.tabMetadata.get(tabId);
+    if (!metadata) return;
+    metadata.isBackground = isBackground || undefined;
+    void this.persistTabState(tabId);
+  }
+
+  isBackgroundWebContents(contents: WebContents): boolean {
+    for (const [tabId, view] of this.tabs.entries()) {
+      if (view?.webContents === contents) {
+        return this.tabMetadata.get(tabId)?.isBackground === true;
+      }
+    }
+    return false;
   }
 
   getSessionPartition(): string {
@@ -1124,7 +1143,16 @@ export class BrowserManager extends EventEmitter {
 
       void (async () => {
         try {
-          const createdTabId = await this.createTab(targetUrl);
+          const sourceTab = this.tabMetadata.get(tabId);
+          const shouldStayBackground = sourceTab?.isBackground === true;
+          const createdTabId = await this.createTab(targetUrl, {
+            incognito: sourceTab?.isIncognito,
+            background: shouldStayBackground,
+          });
+          if (shouldStayBackground) {
+            this.ensureViewRenderable(createdTabId);
+            return;
+          }
           await this.switchTab(createdTabId);
           const hostWindow = this.mainWindow as BrowserWindow;
           if (!hostWindow.webContents.isDestroyed()) {
@@ -1327,8 +1355,11 @@ export class BrowserManager extends EventEmitter {
   private async persistTabState(tabId: string): Promise<void> {
     const metadata = this.tabMetadata.get(tabId);
     if (!metadata) return;
-    // Incognito tabs should not be persisted to disk
-    if (metadata.isIncognito) return;
+    // Incognito and automation-only background tabs should not be restored as user tabs.
+    if (metadata.isIncognito || metadata.isBackground) {
+      this.database.deleteTabState(tabId);
+      return;
+    }
 
     let scrollPosition = { x: 0, y: 0 };
     const view = this.tabs.get(tabId);

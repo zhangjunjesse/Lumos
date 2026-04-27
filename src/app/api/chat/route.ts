@@ -109,6 +109,7 @@ Available browser tools (call by exact name):
 
 Workflow: call \`mcp__chrome-devtools__list_pages\` → get pageId → use other tools with that pageId.
 If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome-devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.
+Browser tools run in background mode during chat. Do not open or switch the user's visible browser panel unless the user explicitly asks to see/control the page.
 Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
 
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
@@ -850,7 +851,7 @@ export async function POST(request: NextRequest) {
       sessionId: session_id,
       browserBridgeOverride: readChromeBridgeEnvFromRequest(request),
       skipNames: new Set(['task-management']),
-      browserBackground: isWorkflowChatSession(session),
+      browserBackground: true,
     });
     console.timeEnd('[perf] MCP servers loading');
 

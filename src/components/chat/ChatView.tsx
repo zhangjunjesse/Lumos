@@ -20,7 +20,6 @@ import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
-import { extractChromeMcpUrl, openBrowserUrlInPanel } from '@/lib/chrome-mcp';
 import { useStreamingStore } from '@/stores/streaming-store';
 import { useMessagesStore } from '@/stores/messages-store';
 import {
@@ -126,7 +125,7 @@ export function ChatView({
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
-  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setContentPanelOpen } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId } = usePanel();
   const effectiveWorkingDirectory = useMemo(
     () => workingDirectoryOverride || workingDirectory,
     [workingDirectoryOverride, workingDirectory]
@@ -841,11 +840,6 @@ export function ChatView({
               return next;
             });
 
-            const browserUrl = extractChromeMcpUrl(tool.name, tool.input);
-            if (browserUrl) {
-              setContentPanelOpen(true);
-              openBrowserUrlInPanel(browserUrl);
-            }
           },
           onToolResult: (res) => {
             markActive();
@@ -1093,7 +1087,6 @@ export function ChatView({
       scheduleIdleMemoryTrigger,
       refreshSessionMetadata,
       sessionId,
-      setContentPanelOpen,
       setPendingApprovalSessionId,
       setStreamingSessionId,
       startStreamingSession,

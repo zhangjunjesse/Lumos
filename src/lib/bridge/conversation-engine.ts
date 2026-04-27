@@ -127,6 +127,7 @@ export class ConversationEngine {
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: session.working_directory || undefined,
       sessionId,
+      browserBackground: true,
     });
     const hints: string[] = [];
 
