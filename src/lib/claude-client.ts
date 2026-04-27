@@ -549,13 +549,40 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
         const currentMcpSignature = computeMcpSignature(mcpServers);
         const storedMcpSignature = sessionId ? (getSetting(getSessionMcpSignatureKey(sessionId)) || '') : '';
+        const mcpSignatureChanged = !!sessionId
+          && storedMcpSignature !== ''
+          && currentMcpSignature !== storedMcpSignature;
+
+        // If the MCP set changed since last resume (e.g. user just enabled a new
+        // built-in MCP like wechat-export), the resumed CLI session will not
+        // pick up the new tool process. Drop resume for this one query so the
+        // SDK starts a fresh session with the full new tool set; the new
+        // sdkSessionId is captured downstream and subsequent messages resume
+        // normally. One-time hit per MCP set change — does not violate the
+        // "no full reconnect on every message" rule.
+        if (shouldResume && mcpSignatureChanged) {
+          console.log('[claude-client] MCP signature changed on resume — starting fresh CLI session', {
+            stored: storedMcpSignature.slice(0, 12),
+            current: currentMcpSignature.slice(0, 12),
+          });
+          shouldResume = false;
+          if (sessionId) {
+            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+          }
+          controller.enqueue(formatSSE({
+            type: 'status',
+            data: JSON.stringify({
+              notification: true,
+              title: '工具集已更新',
+              message: '检测到新的工具,已重新加载会话以让 AI 使用新工具。',
+            }),
+          }));
+        }
+
         if (hasMcpServers) {
           const serverNames = Object.keys(mcpServers!);
           const forceReloadOnResume = shouldResume
-            && (
-              getSetting('mcp_reload_on_resume') === 'true'
-              || currentMcpSignature !== storedMcpSignature
-            );
+            && getSetting('mcp_reload_on_resume') === 'true';
 
           emitStatus(
             controller,
@@ -573,11 +600,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (!shouldResume || forceReloadOnResume) {
             console.log('[claude-client] Loading MCP servers:', {
               names: serverNames,
-              reason: shouldResume
-                ? currentMcpSignature !== storedMcpSignature
-                  ? 'resume-config-changed'
-                  : 'resume-reload'
-                : 'initial',
+              reason: shouldResume ? 'resume-reload' : 'initial',
             });
           } else {
             console.log('[claude-client] Resuming session, MCP config passed for reconnect safety');
