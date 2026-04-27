@@ -21,6 +21,7 @@ import {
   Globe,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
+import { formatYuanPerMtok } from '@/lib/pricing';
 import { isPro } from '@/lib/edition';
 import { useProAuthSelector } from '@/hooks/useProAuth';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -133,16 +134,8 @@ const CHAT_DRAFT_STORAGE_KEY = 'lumos.chat.draft';
 const CHAT_DRAFT_EVENT = 'lumos:chat-draft';
 const IMAGE_REQUEST_HINT_REGEX = /(生成图片|生成一张图|做图|改图|出图|海报|主图|banner|封面|插画|渲染|画一张|render|draw|generate image|image poster|image banner)/i;
 
-// 500000 quota units = ¥1；价格字段以“每 1M tokens 的 quota units”为单位。
-const QUOTA_UNITS_PER_YUAN = 500_000;
-
-function formatYuanPerMtok(units: number | undefined): string | null {
-  if (!units || !Number.isFinite(units) || units <= 0) return null;
-  const yuan = units / QUOTA_UNITS_PER_YUAN;
-  if (yuan >= 10) return `¥${yuan.toFixed(0)}`;
-  if (yuan >= 1) return `¥${yuan.toFixed(1).replace(/\.0$/, '')}`;
-  return `¥${yuan.toFixed(2)}`;
-}
+// Pricing helpers (formatYuanPerMtok / QUOTA_UNITS_PER_YUAN) live in
+// @/lib/pricing and are imported at the top of the file.
 
 interface ChatDraftPayload {
   text: string;

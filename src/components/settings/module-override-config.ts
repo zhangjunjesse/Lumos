@@ -1,10 +1,13 @@
 import { parseProviderCapabilities } from '@/lib/provider-config';
-import type { ApiProvider, ProviderCapability, ProviderPresetModule } from '@/types';
+import { parseProviderModelCatalog } from '@/lib/model-metadata';
+import type { ApiProvider, ProviderCapability, ProviderModelOption, ProviderPresetModule } from '@/types';
 
-export interface ProviderModelItem {
-  value: string;
-  label: string;
-}
+/**
+ * Catalog entry surfaced to the settings UIs. Same shape as the canonical
+ * ProviderModelOption so price fields (input_price_per_mtok / output_price_per_mtok)
+ * propagate through to the cards / dropdowns when the cloud has provisioned them.
+ */
+export type ProviderModelItem = ProviderModelOption;
 
 export interface ProviderOption {
   id: string;
@@ -102,5 +105,8 @@ export function providerEligibleForModule(provider: ProviderOption, config: Modu
 }
 
 export function parseModelCatalog(catalog: string): ProviderModelItem[] {
-  try { return JSON.parse(catalog) as ProviderModelItem[]; } catch { return []; }
+  // Delegate to the canonical parser so price fields (input_price_per_mtok /
+  // output_price_per_mtok) survive — the previous JSON.parse cast was lossy
+  // when callers consumed the result through the loose ProviderModelItem type.
+  return parseProviderModelCatalog(catalog);
 }
