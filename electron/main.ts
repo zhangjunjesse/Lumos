@@ -47,6 +47,16 @@ function configureUserDataPath(): void {
 
 configureUserDataPath();
 
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  console.warn('[main] Another Lumos instance is already running; quitting this instance.');
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    void reopenMainWindow();
+  });
+}
+
 function getBrowserBridgeRuntimeFilePath(): string {
   return path.join(getConfiguredDataDir(), BROWSER_BRIDGE_RUNTIME_RELATIVE_PATH);
 }
@@ -319,6 +329,38 @@ function loadUserShellEnv(): Record<string, string> {
   } catch (err) {
     console.warn('Failed to load user shell env:', err);
     return {};
+  }
+}
+
+async function clearVersionUpgradeCache(): Promise<void> {
+  const currentVersion = app.getVersion();
+  const versionFilePath = path.join(app.getPath('userData'), 'last-version.txt');
+  let lastVersion = '';
+
+  try {
+    lastVersion = fs.existsSync(versionFilePath)
+      ? fs.readFileSync(versionFilePath, 'utf-8').trim()
+      : '';
+  } catch (err) {
+    console.warn('[main] Failed to read last version file:', err);
+  }
+
+  if (lastVersion && lastVersion !== currentVersion) {
+    console.log(`Version changed from ${lastVersion} to ${currentVersion}, refreshing HTTP cache...`);
+    try {
+      // Do not clear service worker storage at startup; Chromium may keep the
+      // LevelDB open, and browser login/runtime state must survive upgrades.
+      await session.defaultSession.clearCache();
+      console.log('[main] HTTP cache cleared successfully');
+    } catch (err) {
+      console.warn('[main] Failed to clear HTTP cache on version upgrade:', err);
+    }
+  }
+
+  try {
+    fs.writeFileSync(versionFilePath, currentVersion, 'utf-8');
+  } catch (err) {
+    console.warn('[main] Failed to write last version file:', err);
   }
 }
 
@@ -725,11 +767,52 @@ function openAuthWindow(targetUrl: string) {
   });
 }
 
+async function reopenMainWindow(): Promise<void> {
+  if (!app.isReady()) {
+    return;
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  try {
+    if (!isDev && !serverProcess) {
+      const port = await getPort(getPreferredServerPort());
+      serverProcess = startServer(port);
+      await waitForServer(port);
+      serverPort = port;
+    }
+
+    createWindow(serverPort || getPreferredServerPort());
+    if (serverPort) {
+      await startBridgeRuntime(serverPort);
+    }
+
+    if (!isDev && mainWindow) {
+      setUpdaterWindow(mainWindow);
+    } else if (mainWindow) {
+      registerUpdaterHandlers(mainWindow);
+    }
+  } catch (err) {
+    console.error('Failed to reopen main window:', err);
+  }
+}
+
 async function ensureBridgeRuntimeReady(port: number): Promise<void> {
   await startBridgeRuntime(port);
 }
 
 app.whenReady().then(async () => {
+  if (!isPrimaryInstance) {
+    return;
+  }
+
   // Clear stale bridge runtime file from previous crashes/restarts.
   clearBrowserBridgeRuntime();
   clearBridgeRuntimeConfig();
@@ -892,25 +975,7 @@ app.whenReady().then(async () => {
     console.warn('[main] WARNING: User ~/.claude/ directory detected. Lumos uses isolated config at:', claudeConfigDir);
   }
 
-  // Clear cache on version upgrade
-  const currentVersion = app.getVersion();
-  const versionFilePath = path.join(app.getPath('userData'), 'last-version.txt');
-  try {
-    const lastVersion = fs.existsSync(versionFilePath)
-      ? fs.readFileSync(versionFilePath, 'utf-8').trim()
-      : '';
-    if (lastVersion && lastVersion !== currentVersion) {
-      console.log(`Version changed from ${lastVersion} to ${currentVersion}, clearing cache...`);
-      await session.defaultSession.clearCache();
-      await session.defaultSession.clearStorageData({
-        storages: ['cachestorage', 'serviceworkers'],
-      });
-      console.log('Cache cleared successfully');
-    }
-    fs.writeFileSync(versionFilePath, currentVersion, 'utf-8');
-  } catch (err) {
-    console.warn('Failed to check/clear version cache:', err);
-  }
+  await clearVersionUpgradeCache();
 
   // Skills sync moved to Next.js server to avoid better-sqlite3 ABI conflicts
 
@@ -1355,30 +1420,8 @@ app.on('window-all-closed', async () => {
   }
 });
 
-app.on('activate', async () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    try {
-      if (!isDev && !serverProcess) {
-        const port = await getPort(getPreferredServerPort());
-        serverProcess = startServer(port);
-        await waitForServer(port);
-        serverPort = port;
-      }
-      createWindow(serverPort || getPreferredServerPort());
-      if (serverPort) {
-        await startBridgeRuntime(serverPort);
-      }
-
-      // Re-attach updater to the new window
-      if (!isDev && mainWindow) {
-        setUpdaterWindow(mainWindow);
-      } else if (mainWindow) {
-        registerUpdaterHandlers(mainWindow);
-      }
-    } catch (err) {
-      console.error('Failed to restart server:', err);
-    }
-  }
+app.on('activate', () => {
+  void reopenMainWindow();
 });
 
 app.on('before-quit', async (e) => {

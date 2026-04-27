@@ -85,11 +85,12 @@ function TraceRow({ event }: { event: StepTraceEvent }) {
  * new events arrive unless the user has scrolled up to inspect history.
  */
 export function StepTraceStreamSection({
-  events, isRunning, title = '实时执行流',
+  events, isRunning, title = '实时执行流', emptyMessage = '等待 agent 开始输出...',
 }: {
   events?: StepTraceEvent[];
   isRunning: boolean;
   title?: string;
+  emptyMessage?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoStick, setAutoStick] = useState(true);
@@ -105,7 +106,7 @@ export function StepTraceStreamSection({
     return (
       <div className="rounded-lg border border-dashed border-border/50 bg-muted/10 px-3 py-4 text-xs text-muted-foreground text-center">
         <span className="inline-block w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin align-middle mr-2" />
-        等待 agent 开始输出...
+        {emptyMessage}
       </div>
     );
   }

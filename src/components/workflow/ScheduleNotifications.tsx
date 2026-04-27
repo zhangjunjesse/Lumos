@@ -14,7 +14,7 @@ interface ScheduleItem {
   id: string;
   name: string;
   lastRunAt: string | null;
-  lastRunStatus: 'success' | 'error' | '';
+  lastRunStatus: 'success' | 'error' | 'cancelled' | '';
   notifyOnComplete: boolean;
 }
 

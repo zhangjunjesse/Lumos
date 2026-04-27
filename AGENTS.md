@@ -52,6 +52,41 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - Status updates in chat should stay consistent with the latest `AGENTS.md`.
 - Use strict status language in `当前状态进度`; do not mark a goal complete if only the main path or POC path is working.
 
+## Task Lifecycle Safety Rules
+
+These rules exist because a prior bug let Workflow tasks disappear from the UI while the underlying OpenWorkflow run kept executing. Do not repeat that mistake.
+
+- Product verbs must be implemented by product semantics, not by table names:
+  - `停止 / 取消执行`: must interrupt the active runtime, stop agent/subagent work where possible, and write terminal state back to every visible execution record.
+  - `关闭 / 暂停任务`: must stop future triggers and also cancel currently running executions, unless the UI explicitly says "仅停止后续触发".
+  - `删除任务`: must first cancel all running executions for that task, verify they are terminal or no longer cancellable, and only then remove the visible task/schedule records.
+- For Workflow tasks, lifecycle code must account for all relevant state layers:
+  - `scheduled_workflows`: task definition and future trigger state.
+  - `schedule_run_history` and `schedule_run_steps`: user-visible execution records.
+  - `workflow_task_mapping` and `workflow_executions`: Lumos projection from task/session to workflow run.
+  - `~/.lumos/workflows.db` / OpenWorkflow `workflow_runs` and `step_attempts`: actual engine state.
+  - in-memory runtime controllers such as Scheduling `activeExecutions` and workflow subagent abort controllers.
+- Do not implement lifecycle behavior ad hoc inside UI components or thin route handlers. Route handlers should call a lifecycle/control service, e.g. `src/lib/workflow/schedule-run-control.ts` for scheduled Workflow runs, or create an equivalent service before adding new lifecycle actions.
+- If an execution history row is missing but a workflow projection or OpenWorkflow run is still `running`, code must include a conservative cleanup path that can still find and cancel the orphaned execution.
+- Lifecycle acceptance must check more than the UI:
+  - User action is visible in UI as `已取消` / `失败` / terminal state.
+  - There are no `schedule_run_history.status = 'running'` rows for the target task.
+  - Matching `workflow_executions` rows are terminal.
+  - Matching OpenWorkflow `workflow_runs` are not `pending / running / sleeping`.
+  - One-time tasks do not auto-trigger again after cancellation.
+- Never report "已删除", "已关闭", or "已停止" for a task unless the runtime side is confirmed or the remaining uncertainty is explicitly stated.
+
+## Electron Startup And Cache Safety Rules
+
+These rules exist because a prior version-upgrade path tried to delete Chromium Service Worker storage while another Electron process still held the LevelDB lock, causing repeated startup errors like `Failed to delete the database: Database IO error`.
+
+- Electron must have a single-instance guard before startup work that touches `app.getPath('userData')`, browser sessions, browser bridge runtime files, or SQLite databases.
+- Do not clear `serviceworkers`, `cachestorage`, cookies, local storage, or other browser/login storage during normal startup or version upgrade unless the user explicitly chooses a destructive reset action.
+- Version-upgrade maintenance may clear HTTP cache with `session.defaultSession.clearCache()`, but it must not block app startup if cache cleanup fails.
+- Always write the current app version after a best-effort upgrade-maintenance attempt; otherwise the app can get stuck retrying the same failed cleanup on every launch.
+- Treat `~/.lumos` as shared runtime state. Before adding startup cleanup, ask what other process/session might currently own the file or database being touched.
+- When startup logs mention Chromium storage/database deletion, verify whether an old Electron process is still running and holding `Service Worker/Database/LOCK` before changing unrelated code.
+
 ## 大目标
 
 - 按“完整实现”标准落地 `03 / 04 / 05 / 06` 任务架构文档，而不只是打通最小闭环。
@@ -120,6 +155,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
   - 成果：正式 `Workflow` 详情页里的浏览器步骤现已支持截图直接预览，并提供截图文件 / 详细结果的正式打开入口；`05` 的浏览器产物验收不再只依赖绝对路径文本。
   - 成果：正式“执行记录 > 结果文件”tab 已继续补上浏览器下载文件的正式验收体验；现在除步骤 output 目录下的文本/图片外，浏览器真实下载得到的 `.xlsx/.pdf/.docx` 等文件也会随步骤产物进入该 tab，并以“打开本地文件 / 下载原文件”的方式展示，不再误用文本预览或因未复制进 output 而完全不可见。
   - 成果：正式 `Workflow` 详情页现已继续补齐 agent / code 节点的执行留痕；当前工作流步骤运行时会把步骤结果摘要同步写入 `schedule_run_steps`、旧 run 详情也会回退解析会话消息补摘要，且 agent / code 节点都会额外把 summary 落到本步骤 `output` 目录并写入 `_lumos_step_input.json` 输入快照，使“步骤详情 / 完整输入上下文 / 结果文件”不再只对浏览器节点完整、也不再出现“节点跑完但没有可见输出物”的黑盒状态。
+  - 成果：正式 `Workflow` 任务的关闭 / 删除 / 执行记录停止已补真实执行收口；现在关闭任务会取消同任务下正在运行的 workflow，删除任务前也会先取消底层执行，执行记录页新增“停止执行”，一次性任务取消后会自动暂停，且当历史 run 记录已被删但 workflow projection 仍残留 running 时也会按任务名兜底取消，减少“UI 看似删除但底层还在跑”的断链。
   - 成果：按 `01 / 02 / 03` 设计文档要求，主 Agent 复杂请求已补上正式下发闭环：命中复杂任务时会直接创建 Task Management 任务并返回交接确认，不再在主对话里自己执行整项任务；同时 `createTask` 生成的任务会正式回写来源用户消息与助手确认消息。
   - 成果：按用户最新要求，主 Agent 页已去掉临时任务面板，任务标签也已从全局左侧导航撤下，改为出现在聊天界面右侧的轻量任务标签；用户可直接点击标签跳到标准 `Workflow` 任务详情查看报告，不看详情时仍由主 Agent 在对话里汇报结果。
   - 成果：图片模块已新增 `Nano banana2（ToAPIs）` 的第一阶段接入；当前正式预设会把 ToAPIs 的“上传参考图 -> 创建异步任务 -> 轮询状态 -> 下载结果”接进统一图片生成主链，不再误复用 Google 官方 Gemini 原生协议；同时已开始支持文生图、图生图/多参考图、极端宽高比与 `resolution` 元数据透传，便于先承接与万相相近的一批电商出图/改图场景；图片参数 UI 也已从旧确认卡片扩到真实聊天入口与图片服务商编辑弹窗，当前会按图片模块正在使用的服务商动态展示可用比例、分辨率、生成张数上限、参考图上限与专有高级参数入口，优先适配 `Nano banana2（ToAPIs）` 的极端宽高比和高参考图上限；同时图片服务商现已支持在设置里保存默认比例/分辨率/张数，并在真正的生成运行时自动生效；Pro 图片生成工具已移除旧的“每会话最多 10 张”运行时限制与结果字段，改为按张计费口径，聊天侧不再应根据历史 `generation_count / generation_limit` 推导剩余额度。
@@ -186,12 +222,12 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - `05 流程执行层`
   - 文档完整度：`基本完成`
   - 主链状态：`已打通`
-  - 当前进展：正式工作流页已开始展示真实执行输出和实际执行步骤，不再只展示 DSL 规划视角；同时已补 OpenWorkflow sqlite backend 的 Next 外部包配置以降低开发环境兼容风险；workflow agent step 现已默认收紧为文本结果交付，避免因声明不存在的 artifact 而导致执行伪失败；文本型 stage 还具备结构化输出失败后的纯文本兜底，降低真实执行时因 JSON schema 收敛失败造成的主链中断；任务完成后写回主 Agent 对话的结果消息也已改为稳定直写，可保留浏览器截图的真实绝对路径并在聊天区直接预览；并行浏览器分支现已为每个分支创建独立页面并把 pageId 显式传递到后续截图步骤，减少复杂工作流中的串页风险；workflow agent step 现已支持受控 context 依赖输入，汇总代理可以读取并行分支结果做真实汇总；当汇总代理与最终通知正文相同，任务完成系统通知也已收敛为简短提示，避免在对话里第三次重复整份长报告；正式页现在还能展示 workflow 投影返回的真实运行态，包括运行中/跳过步骤、失败原因和关键步骤结果；浏览器步骤还已支持截图直出预览和产物打开入口；混合复杂工作流执行主链已完成一轮真实 UI 验收；最新 simple execution 与 workflow agent step 已补运行时超时透传，同时浏览器搜索步骤还能把页面摘录传给后续汇总代理使用；此外，编译产物与执行提交层也已补上任务级 runtime 元数据注入，workflow step 现在可稳定拿到来源 task/session 的 `taskId / sessionId / requestedModel / workingDirectory`；browser bridge 代码模式运行时还已补上 `waitFor` 传输超时透传、短等待自动抬底与同实例 `pageId` 粘连，减少登录页/收藏页这类慢页面场景下被 `10000 / 15000 / 30000ms` 的客户端等待或多标签页错页共同放大失败概率；同时 `/v1/pages/navigate`、新建页、快照、截图这些桥接请求也已补接口级更长默认传输超时；workflow `code-only` 浏览器步骤现在还会在失败时自动保存页面快照、失败截图与调试日志，并把这些调试产物通过正式 `Workflow` 详情页暴露出来，减少浏览器代码节点的黑盒排障；最新这条 `code-only` 浏览器链路也已默认改成后台执行，运行中的页面操作不再主动切前台浏览器标签页，只在手动调试入口保留前台行为；workflow outer timeout 也已改为按 manifest step timeout 求和并追加缓冲，`notification / capability / wait` step 的真实 runtime binding 也已补齐；另外 `chrome-devtools` MCP 在多标签页场景下已改为要求显式 `pageId`，且 `list_pages` 结果会附带活动页和相似页签警告，纯 Agent 浏览器路径的串页风险也开始收口
+  - 当前进展：正式工作流页已开始展示真实执行输出和实际执行步骤，不再只展示 DSL 规划视角；同时已补 OpenWorkflow sqlite backend 的 Next 外部包配置以降低开发环境兼容风险；workflow agent step 现已默认收紧为文本结果交付，避免因声明不存在的 artifact 而导致执行伪失败；文本型 stage 还具备结构化输出失败后的纯文本兜底，降低真实执行时因 JSON schema 收敛失败造成的主链中断；任务完成后写回主 Agent 对话的结果消息也已改为稳定直写，可保留浏览器截图的真实绝对路径并在聊天区直接预览；并行浏览器分支现已为每个分支创建独立页面并把 pageId 显式传递到后续截图步骤，减少复杂工作流中的串页风险；workflow agent step 现已支持受控 context 依赖输入，汇总代理可以读取并行分支结果做真实汇总；当汇总代理与最终通知正文相同，任务完成系统通知也已收敛为简短提示，避免在对话里第三次重复整份长报告；正式页现在还能展示 workflow 投影返回的真实运行态，包括运行中/跳过步骤、失败原因和关键步骤结果；浏览器步骤还已支持截图直出预览和产物打开入口；混合复杂工作流执行主链已完成一轮真实 UI 验收；最新 simple execution 与 workflow agent step 已补运行时超时透传，同时浏览器搜索步骤还能把页面摘录传给后续汇总代理使用；此外，编译产物与执行提交层也已补上任务级 runtime 元数据注入，workflow step 现在可稳定拿到来源 task/session 的 `taskId / sessionId / requestedModel / workingDirectory`；browser bridge 代码模式运行时还已补上 `waitFor` 传输超时透传、短等待自动抬底与同实例 `pageId` 粘连，减少登录页/收藏页这类慢页面场景下被 `10000 / 15000 / 30000ms` 的客户端等待或多标签页错页共同放大失败概率；同时 `/v1/pages/navigate`、新建页、快照、截图这些桥接请求也已补接口级更长默认传输超时；workflow `code-only` 浏览器步骤现在还会在失败时自动保存页面快照、失败截图与调试日志，并把这些调试产物通过正式 `Workflow` 详情页暴露出来，减少浏览器代码节点的黑盒排障；最新这条 `code-only` 浏览器链路也已默认改成后台执行，运行中的页面操作不再主动切前台浏览器标签页，只在手动调试入口保留前台行为；workflow outer timeout 也已改为按 manifest step timeout 求和并追加缓冲，`notification / capability / wait` step 的真实 runtime binding 也已补齐；另外 `chrome-devtools` MCP 在多标签页场景下已改为要求显式 `pageId`，且 `list_pages` 结果会附带活动页和相似页签警告，纯 Agent 浏览器路径的串页风险也开始收口；最新正式任务关闭 / 删除 / 执行记录停止已能向底层 workflow cancel 收口，并会同步执行历史和投影状态为已取消，避免删除 UI 记录后底层执行继续残留
   - 当前缺口：浏览器与通知能力仍有工程化收尾项，尚未按“完整实现”关闭；工作流引擎在真实 UI 开发环境中的重新验证仍需继续完成
 - `06 执行代理层`
   - 文档完整度：`部分完成`
   - 主链状态：`已打通`
-  - 当前进展：底层 agent abort 已打通，simple execution 与 workflow cancel 都会向活动中的 agent 执行传播中断信号；正式工作流角色配置 UI 已接入 Scheduling / Workflow SubAgent 的真实配置源，且现在除团队设置页外，已新增独立的 `Workflow Roles` 正式入口，并按“执行角色 / 规划角色”分组，减少与旧团队预设混淆；正式 `Workflow` 页面也已能显示任务计划引用到的角色快照、实际输出、实际执行步骤，以及运行态详情（当前动作、运行中步骤、已跳过步骤、失败或取消原因）；最新又补进了“当前运行角色”“任务内角色分配”以及会话/资源视图，用户现在可直接在正式任务详情看到代理会话、任务/规划/执行记忆槽、隔离工作目录、输出目录、请求模型、耗时与 Token/API 调用；正式 `Workflow Roles` 页面也已新增活跃代理会话面板，可直接查看当前会话生命周期状态并发起单代理中断；另外 workflow subagent 与 StageWorker 已改为优先继承任务 session 的 provider/model/workspace，不再默认回落到全局 active provider 或 `process.cwd()`；最新执行代理链也已补上统一的 provider-aware 模型解析与失败诊断，`requestedModel` 和实际 `resolvedModel` 会随运行时收口，减少 Claude 风格别名与 gateway 实际模型 ID 不一致时的黑盒失败
+  - 当前进展：底层 agent abort 已打通，simple execution 与 workflow cancel 都会向活动中的 agent 执行传播中断信号；正式工作流角色配置 UI 已接入 Scheduling / Workflow SubAgent 的真实配置源，且现在除团队设置页外，已新增独立的 `Workflow Roles` 正式入口，并按“执行角色 / 规划角色”分组，减少与旧团队预设混淆；正式 `Workflow` 页面也已能显示任务计划引用到的角色快照、实际输出、实际执行步骤，以及运行态详情（当前动作、运行中步骤、已跳过步骤、失败或取消原因）；最新又补进了“当前运行角色”“任务内角色分配”以及会话/资源视图，用户现在可直接在正式任务详情看到代理会话、任务/规划/执行记忆槽、隔离工作目录、输出目录、请求模型、耗时与 Token/API 调用；正式 `Workflow Roles` 页面也已新增活跃代理会话面板，可直接查看当前会话生命周期状态并发起单代理中断；另外 workflow subagent 与 StageWorker 已改为优先继承任务 session 的 provider/model/workspace，不再默认回落到全局 active provider 或 `process.cwd()`；最新执行代理链也已补上统一的 provider-aware 模型解析与失败诊断，`requestedModel` 和实际 `resolvedModel` 会随运行时收口，减少 Claude 风格别名与 gateway 实际模型 ID 不一致时的黑盒失败；正式执行记录页现已提供“停止执行”，关闭或删除任务也会先中断运行中的 workflow / agent 链路，并对已丢失 run history 但仍 running 的执行投影做兜底取消
   - 当前缺口：完整代理生命周期与更强的长期资源治理仍未全部落地；虽然正式页面已能验收活跃会话、核心会话隔离、资源边界与单代理中断，但更长期的会话续跑、自动回收、限额治理还未全部产品化可验
 - `07 动态能力扩展`
   - 文档完整度：`基本完成`
@@ -216,4 +252,5 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - 总体结论
   - 最小闭环：`已完成`
   - 按完整实现标准的总体验收：`未通过`
+  - 最新工程稳定性：Electron 版本升级启动链路已补单实例保护，并把升级维护收敛为只做 best-effort HTTP cache 清理，不再在普通启动/升级时删除 Chromium `serviceworkers` / `cachestorage` 等浏览器运行态数据库；当前已通过 `npm run build`、`npm run typecheck` 和 Electron 主进程构建脚本验证，但真实重启验收仍需先退出旧 Electron 进程后再确认启动日志。
   - 当前优先级：在继续收 `03 / 04 / 05 / 06` 验收尾项的同时，按 `08` 文档先启动 DeepSearch 独立模块主线，优先补站点登录态、独立 UI 与可恢复执行，再让聊天和 Workflow 复用该服务；`07` 继续保持与主链并行的独立能力建设路线

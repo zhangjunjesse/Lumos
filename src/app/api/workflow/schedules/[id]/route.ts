@@ -6,6 +6,7 @@ import {
   deleteScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
+import { cancelRunningScheduleRuns } from '@/lib/workflow/schedule-run-control';
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
@@ -47,6 +48,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     const body = await request.json();
     const input = updateSchema.parse(body);
+    const existing = getScheduledWorkflow(id);
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     // #7: Validate DSL at save time when it changes
     if (input.workflowDsl) {
@@ -73,7 +76,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       runParams: input.runParams,
     });
     if (!schedule) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    return NextResponse.json({ schedule });
+    const cancelResult = existing.enabled && input.enabled === false
+      ? await cancelRunningScheduleRuns(id, '任务已关闭，停止执行中的工作流')
+      : undefined;
+    return NextResponse.json({ schedule, ...(cancelResult ? { cancelResult } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update schedule';
     return NextResponse.json({ error: message }, { status: 400 });
@@ -83,6 +89,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 export async function DELETE(_request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
+    await cancelRunningScheduleRuns(id, '任务已删除，停止执行中的工作流', {
+      updateScheduleSummary: false,
+    });
     const deleted = deleteScheduledWorkflow(id);
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json({ success: true });

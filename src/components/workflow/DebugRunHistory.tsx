@@ -8,7 +8,7 @@ import { DebugRunFailurePanel } from './DebugRunFailurePanel';
 interface DebugRun {
   id: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
   completedAt: string | null;
@@ -24,6 +24,7 @@ const STATUS_CFG = {
   success: { label: '成功', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
   error: { label: '失败', cls: 'bg-red-500/15 text-red-700 dark:text-red-400' },
   running: { label: '运行中', cls: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
+  cancelled: { label: '已取消', cls: 'bg-muted text-muted-foreground' },
 } as const;
 
 function formatTime(iso: string): string {

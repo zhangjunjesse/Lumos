@@ -9,7 +9,7 @@ interface RunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
   completedAt: string | null;
@@ -73,6 +73,7 @@ const STATUS_CFG = {
   success: { label: '成功', cls: 'bg-green-500/10 text-green-700 border-green-500/20' },
   error: { label: '失败', cls: 'bg-red-500/10 text-red-700 border-red-500/20' },
   running: { label: '运行中', cls: 'bg-blue-500/10 text-blue-700 border-blue-500/20' },
+  cancelled: { label: '已取消', cls: 'bg-muted text-muted-foreground border-border' },
 } as const;
 
 function RunItem({ run, scheduleId }: { run: RunRecord; scheduleId: string }) {

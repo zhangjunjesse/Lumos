@@ -7,7 +7,7 @@ import { formatWorkflowError } from '@/lib/workflow/error-format';
 export interface RunDetailHeaderRun {
   id: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
   completedAt: string | null;
@@ -17,6 +17,7 @@ const STATUS_CFG = {
   success: { label: '执行成功', cls: 'bg-green-500/10 text-green-700 border-green-500/20' },
   error: { label: '执行失败', cls: 'bg-red-500/10 text-red-700 border-red-500/20' },
   running: { label: '执行中', cls: 'bg-blue-500/10 text-blue-700 border-blue-500/20 animate-pulse' },
+  cancelled: { label: '已取消', cls: 'bg-muted text-muted-foreground border-border' },
 } as const;
 
 function formatDateTime(iso: string): string {
@@ -40,9 +41,13 @@ function durationLabel(start: string, end: string | null): string {
 export function RunDetailHeader({
   run,
   onRefresh,
+  onCancel,
+  cancelling = false,
 }: {
   run: RunDetailHeaderRun;
   onRefresh: () => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const cfg = STATUS_CFG[run.status] ?? STATUS_CFG.running;
   return (
@@ -74,9 +79,16 @@ export function RunDetailHeader({
           </div>
         </div>
 
-        <Button variant="outline" size="sm" onClick={onRefresh} className="shrink-0">
-          刷新
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          {run.status === 'running' && onCancel ? (
+            <Button variant="outline" size="sm" onClick={onCancel} disabled={cancelling}>
+              {cancelling ? '停止中...' : '停止执行'}
+            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={onRefresh}>
+            刷新
+          </Button>
+        </div>
       </div>
 
       {run.error && (

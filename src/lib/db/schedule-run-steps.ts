@@ -107,6 +107,24 @@ export function setRunStepOutputSummary(runId: string, stepId: string, outputSum
   ).run(outputSummary.slice(0, 2000), runId, stepId);
 }
 
+export function cancelRunningRunSteps(runId: string, reason = '用户已取消任务'): void {
+  if (!hasTable()) return;
+  const now = new Date().toISOString();
+  getDb().prepare(`
+    UPDATE schedule_run_steps
+    SET status = 'error',
+        error = CASE WHEN error <> '' THEN error ELSE ? END,
+        completed_at = COALESCE(completed_at, ?),
+        duration_ms = CASE
+          WHEN duration_ms IS NOT NULL THEN duration_ms
+          WHEN started_at IS NOT NULL THEN MAX(0, CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER))
+          ELSE NULL
+        END
+    WHERE run_id = ?
+      AND status IN ('pending', 'running')
+  `).run(reason, now, now, runId);
+}
+
 export function listRunSteps(runId: string): ScheduleRunStep[] {
   if (!hasTable()) return [];
   const rows = getDb().prepare(

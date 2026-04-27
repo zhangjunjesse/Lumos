@@ -119,6 +119,33 @@ Agent 的工作目录（`sessionWorkspace`）优先使用 schedule 配置的 `wo
 - 每个步骤结果通过 `step-output-formatter.ts` 格式化为 Markdown，含执行 trace
 - UI：`/workflow/schedules/[id]/runs/[runId]`
 
+### 任务生命周期规则（必须遵守）
+
+工作流任务有多层状态，不能把删除 UI 记录当成停止执行。涉及 `关闭`、`删除`、`停止`、`取消` 的改动必须按下面规则实现和验收：
+
+- `关闭 / 暂停任务`：除非产品文案明确写成“仅停止后续触发”，否则必须同时取消当前正在运行的 workflow run，并阻止后续自动触发。
+- `删除任务`：必须先取消该任务正在运行的 workflow run，再删除 `scheduled_workflows` / `schedule_run_history` 等可见记录。
+- `停止执行 / 取消执行`：必须调用 workflow runtime 的取消链路，向 agent/subagent abort controller 传播中断，并把执行记录写成终态。
+- 不要在页面组件或 route handler 里直接散写生命周期逻辑；应集中调用 `src/lib/workflow/schedule-run-control.ts` 这类控制服务。新增任务类型时也应先建统一 lifecycle service。
+- 必须同步检查这些层：
+  - `scheduled_workflows`：任务是否仍会再次触发。
+  - `schedule_run_history` / `schedule_run_steps`：执行记录是否还显示 `running`。
+  - `workflow_task_mapping` / `workflow_executions`：Lumos 投影是否已终态。
+  - `~/.lumos/workflows.db` 的 OpenWorkflow `workflow_runs`：真实 run 是否还在 `pending / running / sleeping`。
+  - 内存运行态：Scheduling `activeExecutions`、workflow subagent execution abort controller 是否被中断。
+- 如果 `schedule_run_history` 已被删除或缺少映射，但 `workflow_executions` 或 OpenWorkflow 仍有 matching running run，必须提供兜底查找和取消逻辑。
+- 验收时至少用一个长时间运行的 `wait` 或 `agent` workflow 验证：点击关闭、删除、停止后，UI 显示终态，DB 不再有 matching running 记录，OpenWorkflow run 不再是 active 状态，一次性任务不会再次自动启动。
+
+### Electron 启动与缓存规则（必须遵守）
+
+这些规则用于防止版本升级或重启时误删 Chromium 运行态数据库，导致 `Failed to delete the database: Database IO error` 这类启动错误。
+
+- Electron 启动必须先做单实例保护，再触碰 `~/.lumos` 下的 userData、browser session、browser bridge runtime 文件或 SQLite 数据库。
+- 普通启动和版本升级不能清理 `serviceworkers`、`cachestorage`、cookies、local storage 等浏览器/登录态存储；除非用户明确选择“重置浏览器数据”这类破坏性动作。
+- 版本升级只允许做 best-effort 的 HTTP cache 清理，例如 `session.defaultSession.clearCache()`；清理失败不得阻塞应用启动。
+- 不管 cache 清理是否成功，都要在维护尝试后写入当前版本号，避免每次启动都重复触发同一个失败清理动作。
+- 新增启动清理逻辑前，必须先确认是否可能有旧 Electron 进程、browser bridge、内置浏览器分区或 Chromium Service Worker LevelDB 正在占用对应文件。
+
 ---
 
 ## 数据存储

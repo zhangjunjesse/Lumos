@@ -29,7 +29,7 @@ interface ScheduledWorkflow {
   lastRunAt: string | null;
   nextRunAt: string | null;
   runCount: number;
-  lastRunStatus: 'success' | 'error' | '';
+  lastRunStatus: 'success' | 'error' | 'cancelled' | '';
   lastError: string;
   workflowId?: string | null;
   workflowDsl?: Record<string, unknown>;
@@ -78,6 +78,7 @@ function StatusDot({ status, enabled }: { status: string; enabled: boolean }) {
   if (!enabled) return <span className="w-2 h-2 rounded-full bg-muted-foreground/30 shrink-0" />;
   if (status === 'error') return <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />;
   if (status === 'success') return <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />;
+  if (status === 'cancelled') return <span className="w-2 h-2 rounded-full bg-muted-foreground/50 shrink-0" />;
   return <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />;
 }
 
@@ -115,6 +116,9 @@ function ScheduleCard({
             </Badge>
             {s.lastRunStatus === 'error' && (
               <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4 shrink-0">上次失败</Badge>
+            )}
+            {s.lastRunStatus === 'cancelled' && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">上次取消</Badge>
             )}
           </div>
 

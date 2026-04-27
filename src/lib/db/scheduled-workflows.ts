@@ -45,7 +45,7 @@ export interface ScheduledWorkflow {
   lastRunAt: string | null;
   nextRunAt: string | null;
   runCount: number;
-  lastRunStatus: 'success' | 'error' | '';
+  lastRunStatus: 'success' | 'error' | 'cancelled' | '';
   lastError: string;
   createdAt: string;
   updatedAt: string;
@@ -306,7 +306,7 @@ export function advanceScheduleTimer(id: string): void {
 
 export function recordScheduleRun(
   id: string,
-  status: 'success' | 'error',
+  status: 'success' | 'error' | 'cancelled',
   error = '',
 ): void {
   if (!hasTable()) return;
@@ -335,7 +335,7 @@ export interface ScheduleRunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
   completedAt: string | null;
@@ -372,11 +372,38 @@ export function insertRunHistory(
   return id;
 }
 
-export function updateRunHistory(id: string, status: 'success' | 'error', error = ''): void {
+export function updateRunHistory(id: string, status: 'success' | 'error' | 'cancelled', error = ''): void {
   if (!hasHistoryTable()) return;
   getDb().prepare(
     'UPDATE schedule_run_history SET status = ?, error = ?, completed_at = ? WHERE id = ?',
   ).run(status, error, new Date().toISOString(), id);
+}
+
+export function updateRunHistoryStatus(
+  id: string,
+  status: ScheduleRunRecord['status'],
+  error = '',
+): void {
+  if (!hasHistoryTable()) return;
+  getDb().prepare(
+    'UPDATE schedule_run_history SET status = ?, error = ?, completed_at = CASE WHEN ? = ? THEN completed_at ELSE ? END WHERE id = ?',
+  ).run(status, error, status, 'running', new Date().toISOString(), id);
+}
+
+export function listRunningRunHistory(scheduleId: string): ScheduleRunRecord[] {
+  if (!hasHistoryTable()) return [];
+  return (getDb().prepare(
+    "SELECT * FROM schedule_run_history WHERE schedule_id = ? AND status = 'running' ORDER BY started_at DESC",
+  ).all(scheduleId) as Array<Record<string, unknown>>).map(r => ({
+    id: String(r['id']),
+    scheduleId: String(r['schedule_id']),
+    sessionId: r['session_id'] ? String(r['session_id']) : null,
+    status: String(r['status']) as ScheduleRunRecord['status'],
+    error: String(r['error'] ?? ''),
+    startedAt: String(r['started_at']),
+    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
+    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
+  }));
 }
 
 export function listRunHistory(scheduleId: string, limit = 30): ScheduleRunRecord[] {

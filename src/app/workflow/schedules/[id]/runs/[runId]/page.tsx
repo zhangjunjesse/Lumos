@@ -31,7 +31,7 @@ interface RunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
   completedAt: string | null;
@@ -113,6 +113,7 @@ export default function RunDetailPage() {
   const [stepLiveTraces, setStepLiveTraces] = useState<Record<string, StepTraceEvent[]>>({});
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState('');
 
@@ -146,6 +147,28 @@ export default function RunDetailPage() {
     pollRef.current = setInterval(() => { void load(); }, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [isRunning, load]);
+
+  const handleCancel = useCallback(async () => {
+    if (!scheduleId || !runId || cancelling) return;
+    setCancelling(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/workflow/schedules/${encodeURIComponent(scheduleId)}/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: '用户从执行记录页停止任务' }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || '停止执行失败');
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '停止执行失败');
+    } finally {
+      setCancelling(false);
+    }
+  }, [cancelling, load, runId, scheduleId]);
 
   if (loading) {
     return (
@@ -193,7 +216,12 @@ export default function RunDetailPage() {
         <span className="text-foreground">执行记录</span>
       </div>
 
-      <RunDetailHeader run={run} onRefresh={() => void load()} />
+      <RunDetailHeader
+        run={run}
+        onRefresh={() => void load()}
+        onCancel={isRunning ? () => void handleCancel() : undefined}
+        cancelling={cancelling}
+      />
 
       {/* Tabs: workflow / results / execution process */}
       <Tabs defaultValue={defaultTab}>

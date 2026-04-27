@@ -20,7 +20,7 @@ interface Schedule {
   lastRunAt: string | null;
   nextRunAt: string | null;
   runCount: number;
-  lastRunStatus: 'success' | 'error' | '';
+  lastRunStatus: 'success' | 'error' | 'cancelled' | '';
   lastError: string;
   workflowDsl: WorkflowDSLV3;
 }
