@@ -262,5 +262,5 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - 总体结论
   - 最小闭环：`已完成`
   - 按完整实现标准的总体验收：`未通过`
-  - 最新工程稳定性：Electron 版本升级启动链路已补单实例保护，并把升级维护收敛为只做 best-effort HTTP cache 清理，不再在普通启动/升级时删除 Chromium `serviceworkers` / `cachestorage` 等浏览器运行态数据库；当前已通过 `npm run build`、`npm run typecheck` 和 Electron 主进程构建脚本验证，但真实重启验收仍需先退出旧 Electron 进程后再确认启动日志。
+  - 最新工程稳定性：Electron 版本升级启动链路已补单实例保护，并把升级维护收敛为只做 best-effort HTTP cache 清理，不再在普通启动/升级时删除 Chromium `serviceworkers` / `cachestorage` 等浏览器运行态数据库；当前已通过 `npm run build`、`npm run typecheck` 和 Electron 主进程构建脚本验证，但真实重启验收仍需先退出旧 Electron 进程后再确认启动日志；最新还已修正 GitHub Actions / Next build 阶段多个 page-data worker 竞争同一个 SQLite 运行库的问题，构建期现在显式启用 `LUMOS_BUILD_PHASE=1` 并为每个 worker 使用隔离临时 DB，避免 `/api/task-management/list` 收集 page data 时因 `SQLITE_BUSY` 中断发布打包。
   - 当前优先级：在继续收 `03 / 04 / 05 / 06` 验收尾项的同时，按 `08` 文档先启动 DeepSearch 独立模块主线，优先补站点登录态、独立 UI 与可恢复执行，再让聊天和 Workflow 复用该服务；`07` 继续保持与主链并行的独立能力建设路线

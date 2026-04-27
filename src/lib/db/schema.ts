@@ -5,6 +5,10 @@ import { migrateSyncTables } from './migrations-sync';
 import { migrateTeamRunTables } from './migrations-team-run';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
+function isBuildPhase(): boolean {
+  return process.env.LUMOS_BUILD_PHASE === '1';
+}
+
 export function initDb(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -182,8 +186,10 @@ export function initDb(db: Database.Database): void {
     migrateTeamRunTables(db);
     db.exec('COMMIT');
 
-    // Seed admin user after migrations (outside transaction, idempotent)
-    try { seedAdminUser(); } catch { /* ignore if new-api unavailable */ }
+    if (!isBuildPhase()) {
+      // Seed admin user after migrations (outside transaction, idempotent).
+      try { seedAdminUser(); } catch { /* ignore if new-api unavailable */ }
+    }
   } catch (err: unknown) {
     try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
     const msg = err instanceof Error ? err.message : String(err);

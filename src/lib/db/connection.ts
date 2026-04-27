@@ -4,7 +4,22 @@ import fs from 'fs';
 import os from 'os';
 import { initDb } from './schema';
 
-export const dataDir = process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
+function isBuildPhase(): boolean {
+  return process.env.LUMOS_BUILD_PHASE === '1';
+}
+
+function resolveDataDir(): string {
+  if (isBuildPhase()) {
+    return process.env.LUMOS_BUILD_DATA_DIR
+      || path.join(os.tmpdir(), 'lumos-next-build', String(process.pid));
+  }
+
+  return process.env.LUMOS_DATA_DIR
+    || process.env.CLAUDE_GUI_DATA_DIR
+    || path.join(os.homedir(), '.lumos');
+}
+
+export const dataDir = resolveDataDir();
 export const DB_PATH = path.join(dataDir, 'lumos.db');
 
 let db: Database.Database | null = null;
@@ -105,11 +120,15 @@ export function getDb(): Database.Database {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Run migration before anything else
-    migrateFromCodePilot();
+    // Build-time page-data workers must not touch or migrate the user's real
+    // runtime database. Each worker gets its own temp DB above.
+    if (!isBuildPhase()) {
+      // Run migration before anything else
+      migrateFromCodePilot();
+    }
 
     // Migrate from old locations if the new DB doesn't exist yet
-    if (!fs.existsSync(DB_PATH)) {
+    if (!isBuildPhase() && !fs.existsSync(DB_PATH)) {
       const home = os.homedir();
       const oldPaths = [
         path.join(home, '.codepilot', 'codepilot.db'),
@@ -158,7 +177,7 @@ export function getDb(): Database.Database {
 
     const skipSideEffects = process.env.NODE_ENV === 'test'
       || Boolean(process.env.JEST_WORKER_ID)
-      || process.env.LUMOS_BUILD_PHASE === '1';
+      || isBuildPhase();
     if (!skipSideEffects) {
       // Initialize builtin resources (Skills and MCP servers) after DB is ready
       // This runs on every startup to check for updates

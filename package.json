@@ -1,6 +1,6 @@
 {
   "name": "lumos",
-  "version": "0.25.17",
+  "version": "0.25.18",
   "private": true,
   "author": {
     "name": "op7418",
@@ -13,9 +13,9 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "build:open": "NEXT_PUBLIC_LUMOS_EDITION=open next build",
-    "build:pro": "NEXT_PUBLIC_LUMOS_EDITION=pro next build",
+    "build": "cross-env LUMOS_BUILD_PHASE=1 next build",
+    "build:open": "cross-env LUMOS_BUILD_PHASE=1 NEXT_PUBLIC_LUMOS_EDITION=open next build",
+    "build:pro": "cross-env LUMOS_BUILD_PHASE=1 NEXT_PUBLIC_LUMOS_EDITION=pro next build",
     "start": "next start",
     "test": "jest",
     "lint": "eslint",
@@ -25,7 +25,7 @@
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "prepare": "node scripts/install-git-hooks.mjs",
     "electron:dev": "cross-env LUMOS_CLAUDE_CONFIG_DIR=$HOME/.lumos/.claude LUMOS_DATA_DIR=$HOME/.lumos concurrently -k \"next dev\" \"node scripts/build-electron.mjs && wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "node scripts/download-node.mjs && node scripts/download-git-bash.mjs && next build && node scripts/build-electron.mjs",
+    "electron:build": "node scripts/download-node.mjs && node scripts/download-git-bash.mjs && cross-env LUMOS_BUILD_PHASE=1 next build && node scripts/build-electron.mjs",
     "electron:build:pro": "cross-env NEXT_PUBLIC_LUMOS_EDITION=pro npm run electron:build",
     "electron:build:open": "cross-env NEXT_PUBLIC_LUMOS_EDITION=open npm run electron:build",
     "electron:pack": "npm run electron:build && electron-builder --config electron-builder.yml",
