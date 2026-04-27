@@ -134,6 +134,52 @@ function enrichGeminiEnv(env: Record<string, string>, ctx: McpEnrichContext): Re
 }
 
 // ---------------------------------------------------------------------------
+// wechat-export — auto-discover sqlcipher binary across Homebrew prefixes
+// ---------------------------------------------------------------------------
+
+const SQLCIPHER_CANDIDATES = [
+  '/opt/homebrew/opt/sqlcipher/bin/sqlcipher', // Apple Silicon brew
+  '/usr/local/opt/sqlcipher/bin/sqlcipher',    // Intel brew
+  '/opt/homebrew/bin/sqlcipher',
+  '/usr/local/bin/sqlcipher',
+];
+
+function findSqlcipherBinary(): string {
+  for (const candidate of SQLCIPHER_CANDIDATES) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch { /* keep scanning */ }
+  }
+  // Fall through to PATH lookup; the server will surface a clearer error if it
+  // can't run sqlcipher.
+  return 'sqlcipher';
+}
+
+function enrichWeChatExportEnv(
+  env: Record<string, string>,
+  ctx: McpEnrichContext,
+): Record<string, string> {
+  const baseDir = path.join(ctx.dataDir, 'wechat-export');
+  return {
+    ...env,
+    LUMOS_WECHAT_EXPORT_KEY_FILE: pickNonEmpty(
+      env.LUMOS_WECHAT_EXPORT_KEY_FILE,
+      path.join(baseDir, 'key.txt'),
+    ),
+    LUMOS_WECHAT_EXPORT_CONTACTS_FILE: pickNonEmpty(
+      env.LUMOS_WECHAT_EXPORT_CONTACTS_FILE,
+      path.join(baseDir, 'contacts.json'),
+    ),
+    LUMOS_WECHAT_EXPORT_SQLCIPHER: pickNonEmpty(
+      env.LUMOS_WECHAT_EXPORT_SQLCIPHER,
+      findSqlcipherBinary(),
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -146,4 +192,5 @@ export const ENRICHER_MAP: Record<string, McpEnvEnricher> = {
   'deepsearch': enrichDeepsearchEnv,
   'gemini-image': enrichGeminiEnv,
   'gemini_image': enrichGeminiEnv,
+  'wechat-export': enrichWeChatExportEnv,
 };

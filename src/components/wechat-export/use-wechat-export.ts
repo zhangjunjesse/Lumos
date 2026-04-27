@@ -1,0 +1,193 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ExtractProgressEvent, WeChatExportStatus } from './types';
+
+const POLL_MS = 4000;
+
+/**
+ * Stateful glue between the panel UI and /api/wechat-export/*.
+ *
+ * Owns:
+ *   - the `status` snapshot (re-fetched on focus + every 4s while open)
+ *   - consent / toggle / SSE-driven key extraction
+ *   - per-action loading + error state for the panel
+ */
+export function useWeChatExport() {
+  const [status, setStatus] = useState<WeChatExportStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract'>(null);
+  const [busyMessage, setBusyMessage] = useState<string>('');
+  const [extractProgress, setExtractProgress] = useState<ExtractProgressEvent | null>(null);
+  const [extractKeys, setExtractKeys] = useState<number>(0);
+  const [actionMessage, setActionMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch('/api/wechat-export/status', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = (await res.json()) as WeChatExportStatus;
+      setStatus(data);
+      setStatusError(null);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'unknown error');
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    const timer = window.setInterval(() => { void refresh(); }, POLL_MS);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+
+  const acceptConsent = useCallback(async () => {
+    if (!status?.consent) return;
+    setBusy('consent');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'accept',
+          acknowledgedVersion: status.consent.version,
+          acknowledgedHash: status.consent.hash,
+          acceptedRiskBox: true,
+          acceptedScopeBox: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'consent_failed');
+      setActionMessage({ kind: 'ok', text: '已接受免责声明。' });
+      await refresh();
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '操作失败',
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, [status?.consent, refresh]);
+
+  const toggle = useCallback(async (action: 'enable' | 'disable' | 'uninstall') => {
+    setBusy(action);
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || data?.error || 'toggle_failed');
+      const text = action === 'enable'
+        ? '微信导出已启用。'
+        : action === 'disable'
+          ? '微信导出已暂停 (密钥保留)。'
+          : '微信导出已完全卸载,密钥已删除。';
+      setActionMessage({ kind: 'ok', text });
+      await refresh();
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '操作失败',
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
+  const startExtract = useCallback(async () => {
+    setBusy('extract');
+    setBusyMessage('准备扫描微信进程内存…');
+    setExtractProgress(null);
+    setExtractKeys(0);
+    setActionMessage(null);
+
+    abortRef.current?.abort();
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    try {
+      const res = await fetch('/api/wechat-export/extract-key', {
+        method: 'POST',
+        headers: { 'Accept': 'text/event-stream' },
+        signal: ctl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.message || `start failed (${res.status})`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const eventLine = block.split('\n').find(l => l.startsWith('event: '));
+          const dataLine = block.split('\n').find(l => l.startsWith('data: '));
+          if (!eventLine || !dataLine) continue;
+          const event = eventLine.slice(7).trim();
+          const data = JSON.parse(dataLine.slice(6));
+          if (event === 'progress') {
+            setExtractProgress(data as ExtractProgressEvent);
+            if ((data as ExtractProgressEvent).phase === 'found') {
+              setExtractKeys((n) => n + 1);
+            }
+            setBusyMessage((data as ExtractProgressEvent).message || busyMessage);
+          } else if (event === 'done') {
+            setBusyMessage(`已恢复 ${data.keysFound ?? 0} 个数据库密钥。`);
+            setActionMessage({
+              kind: 'ok',
+              text: `密钥提取完成,共恢复 ${data.keysFound ?? 0} 个数据库密钥。`,
+            });
+          } else if (event === 'error') {
+            throw new Error(data?.message || '提取失败');
+          }
+        }
+      }
+      await refresh();
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '提取失败',
+      });
+    } finally {
+      setBusy(null);
+      setBusyMessage('');
+    }
+  }, [refresh, busyMessage]);
+
+  const cancelExtract = useCallback(() => {
+    abortRef.current?.abort();
+    setBusy(null);
+    setBusyMessage('');
+  }, []);
+
+  return {
+    status,
+    statusError,
+    busy,
+    busyMessage,
+    extractProgress,
+    extractKeys,
+    actionMessage,
+    refresh,
+    acceptConsent,
+    toggle,
+    startExtract,
+    cancelExtract,
+  };
+}

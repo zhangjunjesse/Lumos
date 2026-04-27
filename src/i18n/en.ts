@@ -395,6 +395,7 @@ const en = {
   'extensions.deepsearch': 'DeepSearch',
   'extensions.builder': 'Builder',
   'extensions.feishu': 'Feishu',
+  'extensions.wechatExport': 'WeChat Export',
   'extensions.builderTitle': 'Extension Builder',
   'extensions.builderDesc': 'Describe what you need. The builder will propose Skills and MCP servers, and you decide when to apply.',
   'extensions.builderHint1': 'Ask for clarifications, constraints, and examples.',

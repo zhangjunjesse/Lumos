@@ -392,6 +392,7 @@ const zh: Record<TranslationKey, string> = {
   'extensions.deepsearch': 'DeepSearch',
   'extensions.builder': '生成器',
   'extensions.feishu': '飞书',
+  'extensions.wechatExport': '微信导出',
   'extensions.builderTitle': '扩展生成器',
   'extensions.builderDesc': '描述你的需求，生成器会给出技能与 MCP 方案，由你确认后再应用。',
   'extensions.builderHint1': '先问清楚目标、约束和示例。',

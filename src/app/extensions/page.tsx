@@ -12,9 +12,10 @@ import { FeishuPanel } from "@/components/feishu/FeishuPanel";
 import { ExtensionPackManager } from "@/components/extensions/ExtensionPackManager";
 import { ExtensionBuilderPanel } from "@/components/extensions/ExtensionBuilderPanel";
 import { DeepSearchPanel } from "@/components/deepsearch/DeepSearchPanel";
+import { WeChatExportPanel } from "@/components/wechat-export/WeChatExportPanel";
 import { useTranslation } from "@/hooks/useTranslation";
 
-type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch";
+type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch" | "wechat-export";
 
 export default function ExtensionsPage() {
   return (
@@ -53,6 +54,7 @@ function ExtensionsPageInner() {
             <TabsTrigger value="deepsearch">{t('extensions.deepsearch')}</TabsTrigger>
             <TabsTrigger value="builder">{t('extensions.builder')}</TabsTrigger>
             <TabsTrigger value="feishu">{t('extensions.feishu')}</TabsTrigger>
+            <TabsTrigger value="wechat-export">{t('extensions.wechatExport')}</TabsTrigger>
           </TabsList>
         </Tabs>
         <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
@@ -63,6 +65,7 @@ function ExtensionsPageInner() {
         {tab === "deepsearch" && <DeepSearchPanel />}
         {tab === "builder" && <ExtensionBuilderPanel />}
         {tab === "feishu" && <FeishuPanel />}
+        {tab === "wechat-export" && <WeChatExportPanel />}
       </div>
     </div>
   );
