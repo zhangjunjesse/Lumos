@@ -53,26 +53,91 @@ _contacts_cache: dict[str, dict] | None = None
 
 
 def _load_contacts() -> dict[str, dict]:
-    """Load contacts mapping from contacts.json.
+    """Build {wxid: {nickname, remark}} from WeChat's contact.db.
 
-    File format:
-    {
-        "wxid_ge83frr86ypp22": {"nickname": "蔡蔡", "remark": ""},
-        "jingjingleaf": {"nickname": "张老师", "remark": "Mika铁"}
-    }
+    Order of precedence:
+      1. explicit CONTACTS_FILE override (mostly for tests / manual fixups)
+      2. auto-decrypt contact.db using the per-salt key in wechat_keys.json
+
+    Falls back to {} on any failure so the rest of the server still works
+    (the AI just sees raw wxids instead of friendly names).
     """
     global _contacts_cache
     if _contacts_cache is not None:
         return _contacts_cache
+
+    # 1. Manual override (used by tests, or when user wants to curate names)
     if os.path.exists(CONTACTS_FILE):
         try:
             with open(CONTACTS_FILE, "r", encoding="utf-8") as f:
                 _contacts_cache = json.load(f)
+                return _contacts_cache
         except (json.JSONDecodeError, OSError):
-            _contacts_cache = {}
-    else:
-        _contacts_cache = {}
+            pass  # fall through to auto-load
+
+    # 2. Auto-decrypt contact.db
+    _contacts_cache = _load_contacts_from_db()
     return _contacts_cache
+
+
+def _load_contacts_from_db() -> dict[str, dict]:
+    """Decrypt the per-account contact.db and read the contact table.
+
+    Each WeChat database has its own SQLCipher salt-derived key; the
+    extract-key step records all of them in wechat_keys.json (sibling to
+    key.txt). We look up contact.db's salt → key → run a single SELECT.
+    """
+    try:
+        keys_path = os.path.join(os.path.dirname(KEY_FILE), "wechat_keys.json")
+        if not os.path.exists(keys_path):
+            return {}
+        with open(keys_path, "r") as fh:
+            keys = json.load(fh)
+
+        contact_db = os.path.join(_find_data_dir(), "contact", "contact.db")
+        if not os.path.exists(contact_db):
+            return {}
+
+        with open(contact_db, "rb") as fh:
+            salt_hex = fh.read(16).hex()
+        contact_key = keys.get(salt_hex)
+        if not contact_key:
+            return {}
+
+        sql = (
+            _preamble(contact_key)
+            + ".headers on\n.mode csv\n"
+            + "SELECT username, nick_name, remark FROM contact "
+              "WHERE username != '' AND username NOT LIKE 'gh\\_%' ESCAPE '\\';\n"
+        )
+        result = subprocess.run(
+            [SQLCIPHER_PATH, contact_db],
+            input=sql.encode(), capture_output=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {}
+
+        # sqlcipher emits "ok" lines from each PRAGMA before the CSV body —
+        # strip them so DictReader picks up the real header row.
+        lines = result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+        while lines and lines[0].strip() == "ok":
+            lines.pop(0)
+        if len(lines) < 2:
+            return {}
+
+        contacts: dict[str, dict] = {}
+        reader = csv.DictReader(io.StringIO("\n".join(lines)))
+        for row in reader:
+            wxid = (row.get("username") or "").strip()
+            if not wxid or wxid.endswith("@chatroom"):
+                continue
+            contacts[wxid] = {
+                "nickname": (row.get("nick_name") or "").strip(),
+                "remark": (row.get("remark") or "").strip(),
+            }
+        return contacts
+    except Exception:
+        return {}
 
 
 def _get_contact_info(wxid: str) -> dict:
