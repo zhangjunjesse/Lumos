@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -131,9 +133,9 @@ function ConsentSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
       </button>
 
       {showFull && (
-        <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border/40 bg-muted/30 p-3 text-[11px] leading-relaxed whitespace-pre-wrap font-sans text-muted-foreground">
-          {consent.body}
-        </pre>
+        <div className="mt-3 max-h-72 overflow-auto rounded-md border border-border/40 bg-muted/30 p-4 prose prose-sm dark:prose-invert max-w-none prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{consent.body}</ReactMarkdown>
+        </div>
       )}
 
       <div className="mt-5 space-y-2">
