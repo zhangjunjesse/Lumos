@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 import { WorkflowRunDialog } from './WorkflowRunDialog';
 import type { WorkflowParamDef } from '@/lib/workflow/types';
 
@@ -86,6 +88,7 @@ function StatusDot({ status, enabled }: { status: string; enabled: boolean }) {
 function ScheduleCard({
   schedule: s,
   selected,
+  selectionActive,
   onSelectToggle,
   onEdit,
   onNavigate,
@@ -95,6 +98,9 @@ function ScheduleCard({
 }: {
   schedule: ScheduledWorkflow;
   selected: boolean;
+  /** True when at least one card in the list is selected — keeps every
+   *  checkbox visible so the user has a stable target while bulk-editing. */
+  selectionActive: boolean;
   onSelectToggle: (id: string, next: boolean) => void;
   onEdit: (s: ScheduledWorkflow) => void;
   onNavigate: (s: ScheduledWorkflow) => void;
@@ -102,16 +108,37 @@ function ScheduleCard({
   onDelete: (id: string) => void;
   onTrigger: (s: ScheduledWorkflow) => void;
 }) {
+  // Selection checkbox is hidden by default to keep the list clean, then
+  // fades in on hover. Once anything is selected we keep it visible across
+  // the whole list so the user can keep clicking without re-hovering.
+  const checkboxVisible = selected || selectionActive;
+
   return (
     <div
-      className={`group relative rounded-lg border bg-card p-4 hover:shadow-md transition-all cursor-pointer ${
-        selected ? 'border-primary/60 ring-1 ring-primary/30' : 'border-border/60 hover:border-border'
-      } ${!s.enabled ? 'opacity-55' : ''}`}
+      className={cn(
+        'group relative overflow-hidden rounded-lg border bg-card p-4 transition-all cursor-pointer',
+        selected
+          ? 'border-primary/40 bg-primary/[0.02]'
+          : 'border-border/60 hover:border-border hover:shadow-md',
+        !s.enabled && 'opacity-55',
+      )}
       onClick={() => onNavigate(s)}
     >
+      {/* Selection accent — appears as a subtle left rail when picked, no ring noise. */}
+      <span
+        aria-hidden
+        className={cn(
+          'absolute inset-y-0 left-0 w-[3px] bg-primary transition-opacity',
+          selected ? 'opacity-100' : 'opacity-0',
+        )}
+      />
+
       <div className="flex items-start gap-3">
         <div
-          className="flex items-center pt-1 shrink-0"
+          className={cn(
+            'flex items-center pt-1 shrink-0 transition-opacity',
+            checkboxVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          )}
           onClick={(e) => e.stopPropagation()}
         >
           <Checkbox
@@ -337,44 +364,6 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
           </div>
         )}
 
-        {schedules.length > 0 && (
-          <div className="sticky top-0 z-10 -mx-1 px-1 py-2 backdrop-blur bg-background/80 border-b border-border/40">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <Checkbox
-                checked={allSelected ? true : selectedIds.size > 0 ? 'indeterminate' : false}
-                onCheckedChange={() => toggleSelectAll()}
-                aria-label="全选"
-              />
-              <span className="text-muted-foreground">
-                {selectedIds.size === 0
-                  ? `共 ${schedules.length} 个任务`
-                  : `已选 ${selectedIds.size} / ${schedules.length}`}
-              </span>
-              {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-8"
-                    disabled={bulkDeleting}
-                    onClick={() => void handleBulkDelete()}
-                  >
-                    {bulkDeleting ? '删除中…' : `🗑 删除 ${selectedIds.size} 个`}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8"
-                    disabled={bulkDeleting}
-                    onClick={clearSelection}
-                  >
-                    取消选择
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {loading ? (
           <div className="space-y-3">
@@ -394,6 +383,7 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
                 key={s.id}
                 schedule={s}
                 selected={selectedIds.has(s.id)}
+                selectionActive={selectedIds.size > 0}
                 onSelectToggle={toggleSelect}
                 onEdit={onEdit}
                 onNavigate={(s) => router.push(`/workflow/schedules/${s.id}`)}
@@ -415,7 +405,107 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
             onRun={params => void doTrigger(runDialog.schedule.id, params)}
           />
         )}
+
+        <BulkActionBar
+          visible={selectedIds.size > 0}
+          selectedCount={selectedIds.size}
+          totalCount={schedules.length}
+          allSelected={allSelected}
+          deleting={bulkDeleting}
+          onToggleSelectAll={toggleSelectAll}
+          onClear={clearSelection}
+          onDelete={() => void handleBulkDelete()}
+        />
       </div>
+  );
+}
+
+/**
+ * Floating action bar for bulk operations on the schedule list. Centered at
+ * the viewport bottom, slides up when selection becomes active and slides
+ * back down when cleared. Mirrors the pattern used by Linear / Finder /
+ * Notion — out of the way until the user opts in, then immediately reachable
+ * without scrolling back to a header toolbar.
+ */
+function BulkActionBar({
+  visible,
+  selectedCount,
+  totalCount,
+  allSelected,
+  deleting,
+  onToggleSelectAll,
+  onClear,
+  onDelete,
+}: {
+  visible: boolean;
+  selectedCount: number;
+  totalCount: number;
+  allSelected: boolean;
+  deleting: boolean;
+  onToggleSelectAll: () => void;
+  onClear: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      role="region"
+      aria-label="批量操作"
+      aria-hidden={!visible}
+      className={cn(
+        'pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4 transition-all duration-200 ease-out',
+        visible
+          ? 'translate-y-0 opacity-100'
+          : 'translate-y-3 opacity-0',
+      )}
+    >
+      <div
+        className={cn(
+          'pointer-events-auto flex items-center gap-1 rounded-full border border-border/60 bg-background/95 py-1.5 pl-2 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.12)] backdrop-blur supports-[backdrop-filter]:bg-background/80',
+          !visible && 'pointer-events-none',
+        )}
+      >
+        <span className="px-2 text-sm font-medium tabular-nums">
+          已选 <span className="text-primary">{selectedCount}</span>
+          <span className="text-muted-foreground"> / {totalCount}</span>
+        </span>
+
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 rounded-full px-3 text-xs font-medium"
+          disabled={deleting}
+          onClick={onToggleSelectAll}
+        >
+          {allSelected ? '取消全选' : '全选'}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 rounded-full px-3 text-xs font-medium text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={deleting}
+          onClick={onDelete}
+        >
+          <Trash2 className="mr-1 h-3.5 w-3.5" />
+          {deleting ? '删除中…' : '删除'}
+        </Button>
+
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+          disabled={deleting}
+          onClick={onClear}
+          aria-label="退出选择"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

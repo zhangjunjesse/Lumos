@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+    const webBase = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
     const upstream = await fetch(`${webBase}/api/payment/create`, {
       method: 'POST',
       headers: {

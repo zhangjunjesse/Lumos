@@ -17,7 +17,7 @@ const QUOTA_MAX_ATTEMPTS = 2;
 const QUOTA_RETRY_BACKOFF_MS = 600;
 
 function getWebBase(): string {
-  return process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  return process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
 }
 
 function getWebSessionToken(userId: string): string | null {

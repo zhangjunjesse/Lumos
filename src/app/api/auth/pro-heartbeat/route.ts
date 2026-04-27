@@ -10,7 +10,7 @@ import {
 import { getCustomProviderFlags } from '@/lib/edition-runtime';
 import { composeAuthPayload } from '@/lib/auth/payload';
 
-const LUMOS_WEB_URL = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+const LUMOS_WEB_URL = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
 const HEARTBEAT_TIMEOUT_MS = 5_000;
 
 // lumos-web session tokens are 32 random bytes hex-encoded (64 hex chars).

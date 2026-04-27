@@ -61,7 +61,7 @@ export async function registerUser(params: RegisterParams): Promise<AuthResult> 
 }
 
 async function fetchRemoteRegister(params: RegisterParams): Promise<{ user: RemoteUser; response: Response }> {
-  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const webBase = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
   const response = await fetch(`${webBase}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -110,7 +110,7 @@ export interface RemoteUser {
 }
 
 async function fetchRemoteLogin(account: string, password: string): Promise<{ user: RemoteUser; response: Response }> {
-  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const webBase = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
   const response = await fetch(`${webBase}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -295,7 +295,7 @@ export async function refreshUserBalance(
     throw new Error('Web 会话 token 格式异常');
   }
 
-  const webBase = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+  const webBase = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
   const res = await fetch(`${webBase}/api/auth/me`, {
     headers: { Cookie: `lumos_session=${webToken}` },
     cache: 'no-store',

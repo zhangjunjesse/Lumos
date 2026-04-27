@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const WEB_BASE = process.env.LUMOS_WEB_URL || 'http://lumos.miki.zj.cn';
+const WEB_BASE = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
 
 /**
  * POST /api/auth/send-code — Pass-through proxy to lumos-web.
