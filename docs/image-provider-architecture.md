@@ -55,10 +55,10 @@ lumos_image_providers                       │                                 
    - 按 `remote_id` 一对一 upsert 到 `api_providers`(`provider_origin=system`)。
    - 原 map 中但新列表没有的 → 删除(orphan 清理)。
    - 写入新 map。
-   - 维护 `provider_override:image`:
-     - 有 `is_default=true` 的 config → 强制指向它(**覆盖用户选择**)。
-     - 否则旧值还指向合法 local id → 保留。
-     - 否则 → 清空。
+   - 维护 `provider_override:image`(用户选择优先, `is_default` 仅做兜底):
+     - 旧值仍指向 map 内合法 local id → 保留(用户的手动切换不被周期同步覆盖)。
+     - 否则有 `is_default=true` 的 config → 用它兜底(全新用户 / 旧值失效场景)。
+     - 否则 → 清空, 让 `resolveProviderForCapability` 报错提醒用户去选择。
 3. **`model_override:image` 从不被 provisioner 动**。这是脱钩的根源,由读端校验兜底。
 
 ---

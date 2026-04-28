@@ -261,9 +261,10 @@ async function removeOrphanSystemProviders(
  * - 入参空数组 → 删除所有已 provision 的云图片 provider, 清掉 map 和 override。
  * - 入参非空 → 按 `remote_id` 一对一 upsert 本地 provider; 原来在 map 中但
  *   新列表里没有的 → 删除。
- * - `provider_override:image` 的维护:
- *    - 如果入参里有 `is_default=true` → 指向它的 local id。
- *    - 否则若旧值还指向现有 local provider → 保留, 让用户的手动选择生效。
+ * - `provider_override:image` 的维护(用户选择优先, `is_default` 仅做兜底):
+ *    - 旧值仍指向 map 内的合法 local id → 保留(用户的手动选择不被周期同步覆盖)。
+ *    - 否则若入参里有 `is_default=true` → 用它兜底, 让全新用户/失效 override
+ *      的用户有可用默认。
  *    - 否则 → 清空, 让 `resolveProviderForCapability` 报错提醒用户去选择。
  */
 export async function provisionImageProviders(
@@ -307,12 +308,15 @@ export async function provisionImageProviders(
   const overrideStillValid = currentOverride
     && Object.values(nextMap).includes(currentOverride);
 
-  if (defaultLocalId) {
+  if (overrideStillValid) {
+    // 用户已经选了一个仍然合法的 provider, 不要被周期同步覆盖。
+  } else if (defaultLocalId) {
+    // 旧 override 缺失或已失效, 用云端 is_default 兜底。
     db.prepare(
       'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     ).run(PROVIDER_OVERRIDE_IMAGE_KEY, defaultLocalId);
-  } else if (!overrideStillValid) {
-    // 没有系统默认, 旧 override 也已失效 → 清空, 让用户重新选择。
+  } else {
+    // 既没有合法旧值, 也没有云端默认 → 清空, 让用户重新选择。
     db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_IMAGE_KEY);
   }
 
