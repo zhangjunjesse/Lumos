@@ -135,6 +135,7 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 成果：`Workflow` 正式页已补上真实最终输出展示，并能区分“原始规划步骤”和“实际执行步骤”；当任务回退为 simple execution 时，不再把旧工作流步骤错误展示为当前执行状态。
   - 成果：正式 `Workflow` 编辑页已补一轮保存收口；现在删除最后一个节点后仍可按“空白草稿”正常保存，且删除节点时会同步清理残留的依赖/控制流引用，减少“界面上节点已删、点击保存后仍一直显示未保存”的假失败。
   - 成果：正式 `Workflow` 编辑主路径已开始收敛到原生 `v3 nodes/edges`；当前详情编辑页与新建构建器页的页级真源、JSON 文本与保存载荷都已统一使用正式 `v3` DSL，旧 `steps / dependsOn` 视图模型仅保留在图形/可视化子组件边界，通过适配器进出，不再继续作为页面级保存真源。
+  - 成果：正式 `Workflow` 列表页已补上批量导入 / 导出第一版；用户现在可以多选工作流后导出，也可以导出全部工作流；导入接口同时兼容旧单工作流包 `lumos-workflow/v1` 和新批量包 `lumos-workflow-bundle/v1`，页面导入也支持一次选择多个旧单包文件并合并成批量导入请求；批量导入时会复用同一批 preset ID 映射，减少同一批包内共享代理预设被重复创建。
   - 成果：已修正调度层对中文否定语义的一个显性误判，`不需要通知` 不再被当成通知需求。
   - 成果：已补 OpenWorkflow / backend-sqlite 的 Next 服务端外部包配置，收口当前开发环境下的一个工作流引擎兼容风险。
   - 成果：已收紧 workflow agent step 的输出合同，默认只交付结构化文本结果，不再允许虚报未落盘的 artifact 文件，减少多步代理工作流的伪失败。
@@ -163,6 +164,7 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 成果：按用户最新要求，主 Agent 页已去掉临时任务面板，任务标签也已从全局左侧导航撤下，改为出现在聊天界面右侧的轻量任务标签；用户可直接点击标签跳到标准 `Workflow` 任务详情查看报告，不看详情时仍由主 Agent 在对话里汇报结果。
   - 成果：图片模块已新增 `Nano banana2（ToAPIs）` 的第一阶段接入；当前正式预设会把 ToAPIs 的“上传参考图 -> 创建异步任务 -> 轮询状态 -> 下载结果”接进统一图片生成主链，不再误复用 Google 官方 Gemini 原生协议；同时已开始支持文生图、图生图/多参考图、极端宽高比与 `resolution` 元数据透传，便于先承接与万相相近的一批电商出图/改图场景；图片参数 UI 也已从旧确认卡片扩到真实聊天入口与图片服务商编辑弹窗，当前会按图片模块正在使用的服务商动态展示可用比例、分辨率、生成张数上限、参考图上限与专有高级参数入口，优先适配 `Nano banana2（ToAPIs）` 的极端宽高比和高参考图上限；同时图片服务商现已支持在设置里保存默认比例/分辨率/张数，并在真正的生成运行时自动生效；Pro 图片生成工具已移除旧的“每会话最多 10 张”运行时限制与结果字段，改为按张计费口径，聊天侧不再应根据历史 `generation_count / generation_limit` 推导剩余额度。
   - 成果：支付模块已按用户最新要求收敛为“充值余额”第一阶段主链；当前桌面端充值弹窗不再展示月卡/套餐购买，用户可输入金额，当前仅展示支付宝支付，创建订单后直接在弹窗展示二维码，并会自动检测到账后显示“支付成功 / 余额已到账”；订单创建由桌面端转发到 `lumos-web`，后台按易支付签名规则生成支付链接，并在异步/同步回调中校验签名、支付状态和金额后给对应 new-api token 增加额度，同时记录订单到账状态以减少重复回调导致的重复入账风险。
+  - 成果：Lumos Cloud DeepSeek 计费差异已完成一次生产排查和收口；确认根因不是未记录缓存命中，而是 new-api `CacheRatio` 里缺少 `deepseek-v4-flash / deepseek-v4-pro` 别名，导致缓存命中 token 按未命中全价扣费。生产 new-api 已补 `deepseek-v4-flash=0.02`、`deepseek-v4-pro=0.0083333333` 并重启生效；受影响历史日志、小时统计、token 余额和用户 used quota 已按同一规则修正，当前累计返还 `108,275,040` quota（¥216.5501）。客户端侧也已补 Claude Agent SDK 辅助 Haiku 调用的 provider 级防护，非 Claude 模型目录会把 `ANTHROPIC_SMALL_FAST_MODEL / ANTHROPIC_DEFAULT_HAIKU_MODEL` 固定到当前 resolved model，减少 DeepSeek 渠道继续产生 `claude-haiku-*` 账单行。
   - 成果：知识库向量化的长期跨平台问题已正式记录并定位；Windows exe 报错 `embedding model initialization failed: Cannot read properties of undefined (reading 'create')` 时，诊断已显示模型文件实际存在于用户 runtime cache 和安装目录，因此不应继续按“模型文件缺失”方向排查。当前判断为 Electron/Next packaged server 中 portable `transformers.web.js` 在 Node 进程里误选 `onnxruntime-node` 空后端，导致 `InferenceSession.create` 为空；修复方向是让打包版索引统一走本地 `onnxruntime-web` WASM 后端，并显式绑定打包内 `ort-wasm-simd-threaded` 文件路径。
   - 待完成：知识库索引仍需完成新安装包级验收；必须分别在 macOS 和 Windows exe 上验证“导入内容 -> 向量化成功 -> 搜索命中”，在此之前不能把跨平台索引问题标为完整完成。
   - 成果：已新增 `07-dynamic-capability-extension-design.md`，把“用户通过 LLM 动态新增系统能力，并让工作流后续可正式使用”定义为独立横切架构，不再硬塞进 `03 ~ 06` 任一单层文档。
@@ -255,8 +257,8 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - `Workflow 编辑体验`
   - 文档完整度：`部分完成`
   - 主链状态：`已打通`
-  - 当前进展：正式 `Workflow` 详情编辑页与新建构建器的页级真源、JSON 文本和保存载荷现已统一使用原生 `v3 nodes/edges`；旧 `steps / dependsOn` 形状当前只保留在图表/可视化子组件边界，并通过适配器做进出转换，不再继续作为页面级保存真源；同时编辑器保真元数据也已移到隐藏存储，不再泄漏到用户可见 JSON 文本里。
-  - 当前缺口：图表、画布、步骤属性编辑等子组件内部仍建立在旧 `steps / dependsOn` 视图模型上，适配层仍然存在；这意味着“双轨模型”已从正式页主状态退到组件边界，但还没有被彻底删除，因此还不能按“完整实现”标准说编辑器已经完全收敛。
+  - 当前进展：正式 `Workflow` 详情编辑页与新建构建器的页级真源、JSON 文本和保存载荷现已统一使用原生 `v3 nodes/edges`；旧 `steps / dependsOn` 形状当前只保留在图表/可视化子组件边界，并通过适配器做进出转换，不再继续作为页面级保存真源；同时编辑器保真元数据也已移到隐藏存储，不再泄漏到用户可见 JSON 文本里；最新列表页已补上批量导出 / 导入第一版，用户可多选导出或导出全部，导入可识别旧单包、新批量包，以及一次选择多个旧单包文件，并会在同一批导入中共享代理预设映射。
+  - 当前缺口：图表、画布、步骤属性编辑等子组件内部仍建立在旧 `steps / dependsOn` 视图模型上，适配层仍然存在；这意味着“双轨模型”已从正式页主状态退到组件边界，但还没有被彻底删除，因此还不能按“完整实现”标准说编辑器已经完全收敛；批量导入 / 导出目前已完成列表页第一版主链，但还未补更细的冲突预览、导入前清单确认、部分失败回滚和更系统的 UI 验收。
 - `图片生成模块`
   - 文档完整度：`部分完成`
   - 主链状态：`已打通`
@@ -268,6 +270,11 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 当前进展：支付主线已明确只做余额充值，不做月卡或订阅；桌面端充值入口已切到金额输入 + 支付宝二维码 + 自动检测到账 + 手动刷新余额，创建订单时会使用当前 Lumos 云账户会话转发到 `lumos-web`；后台已接入易支付/ZPay `submit.php` 参数与 MD5 签名规则，创建 `balance_topup` 订单，并在支付回调里校验签名、`TRADE_SUCCESS`、订单金额后给用户的 new-api token 增加额度，回调会写入支付单号、原始通知和到账状态；最新已把后台默认提交网关切到 `https://zpayz.cn/submit.php`，`lumos-web` 生产站点已用 Let's Encrypt + Nginx 切到 `https://lumos.miki.zj.cn`，HTTP 会自动跳转 HTTPS，生产 `LUMOS_WEB_PUBLIC_URL` 也已切到 HTTPS。
   - UI 可验收范围：用户现在能在侧边栏或设置里的“充值”入口打开“充值余额”弹窗，选择 ¥10 / ¥50 / ¥100 / ¥200 或“其他金额”后输入自定义金额，当前仅展示并使用支付宝支付；Lumos 客户端创建订单后会直接在弹窗中展示支付宝扫码二维码，不再展示“打开支付页”按钮；支付完成且后台已入账后，弹窗会自动切换到“支付成功 / 余额已到账”，手动点击“刷新余额”也能触发同样的到账状态；同时 `lumos-web` 普通用户后台已把旧“套餐管理”入口改为“余额充值”，旧个人版/专业版卡片已从普通用户可见页面移除，公开首页价格区也已收敛为免费注册与余额充值；`账单记录` 页已接入当前用户自己的充值订单列表，可查看订单号、金额、支付方式、支付状态、到账状态和到账时间。
   - 当前缺口：已完成一笔真实支付成功验收，生产 HTTPS 支付回调与到账主链已确认；后台对账、退款、管理员订单检索与异常补单还未做，因此不能按“完整实现”标准验收支付模块。
+- `Lumos Cloud 计费`
+  - 文档完整度：`部分完成`
+  - 主链状态：`已打通`
+  - UI 可验收范围：用户可在 Lumos Cloud 账户信息里刷新余额/已使用额度，当前 DeepSeek 缓存命中按生产 new-api 新比例计费；本次受影响账户已返还 `108,275,040` quota（¥216.5501），token 4 余额已从 `364,988,757` 增至 `466,878,222`，token 8 余额已从 `1,414,443` 增至 `7,800,018`。
+  - 当前缺口：仍缺正式的后台对账页、按 provider/model 的缓存命中差额报表、可审计的管理员补偿操作记录和自动化计费回归；当前只能说 DeepSeek 别名缓存计费问题已在生产配置与本次历史账上收口，不能说 Cloud 计费体系已经完整完成。
 - 总体结论
   - 最小闭环：`已完成`
   - 按完整实现标准的总体验收：`未通过`

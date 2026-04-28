@@ -4,7 +4,7 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ApiProvider } from '@/types'
 import { getDefaultProvider, getProvider } from '@/lib/db/providers'
 import { getSession } from '@/lib/db/sessions'
-import { resolveProviderModelForRequest } from '@/lib/model-metadata'
+import { parseProviderModelCatalog, resolveProviderModelForRequest } from '@/lib/model-metadata'
 import fs from 'fs'
 import { findClaudeBinary, findGitBash, getClaudeConfigDir, getExpandedPath } from '@/lib/platform'
 import { findBundledClaudeSdkCliPath } from './sdk-paths'
@@ -116,6 +116,39 @@ function resolveClaudeCliPath(): string | undefined {
   return claudePath
 }
 
+function isClaudeHaikuModel(value?: string | null): boolean {
+  const normalized = value?.trim().toLowerCase() || ''
+  return normalized === 'haiku' || normalized.includes('haiku')
+}
+
+function shouldPinSdkAuxiliaryModels(
+  provider: ApiProvider | undefined,
+  resolvedModel: string | undefined,
+): provider is ApiProvider {
+  if (!provider || !resolvedModel) return false
+  if (provider.auth_mode === 'local_auth') return false
+
+  const configuredModels = parseProviderModelCatalog(provider.model_catalog)
+  if (configuredModels.length === 0) return false
+
+  return !configuredModels.some((model) => isClaudeHaikuModel(model.value))
+}
+
+function pinSdkAuxiliaryModelsToResolvedModel(
+  env: Record<string, string>,
+  provider: ApiProvider | undefined,
+  resolvedModel: string | undefined,
+): void {
+  const auxiliaryModel = resolvedModel?.trim()
+  if (!auxiliaryModel || !shouldPinSdkAuxiliaryModels(provider, auxiliaryModel)) return
+
+  // Claude Code may use a separate Haiku-class helper model for startup and
+  // light background work. Non-Claude gateway providers often cannot bill that
+  // model correctly, so pin it to the same model Lumos resolved for the run.
+  env.ANTHROPIC_SMALL_FAST_MODEL = auxiliaryModel
+  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = auxiliaryModel
+}
+
 export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstrapOptions): ClaudeSdkRuntimeBootstrap {
   const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> }
 
@@ -163,6 +196,7 @@ export function buildClaudeSdkInvocationContext(
   const runtime = buildClaudeSdkRuntimeBootstrap(options)
   const requestedModel = options?.requestedModel?.trim() || undefined
   const resolvedModel = resolveProviderModelForRequest(runtime.activeProvider, requestedModel)
+  pinSdkAuxiliaryModelsToResolvedModel(runtime.env, runtime.activeProvider, resolvedModel)
 
   return {
     ...runtime,

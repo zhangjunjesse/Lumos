@@ -27,6 +27,7 @@ import type { WorkflowNode } from './types-v3';
 // ---------------------------------------------------------------------------
 
 export const PACKAGE_FORMAT = 'lumos-workflow/v1' as const;
+export const BUNDLE_PACKAGE_FORMAT = 'lumos-workflow-bundle/v1' as const;
 
 /** 'workflow-agent' = templates.type='workflow-agent'; 'conversation' = templates.type='conversation' */
 export type PackageAgentPresetType = 'workflow-agent' | 'conversation';
@@ -62,6 +63,17 @@ export interface WorkflowPackage {
   exportedAt: string;
   workflow: WorkflowDSLV3;
   agents: Record<string, WorkflowPackageAgent>;
+}
+
+export interface WorkflowBundleItem {
+  workflow: WorkflowDSLV3;
+  agents: Record<string, WorkflowPackageAgent>;
+}
+
+export interface WorkflowBundlePackage {
+  format: typeof BUNDLE_PACKAGE_FORMAT;
+  exportedAt: string;
+  workflows: WorkflowBundleItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +114,20 @@ export function exportWorkflowPackage(dsl: WorkflowDSLV3): WorkflowPackage {
     exportedAt: new Date().toISOString(),
     workflow: dsl,
     agents,
+  };
+}
+
+export function exportWorkflowBundlePackage(workflows: WorkflowDSLV3[]): WorkflowBundlePackage {
+  return {
+    format: BUNDLE_PACKAGE_FORMAT,
+    exportedAt: new Date().toISOString(),
+    workflows: workflows.map((workflow) => {
+      const pkg = exportWorkflowPackage(workflow);
+      return {
+        workflow: pkg.workflow,
+        agents: pkg.agents,
+      };
+    }),
   };
 }
 
@@ -157,6 +183,11 @@ export interface ImportResult {
   createdPresets: Array<{ id: string; name: string }>;
 }
 
+export interface ImportBundleResult {
+  workflows: Array<{ dsl: WorkflowDSLV3 }>;
+  createdPresets: Array<{ id: string; name: string }>;
+}
+
 /**
  * Import a workflow package: create agent presets and rewrite DSL preset IDs.
  *
@@ -165,72 +196,90 @@ export interface ImportResult {
  * - Creates the correct preset type (workflow-agent or conversation).
  */
 export function importWorkflowPackage(pkg: WorkflowPackage): ImportResult {
+  const result = importWorkflowBundleItems([{ workflow: pkg.workflow, agents: pkg.agents || {} }]);
+  return {
+    dsl: result.workflows[0].dsl,
+    createdPresets: result.createdPresets,
+  };
+}
+
+export function importWorkflowBundlePackage(pkg: WorkflowBundlePackage): ImportBundleResult {
+  return importWorkflowBundleItems(pkg.workflows);
+}
+
+function importWorkflowBundleItems(items: WorkflowBundleItem[]): ImportBundleResult {
   const db = getDb();
 
   return db.transaction(() => {
     const idMapping = new Map<string, string>();
     const createdPresets: ImportResult['createdPresets'] = [];
 
-    for (const [oldId, agent] of Object.entries(pkg.agents)) {
-      if (oldId.startsWith(BUILTIN_PREFIX)) continue;
+    for (const item of items) {
+      for (const [oldId, agent] of Object.entries(item.agents ?? {})) {
+        if (oldId.startsWith(BUILTIN_PREFIX) || idMapping.has(oldId)) continue;
 
-      // Backward compat: old packages don't have presetType
-      const presetType: PackageAgentPresetType = agent.presetType || 'workflow-agent';
+        // Backward compat: old packages don't have presetType
+        const presetType: PackageAgentPresetType = agent.presetType || 'workflow-agent';
 
-      let name = agent.name;
-      while (isNameTaken(name, presetType)) {
-        const suffix = Math.random().toString(36).slice(2, 6);
-        name = `${agent.name}_${suffix}`;
+        let name = agent.name;
+        while (isNameTaken(name, presetType)) {
+          const suffix = Math.random().toString(36).slice(2, 6);
+          name = `${agent.name}_${suffix}`;
+        }
+
+        let newId: string;
+        if (presetType === 'conversation') {
+          const created = createAgentPreset({
+            name,
+            systemPrompt: agent.systemPrompt || '',
+            roleKind: agent.roleKind as 'worker' | undefined,
+            responsibility: agent.responsibility,
+            description: agent.description,
+            collaborationStyle: agent.collaborationStyle,
+            outputContract: agent.outputContract,
+            preferredModel: agent.preferredModel,
+            mcpServers: agent.mcpServers,
+            position: agent.position,
+            interests: agent.interests,
+            specialties: agent.specialties,
+          });
+          newId = created.id;
+        } else {
+          const created = createWorkflowAgentPreset({
+            name,
+            description: agent.expertise || '',
+            expertise: agent.expertise || '',
+            role: agent.role as WorkflowAgentPresetConfig['role'],
+            systemPrompt: agent.systemPrompt,
+            model: agent.model,
+            allowedTools: agent.allowedTools as WorkflowAgentPresetConfig['allowedTools'],
+            outputMode: agent.outputMode as WorkflowAgentPresetConfig['outputMode'],
+            capabilityTags: agent.capabilityTags,
+            memoryPolicy: agent.memoryPolicy,
+            concurrencyLimit: agent.concurrencyLimit,
+          });
+          newId = created.id;
+        }
+
+        idMapping.set(oldId, newId);
+        createdPresets.push({ id: newId, name });
       }
-
-      let newId: string;
-      if (presetType === 'conversation') {
-        const created = createAgentPreset({
-          name,
-          systemPrompt: agent.systemPrompt || '',
-          roleKind: agent.roleKind as 'worker' | undefined,
-          responsibility: agent.responsibility,
-          description: agent.description,
-          collaborationStyle: agent.collaborationStyle,
-          outputContract: agent.outputContract,
-          preferredModel: agent.preferredModel,
-          mcpServers: agent.mcpServers,
-          position: agent.position,
-          interests: agent.interests,
-          specialties: agent.specialties,
-        });
-        newId = created.id;
-      } else {
-        const created = createWorkflowAgentPreset({
-          name,
-          description: agent.expertise || '',
-          expertise: agent.expertise || '',
-          role: agent.role as WorkflowAgentPresetConfig['role'],
-          systemPrompt: agent.systemPrompt,
-          model: agent.model,
-          allowedTools: agent.allowedTools as WorkflowAgentPresetConfig['allowedTools'],
-          outputMode: agent.outputMode as WorkflowAgentPresetConfig['outputMode'],
-          capabilityTags: agent.capabilityTags,
-          memoryPolicy: agent.memoryPolicy,
-          concurrencyLimit: agent.concurrencyLimit,
-        });
-        newId = created.id;
-      }
-
-      idMapping.set(oldId, newId);
-      createdPresets.push({ id: newId, name });
     }
 
-    // Rewrite DSL node preset IDs
-    const nodes = pkg.workflow.nodes.map((node): WorkflowNode => {
-      if (node.type !== 'agent') return node;
-      const input = node.input as Record<string, unknown> | undefined;
-      const oldPresetId = input?.preset as string | undefined;
-      if (!oldPresetId || !idMapping.has(oldPresetId)) return node;
-      return { ...node, input: { ...input, preset: idMapping.get(oldPresetId) } };
+    const workflows = items.map((item) => {
+      // Rewrite DSL node preset IDs
+      const nodes = item.workflow.nodes.map((node): WorkflowNode => {
+        if (node.type !== 'agent') return node;
+        const input = node.input as Record<string, unknown> | undefined;
+        const oldPresetId = input?.preset as string | undefined;
+        if (!oldPresetId || !idMapping.has(oldPresetId)) return node;
+        return { ...node, input: { ...input, preset: idMapping.get(oldPresetId) } };
+      });
+
+      return { dsl: { ...item.workflow, nodes } };
     });
 
-    return { dsl: { ...pkg.workflow, nodes }, createdPresets };
+    return { workflows, createdPresets };
   })();
 }
 
@@ -255,4 +304,21 @@ export function isValidWorkflowPackage(data: unknown): data is WorkflowPackage {
   if (!Array.isArray(wf.nodes) || !Array.isArray(wf.edges)) return false;
   if (obj.agents !== undefined && typeof obj.agents !== 'object') return false;
   return true;
+}
+
+export function isValidWorkflowBundlePackage(data: unknown): data is WorkflowBundlePackage {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+  if (obj.format !== BUNDLE_PACKAGE_FORMAT) return false;
+  if (!Array.isArray(obj.workflows) || obj.workflows.length === 0) return false;
+
+  return obj.workflows.every((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const item = entry as Record<string, unknown>;
+    if (!item.workflow || typeof item.workflow !== 'object') return false;
+    const workflow = item.workflow as Record<string, unknown>;
+    if (workflow.version !== 'v3') return false;
+    if (!Array.isArray(workflow.nodes) || !Array.isArray(workflow.edges)) return false;
+    return item.agents === undefined || typeof item.agents === 'object';
+  });
 }

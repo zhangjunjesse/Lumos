@@ -372,4 +372,76 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.requestedModel).toBe('doubao-seed-2.0-lite')
     expect(runtime.resolvedModel).toBe('doubao-seed-2-0-lite-260215')
   })
+
+  test('pins Claude SDK auxiliary Haiku calls to the resolved model for non-Claude cloud catalogs', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-deepseek-cloud',
+      name: 'LumosProToDeepSeek',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'deepseek-v4-flash', label: 'deepseek-v4-flash' },
+        { value: 'deepseek-v4-pro', label: 'deepseek-v4-pro' },
+      ]),
+      model_catalog_source: 'manual',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-28 00:00:00',
+      updated_at: '2026-04-28 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkInvocationContext({
+      requestedModel: 'deepseek-v4-flash',
+    })
+
+    expect(runtime.resolvedModel).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4-flash')
+  })
+
+  test('keeps Claude SDK auxiliary model defaults when the provider catalog has Haiku', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-claude-proxy',
+      name: 'Claude Proxy',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+        { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+      ]),
+      model_catalog_source: 'manual',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-28 00:00:00',
+      updated_at: '2026-04-28 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkInvocationContext({
+      requestedModel: 'claude-sonnet-4-6',
+    })
+
+    expect(runtime.resolvedModel).toBe('claude-sonnet-4-6')
+    expect(runtime.env.ANTHROPIC_SMALL_FAST_MODEL).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined()
+  })
 })

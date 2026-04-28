@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -19,6 +20,50 @@ interface WorkflowItem {
   updatedAt: string;
 }
 
+interface WorkflowImportPackage {
+  format: 'lumos-workflow/v1';
+  workflow: unknown;
+  agents?: Record<string, unknown>;
+}
+
+interface WorkflowImportBundle {
+  format: 'lumos-workflow-bundle/v1';
+  exportedAt?: string;
+  workflows: Array<{
+    workflow: unknown;
+    agents?: Record<string, unknown>;
+  }>;
+}
+
+function isWorkflowImportPackage(value: unknown): value is WorkflowImportPackage {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return record.format === 'lumos-workflow/v1' && Boolean(record.workflow);
+}
+
+function isWorkflowImportBundle(value: unknown): value is WorkflowImportBundle {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return record.format === 'lumos-workflow-bundle/v1' && Array.isArray(record.workflows);
+}
+
+function buildImportPayload(packages: Array<WorkflowImportPackage | WorkflowImportBundle>) {
+  if (packages.length === 1) {
+    return packages[0];
+  }
+
+  return {
+    format: 'lumos-workflow-bundle/v1',
+    exportedAt: new Date().toISOString(),
+    workflows: packages.flatMap((pkg) => {
+      if (isWorkflowImportBundle(pkg)) {
+        return pkg.workflows;
+      }
+      return [{ workflow: pkg.workflow, agents: pkg.agents ?? {} }];
+    }),
+  };
+}
+
 export default function WorkflowPage() {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
@@ -31,6 +76,9 @@ export default function WorkflowPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [importError, setImportError] = useState('');
+  const [importNotice, setImportNotice] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [exporting, setExporting] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,6 +99,14 @@ export default function WorkflowPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const workflowIds = new Set(workflows.map(w => w.id));
+      const next = new Set(Array.from(prev).filter(id => workflowIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [workflows]);
 
   const handleDeleted = useCallback((id: string) => {
     setWorkflows(prev => prev.filter(w => w.id !== id));
@@ -95,37 +151,119 @@ export default function WorkflowPage() {
   }, [newName, router]);
 
   const handleImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     if (importInputRef.current) importInputRef.current.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
     setImportError('');
-    if (file.size > 1024 * 1024) {
-      setImportError('文件过大，最大支持 1MB');
+    setImportNotice('');
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalSize > 10 * 1024 * 1024) {
+      setImportError('文件过大，单次最大支持 10MB');
       return;
     }
     try {
-      const text = await file.text();
-      const pkg = JSON.parse(text) as Record<string, unknown>;
-      if (pkg.format !== 'lumos-workflow/v1') {
+      const packages = await Promise.all(
+        files.map(async (file) => JSON.parse(await file.text()) as unknown),
+      );
+      const validPackages = packages.filter(
+        (pkg): pkg is WorkflowImportPackage | WorkflowImportBundle => (
+          isWorkflowImportPackage(pkg) || isWorkflowImportBundle(pkg)
+        ),
+      );
+      if (validPackages.length !== packages.length) {
         setImportError('无效的工作流包格式：缺少 format 标识');
         return;
       }
+      const payload = buildImportPayload(validPackages);
       const res = await fetch('/api/workflow/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: text,
+        body: JSON.stringify(payload),
       });
       const data = await res.json() as {
         workflow?: { id: string };
+        workflows?: Array<{ id: string; name?: string }>;
+        count?: number;
         createdPresets?: Array<{ name: string }>;
         error?: string;
       };
       if (data.error) { setImportError(data.error); return; }
-      if (data.workflow?.id) {
+      const importedCount = data.count ?? data.workflows?.length ?? (data.workflow ? 1 : 0);
+      if (importedCount > 1) {
+        setImportNotice(`已导入 ${importedCount} 个工作流`);
+        await load();
+      } else if (data.workflow?.id) {
         router.push(`/workflow/${data.workflow.id}`);
+      } else {
+        await load();
       }
     } catch { setImportError('导入失败：文件格式不正确'); }
-  }, [router]);
+  }, [load, router]);
+
+  const handleSelectWorkflow = useCallback((id: string, selected: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (selected) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(prev => {
+      if (prev.size === workflows.length) {
+        return new Set();
+      }
+      return new Set(workflows.map(w => w.id));
+    });
+  }, [workflows]);
+
+  const downloadJson = useCallback((data: unknown, fileName: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleBulkExport = useCallback(async (mode: 'selected' | 'all') => {
+    const ids = mode === 'selected' ? Array.from(selectedIds) : workflows.map(w => w.id);
+    if (ids.length === 0) {
+      setImportError('请选择要导出的工作流');
+      return;
+    }
+
+    setExporting(true);
+    setImportError('');
+    setImportNotice('');
+    try {
+      const res = await fetch('/api/workflow/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mode === 'all' ? { all: true } : { ids }),
+      });
+      const data = await res.json() as { error?: string; count?: number };
+      if (!res.ok || data.error) {
+        setImportError(data.error || '导出失败');
+        return;
+      }
+
+      const date = new Date().toISOString().slice(0, 10);
+      const count = data.count ?? ids.length;
+      downloadJson(data, `lumos-workflows-${date}-${count}.json`);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  }, [downloadJson, selectedIds, workflows]);
 
   // Compute group metadata
   const existingGroups = [...new Set(workflows.map(w => w.groupName).filter(Boolean))].sort();
@@ -152,6 +290,8 @@ export default function WorkflowPage() {
     onGroupChange: handleGroupChange,
     onRun: (id: string) => openTaskEditor(id, 'once'),
     onSchedule: (id: string) => openTaskEditor(id, 'scheduled'),
+    selected: selectedIds.has(w.id),
+    onSelectedChange: handleSelectWorkflow,
   });
 
   const gridClass = 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
@@ -159,20 +299,51 @@ export default function WorkflowPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Page header */}
-      <div className="flex items-center justify-between border-b border-border/50 px-8 py-5">
+      <div className="flex flex-col gap-4 border-b border-border/50 px-8 py-5 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">工作流</h1>
           <p className="text-sm text-muted-foreground mt-0.5">用 AI 自动化你的重复任务</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => importInputRef.current?.click()}>导入</Button>
-          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
+        <div className="flex flex-wrap items-center gap-2">
+          {workflows.length > 0 && (
+            <>
+              <Button variant="outline" onClick={handleSelectAll}>
+                {selectedIds.size === workflows.length ? '取消选择' : '全选'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void handleBulkExport('selected')}
+                disabled={selectedIds.size === 0 || exporting}
+              >
+                <Download className="h-4 w-4" />
+                导出已选{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void handleBulkExport('all')}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4" />
+                导出全部
+              </Button>
+            </>
+          )}
+          <Button variant="outline" onClick={() => importInputRef.current?.click()}>
+            <Upload className="h-4 w-4" />
+            导入
+          </Button>
+          <input ref={importInputRef} type="file" accept=".json" className="hidden" multiple onChange={handleImport} />
           <Button onClick={openCreate}>+ 新建工作流</Button>
         </div>
       </div>
       {importError && (
         <div className="mx-8 mt-3 text-sm px-3 py-2 rounded-lg border bg-destructive/10 text-destructive border-destructive/20">
           {importError}
+        </div>
+      )}
+      {importNotice && (
+        <div className="mx-8 mt-3 text-sm px-3 py-2 rounded-lg border bg-emerald-500/10 text-emerald-700 border-emerald-500/20">
+          {importNotice}
         </div>
       )}
 

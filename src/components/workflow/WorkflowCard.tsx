@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
+import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -15,8 +16,10 @@ interface WorkflowCardProps {
   updatedAt: string;
   groupName: string;
   existingGroups: string[];
+  selected?: boolean;
   onDeleted: (id: string) => void;
   onGroupChange: (id: string, groupName: string) => void;
+  onSelectedChange?: (id: string, selected: boolean) => void;
   onRun?: (id: string) => void;
   onSchedule?: (id: string) => void;
 }
@@ -34,7 +37,22 @@ const VERSION_COLORS: Record<string, string> = {
   v1: 'bg-slate-500/10 text-slate-500',
 };
 
-export function WorkflowCard({ id, name, description, dslVersion, stepCount, updatedAt, groupName, existingGroups, onDeleted, onGroupChange, onRun, onSchedule }: WorkflowCardProps) {
+export function WorkflowCard({
+  id,
+  name,
+  description,
+  dslVersion,
+  stepCount,
+  updatedAt,
+  groupName,
+  existingGroups,
+  selected = false,
+  onDeleted,
+  onGroupChange,
+  onSelectedChange,
+  onRun,
+  onSchedule,
+}: WorkflowCardProps) {
   const [deleting, setDeleting] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupInput, setGroupInput] = useState('');
@@ -52,6 +70,12 @@ export function WorkflowCard({ id, name, description, dslVersion, stepCount, upd
       setDeleting(false);
     }
   }, [id, name, onDeleted]);
+
+  const handleSelect = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelectedChange?.(id, !selected);
+  }, [id, onSelectedChange, selected]);
 
   const handleGroupOpen = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -84,10 +108,27 @@ export function WorkflowCard({ id, name, description, dslVersion, stepCount, upd
   return (
     <Link
       href={`/workflow/${id}`}
-      className="group relative flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5 transition-all hover:border-border hover:shadow-md hover:shadow-black/5"
+      className={`group relative flex flex-col gap-3 rounded-xl border bg-card p-5 transition-all hover:border-border hover:shadow-md hover:shadow-black/5 ${
+        selected ? 'border-primary/60 shadow-sm shadow-primary/10' : 'border-border/60'
+      }`}
     >
+      {onSelectedChange && (
+        <button
+          type="button"
+          aria-pressed={selected}
+          aria-label={selected ? `取消选择 ${name}` : `选择 ${name}`}
+          className={`absolute left-3 top-3 z-10 flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
+            selected
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-background text-transparent group-hover:text-muted-foreground'
+          }`}
+          onClick={handleSelect}
+        >
+          <Check className="h-3.5 w-3.5" />
+        </button>
+      )}
       {/* Header */}
-      <div className="flex items-start justify-between gap-2">
+      <div className={`flex items-start justify-between gap-2 ${onSelectedChange ? 'pl-8' : ''}`}>
         <h3 className="text-sm font-semibold leading-snug line-clamp-2 flex-1">{name}</h3>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${versionClass}`}>
           {dslVersion}
