@@ -1,9 +1,20 @@
 appId: com.lumos.app
 productName: Lumos
+# Two providers in priority order:
+#   1. generic (lumos-web /api/updates) — checked first by electron-updater at
+#      runtime, mirrors are usually faster + reachable from regions where
+#      GitHub is rate-limited or blocked
+#   2. github — keeps `electron-builder --publish always` uploading installer
+#      bytes to GitHub Releases at build time so lumos-web can sync them, and
+#      provides a fallback if the official mirror is down
+# To migrate the official URL: update both this file and feedback_website_url.md.
 publish:
-  provider: github
-  owner: zhangjunjesse
-  repo: Lumos
+  - provider: generic
+    url: https://lumos.miki.zj.cn/api/updates
+    channel: latest
+  - provider: github
+    owner: zhangjunjesse
+    repo: Lumos
 directories:
   output: release
 files:
