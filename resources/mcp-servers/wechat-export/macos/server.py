@@ -139,7 +139,7 @@ def _load_contacts_from_db() -> dict[str, dict]:
         reader = csv.DictReader(io.StringIO("\n".join(lines)))
         for row in reader:
             wxid = (row.get("username") or "").strip()
-            if not wxid or wxid.endswith("@chatroom"):
+            if not wxid:
                 continue
             contacts[wxid] = {
                 "nickname": (row.get("nick_name") or "").strip(),

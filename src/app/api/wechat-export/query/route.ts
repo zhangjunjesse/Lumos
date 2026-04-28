@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const schema = z.object({
-  op: z.enum(['list_contacts', 'read_chat']),
+  op: z.enum(['list_contacts', 'list_sessions', 'read_chat']),
   args: z.record(z.string(), z.unknown()).optional(),
 });
 
