@@ -306,6 +306,25 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
       { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image Preview（Nano banana2）' },
     ],
   },
+  {
+    id: 'openai-image-compatible',
+    name: 'OpenAI 图片接口（通用）',
+    description: '走 OpenAI 标准 /v1/images/generations 同步协议的网关，适配 OpenAI 直连、new-api / one-api 代理、自建中转等。请填写网关根地址（不含 /v1）。',
+    provider_type: 'openai-image',
+    api_protocol: 'openai-compatible',
+    capabilities: ['image-gen'],
+    provider_origin: 'preset',
+    auth_mode: 'api_key',
+    base_url: '',
+    notes: '示例 base_url：https://api.openai.com、https://dm-fox.rjj.cc/codex；请勿手动追加 /v1/images/generations。带参考图时自动改走 /v1/images/edits multipart。',
+    tags: ['图片', '补充能力', '通用'],
+    supported_modules: ['image'],
+    default_models: [
+      { value: 'gpt-image-1', label: 'gpt-image-1' },
+      { value: 'gpt-image-2', label: 'gpt-image-2' },
+      { value: 'dall-e-3', label: 'DALL·E 3' },
+    ],
+  },
 ];
 
 /* ── 合并导出 ─────────────────────────────────────────── */
