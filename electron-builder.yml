@@ -112,6 +112,11 @@ mac:
       arch: [arm64]
 win:
   icon: build/icon.ico
+  # No spaces — keeps electron-builder's GitHub publisher and the workflow's
+  # subsequent `gh release upload` from producing two distinctly-named copies
+  # (`Lumos Setup ${version}.exe` vs. `Lumos.Setup.${version}.exe` after the
+  # actions/upload-artifact roundtrip).
+  artifactName: "${productName}-Setup-${version}.${ext}"
   target:
     - target: nsis
       arch: [x64]
