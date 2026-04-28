@@ -433,27 +433,6 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
 
       {enabled ? <WeChatBrowser /> : null}
 
-      <Disclosure title="在主对话里这么用 AI">
-        <ul className="text-sm text-foreground/85 space-y-2 leading-relaxed">
-          <li className="flex items-start gap-2">
-            <span className="mt-2 h-1 w-1 rounded-full bg-foreground/40" />
-            <span>「读一下我和 <em>夫人</em> 最近的聊天,有没有要做的事?」</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-2 h-1 w-1 rounded-full bg-foreground/40" />
-            <span>「最近三天微信里有什么待办?」</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-2 h-1 w-1 rounded-full bg-foreground/40" />
-            <span>「搜一下提到 <em>合同</em> 的所有微信记录」</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="mt-2 h-1 w-1 rounded-full bg-foreground/40" />
-            <span>「把<em> XX 群</em>本周聊的内容总结成会议纪要」</span>
-          </li>
-        </ul>
-      </Disclosure>
-
       <Disclosure title="维护与隐私">
         <div className="space-y-3 text-sm">
           <p className="text-muted-foreground leading-relaxed">
