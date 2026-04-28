@@ -77,6 +77,16 @@ def _load_contacts() -> dict[str, dict]:
 
     # 2. Auto-decrypt contact.db
     _contacts_cache = _load_contacts_from_db()
+
+    # Persist as side cache so future cold starts (e.g. lumos UI's per-request
+    # python subprocess) skip the contact.db decrypt entirely.
+    if _contacts_cache:
+        try:
+            with open(CONTACTS_FILE, "w", encoding="utf-8") as fh:
+                json.dump(_contacts_cache, fh, ensure_ascii=False)
+        except OSError:
+            pass  # cache write failure shouldn't break runtime
+
     return _contacts_cache
 
 

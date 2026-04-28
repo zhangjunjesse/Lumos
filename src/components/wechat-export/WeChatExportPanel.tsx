@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useWeChatExport } from './use-wechat-export';
+import { WeChatBrowser } from './WeChatBrowser';
 
 const WECHAT_APP_STORE_URL = 'macappstore://apps.apple.com/cn/app/wechat/id836500024';
 
@@ -430,8 +431,9 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
         </div>
       </Card>
 
-      <Card tone="soft">
-        <h4 className="text-sm font-semibold mb-2">在主对话里这么用</h4>
+      {enabled ? <WeChatBrowser /> : null}
+
+      <Disclosure title="在主对话里这么用 AI">
         <ul className="text-sm text-foreground/85 space-y-2 leading-relaxed">
           <li className="flex items-start gap-2">
             <span className="mt-2 h-1 w-1 rounded-full bg-foreground/40" />
@@ -450,7 +452,7 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
             <span>「把<em> XX 群</em>本周聊的内容总结成会议纪要」</span>
           </li>
         </ul>
-      </Card>
+      </Disclosure>
 
       <Disclosure title="维护与隐私">
         <div className="space-y-3 text-sm">

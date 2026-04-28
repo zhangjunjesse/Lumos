@@ -39,6 +39,10 @@ yarn-error.log*
 # local database
 /data/
 
+# python bytecode caches under vendored MCP servers
+__pycache__/
+*.pyc
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
