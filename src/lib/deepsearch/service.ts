@@ -43,8 +43,10 @@ import {
 } from './site-auth-validation';
 import {
   DEEPSEARCH_PAGE_VALIDATION_BLOCKED,
+  isDeepSearchSiteLoginFree,
   requiresManualPageValidation,
 } from './site-state';
+import { listAdapterKeys } from './adapter-registry';
 import type {
   CreateDeepSearchRunInput,
   DeepSearchBrowserBindingPreview,
@@ -1106,6 +1108,58 @@ export async function getDeepSearchBrowserBindingPreview(
 
 export async function listDeepSearchSitesView() {
   return listDeepSearchSites();
+}
+
+export interface DeepSearchToolManifestSite {
+  siteKey: string;
+  displayName: string;
+  baseUrl: string;
+  loginRequired: boolean;
+}
+
+export interface DeepSearchToolManifestAccountDataSite {
+  siteKey: string;
+  types: string[];
+}
+
+export interface DeepSearchToolManifest {
+  version: string;
+  sites: DeepSearchToolManifestSite[];
+  accountDataSites: DeepSearchToolManifestAccountDataSite[];
+}
+
+const ACCOUNT_DATA_CAPABILITY: DeepSearchToolManifestAccountDataSite[] = [
+  { siteKey: 'zhihu', types: ['browse_history'] },
+];
+
+export function getDeepSearchToolManifest(): DeepSearchToolManifest {
+  const adapterKeys = listAdapterKeys();
+  const dbSites = listDeepSearchSites();
+  const dbByKey = new Map(dbSites.map((site) => [site.siteKey, site]));
+
+  const sites: DeepSearchToolManifestSite[] = adapterKeys.map((siteKey) => {
+    const dbSite = dbByKey.get(siteKey);
+    return {
+      siteKey,
+      displayName: dbSite?.displayName || siteKey,
+      baseUrl: dbSite?.baseUrl || '',
+      loginRequired: !isDeepSearchSiteLoginFree(siteKey),
+    };
+  });
+
+  sites.sort((a, b) => {
+    if (a.loginRequired !== b.loginRequired) return a.loginRequired ? 1 : -1;
+    return a.siteKey.localeCompare(b.siteKey);
+  });
+
+  const registeredKeys = new Set(adapterKeys);
+  const accountDataSites = ACCOUNT_DATA_CAPABILITY.filter((entry) => registeredKeys.has(entry.siteKey));
+
+  return {
+    version: '1',
+    sites,
+    accountDataSites,
+  };
 }
 
 export async function saveDeepSearchSite(input: DeepSearchSiteUpsertInput) {

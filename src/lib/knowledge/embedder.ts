@@ -8,7 +8,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 // @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
 import * as onnxruntimeWebRuntime from 'onnxruntime-web';
-import * as portableTransformersRuntime from './transformers-web-runtime';
 import { getDb } from '@/lib/db';
 
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
@@ -36,6 +35,9 @@ interface OnnxruntimeWebModule {
 }
 
 interface TransformersLikeEnv {
+  backends?: {
+    onnx?: OnnxruntimeWebModule['env'];
+  };
   localModelPath?: string;
   allowRemoteModels?: boolean;
   allowLocalModels?: boolean;
@@ -114,16 +116,8 @@ function getConfiguredDataDir(): string {
   return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
 }
 
-function resolvePortableEmbeddingDevice(): 'cpu' {
-  // `transformers.web.js` still runs inside Electron's Node environment.
-  // In that environment, transformers validates devices against the Node list
-  // (`cpu` / `dml` on Windows), so passing `wasm` fails before the portable
-  // onnxruntime-web backend even gets a chance to initialize.
-  //
-  // Keep using the portable web runtime, but ask transformers for the `cpu`
-  // device. In onnxruntime-web this still routes through the bundled WASM
-  // backend, while avoiding the Electron/Node device validation failure.
-  return 'cpu';
+function resolvePortableEmbeddingDevice(): 'wasm' {
+  return 'wasm';
 }
 
 function buildOnnxruntimeWebDistCandidates(): string[] {
@@ -156,6 +150,31 @@ function resolveOnnxruntimeWebDir(): string {
   throw new Error(
     `onnxruntime-web dist not found; checked ${buildOnnxruntimeWebDistCandidates().join(', ')}`,
   );
+}
+
+function buildOnnxruntimeWebDiagnostics(): string {
+  const requiredFiles = [
+    'ort-wasm-simd-threaded.mjs',
+    'ort-wasm-simd-threaded.wasm',
+  ];
+
+  return buildOnnxruntimeWebDistCandidates()
+    .map((candidate) => {
+      const present = requiredFiles
+        .map((file) => {
+          const absolutePath = path.join(candidate, file);
+          try {
+            const stats = fs.statSync(absolutePath);
+            return `${file}(${stats.size}B)`;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is string => Boolean(entry));
+      const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(candidate, file)));
+      return `${candidate} -> missing=[${missing.length ? missing.join(', ') : 'none'}] present=[${present.join(', ') || 'none'}]`;
+    })
+    .join(' | ');
 }
 
 function buildLocalModelRootCandidates(): string[] {
@@ -293,11 +312,11 @@ function shouldRetryModelLoad(error: unknown): boolean {
 function buildModelLoadError(error: unknown, preparedModel: PreparedLocalModel): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(
-    `embedding model initialization failed: ${message}; diagnostics: ${buildModelDiagnostics([
+    `embedding model initialization failed: ${message}; model diagnostics: ${buildModelDiagnostics([
       preparedModel.cacheRoot,
       preparedModel.sourceRoot,
       ...buildLocalModelRootCandidates(),
-    ])}`,
+    ])}; onnxruntime-web diagnostics: ${buildOnnxruntimeWebDiagnostics()}`,
   );
 }
 
@@ -363,16 +382,62 @@ function createPortableLocalModelCache() {
   };
 }
 
-async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
-  const onnxruntimeWebDistDir = resolveOnnxruntimeWebDir();
-
-  onnxruntimeWeb.env.wasm.wasmPaths = {
+function buildPortableWasmPaths(onnxruntimeWebDistDir: string): { mjs: string; wasm: string } {
+  return {
     mjs: pathToFileURL(path.join(onnxruntimeWebDistDir, 'ort-wasm-simd-threaded.mjs')).href,
     wasm: pathToFileURL(path.join(onnxruntimeWebDistDir, 'ort-wasm-simd-threaded.wasm')).href,
   };
-  onnxruntimeWeb.env.wasm.proxy = false;
+}
 
-  return portableTransformersRuntime as typeof import('@huggingface/transformers');
+function configureOnnxruntimeWebEnv(env: OnnxruntimeWebModule['env'] | undefined, onnxruntimeWebDistDir: string): void {
+  if (!env?.wasm) {
+    return;
+  }
+
+  env.wasm.wasmPaths = buildPortableWasmPaths(onnxruntimeWebDistDir);
+  env.wasm.proxy = false;
+}
+
+async function importPortableTransformersRuntime(): Promise<typeof import('@huggingface/transformers')> {
+  const processReleaseNameDescriptor = process.release
+    ? Object.getOwnPropertyDescriptor(process.release, 'name')
+    : undefined;
+
+  // `transformers.web.js` decides between `onnxruntime-node` and
+  // `onnxruntime-web` at module evaluation time using
+  // `process.release.name === "node"`. In Electron's server process that would
+  // incorrectly select the ignored web-bundle stub for `onnxruntime-node`,
+  // leaving `InferenceSession` undefined. Temporarily presenting this import as
+  // a non-Node runtime makes the web build initialize its WASM backend.
+  if (processReleaseNameDescriptor?.configurable) {
+    Object.defineProperty(process.release, 'name', {
+      ...processReleaseNameDescriptor,
+      value: 'browser',
+    });
+  }
+
+  try {
+    const runtime = await import('./transformers-web-runtime');
+    return runtime as typeof import('@huggingface/transformers');
+  } finally {
+    if (processReleaseNameDescriptor?.configurable) {
+      Object.defineProperty(process.release, 'name', processReleaseNameDescriptor);
+    }
+  }
+}
+
+async function loadPortableTransformers(): Promise<typeof import('@huggingface/transformers')> {
+  const onnxruntimeWebDistDir = resolveOnnxruntimeWebDir();
+
+  configureOnnxruntimeWebEnv(onnxruntimeWeb.env, onnxruntimeWebDistDir);
+
+  const transformers = await importPortableTransformersRuntime();
+  configureOnnxruntimeWebEnv(
+    (transformers.env as TransformersLikeEnv).backends?.onnx,
+    onnxruntimeWebDistDir,
+  );
+
+  return transformers;
 }
 
 function getExtractor(): Promise<unknown> {

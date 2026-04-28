@@ -10,9 +10,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
 import { useContentPanelStore } from "@/stores/content-panel";
-import { UpdateProvider } from "./UpdateProvider";
 import { UpdateBanner } from "./UpdateBanner";
-import { UpdateDialog } from "./UpdateDialog";
 
 const ContentPanel = dynamic(() => import("./ContentPanel").then(m => m.ContentPanel), { ssr: false });
 
@@ -176,49 +174,46 @@ export function AppLayout({ children }: AppLayoutProps) {
   }), [panelOpen, contentPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, setPreviewFile]);
 
   return (
-    <UpdateProvider>
-      <PanelContext.Provider value={panelContextValue}>
-        <TooltipProvider delayDuration={300}>
-          <UpdateBanner />
-          <UpdateDialog />
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar onOpenAssistant={openAssistant} />
+    <PanelContext.Provider value={panelContextValue}>
+      <TooltipProvider delayDuration={300}>
+        <UpdateBanner />
+        <div className="flex h-screen overflow-hidden">
+          <Sidebar onOpenAssistant={openAssistant} />
 
-            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-              {/* Draggable title bar region */}
-              <div
-                className="h-10 shrink-0"
-                style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-              />
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Draggable title bar region */}
+            <div
+              className="h-10 shrink-0"
+              style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+            />
 
-              <TopBar />
+            <TopBar />
 
-              <div className="flex flex-1 overflow-hidden">
-                <main className="relative flex-1 overflow-auto">
-                  <ErrorBoundary>{children}</ErrorBoundary>
-                </main>
+            <div className="flex flex-1 overflow-hidden">
+              <main className="relative flex-1 overflow-auto">
+                <ErrorBoundary>{children}</ErrorBoundary>
+              </main>
 
-                {isChatRoute && (
-                  <>
-                    {contentPanelOpen && (
-                      <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
-                    )}
-                    <ErrorBoundary>
-                      <ContentPanel width={contentPanelOpen ? contentPanelWidth : undefined} />
-                    </ErrorBoundary>
-                  </>
-                )}
-              </div>
+              {isChatRoute && (
+                <>
+                  {contentPanelOpen && (
+                    <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
+                  )}
+                  <ErrorBoundary>
+                    <ContentPanel width={contentPanelOpen ? contentPanelWidth : undefined} />
+                  </ErrorBoundary>
+                </>
+              )}
             </div>
           </div>
+        </div>
 
-          {/* AI Assistant modal will be rendered here */}
-          {assistantOpen && (
-            <AssistantModalLazy onClose={closeAssistant} />
-          )}
-        </TooltipProvider>
-      </PanelContext.Provider>
-    </UpdateProvider>
+        {/* AI Assistant modal will be rendered here */}
+        {assistantOpen && (
+          <AssistantModalLazy onClose={closeAssistant} />
+        )}
+      </TooltipProvider>
+    </PanelContext.Provider>
   );
 }
 

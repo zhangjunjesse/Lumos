@@ -6,6 +6,8 @@ import { AppLayout } from "@/components/layout/app-layout";
 import { ProAuthGate } from "@/components/layout/ProAuthGate";
 import { MemoryToastProvider } from "@/components/memory/memory-toast-container";
 import { ScheduleNotifications } from "@/components/workflow/ScheduleNotifications";
+import { UpdateProvider } from "@/components/layout/UpdateProvider";
+import { UpdateDialog } from "@/components/layout/UpdateDialog";
 
 export const metadata: Metadata = {
   title: "Lumos",
@@ -23,10 +25,13 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <MemoryToastProvider>
-              <ProAuthGate>
-                <AppLayout>{children}</AppLayout>
-                <ScheduleNotifications />
-              </ProAuthGate>
+              <UpdateProvider>
+                <ProAuthGate>
+                  <AppLayout>{children}</AppLayout>
+                  <ScheduleNotifications />
+                </ProAuthGate>
+                <UpdateDialog />
+              </UpdateProvider>
             </MemoryToastProvider>
           </I18nProvider>
         </ThemeProvider>

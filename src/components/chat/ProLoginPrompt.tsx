@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LoginForm } from "./LoginForm";
 import { RegisterForm } from "./RegisterForm";
+import { useUpdate } from "@/hooks/useUpdate";
 
 interface Props {
   onLoggedIn?: () => void;
@@ -11,8 +13,24 @@ interface Props {
 
 type Tab = "login" | "register";
 
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
+
 export function ProLoginPrompt({ onLoggedIn }: Props) {
   const [tab, setTab] = useState<Tab>("login");
+  const { checkForUpdates, checking, updateInfo, setShowDialog } = useUpdate();
+
+  useEffect(() => {
+    void checkForUpdates();
+  }, [checkForUpdates]);
+
+  const hasUpdate = updateInfo?.updateAvailable === true;
+  const handleUpdateClick = () => {
+    if (hasUpdate) {
+      setShowDialog(true);
+      return;
+    }
+    void checkForUpdates();
+  };
 
   return (
     <div className="relative flex h-screen w-full items-center justify-center overflow-hidden bg-neutral-100">
@@ -50,6 +68,30 @@ export function ProLoginPrompt({ onLoggedIn }: Props) {
           ? <LoginForm onSuccess={() => onLoggedIn?.()} />
           : <RegisterForm onSuccess={() => onLoggedIn?.()} />
         }
+
+        {/* Version + manual update entry */}
+        <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-neutral-400">
+          <span>Lumos v{APP_VERSION}</span>
+          <span aria-hidden>·</span>
+          <button
+            type="button"
+            onClick={handleUpdateClick}
+            disabled={checking}
+            className={cn(
+              "inline-flex items-center gap-1 rounded px-1 py-0.5 transition hover:text-neutral-700 disabled:opacity-50",
+              hasUpdate && "text-violet-600 hover:text-violet-700",
+            )}
+          >
+            {checking
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <RefreshCw className="h-3 w-3" />}
+            {checking
+              ? "检查中..."
+              : hasUpdate
+              ? `有新版本 v${updateInfo?.latestVersion}`
+              : "检查更新"}
+          </button>
+        </div>
       </div>
     </div>
   );

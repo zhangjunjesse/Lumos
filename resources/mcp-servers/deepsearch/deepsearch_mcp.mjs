@@ -26,27 +26,65 @@ function getApiBase() {
 
 const API_BASE = getApiBase();
 
-const TOOLS = [
-  {
+const TOOL_NAMES = new Set([
+  'start',
+  'get_result',
+  'pause',
+  'resume',
+  'cancel',
+  'fetch_account_data',
+]);
+
+async function loadToolManifest() {
+  try {
+    const response = await fetch(`${API_BASE}/api/deepsearch/tool-manifest`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`status ${response.status}`);
+    }
+    const data = await response.json();
+    if (!data || !Array.isArray(data.sites)) {
+      throw new Error('invalid manifest payload');
+    }
+    return data;
+  } catch (error) {
+    log(`[deepsearch-mcp] loadToolManifest failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function buildStartTool(manifest) {
+  const sites = manifest && Array.isArray(manifest.sites) ? manifest.sites : [];
+
+  let description;
+  let sitesItemSchema;
+  if (sites.length > 0) {
+    const formattedList = sites
+      .map((s) => `${s.siteKey} (${s.displayName}${s.loginRequired ? ', login required' : ', no login'})`)
+      .join('; ');
+    description = `Start a DeepSearch run to search and extract content from a registered site. Available sites: ${formattedList}. When the user mentions any of these sources, use this tool. Sites marked "no login" are always usable; "login required" sites need cookies configured in the DeepSearch settings panel.`;
+    sitesItemSchema = { type: 'string', enum: sites.map((s) => s.siteKey) };
+  } else {
+    description = 'Start a DeepSearch run to search and extract content from a registered site. The site list could not be loaded right now; pass a human-readable query and let the server pick ready sites automatically.';
+    sitesItemSchema = { type: 'string' };
+  }
+
+  return {
     name: 'start',
-    description: 'Start a DeepSearch run to search and extract content from supported sites. Supported sites: zhihu (知乎), wechat (微信公众号, via Baidu), xiaohongshu (小红书), juejin (掘金), x (Twitter/X). When user asks to search any of these platforms, use this tool. WeChat articles are publicly accessible — no login required.',
+    description,
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Research query or topic to search for.' },
-        sites: { type: 'array', items: { type: 'string' }, description: 'Target site keys: zhihu, wechat, xiaohongshu, juejin, x. If omitted, auto-detected from query or all ready sites used.' },
-        goal: {
-          type: 'string',
-          enum: ['browse', 'evidence', 'full-content', 'research-report'],
+        sites: {
+          type: 'array',
+          items: sitesItemSchema,
+          description: 'Optional. Target site keys; if omitted, the server auto-detects from query or uses all ready sites.',
         },
-        pageMode: {
-          type: 'string',
-          enum: ['takeover_active_page', 'managed_page'],
-        },
-        strictness: {
-          type: 'string',
-          enum: ['strict', 'best_effort'],
-        },
+        goal: { type: 'string', enum: ['browse', 'evidence', 'full-content', 'research-report'] },
+        pageMode: { type: 'string', enum: ['takeover_active_page', 'managed_page'] },
+        strictness: { type: 'string', enum: ['strict', 'best_effort'] },
         maxPages: { type: 'integer', minimum: 1 },
         maxDepth: { type: 'integer', minimum: 1 },
         keepEvidence: { type: 'boolean' },
@@ -54,67 +92,38 @@ const TOOLS = [
       },
       required: ['query'],
     },
-  },
-  {
-    name: 'get_result',
-    description: 'Read current DeepSearch run status, summary, captured record snippets, and artifact references.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        runId: { type: 'string' },
-      },
-      required: ['runId'],
-    },
-  },
-  {
-    name: 'pause',
-    description: 'Pause a running or pending DeepSearch run.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        runId: { type: 'string' },
-      },
-      required: ['runId'],
-    },
-  },
-  {
-    name: 'resume',
-    description: 'Resume a paused or waiting-login DeepSearch run.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        runId: { type: 'string' },
-      },
-      required: ['runId'],
-    },
-  },
-  {
-    name: 'cancel',
-    description: 'Cancel a DeepSearch run that has not reached a terminal state.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        runId: { type: 'string' },
-      },
-      required: ['runId'],
-    },
-  },
-  {
+  };
+}
+
+function buildFetchAccountDataTool(manifest) {
+  const entries = manifest && Array.isArray(manifest.accountDataSites) ? manifest.accountDataSites : [];
+
+  let description;
+  let siteSchema;
+  let typeSchema;
+  if (entries.length > 0) {
+    const summary = entries
+      .map((entry) => `${entry.siteKey}: ${(entry.types || []).join('/')}`)
+      .join('; ');
+    const allKeys = entries.map((entry) => entry.siteKey);
+    const allTypes = Array.from(new Set(entries.flatMap((entry) => entry.types || [])));
+    description = `Fetch personal account data from a logged-in site. Currently supported: ${summary}. Returns recent items with title, url, type, and viewedAt.`;
+    siteSchema = { type: 'string', description: 'Site key', enum: allKeys };
+    typeSchema = { type: 'string', description: 'Data type', enum: allTypes };
+  } else {
+    description = 'Fetch personal account data from a logged-in site. The supported list could not be loaded; the server will reject unsupported site/type combinations.';
+    siteSchema = { type: 'string', description: 'Site key' };
+    typeSchema = { type: 'string', description: 'Data type' };
+  }
+
+  return {
     name: 'fetch_account_data',
-    description: 'Fetch personal account data from a supported site using the logged-in session. Currently supports zhihu browse_history (知乎浏览历史，需已登录). Returns a list of recently viewed items with title, url, type, and viewedAt.',
+    description,
     inputSchema: {
       type: 'object',
       properties: {
-        site: {
-          type: 'string',
-          description: 'Site key, e.g. "zhihu"',
-          enum: ['zhihu'],
-        },
-        type: {
-          type: 'string',
-          description: 'Data type to fetch, e.g. "browse_history"',
-          enum: ['browse_history'],
-        },
+        site: siteSchema,
+        type: typeSchema,
         limit: {
           type: 'integer',
           description: 'Max number of items to return (default 20, max 100)',
@@ -124,8 +133,56 @@ const TOOLS = [
       },
       required: ['site', 'type'],
     },
+  };
+}
+
+const STATIC_TOOLS = [
+  {
+    name: 'get_result',
+    description: 'Read current DeepSearch run status, summary, captured record snippets, and artifact references.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' } },
+      required: ['runId'],
+    },
+  },
+  {
+    name: 'pause',
+    description: 'Pause a running or pending DeepSearch run.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' } },
+      required: ['runId'],
+    },
+  },
+  {
+    name: 'resume',
+    description: 'Resume a paused or waiting-login DeepSearch run.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' } },
+      required: ['runId'],
+    },
+  },
+  {
+    name: 'cancel',
+    description: 'Cancel a DeepSearch run that has not reached a terminal state.',
+    inputSchema: {
+      type: 'object',
+      properties: { runId: { type: 'string' } },
+      required: ['runId'],
+    },
   },
 ];
+
+async function buildTools() {
+  const manifest = await loadToolManifest();
+  return [
+    buildStartTool(manifest),
+    ...STATIC_TOOLS,
+    buildFetchAccountDataTool(manifest),
+  ];
+}
 
 async function callDeepSearchTool(name, args) {
   const body = {
@@ -174,17 +231,18 @@ async function handleRequest(request) {
   }
 
   if (method === 'tools/list') {
+    const tools = await buildTools();
     return {
       jsonrpc: '2.0',
       id,
-      result: { tools: TOOLS },
+      result: { tools },
     };
   }
 
   if (method === 'tools/call') {
     const { name, arguments: args } = params;
     try {
-      if (!TOOLS.some((tool) => tool.name === name)) {
+      if (!TOOL_NAMES.has(name)) {
         throw new Error(`Unknown tool: ${name}`);
       }
       const result = await callDeepSearchTool(name, args);
