@@ -407,6 +407,48 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.resolvedModel).toBe('deepseek-v4-flash')
     expect(runtime.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('deepseek-v4-flash')
     expect(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('deepseek-v4-flash')
+  })
+
+  test('pins auxiliary models when a mixed catalog resolves to a non-Claude model', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-mixed-cloud',
+      name: 'Mixed Gateway',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'deepseek-v4-flash', label: 'deepseek-v4-flash' },
+        { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+      ]),
+      model_catalog_source: 'detected',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-28 00:00:00',
+      updated_at: '2026-04-28 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkInvocationContext({
+      requestedModel: 'deepseek-v4-flash',
+    })
+
+    expect(runtime.resolvedModel).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('deepseek-v4-flash')
+    expect(runtime.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('deepseek-v4-flash')
   })
 
   test('keeps Claude SDK auxiliary model defaults when the provider catalog has Haiku', () => {
@@ -443,5 +485,8 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.resolvedModel).toBe('claude-sonnet-4-6')
     expect(runtime.env.ANTHROPIC_SMALL_FAST_MODEL).toBeUndefined()
     expect(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined()
+    expect(runtime.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined()
+    expect(runtime.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined()
   })
 })

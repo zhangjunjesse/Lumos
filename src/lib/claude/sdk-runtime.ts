@@ -116,9 +116,14 @@ function resolveClaudeCliPath(): string | undefined {
   return claudePath
 }
 
-function isClaudeHaikuModel(value?: string | null): boolean {
+function isActualClaudeModel(value?: string | null): boolean {
   const normalized = value?.trim().toLowerCase() || ''
-  return normalized === 'haiku' || normalized.includes('haiku')
+  return normalized.startsWith('claude-')
+}
+
+function isActualClaudeHaikuModel(value?: string | null): boolean {
+  const normalized = value?.trim().toLowerCase() || ''
+  return isActualClaudeModel(normalized) && normalized.includes('haiku')
 }
 
 function shouldPinSdkAuxiliaryModels(
@@ -128,10 +133,14 @@ function shouldPinSdkAuxiliaryModels(
   if (!provider || !resolvedModel) return false
   if (provider.auth_mode === 'local_auth') return false
 
+  if (!isActualClaudeModel(resolvedModel)) {
+    return true
+  }
+
   const configuredModels = parseProviderModelCatalog(provider.model_catalog)
   if (configuredModels.length === 0) return false
 
-  return !configuredModels.some((model) => isClaudeHaikuModel(model.value))
+  return !configuredModels.some((model) => isActualClaudeHaikuModel(model.value))
 }
 
 function pinSdkAuxiliaryModelsToResolvedModel(
@@ -142,11 +151,15 @@ function pinSdkAuxiliaryModelsToResolvedModel(
   const auxiliaryModel = resolvedModel?.trim()
   if (!auxiliaryModel || !shouldPinSdkAuxiliaryModels(provider, auxiliaryModel)) return
 
-  // Claude Code may use a separate Haiku-class helper model for startup and
-  // light background work. Non-Claude gateway providers often cannot bill that
-  // model correctly, so pin it to the same model Lumos resolved for the run.
+  // Claude Code may use separate helper/default/subagent models outside the
+  // main `options.model`. Non-Claude gateway providers often cannot bill those
+  // Claude-native model ids correctly, so pin every SDK-side auxiliary selector
+  // to the same model Lumos resolved for the run.
   env.ANTHROPIC_SMALL_FAST_MODEL = auxiliaryModel
   env.ANTHROPIC_DEFAULT_HAIKU_MODEL = auxiliaryModel
+  env.ANTHROPIC_DEFAULT_SONNET_MODEL = auxiliaryModel
+  env.ANTHROPIC_DEFAULT_OPUS_MODEL = auxiliaryModel
+  env.CLAUDE_CODE_SUBAGENT_MODEL = auxiliaryModel
 }
 
 export function buildClaudeSdkRuntimeBootstrap(options?: ClaudeSdkRuntimeBootstrapOptions): ClaudeSdkRuntimeBootstrap {

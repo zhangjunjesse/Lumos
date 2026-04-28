@@ -246,10 +246,8 @@ describe('StageWorker', () => {
         options: {
           cwd: payload.workspace.sessionWorkspace,
           systemPrompt: 'You are a worker.',
-          tools: ['Read', 'Glob', 'Grep'],
-          allowedTools: ['Read', 'Glob', 'Grep'],
-          permissionMode: 'dontAsk',
-          model: 'claude-sonnet-4-6',
+          permissionMode: 'bypassPermissions',
+          model: 'doubao-seed-2-0-lite-260215',
           env: {
             ANTHROPIC_AUTH_TOKEN: 'runtime-secret',
           },
@@ -262,7 +260,9 @@ describe('StageWorker', () => {
       })
       expect(mockBuildClaudeSdkRuntimeBootstrap).toHaveBeenCalledTimes(1)
       expect(mockBuildClaudeSdkRuntimeBootstrap).toHaveBeenCalledWith({
+        provider: undefined,
         sessionId: 'session-test-001',
+        requestedModel: 'claude-sonnet-4-6',
       })
     })
 
@@ -340,7 +340,7 @@ describe('StageWorker', () => {
       )
     })
 
-    test('文本型阶段在 structured_output 多次失败后会回退到纯文本交付', async () => {
+    test('structured_output 多次失败时会返回失败诊断', async () => {
       const realWorker = new StageWorker(true)
       const payload = buildPayload(tempDir)
       payload.stage.outputContract = {
@@ -350,31 +350,24 @@ describe('StageWorker', () => {
         artifactKinds: [],
       }
 
-      mockQuery
-        .mockReturnValueOnce({
-          async *[Symbol.asyncIterator]() {
-            throw new Error('Claude Code returned an error result: Failed to provide valid structured output after 5 attempts')
-          },
-        })
-        .mockReturnValueOnce(streamMessages([
-          {
-            type: 'result',
-            text: '## 交付清单\n\n1. 目标\n2. 风险\n3. 计划',
-          },
-        ]))
+      mockQuery.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          throw new Error('Claude Code returned an error result: Failed to provide valid structured output after 5 attempts')
+        },
+      })
 
       const result = await realWorker.execute(payload)
 
       expect(result).toMatchObject({
-        outcome: 'done',
-        summary: '## 交付清单\n\n1. 目标\n2. 风险\n3. 计划',
+        outcome: 'failed',
+        summary: '',
         artifacts: [],
         diagnostics: {
-          errorName: 'StructuredOutputFallback',
-          rawMessage: 'Claude structured output failed; runtime accepted plain-text fallback',
+          errorName: 'Error',
+          rawMessage: 'Claude Code returned an error result: Failed to provide valid structured output after 5 attempts',
         },
       })
-      expect(mockQuery).toHaveBeenCalledTimes(2)
+      expect(mockQuery).toHaveBeenCalledTimes(1)
       expect(mockQuery.mock.calls[0][0]).toMatchObject({
         options: {
           outputFormat: {
@@ -382,8 +375,6 @@ describe('StageWorker', () => {
           },
         },
       })
-      expect(mockQuery.mock.calls[1][0].prompt).toContain('Fallback Delivery Mode')
-      expect(mockQuery.mock.calls[1][0].options.outputFormat).toBeUndefined()
     })
 
     test('纯文本交付模式会直接请求正文文本而不要求 structured_output', async () => {
