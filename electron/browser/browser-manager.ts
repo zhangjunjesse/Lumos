@@ -12,6 +12,7 @@ import { EventEmitter } from 'events';
 import { CDPManager } from './cdp-manager';
 import { getPlatformLayout } from './platform-layout';
 import { setupBrowserContextMenu } from './context-menu';
+import { buildCleanChromeUserAgent } from './user-agent';
 import {
   BrowserCaptureSettings,
   BrowserContextEvent,
@@ -473,6 +474,23 @@ export class BrowserManager extends EventEmitter {
     ses.on('will-download', (_event, item, webContents) => {
       this.handleDownload(item, webContents);
     });
+    this.applyCleanUserAgent(this.sessionPartition);
+  }
+
+  /**
+   * Strip "Electron/" and "lumos/" from the default UA so anti-bot vendors
+   * (Akamai on etsy.com, Cloudflare bot fight, etc.) don't 403 us. The
+   * underlying Chromium network stack is real Chrome — only the UA string
+   * leaks app identity. Applies at session level (covers subresources +
+   * fetch/XHR) and is reapplied per-WebContents in createView().
+   */
+  private applyCleanUserAgent(partition: string): void {
+    const ua = buildCleanChromeUserAgent();
+    try {
+      session.fromPartition(partition).setUserAgent(ua);
+    } catch (err) {
+      console.warn(`[browser-manager] Failed to set session UA on ${partition}:`, err);
+    }
   }
 
   private handleWindowResize(): void {
@@ -1113,7 +1131,10 @@ export class BrowserManager extends EventEmitter {
   private createView(incognito?: boolean): WebContentsView {
     // Incognito tabs use a non-persist partition (in-memory only, cleared on close)
     const partition = incognito ? 'lumos-incognito' : this.sessionPartition;
-    return new WebContentsView({
+    if (incognito) {
+      this.applyCleanUserAgent(partition);
+    }
+    const view = new WebContentsView({
       webPreferences: {
         partition,
         contextIsolation: true,
@@ -1122,6 +1143,12 @@ export class BrowserManager extends EventEmitter {
         webSecurity: true,
       },
     });
+    try {
+      view.webContents.setUserAgent(buildCleanChromeUserAgent());
+    } catch (err) {
+      console.warn('[browser-manager] Failed to set webContents UA:', err);
+    }
+    return view;
   }
 
   private setupViewListeners(tabId: string, view: WebContentsView): void {

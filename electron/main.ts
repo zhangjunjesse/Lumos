@@ -451,13 +451,53 @@ async function getPort(preferredPort?: number): Promise<number> {
   return tryListenOnPort(0);
 }
 
-async function waitForServer(port: number, timeout = 30000): Promise<void> {
+function getServerStartupTimeoutMs(): number {
+  const raw = process.env.LUMOS_SERVER_STARTUP_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 5000 && parsed <= 600000) {
+      return parsed;
+    }
+    console.warn(`[main] Invalid LUMOS_SERVER_STARTUP_TIMEOUT_MS: ${raw}. Using default.`);
+  }
+  // First launch on Windows runs sqlite migrations + skills/MCP sync synchronously
+  // and can be further slowed by Defender/AV file scans. 30s was too tight in the wild.
+  return process.platform === 'win32' ? 90000 : 60000;
+}
+
+function dumpServerStartupLog(reason: string): string | null {
+  if (serverErrors.length === 0) return null;
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `server-startup-${Date.now()}.log`);
+    const header = `# Lumos server startup log\n# reason: ${reason}\n# time: ${new Date().toISOString()}\n# platform: ${process.platform} ${os.release()}\n\n`;
+    fs.writeFileSync(file, header + serverErrors.join('\n'));
+    return file;
+  } catch (err) {
+    console.warn('[main] Failed to dump server startup log:', err);
+    return null;
+  }
+}
+
+function formatServerOutputForDialog(): string {
+  if (serverErrors.length === 0) return 'No server output captured.';
+  const tailLines = 40;
+  const tail = serverErrors.slice(-tailLines);
+  const omitted = serverErrors.length - tail.length;
+  const prefix = omitted > 0 ? `Server output (last ${tailLines} of ${serverErrors.length} lines):\n` : 'Server output:\n';
+  return prefix + tail.join('\n');
+}
+
+async function waitForServer(port: number, timeout = getServerStartupTimeoutMs()): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     // If the server process already exited, fail fast
     if (serverExited) {
+      const logPath = dumpServerStartupLog(`server exited with code ${serverExitCode}`);
+      const logHint = logPath ? `\n\nFull log: ${logPath}` : '';
       throw new Error(
-        `Server process exited with code ${serverExitCode}.\n\n${serverErrors.join('\n')}`
+        `Server process exited with code ${serverExitCode}.\n\n${formatServerOutputForDialog()}${logHint}`
       );
     }
     try {
@@ -478,8 +518,10 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
       await new Promise(r => setTimeout(r, 200));
     }
   }
+  const logPath = dumpServerStartupLog(`startup timeout after ${timeout / 1000}s`);
+  const logHint = logPath ? `\n\nFull log: ${logPath}` : '';
   throw new Error(
-    `Server startup timeout after ${timeout / 1000}s.\n\n${serverErrors.length > 0 ? 'Server output:\n' + serverErrors.slice(-10).join('\n') : 'No server output captured.'}`
+    `Server startup timeout after ${timeout / 1000}s.\n\n${formatServerOutputForDialog()}${logHint}`
   );
 }
 
@@ -1429,9 +1471,10 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     console.error('Failed to start:', err);
+    const detail = err instanceof Error ? err.message : String(err);
     dialog.showErrorBox(
       'Lumos - Failed to Start',
-      `The internal server could not start.\n\n${err instanceof Error ? err.message : String(err)}\n\nPlease try restarting the application.`
+      `The internal server could not start.\n\n${detail}\n\nPlease try restarting the application. If the problem persists, attach the "Full log" file shown above when reporting the issue.`
     );
     app.quit();
   }
