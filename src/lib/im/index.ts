@@ -85,4 +85,5 @@ export {
   listActiveAdapters,
   sendToProvider,
   sendToDefault,
+  probeProvider,
 } from './core/runtime';

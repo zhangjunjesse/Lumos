@@ -8,7 +8,7 @@
  * 通过 sendToProvider / sendToDefault 单一入口发消息，不关心具体 IM。
  */
 
-import type { IMAdapter, IMProviderId, OutboundMessage, SendResult } from './types';
+import type { IMAdapter, IMProviderId, OutboundMessage, SendResult, ProbeResult } from './types';
 import { getPlugin, listProviderIds } from './registry';
 import {
   getProviderConfig,
@@ -110,6 +110,22 @@ export async function sendToDefault(message: OutboundMessage): Promise<SendResul
     };
   }
   return sendToProvider(defaultId, message);
+}
+
+/**
+ * One-off 探针：用当前 config 创建一个临时 adapter，调 probe()，不缓存、不启动。
+ * 给 settings UI "测试连接" 按钮调用。
+ */
+export async function probeProvider(providerId: IMProviderId): Promise<ProbeResult> {
+  const plugin = getPlugin(providerId);
+  if (!plugin) return { ok: false, error: `unknown provider: ${providerId}` };
+  const config = getProviderConfig(providerId);
+  try {
+    const adapter = plugin.createAdapter(config);
+    return await adapter.probe();
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'probe failed' };
+  }
 }
 
 /**
