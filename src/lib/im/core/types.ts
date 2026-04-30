@@ -11,7 +11,20 @@
  *   types-future.ts   ← P2 预留接口（M1-M5 不实现）
  */
 
-import type { FileAttachment } from '@/types';
+/**
+ * IM-local 附件类型，刻意与 src/types 的 FileAttachment 解耦：
+ * core/* 不该依赖 app 级别类型（R6 单向依赖）。
+ * 字段是 src/types/FileAttachment 的子集，结构兼容、按结构性 typing 互操作。
+ */
+export interface IMFileAttachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  data: string;
+  filePath?: string;
+}
+type FileAttachment = IMFileAttachment;
 
 // ============================================================================
 // Provider identity

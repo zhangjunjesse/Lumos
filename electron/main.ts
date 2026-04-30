@@ -10,6 +10,7 @@ import { BrowserManager } from './browser/browser-manager';
 import { setupBrowserIPC } from './ipc/browser-handlers';
 import { BrowserBridgeServer } from './browser/bridge-server';
 import { FeishuBridgeRuntimeManager } from './bridge/runtime-manager';
+import { ImRuntimeManager } from './bridge/im-runtime-manager';
 import {
   clearBridgeRuntimeConfig,
   initializeBridgeRuntimeConfig,
@@ -23,6 +24,7 @@ let browserBridgeServer: BrowserBridgeServer | null = null;
 let browserBridgeUrl = '';
 let browserBridgeToken = '';
 let bridgeRuntimeManager: FeishuBridgeRuntimeManager | null = null;
+let imRuntimeManager: ImRuntimeManager | null = null;
 let bridgeRuntimeToken = '';
 let serverProcess: Electron.UtilityProcess | null = null;
 let serverPort: number | null = null;
@@ -127,9 +129,27 @@ async function startBridgeRuntime(port: number): Promise<void> {
   }
 
   await bridgeRuntimeManager.start();
+
+  // 同时启动 IM 多 provider runtime（处理 feishu 之外的 provider）
+  if (!imRuntimeManager) {
+    imRuntimeManager = new ImRuntimeManager({ baseUrl, token: bridgeRuntimeToken });
+  } else {
+    imRuntimeManager.setBaseUrl(baseUrl);
+  }
+  await imRuntimeManager.start();
 }
 
 async function stopBridgeRuntime(): Promise<void> {
+  if (imRuntimeManager) {
+    try {
+      await imRuntimeManager.stop();
+    } catch (error) {
+      console.error('[IM Runtime] Failed to stop:', error);
+    } finally {
+      imRuntimeManager = null;
+    }
+  }
+
   if (!bridgeRuntimeManager) return;
 
   try {
