@@ -1,22 +1,25 @@
 /**
- * IM Runtime Manager (Multi-Provider, Non-Feishu)
+ * IM Runtime Manager (Multi-Provider, including Feishu)
  *
- * 与 legacy FeishuBridgeRuntimeManager 并行运行，负责非 feishu 的 IM provider。
- * Feishu 仍走 legacy 路径，避免双 runtime 抢占。
+ * Phase C 起 feishu 也由这里管理，取代 legacy electron/bridge/feishu-runtime.ts。
  *
  * 工作流：
  *   1. 定期 GET /api/im/runtime/bootstrap 拿当前 enabled providers + 各自 raw config
  *   2. 比对当前在跑的 adapter，启动新增、停止移除、重启 config 改变的
  *   3. 每个 running adapter 起一个 consumeOne 循环，把消息 POST 给 /api/im/runtime/ingest
+ *   4. ingest 端按 platform 派发：feishu→legacy handleFeishuMessage（保留 mentions/OAuth/multimodal）
+ *      其它→dispatchInbound（generic AI 派发）
  *
  * adapter 类直接从 src/lib/im/providers/<id>/ 相对路径导入。
- * 这些 adapter 都不依赖 DB（只用 fetch / ws），可以在主进程运行。
+ * Adapter 实例化只需 plain config object，不依赖 Next.js DB（DB 读取在 bootstrap endpoint 完成）。
  */
 
 import { BRIDGE_RUNTIME_TOKEN_HEADER } from '../../src/lib/bridge/runtime-config';
 import {
   WechatQClawAdapter,
   parseQClawConfig,
+  FeishuAdapter,
+  parseFeishuConfig,
 } from './im-providers';
 
 interface ManagerOptions {
@@ -202,10 +205,12 @@ function configKeyOf(config: Record<string, string>): string {
 }
 
 function createAdapter(providerId: string, config: Record<string, string>): GenericIMAdapter | null {
+  if (providerId === 'feishu') {
+    return new FeishuAdapter(parseFeishuConfig(config)) as unknown as GenericIMAdapter;
+  }
   if (providerId === 'wechat-qclaw') {
     return new WechatQClawAdapter(parseQClawConfig(config)) as unknown as GenericIMAdapter;
   }
-  // wechat-work 是 webhook-driven，没有需要在主进程跑的 consumeOne 来源 —— 直接 skip
   return null;
 }
 

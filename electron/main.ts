@@ -9,7 +9,6 @@ import { initAutoUpdater, setUpdaterWindow, registerUpdaterHandlers } from './up
 import { BrowserManager } from './browser/browser-manager';
 import { setupBrowserIPC } from './ipc/browser-handlers';
 import { BrowserBridgeServer } from './browser/bridge-server';
-import { FeishuBridgeRuntimeManager } from './bridge/runtime-manager';
 import { ImRuntimeManager } from './bridge/im-runtime-manager';
 import {
   clearBridgeRuntimeConfig,
@@ -23,7 +22,6 @@ const browserBridgeContext: { browserManager: BrowserManager | null } = { browse
 let browserBridgeServer: BrowserBridgeServer | null = null;
 let browserBridgeUrl = '';
 let browserBridgeToken = '';
-let bridgeRuntimeManager: FeishuBridgeRuntimeManager | null = null;
 let imRuntimeManager: ImRuntimeManager | null = null;
 let bridgeRuntimeToken = '';
 let serverProcess: Electron.UtilityProcess | null = null;
@@ -102,35 +100,14 @@ function initializeBridgeRuntime(): void {
   initializeBridgeRuntimeConfig(bridgeRuntimeToken);
 }
 
-function broadcastBridgeEvent(eventName: string, payload: unknown): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-
-  mainWindow.webContents.send('bridge:event', eventName, payload);
-}
-
 async function startBridgeRuntime(port: number): Promise<void> {
   if (!bridgeRuntimeToken) {
     initializeBridgeRuntime();
   }
 
   const baseUrl = `http://127.0.0.1:${port}`;
-  if (!bridgeRuntimeManager) {
-    bridgeRuntimeManager = new FeishuBridgeRuntimeManager({
-      baseUrl,
-      token: bridgeRuntimeToken,
-      onUiEvent: (eventName, payload) => {
-        broadcastBridgeEvent(eventName, payload);
-      },
-    });
-  } else {
-    bridgeRuntimeManager.setBaseUrl(baseUrl);
-  }
-
-  await bridgeRuntimeManager.start();
-
-  // 同时启动 IM 多 provider runtime（处理 feishu 之外的 provider）
+  // Phase C 起 ImRuntimeManager 统一管理所有 provider（含 feishu）。
+  // 旧 FeishuBridgeRuntimeManager 已删除。
   if (!imRuntimeManager) {
     imRuntimeManager = new ImRuntimeManager({ baseUrl, token: bridgeRuntimeToken });
   } else {
@@ -140,24 +117,13 @@ async function startBridgeRuntime(port: number): Promise<void> {
 }
 
 async function stopBridgeRuntime(): Promise<void> {
-  if (imRuntimeManager) {
-    try {
-      await imRuntimeManager.stop();
-    } catch (error) {
-      console.error('[IM Runtime] Failed to stop:', error);
-    } finally {
-      imRuntimeManager = null;
-    }
-  }
-
-  if (!bridgeRuntimeManager) return;
-
+  if (!imRuntimeManager) return;
   try {
-    await bridgeRuntimeManager.stop();
+    await imRuntimeManager.stop();
   } catch (error) {
-    console.error('[Bridge Runtime] Failed to stop:', error);
+    console.error('[IM Runtime] Failed to stop:', error);
   } finally {
-    bridgeRuntimeManager = null;
+    imRuntimeManager = null;
   }
 }
 

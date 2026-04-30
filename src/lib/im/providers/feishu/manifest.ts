@@ -69,8 +69,6 @@ export const feishuManifest: IMProviderManifest = {
     },
   ],
   capabilities: {
-    // M7 起开启 commands（IMCommandHandler 通过内置命令实现）。
-    // streamingPreview 仍待后续 milestone。
     chatTypes: ['direct', 'group'],
     media: false,
     reactions: false,
@@ -78,6 +76,6 @@ export const feishuManifest: IMProviderManifest = {
     edit: false,
     commands: true,
     targetDirectory: true,
-    streamingPreview: false,
+    streamingPreview: true,
   },
 };

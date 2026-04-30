@@ -1,11 +1,10 @@
 /**
  * GET /api/im/runtime/bootstrap
  *
- * Electron im-runtime-manager 拉这个端点拿到当前 enabled 的非 feishu IM provider
+ * Electron im-runtime-manager 拉这个端点拿到当前 enabled 的所有 IM provider
  * 列表 + 各自的 raw config（不 mask），用于在主进程实例化 adapter。
  *
- * Feishu 故意不出现在这里——legacy electron/bridge/feishu-runtime 仍然处理它，
- * 避免双 runtime 同时跑同一 provider。
+ * Phase C 起 feishu 也包含进来，取代 legacy /api/bridge/runtime/bootstrap。
  *
  * 鉴权：runtime-token 同样套用 bridge runtime 的 token 体系。
  */
@@ -16,8 +15,6 @@ import { listPlugins, getProviderConfig, isProviderEnabled, isProviderConfigured
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const LEGACY_FEISHU = 'feishu';
 
 interface ImProviderBootstrap {
   providerId: string;
@@ -33,7 +30,6 @@ export async function GET(request: Request) {
 
   for (const plugin of listPlugins()) {
     const id = plugin.manifest.id;
-    if (id === LEGACY_FEISHU) continue;
     if (!isProviderEnabled(id)) continue;
     if (!isProviderConfigured(id)) continue;
     providers.push({

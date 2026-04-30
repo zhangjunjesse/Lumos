@@ -1,7 +1,6 @@
 const fakePlugins = [
   { manifest: { id: 'feishu', label: 'Feishu', description: '', configSchema: [], capabilities: {} } },
   { manifest: { id: 'wechat-qclaw', label: 'QClaw', description: '', configSchema: [], capabilities: {} } },
-  { manifest: { id: 'wechat-work', label: 'Work', description: '', configSchema: [], capabilities: {} } },
 ];
 
 const enabled = new Set<string>();
@@ -40,7 +39,7 @@ describe('GET /api/im/runtime/bootstrap', () => {
     expect(res.status).toBe(401);
   });
 
-  test('omits feishu (legacy runtime handles it)', async () => {
+  test('Phase C: includes feishu when enabled+configured', async () => {
     enabled.add('feishu');
     enabled.add('wechat-qclaw');
     configured.add('feishu');
@@ -48,13 +47,14 @@ describe('GET /api/im/runtime/bootstrap', () => {
 
     const res = await GET(makeReq());
     const data = await res.json();
-    expect(data.providers).toHaveLength(1);
-    expect(data.providers[0].providerId).toBe('wechat-qclaw');
+    expect(data.providers).toHaveLength(2);
+    const ids = data.providers.map((p: { providerId: string }) => p.providerId).sort();
+    expect(ids).toEqual(['feishu', 'wechat-qclaw']);
   });
 
   test('skips disabled or unconfigured providers', async () => {
     enabled.add('wechat-qclaw'); // enabled but not configured
-    configured.add('wechat-work'); // configured but not enabled
+    configured.add('feishu'); // configured but not enabled
 
     const res = await GET(makeReq());
     const data = await res.json();
@@ -62,14 +62,14 @@ describe('GET /api/im/runtime/bootstrap', () => {
   });
 
   test('returns config payload for fully ready providers', async () => {
+    enabled.add('feishu');
+    configured.add('feishu');
     enabled.add('wechat-qclaw');
     configured.add('wechat-qclaw');
-    enabled.add('wechat-work');
-    configured.add('wechat-work');
 
     const res = await GET(makeReq());
     const data = await res.json();
     expect(data.providers).toHaveLength(2);
-    expect(data.providers[0].config).toEqual({ _provider: 'wechat-qclaw', secret: 'X' });
+    expect(data.providers[0].config).toEqual({ _provider: 'feishu', secret: 'X' });
   });
 });

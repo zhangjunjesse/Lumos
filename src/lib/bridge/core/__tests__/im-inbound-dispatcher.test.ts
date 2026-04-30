@@ -2,8 +2,24 @@
 // to load @anthropic-ai/claude-agent-sdk and other ESM deps.
 
 const sendToProvider = jest.fn(async () => ({ ok: true, messageId: 'reply-1' }));
+
+// Streaming-preview-capable fake adapter, switched on per-test
+const previewAdapter = {
+  startPreview: jest.fn(async () => ({
+    providerId: 'feishu',
+    cardId: 'card-1',
+    address: { providerId: 'feishu', chatId: 'gid_a' },
+  })),
+  updatePreview: jest.fn(async () => undefined),
+  finalizePreview: jest.fn(async () => undefined),
+};
+let streamingEnabled = false;
+
 jest.mock('@/lib/im', () => ({
   sendToProvider: (id: string, msg: unknown) => sendToProvider(id, msg),
+  getOrCreateAdapter: () => (streamingEnabled ? previewAdapter : null),
+  hasStreamingPreview: (a: unknown) =>
+    !!a && typeof (a as { startPreview?: unknown }).startPreview === 'function',
 }));
 
 let mockBinding: { id: number; sessionId: string; status: string } | null = {
@@ -22,6 +38,7 @@ class FakeBindingService {
 const conversationCalls: Array<{ sessionId: string; text: string; meta: unknown }> = [];
 let conversationResponseText = 'AI reply';
 let conversationDelay: Promise<void> | null = null;
+let conversationStreamChunks: string[] = [];
 
 class FakeConversationEngine {
   async sendMessage(
@@ -29,9 +46,15 @@ class FakeConversationEngine {
     text: string,
     _files?: never,
     meta?: { source?: string },
+    callbacks?: { onVisibleText?: (chunk: string) => void },
   ) {
     if (conversationDelay) await conversationDelay;
     conversationCalls.push({ sessionId, text, meta });
+    if (callbacks?.onVisibleText) {
+      for (const chunk of conversationStreamChunks) {
+        callbacks.onVisibleText(chunk);
+      }
+    }
     return { visibleText: conversationResponseText, rawContent: conversationResponseText };
   }
 }
@@ -63,9 +86,14 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 beforeEach(() => {
   __resetDispatcherForTesting();
   sendToProvider.mockClear();
+  previewAdapter.startPreview.mockClear();
+  previewAdapter.updatePreview.mockClear();
+  previewAdapter.finalizePreview.mockClear();
+  streamingEnabled = false;
   conversationCalls.length = 0;
   conversationResponseText = 'AI reply';
   conversationDelay = null;
+  conversationStreamChunks = [];
   mockBinding = { id: 1, sessionId: 'sess-1', status: 'active' };
 });
 
@@ -139,5 +167,67 @@ describe('im-inbound-dispatcher', () => {
 
     resolveDelay?.();
     await first;
+  });
+
+  describe('streaming preview path', () => {
+    test('starts preview, streams chunks, finalizes, no duplicate send', async () => {
+      streamingEnabled = true;
+      conversationStreamChunks = ['He', 'Hel', 'Hello'];
+      conversationResponseText = 'Hello world';
+
+      const result = await dispatchInbound('feishu', makeMessage({
+        address: { providerId: 'feishu', chatId: 'gid_a', userId: 'u' },
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.replyMessageId).toBe('card-1');
+      expect(previewAdapter.startPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: 'gid_a' }),
+        '正在思考...',
+      );
+      expect(previewAdapter.updatePreview).toHaveBeenCalledTimes(3);
+      expect(previewAdapter.finalizePreview).toHaveBeenCalledWith(
+        expect.objectContaining({ cardId: 'card-1' }),
+        'Hello world',
+      );
+      // 流式路径不再调 sendToProvider
+      expect(sendToProvider).not.toHaveBeenCalled();
+    });
+
+    test('preview start failure falls back to plain send', async () => {
+      streamingEnabled = true;
+      previewAdapter.startPreview.mockRejectedValueOnce(new Error('init failed'));
+
+      const result = await dispatchInbound('feishu', makeMessage({
+        address: { providerId: 'feishu', chatId: 'gid_a' },
+      }));
+      expect(result.ok).toBe(true);
+      expect(sendToProvider).toHaveBeenCalledTimes(1);
+      expect(previewAdapter.finalizePreview).not.toHaveBeenCalled();
+    });
+
+    test('AI exception finalizes preview with error', async () => {
+      streamingEnabled = true;
+      // Make conversationEngine throw
+      const ce = new FakeConversationEngine();
+      ce.sendMessage = jest.fn(async () => { throw new Error('AI down'); });
+      // Reach into module to swap the cached fake — easier: trigger via deps param? Not in tests yet.
+      // Instead use the global FakeConversationEngine and stub one call:
+      const original = FakeConversationEngine.prototype.sendMessage;
+      FakeConversationEngine.prototype.sendMessage = jest.fn(async () => {
+        throw new Error('AI down');
+      });
+      try {
+        await expect(
+          dispatchInbound('feishu', makeMessage({ address: { providerId: 'feishu', chatId: 'gid_a' } })),
+        ).rejects.toThrow(/AI down/);
+        expect(previewAdapter.finalizePreview).toHaveBeenCalledWith(
+          expect.any(Object),
+          expect.stringMatching(/❌.*AI down/),
+        );
+      } finally {
+        FakeConversationEngine.prototype.sendMessage = original;
+      }
+    });
   });
 });

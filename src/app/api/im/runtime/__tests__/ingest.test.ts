@@ -9,13 +9,17 @@ jest.mock('@/lib/db', () => ({
   getDb: () => ({ prepare: () => fakeStmt }),
 }));
 
-const knownProviders = new Set(['wechat-qclaw', 'wechat-work']);
+const knownProviders = new Set(['wechat-qclaw', 'feishu']);
 jest.mock('@/lib/im', () => ({
   hasProvider: (id: string) => knownProviders.has(id),
 }));
 
 jest.mock('@/lib/bridge/core/im-inbound-dispatcher', () => ({
   dispatchInbound: jest.fn(async () => ({ ok: true })),
+}));
+
+jest.mock('@/lib/bridge/message-handler', () => ({
+  handleFeishuMessage: jest.fn(async () => undefined),
 }));
 
 let authorized = true;
@@ -95,5 +99,70 @@ describe('POST /api/im/runtime/ingest', () => {
     expect(typeof args[4]).toBe('string'); // payload_json
     const payload = JSON.parse(args[4] as string);
     expect(payload.text).toBe('hello');
+  });
+
+  test('Phase C: feishu inbound routes to legacy handleFeishuMessage when raw present', async () => {
+    const handler = jest.requireMock('@/lib/bridge/message-handler') as {
+      handleFeishuMessage: jest.Mock;
+    };
+    const dispatcher = jest.requireMock('@/lib/bridge/core/im-inbound-dispatcher') as {
+      dispatchInbound: jest.Mock;
+    };
+    handler.handleFeishuMessage.mockClear();
+    dispatcher.dispatchInbound.mockClear();
+
+    const rawFeishuEvent = {
+      message: {
+        message_id: 'om_x',
+        chat_id: 'oc_y',
+        message_type: 'text',
+        content: '{"text":"hi"}',
+      },
+      sender: { sender_type: 'user', sender_id: { open_id: 'u1' } },
+    };
+
+    const res = await POST(makeReq({
+      providerId: 'feishu',
+      message: {
+        messageId: 'om_x',
+        address: { providerId: 'feishu', chatId: 'oc_y', userId: 'u1' },
+        text: 'hi',
+        timestamp: 1700000000,
+        raw: rawFeishuEvent,
+      },
+    }));
+    expect(res.status).toBe(200);
+
+    // Wait briefly for the async dispatch to fire
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(handler.handleFeishuMessage).toHaveBeenCalledTimes(1);
+    expect(dispatcher.dispatchInbound).not.toHaveBeenCalled();
+  });
+
+  test('Phase C: non-feishu inbound routes to dispatchInbound', async () => {
+    const handler = jest.requireMock('@/lib/bridge/message-handler') as {
+      handleFeishuMessage: jest.Mock;
+    };
+    const dispatcher = jest.requireMock('@/lib/bridge/core/im-inbound-dispatcher') as {
+      dispatchInbound: jest.Mock;
+    };
+    handler.handleFeishuMessage.mockClear();
+    dispatcher.dispatchInbound.mockClear();
+
+    const res = await POST(makeReq({
+      providerId: 'wechat-qclaw',
+      message: {
+        messageId: 'm',
+        address: { providerId: 'wechat-qclaw', chatId: 'c1', userId: 'u' },
+        text: 'hi',
+        timestamp: 1700000000,
+      },
+    }));
+    expect(res.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(dispatcher.dispatchInbound).toHaveBeenCalledTimes(1);
+    expect(handler.handleFeishuMessage).not.toHaveBeenCalled();
   });
 });

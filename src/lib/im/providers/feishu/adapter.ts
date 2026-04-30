@@ -15,10 +15,13 @@ import type {
   IMCommand,
   IMCommandContext,
   IMCommandResult,
+  IMStreamingPreview,
   IMTarget,
   ListTargetsOptions,
+  ChannelAddress,
   InboundMessage,
   OutboundMessage,
+  PreviewHandle,
   SendResult,
   ProbeResult,
 } from '../../core/types';
@@ -30,16 +33,20 @@ import { sendOutbound } from './send';
 import { probeFeishu } from './probe';
 import { listFeishuTargets, resolveFeishuTarget } from './targets';
 import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
+import { FeishuStreamingPreview } from './streaming-preview';
 
-export class FeishuAdapter implements IMAdapter, IMTargetDirectory, IMCommandHandler {
+export class FeishuAdapter
+  implements IMAdapter, IMTargetDirectory, IMCommandHandler, IMStreamingPreview {
   readonly id = 'feishu';
 
   private readonly client: FeishuClient;
   private readonly monitor: FeishuMonitor;
+  private readonly streamingPreview: FeishuStreamingPreview;
 
   constructor(private readonly config: FeishuConfig) {
     this.client = new FeishuClient(config);
     this.monitor = new FeishuMonitor(this.client);
+    this.streamingPreview = new FeishuStreamingPreview(config);
   }
 
   async start(): Promise<void> {
@@ -95,5 +102,19 @@ export class FeishuAdapter implements IMAdapter, IMTargetDirectory, IMCommandHan
     const builtin = await handleBuiltinCommand(ctx, 'Feishu');
     if (builtin) return builtin;
     return { handled: false };
+  }
+
+  // ------------- IMStreamingPreview -------------
+
+  startPreview(address: ChannelAddress, initialText?: string): Promise<PreviewHandle> {
+    return this.streamingPreview.startPreview(address, initialText);
+  }
+
+  updatePreview(handle: PreviewHandle, chunk: string): Promise<void> {
+    return this.streamingPreview.updatePreview(handle, chunk);
+  }
+
+  finalizePreview(handle: PreviewHandle, finalText: string): Promise<void> {
+    return this.streamingPreview.finalizePreview(handle, finalText);
   }
 }

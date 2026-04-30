@@ -18,8 +18,12 @@
 
 import { BindingService } from './binding-service';
 import { ConversationEngine } from '../conversation-engine';
-import { sendToProvider } from '@/lib/im';
-import type { InboundMessage } from '@/lib/im';
+import {
+  sendToProvider,
+  getOrCreateAdapter,
+  hasStreamingPreview,
+} from '@/lib/im';
+import type { InboundMessage, PreviewHandle } from '@/lib/im';
 
 export interface DispatchResult {
   ok: boolean;
@@ -62,14 +66,66 @@ export async function dispatchInbound(
     }
 
     const conversationEngine = deps.conversationEngine ?? new ConversationEngine();
-    const response = await conversationEngine.sendMessage(
-      binding.sessionId,
-      message.text.trim(),
-      undefined,
-      { source: providerId },
-    );
+
+    // 如果 adapter 实现了 IMStreamingPreview，开一张实时刷新卡片代替最终一次性发送。
+    // 这条路径下 ConversationEngine 的 onVisibleText 流回调直接灌进卡片。
+    let previewHandle: PreviewHandle | null = null;
+    let streamingAdapter: ReturnType<typeof getOrCreateAdapter> | null = null;
+    try {
+      streamingAdapter = getOrCreateAdapter(providerId);
+    } catch {
+      streamingAdapter = null;
+    }
+    if (streamingAdapter && hasStreamingPreview(streamingAdapter)) {
+      try {
+        previewHandle = await streamingAdapter.startPreview(message.address, '正在思考...');
+      } catch (err) {
+        console.warn('[im-dispatcher] startPreview failed, falling back to plain send:', err);
+        previewHandle = null;
+      }
+    }
+
+    let response: Awaited<ReturnType<ConversationEngine['sendMessage']>>;
+    try {
+      response = await conversationEngine.sendMessage(
+        binding.sessionId,
+        message.text.trim(),
+        undefined,
+        { source: providerId },
+        previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)
+          ? {
+              onVisibleText: (chunk) => {
+                void streamingAdapter!.updatePreview(previewHandle!, chunk);
+              },
+            }
+          : undefined,
+      );
+    } catch (err) {
+      // 异常时也要终结卡片，避免一直停在"正在思考..."
+      if (previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)) {
+        const errMsg = err instanceof Error ? err.message : 'AI failed';
+        await streamingAdapter
+          .finalizePreview(previewHandle, `❌ ${errMsg}`)
+          .catch(() => undefined);
+      }
+      throw err;
+    }
 
     const replyText = (response.visibleText || '').trim();
+
+    // 如果走了流式预览，最终落到卡片即可，不再额外发一条文本消息
+    if (previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)) {
+      await streamingAdapter.finalizePreview(
+        previewHandle,
+        replyText || '已处理完成。',
+      );
+      return {
+        ok: true,
+        sessionId: binding.sessionId,
+        replyMessageId: previewHandle.cardId,
+      };
+    }
+
     if (!replyText) {
       return { ok: true, sessionId: binding.sessionId, reason: 'empty reply' };
     }
