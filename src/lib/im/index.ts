@@ -11,6 +11,7 @@
 import { registerPlugin } from './core/registry';
 import { feishuPlugin } from './providers/feishu';
 import { wechatQclawPlugin } from './providers/wechat-qclaw';
+import { wechatWorkPlugin } from './providers/wechat-work';
 
 // ============================================================================
 // 静态 provider 注册（加新 IM = 在这下面加一行）
@@ -18,7 +19,7 @@ import { wechatQclawPlugin } from './providers/wechat-qclaw';
 
 registerPlugin(feishuPlugin);
 registerPlugin(wechatQclawPlugin);
-// registerPlugin(wechatWorkPlugin);    // M5
+registerPlugin(wechatWorkPlugin);
 
 // ============================================================================
 // 类型
