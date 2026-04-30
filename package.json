@@ -1,6 +1,6 @@
 {
   "name": "lumos",
-  "version": "0.25.24",
+  "version": "0.25.25",
   "private": true,
   "author": {
     "name": "op7418",
@@ -34,7 +34,8 @@
     "electron:pack:linux": "npm run electron:build && electron-builder --linux --config electron-builder.yml",
     "electron:pack:pro": "npm run electron:build:pro && electron-builder --config electron-builder.yml",
     "electron:pack:pro:mac": "npm run electron:build:pro && electron-builder --mac --config electron-builder.yml",
-    "electron:pack:pro:win": "npm run electron:build:pro && electron-builder --win --config electron-builder.yml"
+    "electron:pack:pro:win": "npm run electron:build:pro && electron-builder --win --config electron-builder.yml",
+    "runtime-resources:manifest": "node scripts/build-runtime-resource-manifest.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.47",

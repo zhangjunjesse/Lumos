@@ -1134,6 +1134,11 @@ export class BrowserManager extends EventEmitter {
     if (incognito) {
       this.applyCleanUserAgent(partition);
     }
+    // Preload runs in every browser tab (user / AI / workflow / DeepSearch)
+    // because all of them flow through this single createView() call. The
+    // preload patches the `chrome.runtime` Electron tell so Akamai-class
+    // anti-bot scripts don't 403 us. See browser-tab-preload.ts for scope.
+    const preloadPath = path.join(__dirname, 'browser-tab-preload.js');
     const view = new WebContentsView({
       webPreferences: {
         partition,
@@ -1141,6 +1146,7 @@ export class BrowserManager extends EventEmitter {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
+        preload: preloadPath,
       },
     });
     try {
