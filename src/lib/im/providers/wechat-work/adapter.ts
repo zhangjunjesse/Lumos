@@ -80,4 +80,20 @@ export class WechatWorkAdapter implements IMAdapter, IMCommandHandler {
     if (builtin) return builtin;
     return { handled: false };
   }
+
+  // ------------- Webhook 入口 -------------
+  // 给 /api/im/webhooks/wechat-work 路由调用：解密后的事件注入 monitor 队列。
+  // 这两个方法不在 IMAdapter 接口里——是 wechat-work 特有的 webhook-driven 模式。
+
+  injectInbound(message: InboundMessage): void {
+    this.monitor.ingestEvent(message);
+  }
+
+  getCallbackCredentials(): { token: string; aesKey: string; corpId: string } {
+    return {
+      token: this.config.callbackToken,
+      aesKey: this.config.callbackAesKey,
+      corpId: this.config.corpId,
+    };
+  }
 }
