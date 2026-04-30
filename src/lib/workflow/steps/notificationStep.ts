@@ -94,7 +94,7 @@ async function deliverViaIm(args: ImDeliveryArgs): Promise<StepResult> {
   }
 
   const bindingService = new BindingService();
-  const binding = bindingService.getActiveBinding(args.sessionId, providerId as 'feishu');
+  const binding = bindingService.getActiveBinding(args.sessionId, providerId);
   if (!binding) {
     return {
       success: false,

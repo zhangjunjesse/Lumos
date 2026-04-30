@@ -88,7 +88,8 @@ export class ConversationEngine {
     sessionId: string,
     text: string,
     files?: FileAttachment[],
-    meta?: { source?: 'feishu' | 'lumos' },
+    // source: any IM provider id ('feishu' | 'wechat-qclaw' | 'wechat-work' | ...) 或 'lumos'
+    meta?: { source?: string },
     callbacks?: ConversationStreamingCallbacks,
   ): Promise<ConversationResponse> {
     const session = getSession(sessionId);

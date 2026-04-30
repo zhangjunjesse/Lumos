@@ -14,6 +14,10 @@ jest.mock('@/lib/im', () => ({
   hasProvider: (id: string) => knownProviders.has(id),
 }));
 
+jest.mock('@/lib/bridge/core/im-inbound-dispatcher', () => ({
+  dispatchInbound: jest.fn(async () => ({ ok: true })),
+}));
+
 let authorized = true;
 jest.mock('@/lib/bridge/runtime-auth', () => ({
   isBridgeRuntimeAuthorized: () => authorized,

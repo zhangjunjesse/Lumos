@@ -15,6 +15,10 @@ jest.mock('@/lib/im', () => ({
   getActiveAdapter: jest.fn(() => (adapterAvailable ? fakeAdapter : null)),
 }));
 
+jest.mock('@/lib/bridge/core/im-inbound-dispatcher', () => ({
+  dispatchInbound: jest.fn(async () => ({ ok: true })),
+}));
+
 import { GET, POST } from '../route';
 
 function encrypt(plaintext: string, opts: { random?: Buffer } = {}): string {

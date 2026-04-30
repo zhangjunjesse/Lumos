@@ -3,9 +3,8 @@
  *
  * Electron im-runtime-manager 把 IMAdapter 收到的 InboundMessage 通过这里上报。
  *
- * M9 范围：把消息记录到 bridge_events 表（platform 字段已通用化），
- * 提供给 UI / 历史查询用。**暂不**触发 AI 对话——非 feishu 的 inbound pipeline
- * 会在 M10 单独建。这一层做完后再接通端到端。
+ * M9: 落 bridge_events 表用于可见性。
+ * M10: 调 dispatchInbound 进 AI 对话循环（绑定查找 + AI 派发 + 回复送回）。
  *
  * 鉴权：runtime-token 同 bridge runtime。
  */
@@ -15,6 +14,7 @@ import { bridgeRuntimeUnauthorizedResponse, isBridgeRuntimeAuthorized } from '@/
 import { hasProvider } from '@/lib/im';
 import type { InboundMessage } from '@/lib/im';
 import { getDb } from '@/lib/db';
+import { dispatchInbound } from '@/lib/bridge/core/im-inbound-dispatcher';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,6 +61,20 @@ export async function POST(request: Request) {
     chatId: message.address.chatId,
     text: message.text.slice(0, 80),
   });
+
+  // 异步派发到 AI 对话循环。失败只记日志，不影响 ingest 200 响应（避免重发风暴）。
+  void dispatchInbound(providerId, message)
+    .then((result) => {
+      if (!result.ok) {
+        console.info('[im/runtime] dispatch result:', result);
+      } else {
+        console.info('[im/runtime] AI replied via', providerId, 'to', message.address.chatId);
+      }
+    })
+    .catch((err) => {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[im/runtime] dispatch error:', errMsg);
+    });
 
   return NextResponse.json({ ok: true });
 }

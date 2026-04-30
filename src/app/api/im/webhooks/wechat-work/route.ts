@@ -19,6 +19,7 @@ import {
   WXBizMsgCryptError,
 } from '@/lib/im/providers/wechat-work/crypto';
 import type { InboundMessage } from '@/lib/im';
+import { dispatchInbound } from '@/lib/bridge/core/im-inbound-dispatcher';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -139,14 +140,24 @@ export async function POST(request: NextRequest) {
 
   const inbound = parseInboundFromXml(plaintext);
   if (inbound) {
+    // 仍然注入 monitor 队列（保留 consumeOne 接口语义）
     try {
       adapter.injectInbound(inbound);
     } catch (err) {
       console.error('[wechat-work webhook] inject failed:', err);
     }
+    // 异步派发到 AI 对话循环，立刻响应（企微 5 秒超时）
+    void dispatchInbound('wechat-work', inbound)
+      .then((result) => {
+        if (!result.ok) console.info('[wechat-work webhook] dispatch:', result);
+      })
+      .catch((err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error('[wechat-work webhook] dispatch error:', errMsg);
+      });
   }
 
-  // 企微要求 5 秒内回应；事件已落队列，立刻响应空字符串
+  // 企微要求 5 秒内回应；立刻响应空字符串
   return new Response('', { status: 200 });
 }
 
