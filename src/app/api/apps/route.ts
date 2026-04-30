@@ -4,6 +4,7 @@ import path from 'path';
 
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { createSessionStore } from '@/lib/app/builder/session';
 import { installApp } from '@/lib/app/installer';
 import type { ConsentRequest } from '@/lib/app/installer';
 import { buildInstallContext, getAppPlatformService } from '@/lib/app/service';
@@ -60,7 +61,23 @@ export async function GET(): Promise<NextResponse> {
       lastUsedAt: r.last_used_at,
       sizeBytes: r.size_bytes,
     }));
-    return NextResponse.json({ apps });
+
+    // Drafts: builder sessions that haven't produced an installed app yet.
+    // Sessions whose status is 'failed' surface separately as failed
+    // attempts; for the list we keep only actively-buildable ones.
+    const store = createSessionStore(svc.db);
+    const draftSessions = store
+      .listSessions({ limit: 100 })
+      .filter((s) => !s.appId && s.status !== 'failed' && s.appName);
+    const drafts = draftSessions.map((s) => ({
+      sessionId: s.id,
+      name: s.appName ?? '未命名应用',
+      description: s.appDescription ?? '',
+      status: s.status,
+      updatedAt: s.updatedAt,
+    }));
+
+    return NextResponse.json({ apps, drafts });
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message },

@@ -33,6 +33,13 @@ export type MessageRole = 'user' | 'assistant' | 'tool';
 export interface BuilderSession {
   id: string;
   status: SessionStatus;
+  /**
+   * User-supplied app name typed at create time. Surfaced in the sidebar,
+   * /apps draft cards, builder header, and post-install /apps/[id]. Stored
+   * inside `needs_summary_json.appName` to avoid a column migration.
+   */
+  appName?: string;
+  appDescription?: string;
   needsSummary?: Record<string, unknown>;
   appId?: string;
   templateId?: string;
@@ -64,6 +71,8 @@ export interface BuilderArtifact {
 
 export interface SessionStore {
   createSession(opts?: {
+    appName?: string;
+    appDescription?: string;
     templateId?: string;
     llmModel?: string;
     initialStatus?: SessionStatus;
@@ -111,12 +120,21 @@ export function createSessionStore(db: Database.Database): SessionStore {
   }
 
   function rowToSession(r: SessionRow): BuilderSession {
+    const needs = r.needs_summary_json
+      ? safeJson<Record<string, unknown>>(r.needs_summary_json)
+      : undefined;
+    const appName =
+      typeof needs?.appName === 'string' ? (needs.appName as string) : undefined;
+    const appDescription =
+      typeof needs?.appDescription === 'string'
+        ? (needs.appDescription as string)
+        : undefined;
     return {
       id: r.id,
       status: r.status,
-      needsSummary: r.needs_summary_json
-        ? safeJson<Record<string, unknown>>(r.needs_summary_json)
-        : undefined,
+      appName,
+      appDescription,
+      needsSummary: needs,
       appId: r.app_id ?? undefined,
       templateId: r.template_id ?? undefined,
       llmModel: r.llm_model ?? undefined,
@@ -155,14 +173,30 @@ export function createSessionStore(db: Database.Database): SessionStore {
       const id = genId('bs');
       const now = nowMs();
       const status: SessionStatus = opts?.initialStatus ?? 'gathering';
+      const initialSummary: Record<string, unknown> = {};
+      if (opts?.appName) initialSummary.appName = opts.appName;
+      if (opts?.appDescription) initialSummary.appDescription = opts.appDescription;
+      const summaryJson =
+        Object.keys(initialSummary).length > 0 ? JSON.stringify(initialSummary) : null;
       db.prepare(
         `INSERT INTO lumos_app_builder_sessions
          (id, status, needs_summary_json, app_id, template_id, llm_model, created_at, updated_at)
-         VALUES (?, ?, NULL, NULL, ?, ?, ?, ?)`,
-      ).run(id, status, opts?.templateId ?? null, opts?.llmModel ?? null, now, now);
+         VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        status,
+        summaryJson,
+        opts?.templateId ?? null,
+        opts?.llmModel ?? null,
+        now,
+        now,
+      );
       return {
         id,
         status,
+        appName: opts?.appName,
+        appDescription: opts?.appDescription,
+        needsSummary: summaryJson ? initialSummary : undefined,
         templateId: opts?.templateId,
         llmModel: opts?.llmModel,
         createdAt: now,

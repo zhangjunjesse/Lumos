@@ -25,6 +25,30 @@ describe('SessionStore — sessions', () => {
     expect(s.status).toBe('iterating');
   });
 
+  it('persists appName and appDescription via needs_summary_json', () => {
+    const { store } = setup();
+    const s = store.createSession({
+      appName: '客户管理',
+      appDescription: '记录客户、订单、自动跟进',
+    });
+    expect(s.appName).toBe('客户管理');
+    expect(s.appDescription).toBe('记录客户、订单、自动跟进');
+    expect(s.needsSummary).toEqual({
+      appName: '客户管理',
+      appDescription: '记录客户、订单、自动跟进',
+    });
+    const fetched = store.getSession(s.id);
+    expect(fetched?.appName).toBe('客户管理');
+    expect(fetched?.appDescription).toBe('记录客户、订单、自动跟进');
+  });
+
+  it('appName-only persists without appDescription', () => {
+    const { store } = setup();
+    const s = store.createSession({ appName: '周报助手' });
+    expect(s.appName).toBe('周报助手');
+    expect(s.appDescription).toBeUndefined();
+  });
+
   it('getSession returns null when missing', () => {
     const { store } = setup();
     expect(store.getSession('bs_nope')).toBeNull();

@@ -28,12 +28,35 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const body = (await req.json().catch(() => ({}))) as {
+      appName?: string;
+      appDescription?: string;
       templateId?: string;
       llmModel?: string;
     };
+    if (typeof body.appName !== 'string' || body.appName.trim().length === 0) {
+      return NextResponse.json(
+        { error: 'appName is required' },
+        { status: 400 },
+      );
+    }
+    if (body.appName.length > 64) {
+      return NextResponse.json(
+        { error: 'appName must be ≤ 64 characters' },
+        { status: 400 },
+      );
+    }
+    const description = typeof body.appDescription === 'string' ? body.appDescription.trim() : '';
+    if (description.length > 500) {
+      return NextResponse.json(
+        { error: 'appDescription must be ≤ 500 characters' },
+        { status: 400 },
+      );
+    }
     const { db } = getAppPlatformService();
     const store = createSessionStore(db);
     const session = store.createSession({
+      appName: body.appName.trim(),
+      appDescription: description || undefined,
       templateId: body.templateId,
       llmModel: body.llmModel,
     });
