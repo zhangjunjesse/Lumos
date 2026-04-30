@@ -9,20 +9,15 @@
  */
 
 import { registerPlugin } from './core/registry';
+import { feishuPlugin } from './providers/feishu';
 
 // ============================================================================
-// 静态 provider 注册（M2 起逐个上线）
+// 静态 provider 注册（加新 IM = 在这下面加一行）
 // ============================================================================
 
-// import { feishuPlugin } from './providers/feishu';
-// import { wechatQclawPlugin } from './providers/wechat-qclaw';
-// import { wechatWorkPlugin } from './providers/wechat-work';
-
-// registerPlugin(feishuPlugin);
-// registerPlugin(wechatQclawPlugin);
-// registerPlugin(wechatWorkPlugin);
-
-void registerPlugin; // 占位避免 unused-import；M2 起 register 列表会真正用到
+registerPlugin(feishuPlugin);
+// registerPlugin(wechatQclawPlugin);   // M4
+// registerPlugin(wechatWorkPlugin);    // M5
 
 // ============================================================================
 // 类型
