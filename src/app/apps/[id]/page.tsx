@@ -4,8 +4,8 @@ import * as React from 'react';
 import { useParams } from 'next/navigation';
 
 import { AppContainer } from '@/components/app/container/AppContainer';
-import type { RendererBridge } from '@/components/app/declarative/bridge';
-import type { AppManifest, AppPage, AppRoutes } from '@/lib/app/manifest/types';
+import { createApiRendererBridge } from '@/components/app/declarative/api-bridge';
+import type { AppManifest, AppPage, AppRoutes, MenuItem } from '@/lib/app/manifest/types';
 
 interface AppDetailResponse {
   id: string;
@@ -15,47 +15,117 @@ interface AppDetailResponse {
   manifest: AppManifest;
 }
 
+interface ConfigEntry {
+  key: string;
+  isSecret: boolean;
+  value: string | null;
+}
+
 export default function AppEntryPage(): React.ReactElement {
   const params = useParams<{ id: string }>();
   const appId = params?.id ?? '';
 
   const [detail, setDetail] = React.useState<AppDetailResponse | null>(null);
-  // routes / pages will be populated once the assets route ships in M2.
-  const [routes] = React.useState<AppRoutes | null>(null);
-  const [pages] = React.useState<Record<string, AppPage>>({});
+  const [routes, setRoutes] = React.useState<AppRoutes | null>(null);
+  const [pages, setPages] = React.useState<Record<string, AppPage>>({});
+  const [config, setConfig] = React.useState<Record<string, string>>({});
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    let cancelled = false;
     async function load() {
       try {
         const detailRes = await fetch(`/api/apps/${appId}`);
-        if (!detailRes.ok) throw new Error(`Detail fetch failed: ${detailRes.status}`);
+        if (!detailRes.ok) {
+          throw new Error(`Detail fetch failed: ${detailRes.status}`);
+        }
         const detailJson = (await detailRes.json()) as { app: AppDetailResponse };
+        if (cancelled) return;
         setDetail(detailJson.app);
 
-        // For now, the page renderer reads routes/pages from the install dir
-        // via a dedicated assets route. v1 ships a simple inline read by
-        // re-using the manifest table — real implementation lands with the
-        // /api/apps/<id>/assets endpoint in M2. For dev preview we surface
-        // a clear error.
-        setError(
-          'M1 状态：应用入口页 UI 已就位，但 routes.json / pages/*.json 的资源路由 ' +
-            '(/api/apps/<id>/assets/*) 计划在 M2 实装。当前只能展示 manifest 元信息。',
+        const routesRes = await fetch(`/api/apps/${appId}/assets/routes.json`);
+        if (!routesRes.ok) {
+          throw new Error(`routes.json missing: ${routesRes.status}`);
+        }
+        const routesJson = (await routesRes.json()) as AppRoutes;
+        if (cancelled) return;
+        setRoutes(routesJson);
+
+        const pagePaths = collectPagePaths(routesJson.menu);
+        const pageEntries = await Promise.all(
+          pagePaths.map(async (p) => {
+            const segs = p.split('/').filter((s) => s.length > 0);
+            const r = await fetch(
+              `/api/apps/${appId}/assets/${segs.map(encodeURIComponent).join('/')}`,
+            );
+            if (!r.ok) throw new Error(`${p} missing: ${r.status}`);
+            return [p, (await r.json()) as AppPage] as const;
+          }),
         );
+        if (cancelled) return;
+        setPages(Object.fromEntries(pageEntries));
+
+        // Non-secret config (secrets aren't returned by the API).
+        try {
+          const cfgRes = await fetch(`/api/apps/${appId}/config`);
+          if (cfgRes.ok) {
+            const cfgJson = (await cfgRes.json()) as { entries: ConfigEntry[] };
+            if (cancelled) return;
+            setConfig(
+              Object.fromEntries(
+                cfgJson.entries
+                  .filter((e) => !e.isSecret && typeof e.value === 'string')
+                  .map((e) => [e.key, e.value as string]),
+              ),
+            );
+          }
+        } catch {
+          // config is optional
+        }
       } catch (err) {
-        setError((err as Error).message);
+        if (!cancelled) setError((err as Error).message);
       }
     }
     if (appId) void load();
+    return () => {
+      cancelled = true;
+    };
   }, [appId]);
 
-  const bridge = useMockBridge();
+  const bridge = React.useMemo(
+    () =>
+      createApiRendererBridge(appId, {
+        navigate: () => {
+          // AppContainer overrides navigate for in-app menu items;
+          // anything that bubbles up here would be cross-app navigation,
+          // which v1 doesn't support.
+        },
+        openDialog: (dialogId) => {
+          // Page-level dialog manager (form-driven create/edit modals)
+          // is M2; for now surface a console warning so the intent is
+          // visible during dev.
+          console.warn(`Dialog '${dialogId}' opened — page-level dialog manager is M2.`);
+        },
+        toast: ({ title, description, level }) => {
+          if (level === 'error' || level === 'warning') {
+            window.alert(`${title}${description ? `\n${description}` : ''}`);
+          } else {
+            console.info(`[toast] ${title}${description ? `: ${description}` : ''}`);
+          }
+        },
+        confirm: async (message) => {
+          if (typeof window === 'undefined') return false;
+          return window.confirm(message);
+        },
+      }),
+    [appId],
+  );
 
   if (error) {
     return (
       <div className="p-6">
         <h1 className="text-xl font-semibold">{detail?.name ?? appId}</h1>
-        <p className="mt-4 text-sm text-muted-foreground">{error}</p>
+        <p className="mt-4 text-sm text-destructive">{error}</p>
       </div>
     );
   }
@@ -67,34 +137,16 @@ export default function AppEntryPage(): React.ReactElement {
       manifest={detail.manifest}
       routes={routes}
       pages={pages}
+      config={config}
       bridge={bridge}
     />
   );
 }
 
-/** Wire the bridge to /api/apps/<id>/* routes. */
-function useMockBridge(): RendererBridge {
-  // Wired in M2 with real fetch calls; for now use noop stubs so the
-  // component compiles and renders without crashing if fed mock data.
-  return React.useMemo<RendererBridge>(
-    () => ({
-      runWorkflow: async () => ({
-        output: null,
-        status: 'failed',
-        error: 'workflow runtime integration is M3',
-      }),
-      dbQuery: async () => [],
-      dbGet: async () => null,
-      dbCount: async () => 0,
-      dbCreate: async (_c, data) => ({ ...data, id: 'stub-id' }),
-      dbUpdate: async () => null,
-      dbDelete: async () => false,
-      configGet: async () => null,
-      navigate: () => undefined,
-      openDialog: () => undefined,
-      toast: () => undefined,
-      confirm: async () => true,
-    }),
-    [],
-  );
+function collectPagePaths(menu: MenuItem[]): string[] {
+  const out = new Set<string>();
+  for (const item of menu) {
+    if (item.page) out.add(item.page);
+  }
+  return Array.from(out);
 }

@@ -4,6 +4,12 @@ import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { InstallDialog } from '@/components/app/install-flow/InstallDialog';
+import type {
+  ConsentRequest,
+  ConsentResponse,
+  InstalledApp,
+} from '@/lib/app/installer';
 
 interface ListedApp {
   id: string;
@@ -20,6 +26,13 @@ export default function AppsListPage(): React.ReactElement {
   const [apps, setApps] = React.useState<ListedApp[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Pending install state — what we need to repeat the upload after the
+  // user confirms consent. Stored in component state because Next.js route
+  // handlers are stateless and cannot remember the file buffer between calls.
+  const [pendingFile, setPendingFile] = React.useState<File | null>(null);
+  const [pendingRequest, setPendingRequest] = React.useState<ConsentRequest | null>(null);
+  const [installing, setInstalling] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -40,6 +53,76 @@ export default function AppsListPage(): React.ReactElement {
     void load();
   }, [load]);
 
+  const performUpload = React.useCallback(
+    async (file: File, consent: ConsentResponse | null) => {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('source', 'local');
+      if (consent) form.append('consent', JSON.stringify(consent));
+
+      const res = await fetch('/api/apps', { method: 'POST', body: form });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        installed?: InstalledApp;
+        error?: string;
+        message?: string;
+        needsConsent?: boolean;
+        request?: ConsentRequest;
+      };
+
+      if (json.needsConsent && json.request) {
+        return { kind: 'needs-consent' as const, request: json.request };
+      }
+      if (!res.ok || json.ok === false) {
+        return {
+          kind: 'error' as const,
+          message: json.message ?? json.error ?? `HTTP ${res.status}`,
+        };
+      }
+      return { kind: 'ok' as const, installed: json.installed };
+    },
+    [],
+  );
+
+  const handleFile = async (file: File) => {
+    setInstalling(true);
+    try {
+      const res = await performUpload(file, null);
+      if (res.kind === 'needs-consent') {
+        setPendingFile(file);
+        setPendingRequest(res.request);
+      } else if (res.kind === 'ok') {
+        await load();
+      } else {
+        window.alert(`安装失败：${res.message}`);
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleConsent = async (response: ConsentResponse) => {
+    if (!pendingFile) return;
+    setInstalling(true);
+    try {
+      const res = await performUpload(pendingFile, response);
+      setPendingFile(null);
+      setPendingRequest(null);
+      if (res.kind === 'ok') {
+        await load();
+      } else if (res.kind === 'error') {
+        window.alert(`安装失败：${res.message}`);
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleCancelConsent = () => {
+    setPendingFile(null);
+    setPendingRequest(null);
+  };
+
   const handleUninstall = async (id: string) => {
     if (typeof window !== 'undefined' && !window.confirm(`确定卸载应用 ${id} 吗？\n用户数据将默认保留。`)) return;
     const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' });
@@ -56,9 +139,9 @@ export default function AppsListPage(): React.ReactElement {
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">应用</h1>
         <div className="flex gap-2">
-          <Button variant="outline" asChild>
+          <Button variant="outline" disabled={installing} asChild>
             <label className="cursor-pointer">
-              安装本地包…
+              {installing ? '处理中…' : '安装本地包…'}
               <input
                 type="file"
                 accept=".lumos-app,application/zip"
@@ -66,25 +149,7 @@ export default function AppsListPage(): React.ReactElement {
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const form = new FormData();
-                  form.append('file', file);
-                  form.append('source', 'local');
-                  const res = await fetch('/api/apps', { method: 'POST', body: form });
-                  const json = (await res.json()) as {
-                    ok?: boolean;
-                    error?: string;
-                    message?: string;
-                    needsConsent?: boolean;
-                  };
-                  if (!res.ok && !json.needsConsent) {
-                    window.alert(`安装失败：${json.message ?? json.error ?? '未知错误'}`);
-                  } else if (json.needsConsent) {
-                    // Re-upload with full consent for now (no UI modal here yet).
-                    // The renderer's InstallDialog (src/components/app/install-flow)
-                    // is designed for this; wire-up lands when navigation finishes.
-                    window.alert('该应用需要授权确认，请暂时跳过；交互式弹窗将在后续接入。');
-                  }
-                  await load();
+                  await handleFile(file);
                   e.currentTarget.value = '';
                 }}
               />
@@ -144,6 +209,13 @@ export default function AppsListPage(): React.ReactElement {
           ))}
         </div>
       )}
+
+      <InstallDialog
+        open={pendingRequest !== null}
+        request={pendingRequest}
+        onConfirm={handleConsent}
+        onCancel={handleCancelConsent}
+      />
     </div>
   );
 }
