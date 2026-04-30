@@ -69,14 +69,14 @@ export const feishuManifest: IMProviderManifest = {
     },
   ],
   capabilities: {
-    // M2 范围：仅 text 入出站 + target directory。
-    // commands/streamingPreview 在 M3.5 / 后续 milestone 中接入。
+    // M7 起开启 commands（IMCommandHandler 通过内置命令实现）。
+    // streamingPreview 仍待后续 milestone。
     chatTypes: ['direct', 'group'],
     media: false,
     reactions: false,
     threads: false,
     edit: false,
-    commands: false,
+    commands: true,
     targetDirectory: true,
     streamingPreview: false,
   },

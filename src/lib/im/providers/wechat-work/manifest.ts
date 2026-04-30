@@ -65,7 +65,7 @@ export const wechatWorkManifest: IMProviderManifest = {
     reactions: false,
     threads: false,
     edit: false,
-    commands: false,
+    commands: true,
     targetDirectory: false, // M5 不暴露通讯录列表
     streamingPreview: false,
   },

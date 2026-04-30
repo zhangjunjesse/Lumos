@@ -7,6 +7,10 @@
 
 import type {
   IMAdapter,
+  IMCommandHandler,
+  IMCommand,
+  IMCommandContext,
+  IMCommandResult,
   InboundMessage,
   OutboundMessage,
   SendResult,
@@ -18,8 +22,9 @@ import { WechatWorkClient } from './client';
 import { WechatWorkMonitor } from './monitor';
 import { sendOutbound } from './send';
 import { probeWechatWork } from './probe';
+import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
 
-export class WechatWorkAdapter implements IMAdapter {
+export class WechatWorkAdapter implements IMAdapter, IMCommandHandler {
   readonly id = 'wechat-work';
 
   private readonly client: WechatWorkClient;
@@ -62,5 +67,17 @@ export class WechatWorkAdapter implements IMAdapter {
       return 'corp_id, agent_id, corp_secret are required';
     }
     return null;
+  }
+
+  // ------------- IMCommandHandler -------------
+
+  listCommands(): IMCommand[] {
+    return [...BUILTIN_COMMANDS];
+  }
+
+  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    const builtin = await handleBuiltinCommand(ctx, '企业微信');
+    if (builtin) return builtin;
+    return { handled: false };
   }
 }

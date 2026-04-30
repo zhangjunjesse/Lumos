@@ -52,6 +52,15 @@ export type {
 
 export { hasCommands, hasTargetDirectory, hasStreamingPreview } from './core/types';
 
+// Slash command router
+export {
+  parseSlashCommand,
+  routeInboundCommand,
+  maybeInterceptCommand,
+} from './core/command-router';
+export type { ParsedCommand } from './core/command-router';
+export { BUILTIN_COMMANDS, handleBuiltinCommand } from './core/built-in-commands';
+
 // ============================================================================
 // Registry（哪些 IM 已注册）
 // ============================================================================

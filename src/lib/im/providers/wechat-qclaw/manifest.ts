@@ -90,7 +90,7 @@ export const wechatQclawManifest: IMProviderManifest = {
     reactions: false,
     threads: false,
     edit: false,
-    commands: false,
+    commands: true,
     targetDirectory: true,
     streamingPreview: false,
   },

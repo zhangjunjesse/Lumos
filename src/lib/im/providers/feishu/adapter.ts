@@ -11,6 +11,10 @@
 import type {
   IMAdapter,
   IMTargetDirectory,
+  IMCommandHandler,
+  IMCommand,
+  IMCommandContext,
+  IMCommandResult,
   IMTarget,
   ListTargetsOptions,
   InboundMessage,
@@ -25,8 +29,9 @@ import { FeishuMonitor } from './monitor';
 import { sendOutbound } from './send';
 import { probeFeishu } from './probe';
 import { listFeishuTargets, resolveFeishuTarget } from './targets';
+import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
 
-export class FeishuAdapter implements IMAdapter, IMTargetDirectory {
+export class FeishuAdapter implements IMAdapter, IMTargetDirectory, IMCommandHandler {
   readonly id = 'feishu';
 
   private readonly client: FeishuClient;
@@ -78,5 +83,17 @@ export class FeishuAdapter implements IMAdapter, IMTargetDirectory {
 
   resolveTarget(query: string): Promise<IMTarget | null> {
     return resolveFeishuTarget(this.client, this.config, query);
+  }
+
+  // ------------- IMCommandHandler -------------
+
+  listCommands(): IMCommand[] {
+    return [...BUILTIN_COMMANDS];
+  }
+
+  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    const builtin = await handleBuiltinCommand(ctx, 'Feishu');
+    if (builtin) return builtin;
+    return { handled: false };
   }
 }

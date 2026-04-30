@@ -8,6 +8,10 @@
 import type {
   IMAdapter,
   IMTargetDirectory,
+  IMCommandHandler,
+  IMCommand,
+  IMCommandContext,
+  IMCommandResult,
   IMTarget,
   ListTargetsOptions,
   InboundMessage,
@@ -22,8 +26,9 @@ import { QClawMonitor } from './monitor';
 import { sendOutbound } from './send';
 import { probeQClaw } from './probe';
 import { listQClawTargets, resolveQClawTarget } from './targets';
+import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
 
-export class WechatQClawAdapter implements IMAdapter, IMTargetDirectory {
+export class WechatQClawAdapter implements IMAdapter, IMTargetDirectory, IMCommandHandler {
   readonly id = 'wechat-qclaw';
 
   private readonly client: QClawClient;
@@ -76,5 +81,17 @@ export class WechatQClawAdapter implements IMAdapter, IMTargetDirectory {
 
   resolveTarget(query: string): Promise<IMTarget | null> {
     return resolveQClawTarget(this.client, query);
+  }
+
+  // ------------- IMCommandHandler -------------
+
+  listCommands(): IMCommand[] {
+    return [...BUILTIN_COMMANDS];
+  }
+
+  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    const builtin = await handleBuiltinCommand(ctx, '微信 (QClaw)');
+    if (builtin) return builtin;
+    return { handled: false };
   }
 }
