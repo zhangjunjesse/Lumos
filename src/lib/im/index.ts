@@ -85,6 +85,7 @@ export {
   stopAll,
   getActiveAdapter,
   listActiveAdapters,
+  getOrCreateAdapter,
   sendToProvider,
   sendToDefault,
   probeProvider,
