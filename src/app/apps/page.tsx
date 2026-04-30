@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -139,6 +140,9 @@ export default function AppsListPage(): React.ReactElement {
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">应用</h1>
         <div className="flex gap-2">
+          <Button asChild>
+            <Link href="/apps/create">用 AI 创建</Link>
+          </Button>
           <Button variant="outline" disabled={installing} asChild>
             <label className="cursor-pointer">
               {installing ? '处理中…' : '安装本地包…'}
