@@ -65,7 +65,7 @@ describe('app platform db migrations', () => {
     expect(insertBadSource).toThrow(/CHECK constraint failed/);
   });
 
-  it('cascades deletes from lumos_app_apps to dependent tables', () => {
+  it('cascades app deletion to install-state tables but PRESERVES user data', () => {
     migrateAppTables(db);
 
     const now = Date.now();
@@ -84,13 +84,23 @@ describe('app platform db migrations', () => {
        VALUES (?, ?, ?, ?, ?)`,
     ).run('test-app', 'token', 'enc', 1, now);
 
+    db.prepare(
+      `INSERT INTO lumos_app_permissions (app_id, permission, granted, granted_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run('test-app', 'mcp:feishu', 1, now);
+
     db.prepare('DELETE FROM lumos_app_apps WHERE id = ?').run('test-app');
 
-    const dataRows = db.prepare('SELECT COUNT(*) as c FROM lumos_app_data').get() as { c: number };
+    // Install-state tables cascade with the app row.
     const configRows = db.prepare('SELECT COUNT(*) as c FROM lumos_app_configs').get() as { c: number };
-
-    expect(dataRows.c).toBe(0);
+    const permRows = db.prepare('SELECT COUNT(*) as c FROM lumos_app_permissions').get() as { c: number };
     expect(configRows.c).toBe(0);
+    expect(permRows.c).toBe(0);
+
+    // User data SURVIVES uninstall — re-installing the same app id reconnects.
+    // To purge data, the installer must explicitly DELETE FROM lumos_app_data.
+    const dataRows = db.prepare('SELECT COUNT(*) as c FROM lumos_app_data').get() as { c: number };
+    expect(dataRows.c).toBe(1);
   });
 
   it('isolates data by app_id (composite primary key blocks duplicate ids across apps)', () => {

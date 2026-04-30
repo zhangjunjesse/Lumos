@@ -52,6 +52,11 @@ export function migrateAppTables(db: Database.Database): void {
       FOREIGN KEY (app_id) REFERENCES lumos_app_apps(id) ON DELETE CASCADE
     );
 
+    -- lumos_app_data deliberately has NO foreign key to lumos_app_apps.
+    -- Uninstall defaults to keeping user data (per requirements §3 and main
+    -- design §8.6) so a re-install of the same app id reconnects to the
+    -- prior dataset. To purge data, the installer's keepData=false branch
+    -- issues an explicit DELETE FROM lumos_app_data WHERE app_id = ?.
     CREATE TABLE IF NOT EXISTS lumos_app_data (
       app_id TEXT NOT NULL,
       collection TEXT NOT NULL,
@@ -59,8 +64,7 @@ export function migrateAppTables(db: Database.Database): void {
       data_json TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      PRIMARY KEY (app_id, collection, id),
-      FOREIGN KEY (app_id) REFERENCES lumos_app_apps(id) ON DELETE CASCADE
+      PRIMARY KEY (app_id, collection, id)
     );
 
     CREATE TABLE IF NOT EXISTS lumos_app_runs (
