@@ -4,7 +4,15 @@ import path from 'path';
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
-const SCHEMA_DIR = path.resolve(__dirname, '../../../../resources/app-schemas');
+// SCHEMA_DIR resolution priority:
+//   1. LUMOS_APP_SCHEMA_DIR env var (used by the CLI script after bundling
+//      with esbuild, where __dirname no longer points at the source tree).
+//   2. <__dirname>/../../../../resources/app-schemas — the in-tree path
+//      that works for jest, Next.js, and Electron-packaged builds.
+const SCHEMA_DIR =
+  process.env.LUMOS_APP_SCHEMA_DIR && process.env.LUMOS_APP_SCHEMA_DIR.length > 0
+    ? process.env.LUMOS_APP_SCHEMA_DIR
+    : path.resolve(__dirname, '../../../../resources/app-schemas');
 
 export type Validators = {
   app: ValidateFunction;

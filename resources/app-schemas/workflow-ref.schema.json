@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lumos.io/schemas/app-workflow-ref.v1.json",
   "title": "Lumos App Workflow Reference",
-  "description": "Minimal contract for workflow files inside an app package. The full Workflow DSL V2 is owned by src/lib/workflow/; this schema only specifies the fields the app platform reads (id, name, version, inputs, outputs). Step bodies are passed through to the workflow engine as-is.",
+  "description": "Minimal contract for workflow files inside an app package. The full workflow DSL (V3) is owned by src/lib/workflow/; this schema only validates the fields the app platform itself reads (id, name, description, inputs, outputs). Any other engine-specific fields (e.g. version, params, nodes, edges, spec, steps) pass through without app-platform validation — they're validated downstream by the workflow engine when the workflow runs.",
   "type": "object",
-  "required": ["id", "version", "steps"],
+  "required": ["id"],
+  "additionalProperties": true,
 
   "properties": {
     "$schema": { "type": "string" },
@@ -15,12 +16,6 @@
     },
     "name": { "type": "string", "minLength": 1, "maxLength": 128 },
     "description": { "type": "string", "maxLength": 500 },
-    "version": {
-      "type": "integer",
-      "minimum": 2,
-      "maximum": 2,
-      "description": "App platform v1 only supports Workflow DSL V2"
-    },
     "inputs": {
       "type": "array",
       "items": { "$ref": "#/$defs/inputDef" },
@@ -30,19 +25,6 @@
       "type": "array",
       "items": { "$ref": "#/$defs/outputDef" },
       "description": "Output declaration; used to derive a result page renderer"
-    },
-    "steps": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["id", "type"],
-        "properties": {
-          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-          "type": { "type": "string" }
-        }
-      },
-      "description": "Step bodies validated by workflow engine, not here"
     }
   },
 
