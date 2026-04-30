@@ -1,0 +1,21 @@
+{
+  "$schema": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "id": "generate-report",
+  "name": "生成周报",
+  "version": 2,
+  "inputs": [
+    { "name": "completed", "label": "本周完成", "type": "text", "required": true },
+    { "name": "next", "label": "下周计划", "type": "text" }
+  ],
+  "outputs": [
+    { "name": "report", "type": "markdown", "label": "周报" }
+  ],
+  "steps": [
+    {
+      "id": "write",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "根据输入生成周报：完成={{ inputs.completed }} 计划={{ inputs.next }}"
+    }
+  ]
+}

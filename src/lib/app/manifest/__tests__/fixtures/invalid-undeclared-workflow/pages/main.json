@@ -1,0 +1,6 @@
+{
+  "title": "Main",
+  "layout": "form",
+  "form": [{ "type": "text", "name": "x", "label": "X" }],
+  "submit": { "label": "Run", "run": "workflow:nonexistent", "render": "markdown" }
+}

@@ -1,0 +1,16 @@
+{
+  "collections": [
+    {
+      "name": "customers",
+      "label": "客户",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "name", "type": "string", "required": true, "indexed": true },
+        { "name": "phone", "type": "string" },
+        { "name": "status", "type": "enum", "options": ["active", "inactive"], "default": "active" },
+        { "name": "created_at", "type": "datetime", "auto": "now" }
+      ],
+      "indexes": [["status", "created_at"]]
+    }
+  ]
+}

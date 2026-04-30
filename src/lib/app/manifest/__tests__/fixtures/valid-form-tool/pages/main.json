@@ -1,0 +1,14 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "生成周报",
+  "layout": "form",
+  "form": [
+    { "type": "textarea", "name": "completed", "label": "本周完成", "required": true, "rows": 6 },
+    { "type": "textarea", "name": "next", "label": "下周计划", "rows": 4 }
+  ],
+  "submit": {
+    "label": "生成",
+    "run": "workflow:generate-report",
+    "render": "markdown"
+  }
+}

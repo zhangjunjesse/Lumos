@@ -1,0 +1,7 @@
+{
+  "id": "bad-binding",
+  "name": "Bad binding",
+  "version": "1.0.0",
+  "icon": "./icon.png",
+  "entry": "main"
+}

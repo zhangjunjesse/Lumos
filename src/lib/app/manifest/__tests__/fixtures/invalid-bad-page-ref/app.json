@@ -1,0 +1,7 @@
+{
+  "id": "bad-page-ref",
+  "name": "Bad page ref",
+  "version": "1.0.0",
+  "icon": "./icon.png",
+  "entry": "home"
+}

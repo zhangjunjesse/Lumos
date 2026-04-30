@@ -1,0 +1,8 @@
+{
+  "id": "shared-data",
+  "name": "Shared data app",
+  "version": "1.0.0",
+  "icon": "./icon.png",
+  "entry": "main",
+  "permissions": { "data": "shared" }
+}

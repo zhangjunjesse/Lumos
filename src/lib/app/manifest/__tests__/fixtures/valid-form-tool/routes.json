@@ -1,0 +1,7 @@
+{
+  "$schema": "https://lumos.io/schemas/app-routes.v1.json",
+  "menu": [
+    { "id": "main", "label": "生成", "icon": "edit", "page": "pages/main.json" }
+  ],
+  "default": "main"
+}

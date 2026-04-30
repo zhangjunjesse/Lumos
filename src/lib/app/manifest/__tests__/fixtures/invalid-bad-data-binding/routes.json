@@ -1,0 +1,4 @@
+{
+  "menu": [{ "id": "main", "label": "Main", "page": "pages/main.json" }],
+  "default": "main"
+}

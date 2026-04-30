@@ -1,0 +1,7 @@
+{
+  "title": "Main",
+  "layout": "single",
+  "blocks": [
+    { "type": "markdown", "content": "Total: {{ db.unknown_collection.count }}" }
+  ]
+}
