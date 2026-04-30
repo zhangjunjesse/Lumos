@@ -1,7 +1,7 @@
 import { getDb } from '@/lib/db';
 import type Database from 'better-sqlite3';
 
-// Open to any IM provider id ('feishu' | 'wechat-qclaw' | 'wechat-work' | future)
+// Open to any IM provider id ('feishu' | 'wechat-qclaw' | future...)
 // 真正的合法 id 由 src/lib/im 的 registry 决定，这里不做字面量限制以避免连锁改动。
 export type BridgePlatform = string;
 export type BridgeBindingStatus = 'active' | 'inactive' | 'expired' | 'deleted' | 'pending';

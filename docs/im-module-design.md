@@ -14,7 +14,7 @@
 1. 用户能在 settings 里开关每个 IM、设默认 IM
 2. 飞书继续工作，行为零变化
 3. 接入微信（**通过 QClaw 协议**，腾讯官方 OpenClaw 微信桥）
-4. 后续接钉钉/QQ/公众号/企业微信/Telegram/Discord 时，AI 套模板就能完成，不用碰核心层
+4. 后续接钉钉/QQ/公众号/Telegram/Discord 时，AI 套模板就能完成，不用碰核心层
 
 ### 工程目标（同等重要）
 
@@ -41,7 +41,7 @@ src/lib/im/
 ├── providers/               ★ 可独立修改层（每个 IM 一个垂直切片）
 │   ├── feishu/
 │   ├── wechat-qclaw/
-│   └── wechat-work/         （后续）
+│   （后续可加：钉钉、QQ、公众号、Telegram 等）
 │
 └── index.ts                 列出所有 provider import + registry.register
 
@@ -122,13 +122,12 @@ export interface IMAuthProvider { /* 见 core/types.ts */ }
 export interface IMArchiveProvider { /* 见 core/types.ts */ }
 ```
 
-### Provider 能力矩阵（M5 完成时的目标）
+### Provider 能力矩阵（当前实现状态）
 
 | Provider | A | B | C | D | E | F | J | G | H | I |
 |---|---|---|---|---|---|---|---|---|---|---|
 | feishu       | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | (保留旧实现，不进 IM 模块) | (同) | – |
-| wechat-qclaw | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ 视 QClaw 能力 | – | – | – |
-| wechat-work  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | – | – | – |
+| wechat-qclaw | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | – | – | – | – |
 
 ---
 
@@ -241,13 +240,11 @@ electron/bridge/platforms/* ──→ core/types  (主进程通过 IPC/HTTP 拿 
 ```ts
 import { feishuPlugin } from './providers/feishu';
 import { wechatQclawPlugin } from './providers/wechat-qclaw';
-// import { wechatWorkPlugin } from './providers/wechat-work';
 
 import { registerPlugin } from './core/registry';
 
 registerPlugin(feishuPlugin);
 registerPlugin(wechatQclawPlugin);
-// registerPlugin(wechatWorkPlugin);
 
 export { getPlugin, listPlugins, getDefaultProvider, setDefaultProvider } from './core/registry';
 export { getProviderConfig, setProviderConfig, isProviderEnabled } from './core/config-store';
@@ -351,14 +348,23 @@ QClaw 是腾讯出品的 OpenClaw 微信桥，**用户在自己机器上装 QCla
 
 ## 7. M1-M5 实施分期
 
-| Phase | 范围 | 文件改动量 | 验收 |
-|---|---|---|---|
-| **M0** | 本文档 + tasks | docs/im-module-design.md | 用户 review |
-| **M1** | core/ 4 文件 + core/README | ~600 行 | unit test + types.ts 编译通过 |
-| **M2** | providers/feishu/ 完整迁移 | ~1200 行（含搬迁） | 飞书 e2e 不回归 |
-| **M3** | API + Settings UI | ~1500 行 | settings 页可读写飞书配置 |
-| **M4** | providers/wechat-qclaw/ | ~1500 行 | QClaw 实例发收消息 |
-| **M5** | providers/wechat-work/ | ~1200 行 | 企微自建应用发收消息 |
+| Phase | 范围 | 状态 |
+|---|---|---|
+| **M0** | 本文档 + tasks | ✅ |
+| **M1** | core/ 框架 (types/registry/config-store/runtime/README) | ✅ |
+| **M2** | providers/feishu/ 完整迁移 | ✅ |
+| **M3** | API + Settings UI | ✅ |
+| **M3.5** | 集成点 B/C (workflow notification + sendToDefault) | ✅ |
+| **M4** | providers/wechat-qclaw/ | ✅ |
+| ~~M5~~ | ~~providers/wechat-work/~~ | ❌ 已删除（用户不需要企微） |
+| **M6** | im-tools MCP server (集成点 F) | ✅ |
+| **M7** | Slash Command router (集成点 E) | ✅ |
+| ~~M8~~ | ~~企业微信 webhook + crypto~~ | ❌ 同 M5 一并删除 |
+| **M9** | 多 provider electron runtime + bootstrap/ingest | ✅ |
+| **M10** | inbound → AI 对话循环（dispatchInbound） | ✅ |
+| **A**  | 删除 wechat-work | ✅ |
+| **B**  | feishu IMStreamingPreview（流式预览） | ✅ |
+| **C**  | feishu 迁到 ImRuntimeManager（删除 legacy bridge runtime） | ✅ |
 
 每期独立 commit，feature/im-module 分支累积，全部通过后整体合 main。
 
@@ -381,3 +387,6 @@ QClaw 是腾讯出品的 OpenClaw 微信桥，**用户在自己机器上装 QCla
 - 2026-04-30：选择「Feishu 同步迁移到新框架」而非保留两套并存，理由：长期看两套代码会让 AI 混淆，短痛优于长痛
 - 2026-04-30：选择「QClaw 个人微信」作为 WeChat P0，企业微信 P1
 - 2026-04-30：集成点 P0=A/B/C/D, P1=E/F/J 进 M1-M5；P2=G/H/I 仅在 core/types.ts 预留类型不实现；飞书已有的文档/OAuth 实现**留在原 `src/lib/feishu/` 和 `src/lib/feishu-auth.ts`**，本次不动，避免大爆炸式重构
+- 2026-04-30：删除 wechat-work（企业微信）provider —— 用户不需要。所有相关文件 + webhook + WXBizMsgCrypt 一并清除。
+- 2026-04-30：feishu 完整迁到 ImRuntimeManager；legacy `electron/bridge/feishu-runtime.ts` + `runtime-manager.ts` + `/api/bridge/runtime/*` 删除。Inbound 仍走 `handleFeishuMessage`（保留 mentions/OAuth/multimodal）通过 ingest 派发。新架构 + 旧 pipeline = 共生方案。
+- 2026-04-30：feishu 实现 IMStreamingPreview（capability=true）。dispatcher 在 adapter 支持流式预览时启用打字效果卡片。流式路径不再额外调 sendToProvider；finalize 后卡片即终态。

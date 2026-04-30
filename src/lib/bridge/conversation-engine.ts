@@ -88,7 +88,7 @@ export class ConversationEngine {
     sessionId: string,
     text: string,
     files?: FileAttachment[],
-    // source: any IM provider id ('feishu' | 'wechat-qclaw' | 'wechat-work' | ...) 或 'lumos'
+    // source: any IM provider id ('feishu' | 'wechat-qclaw' | future...) 或 'lumos'
     meta?: { source?: string },
     callbacks?: ConversationStreamingCallbacks,
   ): Promise<ConversationResponse> {

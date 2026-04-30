@@ -138,6 +138,8 @@ describe('POST /api/im/runtime/ingest', () => {
 
     expect(handler.handleFeishuMessage).toHaveBeenCalledTimes(1);
     expect(dispatcher.dispatchInbound).not.toHaveBeenCalled();
+    // bridge_events 不应被本路由重复落库（legacy pipeline 内部会自己写）
+    expect(fakeStmt.run).not.toHaveBeenCalled();
   });
 
   test('Phase C: non-feishu inbound routes to dispatchInbound', async () => {

@@ -47,14 +47,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'INVALID_MESSAGE' }, { status: 400 });
   }
 
-  // 落 bridge_events 用于可见性，platform 字段直接用 IM provider id（schema 已通用化）
-  // binding_id 此时未必存在；用 0 占位，后续 M10 完整 pipeline 会补 binding 解析。
-  try {
-    persistEvent(providerId, message, body.receivedAt ?? Date.now());
-  } catch (err) {
-    const errMessage = err instanceof Error ? err.message : 'persist failed';
-    console.error('[im/runtime] persist failed:', errMessage);
-    return NextResponse.json({ error: errMessage }, { status: 500 });
+  // 落 bridge_events 用于可见性。feishu 例外：legacy handleFeishuMessage 内部有
+  // 自己的事件落库（含 binding_id 解析），这里跳过避免重复。
+  if (providerId !== 'feishu') {
+    try {
+      persistEvent(providerId, message, body.receivedAt ?? Date.now());
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : 'persist failed';
+      console.error('[im/runtime] persist failed:', errMessage);
+      return NextResponse.json({ error: errMessage }, { status: 500 });
+    }
   }
 
   console.info('[im/runtime] inbound', {
