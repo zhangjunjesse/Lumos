@@ -9,7 +9,7 @@ jest.mock('@/lib/db', () => ({
   getDb: () => ({ prepare: () => fakeStmt }),
 }));
 
-const knownProviders = new Set(['wechat-qclaw', 'feishu']);
+const knownProviders = new Set(['wechat', 'feishu']);
 jest.mock('@/lib/im', () => ({
   hasProvider: (id: string) => knownProviders.has(id),
 }));
@@ -48,7 +48,7 @@ beforeEach(() => {
 describe('POST /api/im/runtime/ingest', () => {
   test('401 without runtime auth', async () => {
     authorized = false;
-    const res = await POST(makeReq({ providerId: 'wechat-qclaw' }));
+    const res = await POST(makeReq({ providerId: 'wechat' }));
     expect(res.status).toBe(401);
   });
 
@@ -72,7 +72,7 @@ describe('POST /api/im/runtime/ingest', () => {
 
   test('400 on missing message fields', async () => {
     const res = await POST(makeReq({
-      providerId: 'wechat-qclaw',
+      providerId: 'wechat',
       message: { messageId: 'm', address: {}, text: '', timestamp: 0 },
     }));
     expect(res.status).toBe(400);
@@ -80,10 +80,10 @@ describe('POST /api/im/runtime/ingest', () => {
 
   test('persists valid event to bridge_events', async () => {
     const res = await POST(makeReq({
-      providerId: 'wechat-qclaw',
+      providerId: 'wechat',
       message: {
-        messageId: 'qclaw-msg-1',
-        address: { providerId: 'wechat-qclaw', chatId: 'gid_123', userId: 'wxid_a' },
+        messageId: 'wechat-msg-1',
+        address: { providerId: 'wechat', chatId: 'gid_123', userId: 'wxid_a' },
         text: 'hello',
         timestamp: 1700000000,
       },
@@ -92,10 +92,10 @@ describe('POST /api/im/runtime/ingest', () => {
     expect(res.status).toBe(200);
     expect(fakeStmt.run).toHaveBeenCalledTimes(1);
     const args = insertedRows[0];
-    expect(args[0]).toMatch(/^im_wechat-qclaw_qclaw-msg-1_/); // event id
-    expect(args[1]).toBe('wechat-qclaw'); // platform
+    expect(args[0]).toMatch(/^im_wechat_wechat-msg-1_/); // event id
+    expect(args[1]).toBe('wechat'); // platform
     expect(args[2]).toBe('gid_123'); // chat_id
-    expect(args[3]).toBe('qclaw-msg-1'); // platform_message_id
+    expect(args[3]).toBe('wechat-msg-1'); // platform_message_id
     expect(typeof args[4]).toBe('string'); // payload_json
     const payload = JSON.parse(args[4] as string);
     expect(payload.text).toBe('hello');
@@ -153,10 +153,10 @@ describe('POST /api/im/runtime/ingest', () => {
     dispatcher.dispatchInbound.mockClear();
 
     const res = await POST(makeReq({
-      providerId: 'wechat-qclaw',
+      providerId: 'wechat',
       message: {
         messageId: 'm',
-        address: { providerId: 'wechat-qclaw', chatId: 'c1', userId: 'u' },
+        address: { providerId: 'wechat', chatId: 'c1', userId: 'u' },
         text: 'hi',
         timestamp: 1700000000,
       },

@@ -93,9 +93,16 @@ export async function sendToProvider(
   providerId: IMProviderId,
   message: OutboundMessage,
 ): Promise<SendResult> {
-  await startAdapter(providerId);
-  const adapter = getActiveAdapter(providerId);
-  if (!adapter) return { ok: false, error: `provider not active: ${providerId}` };
+  // 注意：不调 startAdapter — 只 getOrCreateAdapter 拿到实例后直接 send。
+  // 入站长轮询/WebSocket 由 electron 主进程的 ImRuntimeManager 独占启动；
+  // 在 Next.js server 进程里再 start 会触发双进程抢同一 inbound 流（cursor 错位、
+  // 消息丢失）。adapter.send 不需要 isRunning=true，只用 client 和持久化状态。
+  let adapter;
+  try {
+    adapter = getOrCreateAdapter(providerId);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'unknown provider' };
+  }
   return adapter.send(message);
 }
 

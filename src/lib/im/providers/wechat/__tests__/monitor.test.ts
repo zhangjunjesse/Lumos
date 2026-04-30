@@ -12,7 +12,8 @@ afterAll(() => {
   (global as { fetch: typeof fetch }).fetch = originalFetch;
 });
 
-import { WechatMonitor, bodyFromItemList } from '../monitor';
+import { WechatMonitor } from '../monitor';
+import { bodyFromItemList } from '../parse';
 import { WechatClient, MESSAGE_ITEM_TEXT, MESSAGE_ITEM_VOICE, MESSAGE_TYPE_USER, MESSAGE_TYPE_BOT } from '../client';
 import type { WechatConfig } from '../config';
 import type { WeixinInboundMsg, MessageItem } from '../client';

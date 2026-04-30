@@ -5,95 +5,35 @@
  * 4 个核心 endpoint：
  *   POST /ilink/bot/getupdates    — 长轮询拉消息
  *   POST /ilink/bot/sendmessage   — 发消息
- *   POST /ilink/bot/getconfig     — 拿 typing ticket（M+1 再做）
- *   POST /ilink/bot/sendtyping    — 发 typing 状态（M+1 再做）
  *
  * 鉴权 header: Authorization: Bearer <token>; iLink-App-ClientVersion: 1.
  * 可选 SKRouteTag header（routeTag 由配置传，默认空）。
+ *
+ * 类型定义在 types.ts，本文件只放运行时逻辑。
  */
+
+import {
+  MESSAGE_ITEM_TEXT,
+  MESSAGE_TYPE_BOT,
+  MESSAGE_STATE_FINISH,
+  type GetUpdatesResp,
+  type OutboundMsg,
+  type SendMessageResp,
+} from './types';
+
+// Re-export 常量与类型，方便 monitor / send / parse 用同一个 ./client 入口
+export * from './types';
 
 const CHANNEL_VERSION = 'lumos-wechat/1.0';
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BODY = 64 * 1024 * 1024; // 64MB cap
 
-export const MESSAGE_TYPE_USER = 1;
-export const MESSAGE_TYPE_BOT = 2;
-export const MESSAGE_ITEM_TEXT = 1;
-export const MESSAGE_ITEM_IMAGE = 2;
-export const MESSAGE_ITEM_VOICE = 3;
-export const MESSAGE_ITEM_FILE = 4;
-export const MESSAGE_ITEM_VIDEO = 5;
-export const MESSAGE_STATE_FINISH = 2;
-export const ERR_SESSION_EXPIRED = -14;
-
-// ---- JSON shapes from ilink API ---------------------------------------------
-
-export interface BaseInfo {
-  channel_version?: string;
-}
-
-export interface TextItem {
-  text?: string;
-}
-
-export interface VoiceItem {
-  text?: string; // ASR transcript
-}
-
-export interface MessageItem {
-  type?: number;
-  text_item?: TextItem;
-  voice_item?: VoiceItem;
-  ref_msg?: { message_item?: MessageItem; title?: string };
-}
-
-export interface WeixinInboundMsg {
-  seq?: number;
-  message_id?: number;
-  from_user_id?: string;
-  to_user_id?: string;
-  client_id?: string;
-  create_time_ms?: number;
-  session_id?: string;
-  message_type?: number;
-  message_state?: number;
-  item_list?: MessageItem[];
-  context_token?: string;
-}
-
-export interface GetUpdatesResp {
-  ret: number;
-  errcode?: number;
-  errmsg?: string;
-  msgs?: WeixinInboundMsg[];
-  get_updates_buf: string;
-  longpolling_timeout_ms?: number;
-}
-
-export interface SendMessageResp {
-  ret: number;
-  errcode?: number;
-  errmsg?: string;
-}
-
-export interface OutboundMsg {
-  from_user_id: string;
-  to_user_id: string;
-  client_id: string;
-  message_type: number;
-  message_state: number;
-  item_list: MessageItem[];
-  context_token: string;
-}
-
 export interface ClientOptions {
   baseUrl: string;
   token: string;
   routeTag?: string;
 }
-
-// ---- Client ----------------------------------------------------------------
 
 export class WechatClient {
   constructor(private readonly options: ClientOptions) {}
@@ -165,9 +105,7 @@ export class WechatClient {
     }
   }
 
-  /**
-   * Verify token validity. Returns ok=true if getUpdates with empty buf succeeds.
-   */
+  /** Verify token validity. ok=true if getUpdates with empty buf succeeds. */
   async verifyToken(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await this.getUpdates('', 5_000);

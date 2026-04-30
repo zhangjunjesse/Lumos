@@ -1,154 +1,23 @@
 /**
- * WeChat Provider — Inbound Monitor (long-poll)
+ * WeChat Provider — Inbound Monitor (long-poll loop)
  *
  * 持续 getUpdates → 解析消息（仅 text + voice ASR）→ 入队
- * 每条入站消息带 context_token，按 from_user_id 持久化到磁盘。
- * 之后回复时 send.ts 从磁盘读取该 peer 的最近 context_token。
- *
- * 持久化文件：
- *   <LUMOS_DATA_DIR>/im-wechat/<account_id>/sync_buf.txt
- *   <LUMOS_DATA_DIR>/im-wechat/<account_id>/context-tokens.json
+ * 每条入站消息带 context_token，按 from_user_id 持久化到磁盘（state.ts）。
+ * 之后 send.ts 通过 monitor.getContextToken(peer) 拿到。
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import type { InboundMessage } from '../../core/types';
-import {
-  WechatClient,
-  MESSAGE_ITEM_TEXT,
-  MESSAGE_ITEM_VOICE,
-  MESSAGE_TYPE_USER,
-  type WeixinInboundMsg,
-  type MessageItem,
-} from './client';
+import { WechatClient, MESSAGE_TYPE_USER, type WeixinInboundMsg } from './client';
 import type { WechatConfig } from './config';
 import { isPeerAllowed } from './config';
+import { bodyFromItemList } from './parse';
+import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
 
 const SEEN_LIMIT = 1000;
-
-function dataDir(): string {
-  return process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos');
-}
-
-function stateDir(accountId: string): string {
-  return path.join(dataDir(), 'im-wechat', sanitize(accountId));
-}
-
-function sanitize(s: string): string {
-  return s.replace(/[/\\:\0]/g, '_') || 'default';
-}
-
-function syncBufPath(accountId: string): string {
-  return path.join(stateDir(accountId), 'sync_buf.txt');
-}
-
-function tokensPath(accountId: string): string {
-  return path.join(stateDir(accountId), 'context-tokens.json');
-}
-
-function ensureDir(p: string): void {
-  fs.mkdirSync(p, { recursive: true });
-}
-
-// ---- context_token store (per-account, on-disk) ----------------------------
-
-class ContextTokenStore {
-  private cache = new Map<string, string>();
-  private loaded = false;
-
-  constructor(private readonly accountId: string) {}
-
-  private load(): void {
-    if (this.loaded) return;
-    this.loaded = true;
-    try {
-      const raw = fs.readFileSync(tokensPath(this.accountId), 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, string>;
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string') this.cache.set(k, v);
-      }
-    } catch {
-      // first run, no file yet
-    }
-  }
-
-  get(peer: string): string {
-    this.load();
-    return this.cache.get(peer) || '';
-  }
-
-  set(peer: string, token: string): void {
-    this.load();
-    if (!token.trim()) return;
-    if (this.cache.get(peer) === token) return;
-    this.cache.set(peer, token);
-    try {
-      ensureDir(stateDir(this.accountId));
-      fs.writeFileSync(
-        tokensPath(this.accountId),
-        JSON.stringify(Object.fromEntries(this.cache), null, 2),
-        'utf-8',
-      );
-    } catch (err) {
-      console.warn('[wechat/monitor] failed to persist context token:', err);
-    }
-  }
-}
-
-// ---- sync_buf store (cursor for long-poll) ---------------------------------
-
-function readSyncBuf(accountId: string): string {
-  try {
-    return fs.readFileSync(syncBufPath(accountId), 'utf-8');
-  } catch {
-    return '';
-  }
-}
-
-function writeSyncBuf(accountId: string, buf: string): void {
-  try {
-    ensureDir(stateDir(accountId));
-    fs.writeFileSync(syncBufPath(accountId), buf, 'utf-8');
-  } catch (err) {
-    console.warn('[wechat/monitor] failed to persist sync_buf:', err);
-  }
-}
-
-// ---- Parse user-visible text from item_list (text + voice ASR + 引用) ------
-
-export function bodyFromItemList(items: MessageItem[] | undefined): string {
-  if (!items || items.length === 0) return '';
-  for (const item of items) {
-    if (item.type === MESSAGE_ITEM_TEXT && item.text_item) {
-      const text = (item.text_item.text || '').trim();
-      const ref = item.ref_msg;
-      if (!ref || !ref.message_item) return text;
-      const refType = ref.message_item.type;
-      if (refType && [2, 3, 4, 5].includes(refType)) {
-        // ref is media — drop ref body, just return current text
-        return text;
-      }
-      const refBody = bodyFromItemList([ref.message_item]);
-      const parts: string[] = [];
-      if (ref.title) parts.push(ref.title);
-      if (refBody) parts.push(refBody);
-      if (parts.length === 0) return text;
-      return `[引用: ${parts.join(' | ')}]\n${text}`;
-    }
-    if (item.type === MESSAGE_ITEM_VOICE && item.voice_item) {
-      const t = (item.voice_item.text || '').trim();
-      if (t) return t;
-    }
-  }
-  return '';
-}
-
-// ---- Monitor ---------------------------------------------------------------
+const MIN_LOOP_INTERVAL_MS = 100;
 
 export interface WechatMonitorDeps {
   contextTokenStore?: ContextTokenStore;
-  /** Inject a custom sync_buf reader/writer (for tests). */
   syncBuf?: { read(): string; write(buf: string): void };
 }
 
@@ -159,6 +28,7 @@ export class WechatMonitor {
   private waiters: Array<(msg: InboundMessage | null) => void> = [];
   private seenIds = new Set<string>();
   private loopPromise: Promise<void> | null = null;
+  private wakeStop: (() => void) | null = null;
   private readonly tokens: ContextTokenStore;
   private readonly bufStore: { read(): string; write(buf: string): void };
 
@@ -174,8 +44,6 @@ export class WechatMonitor {
     };
   }
 
-  private wakeStop: (() => void) | null = null;
-
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -187,7 +55,6 @@ export class WechatMonitor {
     if (!this.running) return;
     this.running = false;
     this.cancelled = true;
-    // Wake the loop's sleep if any
     if (this.wakeStop) {
       this.wakeStop();
       this.wakeStop = null;
@@ -241,38 +108,24 @@ export class WechatMonitor {
         this.bufStore.write(buf);
       }
       for (const m of resp.msgs ?? []) this.ingestMessage(m);
-      // Safety throttle: ensure at least 100ms between iterations.
-      // Real long-poll returns in seconds; this only kicks in if the server
-      // returns immediately and would otherwise hot-loop.
-      const elapsed = Date.now() - iterStart;
-      if (elapsed < 100) await this.cancellableDelay(100 - elapsed);
-    }
-  }
 
-  private cancellableDelay(ms: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.wakeStop = null;
-        resolve();
-      }, ms);
-      this.wakeStop = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-    });
+      // Safety throttle: long-poll is normally seconds; this only kicks in
+      // if the server returns immediately and would otherwise hot-loop.
+      const elapsed = Date.now() - iterStart;
+      if (elapsed < MIN_LOOP_INTERVAL_MS) {
+        await this.cancellableDelay(MIN_LOOP_INTERVAL_MS - elapsed);
+      }
+    }
   }
 
   /** Exposed for tests. */
   ingestMessage(m: WeixinInboundMsg): void {
-    // Only inbound user → bot direction
     if (m.message_type !== MESSAGE_TYPE_USER) return;
 
     const from = (m.from_user_id || '').trim();
     if (!from) return;
     if (!isPeerAllowed(this.config, from)) return;
 
-    // Persist context_token first — even if we end up dropping the message,
-    // the token is still useful for any later send.
     if (m.context_token && m.context_token.trim()) {
       this.tokens.set(from, m.context_token.trim());
     }
@@ -300,5 +153,17 @@ export class WechatMonitor {
     if (waiter) waiter(inbound);
     else this.queue.push(inbound);
   }
-}
 
+  private cancellableDelay(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.wakeStop = null;
+        resolve();
+      }, ms);
+      this.wakeStop = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  }
+}

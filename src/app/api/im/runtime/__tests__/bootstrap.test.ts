@@ -1,6 +1,6 @@
 const fakePlugins = [
   { manifest: { id: 'feishu', label: 'Feishu', description: '', configSchema: [], capabilities: {} } },
-  { manifest: { id: 'wechat-qclaw', label: 'QClaw', description: '', configSchema: [], capabilities: {} } },
+  { manifest: { id: 'wechat', label: 'WeChat', description: '', configSchema: [], capabilities: {} } },
 ];
 
 const enabled = new Set<string>();
@@ -41,19 +41,19 @@ describe('GET /api/im/runtime/bootstrap', () => {
 
   test('Phase C: includes feishu when enabled+configured', async () => {
     enabled.add('feishu');
-    enabled.add('wechat-qclaw');
+    enabled.add('wechat');
     configured.add('feishu');
-    configured.add('wechat-qclaw');
+    configured.add('wechat');
 
     const res = await GET(makeReq());
     const data = await res.json();
     expect(data.providers).toHaveLength(2);
     const ids = data.providers.map((p: { providerId: string }) => p.providerId).sort();
-    expect(ids).toEqual(['feishu', 'wechat-qclaw']);
+    expect(ids).toEqual(['feishu', 'wechat']);
   });
 
   test('skips disabled or unconfigured providers', async () => {
-    enabled.add('wechat-qclaw'); // enabled but not configured
+    enabled.add('wechat'); // enabled but not configured
     configured.add('feishu'); // configured but not enabled
 
     const res = await GET(makeReq());
@@ -64,8 +64,8 @@ describe('GET /api/im/runtime/bootstrap', () => {
   test('returns config payload for fully ready providers', async () => {
     enabled.add('feishu');
     configured.add('feishu');
-    enabled.add('wechat-qclaw');
-    configured.add('wechat-qclaw');
+    enabled.add('wechat');
+    configured.add('wechat');
 
     const res = await GET(makeReq());
     const data = await res.json();
