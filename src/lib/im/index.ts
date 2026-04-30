@@ -10,13 +10,14 @@
 
 import { registerPlugin } from './core/registry';
 import { feishuPlugin } from './providers/feishu';
+import { wechatQclawPlugin } from './providers/wechat-qclaw';
 
 // ============================================================================
 // 静态 provider 注册（加新 IM = 在这下面加一行）
 // ============================================================================
 
 registerPlugin(feishuPlugin);
-// registerPlugin(wechatQclawPlugin);   // M4
+registerPlugin(wechatQclawPlugin);
 // registerPlugin(wechatWorkPlugin);    // M5
 
 // ============================================================================
