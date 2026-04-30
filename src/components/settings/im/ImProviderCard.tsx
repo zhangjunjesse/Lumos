@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading, CheckmarkCircle02Icon, AlertCircleIcon } from "@hugeicons/core-free-icons";
 import { SchemaForm } from "./schema-form";
+import { WechatBindCard } from "./WechatBindCard";
 import type { IMProviderManifest } from "@/lib/im";
 
 interface ProviderState {
@@ -143,12 +144,24 @@ export function ImProviderCard({ state, onChanged }: ImProviderCardProps) {
           加载配置中…
         </div>
       ) : (
-        <SchemaForm
-          fields={manifest.configSchema}
-          values={values}
-          onChange={handleFieldChange}
-          disabled={saveStatus === "saving"}
-        />
+        <>
+          {manifest.id === "wechat" && (
+            <div className="mb-4">
+              <WechatBindCard
+                onBound={() => {
+                  void loadConfig();
+                  onChanged();
+                }}
+              />
+            </div>
+          )}
+          <SchemaForm
+            fields={manifest.configSchema}
+            values={values}
+            onChange={handleFieldChange}
+            disabled={saveStatus === "saving"}
+          />
+        </>
       )}
 
       {errorMsg && (

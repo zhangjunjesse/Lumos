@@ -16,8 +16,8 @@
 
 import { BRIDGE_RUNTIME_TOKEN_HEADER } from '../../src/lib/bridge/runtime-config';
 import {
-  WechatQClawAdapter,
-  parseQClawConfig,
+  WechatAdapter,
+  parseWechatConfig,
   FeishuAdapter,
   parseFeishuConfig,
 } from './im-providers';
@@ -208,8 +208,8 @@ function createAdapter(providerId: string, config: Record<string, string>): Gene
   if (providerId === 'feishu') {
     return new FeishuAdapter(parseFeishuConfig(config)) as unknown as GenericIMAdapter;
   }
-  if (providerId === 'wechat-qclaw') {
-    return new WechatQClawAdapter(parseQClawConfig(config)) as unknown as GenericIMAdapter;
+  if (providerId === 'wechat') {
+    return new WechatAdapter(parseWechatConfig(config)) as unknown as GenericIMAdapter;
   }
   return null;
 }
