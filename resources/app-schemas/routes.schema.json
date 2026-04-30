@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumos.io/schemas/app-routes.v1.json",
+  "title": "Lumos App Routes",
+  "description": "routes.json — application menu and route table",
+  "type": "object",
+  "required": ["menu", "default"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "menu": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/menuItem" }
+    },
+
+    "default": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id of the menu item to render on first open"
+    },
+
+    "fullscreen": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hide Lumos sidebar when this app is open"
+    }
+  },
+
+  "$defs": {
+    "menuItem": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "icon": {
+          "type": "string",
+          "description": "lucide-react icon name, e.g. 'home', 'users', 'settings'",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "page": {
+          "type": "string",
+          "pattern": "^pages/[A-Za-z0-9_-]+\\.json$",
+          "description": "Path to a page JSON file (declarative UI)"
+        },
+        "component": {
+          "type": "string",
+          "pattern": "^components/[A-Za-z0-9_-]+$",
+          "description": "Path to a code component (M6+; v1 will reject)"
+        },
+        "badge": {
+          "type": "string",
+          "description": "Template expression for menu badge, e.g. '{{ db.customers.count }}'"
+        },
+        "hidden": { "type": "boolean", "default": false }
+      },
+      "oneOf": [
+        { "required": ["page"], "not": { "required": ["component"] } },
+        { "required": ["component"], "not": { "required": ["page"] } }
+      ]
+    }
+  }
+}

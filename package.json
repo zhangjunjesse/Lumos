@@ -1,6 +1,6 @@
 {
   "name": "lumos",
-  "version": "0.25.25",
+  "version": "0.25.26",
   "private": true,
   "author": {
     "name": "op7418",
@@ -75,6 +75,8 @@
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.10.2",
     "ai": "^6.0.73",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "ansi-to-react": "^6.2.6",
     "better-sqlite3": "^12.8.0",
     "class-variance-authority": "^0.7.1",

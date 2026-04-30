@@ -3,6 +3,7 @@ import { migrateCoreTables } from './migrations';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateTeamRunTables } from './migrations-team-run';
+import { migrateAppTables } from './migrations-app';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
 function isBuildPhase(): boolean {
@@ -184,6 +185,7 @@ export function initDb(db: Database.Database): void {
     migrateLumosTables(db);
     migrateSyncTables(db);
     migrateTeamRunTables(db);
+    migrateAppTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {
