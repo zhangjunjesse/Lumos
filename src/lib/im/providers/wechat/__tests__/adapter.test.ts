@@ -1,6 +1,20 @@
 const fakeFetch = jest.fn();
 const originalFetch = global.fetch;
 
+// adapter.ts now transitively imports commands.ts → @/lib/db. Mock to keep tests fast/light.
+jest.mock('@/lib/db', () => ({
+  getAllSessions: () => [],
+  getSession: () => undefined,
+  createSession: (title?: string) => ({
+    id: 'fake-session',
+    title: title || 'New Chat',
+    status: 'active',
+    updated_at: new Date().toISOString().replace('T', ' ').split('.')[0],
+  }),
+  getSetting: () => undefined,
+  setSetting: () => undefined,
+}));
+
 import { WechatAdapter } from '../adapter';
 import type { WechatConfig } from '../config';
 

@@ -22,6 +22,29 @@ jest.mock('@/lib/im', () => ({
     !!a && typeof (a as { startPreview?: unknown }).startPreview === 'function',
 }));
 
+// In-memory mocks for db + wechat route-pointer (used by wechat path)
+const fakeSessions = new Map<string, { id: string; title: string }>();
+let createSessionCounter = 0;
+let routePointer: string | null = null;
+
+jest.mock('@/lib/db', () => ({
+  getSession: (id: string) => fakeSessions.get(id),
+  createSession: () => {
+    createSessionCounter += 1;
+    const id = `auto_${createSessionCounter}`;
+    const session = { id, title: 'New Chat' };
+    fakeSessions.set(id, session);
+    return session;
+  },
+}));
+
+jest.mock('@/lib/im/providers/wechat/route-pointer', () => ({
+  getCurrentRoutedSessionId: () => routePointer,
+  setCurrentRoutedSessionId: (id: string) => {
+    routePointer = id;
+  },
+}));
+
 let mockBinding: { id: number; sessionId: string; status: string } | null = {
   id: 1,
   sessionId: 'sess-1',
@@ -95,6 +118,9 @@ beforeEach(() => {
   conversationDelay = null;
   conversationStreamChunks = [];
   mockBinding = { id: 1, sessionId: 'sess-1', status: 'active' };
+  fakeSessions.clear();
+  createSessionCounter = 0;
+  routePointer = null;
 });
 
 describe('im-inbound-dispatcher', () => {
@@ -228,6 +254,51 @@ describe('im-inbound-dispatcher', () => {
       } finally {
         FakeConversationEngine.prototype.sendMessage = original;
       }
+    });
+  });
+
+  describe('wechat path: route pointer + auto-create + session prefix', () => {
+    function wechatMsg(text = 'hello bot'): Parameters<typeof dispatchInbound>[1] {
+      return {
+        messageId: `wmsg-${Date.now()}-${Math.random()}`,
+        address: { providerId: 'wechat', chatId: 'peer1', userId: 'peer1' },
+        text,
+        timestamp: 1700000000,
+      };
+    }
+
+    test('empty pointer → auto-creates session, sets pointer, prefixes reply', async () => {
+      conversationResponseText = 'hi from AI';
+      const r = await dispatchInbound('wechat', wechatMsg());
+      expect(r.ok).toBe(true);
+      expect(r.sessionId).toBe('auto_1');
+      expect(routePointer).toBe('auto_1');
+      expect(fakeSessions.has('auto_1')).toBe(true);
+
+      // Reply text should be prefixed with session title block
+      const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
+      expect(sentArgs.text).toMatch(/📂 \(未命名 auto_1\)/);
+      expect(sentArgs.text).toMatch(/─────/);
+      expect(sentArgs.text).toMatch(/hi from AI/);
+    });
+
+    test('reuses pointer when already set', async () => {
+      fakeSessions.set('preset_1', { id: 'preset_1', title: '项目脑暴' });
+      routePointer = 'preset_1';
+
+      const r = await dispatchInbound('wechat', wechatMsg());
+      expect(r.sessionId).toBe('preset_1');
+      // Should NOT create a new session
+      expect(fakeSessions.size).toBe(1);
+
+      const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
+      expect(sentArgs.text).toMatch(/📂 项目脑暴/);
+    });
+
+    test('reply with session prefix is single send (no streaming)', async () => {
+      const r = await dispatchInbound('wechat', wechatMsg());
+      expect(r.ok).toBe(true);
+      expect(sendToProvider).toHaveBeenCalledTimes(1);
     });
   });
 });

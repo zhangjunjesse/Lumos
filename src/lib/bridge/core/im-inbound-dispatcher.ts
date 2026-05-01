@@ -4,16 +4,11 @@
  * 把 IMAdapter 的 InboundMessage 接到 lumos AI 对话循环。
  * 与 inbound-pipeline.ts 的 handleFeishuMessage 平行，但走 IM 通用契约。
  *
- * 对每条消息：
- *   1. 通过 BindingService 查 binding（platform=providerId, channel_id=chatId）
- *   2. 没有 binding → 跳过（要求用户显式绑定，不主动建群对话）
- *   3. binding.sessionId → ConversationEngine.sendMessage 进 AI 循环
- *   4. 回复 visibleText → @/lib/im sendToProvider 送回用户
- *
- * 与 feishu pipeline 的差异：
- *   - 不做 streaming card（feishu 特有）
- *   - 不做 user OAuth token 校验（IM 用应用凭据，不依赖个人 token）
- *   - 不做事件去重表跟踪（先简单实现；M10+ 再加 inFlight set 防重）
+ * 路由策略：
+ *   - feishu: 由 inbound-pipeline 处理（不走这里）
+ *   - wechat: 用「当前路由 session 指针」(route-pointer.ts)，没有就自动建。
+ *             AI 回复加 session 名前缀送回（防止用户切来切去搞混）。
+ *   - 其它  : 走 BindingService.getBindingByChannel（chat ↔ session 1:1 绑定）。
  */
 
 import { BindingService } from './binding-service';
@@ -24,6 +19,11 @@ import {
   hasStreamingPreview,
 } from '@/lib/im';
 import type { InboundMessage, PreviewHandle } from '@/lib/im';
+import { getSession, createSession } from '@/lib/db';
+import {
+  getCurrentRoutedSessionId,
+  setCurrentRoutedSessionId,
+} from '@/lib/im/providers/wechat/route-pointer';
 
 export interface DispatchResult {
   ok: boolean;
@@ -51,7 +51,6 @@ export async function dispatchInbound(
     return { ok: false, reason: IGNORE_REASONS.EMPTY_TEXT };
   }
 
-  // 简单的进程内去重：避免同 messageId 在 race 下被双发
   const dedupeKey = `${providerId}:${message.messageId}`;
   if (inFlight.has(dedupeKey)) {
     return { ok: false, reason: 'duplicate inflight' };
@@ -59,16 +58,28 @@ export async function dispatchInbound(
   inFlight.add(dedupeKey);
 
   try {
-    const bindingService = deps.bindingService ?? new BindingService();
-    const binding = bindingService.getBindingByChannel(providerId, message.address.chatId);
-    if (!binding || binding.status !== 'active') {
-      return { ok: false, reason: IGNORE_REASONS.NO_BINDING };
+    // ---- 1. 决定路由到哪个 session ----------------------------------------
+    let sessionId: string;
+    let needsTitlePrefix: boolean;
+
+    if (providerId === 'wechat') {
+      ({ sessionId, needsTitlePrefix } = resolveWechatSession());
+    } else {
+      const bindingService = deps.bindingService ?? new BindingService();
+      const binding = bindingService.getBindingByChannel(
+        providerId,
+        message.address.chatId,
+      );
+      if (!binding || binding.status !== 'active') {
+        return { ok: false, reason: IGNORE_REASONS.NO_BINDING };
+      }
+      sessionId = binding.sessionId;
+      needsTitlePrefix = false;
     }
 
+    // ---- 2. 进 AI 对话循环 ------------------------------------------------
     const conversationEngine = deps.conversationEngine ?? new ConversationEngine();
 
-    // 如果 adapter 实现了 IMStreamingPreview，开一张实时刷新卡片代替最终一次性发送。
-    // 这条路径下 ConversationEngine 的 onVisibleText 流回调直接灌进卡片。
     let previewHandle: PreviewHandle | null = null;
     let streamingAdapter: ReturnType<typeof getOrCreateAdapter> | null = null;
     try {
@@ -80,7 +91,7 @@ export async function dispatchInbound(
       try {
         previewHandle = await streamingAdapter.startPreview(message.address, '正在思考...');
       } catch (err) {
-        console.warn('[im-dispatcher] startPreview failed, falling back to plain send:', err);
+        console.warn('[im-dispatcher] startPreview failed:', err);
         previewHandle = null;
       }
     }
@@ -88,7 +99,7 @@ export async function dispatchInbound(
     let response: Awaited<ReturnType<ConversationEngine['sendMessage']>>;
     try {
       response = await conversationEngine.sendMessage(
-        binding.sessionId,
+        sessionId,
         message.text.trim(),
         undefined,
         { source: providerId },
@@ -101,7 +112,6 @@ export async function dispatchInbound(
           : undefined,
       );
     } catch (err) {
-      // 异常时也要终结卡片，避免一直停在"正在思考..."
       if (previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)) {
         const errMsg = err instanceof Error ? err.message : 'AI failed';
         await streamingAdapter
@@ -111,39 +121,61 @@ export async function dispatchInbound(
       throw err;
     }
 
-    const replyText = (response.visibleText || '').trim();
+    const rawReply = (response.visibleText || '').trim();
 
-    // 如果走了流式预览，最终落到卡片即可，不再额外发一条文本消息
+    // ---- 3. 流式预览路径（feishu）独立返回 -------------------------------
     if (previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)) {
       await streamingAdapter.finalizePreview(
         previewHandle,
-        replyText || '已处理完成。',
+        rawReply || '已处理完成。',
       );
-      return {
-        ok: true,
-        sessionId: binding.sessionId,
-        replyMessageId: previewHandle.cardId,
-      };
+      return { ok: true, sessionId, replyMessageId: previewHandle.cardId };
     }
 
-    if (!replyText) {
-      return { ok: true, sessionId: binding.sessionId, reason: 'empty reply' };
+    if (!rawReply) {
+      return { ok: true, sessionId, reason: 'empty reply' };
     }
+
+    // ---- 4. wechat 加 session 名前缀 ------------------------------------
+    const finalText = needsTitlePrefix
+      ? withSessionPrefix(sessionId, rawReply)
+      : rawReply;
 
     const sendResult = await sendToProvider(providerId, {
       address: { providerId, chatId: message.address.chatId },
-      text: replyText,
+      text: finalText,
     });
 
     return {
       ok: sendResult.ok,
       reason: sendResult.ok ? undefined : sendResult.error,
-      sessionId: binding.sessionId,
+      sessionId,
       replyMessageId: sendResult.messageId,
     };
   } finally {
     inFlight.delete(dedupeKey);
   }
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+function resolveWechatSession(): { sessionId: string; needsTitlePrefix: true } {
+  const existing = getCurrentRoutedSessionId();
+  if (existing) return { sessionId: existing, needsTitlePrefix: true };
+
+  // 指针为空或失效 → 自动建一个新 session，回写指针
+  const created = createSession();
+  setCurrentRoutedSessionId(created.id);
+  return { sessionId: created.id, needsTitlePrefix: true };
+}
+
+function withSessionPrefix(sessionId: string, body: string): string {
+  const s = getSession(sessionId);
+  const title = (s?.title || '').trim();
+  const display = title && title !== 'New Chat'
+    ? title
+    : `(未命名 ${sessionId.slice(0, 6)})`;
+  return `📂 ${display}\n─────\n${body}`;
 }
 
 export function __resetDispatcherForTesting(): void {

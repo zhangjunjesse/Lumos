@@ -23,7 +23,7 @@ import { WechatClient } from './client';
 import { WechatMonitor } from './monitor';
 import { sendOutbound } from './send';
 import { probeWechat } from './probe';
-import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
+import { WECHAT_COMMANDS, handleWechatCommand } from './commands';
 
 export class WechatAdapter implements IMAdapter, IMCommandHandler {
   readonly id = 'wechat';
@@ -78,12 +78,10 @@ export class WechatAdapter implements IMAdapter, IMCommandHandler {
   // ------------- IMCommandHandler -------------
 
   listCommands(): IMCommand[] {
-    return [...BUILTIN_COMMANDS];
+    return [...WECHAT_COMMANDS];
   }
 
-  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
-    const builtin = await handleBuiltinCommand(ctx, '微信');
-    if (builtin) return builtin;
-    return { handled: false };
+  handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    return handleWechatCommand(ctx);
   }
 }

@@ -84,6 +84,12 @@ export class WechatClient {
       }
       if (!text.trim()) return null;
       return JSON.parse(text);
+    } catch (err) {
+      // Node 22 undici 把真实错误塞进 err.cause（'fetch failed' 几乎没信息量）。
+      // 抽出 cause 链路 → 打到日志 + 抛出更详细的错误。
+      const detail = describeFetchError(err);
+      console.error(`[wechat/client] ${label} ${this.url(path)} →`, detail);
+      throw new Error(`weixin: ${label}: ${detail}`);
     } finally {
       clearTimeout(timer);
     }
@@ -168,6 +174,39 @@ function truncate(s: string, max: number): string {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message));
+}
+
+/**
+ * 把 Node 22 undici 的洋葱式 cause 链路抽出来。"fetch failed" 本身没信息量，
+ * 真实根因（ENOTFOUND / ECONNREFUSED / 证书错误 / EAI_AGAIN）都在 err.cause。
+ */
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [err.message];
+  let cur: unknown = (err as { cause?: unknown }).cause;
+  let depth = 0;
+  while (cur && depth < 5) {
+    if (cur instanceof Error) {
+      const code = (cur as { code?: string }).code;
+      const errno = (cur as { errno?: number }).errno;
+      const host = (cur as { hostname?: string }).hostname;
+      const seg = [
+        cur.message,
+        code ? `code=${code}` : '',
+        errno ? `errno=${errno}` : '',
+        host ? `host=${host}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      parts.push(seg);
+      cur = (cur as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(cur));
+      cur = null;
+    }
+    depth += 1;
+  }
+  return parts.join(' ← ');
 }
 
 /** Generate a random 16-byte hex client_id (matches cc-connect's behavior). */

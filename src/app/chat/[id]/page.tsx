@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { BindingButton } from '@/components/bridge/BindingButton';
+import { WechatRouteIndicator } from '@/components/chat/WechatRouteIndicator';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -561,6 +562,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                   <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
                 </button>
                 <BindingButton sessionId={id} />
+                <WechatRouteIndicator sessionId={id} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
