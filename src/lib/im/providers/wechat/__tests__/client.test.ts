@@ -17,7 +17,7 @@ const baseOpts = {
 };
 
 describe('wechat/client: getUpdates', () => {
-  test('POSTs to /ilink/bot/getupdates with Bearer + iLink-App-ClientVersion', async () => {
+  test('POSTs to /ilink/bot/getupdates with Bearer + AuthorizationType + X-WECHAT-UIN', async () => {
     fakeFetch.mockResolvedValueOnce({
       ok: true,
       text: async () => JSON.stringify({ ret: 0, msgs: [], get_updates_buf: 'cursor-1' }),
@@ -33,7 +33,12 @@ describe('wechat/client: getUpdates', () => {
     expect(body.get_updates_buf).toBe('');
     expect(body.base_info.channel_version).toMatch(/lumos-wechat/);
     expect(init.headers.Authorization).toBe('Bearer tk-1');
-    expect(init.headers['iLink-App-ClientVersion']).toBe('1');
+    // 关键 header — 缺了服务端会返回 "session timeout" 怪响应
+    expect(init.headers.AuthorizationType).toBe('ilink_bot_token');
+    expect(typeof init.headers['X-WECHAT-UIN']).toBe('string');
+    expect(init.headers['X-WECHAT-UIN'].length).toBeGreaterThan(0);
+    // 这个 header 只属于 setup QR 流，bot 业务 API 不该带
+    expect(init.headers['iLink-App-ClientVersion']).toBeUndefined();
   });
 
   test('handles HTTP error', async () => {

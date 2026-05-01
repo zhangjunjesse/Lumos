@@ -45,10 +45,16 @@ export class WechatClient {
   }
 
   private headers(): Record<string, string> {
+    // cc-connect/platform/weixin/client.go (MIT) 严格要求这套 header 组合：
+    //   AuthorizationType: ilink_bot_token   ← 缺了服务端会返回带 errmsg 但无 ret 的怪响应（"session timeout"）
+    //   X-WECHAT-UIN: <random base64>        ← 同样关键
+    //   Authorization: Bearer <token>
+    // iLink-App-ClientVersion 只在 setup.ts 的 QR 流里要，bot 业务 API 不需要。
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
+      AuthorizationType: 'ilink_bot_token',
+      'X-WECHAT-UIN': randomWechatUIN(),
       Authorization: `Bearer ${this.options.token}`,
-      'iLink-App-ClientVersion': '1',
     };
     if (this.options.routeTag) h.SKRouteTag = this.options.routeTag;
     return h;
@@ -173,4 +179,20 @@ export function newClientId(): string {
     for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
   }
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generate X-WECHAT-UIN header value: random uint32 → decimal string → base64.
+ * 复刻自 cc-connect randomWechatUIN()。
+ */
+function randomWechatUIN(): string {
+  const bytes = new Uint8Array(4);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 4; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  const u =
+    ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0; // unsigned
+  return Buffer.from(String(u), 'utf-8').toString('base64');
 }
