@@ -4,6 +4,7 @@ import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
@@ -889,6 +890,9 @@ export async function POST(request: NextRequest) {
     }
     if (permissionMode !== 'default' && hasDeepSearchMcp(loadedMcpServers)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + DEEPSEARCH_MCP_SYSTEM_HINT;
+    }
+    if (permissionMode !== 'default' && hasImToolsMcp(loadedMcpServers)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IM_TOOLS_SYSTEM_HINT;
     }
     if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;

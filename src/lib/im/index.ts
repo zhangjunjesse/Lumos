@@ -103,3 +103,6 @@ export {
 
 // Sandbox helpers (used by tools / dispatcher to gate outbound file paths)
 export { resolveLumosSandboxPath, mimeFromPath } from './core/sandbox';
+
+// System prompt fragment for the im-tools MCP — injected when im-tools is loaded
+export { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from './im-tools-hint';

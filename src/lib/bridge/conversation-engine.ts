@@ -10,6 +10,7 @@ import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { getActiveUserId } from '@/lib/auth/user-service';
 import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
@@ -163,6 +164,9 @@ export class ConversationEngine {
     }
     if (hasDeepSearchMcp(loadedMcpServers)) {
       hints.push(DEEPSEARCH_MCP_SYSTEM_HINT);
+    }
+    if (hasImToolsMcp(loadedMcpServers)) {
+      hints.push(IM_TOOLS_SYSTEM_HINT);
     }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
 
