@@ -303,11 +303,12 @@ describe('im-inbound-dispatcher', () => {
       expect(routePointer).toBe('auto_1');
       expect(fakeSessions.has('auto_1')).toBe(true);
 
-      // Reply text should be prefixed with session title block
+      // Reply text should be prefixed with session title block (title on first line,
+      // blank line separator, then body)
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
       expect(sentArgs.text).toMatch(/📂 \(未命名 auto_1\)/);
-      expect(sentArgs.text).toMatch(/─────/);
       expect(sentArgs.text).toMatch(/hi from AI/);
+      expect(sentArgs.text).toMatch(/^📂 \(未命名 auto_1\)\n\n/);
     });
 
     test('reuses pointer when already set', async () => {

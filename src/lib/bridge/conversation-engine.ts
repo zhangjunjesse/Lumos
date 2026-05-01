@@ -1,6 +1,7 @@
 import {
   addMessage,
   dataDir,
+  getMessages,
   getSession,
   updateSdkSessionId,
   updateSessionResolvedModel,
@@ -65,6 +66,15 @@ function hasFeishuMcp(
   return Boolean(servers.feishu);
 }
 
+/**
+ * Remove HTML-comment directives like `<!--source:wechat-->`, `<!--files:[...]-->`,
+ * `<!--feishu_mentions:[...]-->` before feeding history back to the model.
+ * They are display / routing metadata, not content the model should see.
+ */
+function stripContentDirectives(content: string): string {
+  return content.replace(/<!--[a-zA-Z0-9_-]+:[\s\S]*?-->/g, '').trim();
+}
+
 function hasDeepSearchMcp(
   servers: Record<string, MCPServerConfig> | undefined,
 ): boolean {
@@ -125,6 +135,18 @@ export class ConversationEngine {
 
     addMessage(sessionId, 'user', savedContent);
 
+    // SDK resume 是不可靠的兜底（每次 fork 出新 session_id 后，SDK 实际只保留最近
+    // 几轮 turn，老历史可能丢失）。chat/route.ts 在 lumos UI 里走 conversationHistory
+    // 兜底；之前这条路径没传，导致 wechat / 飞书入站消息每次 AI 都说"这是第一条对话"。
+    // 拉最近 50 条作为 fallback context；注释 directive 要 strip 掉，不让模型读到。
+    const { messages: recentMsgs } = getMessages(sessionId, { limit: 50 });
+    const conversationHistory = recentMsgs
+      .slice(0, -1) // exclude the user message we just saved
+      .map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: stripContentDirectives(m.content),
+      }));
+
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: session.working_directory || undefined,
       sessionId,
@@ -155,6 +177,7 @@ export class ConversationEngine {
       mcpServers: loadedMcpServers,
       inProcessMcpServers: { [lumosMcpServer.name]: lumosMcpServer },
       systemPrompt,
+      conversationHistory,
     });
 
     const contentBlocks: MessageContentBlock[] = [];
