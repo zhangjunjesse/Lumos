@@ -9,7 +9,10 @@ jest.mock('@/lib/db', () => ({
   getDb: () => ({ prepare: () => fakeStmt }),
 }));
 
-const knownProviders = new Set(['wechat', 'feishu']);
+// `mock-im` simulates a future binding-based provider so we can exercise the
+// persist path without conflicting with feishu (legacy handler) or wechat
+// (route-pointer model — no binding row exists, FK would fail).
+const knownProviders = new Set(['wechat', 'feishu', 'mock-im']);
 jest.mock('@/lib/im', () => ({
   hasProvider: (id: string) => knownProviders.has(id),
 }));
@@ -78,12 +81,12 @@ describe('POST /api/im/runtime/ingest', () => {
     expect(res.status).toBe(400);
   });
 
-  test('persists valid event to bridge_events', async () => {
+  test('persists valid event to bridge_events for binding-based providers', async () => {
     const res = await POST(makeReq({
-      providerId: 'wechat',
+      providerId: 'mock-im',
       message: {
-        messageId: 'wechat-msg-1',
-        address: { providerId: 'wechat', chatId: 'gid_123', userId: 'wxid_a' },
+        messageId: 'mock-msg-1',
+        address: { providerId: 'mock-im', chatId: 'gid_123', userId: 'u_a' },
         text: 'hello',
         timestamp: 1700000000,
       },
@@ -92,13 +95,27 @@ describe('POST /api/im/runtime/ingest', () => {
     expect(res.status).toBe(200);
     expect(fakeStmt.run).toHaveBeenCalledTimes(1);
     const args = insertedRows[0];
-    expect(args[0]).toMatch(/^im_wechat_wechat-msg-1_/); // event id
-    expect(args[1]).toBe('wechat'); // platform
+    expect(args[0]).toMatch(/^im_mock-im_mock-msg-1_/); // event id
+    expect(args[1]).toBe('mock-im'); // platform
     expect(args[2]).toBe('gid_123'); // chat_id
-    expect(args[3]).toBe('wechat-msg-1'); // platform_message_id
+    expect(args[3]).toBe('mock-msg-1'); // platform_message_id
     expect(typeof args[4]).toBe('string'); // payload_json
     const payload = JSON.parse(args[4] as string);
     expect(payload.text).toBe('hello');
+  });
+
+  test('wechat skips bridge_events persist (route-pointer model has no binding)', async () => {
+    const res = await POST(makeReq({
+      providerId: 'wechat',
+      message: {
+        messageId: 'wechat-msg-1',
+        address: { providerId: 'wechat', chatId: 'gid_123', userId: 'wxid_a' },
+        text: 'hello',
+        timestamp: 1700000000,
+      },
+    }));
+    expect(res.status).toBe(200);
+    expect(fakeStmt.run).not.toHaveBeenCalled();
   });
 
   test('Phase C: feishu inbound routes to legacy handleFeishuMessage when raw present', async () => {

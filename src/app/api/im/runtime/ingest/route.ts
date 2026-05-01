@@ -47,9 +47,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'INVALID_MESSAGE' }, { status: 400 });
   }
 
-  // 落 bridge_events 用于可见性。feishu 例外：legacy handleFeishuMessage 内部有
-  // 自己的事件落库（含 binding_id 解析），这里跳过避免重复。
-  if (providerId !== 'feishu') {
+  // 落 bridge_events 用于可见性。
+  //   feishu: legacy handleFeishuMessage 内部已自行落库（含 binding_id 解析），跳过避免重复。
+  //   wechat: 走 route-pointer 路由模型，不存在 chat ↔ session 的 binding，
+  //           bridge_events.binding_id 是 NOT NULL + FK，强写就会 FOREIGN KEY 失败。
+  //           wechat 的可见性日后另起 wechat 专属表（M+1），现在不阻塞派发。
+  if (providerId !== 'feishu' && providerId !== 'wechat') {
     try {
       persistEvent(providerId, message, body.receivedAt ?? Date.now());
     } catch (err) {
