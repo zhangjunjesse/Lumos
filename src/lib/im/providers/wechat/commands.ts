@@ -15,23 +15,19 @@
 
 import { getAllSessions, getSession, createSession } from '@/lib/db';
 import type { ChatSession } from '@/types';
-import type { IMCommand, IMCommandContext, IMCommandResult } from '../../core/types';
-import { handleBuiltinCommand, BUILTIN_COMMANDS } from '../../core/built-in-commands';
+import type { IMCommandContext, IMCommandResult } from '../../core/types';
+import { handleBuiltinCommand } from '../../core/built-in-commands';
+import { WECHAT_COMMANDS } from './command-defs';
 import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
 } from './route-pointer';
 
+// Re-export so existing callers (tests, dispatcher) see WECHAT_COMMANDS from this module too.
+export { WECHAT_COMMANDS };
+
 const PAGE_SIZE = 10;
 const ACTIVE_DAYS = 30;
-
-export const WECHAT_COMMANDS: IMCommand[] = [
-  ...BUILTIN_COMMANDS,
-  { name: 'list', description: '列出 lumos 会话（/list <页码>）' },
-  { name: 'switch', description: '切换当前会话（/switch <编号|名字>）' },
-  { name: 'current', description: '查看当前路由到哪个会话' },
-  { name: 'new', description: '新建会话并设为路由目标（/new <名字>）' },
-];
 
 export async function handleWechatCommand(
   ctx: IMCommandContext,

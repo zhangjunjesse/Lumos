@@ -20,6 +20,20 @@ jest.mock('@/lib/im', () => ({
   getOrCreateAdapter: () => (streamingEnabled ? previewAdapter : null),
   hasStreamingPreview: (a: unknown) =>
     !!a && typeof (a as { startPreview?: unknown }).startPreview === 'function',
+  parseSlashCommand: (text: string) => {
+    const m = /^\s*\/(\S+)(?:\s+([\s\S]*))?$/.exec(text || '');
+    if (!m) return null;
+    const name = m[1].toLowerCase();
+    const argText = (m[2] ?? '').trim();
+    return { name, args: argText ? argText.split(/\s+/) : [], raw: text.trim() };
+  },
+}));
+
+// Wechat command handler mock — returns handled=false so all wechat tests
+// fall through to the AI dispatch path. Per-test can override via the
+// jest.requireMock pattern if needed.
+jest.mock('@/lib/im/providers/wechat/commands', () => ({
+  handleWechatCommand: jest.fn(async () => ({ handled: false })),
 }));
 
 // In-memory mocks for db + wechat route-pointer (used by wechat path)

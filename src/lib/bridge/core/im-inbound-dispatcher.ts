@@ -17,6 +17,7 @@ import {
   sendToProvider,
   getOrCreateAdapter,
   hasStreamingPreview,
+  parseSlashCommand,
 } from '@/lib/im';
 import type { InboundMessage, PreviewHandle } from '@/lib/im';
 import { getSession, createSession } from '@/lib/db';
@@ -24,6 +25,7 @@ import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
 } from '@/lib/im/providers/wechat/route-pointer';
+import { handleWechatCommand } from '@/lib/im/providers/wechat/commands';
 
 export interface DispatchResult {
   ok: boolean;
@@ -58,6 +60,26 @@ export async function dispatchInbound(
   inFlight.add(dedupeKey);
 
   try {
+    // ---- 0. wechat 斜杠命令短路 -------------------------------------------
+    // 命令在 server 侧（Next.js）独立处理，不走 AI 对话；不加 session 前缀。
+    if (providerId === 'wechat') {
+      const parsed = parseSlashCommand(message.text);
+      if (parsed) {
+        const result = await handleWechatCommand({
+          command: parsed.name,
+          args: parsed.args,
+          message,
+        });
+        if (result.handled) {
+          if (result.reply) {
+            await sendToProvider(providerId, result.reply);
+          }
+          return { ok: true, reason: 'command-handled' };
+        }
+        // not handled — fall through to AI dispatch with the raw "/xxx" text
+      }
+    }
+
     // ---- 1. 决定路由到哪个 session ----------------------------------------
     let sessionId: string;
     let needsTitlePrefix: boolean;

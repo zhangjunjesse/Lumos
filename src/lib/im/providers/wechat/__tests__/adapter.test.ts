@@ -99,14 +99,19 @@ describe('wechat/adapter: send delegation', () => {
   });
 });
 
-describe('wechat/adapter: command handler', () => {
-  test('listCommands returns built-in commands', () => {
+describe('wechat/adapter: command metadata', () => {
+  test('listCommands returns built-in + wechat commands', () => {
     const cmds = new WechatAdapter(makeConfig()).listCommands();
     expect(cmds.find((c) => c.name === 'ping')).toBeDefined();
     expect(cmds.find((c) => c.name === 'help')).toBeDefined();
+    expect(cmds.find((c) => c.name === 'list')).toBeDefined();
+    expect(cmds.find((c) => c.name === 'switch')).toBeDefined();
+    expect(cmds.find((c) => c.name === 'new')).toBeDefined();
   });
 
-  test('handleCommand returns ping reply', async () => {
+  test('handleCommand is a stub (real dispatch lives in im-inbound-dispatcher)', async () => {
+    // adapter 在 electron 主进程也会被实例化，那侧不能拉 DB。
+    // 命令实际分派由 Next.js 侧的 dispatchInbound 完成。
     const a = new WechatAdapter(makeConfig());
     const result = await a.handleCommand({
       command: 'ping',
@@ -118,7 +123,6 @@ describe('wechat/adapter: command handler', () => {
         timestamp: 1,
       },
     });
-    expect(result.handled).toBe(true);
-    expect(result.reply?.text).toBe('pong');
+    expect(result.handled).toBe(false);
   });
 });

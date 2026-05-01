@@ -23,7 +23,7 @@ import { WechatClient } from './client';
 import { WechatMonitor } from './monitor';
 import { sendOutbound } from './send';
 import { probeWechat } from './probe';
-import { WECHAT_COMMANDS, handleWechatCommand } from './commands';
+import { WECHAT_COMMANDS } from './command-defs';
 
 export class WechatAdapter implements IMAdapter, IMCommandHandler {
   readonly id = 'wechat';
@@ -81,7 +81,10 @@ export class WechatAdapter implements IMAdapter, IMCommandHandler {
     return [...WECHAT_COMMANDS];
   }
 
-  handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
-    return handleWechatCommand(ctx);
+  // 命令分派由 Next.js 侧的 dispatchInbound 完成（DB 操作在那一侧）。
+  // adapter 在 electron 主进程里也会被实例化，那侧 esbuild 不能拉 DB；故保持 stub。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    return { handled: false };
   }
 }
