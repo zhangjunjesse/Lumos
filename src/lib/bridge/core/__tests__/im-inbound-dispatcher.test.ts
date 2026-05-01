@@ -37,19 +37,33 @@ jest.mock('@/lib/im/providers/wechat/commands', () => ({
 }));
 
 // In-memory mocks for db + wechat route-pointer (used by wechat path)
-const fakeSessions = new Map<string, { id: string; title: string }>();
+const fakeSessions = new Map<string, { id: string; title: string; system_prompt?: string }>();
 let createSessionCounter = 0;
 let routePointer: string | null = null;
 
 jest.mock('@/lib/db', () => ({
   getSession: (id: string) => fakeSessions.get(id),
-  createSession: () => {
+  getAllSessions: () => Array.from(fakeSessions.values()),
+  createSession: (
+    _title?: string,
+    _model?: string,
+    systemPrompt?: string,
+  ) => {
     createSessionCounter += 1;
     const id = `auto_${createSessionCounter}`;
-    const session = { id, title: 'New Chat' };
+    const session = { id, title: 'New Chat', system_prompt: systemPrompt || '' };
     fakeSessions.set(id, session);
     return session;
   },
+}));
+
+jest.mock('@/lib/chat/session-entry', () => ({
+  isMainAgentSession: (s: { system_prompt?: string }) =>
+    String(s?.system_prompt || '').includes('__LUMOS_MAIN_AGENT__'),
+  withSessionEntryMarker: (prompt: string | undefined, entry: string) =>
+    entry === 'main-agent'
+      ? `__LUMOS_MAIN_AGENT__\n${prompt || ''}`.trim()
+      : prompt || '',
 }));
 
 jest.mock('@/lib/im/providers/wechat/route-pointer', () => ({

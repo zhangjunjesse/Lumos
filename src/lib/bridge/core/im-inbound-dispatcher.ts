@@ -20,7 +20,11 @@ import {
   parseSlashCommand,
 } from '@/lib/im';
 import type { InboundMessage, PreviewHandle } from '@/lib/im';
-import { getSession, createSession } from '@/lib/db';
+import { getSession, getAllSessions, createSession } from '@/lib/db';
+import {
+  isMainAgentSession,
+  withSessionEntryMarker,
+} from '@/lib/chat/session-entry';
 import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
@@ -182,11 +186,23 @@ export async function dispatchInbound(
 // ---- helpers ---------------------------------------------------------------
 
 function resolveWechatSession(): { sessionId: string; needsTitlePrefix: true } {
-  const existing = getCurrentRoutedSessionId();
-  if (existing) return { sessionId: existing, needsTitlePrefix: true };
+  // 1. 用户用 /switch 显式切到的指针优先
+  const explicit = getCurrentRoutedSessionId();
+  if (explicit) return { sessionId: explicit, needsTitlePrefix: true };
 
-  // 指针为空或失效 → 自动建一个新 session，回写指针
-  const created = createSession();
+  // 2. 默认 = 主 agent 会话（lumos 的"主对话"）
+  const main = getAllSessions().find((s) => isMainAgentSession(s));
+  if (main) {
+    setCurrentRoutedSessionId(main.id);
+    return { sessionId: main.id, needsTitlePrefix: true };
+  }
+
+  // 3. 一个 main-agent session 都没有 → 建一个（带 marker 标记为 main-agent）
+  const created = createSession(
+    undefined,
+    undefined,
+    withSessionEntryMarker(undefined, 'main-agent'),
+  );
   setCurrentRoutedSessionId(created.id);
   return { sessionId: created.id, needsTitlePrefix: true };
 }
