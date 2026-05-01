@@ -51,6 +51,18 @@ export function useTaskEvents({
       const es = new EventSource(url);
       eventSourceRef.current = es;
 
+      const reportToServer = (eventType: string, phase: string) => {
+        try {
+          fetch('/api/im/__debug-sse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ eventType, sessionId, phase }),
+            keepalive: true,
+          }).catch(() => undefined);
+        } catch { /* ignore */ }
+      };
+      reportToServer('open', 'connect');
+
       es.addEventListener('snapshot', (e) => {
         retriesRef.current = 0;
         try {
@@ -67,9 +79,11 @@ export function useTaskEvents({
 
       for (const eventType of taskEventTypes) {
         es.addEventListener(eventType, (e) => {
+          reportToServer(eventType, 'received');
           try {
             const data = JSON.parse(e.data);
             onEvent?.({ type: eventType, ...data });
+            reportToServer(eventType, 'onEvent-called');
           } catch { /* ignore */ }
         });
       }
