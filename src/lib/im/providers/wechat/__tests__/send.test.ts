@@ -79,18 +79,60 @@ describe('wechat/send: sendOutbound', () => {
     expect(fakeFetch).toHaveBeenCalledTimes(2);
   });
 
-  test('non-image attachments rejected (only image/* supported)', async () => {
+  test('file attachment: getuploadurl → CDN upload → sendmessage with file_item', async () => {
+    const fakeDocBytes = Buffer.from('PK\x03\x04 fake docx zip header');
+
+    fakeFetch.mockReset();
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?file=1' }),
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'FILE-DL-PARAM' : null) },
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0 }),
+    });
+
     const r = await sendOutbound(
       client,
       {
         address: makeAddr(),
-        text: 'hi',
-        attachments: [{ id: 'a', name: 'x.pdf', type: 'application/pdf', size: 1, data: '' }],
+        text: '',
+        attachments: [{
+          id: 'doc-1',
+          name: '报告.docx',
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: fakeDocBytes.length,
+          data: fakeDocBytes.toString('base64'),
+        }],
       },
       { getContextToken: () => 'ctx' },
     );
-    expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/image\/\*|only image/);
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+
+    // getuploadurl payload should advertise media_type=3 (UPLOAD_MEDIA_FILE)
+    const uploadCall = fakeFetch.mock.calls[0];
+    expect(uploadCall[0]).toMatch(/getuploadurl$/);
+    const uploadBody = JSON.parse(uploadCall[1].body) as { media_type: number };
+    expect(uploadBody.media_type).toBe(3);
+
+    // sendmessage payload contains file_item with file_name + len
+    const sendCall = fakeFetch.mock.calls[2];
+    expect(sendCall[0]).toMatch(/sendmessage$/);
+    const body = JSON.parse(sendCall[1].body) as {
+      msg: { item_list: Array<{ type: number; file_item: { file_name: string; len: string; media: { encrypt_query_param: string } } }> };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(4); // MESSAGE_ITEM_FILE
+    expect(item.file_item.file_name).toBe('报告.docx');
+    expect(item.file_item.len).toBe(String(fakeDocBytes.length));
+    expect(item.file_item.media.encrypt_query_param).toBe('FILE-DL-PARAM');
   });
 
   test('image attachment: getuploadurl → CDN upload → sendmessage', async () => {

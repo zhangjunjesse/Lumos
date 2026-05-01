@@ -45,24 +45,34 @@ export async function sendOutbound(
   const imageAttachments = (message.attachments || []).filter((a) =>
     (a.type || '').toLowerCase().startsWith('image/'),
   );
-  const unsupported = (message.attachments || []).filter((a) =>
+  const fileAttachments = (message.attachments || []).filter((a) =>
     !(a.type || '').toLowerCase().startsWith('image/'),
   );
-  if (unsupported.length > 0) {
-    return { ok: false, error: `unsupported attachment type: ${unsupported[0].type || 'unknown'} (only image/* is supported)` };
-  }
 
-  if (!text && imageAttachments.length === 0) return { ok: false, error: 'empty message' };
+  if (!text && imageAttachments.length === 0 && fileAttachments.length === 0) {
+    return { ok: false, error: 'empty message' };
+  }
 
   let lastMessageId: string | undefined;
 
-  // 先发图片，再发文本（与微信原生体验一致：图片在前，附带文字说明在后）
+  // 顺序：图片 → 文件 → 文本（与微信原生体验一致：媒体先到，文字说明在后）
   for (const attachment of imageAttachments) {
     const bytes = readAttachmentBytes(attachment);
     if (!bytes) {
       return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
     }
     const result = await sendImageWithRetry(client, peer, bytes, contextToken);
+    if (!result.ok) return { ok: false, error: result.error };
+    lastMessageId = result.clientId;
+    contextToken = deps.getContextToken(peer) || contextToken;
+  }
+
+  for (const attachment of fileAttachments) {
+    const bytes = readAttachmentBytes(attachment);
+    if (!bytes) {
+      return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
+    }
+    const result = await sendFileWithRetry(client, peer, bytes, attachment.name, contextToken);
     if (!result.ok) return { ok: false, error: result.error };
     lastMessageId = result.clientId;
     contextToken = deps.getContextToken(peer) || contextToken;
@@ -109,6 +119,27 @@ async function sendImageWithRetry(
   }
 
   return { ok: false, error: first.error || `sendImage failed: ret=${first.ret}` };
+}
+
+async function sendFileWithRetry(
+  client: WechatClient,
+  peer: string,
+  bytes: Buffer,
+  fileName: string,
+  contextToken: string,
+): Promise<SendOneResult> {
+  const clientId = newClientId();
+  const first = await client.sendFile({ toUserId: peer, bytes, fileName, contextToken, clientId });
+  if (first.ok) return { ok: true, clientId };
+
+  if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
+    await delay(500);
+    const second = await client.sendFile({ toUserId: peer, bytes, fileName, contextToken, clientId });
+    if (second.ok) return { ok: true, clientId };
+    return { ok: false, error: second.error || `sendFile failed (retry): ret=${second.ret}` };
+  }
+
+  return { ok: false, error: first.error || `sendFile failed: ret=${first.ret}` };
 }
 
 interface SendOneResult {

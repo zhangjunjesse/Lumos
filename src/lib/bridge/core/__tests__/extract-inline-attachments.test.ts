@@ -92,4 +92,52 @@ describe('extractInlineAttachments', () => {
     expect(r.attachments).toEqual([]);
     expect(r.cleanText).toBe(text);
   });
+
+  test('extracts office file via plain markdown link', () => {
+    const docPath = path.join(mediaDir, 'report.docx');
+    const docBytes = Buffer.from('PK\x03\x04 fake docx');
+    fs.writeFileSync(docPath, docBytes);
+
+    const text = `Here's the report you asked for: [报告.docx](${docPath})\n\nLet me know.`;
+    const r = extractInlineAttachments(text);
+    expect(r.attachments).toHaveLength(1);
+    expect(r.attachments[0].name).toBe('report.docx');
+    expect(r.attachments[0].type).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    expect(r.attachments[0].size).toBe(docBytes.length);
+    expect(r.cleanText).toContain('[文件: 报告.docx]');
+    expect(r.cleanText).not.toContain(docPath);
+  });
+
+  test('extracts pdf via /api/uploads URL', () => {
+    const pdfPath = path.join(mediaDir, 'invoice.pdf');
+    const pdfBytes = Buffer.from('%PDF-1.4\n');
+    fs.writeFileSync(pdfPath, pdfBytes);
+
+    const url = `/api/uploads?path=${encodeURIComponent(pdfPath)}`;
+    const text = `Invoice: [open](${url})`;
+    const r = extractInlineAttachments(text);
+    expect(r.attachments).toHaveLength(1);
+    expect(r.attachments[0].type).toBe('application/pdf');
+    expect(r.attachments[0].name).toBe('invoice.pdf');
+  });
+
+  test('image markdown does not double-extract under link rule', () => {
+    const url = `/api/media/serve?path=${encodeURIComponent(pngPath)}`;
+    const text = `![cat](${url})`;
+    const r = extractInlineAttachments(text);
+    expect(r.attachments).toHaveLength(1);
+    expect(r.attachments[0].type).toBe('image/png');
+  });
+
+  test('mixes one image and one office doc', () => {
+    const docPath = path.join(mediaDir, 'note.txt');
+    fs.writeFileSync(docPath, 'hello');
+    const text = `![pic](${pngPath}) and [note](${docPath})`;
+    const r = extractInlineAttachments(text);
+    expect(r.attachments).toHaveLength(2);
+    expect(r.attachments[0].type).toBe('image/png');
+    expect(r.attachments[1].type).toBe('text/plain');
+    expect(r.cleanText).toContain('[图片: pic]');
+    expect(r.cleanText).toContain('[文件: note]');
+  });
 });

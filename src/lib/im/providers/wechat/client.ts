@@ -13,10 +13,12 @@
  */
 
 import {
+  MESSAGE_ITEM_FILE,
   MESSAGE_ITEM_IMAGE,
   MESSAGE_ITEM_TEXT,
   MESSAGE_TYPE_BOT,
   MESSAGE_STATE_FINISH,
+  UPLOAD_MEDIA_FILE,
   UPLOAD_MEDIA_IMAGE,
   type GetUpdatesResp,
   type GetUploadUrlReq,
@@ -264,6 +266,113 @@ export class WechatClient {
               encrypt_type: 1,
             },
             mid_size: filesize,
+          },
+        },
+      ],
+      context_token: args.contextToken,
+    };
+
+    try {
+      const data = (await this.post(
+        'ilink/bot/sendmessage',
+        { msg, base_info: { channel_version: CHANNEL_VERSION } },
+        DEFAULT_API_TIMEOUT_MS,
+        'sendMessage',
+      )) as SendMessageResp | null;
+      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
+      return {
+        ok: false,
+        ret: data.ret,
+        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
+    }
+  }
+
+  /**
+   * Upload a generic file (Word / Excel / PPT / PDF / zip / 任意二进制) to the
+   * WeChat CDN and send it to the peer as a file_item. Mirrors cc-connect SendFile.
+   *
+   * 与 sendImage 的差别：media_type=3，sendmessage 的 item_list 用 file_item
+   * (含 file_name + len)，无 mid_size 字段。
+   */
+  async sendFile(args: {
+    toUserId: string;
+    bytes: Buffer;
+    fileName: string;
+    contextToken: string;
+    clientId?: string;
+  }): Promise<{ ok: boolean; ret?: number; error?: string; clientId?: string }> {
+    if (!args.contextToken.trim()) {
+      return { ok: false, error: 'context_token required (reply to an inbound message first)' };
+    }
+    if (args.bytes.length === 0) {
+      return { ok: false, error: 'empty file' };
+    }
+    const fileName = (args.fileName || '').trim() || 'file.bin';
+
+    const aesKey = randomAesKey();
+    const filekey = randomHex(8);
+    const rawsize = args.bytes.length;
+    const filesize = aesEcbPaddedSize(rawsize);
+    const clientId = args.clientId ?? newClientId();
+
+    let upload: GetUploadUrlResp;
+    try {
+      upload = await this.getUploadUrl({
+        filekey,
+        media_type: UPLOAD_MEDIA_FILE,
+        to_user_id: args.toUserId,
+        rawsize,
+        rawfilemd5: md5Hex(args.bytes),
+        filesize,
+        no_need_thumb: true,
+        aeskey: aesKey.toString('hex'),
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'getUploadURL failed' };
+    }
+    if (upload.ret != null && upload.ret !== 0) {
+      return { ok: false, ret: upload.ret, error: `getUploadURL ret=${upload.ret} ${upload.errmsg ?? ''}`.trim() };
+    }
+
+    const uploadUrl = upload.upload_full_url
+      || (upload.upload_param
+        ? buildCdnUploadUrl(this.cdnBase(), upload.upload_param, filekey)
+        : '');
+    if (!uploadUrl) {
+      return { ok: false, error: 'getUploadURL returned no upload URL' };
+    }
+
+    let downloadParam: string;
+    try {
+      downloadParam = await uploadEncryptedToCdn({
+        uploadUrl,
+        plaintext: args.bytes,
+        aesKey,
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'CDN upload failed' };
+    }
+
+    const msg: OutboundMsg = {
+      from_user_id: '',
+      to_user_id: args.toUserId,
+      client_id: clientId,
+      message_type: MESSAGE_TYPE_BOT,
+      message_state: MESSAGE_STATE_FINISH,
+      item_list: [
+        {
+          type: MESSAGE_ITEM_FILE,
+          file_item: {
+            media: {
+              encrypt_query_param: downloadParam,
+              aes_key: formatAesKeyForApi(aesKey),
+              encrypt_type: 1,
+            },
+            file_name: fileName,
+            len: String(rawsize),
           },
         },
       ],

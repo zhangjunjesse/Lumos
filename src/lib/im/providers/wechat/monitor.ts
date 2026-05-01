@@ -14,7 +14,8 @@ import { WechatClient, MESSAGE_TYPE_USER, type WeixinInboundMsg } from './client
 import type { WechatConfig } from './config';
 import { isPeerAllowed } from './config';
 import { detectImageMime } from './cdn';
-import { bodyFromItemList, extractInboundImages } from './parse';
+import { bodyFromItemList, extractInboundFiles, extractInboundImages } from './parse';
+import { mimeFromFileName } from './mime';
 import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
 
 // File-backed debug log so we can diagnose without watching electron stdout.
@@ -177,18 +178,30 @@ export class WechatMonitor {
     }
 
     const text = bodyFromItemList(m.item_list);
-    const attachments = await this.downloadInboundImages(messageId, m.item_list);
+    const imageAttachments = await this.downloadInboundImages(messageId, m.item_list);
+    const fileAttachments = await this.downloadInboundFiles(messageId, m.item_list);
+    const attachments = [...imageAttachments, ...fileAttachments];
 
     if (!text && attachments.length === 0) {
-      // Pure non-image media (file/video/voice without ASR) — TODO M+1.
-      dbg(`[wechat/monitor] skip msgId=${messageId} (no text, no image attachments)`);
+      // Pure non-image / non-file media (video / voice without ASR) — TODO.
+      dbg(`[wechat/monitor] skip msgId=${messageId} (no text, no usable attachments)`);
       return;
+    }
+
+    let placeholder = '';
+    if (!text) {
+      const labels: string[] = [];
+      if (imageAttachments.length > 0) labels.push(`[图片×${imageAttachments.length}]`);
+      if (fileAttachments.length > 0) {
+        labels.push(...fileAttachments.map((a) => `[文件: ${a.name}]`));
+      }
+      placeholder = labels.join(' ');
     }
 
     const inbound: InboundMessage = {
       messageId,
       address: { providerId: 'wechat', chatId: from, userId: from },
-      text: text || (attachments.length > 0 ? '[图片]' : ''),
+      text: text || placeholder,
       timestamp: m.create_time_ms || Date.now(),
       attachments: attachments.length > 0 ? attachments : undefined,
       raw: m,
@@ -230,6 +243,35 @@ export class WechatMonitor {
         dbg(`[wechat/monitor] image downloaded msgId=${messageId} idx=${i} mime=${mime} size=${bytes.length}`);
       } catch (err) {
         dbg(`[wechat/monitor] image download FAILED msgId=${messageId} idx=${i}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return out;
+  }
+
+  private async downloadInboundFiles(
+    messageId: string,
+    items: WeixinInboundMsg['item_list'],
+  ): Promise<IMFileAttachment[]> {
+    const tasks = extractInboundFiles(items, `wechat-file-${messageId}`);
+    if (tasks.length === 0) return [];
+    const out: IMFileAttachment[] = [];
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      try {
+        const bytes = await this.client.downloadCdnMedia({
+          encryptedQueryParam: task.encryptedQueryParam,
+          aesKey: task.aesKey,
+        });
+        out.push({
+          id: `wechat-file-${messageId}-${i}`,
+          name: task.fileName,
+          type: mimeFromFileName(task.fileName),
+          size: bytes.length,
+          data: bytes.toString('base64'),
+        });
+        dbg(`[wechat/monitor] file downloaded msgId=${messageId} idx=${i} name="${task.fileName}" size=${bytes.length}`);
+      } catch (err) {
+        dbg(`[wechat/monitor] file download FAILED msgId=${messageId} idx=${i} name="${task.fileName}": ${err instanceof Error ? err.message : err}`);
       }
     }
     return out;

@@ -12,9 +12,11 @@
  */
 
 import {
+  MESSAGE_ITEM_FILE,
   MESSAGE_ITEM_IMAGE,
   MESSAGE_ITEM_TEXT,
   MESSAGE_ITEM_VOICE,
+  type FileItem,
   type ImageItem,
   type MessageItem,
 } from './client';
@@ -24,11 +26,17 @@ const MEDIA_ITEM_TYPES = new Set([2, 3, 4, 5]); // image / voice / file / video
 
 /**
  * Material needed to download + decrypt one CDN media blob.
- * Returned by extractInboundImages (and future audio/file extractors).
+ * Returned by extractInboundImages / extractInboundFiles.
  */
 export interface CdnDownloadTask {
   encryptedQueryParam: string;
   aesKey: Buffer;
+}
+
+/** Inbound file item — adds the desired filename for the downloaded blob. */
+export interface InboundFileTask extends CdnDownloadTask {
+  fileName: string;
+  declaredLen?: number;
 }
 
 /**
@@ -64,6 +72,51 @@ export function extractInboundImages(items: MessageItem[] | undefined): CdnDownl
     const key = imageAesKey(img);
     if (!key) continue;
     out.push({ encryptedQueryParam: enc, aesKey: key });
+  }
+  return out;
+}
+
+/** Sanitize a user-supplied filename for safe disk write. */
+function safeFileName(raw: string, fallback: string): string {
+  const trimmed = (raw || '').trim();
+  // strip path separators and control chars; preserve unicode (微信原文件名常含中文)
+  const cleaned = trimmed.replace(/[/\\\0\r\n]/g, '_').replace(/^\.+/, '');
+  return cleaned || fallback;
+}
+
+/**
+ * Extract download tasks for file_item entries (Word / Excel / PPT / PDF / zip / etc.).
+ * fileItem 没有 imageItem.aeskey 那条 hex 短路，AES key 走 media.aes_key (base64)。
+ */
+export function extractInboundFiles(
+  items: MessageItem[] | undefined,
+  fallbackPrefix: string,
+): InboundFileTask[] {
+  if (!items || items.length === 0) return [];
+  const out: InboundFileTask[] = [];
+  let idx = 0;
+  for (const item of items) {
+    if (item.type !== MESSAGE_ITEM_FILE) continue;
+    const f: FileItem | undefined = item.file_item;
+    if (!f) continue;
+    const enc = (f.media?.encrypt_query_param || '').trim();
+    if (!enc) continue;
+    const keyB64 = (f.media?.aes_key || '').trim();
+    if (!keyB64) continue;
+    let key: Buffer;
+    try {
+      key = parseAesKey(keyB64);
+    } catch {
+      continue;
+    }
+    const declared = f.len ? Number.parseInt(f.len, 10) : undefined;
+    out.push({
+      encryptedQueryParam: enc,
+      aesKey: key,
+      fileName: safeFileName(f.file_name || '', `${fallbackPrefix}-${idx}.bin`),
+      declaredLen: Number.isFinite(declared) ? declared : undefined,
+    });
+    idx += 1;
   }
   return out;
 }
