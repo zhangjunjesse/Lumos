@@ -53,7 +53,7 @@ export function useTaskEvents({
 
       const reportToServer = (eventType: string, phase: string) => {
         try {
-          fetch('/api/im/__debug-sse', {
+          fetch('/api/im/debug-sse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ eventType, sessionId, phase }),

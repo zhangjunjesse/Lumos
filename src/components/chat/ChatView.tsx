@@ -200,15 +200,29 @@ export function ChatView({
   const [taskBanner, setTaskBanner] = useState<TeamBannerProjectionV1 | null>(null);
 
   const syncMessagesFromServer = useCallback(async () => {
+    const debug = (phase: string, eventType: string) => {
+      try {
+        fetch('/api/im/debug-sse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventType, sessionId, phase }),
+          keepalive: true,
+        }).catch(() => undefined);
+      } catch { /* ignore */ }
+    };
+
     if (messagesRef.current.some((message) => isTempMessageId(message.id))) {
+      debug('sync-skip-temp-id', 'sync');
       return;
     }
+    debug('sync-fetch-start', 'sync');
 
     try {
       const response = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`, {
         cache: 'no-store',
       });
       if (!response.ok) {
+        debug(`sync-fetch-${response.status}`, 'sync');
         return;
       }
 
@@ -218,6 +232,7 @@ export function ChatView({
       const sameLength = currentMessages.length === nextMessages.length;
       const sameLastId = sameLength
         && currentMessages[currentMessages.length - 1]?.id === nextMessages[nextMessages.length - 1]?.id;
+      debug(`sync-compare cur=${currentMessages.length} next=${nextMessages.length} sameLast=${sameLastId}`, 'sync');
       if (sameLength && sameLastId) {
         return;
       }
@@ -232,8 +247,9 @@ export function ChatView({
         loading: false,
         error: null,
       });
-    } catch {
-      // Best effort only.
+      debug('sync-applied', 'sync');
+    } catch (err) {
+      debug(`sync-error-${err instanceof Error ? err.name : 'unknown'}`, 'sync');
     }
   }, [sessionId, updateMessagesSession]);
 
