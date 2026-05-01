@@ -9,13 +9,31 @@
  * 鉴权：runtime-token 同 bridge runtime。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { NextResponse } from 'next/server';
 import { bridgeRuntimeUnauthorizedResponse, isBridgeRuntimeAuthorized } from '@/lib/bridge/runtime-auth';
 import { hasProvider } from '@/lib/im';
 import type { InboundMessage } from '@/lib/im';
 import { getDb } from '@/lib/db';
-import { dispatchInbound } from '@/lib/bridge/core/im-inbound-dispatcher';
+import { dispatchInbound, type DispatchResult } from '@/lib/bridge/core/im-inbound-dispatcher';
 import { handleFeishuMessage, type FeishuWebhookMessage } from '@/lib/bridge/message-handler';
+
+const IM_DEBUG_LOG = path.join(
+  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
+  'im-runtime.log',
+);
+
+function imDbg(line: string): void {
+  const stamped = `[${new Date().toISOString()}] ${line}\n`;
+  console.info(line);
+  try {
+    fs.appendFileSync(IM_DEBUG_LOG, stamped);
+  } catch {
+    // ignore
+  }
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,20 +80,29 @@ export async function POST(request: Request) {
     }
   }
 
-  console.info('[im/runtime] inbound', {
-    provider: providerId,
-    chatId: message.address.chatId,
-    text: message.text.slice(0, 80),
-  });
+  imDbg(
+    `[im/ingest] inbound provider=${providerId} chatId=${message.address.chatId} text="${message.text.slice(0, 60)}"`,
+  );
 
   // 异步派发到 AI 对话循环。失败只记日志，不影响 ingest 200 响应（避免重发风暴）。
   void dispatchByPlatform(providerId, message)
-    .then((label) => {
-      console.info('[im/runtime] dispatched', { provider: providerId, via: label });
+    .then((outcome) => {
+      if ('result' in outcome) {
+        const r = outcome.result;
+        imDbg(
+          `[im/ingest] dispatched provider=${providerId} via=${outcome.via} ok=${r.ok}` +
+            (r.ok
+              ? ` session=${r.sessionId} replyId=${r.replyMessageId ?? ''}`
+              : ` reason="${r.reason ?? ''}"`),
+        );
+      } else {
+        imDbg(`[im/ingest] dispatched provider=${providerId} via=${outcome.via} (no detail)`);
+      }
     })
     .catch((err) => {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error('[im/runtime] dispatch error:', errMsg);
+      const stack = err instanceof Error && err.stack ? `\n${err.stack}` : '';
+      imDbg(`[im/ingest] dispatch ERROR provider=${providerId}: ${errMsg}${stack}`);
     });
 
   return NextResponse.json({ ok: true });
@@ -88,20 +115,24 @@ export async function POST(request: Request) {
  *
  * Feishu 路径要求 message.raw 是原始 FeishuWebhookMessage（FeishuMonitor 会保留它）。
  */
+type DispatchOutcome =
+  | { via: string; result: DispatchResult }
+  | { via: string };
+
 async function dispatchByPlatform(
   providerId: string,
   message: InboundMessage,
-): Promise<string> {
+): Promise<DispatchOutcome> {
   if (providerId === 'feishu') {
     const raw = (message.raw ?? null) as FeishuWebhookMessage | null;
     if (raw && typeof raw === 'object' && 'message' in raw) {
       await handleFeishuMessage(raw, { transportKind: 'websocket' });
-      return 'feishu-legacy-pipeline';
+      return { via: 'feishu-legacy-pipeline' };
     }
     // raw 缺失（异常情况），降级到 generic 派发
   }
-  await dispatchInbound(providerId, message);
-  return 'generic-dispatcher';
+  const result = await dispatchInbound(providerId, message);
+  return { via: 'generic-dispatcher', result };
 }
 
 function persistEvent(providerId: string, msg: InboundMessage, receivedAt: number): void {
