@@ -211,8 +211,16 @@ export function ChatView({
       } catch { /* ignore */ }
     };
 
-    if (messagesRef.current.some((message) => isTempMessageId(message.id))) {
-      debug('sync-skip-temp-id', 'sync');
+    // Skip only while we are actively streaming a local turn — otherwise an
+    // inbound IM message would race with the local temp/append flow. If
+    // streaming already finished but the temp id wasn't swapped out (e.g. the
+    // last stream errored or the page was navigated away mid-stream), let the
+    // server state win — db is the source of truth.
+    const streamingState = useStreamingStore.getState().sessions[sessionId];
+    const activelyStreaming = streamingState?.status === 'streaming';
+    if (activelyStreaming
+      && messagesRef.current.some((message) => isTempMessageId(message.id))) {
+      debug('sync-skip-streaming-temp', 'sync');
       return;
     }
     debug('sync-fetch-start', 'sync');
