@@ -13,16 +13,27 @@
  */
 
 import {
+  MESSAGE_ITEM_IMAGE,
   MESSAGE_ITEM_TEXT,
   MESSAGE_TYPE_BOT,
   MESSAGE_STATE_FINISH,
+  UPLOAD_MEDIA_IMAGE,
   type GetUpdatesResp,
+  type GetUploadUrlReq,
+  type GetUploadUrlResp,
   type OutboundMsg,
   type SendMessageResp,
 } from './types';
 import {
   DEFAULT_CDN_BASE_URL,
+  aesEcbPaddedSize,
+  buildCdnUploadUrl,
   downloadAndDecryptCdnMedia,
+  formatAesKeyForApi,
+  md5Hex,
+  randomAesKey,
+  randomHex,
+  uploadEncryptedToCdn,
 } from './cdn';
 
 // Re-export 常量与类型，方便 monitor / send / parse 用同一个 ./client 入口
@@ -154,6 +165,127 @@ export class WechatClient {
       aesKey: args.aesKey,
       signal: args.signal,
     });
+  }
+
+  /**
+   * Ask the ilink server for an upload URL + handle for an outbound media blob.
+   * Caller has already generated the AES key (hex) and computed sizes.
+   */
+  private async getUploadUrl(req: GetUploadUrlReq): Promise<GetUploadUrlResp> {
+    const data = (await this.post(
+      'ilink/bot/getuploadurl',
+      { ...req, base_info: { channel_version: CHANNEL_VERSION } },
+      DEFAULT_API_TIMEOUT_MS,
+      'getUploadURL',
+    )) as GetUploadUrlResp | null;
+    return data ?? {};
+  }
+
+  /**
+   * Upload an image to the WeChat CDN and send it to the peer in a single
+   * sendmessage call. Returns the client_id used (as messageId).
+   *
+   * Workflow (mirrors cc-connect SendImage):
+   *   1. random 16-byte AES key + random 16-char filekey
+   *   2. POST /ilink/bot/getuploadurl with media_type=1, rawsize, md5, filesize, aeskey(hex)
+   *   3. AES-128-ECB encrypt + POST to upload_full_url (or {cdn}/upload?upload_param + filekey)
+   *   4. server returns x-encrypted-param header (download_param)
+   *   5. POST /ilink/bot/sendmessage with image_item.media{ encrypt_query_param, aes_key=base64(hex), encrypt_type=1 }
+   */
+  async sendImage(args: {
+    toUserId: string;
+    bytes: Buffer;
+    contextToken: string;
+    clientId?: string;
+  }): Promise<{ ok: boolean; ret?: number; error?: string; clientId?: string }> {
+    if (!args.contextToken.trim()) {
+      return { ok: false, error: 'context_token required (reply to an inbound message first)' };
+    }
+    if (args.bytes.length === 0) {
+      return { ok: false, error: 'empty image' };
+    }
+    const aesKey = randomAesKey();
+    const filekey = randomHex(8); // 16-char hex
+    const rawsize = args.bytes.length;
+    const filesize = aesEcbPaddedSize(rawsize);
+    const clientId = args.clientId ?? newClientId();
+
+    let upload: GetUploadUrlResp;
+    try {
+      upload = await this.getUploadUrl({
+        filekey,
+        media_type: UPLOAD_MEDIA_IMAGE,
+        to_user_id: args.toUserId,
+        rawsize,
+        rawfilemd5: md5Hex(args.bytes),
+        filesize,
+        no_need_thumb: true,
+        aeskey: aesKey.toString('hex'),
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'getUploadURL failed' };
+    }
+    if (upload.ret != null && upload.ret !== 0) {
+      return { ok: false, ret: upload.ret, error: `getUploadURL ret=${upload.ret} ${upload.errmsg ?? ''}`.trim() };
+    }
+
+    const uploadUrl = upload.upload_full_url
+      || (upload.upload_param
+        ? buildCdnUploadUrl(this.cdnBase(), upload.upload_param, filekey)
+        : '');
+    if (!uploadUrl) {
+      return { ok: false, error: 'getUploadURL returned no upload URL' };
+    }
+
+    let downloadParam: string;
+    try {
+      downloadParam = await uploadEncryptedToCdn({
+        uploadUrl,
+        plaintext: args.bytes,
+        aesKey,
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'CDN upload failed' };
+    }
+
+    const msg: OutboundMsg = {
+      from_user_id: '',
+      to_user_id: args.toUserId,
+      client_id: clientId,
+      message_type: MESSAGE_TYPE_BOT,
+      message_state: MESSAGE_STATE_FINISH,
+      item_list: [
+        {
+          type: MESSAGE_ITEM_IMAGE,
+          image_item: {
+            media: {
+              encrypt_query_param: downloadParam,
+              aes_key: formatAesKeyForApi(aesKey),
+              encrypt_type: 1,
+            },
+            mid_size: filesize,
+          },
+        },
+      ],
+      context_token: args.contextToken,
+    };
+
+    try {
+      const data = (await this.post(
+        'ilink/bot/sendmessage',
+        { msg, base_info: { channel_version: CHANNEL_VERSION } },
+        DEFAULT_API_TIMEOUT_MS,
+        'sendMessage',
+      )) as SendMessageResp | null;
+      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
+      return {
+        ok: false,
+        ret: data.ret,
+        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
+    }
   }
 
   /** Send a text reply. context_token must come from the latest inbound message of that peer. */

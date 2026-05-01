@@ -1,11 +1,17 @@
 import crypto from 'node:crypto';
 import {
+  aesEcbPaddedSize,
   buildCdnDownloadUrl,
+  buildCdnUploadUrl,
   decryptAesEcbPkcs7,
   detectImageMime,
   downloadAndDecryptCdnMedia,
+  encryptAesEcbPkcs7,
+  formatAesKeyForApi,
+  md5Hex,
   parseAesKey,
   parseAesKeyHex,
+  uploadEncryptedToCdn,
 } from '../cdn';
 
 function aesEncrypt(plaintext: Buffer, key: Buffer): Buffer {
@@ -96,6 +102,99 @@ describe('wechat/cdn: detectImageMime', () => {
     ['unknown→jpeg fallback', Buffer.from([0x00, 0x00, 0x00]), 'image/jpeg'],
   ])('%s', (_label, bytes, expected) => {
     expect(detectImageMime(bytes)).toBe(expected);
+  });
+});
+
+describe('wechat/cdn: aesEcbPaddedSize / md5Hex / formatAesKeyForApi', () => {
+  test('aesEcbPaddedSize matches PKCS#7 ciphertext length', () => {
+    expect(aesEcbPaddedSize(0)).toBe(16);   // empty → one full block of padding
+    expect(aesEcbPaddedSize(1)).toBe(16);
+    expect(aesEcbPaddedSize(15)).toBe(16);
+    expect(aesEcbPaddedSize(16)).toBe(32);  // exact multiple → extra full block
+    expect(aesEcbPaddedSize(17)).toBe(32);
+  });
+
+  test('md5Hex is lowercase hex of standard MD5', () => {
+    expect(md5Hex(Buffer.from('hello', 'utf8'))).toBe('5d41402abc4b2a76b9719d911017c592');
+  });
+
+  test('formatAesKeyForApi is base64(hex(rawKey))', () => {
+    const key = Buffer.from('0123456789abcdef0123456789abcdef', 'hex');
+    const formatted = formatAesKeyForApi(key);
+    // decode and check it's hex of the original
+    const decoded = Buffer.from(formatted, 'base64').toString('utf8');
+    expect(decoded).toBe('0123456789abcdef0123456789abcdef');
+  });
+});
+
+describe('wechat/cdn: buildCdnUploadUrl', () => {
+  test('formats upload URL with upload_param + filekey', () => {
+    expect(buildCdnUploadUrl('https://cdn.example/c2c', 'p&q', 'key#1')).toBe(
+      'https://cdn.example/c2c/upload?encrypted_query_param=p%26q&filekey=key%231',
+    );
+  });
+});
+
+describe('wechat/cdn: encryptAesEcbPkcs7 round-trip', () => {
+  test('round-trips arbitrary plaintext', () => {
+    const key = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
+    const plain = Buffer.from('图片字节 binary data 🌟', 'utf8');
+    const cipher = encryptAesEcbPkcs7(plain, key);
+    expect(cipher.length).toBe(aesEcbPaddedSize(plain.length));
+    expect(decryptAesEcbPkcs7(cipher, key)).toEqual(plain);
+  });
+});
+
+describe('wechat/cdn: uploadEncryptedToCdn', () => {
+  test('POSTs ciphertext, returns x-encrypted-param header', async () => {
+    const fakeFetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'DL-PARAM' : null) },
+    })) as unknown as typeof fetch;
+
+    const dl = await uploadEncryptedToCdn({
+      uploadUrl: 'https://cdn.example/c2c/upload?xx',
+      plaintext: Buffer.from('hello'),
+      aesKey: Buffer.alloc(16, 7),
+      fetchImpl: fakeFetch,
+    });
+    expect(dl).toBe('DL-PARAM');
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    const call = (fakeFetch as unknown as jest.Mock).mock.calls[0];
+    expect(call[1].method).toBe('POST');
+    expect(call[1].headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  test('throws on 4xx (no retry)', async () => {
+    const fakeFetch = jest.fn(async () => ({
+      ok: false,
+      status: 400,
+      headers: { get: () => 'bad request' },
+    })) as unknown as typeof fetch;
+
+    await expect(uploadEncryptedToCdn({
+      uploadUrl: 'https://cdn.example/c2c/upload?xx',
+      plaintext: Buffer.from('hello'),
+      aesKey: Buffer.alloc(16),
+      fetchImpl: fakeFetch,
+    })).rejects.toThrow(/client error 400/);
+  });
+
+  test('retries on 5xx and eventually fails after 3 attempts', async () => {
+    const fakeFetch = jest.fn(async () => ({
+      ok: false,
+      status: 502,
+      headers: { get: () => null },
+    })) as unknown as typeof fetch;
+
+    await expect(uploadEncryptedToCdn({
+      uploadUrl: 'https://cdn.example/c2c/upload?xx',
+      plaintext: Buffer.from('hello'),
+      aesKey: Buffer.alloc(16),
+      fetchImpl: fakeFetch,
+    })).rejects.toThrow(/server error: status 502/);
+    expect((fakeFetch as unknown as jest.Mock).mock.calls.length).toBe(3);
   });
 });
 

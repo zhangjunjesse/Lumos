@@ -20,6 +20,11 @@ export const MESSAGE_STATE_FINISH = 2;
 
 export const ERR_SESSION_EXPIRED = -14;
 
+// Upload media types (for getUploadURL.media_type)
+export const UPLOAD_MEDIA_IMAGE = 1;
+export const UPLOAD_MEDIA_VIDEO = 2;
+export const UPLOAD_MEDIA_FILE = 3;
+
 // ---- JSON shapes -----------------------------------------------------------
 
 export interface BaseInfo {
@@ -98,6 +103,27 @@ export interface SendMessageResp {
   ret: number;
   errcode?: number;
   errmsg?: string;
+}
+
+export interface GetUploadUrlReq {
+  filekey?: string;
+  media_type?: number;
+  to_user_id?: string;
+  rawsize?: number;
+  rawfilemd5?: string;
+  filesize?: number;
+  no_need_thumb?: boolean;
+  aeskey?: string;       // hex (32 chars)
+  base_info?: BaseInfo;
+}
+
+export interface GetUploadUrlResp {
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  upload_param?: string;
+  thumb_upload_param?: string;
+  upload_full_url?: string;
 }
 
 export interface OutboundMsg {

@@ -6,9 +6,14 @@
  * （bot 不能主动开启对话，必须先有用户消息进来才能回）。
  *
  * 长文本切片：单条 ilink 消息上限约 4000 字符，超过分段发送。
+ *
+ * 图片附件：lumos AI 生成或转发图片时通过 OutboundMessage.attachments 传入；
+ * 这里识别 image/* 类型，走 client.sendImage 上传 + 发送。文本消息可与图片
+ * 同时发，图片先发，再发文本。
  */
 
-import type { OutboundMessage, SendResult } from '../../core/types';
+import fs from 'node:fs';
+import type { IMFileAttachment, OutboundMessage, SendResult } from '../../core/types';
 import { WechatClient, ERR_SESSION_EXPIRED, newClientId } from './client';
 
 const MAX_CHUNK = 3800; // stay under ilink ~4000 char cap
@@ -26,13 +31,6 @@ export async function sendOutbound(
   const peer = message.address.chatId.trim();
   if (!peer) return { ok: false, error: 'chatId (peer userId) required' };
 
-  if (message.attachments && message.attachments.length > 0) {
-    return { ok: false, error: 'attachments not yet supported by wechat provider' };
-  }
-
-  const text = message.text.trim();
-  if (!text) return { ok: false, error: 'empty text' };
-
   let contextToken = deps.getContextToken(peer);
   if (!contextToken) {
     return {
@@ -43,19 +41,74 @@ export async function sendOutbound(
     };
   }
 
-  const chunks = splitText(text, MAX_CHUNK);
+  const text = message.text.trim();
+  const imageAttachments = (message.attachments || []).filter((a) =>
+    (a.type || '').toLowerCase().startsWith('image/'),
+  );
+  const unsupported = (message.attachments || []).filter((a) =>
+    !(a.type || '').toLowerCase().startsWith('image/'),
+  );
+  if (unsupported.length > 0) {
+    return { ok: false, error: `unsupported attachment type: ${unsupported[0].type || 'unknown'} (only image/* is supported)` };
+  }
+
+  if (!text && imageAttachments.length === 0) return { ok: false, error: 'empty message' };
+
   let lastMessageId: string | undefined;
 
-  for (const chunk of chunks) {
-    const result = await sendOneWithRetry(client, peer, chunk, contextToken);
+  // 先发图片，再发文本（与微信原生体验一致：图片在前，附带文字说明在后）
+  for (const attachment of imageAttachments) {
+    const bytes = readAttachmentBytes(attachment);
+    if (!bytes) {
+      return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
+    }
+    const result = await sendImageWithRetry(client, peer, bytes, contextToken);
     if (!result.ok) return { ok: false, error: result.error };
     lastMessageId = result.clientId;
-
-    // Refresh context_token in case a fresher inbound landed during the send
     contextToken = deps.getContextToken(peer) || contextToken;
   }
 
+  if (text) {
+    const chunks = splitText(text, MAX_CHUNK);
+    for (const chunk of chunks) {
+      const result = await sendOneWithRetry(client, peer, chunk, contextToken);
+      if (!result.ok) return { ok: false, error: result.error };
+      lastMessageId = result.clientId;
+      contextToken = deps.getContextToken(peer) || contextToken;
+    }
+  }
+
   return { ok: true, messageId: lastMessageId };
+}
+
+function readAttachmentBytes(attachment: IMFileAttachment): Buffer | null {
+  if (attachment.data) {
+    try { return Buffer.from(attachment.data, 'base64'); } catch { /* fall through */ }
+  }
+  if (attachment.filePath) {
+    try { return fs.readFileSync(attachment.filePath); } catch { /* fall through */ }
+  }
+  return null;
+}
+
+async function sendImageWithRetry(
+  client: WechatClient,
+  peer: string,
+  bytes: Buffer,
+  contextToken: string,
+): Promise<SendOneResult> {
+  const clientId = newClientId();
+  const first = await client.sendImage({ toUserId: peer, bytes, contextToken, clientId });
+  if (first.ok) return { ok: true, clientId };
+
+  if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
+    await delay(500);
+    const second = await client.sendImage({ toUserId: peer, bytes, contextToken, clientId });
+    if (second.ok) return { ok: true, clientId };
+    return { ok: false, error: second.error || `sendImage failed (retry): ret=${second.ret}` };
+  }
+
+  return { ok: false, error: first.error || `sendImage failed: ret=${first.ret}` };
 }
 
 interface SendOneResult {

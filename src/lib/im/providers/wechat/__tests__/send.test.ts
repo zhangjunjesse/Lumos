@@ -79,7 +79,7 @@ describe('wechat/send: sendOutbound', () => {
     expect(fakeFetch).toHaveBeenCalledTimes(2);
   });
 
-  test('attachments rejected (M+1)', async () => {
+  test('non-image attachments rejected (only image/* supported)', async () => {
     const r = await sendOutbound(
       client,
       {
@@ -90,6 +90,64 @@ describe('wechat/send: sendOutbound', () => {
       { getContextToken: () => 'ctx' },
     );
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/attachments/);
+    expect(r.error).toMatch(/image\/\*|only image/);
+  });
+
+  test('image attachment: getuploadurl → CDN upload → sendmessage', async () => {
+    const onePngPixel = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG magic
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    ]);
+
+    fakeFetch.mockReset();
+    // 1) getUploadURL
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?xx=1' }),
+    });
+    // 2) CDN upload (POST) returns x-encrypted-param header
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'DOWNLOAD-PARAM-123' : null) },
+    });
+    // 3) sendMessage
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0 }),
+    });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: '',
+        attachments: [{
+          id: 'img-1',
+          name: 'pic.png',
+          type: 'image/png',
+          size: onePngPixel.length,
+          data: onePngPixel.toString('base64'),
+        }],
+      },
+      { getContextToken: () => 'ctx' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+
+    // verify sendmessage payload contains image_item with download_param + base64(hex(aes))
+    const sendCall = fakeFetch.mock.calls[2];
+    expect(sendCall[0]).toMatch(/sendmessage$/);
+    const body = JSON.parse(sendCall[1].body) as {
+      msg: { item_list: Array<{ type: number; image_item: { media: { encrypt_query_param: string; aes_key: string; encrypt_type: number } } }> };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(2); // MESSAGE_ITEM_IMAGE
+    expect(item.image_item.media.encrypt_query_param).toBe('DOWNLOAD-PARAM-123');
+    expect(item.image_item.media.encrypt_type).toBe(1);
+    // aes_key is base64(hex(rawKey)) — 16 bytes → 32 hex chars → 44-char base64 (with =)
+    expect(item.image_item.media.aes_key).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(item.image_item.media.aes_key.length).toBeGreaterThanOrEqual(40);
   });
 });
