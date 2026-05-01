@@ -1,6 +1,21 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { taskEventBus, type TaskEvent } from '@/lib/task-event-bus';
 import { ensureSessionTeamRunsExecution } from '@/lib/db/tasks';
 import { getSessionTeamBannerProjection } from '@/lib/team-run/projections';
+
+const IM_DEBUG_LOG = path.join(
+  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
+  'im-runtime.log',
+);
+function imRuntimeLog(line: string): void {
+  try {
+    fs.appendFileSync(IM_DEBUG_LOG, `[${new Date().toISOString()}] ${line}\n`);
+  } catch {
+    // ignore
+  }
+}
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -36,8 +51,10 @@ export async function GET(_request: Request, context: RouteContext) {
         send('snapshot', { banner: null });
       }
 
+      imRuntimeLog(`[sse] subscribe sessionId=${sessionId} totalListeners=${taskEventBus.listenerCount('task-event') + 1}`);
       // Subscribe to task events for this session
       const unsubscribe = taskEventBus.onSessionEvents(sessionId, (event: TaskEvent) => {
+        imRuntimeLog(`[sse] forward sessionId=${sessionId} type=${event.type} eventSessionId=${event.sessionId}`);
         send(event.type, {
           taskId: event.taskId,
           runId: event.runId,
