@@ -5,7 +5,7 @@ jest.mock('electron', () => ({
   session: {},
 }));
 
-import { waitForTextScript } from '../bridge-server';
+import { calculateBrowserContextRetryAfterMs, waitForTextScript } from '../bridge-server';
 import { didNavigationReachTarget } from '../bridge-server';
 
 describe('waitForTextScript', () => {
@@ -86,5 +86,23 @@ describe('didNavigationReachTarget', () => {
         url: 'https://www.gigab2b.com/index.php?route=common/home',
       },
     })).toBe(false);
+  });
+});
+
+describe('calculateBrowserContextRetryAfterMs', () => {
+  test('caps retry-after by the short lease wait window', () => {
+    expect(calculateBrowserContextRetryAfterMs({
+      now: 1_000,
+      expiresAt: 21_000,
+      maxRetryAfterMs: 10_000,
+    })).toBe(10_000);
+  });
+
+  test('returns zero for an already expired lease', () => {
+    expect(calculateBrowserContextRetryAfterMs({
+      now: 21_000,
+      expiresAt: 20_999,
+      maxRetryAfterMs: 10_000,
+    })).toBe(0);
   });
 });

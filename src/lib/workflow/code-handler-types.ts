@@ -36,6 +36,8 @@ export interface BrowserBridgeApi {
   selectPage(id: string): Promise<void>;
   /** 关闭页签 */
   closePage(id: string): Promise<void>;
+  /** 释放当前浏览器上下文运行态占用租约 */
+  release(): Promise<void>;
   /** 是否已连接到 Bridge Server */
   readonly connected: boolean;
 }

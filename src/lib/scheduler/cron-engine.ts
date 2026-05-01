@@ -12,13 +12,14 @@ import {
   updateRunHistory,
   type ScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
-import { createSession } from '@/lib/db/sessions';
+import { createSession, updateSessionBrowserContext } from '@/lib/db/sessions';
 import { getMessages } from '@/lib/db';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { submitWorkflow } from '@/lib/workflow/api';
 import { startApprovalTimeoutSweeper, stopApprovalTimeoutSweeper } from '@/lib/workflow/approval-timeout-sweeper';
 import { taskEventBus } from '@/lib/task-event-bus';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -75,8 +76,20 @@ async function runSchedule(
 
   const modeLabel = isManual ? '手动' : schedule.runMode === 'once' ? '一次性' : '定时';
   const label = `[${modeLabel}] ${schedule.name}`;
+  const browserContextId = schedule.browserContextId;
+  try {
+    validateBrowserContextId(browserContextId);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const runId = insertRunHistory(schedule.id, null, schedule.workflowDsl, browserContextId);
+    recordScheduleRun(schedule.id, 'error', msg);
+    updateRunHistory(runId, 'error', msg);
+    emitNotification(schedule, 'error', msg);
+    return;
+  }
   const session = createSession(label, undefined, undefined, schedule.workingDirectory || undefined, 'workflow');
-  const runId = insertRunHistory(schedule.id, session.id, schedule.workflowDsl);
+  updateSessionBrowserContext(session.id, browserContextId);
+  const runId = insertRunHistory(schedule.id, session.id, schedule.workflowDsl, browserContextId);
   const effectiveParams = mergeParamDefaults(schedule.workflowDsl, runParams ?? schedule.runParams ?? {});
 
   try {
@@ -90,6 +103,7 @@ async function runSchedule(
           taskId: session.id,
           sessionId: session.id,
           workingDirectory: schedule.workingDirectory || undefined,
+          browserContextId,
         },
         ...effectiveParams,
       },
@@ -138,7 +152,10 @@ async function runSchedule(
   }
 }
 
-export async function triggerSchedule(scheduleId: string, runParams?: Record<string, unknown>): Promise<void> {
+export async function triggerSchedule(
+  scheduleId: string,
+  runParams?: Record<string, unknown>,
+): Promise<void> {
   const schedule = getScheduledWorkflow(scheduleId);
   if (!schedule) throw new Error('任务不存在');
   await runSchedule(schedule, true, runParams);

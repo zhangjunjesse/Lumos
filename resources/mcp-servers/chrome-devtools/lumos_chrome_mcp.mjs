@@ -1,13 +1,153 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import readline from 'node:readline';
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 const BACKGROUND_MODE = process.env.LUMOS_BROWSER_BACKGROUND === '1';
+
+const TOOLS = [
+  {
+    name: 'list_pages',
+    description: 'List available browser pages in the selected Lumos browser context. Use this before other tools, and do not guess among similar tabs when warnings indicate duplicates.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'new_page',
+    description: 'Create and activate a new page. Prefer this when multiple similar tabs are already open and you need a deterministic fresh page. Use incognito=true only when the user explicitly requests private/incognito browsing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        incognito: { type: 'boolean', description: 'Open in incognito mode (no cookies/history persisted). Only use when user explicitly requests it.' },
+        background: { type: 'boolean', description: 'Open without focusing the visible tab. Use false when the user explicitly asks to open/show the page.' },
+      },
+    },
+  },
+  {
+    name: 'select_page',
+    description: 'Switch active page by pageId.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        background: { type: 'boolean', description: 'Select without focusing the visible tab. Use false when the user explicitly asks to show the page.' },
+      },
+      required: ['pageId'],
+    },
+  },
+  {
+    name: 'close_page',
+    description: 'Close page by pageId.',
+    inputSchema: {
+      type: 'object',
+      properties: { pageId: { type: 'string' } },
+      required: ['pageId'],
+    },
+  },
+  {
+    name: 'navigate_page',
+    description: 'Navigate a selected page. type=url|back|forward|reload. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        type: { type: 'string', enum: ['url', 'back', 'forward', 'reload'] },
+        url: { type: 'string' },
+        background: { type: 'boolean', description: 'Navigate without focusing the visible tab. Use false when the user explicitly asks to open/show the page.' },
+      },
+    },
+  },
+  {
+    name: 'take_snapshot',
+    description: 'Take a text snapshot of a selected page and assign uids for interactive elements. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: { pageId: { type: 'string' } },
+    },
+  },
+  {
+    name: 'click',
+    description: 'Click element by uid from latest snapshot. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: { pageId: { type: 'string' }, uid: { type: 'string' } },
+      required: ['uid'],
+    },
+  },
+  {
+    name: 'fill',
+    description: 'Fill input-like element by uid. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        uid: { type: 'string' },
+        value: { type: 'string' },
+      },
+      required: ['uid', 'value'],
+    },
+  },
+  {
+    name: 'type_text',
+    description: 'Type text into currently focused element. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        text: { type: 'string' },
+        submitKey: { type: 'string' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'press_key',
+    description: 'Press key on currently focused element. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        key: { type: 'string' },
+      },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'wait_for',
+    description: 'Wait until any provided text appears on page. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        text: { type: 'array', items: { type: 'string' } },
+        timeout: { type: 'number' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'evaluate_script',
+    description: 'Evaluate JavaScript expression in page context and return value. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        expression: { type: 'string' },
+      },
+      required: ['expression'],
+    },
+  },
+  {
+    name: 'take_screenshot',
+    description: 'Capture screenshot of page and save to local path. When multiple pages are open, pageId is required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageId: { type: 'string' },
+        filePath: { type: 'string' },
+      },
+    },
+  },
+];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,58 +160,6 @@ function pickNonEmpty(...values) {
   return '';
 }
 
-async function loadSdk() {
-  const sdkRoots = Array.from(new Set([
-    path.resolve(__dirname, '..', '..', 'feishu-mcp-server', 'node_modules', '@modelcontextprotocol', 'sdk'),
-    path.resolve(process.cwd(), 'resources', 'feishu-mcp-server', 'node_modules', '@modelcontextprotocol', 'sdk'),
-    typeof process.resourcesPath === 'string'
-      ? path.resolve(process.resourcesPath, 'feishu-mcp-server', 'node_modules', '@modelcontextprotocol', 'sdk')
-      : '',
-  ].filter(Boolean)));
-
-  const entryCandidates = [];
-  for (const sdkRoot of sdkRoots) {
-    entryCandidates.push({
-      serverPath: path.join(sdkRoot, 'server', 'index.js'),
-      stdioPath: path.join(sdkRoot, 'server', 'stdio.js'),
-      typesPath: path.join(sdkRoot, 'types.js'),
-    });
-    entryCandidates.push({
-      serverPath: path.join(sdkRoot, 'dist', 'esm', 'server', 'index.js'),
-      stdioPath: path.join(sdkRoot, 'dist', 'esm', 'server', 'stdio.js'),
-      typesPath: path.join(sdkRoot, 'dist', 'esm', 'types.js'),
-    });
-  }
-
-  const checkedPaths = [];
-  for (const candidate of entryCandidates) {
-    const { serverPath, stdioPath, typesPath } = candidate;
-    checkedPaths.push(serverPath);
-    if (!fs.existsSync(serverPath) || !fs.existsSync(stdioPath) || !fs.existsSync(typesPath)) {
-      continue;
-    }
-
-    try {
-      const [{ Server }, { StdioServerTransport }, typesMod] = await Promise.all([
-        import(pathToFileURL(serverPath).href),
-        import(pathToFileURL(stdioPath).href),
-        import(pathToFileURL(typesPath).href),
-      ]);
-      return {
-        Server,
-        StdioServerTransport,
-        ListToolsRequestSchema: typesMod.ListToolsRequestSchema,
-        CallToolRequestSchema: typesMod.CallToolRequestSchema,
-      };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'unknown import error';
-      console.error('[lumos-chrome-mcp] Failed to import MCP SDK candidate:', serverPath, reason);
-    }
-  }
-
-  throw new Error(`MCP SDK not found. Checked candidates:\n- ${checkedPaths.join('\n- ')}`);
-}
-
 function toolResponse(payload, isError = false) {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
@@ -82,22 +170,34 @@ function toolResponse(payload, isError = false) {
 function getBridgeConfig() {
   const baseUrl = pickNonEmpty(process.env.LUMOS_BROWSER_BRIDGE_URL);
   const token = pickNonEmpty(process.env.LUMOS_BROWSER_BRIDGE_TOKEN);
-  return { baseUrl, token };
+  const browserContextId = pickNonEmpty(process.env.LUMOS_BROWSER_CONTEXT_ID);
+  const lockOwnerId = pickNonEmpty(process.env.LUMOS_BROWSER_LOCK_OWNER, process.env.LUMOS_SESSION_ID);
+  return { baseUrl, token, browserContextId, lockOwnerId };
+}
+
+function buildBridgeUrl(baseUrl, pathname, browserContextId) {
+  const url = new URL(`${baseUrl}${pathname}`);
+  if (browserContextId) {
+    url.searchParams.set('browserContextId', browserContextId);
+  }
+  return url.toString();
 }
 
 async function callBridge(pathname, options = {}) {
-  const { baseUrl, token } = getBridgeConfig();
+  const { baseUrl, token, browserContextId, lockOwnerId } = getBridgeConfig();
   if (!baseUrl || !token) {
     throw new Error(
       'Browser bridge is not configured. Missing LUMOS_BROWSER_BRIDGE_URL or LUMOS_BROWSER_BRIDGE_TOKEN.'
     );
   }
 
-  const res = await fetch(`${baseUrl}${pathname}`, {
+  const res = await fetch(buildBridgeUrl(baseUrl, pathname, browserContextId), {
     method: options.method || 'GET',
     headers: {
       'Content-Type': 'application/json',
       'x-lumos-bridge-token': token,
+      ...(browserContextId ? { 'x-lumos-browser-context-id': browserContextId } : {}),
+      ...(lockOwnerId ? { 'x-lumos-browser-owner-id': lockOwnerId } : {}),
     },
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
   });
@@ -105,10 +205,27 @@ async function callBridge(pathname, options = {}) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) {
     const error = json?.error || `HTTP_${res.status}`;
-    throw new Error(`Bridge request failed (${pathname}): ${error}`);
+    const message = json?.message ? `${error}: ${json.message}` : error;
+    throw new Error(`Bridge request failed (${pathname}): ${message}`);
   }
 
   return json;
+}
+
+let releaseStarted = false;
+
+async function releaseBridgeContext() {
+  const { browserContextId, lockOwnerId } = getBridgeConfig();
+  if (releaseStarted || !browserContextId || !lockOwnerId) {
+    return;
+  }
+  releaseStarted = true;
+  try {
+    await callBridge('/v1/context/release', { method: 'POST', body: {} });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[lumos-chrome-mcp] failed to release browser context:', message);
+  }
 }
 
 function isRetryableBridgeError(error) {
@@ -145,6 +262,13 @@ async function withBridgeRetry(run, options = {}) {
 
 function normalizePageId(raw) {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+function resolveBackground(args) {
+  if (typeof args?.background === 'boolean') {
+    return args.background;
+  }
+  return BACKGROUND_MODE || undefined;
 }
 
 function safeParseUrl(raw) {
@@ -230,10 +354,11 @@ async function handleTool(name, args) {
     case 'new_page': {
       const url = typeof args?.url === 'string' ? args.url : '';
       const incognito = args?.incognito === true;
+      const background = resolveBackground(args);
       const created = await withBridgeRetry(
         () => callBridge('/v1/pages/new', {
           method: 'POST',
-          body: { url: url || undefined, background: BACKGROUND_MODE || undefined, incognito: incognito || undefined },
+          body: { url: url || undefined, background, incognito: incognito || undefined },
         }),
         { delayMs: 700 },
       );
@@ -249,7 +374,7 @@ async function handleTool(name, args) {
       await withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/select', {
           method: 'POST',
-          body: { pageId: resolvedPageId || pageId, background: BACKGROUND_MODE || undefined },
+          body: { pageId: resolvedPageId || pageId, background: resolveBackground(args) },
         }),
         { pageId },
       );
@@ -267,10 +392,11 @@ async function handleTool(name, args) {
       const pageId = await resolveExplicitPageId(args?.pageId, 'navigate_page');
       const type = typeof args?.type === 'string' ? args.type : 'url';
       const url = typeof args?.url === 'string' ? args.url : undefined;
+      const background = resolveBackground(args);
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/navigate', {
           method: 'POST',
-          body: { pageId: resolvedPageId, type, url, background: BACKGROUND_MODE || undefined },
+          body: { pageId: resolvedPageId, type, url, background },
         }),
         { pageId, delayMs: 700 },
       );
@@ -393,171 +519,78 @@ async function handleTool(name, args) {
 }
 
 async function main() {
-  const sdk = await loadSdk();
-  const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } = sdk;
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
-  const server = new Server(
-    { name: 'chrome-devtools', version: '1.0.0' },
-    { capabilities: { tools: {} } },
-  );
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'list_pages',
-        description: 'List available browser pages in Lumos built-in browser context. Use this before other tools, and do not guess among similar tabs when warnings indicate duplicates.',
-        inputSchema: { type: 'object', properties: {} },
-      },
-      {
-        name: 'new_page',
-        description: 'Create and activate a new page. Prefer this when multiple similar tabs are already open and you need a deterministic fresh page. Use incognito=true only when the user explicitly requests private/incognito browsing.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            url: { type: 'string' },
-            incognito: { type: 'boolean', description: 'Open in incognito mode (no cookies/history persisted). Only use when user explicitly requests it.' },
-          },
-        },
-      },
-      {
-        name: 'select_page',
-        description: 'Switch active page by pageId.',
-        inputSchema: {
-          type: 'object',
-          properties: { pageId: { type: 'string' } },
-          required: ['pageId'],
-        },
-      },
-      {
-        name: 'close_page',
-        description: 'Close page by pageId.',
-        inputSchema: {
-          type: 'object',
-          properties: { pageId: { type: 'string' } },
-          required: ['pageId'],
-        },
-      },
-      {
-        name: 'navigate_page',
-        description: 'Navigate a selected page. type=url|back|forward|reload. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            type: { type: 'string', enum: ['url', 'back', 'forward', 'reload'] },
-            url: { type: 'string' },
-          },
-        },
-      },
-      {
-        name: 'take_snapshot',
-        description: 'Take a text snapshot of a selected page and assign uids for interactive elements. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: { pageId: { type: 'string' } },
-        },
-      },
-      {
-        name: 'click',
-        description: 'Click element by uid from latest snapshot. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: { pageId: { type: 'string' }, uid: { type: 'string' } },
-          required: ['uid'],
-        },
-      },
-      {
-        name: 'fill',
-        description: 'Fill input-like element by uid. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            uid: { type: 'string' },
-            value: { type: 'string' },
-          },
-          required: ['uid', 'value'],
-        },
-      },
-      {
-        name: 'type_text',
-        description: 'Type text into currently focused element. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            text: { type: 'string' },
-            submitKey: { type: 'string' },
-          },
-          required: ['text'],
-        },
-      },
-      {
-        name: 'press_key',
-        description: 'Press key on currently focused element. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            key: { type: 'string' },
-          },
-          required: ['key'],
-        },
-      },
-      {
-        name: 'wait_for',
-        description: 'Wait until any provided text appears on page. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            text: { type: 'array', items: { type: 'string' } },
-            timeout: { type: 'number' },
-          },
-          required: ['text'],
-        },
-      },
-      {
-        name: 'evaluate_script',
-        description: 'Evaluate JavaScript expression in page context and return value. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            expression: { type: 'string' },
-          },
-          required: ['expression'],
-        },
-      },
-      {
-        name: 'take_screenshot',
-        description: 'Capture screenshot of page and save to local path. When multiple pages are open, pageId is required.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            pageId: { type: 'string' },
-            filePath: { type: 'string' },
-          },
-        },
-      },
-    ],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const name = request?.params?.name;
-    const args = request?.params?.arguments || {};
-    if (!name) return toolResponse({ error: 'Missing tool name' }, true);
+  rl.on('line', async (line) => {
+    let request;
     try {
-      const result = await handleTool(name, args);
-      return toolResponse(result);
+      request = JSON.parse(line);
+    } catch {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32700, message: 'Parse error' },
+      }) + '\n');
+      return;
+    }
+
+    const { method, params, id } = request;
+    let response = null;
+
+    try {
+      if (method === 'initialize') {
+        response = {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'chrome_devtools', version: '1.0.0' },
+          },
+        };
+      } else if (method === 'notifications/initialized') {
+        response = null;
+      } else if (method === 'tools/list') {
+        response = { jsonrpc: '2.0', id, result: { tools: TOOLS } };
+      } else if (method === 'tools/call') {
+        const name = params?.name;
+        const args = params?.arguments || {};
+        if (!name) {
+          response = { jsonrpc: '2.0', id, result: toolResponse({ error: 'Missing tool name' }, true) };
+        } else {
+          try {
+            const result = await handleTool(name, args);
+            response = { jsonrpc: '2.0', id, result: toolResponse(result) };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            response = { jsonrpc: '2.0', id, result: toolResponse({ error: message }, true) };
+          }
+        }
+      } else {
+        response = { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } };
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return toolResponse({ error: message }, true);
+      response = { jsonrpc: '2.0', id, error: { code: -32603, message } };
+    }
+
+    if (response) {
+      process.stdout.write(JSON.stringify(response) + '\n');
     }
   });
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  rl.on('close', async () => {
+    await releaseBridgeContext();
+    process.exit(0);
+  });
+  process.once('SIGINT', async () => {
+    await releaseBridgeContext();
+    process.exit(130);
+  });
+  process.once('SIGTERM', async () => {
+    await releaseBridgeContext();
+    process.exit(143);
+  });
   console.error('[lumos-chrome-mcp] server started');
 }
 

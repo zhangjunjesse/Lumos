@@ -5,7 +5,7 @@ import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import {
   getMainAgentSessionTeamRuntimePrompt,
@@ -36,12 +36,17 @@ import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
+import {
+  isBrowserAutomationRequest,
+  prefersVisibleBrowserAction,
+} from '@/lib/browser-provider/chat-intent';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
 
 const CHROME_BRIDGE_URL_HEADER = 'x-lumos-browser-bridge-url';
 const CHROME_BRIDGE_TOKEN_HEADER = 'x-lumos-browser-bridge-token';
+const CHROME_BRIDGE_CONTEXT_HEADER = 'x-lumos-browser-context-id';
 const FILE_DIRECTIVE_PREFIX = 'FEISHU_SEND_FILE::';
 const MAIL_DIRECTIVE_PREFIX = 'FEISHU_SEND_MAIL::';
 const MAX_FEISHU_CONTEXT_DOCS = 2;
@@ -90,27 +95,45 @@ Rules:
 - Prefer \`best_effort\` (default) unless every selected site must succeed.
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
-const BROWSER_MCP_SYSTEM_HINT = `You have access to built-in browser control tools (chrome-devtools) that share the user's browser login state. Use them to navigate, read, click, type, and screenshot pages in the built-in Lumos browser.
+const BROWSER_MCP_SYSTEM_HINT = `You have access to Lumos browser control tools (chrome_devtools) that share the selected browser context's login state. Use them to navigate, read, click, type, and screenshot pages in the current Lumos browser context.
 
 Available browser tools (call by exact name):
-- \`mcp__chrome-devtools__list_pages\` — list all open tabs (returns pageId, url, title)
-- \`mcp__chrome-devtools__new_page\` — open a new tab. Params: \`url\` (optional)
-- \`mcp__chrome-devtools__select_page\` — switch active page. Params: \`pageId\`
-- \`mcp__chrome-devtools__navigate_page\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
-- \`mcp__chrome-devtools__take_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
-- \`mcp__chrome-devtools__click\` — click an element by uid. Params: \`pageId\`, \`uid\`
-- \`mcp__chrome-devtools__type_text\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
-- \`mcp__chrome-devtools__fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
-- \`mcp__chrome-devtools__press_key\` — press key. Params: \`pageId\`, \`key\`
-- \`mcp__chrome-devtools__take_screenshot\` — take a screenshot. Params: \`pageId\`, optional \`filePath\`
-- \`mcp__chrome-devtools__evaluate_script\` — run JavaScript. Params: \`pageId\`, \`expression\`
-- \`mcp__chrome-devtools__close_page\` — close a tab. Params: \`pageId\`
-- \`mcp__chrome-devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
+- \`mcp__chrome_devtools__list_pages\` — list all open tabs (returns pageId, url, title)
+- \`mcp__chrome_devtools__new_page\` — open a new tab. Params: \`url\` (optional)
+- \`mcp__chrome_devtools__select_page\` — switch active page. Params: \`pageId\`
+- \`mcp__chrome_devtools__navigate_page\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
+- \`mcp__chrome_devtools__take_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
+- \`mcp__chrome_devtools__click\` — click an element by uid. Params: \`pageId\`, \`uid\`
+- \`mcp__chrome_devtools__type_text\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
+- \`mcp__chrome_devtools__fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
+- \`mcp__chrome_devtools__press_key\` — press key. Params: \`pageId\`, \`key\`
+- \`mcp__chrome_devtools__take_screenshot\` — take a screenshot. Params: \`pageId\`, optional \`filePath\`
+- \`mcp__chrome_devtools__evaluate_script\` — run JavaScript. Params: \`pageId\`, \`expression\`
+- \`mcp__chrome_devtools__close_page\` — close a tab. Params: \`pageId\`
+- \`mcp__chrome_devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
 
-Workflow: call \`mcp__chrome-devtools__list_pages\` → get pageId → use other tools with that pageId.
-If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome-devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.
+Workflow: call \`mcp__chrome_devtools__list_pages\` → get pageId → use other tools with that pageId.
+If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome_devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.
 Browser tools run in background mode during chat. Do not open or switch the user's visible browser panel unless the user explicitly asks to see/control the page.
 Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
+const BROWSER_CONTEXT_SYSTEM_HINT_PREFIX = 'Current Lumos browser context';
+const BROWSER_REQUEST_DISALLOWED_TOOLS = [
+  'Bash',
+  'Task',
+  'TaskOutput',
+  'WebFetch',
+  'WebSearch',
+  'Read',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'Glob',
+  'Grep',
+  'LS',
+  'NotebookEdit',
+  'TodoWrite',
+  'ExitPlanMode',
+];
 
 const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
 Team Mode is session-scoped under the current Main Agent conversation, never a separate top-level agent.
@@ -179,10 +202,54 @@ function sanitizeKnowledgeOverrides(raw: unknown): KnowledgeOverrides | undefine
   return Object.keys(out).length ? out : undefined;
 }
 
-function readChromeBridgeEnvFromRequest(request: NextRequest): { url?: string; token?: string } {
+function readChromeBridgeEnvFromRequest(request: NextRequest): { url?: string; token?: string; browserContextId?: string } {
   const url = pickNonEmpty(request.headers.get(CHROME_BRIDGE_URL_HEADER) || undefined);
   const token = pickNonEmpty(request.headers.get(CHROME_BRIDGE_TOKEN_HEADER) || undefined);
-  return { url, token };
+  const browserContextId = pickNonEmpty(request.headers.get(CHROME_BRIDGE_CONTEXT_HEADER) || undefined);
+  return { url, token, browserContextId };
+}
+
+function normalizeBrowserMatchText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function findMentionedBrowserContext(userInput: string): {
+  contextId: string;
+  displayName: string;
+  providerType: string;
+} | null {
+  const normalizedInput = normalizeBrowserMatchText(userInput);
+  if (!normalizedInput) {
+    return null;
+  }
+
+  const matches: Array<{ contextId: string; displayName: string; providerType: string }> = [];
+  for (const config of listBrowserProviderConfigs()) {
+    if (config.enabled !== 1) {
+      continue;
+    }
+    const candidates = [
+      config.display_name,
+      config.profile_name,
+      config.profile_id,
+      ...(Array.isArray(config.aliases) ? config.aliases : []),
+    ]
+      .map((candidate) => normalizeBrowserMatchText(candidate || ''))
+      .filter((candidate) => candidate.length >= 2);
+
+    if (candidates.some((candidate) => normalizedInput.includes(candidate))) {
+      matches.push({
+        contextId: config.context_id,
+        displayName: config.profile_name || config.display_name,
+        providerType: config.provider_type,
+      });
+    }
+  }
+
+  if (matches.length !== 1) {
+    return null;
+  }
+  return matches[0];
 }
 
 function hasFeishuMcp(
@@ -197,6 +264,44 @@ function hasDeepSearchMcp(
 ): boolean {
   if (!servers) return false;
   return Boolean(servers.deepsearch);
+}
+
+function onlyBrowserMcpServers(
+  servers: Record<string, MCPServerConfig> | undefined,
+): Record<string, MCPServerConfig> | undefined {
+  if (!servers) return undefined;
+  const result: Record<string, MCPServerConfig> = {};
+  for (const name of ['chrome-devtools', 'chrome_devtools']) {
+    if (servers[name]) {
+      result[name] = servers[name];
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function isEmbeddedBrowserContext(contextId?: string): boolean {
+  return !contextId || contextId.trim() === '' || contextId.trim() === 'embedded:default';
+}
+
+function resolveChatBrowserContextId(params: {
+  matchedContextId?: string;
+  requestHeaderContextId?: string;
+  sessionContextId?: string;
+}): string {
+  const matchedContextId = pickNonEmpty(params.matchedContextId);
+  if (matchedContextId) return matchedContextId;
+
+  const headerContextId = pickNonEmpty(params.requestHeaderContextId);
+  if (headerContextId && !isEmbeddedBrowserContext(headerContextId)) {
+    return headerContextId;
+  }
+
+  const sessionContextId = pickNonEmpty(params.sessionContextId);
+  if (sessionContextId && !isEmbeddedBrowserContext(sessionContextId)) {
+    return sessionContextId;
+  }
+
+  return pickNonEmpty(headerContextId, sessionContextId, 'embedded:default');
 }
 
 function isLegacyImageAgentPrompt(systemPromptAppend?: string): boolean {
@@ -687,6 +792,22 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const matchedBrowserContext = findMentionedBrowserContext(content);
+    const sessionBrowserContextId = matchedBrowserContext?.contextId || session.browser_context_id || 'embedded:default';
+    if (matchedBrowserContext && matchedBrowserContext.contextId !== (session.browser_context_id || 'embedded:default')) {
+      updateSessionBrowserContext(session_id, matchedBrowserContext.contextId);
+    }
+    const browserAutomationIntent = isBrowserAutomationRequest({
+      userInput: content,
+      matchedBrowserContext: Boolean(matchedBrowserContext),
+      selectedBrowserContextId: sessionBrowserContextId,
+    });
+    const visibleBrowserIntent = prefersVisibleBrowserAction({
+      userInput: content,
+      matchedBrowserContext: Boolean(matchedBrowserContext),
+      selectedBrowserContextId: sessionBrowserContextId,
+    });
+
     // Save user message — persist file metadata so attachments survive page reload
     let savedContent = content;
     let fileMeta: Array<{ id: string; name: string; type: string; size: number; filePath: string }> | undefined;
@@ -846,13 +967,27 @@ export async function POST(request: NextRequest) {
       || (isMainAgentSession(session) ? neutralMainAgentWorkingDirectory : undefined);
 
     console.time('[perf] MCP servers loading');
-    const loadedMcpServers = resolveEnabledMcpServers({
+    const browserBridgeOverride = readChromeBridgeEnvFromRequest(request);
+    const browserContextId = resolveChatBrowserContextId({
+      matchedContextId: matchedBrowserContext?.contextId,
+      requestHeaderContextId: browserBridgeOverride.browserContextId,
+      sessionContextId: sessionBrowserContextId,
+    });
+    const skippedMcpNames = new Set(['task-management']);
+    if (browserAutomationIntent) {
+      skippedMcpNames.add('deepsearch');
+    }
+    let loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedSessionWorkingDirectory,
       sessionId: session_id,
-      browserBridgeOverride: readChromeBridgeEnvFromRequest(request),
-      skipNames: new Set(['task-management']),
-      browserBackground: true,
+      browserBridgeOverride,
+      browserContextId,
+      skipNames: skippedMcpNames,
+      browserBackground: !visibleBrowserIntent,
     });
+    if (browserAutomationIntent) {
+      loadedMcpServers = onlyBrowserMcpServers(loadedMcpServers);
+    }
     console.timeEnd('[perf] MCP servers loading');
 
     let teamRuntimeState: ReturnType<typeof getMainAgentSessionTeamRuntimeState> = null;
@@ -881,7 +1016,7 @@ export async function POST(request: NextRequest) {
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
     }
-    if (knowledgeEnabledForRequest) {
+    if (knowledgeEnabledForRequest && !browserAutomationIntent) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + CHAT_KNOWLEDGE_MCP_SYSTEM_HINT;
     }
     if (permissionMode !== 'default' && hasFeishuMcp(loadedMcpServers)) {
@@ -892,6 +1027,20 @@ export async function POST(request: NextRequest) {
     }
     if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
+      const selectedBrowserLabel = matchedBrowserContext
+        ? `${matchedBrowserContext.displayName} (${matchedBrowserContext.contextId})`
+        : browserContextId;
+      finalSystemPrompt = (finalSystemPrompt || '')
+        + `\n\n${BROWSER_CONTEXT_SYSTEM_HINT_PREFIX}: \`${selectedBrowserLabel}\`.\n`
+        + 'If the user names a configured browser/profile such as "浏览器1", use the selected Lumos browser context via chrome-devtools tools. Do not use shell commands, system open commands, or the OS default browser as a fallback for browser/profile requests. If chrome-devtools fails, report the failure and the selected context instead of opening Google Chrome.';
+      if (browserAutomationIntent) {
+        finalSystemPrompt = (finalSystemPrompt || '')
+          + '\nThis request explicitly targets browser control. Use chrome_devtools tools only for the browser action. Bash and DeepSearch are unavailable for this browser action, so do not attempt `open`, `osascript`, `curl`, system-browser, or DeepSearch fallbacks.';
+      }
+      if (visibleBrowserIntent) {
+        finalSystemPrompt = (finalSystemPrompt || '')
+          + '\nThe user asked to open or navigate a page. Prefer `mcp__chrome_devtools__new_page` with the target URL and keep it visible in the selected browser context.';
+      }
     }
     // Generic MCP discovery hint: list all loaded MCP servers so the agent knows they exist.
     // This covers user-installed MCPs that don't have a dedicated hint.
@@ -929,11 +1078,11 @@ export async function POST(request: NextRequest) {
 
     // Create in-process MCP servers
     const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> = {};
-    if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
+    if (permissionMode !== 'default' && !browserAutomationIntent && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       const lumosMcpServer = createLumosMcpServer(session_id, lumosUserId);
       inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
     }
-    if (knowledgeEnabledForRequest) {
+    if (knowledgeEnabledForRequest && !browserAutomationIntent) {
       const knowledgeMcpServer = createChatKnowledgeMcpServer({
         tagIds: selectedKnowledgeTagIds,
         overrides: sanitizedKnowledgeOverrides,
@@ -941,7 +1090,7 @@ export async function POST(request: NextRequest) {
       inProcessMcpServers[knowledgeMcpServer.name] = knowledgeMcpServer;
     }
     // Workflow code runner — only for workflow chat sessions
-    if (isWorkflowChatSession(session)) {
+    if (isWorkflowChatSession(session) && !browserAutomationIntent) {
       const workflowMcp = createWorkflowMcpServer();
       inProcessMcpServers[workflowMcp.name] = workflowMcp;
     }
@@ -960,6 +1109,9 @@ export async function POST(request: NextRequest) {
       permissionMode,
       files: fileAttachments,
       toolTimeoutSeconds: toolTimeout || 900,
+      forceFreshSession: browserAutomationIntent,
+      sdkBuiltinTools: browserAutomationIntent ? [] : undefined,
+      disallowedTools: browserAutomationIntent ? BROWSER_REQUEST_DISALLOWED_TOOLS : undefined,
       provider: resolvedProvider,
       knowledgeOptions: {
         enabled: knowledgeEnabledForRequest,

@@ -4,6 +4,7 @@ import {
   listScheduledWorkflows,
   createScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { initScheduler } from '@/lib/scheduler/cron-engine';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 
@@ -26,6 +27,7 @@ const createSchema = z.object({
   scheduleTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   scheduleDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
   workingDirectory: z.string().optional(),
+  browserContextId: z.string().optional(),
   notifyOnComplete: z.boolean().optional(),
   runParams: z.record(z.string(), z.unknown()).optional(),
 });
@@ -54,6 +56,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const browserContextId = validateBrowserContextId(input.browserContextId);
+
     const schedule = createScheduledWorkflow({
       name: input.name,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,6 +68,7 @@ export async function POST(request: NextRequest) {
       scheduleTime: input.scheduleTime,
       scheduleDayOfWeek: input.scheduleDayOfWeek,
       workingDirectory: input.workingDirectory,
+      browserContextId,
       notifyOnComplete: input.notifyOnComplete,
       runParams: input.runParams,
     });

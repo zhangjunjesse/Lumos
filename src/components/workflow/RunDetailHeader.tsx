@@ -43,11 +43,13 @@ export function RunDetailHeader({
   onRefresh,
   onCancel,
   cancelling = false,
+  browserLabel,
 }: {
   run: RunDetailHeaderRun;
   onRefresh: () => void;
   onCancel?: () => void;
   cancelling?: boolean;
+  browserLabel?: string;
 }) {
   const cfg = STATUS_CFG[run.status] ?? STATUS_CFG.running;
   return (
@@ -76,6 +78,12 @@ export function RunDetailHeader({
               <span className="text-muted-foreground">会话 ID</span>
               <div className="font-mono text-xs">{run.sessionId ? `${run.sessionId.slice(0, 12)}...` : '--'}</div>
             </div>
+            {browserLabel ? (
+              <div>
+                <span className="text-muted-foreground">浏览器</span>
+                <div className="font-medium">{browserLabel}</div>
+              </div>
+            ) : null}
           </div>
         </div>
 

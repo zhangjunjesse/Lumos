@@ -9,6 +9,7 @@ import { initAutoUpdater, setUpdaterWindow, registerUpdaterHandlers } from './up
 import { BrowserManager } from './browser/browser-manager';
 import { setupBrowserIPC } from './ipc/browser-handlers';
 import { BrowserBridgeServer } from './browser/bridge-server';
+import { createBrowserProviderRegistry, type BrowserProviderRegistry } from './browser-provider';
 import { FeishuBridgeRuntimeManager } from './bridge/runtime-manager';
 import {
   clearBridgeRuntimeConfig,
@@ -18,7 +19,11 @@ import {
 let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;
 let browserManager: BrowserManager | null = null;
-const browserBridgeContext: { browserManager: BrowserManager | null } = { browserManager: null };
+let browserProviderRegistry: BrowserProviderRegistry | null = null;
+const browserBridgeContext: {
+  browserManager: BrowserManager | null;
+  browserProviderRegistry: BrowserProviderRegistry | null;
+} = { browserManager: null, browserProviderRegistry: null };
 let browserBridgeServer: BrowserBridgeServer | null = null;
 let browserBridgeUrl = '';
 let browserBridgeToken = '';
@@ -98,6 +103,17 @@ function clearBrowserBridgeRuntime(): void {
 function initializeBridgeRuntime(): void {
   bridgeRuntimeToken = crypto.randomBytes(32).toString('hex');
   initializeBridgeRuntimeConfig(bridgeRuntimeToken);
+}
+
+function ensureBrowserProviderRegistry(): BrowserProviderRegistry {
+  if (!browserProviderRegistry) {
+    browserProviderRegistry = createBrowserProviderRegistry(() => browserManager, {
+      ...process.env,
+      ...userShellEnv,
+    });
+    browserBridgeContext.browserProviderRegistry = browserProviderRegistry;
+  }
+  return browserProviderRegistry;
 }
 
 function broadcastBridgeEvent(eventName: string, payload: unknown): void {
@@ -687,6 +703,7 @@ function createWindow(port: number) {
     sessionPartition: 'persist:lumos-browser',
   });
   browserBridgeContext.browserManager = browserManager;
+  ensureBrowserProviderRegistry();
 
   // Register browser IPC and (re)bind event forwarding to current manager.
   setupBrowserIPC(() => browserManager);
@@ -995,6 +1012,7 @@ app.whenReady().then(async () => {
   // Start local browser bridge (for built-in chrome-devtools MCP).
   // Bridge can start before BrowserManager; requests will return unavailable
   // until a window is created and manager is initialized.
+  ensureBrowserProviderRegistry();
   browserBridgeServer = new BrowserBridgeServer(browserBridgeContext);
   try {
     await browserBridgeServer.start();

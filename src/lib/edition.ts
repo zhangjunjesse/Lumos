@@ -1,16 +1,23 @@
 /**
  * Lumos Edition detection.
  *
- * NEXT_PUBLIC_LUMOS_EDITION is set at build time:
+ * NEXT_PUBLIC_LUMOS_EDITION is set at build/dev time:
  *   - "pro"  → 会员版 (built-in Lumos Cloud provider, login flow)
  *   - "open" → 开放版 (user manages own providers/keys)
+ *
+ * Local Electron dev may pass LUMOS_EDITION=pro. next.config.ts maps that to
+ * NEXT_PUBLIC_LUMOS_EDITION so client-side gates see the same edition.
  *
  * Default: "open" (backwards-compatible)
  */
 
 export type LumosEdition = 'open' | 'pro';
 
-const RAW = (process.env.NEXT_PUBLIC_LUMOS_EDITION ?? 'open').trim().toLowerCase();
+const RAW = (
+  process.env.NEXT_PUBLIC_LUMOS_EDITION
+  ?? process.env.LUMOS_EDITION
+  ?? 'open'
+).trim().toLowerCase();
 
 export const EDITION: LumosEdition = RAW === 'pro' ? 'pro' : 'open';
 

@@ -19,7 +19,9 @@ export interface McpEnrichContext {
   sessionId?: string;
   dataDir: string;
   /** Browser bridge info from HTTP request headers (chat route only). */
-  browserBridgeOverride?: { url?: string; token?: string };
+  browserBridgeOverride?: { url?: string; token?: string; browserContextId?: string };
+  /** Browser context routed through the bridge. Defaults to the embedded browser. */
+  browserContextId?: string;
   /** When true, browser MCP operates in background mode (no UI tab switching). */
   browserBackground?: boolean;
 }
@@ -56,14 +58,19 @@ function parseExtraEnv(raw: string | undefined): Record<string, string> {
 }
 
 /** Read browser bridge URL/token from ~/.lumos/runtime/browser-bridge.json. */
-export function readBrowserBridgeFromRuntimeFile(): { url?: string; token?: string } {
+export function readBrowserBridgeFromRuntimeFile(): { url?: string; token?: string; browserContextId?: string } {
   try {
     const runtimePath = path.join(dataDir, 'runtime', 'browser-bridge.json');
     if (!fs.existsSync(runtimePath)) return {};
-    const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as { url?: unknown; token?: unknown };
+    const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as {
+      url?: unknown;
+      token?: unknown;
+      browserContextId?: unknown;
+    };
     return {
       url: typeof parsed.url === 'string' ? parsed.url : undefined,
       token: typeof parsed.token === 'string' ? parsed.token : undefined,
+      browserContextId: typeof parsed.browserContextId === 'string' ? parsed.browserContextId : undefined,
     };
   } catch {
     return {};
@@ -104,6 +111,18 @@ function enrichBrowserBridgeEnv(env: Record<string, string>, ctx: McpEnrichConte
       runtimeBridge.token,
       process.env.LUMOS_BROWSER_BRIDGE_TOKEN,
       env.LUMOS_BROWSER_BRIDGE_TOKEN,
+    ),
+    LUMOS_BROWSER_CONTEXT_ID: pickNonEmpty(
+      ctx.browserContextId,
+      ctx.browserBridgeOverride?.browserContextId,
+      runtimeBridge.browserContextId,
+      process.env.LUMOS_BROWSER_CONTEXT_ID,
+      env.LUMOS_BROWSER_CONTEXT_ID,
+    ),
+    LUMOS_BROWSER_LOCK_OWNER: pickNonEmpty(
+      ctx.sessionId,
+      process.env.LUMOS_BROWSER_LOCK_OWNER,
+      env.LUMOS_BROWSER_LOCK_OWNER,
     ),
     ...(ctx.browserBackground ? { LUMOS_BROWSER_BACKGROUND: '1' } : {}),
   };

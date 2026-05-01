@@ -136,6 +136,7 @@ const en = {
   'settings.general': 'General',
   'settings.knowledge': 'Knowledge',
   'settings.providers': 'Claude & Providers',
+  'settings.browsers': 'Browsers',
   'settings.claudeCli': 'Claude Runtime',
   'settings.codepilot': 'Lumos',
   'settings.version': 'Version {version}',

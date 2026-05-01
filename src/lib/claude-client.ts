@@ -391,6 +391,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     rawPrompt,
     sessionId,
     sdkSessionId,
+    forceFreshSession,
     model,
     systemPrompt,
     workingDirectory,
@@ -400,6 +401,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     permissionMode,
     files,
     toolTimeoutSeconds = 0,
+    sdkBuiltinTools,
+    disallowedTools,
     conversationHistory,
     onRuntimeStatusChange,
   } = options;
@@ -461,6 +464,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           env: sanitizeEnv(sdkEnv),
           settingSources: runtimeContext.settingSources,
         };
+
+        if (disallowedTools && disallowedTools.length > 0) {
+          queryOptions.disallowedTools = disallowedTools;
+        }
+        if (sdkBuiltinTools !== undefined) {
+          queryOptions.tools = sdkBuiltinTools;
+        }
 
         if (skipPermissions) {
           queryOptions.allowDangerouslySkipPermissions = true;
@@ -525,6 +535,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Check if we should resume session (needed for MCP config decision)
         let shouldResume = !!sdkSessionId;
+        if (shouldResume && forceFreshSession) {
+          console.log('[claude-client] Force fresh SDK session requested');
+          shouldResume = false;
+          if (sessionId) {
+            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+          }
+        }
         if (shouldResume && workingDirectory && !fs.existsSync(workingDirectory)) {
           console.warn(`[claude-client] Working directory "${workingDirectory}" does not exist, skipping resume`);
           shouldResume = false;
@@ -651,12 +668,21 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
+          if (disallowedTools?.includes(toolName)) {
+            return {
+              behavior: 'deny' as const,
+              message: `${toolName} is disabled for this request. Use the selected Lumos browser tools when browser control is requested.`,
+            };
+          }
+
           // Auto-approve built-in in-process MCP server tools (read-only or fully owned by Lumos).
           if (
             toolName.startsWith('mcp__feishu__')
             || toolName.startsWith('mcp__lumos-image__')
             || toolName.startsWith('mcp__lumos-knowledge__')
             || toolName.startsWith('mcp__wechat-export__')
+            || toolName.startsWith('mcp__chrome-devtools__')
+            || toolName.startsWith('mcp__chrome_devtools__')
           ) {
             return { behavior: 'allow' as const, updatedInput: input };
           }

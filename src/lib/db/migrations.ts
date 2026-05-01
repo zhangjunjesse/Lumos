@@ -37,6 +37,7 @@ export function migrateCoreTables(db: Database.Database): void {
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN browser_context_id TEXT NOT NULL DEFAULT 'embedded:default'");
 
   const colNames = columns.map(c => c.name);
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN sdk_cwd TEXT NOT NULL DEFAULT ''");
@@ -173,6 +174,40 @@ export function migrateCoreTables(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS browser_provider_configs (
+      id TEXT PRIMARY KEY,
+      provider_type TEXT NOT NULL CHECK(provider_type IN ('external-cdp','adspower')),
+      display_name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      api_base_url TEXT NOT NULL DEFAULT '',
+      api_key TEXT NOT NULL DEFAULT '',
+      cdp_endpoint TEXT NOT NULL DEFAULT '',
+      profile_id TEXT NOT NULL DEFAULT '',
+      profile_name TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      last_test_status TEXT NOT NULL DEFAULT 'untested'
+        CHECK(last_test_status IN ('untested','success','failed')),
+      last_test_message TEXT NOT NULL DEFAULT '',
+      last_profile_count INTEGER NOT NULL DEFAULT 0,
+      last_tested_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_profile_aliases (
+      id TEXT PRIMARY KEY,
+      config_id TEXT NOT NULL REFERENCES browser_provider_configs(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(config_id, alias)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_browser_provider_configs_type ON browser_provider_configs(provider_type, enabled);
+    CREATE INDEX IF NOT EXISTS idx_browser_profile_aliases_config ON browser_profile_aliases(config_id);
   `);
 
   // Ensure media_generations table exists for databases created before this migration

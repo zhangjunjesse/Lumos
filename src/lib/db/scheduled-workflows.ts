@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { normalizeBrowserContextId } from '@/lib/browser-provider/labels';
 import { getDb } from './index';
 
 import type { WorkflowDSLV3 } from '@/lib/workflow/types';
@@ -15,6 +16,7 @@ export interface ScheduledWorkflowRow {
   schedule_time: string | null;
   schedule_day_of_week: number | null;
   working_directory: string;
+  browser_context_id: string;
   enabled: number;
   notify_on_complete: number;
   run_params: string;
@@ -39,6 +41,7 @@ export interface ScheduledWorkflow {
   /** 0=Sun, 1=Mon, ..., 6=Sat — target day for weekly schedules (null = not weekly) */
   scheduleDayOfWeek: number | null;
   workingDirectory: string;
+  browserContextId: string;
   enabled: boolean;
   notifyOnComplete: boolean;
   runParams: Record<string, unknown>;
@@ -60,6 +63,7 @@ export interface CreateScheduledWorkflowInput {
   scheduleTime?: string | null;
   scheduleDayOfWeek?: number | null;
   workingDirectory?: string;
+  browserContextId?: string;
   notifyOnComplete?: boolean;
   runParams?: Record<string, unknown>;
 }
@@ -73,6 +77,7 @@ export type UpdateScheduledWorkflowInput = Partial<{
   scheduleTime: string | null;
   scheduleDayOfWeek: number | null;
   workingDirectory: string;
+  browserContextId: string;
   enabled: boolean;
   notifyOnComplete: boolean;
   runParams: Record<string, unknown>;
@@ -99,6 +104,7 @@ function rowToSchedule(row: ScheduledWorkflowRow): ScheduledWorkflow {
     scheduleTime: row.schedule_time || null,
     scheduleDayOfWeek: typeof row.schedule_day_of_week === 'number' ? row.schedule_day_of_week : null,
     workingDirectory: row.working_directory,
+    browserContextId: normalizeBrowserContextId(row.browser_context_id),
     enabled: row.enabled === 1,
     notifyOnComplete: row.notify_on_complete === 1,
     runParams,
@@ -215,8 +221,8 @@ export function createScheduledWorkflow(
 
   db.prepare(`
     INSERT INTO scheduled_workflows
-      (id, name, workflow_dsl, workflow_id, run_mode, interval_minutes, schedule_time, schedule_day_of_week, working_directory, enabled, notify_on_complete, run_params, next_run_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+      (id, name, workflow_dsl, workflow_id, run_mode, interval_minutes, schedule_time, schedule_day_of_week, working_directory, browser_context_id, enabled, notify_on_complete, run_params, next_run_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.name.trim(),
@@ -227,6 +233,7 @@ export function createScheduledWorkflow(
     input.scheduleTime || null,
     input.scheduleDayOfWeek ?? null,
     (input.workingDirectory || '').trim(),
+    normalizeBrowserContextId(input.browserContextId),
     input.notifyOnComplete !== false ? 1 : 0,
     JSON.stringify(input.runParams ?? {}),
     nextRunAt,
@@ -269,6 +276,7 @@ export function updateScheduledWorkflow(
       schedule_time = ?,
       schedule_day_of_week = ?,
       working_directory = ?,
+      browser_context_id = ?,
       enabled = ?,
       notify_on_complete = ?,
       run_params = ?,
@@ -284,6 +292,7 @@ export function updateScheduledWorkflow(
     scheduleTime || null,
     scheduleDayOfWeek ?? null,
     input.workingDirectory ?? existing.workingDirectory,
+    normalizeBrowserContextId(input.browserContextId ?? existing.browserContextId),
     (input.enabled ?? existing.enabled) ? 1 : 0,
     (input.notifyOnComplete ?? existing.notifyOnComplete) ? 1 : 0,
     JSON.stringify(input.runParams ?? existing.runParams),
@@ -335,6 +344,7 @@ export interface ScheduleRunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
+  browserContextId: string;
   status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
@@ -357,18 +367,36 @@ function hasHistoryTable(): boolean {
   return row?.name === 'schedule_run_history';
 }
 
+function rowToRunRecord(r: Record<string, unknown>): ScheduleRunRecord {
+  return {
+    id: String(r['id']),
+    scheduleId: String(r['schedule_id']),
+    sessionId: r['session_id'] ? String(r['session_id']) : null,
+    browserContextId: normalizeBrowserContextId(
+      typeof r['browser_context_id'] === 'string' ? r['browser_context_id'] : null,
+    ),
+    status: String(r['status']) as ScheduleRunRecord['status'],
+    error: String(r['error'] ?? ''),
+    startedAt: String(r['started_at']),
+    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
+    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
+  };
+}
+
 export function insertRunHistory(
   scheduleId: string,
   sessionId: string | null,
   dsl?: WorkflowDSLV3 | null,
+  browserContextId?: string | null,
 ): string {
   const id = randomUUID();
   const now = new Date().toISOString();
   if (!hasHistoryTable()) return id;
   const snapshot = dsl ? JSON.stringify(dsl) : null;
+  const normalizedBrowserContextId = normalizeBrowserContextId(browserContextId);
   getDb().prepare(
-    'INSERT INTO schedule_run_history (id, schedule_id, session_id, status, started_at, workflow_dsl_snapshot) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, scheduleId, sessionId, 'running', now, snapshot);
+    'INSERT INTO schedule_run_history (id, schedule_id, session_id, browser_context_id, status, started_at, workflow_dsl_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, scheduleId, sessionId, normalizedBrowserContextId, 'running', now, snapshot);
   return id;
 }
 
@@ -394,48 +422,21 @@ export function listRunningRunHistory(scheduleId: string): ScheduleRunRecord[] {
   if (!hasHistoryTable()) return [];
   return (getDb().prepare(
     "SELECT * FROM schedule_run_history WHERE schedule_id = ? AND status = 'running' ORDER BY started_at DESC",
-  ).all(scheduleId) as Array<Record<string, unknown>>).map(r => ({
-    id: String(r['id']),
-    scheduleId: String(r['schedule_id']),
-    sessionId: r['session_id'] ? String(r['session_id']) : null,
-    status: String(r['status']) as ScheduleRunRecord['status'],
-    error: String(r['error'] ?? ''),
-    startedAt: String(r['started_at']),
-    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
-    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
-  }));
+  ).all(scheduleId) as Array<Record<string, unknown>>).map(rowToRunRecord);
 }
 
 export function listRunHistory(scheduleId: string, limit = 30): ScheduleRunRecord[] {
   if (!hasHistoryTable()) return [];
   return (getDb().prepare(
     'SELECT * FROM schedule_run_history WHERE schedule_id = ? ORDER BY started_at DESC LIMIT ?',
-  ).all(scheduleId, limit) as Array<Record<string, unknown>>).map(r => ({
-    id: String(r['id']),
-    scheduleId: String(r['schedule_id']),
-    sessionId: r['session_id'] ? String(r['session_id']) : null,
-    status: String(r['status']) as ScheduleRunRecord['status'],
-    error: String(r['error'] ?? ''),
-    startedAt: String(r['started_at']),
-    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
-    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
-  }));
+  ).all(scheduleId, limit) as Array<Record<string, unknown>>).map(rowToRunRecord);
 }
 
 export function listDebugRuns(workflowId: string, limit = 30): ScheduleRunRecord[] {
   if (!hasHistoryTable()) return [];
   return (getDb().prepare(
     "SELECT * FROM schedule_run_history WHERE schedule_id = ? AND mode = 'debug' ORDER BY started_at DESC LIMIT ?",
-  ).all(workflowId, limit) as Array<Record<string, unknown>>).map(r => ({
-    id: String(r['id']),
-    scheduleId: String(r['schedule_id']),
-    sessionId: r['session_id'] ? String(r['session_id']) : null,
-    status: String(r['status']) as ScheduleRunRecord['status'],
-    error: String(r['error'] ?? ''),
-    startedAt: String(r['started_at']),
-    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
-    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
-  }));
+  ).all(workflowId, limit) as Array<Record<string, unknown>>).map(rowToRunRecord);
 }
 
 export function getRunHistory(runId: string): ScheduleRunRecord | null {
@@ -444,16 +445,7 @@ export function getRunHistory(runId: string): ScheduleRunRecord | null {
     'SELECT * FROM schedule_run_history WHERE id = ?',
   ).get(runId) as Record<string, unknown> | undefined;
   if (!r) return null;
-  return {
-    id: String(r['id']),
-    scheduleId: String(r['schedule_id']),
-    sessionId: r['session_id'] ? String(r['session_id']) : null,
-    status: String(r['status']) as ScheduleRunRecord['status'],
-    error: String(r['error'] ?? ''),
-    startedAt: String(r['started_at']),
-    completedAt: r['completed_at'] ? String(r['completed_at']) : null,
-    workflowDslSnapshot: parseDslSnapshot(r['workflow_dsl_snapshot']),
-  };
+  return rowToRunRecord(r);
 }
 
 export function getWorkflowExecutionId(sessionId: string): string | null {

@@ -7,14 +7,19 @@ import { Badge } from '@/components/ui/badge';
 import { WorkflowDslGraph } from '@/components/workflow/WorkflowDslGraph';
 import { ScheduleRunList } from '@/components/workflow/ScheduleRunList';
 import { ScheduleEditor } from '@/components/workflow/ScheduleEditor';
+import { buildBrowserContextLabelMap, resolveBrowserContextLabel } from '@/lib/browser-provider/labels';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
+import type { BrowserProvidersResponse } from '@/types';
 
 interface Schedule {
   id: string;
   name: string;
   runMode: 'scheduled' | 'once';
   intervalMinutes: number;
+  scheduleTime?: string | null;
+  scheduleDayOfWeek?: number | null;
   workingDirectory: string;
+  browserContextId: string;
   enabled: boolean;
   notifyOnComplete: boolean;
   lastRunAt: string | null;
@@ -74,13 +79,20 @@ export default function ScheduleDetailPage() {
   const [showGraph, setShowGraph] = useState(true);
   const [presetNames, setPresetNames] = useState<Record<string, string>>({});
   const [runListKey, setRunListKey] = useState(0);
+  const [browserLabels, setBrowserLabels] = useState<Record<string, string>>({});
 
   const loadSchedule = useCallback(async () => {
     if (!scheduleId) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/workflow/schedules/${scheduleId}`);
-      const data = await res.json() as { schedule?: Omit<Schedule, 'workflowDsl'> & { workflowDsl: unknown } };
+      const [data, browserData] = await Promise.all([
+        fetch(`/api/workflow/schedules/${scheduleId}`)
+          .then(res => res.json() as Promise<{ schedule?: Omit<Schedule, 'workflowDsl'> & { workflowDsl: unknown } }>),
+        fetch('/api/browser-providers', { cache: 'no-store' })
+          .then(res => res.ok ? res.json() as Promise<BrowserProvidersResponse> : null)
+          .catch(() => null),
+      ]);
+      setBrowserLabels(buildBrowserContextLabelMap(browserData?.configs ?? []));
       if (data.schedule) {
         try {
           setSchedule({ ...data.schedule, workflowDsl: normalizeScheduleDsl(data.schedule.workflowDsl) });
@@ -180,6 +192,7 @@ export default function ScheduleDetailPage() {
             <span>上次: {formatDateTime(schedule.lastRunAt)}</span>
             <span>下次: {formatNextRun(schedule.nextRunAt)}</span>
             <span>共 {schedule.runCount} 次</span>
+            <span>浏览器: {resolveBrowserContextLabel(schedule.browserContextId, browserLabels)}</span>
           </div>
           {schedule.lastError && (
             <div className="mt-1.5 text-xs text-destructive bg-destructive/5 rounded px-2 py-1 max-w-lg truncate">{schedule.lastError}</div>

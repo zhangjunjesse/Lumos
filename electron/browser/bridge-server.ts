@@ -5,9 +5,16 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { BrowserWindow, session } from 'electron';
 import type { BrowserManager } from './browser-manager';
+import {
+  DEFAULT_BROWSER_CONTEXT_ID,
+  normalizeBrowserContextId,
+  type BrowserAutomationSession,
+  type BrowserProviderRegistry,
+} from '../browser-provider';
 
 interface BridgeContext {
   browserManager: BrowserManager | null;
+  browserProviderRegistry?: BrowserProviderRegistry | null;
 }
 
 interface PageRuntimeState {
@@ -16,6 +23,32 @@ interface PageRuntimeState {
   textLength: number;
   title: string;
   url: string;
+}
+
+interface BrowserContextLease {
+  contextId: string;
+  ownerId: string;
+  startedAt: number;
+  updatedAt: number;
+  expiresAt: number;
+  lastPath: string;
+}
+
+const BROWSER_CONTEXT_LEASE_MS = 180_000;
+const BROWSER_CONTEXT_LEASE_WAIT_MS = 10_000;
+const BROWSER_CONTEXT_LEASE_POLL_MS = 250;
+
+type BrowserContextLeaseAcquireResult =
+  | { ok: true; lease: BrowserContextLease; waitedMs: number }
+  | { ok: false; lease: BrowserContextLease; waitedMs: number; retryAfterMs: number };
+
+export function calculateBrowserContextRetryAfterMs(input: {
+  now: number;
+  expiresAt: number;
+  maxRetryAfterMs?: number;
+}): number {
+  const remainingMs = Math.max(0, input.expiresAt - input.now);
+  return Math.min(remainingMs, Math.max(0, input.maxRetryAfterMs ?? BROWSER_CONTEXT_LEASE_WAIT_MS));
 }
 
 function normalizeNavigationUrl(raw: string | undefined | null): string {
@@ -106,16 +139,41 @@ function forwardUrlToContentTabs(url: string, pageId?: string): void {
   }
 }
 
+function getHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value.find((item) => typeof item === 'string' && item.trim())?.trim();
+  }
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function resolveRequestBrowserContextId(req: http.IncomingMessage, requestUrl: URL): string {
+  return normalizeBrowserContextId(
+    requestUrl.searchParams.get('browserContextId')
+    || requestUrl.searchParams.get('contextId')
+    || getHeaderValue(req.headers['x-lumos-browser-context-id']),
+  );
+}
+
+function resolveRequestBrowserOwnerId(req: http.IncomingMessage, requestUrl: URL): string {
+  return (
+    requestUrl.searchParams.get('browserOwnerId')?.trim()
+    || requestUrl.searchParams.get('ownerId')?.trim()
+    || getHeaderValue(req.headers['x-lumos-browser-owner-id'])
+    || getHeaderValue(req.headers['x-lumos-session-id'])
+    || 'anonymous'
+  );
+}
+
 function unauthorized(res: http.ServerResponse): void {
   sendJson(res, 401, { ok: false, error: 'UNAUTHORIZED' });
 }
 
 async function withAiActivity<T>(
-  manager: BrowserManager,
+  manager: BrowserAutomationSession,
   activity: { action: string; pageId?: string; details?: string; successDetails?: string },
   task: () => Promise<T>,
 ): Promise<T> {
-  const entry = manager.emitAiActivity({
+  const entry = manager.emitAiActivity?.({
     action: activity.action,
     pageId: activity.pageId,
     details: activity.details,
@@ -123,11 +181,15 @@ async function withAiActivity<T>(
 
   try {
     const result = await task();
-    manager.finishAiActivity(entry, 'success', activity.successDetails || activity.details);
+    if (entry) {
+      manager.finishAiActivity?.(entry, 'success', activity.successDetails || activity.details);
+    }
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    manager.finishAiActivity(entry, 'error', message);
+    if (entry) {
+      manager.finishAiActivity?.(entry, 'error', message);
+    }
     throw error;
   }
 }
@@ -136,11 +198,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function ensureTabReady(manager: BrowserManager, tabId: string, options?: { background?: boolean }): Promise<void> {
+async function ensureTabReady(manager: BrowserAutomationSession, tabId: string, options?: { background?: boolean }): Promise<void> {
   if (options?.background) {
     // Background mode: ensure the view has renderable bounds so the page
     // actually loads, but position it offscreen so the user doesn't see it.
-    manager.ensureViewRenderable(tabId);
+    manager.ensureViewRenderable?.(tabId);
   } else {
     await manager.switchTab(tabId);
   }
@@ -168,7 +230,7 @@ function buildPageRuntimeStateScript(): string {
 }
 
 async function readPageRuntimeState(
-  manager: BrowserManager,
+  manager: BrowserAutomationSession,
   tabId: string,
 ): Promise<PageRuntimeState | null> {
   try {
@@ -188,7 +250,7 @@ async function readPageRuntimeState(
 }
 
 async function waitForPageStable(
-  manager: BrowserManager,
+  manager: BrowserAutomationSession,
   tabId: string,
   options?: { timeoutMs?: number; requireText?: boolean; stableMs?: number; background?: boolean },
 ): Promise<{ settled: boolean; state: PageRuntimeState | null }> {
@@ -233,7 +295,7 @@ async function waitForPageStable(
 }
 
 async function evalInTab(
-  manager: BrowserManager,
+  manager: BrowserAutomationSession,
   tabId: string,
   expression: string,
   awaitPromise: boolean = true,
@@ -387,9 +449,10 @@ export function waitForTextScript(texts: string[]): string {
 }
 
 async function resolveTargetTabId(
-  manager: BrowserManager,
+  manager: BrowserAutomationSession,
   requested?: string,
 ): Promise<string> {
+  await manager.refreshTabs?.();
   const tabs = manager.getTabs();
   const hasTab = (tabId: string | undefined | null): tabId is string =>
     typeof tabId === 'string' && tabs.some((tab) => tab.id === tabId);
@@ -424,30 +487,172 @@ export class BrowserBridgeServer {
   private readonly token: string;
   private port = 0;
   private readonly context: BridgeContext;
-  /** domain → pageId for persistent per-site hidden tabs used by /v1/site-pages/* */
+  /** browserContextId:domain → pageId for persistent per-site hidden tabs used by /v1/site-pages/* */
   private readonly siteTabs = new Map<string, string>();
+  private readonly contextLeases = new Map<string, BrowserContextLease>();
 
   constructor(context: BridgeContext) {
     this.context = context;
     this.token = crypto.randomBytes(24).toString('hex');
   }
 
+  private getSession(contextId: string): BrowserAutomationSession | null {
+    if (this.context.browserProviderRegistry) {
+      return this.context.browserProviderRegistry.getSession(contextId);
+    }
+    if (normalizeBrowserContextId(contextId) !== DEFAULT_BROWSER_CONTEXT_ID) {
+      return null;
+    }
+    return this.context.browserManager as BrowserAutomationSession | null;
+  }
+
+  private isReady(contextId: string): boolean {
+    if (this.context.browserProviderRegistry) {
+      return this.context.browserProviderRegistry.isReady(contextId);
+    }
+    return normalizeBrowserContextId(contextId) === DEFAULT_BROWSER_CONTEXT_ID
+      && Boolean(this.context.browserManager);
+  }
+
+  private pruneExpiredLeases(now = Date.now()): void {
+    for (const [contextId, lease] of this.contextLeases.entries()) {
+      if (lease.expiresAt <= now) {
+        this.contextLeases.delete(contextId);
+      }
+    }
+  }
+
+  private shouldRequireContextLease(method: string, pathname: string, contextId: string): boolean {
+    if (normalizeBrowserContextId(contextId) === DEFAULT_BROWSER_CONTEXT_ID) {
+      return false;
+    }
+    if (method !== 'POST') {
+      return false;
+    }
+    if (pathname === '/v1/context/release') {
+      return false;
+    }
+    return pathname.startsWith('/v1/pages/') || pathname.startsWith('/v1/site-pages/');
+  }
+
+  private acquireContextLease(
+    contextId: string,
+    ownerId: string,
+    pathname: string,
+  ): { ok: true; lease: BrowserContextLease } | { ok: false; lease: BrowserContextLease } {
+    const normalized = normalizeBrowserContextId(contextId);
+    const normalizedOwner = ownerId.trim() || 'anonymous';
+    const now = Date.now();
+    this.pruneExpiredLeases(now);
+
+    const existing = this.contextLeases.get(normalized);
+    if (existing && existing.ownerId !== normalizedOwner && existing.expiresAt > now) {
+      return { ok: false, lease: existing };
+    }
+
+    const lease: BrowserContextLease = existing && existing.ownerId === normalizedOwner
+      ? {
+        ...existing,
+        updatedAt: now,
+        expiresAt: now + BROWSER_CONTEXT_LEASE_MS,
+        lastPath: pathname,
+      }
+      : {
+        contextId: normalized,
+        ownerId: normalizedOwner,
+        startedAt: now,
+        updatedAt: now,
+        expiresAt: now + BROWSER_CONTEXT_LEASE_MS,
+        lastPath: pathname,
+      };
+    this.contextLeases.set(normalized, lease);
+    return { ok: true, lease };
+  }
+
+  private async acquireContextLeaseWithWait(
+    contextId: string,
+    ownerId: string,
+    pathname: string,
+  ): Promise<BrowserContextLeaseAcquireResult> {
+    const startedAt = Date.now();
+    let leaseResult = this.acquireContextLease(contextId, ownerId, pathname);
+    if (leaseResult.ok) {
+      return { ...leaseResult, waitedMs: 0 };
+    }
+
+    const deadline = startedAt + BROWSER_CONTEXT_LEASE_WAIT_MS;
+    while (Date.now() < deadline) {
+      const now = Date.now();
+      const remainingWaitMs = deadline - now;
+      const remainingLeaseMs = Math.max(0, leaseResult.lease.expiresAt - now);
+      await sleep(Math.max(1, Math.min(BROWSER_CONTEXT_LEASE_POLL_MS, remainingWaitMs, remainingLeaseMs || remainingWaitMs)));
+
+      leaseResult = this.acquireContextLease(contextId, ownerId, pathname);
+      if (leaseResult.ok) {
+        return {
+          ...leaseResult,
+          waitedMs: Date.now() - startedAt,
+        };
+      }
+    }
+
+    const now = Date.now();
+    return {
+      ...leaseResult,
+      waitedMs: now - startedAt,
+      retryAfterMs: calculateBrowserContextRetryAfterMs({
+        now,
+        expiresAt: leaseResult.lease.expiresAt,
+      }),
+    };
+  }
+
+  private releaseContextLease(contextId: string, ownerId: string): boolean {
+    const normalized = normalizeBrowserContextId(contextId);
+    const existing = this.contextLeases.get(normalized);
+    if (!existing) {
+      return false;
+    }
+    if (existing.ownerId !== (ownerId.trim() || 'anonymous')) {
+      return false;
+    }
+    return this.contextLeases.delete(normalized);
+  }
+
+  private forceReleaseContextLease(contextId: string): BrowserContextLease | null {
+    const normalized = normalizeBrowserContextId(contextId);
+    const existing = this.contextLeases.get(normalized) ?? null;
+    if (existing) {
+      this.contextLeases.delete(normalized);
+    }
+    return existing;
+  }
+
+  private getContextLeaseStatus(contextId: string): BrowserContextLease | null {
+    const normalized = normalizeBrowserContextId(contextId);
+    this.pruneExpiredLeases();
+    return this.contextLeases.get(normalized) ?? null;
+  }
+
   private async ensureSiteTab(
-    manager: BrowserManager,
+    manager: BrowserAutomationSession,
+    contextId: string,
     domain: string,
     initialUrl?: string,
   ): Promise<string> {
+    const cacheKey = `${normalizeBrowserContextId(contextId)}:${domain}`;
     const landingUrl = initialUrl || `https://${domain.startsWith('www.') ? domain : 'www.' + domain}/`;
+    await manager.refreshTabs?.();
     const tabs = manager.getTabs();
 
-    const existing = this.siteTabs.get(domain);
+    const existing = this.siteTabs.get(cacheKey);
     if (existing && tabs.some((tab) => tab.id === existing)) {
       const currentUrl = tabs.find((tab) => tab.id === existing)?.url || '';
       let currentHost = '';
       try { currentHost = new URL(currentUrl).hostname; } catch { /* ignore */ }
       if (currentHost && hostnameMatchesDomain(currentHost, domain)) {
-        manager.markTabBackground(existing, true);
-        manager.ensureViewRenderable(existing);
+        manager.markTabBackground?.(existing, true);
+        manager.ensureViewRenderable?.(existing);
         if (!manager.isCDPConnected(existing)) await manager.connectCDP(existing);
         return existing;
       }
@@ -455,18 +660,18 @@ export class BrowserBridgeServer {
       try {
         await manager.navigate(existing, { url: landingUrl, waitUntil: 'domcontentloaded' });
       } catch { /* fall through to waitForPageStable */ }
-      manager.markTabBackground(existing, true);
+      manager.markTabBackground?.(existing, true);
       await waitForPageStable(manager, existing, { timeoutMs: 12_000, background: true });
       return existing;
     }
 
     // Create a fresh background tab for this domain.
     const pageId = await manager.createTab(landingUrl, { background: true });
-    manager.ensureViewRenderable(pageId);
+    manager.ensureViewRenderable?.(pageId);
     try {
       await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: true });
     } catch { /* ignore — subsequent evaluate may still work */ }
-    this.siteTabs.set(domain, pageId);
+    this.siteTabs.set(cacheKey, pageId);
     return pageId;
   }
 
@@ -520,9 +725,16 @@ export class BrowserBridgeServer {
     const rawUrl = req.url || '/';
     const requestUrl = new URL(rawUrl, 'http://127.0.0.1');
     const pathname = requestUrl.pathname;
+    const browserContextId = resolveRequestBrowserContextId(req, requestUrl);
+    const browserOwnerId = resolveRequestBrowserOwnerId(req, requestUrl);
 
     if (pathname === '/health') {
-      sendJson(res, 200, { ok: true, service: 'browser-bridge', ready: Boolean(this.context.browserManager) });
+      sendJson(res, 200, {
+        ok: true,
+        service: 'browser-bridge',
+        ready: this.isReady(browserContextId),
+        browserContextId,
+      });
       return;
     }
 
@@ -532,13 +744,69 @@ export class BrowserBridgeServer {
       return;
     }
 
-    const manager = this.context.browserManager;
-    if (!manager) {
-      sendJson(res, 503, { ok: false, error: 'BROWSER_MANAGER_UNAVAILABLE' });
+    if (method === 'POST' && pathname === '/v1/context/release') {
+      const released = this.releaseContextLease(browserContextId, browserOwnerId);
+      sendJson(res, 200, { ok: true, browserContextId, released });
       return;
     }
 
+    if (method === 'POST' && pathname === '/v1/context/force-release') {
+      const releasedLease = this.forceReleaseContextLease(browserContextId);
+      sendJson(res, 200, {
+        ok: true,
+        browserContextId,
+        released: Boolean(releasedLease),
+        ...(releasedLease ? { previousOwnerId: releasedLease.ownerId } : {}),
+      });
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/v1/context/status') {
+      const lease = this.getContextLeaseStatus(browserContextId);
+      sendJson(res, 200, {
+        ok: true,
+        browserContextId,
+        occupied: Boolean(lease),
+        ...(lease ? {
+          ownerId: lease.ownerId,
+          startedAt: new Date(lease.startedAt).toISOString(),
+          updatedAt: new Date(lease.updatedAt).toISOString(),
+          expiresAt: new Date(lease.expiresAt).toISOString(),
+          lastPath: lease.lastPath,
+        } : {}),
+      });
+      return;
+    }
+
+    const manager = this.getSession(browserContextId);
+    if (!manager) {
+      sendJson(res, 503, { ok: false, error: 'BROWSER_CONTEXT_UNAVAILABLE', browserContextId });
+      return;
+    }
+
+    if (this.shouldRequireContextLease(method, pathname, browserContextId)) {
+      const leaseResult = await this.acquireContextLeaseWithWait(browserContextId, browserOwnerId, pathname);
+      if (!leaseResult.ok) {
+        sendJson(res, 409, {
+          ok: false,
+          error: 'BROWSER_CONTEXT_IN_USE',
+          message: leaseResult.waitedMs > 0
+            ? `该浏览器正在被另一个会话使用，已等待 ${Math.ceil(leaseResult.waitedMs / 1000)} 秒后仍未释放，请稍后再试或切换到其他浏览器。`
+            : '该浏览器正在被另一个会话使用，请稍后再试或切换到其他浏览器。',
+          browserContextId,
+          ownerId: leaseResult.lease.ownerId,
+          updatedAt: new Date(leaseResult.lease.updatedAt).toISOString(),
+          expiresAt: new Date(leaseResult.lease.expiresAt).toISOString(),
+          lastPath: leaseResult.lease.lastPath,
+          waitedMs: leaseResult.waitedMs,
+          retryAfterMs: leaseResult.retryAfterMs,
+        });
+        return;
+      }
+    }
+
     if (method === 'GET' && pathname === '/v1/pages') {
+      await manager.refreshTabs?.();
       const pages = manager.getTabs().map((tab) => ({
         pageId: tab.id,
         url: tab.url,
@@ -547,15 +815,17 @@ export class BrowserBridgeServer {
         isLoading: tab.isLoading,
         isIncognito: tab.isIncognito || false,
       }));
-      sendJson(res, 200, { ok: true, pages, activePageId: manager.getActiveTabId() });
+      sendJson(res, 200, { ok: true, browserContextId, pages, activePageId: manager.getActiveTabId() });
       return;
     }
 
     if (method === 'GET' && pathname === '/v1/pages/current') {
+      await manager.refreshTabs?.();
       const activePageId = manager.getActiveTabId();
       const current = manager.getTabs().find((tab) => tab.id === activePageId) || null;
       sendJson(res, 200, {
         ok: true,
+        browserContextId,
         activePageId,
         page: current ? {
           pageId: current.id,
@@ -569,6 +839,10 @@ export class BrowserBridgeServer {
     }
 
     if (method === 'GET' && pathname === '/v1/cookies') {
+      if (!manager.getCookies) {
+        sendJson(res, 501, { ok: false, error: 'BROWSER_CONTEXT_COOKIES_UNSUPPORTED', browserContextId });
+        return;
+      }
       const domain = requestUrl.searchParams.get('domain')?.trim() || undefined;
       const url = requestUrl.searchParams.get('url')?.trim() || undefined;
       const name = requestUrl.searchParams.get('name')?.trim() || undefined;
@@ -579,6 +853,7 @@ export class BrowserBridgeServer {
       });
       sendJson(res, 200, {
         ok: true,
+        browserContextId,
         cookies: cookies.map((cookie) => ({
           name: cookie.name,
           domain: cookie.domain,
@@ -593,6 +868,10 @@ export class BrowserBridgeServer {
     }
 
     if (method === 'POST' && pathname === '/v1/cookies/import') {
+      if (!manager.setCookie) {
+        sendJson(res, 501, { ok: false, error: 'BROWSER_CONTEXT_COOKIES_UNSUPPORTED', browserContextId });
+        return;
+      }
       const body = (await parseJsonBody(req)) as {
         cookies?: Array<{
           url?: string;
@@ -607,7 +886,7 @@ export class BrowserBridgeServer {
       };
       const cookies = Array.isArray(body.cookies) ? body.cookies : [];
       if (cookies.length === 0) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_COOKIES' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_COOKIES', browserContextId });
         return;
       }
 
@@ -632,6 +911,7 @@ export class BrowserBridgeServer {
 
       sendJson(res, 200, {
         ok: true,
+        browserContextId,
         importedCount,
       });
       return;
@@ -652,7 +932,7 @@ export class BrowserBridgeServer {
           });
           if (body?.background) {
             // Set offscreen bounds so Chromium renders the page content
-            manager.ensureViewRenderable(createdPageId);
+            manager.ensureViewRenderable?.(createdPageId);
           }
           if (!body?.background) {
             await manager.switchTab(createdPageId);
@@ -684,14 +964,14 @@ export class BrowserBridgeServer {
           return createdPageId;
         },
       );
-      sendJson(res, 200, { ok: true, pageId });
+      sendJson(res, 200, { ok: true, browserContextId, pageId });
       return;
     }
 
     if (method === 'POST' && pathname === '/v1/pages/select') {
       const body = (await parseJsonBody(req)) as { pageId?: string; background?: boolean };
       if (!body?.pageId) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_PAGE_ID' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_PAGE_ID', browserContextId });
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
@@ -725,19 +1005,19 @@ export class BrowserBridgeServer {
           }
         }
       }
-      sendJson(res, 200, { ok: true, pageId });
+      sendJson(res, 200, { ok: true, browserContextId, pageId });
       return;
     }
 
     if (method === 'POST' && pathname === '/v1/pages/close') {
       const body = (await parseJsonBody(req)) as { pageId?: string };
       if (!body?.pageId) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_PAGE_ID' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_PAGE_ID', browserContextId });
         return;
       }
       const exists = manager.getTabs().some((tab) => tab.id === body.pageId);
       if (!exists) {
-        sendJson(res, 200, { ok: true, closed: false, pageId: body.pageId });
+        sendJson(res, 200, { ok: true, browserContextId, closed: false, pageId: body.pageId });
         return;
       }
       await withAiActivity(
@@ -751,7 +1031,7 @@ export class BrowserBridgeServer {
           await manager.closeTab(body.pageId!);
         },
       );
-      sendJson(res, 200, { ok: true, closed: true, pageId: body.pageId });
+      sendJson(res, 200, { ok: true, browserContextId, closed: true, pageId: body.pageId });
       return;
     }
 
@@ -765,14 +1045,15 @@ export class BrowserBridgeServer {
       const domain = normalizeDomain(body?.domain || '');
       const script = typeof body?.script === 'string' ? body.script : '';
       if (!domain || !script) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_DOMAIN_OR_SCRIPT' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_DOMAIN_OR_SCRIPT', browserContextId });
         return;
       }
 
       // Self-heal if the recorded pageId has disappeared.
-      const stored = this.siteTabs.get(domain);
+      const cacheKey = `${browserContextId}:${domain}`;
+      const stored = this.siteTabs.get(cacheKey);
       if (stored && !manager.getTabs().some((tab) => tab.id === stored)) {
-        this.siteTabs.delete(domain);
+        this.siteTabs.delete(cacheKey);
       }
 
       const pageId = await withAiActivity(
@@ -781,7 +1062,7 @@ export class BrowserBridgeServer {
           action: 'AI prepared a persistent site tab',
           details: domain,
         },
-        () => this.ensureSiteTab(manager, domain, body?.initialUrl),
+        () => this.ensureSiteTab(manager, browserContextId, domain, body?.initialUrl),
       );
 
       try {
@@ -789,7 +1070,7 @@ export class BrowserBridgeServer {
           let targetHost = '';
           try { targetHost = new URL(body.navigateTo).hostname; } catch { /* ignore */ }
           if (!targetHost || !hostnameMatchesDomain(targetHost, domain)) {
-            sendJson(res, 400, { ok: false, error: 'NAVIGATE_TO_DOMAIN_MISMATCH' });
+            sendJson(res, 400, { ok: false, error: 'NAVIGATE_TO_DOMAIN_MISMATCH', browserContextId });
             return;
           }
           const current = manager.getTabs().find((tab) => tab.id === pageId)?.url || '';
@@ -804,9 +1085,9 @@ export class BrowserBridgeServer {
         await ensureTabReady(manager, pageId, { background: true });
         const value = await evalInTab(manager, pageId, script, true);
         const currentUrl = manager.getTabs().find((tab) => tab.id === pageId)?.url || '';
-        sendJson(res, 200, { ok: true, pageId, value, url: currentUrl });
+        sendJson(res, 200, { ok: true, browserContextId, pageId, value, url: currentUrl });
       } catch (error) {
-        sendJson(res, 500, { ok: false, error: 'SITE_EVAL_FAILED', message: getErrorMessage(error) });
+        sendJson(res, 500, { ok: false, error: 'SITE_EVAL_FAILED', browserContextId, message: getErrorMessage(error) });
       }
       return;
     }
@@ -822,7 +1103,7 @@ export class BrowserBridgeServer {
       const navType = body?.type || 'url';
       const bg = body?.background === true;
       if (navType === 'url' && !body?.url) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_URL' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_URL', browserContextId });
         return;
       }
       await withAiActivity(
@@ -887,7 +1168,7 @@ export class BrowserBridgeServer {
         },
       );
 
-      sendJson(res, 200, { ok: true, pageId });
+      sendJson(res, 200, { ok: true, browserContextId, pageId });
       return;
     }
 
@@ -918,6 +1199,7 @@ export class BrowserBridgeServer {
       );
       sendJson(res, 200, {
         ok: true,
+        browserContextId,
         pageId,
         url: result?.url || '',
         title: result?.title || '',
@@ -929,7 +1211,7 @@ export class BrowserBridgeServer {
     if (method === 'POST' && pathname === '/v1/pages/click') {
       const body = (await parseJsonBody(req)) as { pageId?: string; uid?: string; background?: boolean };
       if (!body?.uid) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_UID' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_UID', browserContextId });
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
@@ -946,14 +1228,14 @@ export class BrowserBridgeServer {
           return evalInTab(manager, pageId, clickByUidScript(body.uid!), true);
         },
       );
-      sendJson(res, 200, { ok: true, pageId, result });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, result });
       return;
     }
 
     if (method === 'POST' && pathname === '/v1/pages/fill') {
       const body = (await parseJsonBody(req)) as { pageId?: string; uid?: string; value?: string; background?: boolean };
       if (!body?.uid) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_UID' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_UID', browserContextId });
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
@@ -970,7 +1252,7 @@ export class BrowserBridgeServer {
           return evalInTab(manager, pageId, fillByUidScript(body.uid!, body.value || ''), true);
         },
       );
-      sendJson(res, 200, { ok: true, pageId, result });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, result });
       return;
     }
 
@@ -990,7 +1272,7 @@ export class BrowserBridgeServer {
           return evalInTab(manager, pageId, typeTextScript(body?.text || '', body?.submitKey), true);
         },
       );
-      sendJson(res, 200, { ok: true, pageId, result });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, result });
       return;
     }
 
@@ -1010,7 +1292,7 @@ export class BrowserBridgeServer {
           return evalInTab(manager, pageId, pressKeyScript(body?.key || 'Enter'), true);
         },
       );
-      sendJson(res, 200, { ok: true, pageId, result });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, result });
       return;
     }
 
@@ -1018,7 +1300,7 @@ export class BrowserBridgeServer {
       const body = (await parseJsonBody(req)) as { pageId?: string; text?: string[]; timeoutMs?: number; background?: boolean };
       const targets = Array.isArray(body?.text) ? body.text.filter((t) => typeof t === 'string' && t.trim()) : [];
       if (targets.length === 0) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_WAIT_TEXT' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_WAIT_TEXT', browserContextId });
         return;
       }
       const pageId = await resolveTargetTabId(manager, body?.pageId);
@@ -1053,10 +1335,10 @@ export class BrowserBridgeServer {
       });
 
       if (matchedText !== null) {
-        sendJson(res, 200, { ok: true, pageId, found: true, text: matchedText });
+        sendJson(res, 200, { ok: true, browserContextId, pageId, found: true, text: matchedText });
         return;
       }
-      sendJson(res, 408, { ok: false, error: 'WAIT_FOR_TIMEOUT' });
+      sendJson(res, 408, { ok: false, error: 'WAIT_FOR_TIMEOUT', browserContextId });
       return;
     }
 
@@ -1064,7 +1346,7 @@ export class BrowserBridgeServer {
       const body = (await parseJsonBody(req)) as { pageId?: string; expression?: string; background?: boolean };
       const expression = typeof body?.expression === 'string' ? body.expression : '';
       if (!expression) {
-        sendJson(res, 400, { ok: false, error: 'MISSING_EXPRESSION' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_EXPRESSION', browserContextId });
         return;
       }
       const pageId = await resolveTargetTabId(manager, body.pageId);
@@ -1080,7 +1362,7 @@ export class BrowserBridgeServer {
           return evalInTab(manager, pageId, expression, true);
         },
       );
-      sendJson(res, 200, { ok: true, pageId, value });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, value });
       return;
     }
 
@@ -1118,10 +1400,10 @@ export class BrowserBridgeServer {
       });
 
       if (!targetPath) {
-        sendJson(res, 500, { ok: false, error: 'CAPTURE_SCREENSHOT_FAILED' });
+        sendJson(res, 500, { ok: false, error: 'CAPTURE_SCREENSHOT_FAILED', browserContextId });
         return;
       }
-      sendJson(res, 200, { ok: true, pageId, filePath: targetPath });
+      sendJson(res, 200, { ok: true, browserContextId, pageId, filePath: targetPath });
       return;
     }
 
@@ -1133,7 +1415,7 @@ export class BrowserBridgeServer {
         maxBytes?: number;
       };
       if (!body?.url || typeof body.url !== 'string') {
-        sendJson(res, 400, { ok: false, error: 'MISSING_URL' });
+        sendJson(res, 400, { ok: false, error: 'MISSING_URL', browserContextId });
         return;
       }
       const targetUrl = body.url;
@@ -1161,6 +1443,7 @@ export class BrowserBridgeServer {
 
         sendJson(res, 200, {
           ok: true,
+          browserContextId,
           url: targetUrl,
           status: response.status,
           contentType,
@@ -1172,12 +1455,13 @@ export class BrowserBridgeServer {
         sendJson(res, 502, {
           ok: false,
           error: 'FETCH_FAILED',
+          browserContextId,
           message: error instanceof Error ? error.message : String(error),
         });
       }
       return;
     }
 
-    sendJson(res, 404, { ok: false, error: 'NOT_FOUND' });
+    sendJson(res, 404, { ok: false, error: 'NOT_FOUND', browserContextId });
   }
 }

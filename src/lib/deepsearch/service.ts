@@ -61,6 +61,12 @@ import type {
   DeepSearchSiteUpsertInput,
 } from '@/types';
 
+const DEEPSEARCH_BROWSER_CONTEXT_ID = 'embedded:default';
+
+function resolveDeepSearchBrowserBridgeRuntimeConfig() {
+  return resolveBrowserBridgeRuntimeConfig({ browserContextId: DEEPSEARCH_BROWSER_CONTEXT_ID });
+}
+
 interface BrowserBridgePagesResponse {
   ok: true;
   pages?: BrowserBridgePagePayload[];
@@ -402,7 +408,7 @@ async function probeDeepSearchSiteLoginState(
     throw new Error(`Unknown DeepSearch site: ${siteKey}`);
   }
 
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveDeepSearchBrowserBridgeRuntimeConfig();
   if (!config) {
     const state = upsertDeepSearchSiteState({
       siteKey,
@@ -950,7 +956,7 @@ async function maybeExecuteDeepSearchRun(
     return run;
   }
 
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveDeepSearchBrowserBridgeRuntimeConfig();
   if (!config) {
     return updateDeepSearchRunExecution({
       id: run.id,
@@ -1043,7 +1049,7 @@ async function maybeExecuteDeepSearchRun(
 export async function getDeepSearchBrowserBindingPreview(
   pageMode: DeepSearchPageMode,
 ): Promise<DeepSearchBrowserBindingPreview> {
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveDeepSearchBrowserBridgeRuntimeConfig();
   if (!config) {
     return {
       pageMode,
@@ -1190,7 +1196,7 @@ export async function openDeepSearchSiteLoginView(siteKey: string) {
     throw new Error(`Unknown DeepSearch site: ${siteKey}`);
   }
 
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveDeepSearchBrowserBridgeRuntimeConfig();
   if (!config) {
     throw new Error('Browser bridge runtime config is missing.');
   }
@@ -1426,7 +1432,7 @@ export async function createDeepSearchRunEntry(input: CreateDeepSearchRunInput):
     return run;
   }
 
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveDeepSearchBrowserBridgeRuntimeConfig();
   if (!config) {
     run = createDeepSearchRun(input, {
       bindingNote: 'Browser bridge runtime config is missing, so no active page was captured for takeover at creation time.',

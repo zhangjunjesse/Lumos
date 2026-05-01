@@ -133,6 +133,7 @@ const zh: Record<TranslationKey, string> = {
   'settings.general': '通用',
   'settings.knowledge': '知识库',
   'settings.providers': '服务商',
+  'settings.browsers': '浏览器',
   'settings.claudeCli': 'Claude 运行环境',
   'settings.codepilot': 'Lumos',
   'settings.version': '版本 {version}',

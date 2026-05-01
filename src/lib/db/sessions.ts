@@ -109,6 +109,12 @@ export function updateSessionProviderId(id: string, providerId: string): void {
   db.prepare('UPDATE chat_sessions SET provider_id = ? WHERE id = ?').run(providerId, id);
 }
 
+export function updateSessionBrowserContext(id: string, browserContextId: string): void {
+  const db = getDb();
+  const normalized = browserContextId.trim() || 'embedded:default';
+  db.prepare('UPDATE chat_sessions SET browser_context_id = ? WHERE id = ?').run(normalized, id);
+}
+
 export function updateSessionSystemPrompt(id: string, systemPrompt: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET system_prompt = ? WHERE id = ?').run(systemPrompt, id);

@@ -494,6 +494,7 @@ export class StageWorker {
     const lumosMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: getStageExecutionCwd(payload),
       sessionId: payload.sessionId,
+      browserContextId: payload.browserContextId,
       browserBackground: true,
     })
     const stdioMcpServers = lumosMcpServers ? toSdkMcpConfig(lumosMcpServers) : undefined
@@ -821,6 +822,7 @@ export class StageWorker {
       `Stage: ${payload.stage.title}`,
       `Attempt: ${payload.attempt}`,
       `Role: ${payload.agent.roleName} (${payload.agent.agentType})`,
+      `Browser Context: ${payload.browserContextId || 'embedded:default'}`,
     ]
 
     const context = [

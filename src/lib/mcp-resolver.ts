@@ -24,7 +24,9 @@ export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
   sessionId?: string;
   /** Browser bridge info from HTTP request headers (chat route only). */
-  browserBridgeOverride?: { url?: string; token?: string };
+  browserBridgeOverride?: { url?: string; token?: string; browserContextId?: string };
+  /** Browser context routed through the bridge. Defaults to the embedded browser. */
+  browserContextId?: string;
   /** MCP names to skip (e.g. chat route skips 'task-management'). */
   skipNames?: Set<string>;
   /** When true, browser MCP operates in background mode (no UI tab switching). */
@@ -59,6 +61,7 @@ export function resolveEnabledMcpServers(
     sessionId: options.sessionId,
     dataDir,
     browserBridgeOverride: options.browserBridgeOverride,
+    browserContextId: options.browserContextId,
     browserBackground: options.browserBackground,
   };
 
@@ -132,6 +135,7 @@ export function toSdkMcpConfig(
 ): Record<string, McpServerConfig> {
   const result: Record<string, McpServerConfig> = {};
   for (const [name, config] of Object.entries(servers)) {
+    const sdkName = toSdkMcpServerName(name);
     const transport = config.type || 'stdio';
     switch (transport) {
       case 'sse': {
@@ -141,7 +145,7 @@ export function toSdkMcpConfig(
         }
         const sse: McpSSEServerConfig = { type: 'sse', url: config.url };
         if (config.headers && Object.keys(config.headers).length > 0) sse.headers = config.headers;
-        result[name] = sse;
+        result[sdkName] = sse;
         break;
       }
       case 'http': {
@@ -151,7 +155,7 @@ export function toSdkMcpConfig(
         }
         const http: McpHttpServerConfig = { type: 'http', url: config.url };
         if (config.headers && Object.keys(config.headers).length > 0) http.headers = config.headers;
-        result[name] = http;
+        result[sdkName] = http;
         break;
       }
       case 'stdio':
@@ -161,7 +165,7 @@ export function toSdkMcpConfig(
           continue;
         }
         const stdio: McpStdioServerConfig = { command: config.command, args: config.args, env: config.env };
-        result[name] = stdio;
+        result[sdkName] = stdio;
         break;
       }
     }
@@ -172,6 +176,13 @@ export function toSdkMcpConfig(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+function toSdkMcpServerName(name: string): string {
+  if (name === 'chrome-devtools') {
+    return 'chrome_devtools';
+  }
+  return name;
+}
 
 function resolveRuntimePath(): string {
   if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {

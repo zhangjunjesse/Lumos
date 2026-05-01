@@ -20,6 +20,11 @@ import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
+import { Button } from '@/components/ui/button';
+import {
+  parseBrowserContextConflict,
+  type BrowserContextConflictDetails,
+} from '@/lib/browser-provider/occupancy';
 import { useStreamingStore } from '@/stores/streaming-store';
 import { useMessagesStore } from '@/stores/messages-store';
 import {
@@ -50,6 +55,7 @@ interface ChatViewProps {
   resolvedModelName?: string;
   initialKnowledgeEnabled?: boolean;
   providerId?: string;
+  browserContextId?: string;
   workingDirectoryOverride?: string;
   compactInputOnly?: boolean;
   onInputFocus?: () => void;
@@ -57,6 +63,7 @@ interface ChatViewProps {
   hideEmptyState?: boolean;
   onRequestedModelChange?: (model: string) => void;
   onResolvedModelChange?: (model: string) => void;
+  onBrowserContextChange?: (contextId: string) => void;
 }
 
 interface MemoryIdleTriggerConfig {
@@ -64,13 +71,21 @@ interface MemoryIdleTriggerConfig {
   timeoutMs: number;
 }
 
+interface BrowserContextConflictState extends BrowserContextConflictDetails {
+  retryContent?: string;
+  retryFiles?: FileAttachment[];
+  retrySystemPromptAppend?: string;
+  retryDisplayOverride?: string;
+  retryKnowledgeOptions?: ChatKnowledgeOptions;
+}
+
 const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
 const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
 const EMPTY_MESSAGES: Message[] = [];
 
-async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
+async function getBrowserBridgeHeaders(browserContextId?: string): Promise<Record<string, string>> {
   if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
-    return {};
+    return browserContextId ? { 'x-lumos-browser-context-id': browserContextId } : {};
   }
 
   try {
@@ -80,9 +95,10 @@ async function getBrowserBridgeHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {};
     if (bridge.url) headers['x-lumos-browser-bridge-url'] = bridge.url;
     if (bridge.token) headers['x-lumos-browser-bridge-token'] = bridge.token;
+    if (browserContextId) headers['x-lumos-browser-context-id'] = browserContextId;
     return headers;
   } catch {
-    return {};
+    return browserContextId ? { 'x-lumos-browser-context-id': browserContextId } : {};
   }
 }
 
@@ -115,6 +131,7 @@ export function ChatView({
   resolvedModelName,
   initialKnowledgeEnabled = false,
   providerId,
+  browserContextId = 'embedded:default',
   workingDirectoryOverride,
   compactInputOnly = false,
   onInputFocus,
@@ -122,6 +139,7 @@ export function ChatView({
   hideEmptyState = false,
   onRequestedModelChange,
   onResolvedModelChange,
+  onBrowserContextChange,
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
@@ -176,6 +194,8 @@ export function ChatView({
     enabled: true,
     timeoutMs: DEFAULT_MEMORY_IDLE_TIMEOUT_MS,
   });
+  const [browserConflict, setBrowserConflict] = useState<BrowserContextConflictState | null>(null);
+  const [browserConflictAction, setBrowserConflictAction] = useState<'release' | 'retry' | 'embedded' | null>(null);
   const mode = 'code';
 
   const messagesRef = useRef<Message[]>(sourceMessages);
@@ -372,6 +392,104 @@ export function ChatView({
       }
     }
   }, [currentProviderId, isStreaming, onRequestedModelChange, sessionId]);
+
+  const recordBrowserConflict = useCallback((
+    raw: unknown,
+    retry: Omit<BrowserContextConflictState, keyof BrowserContextConflictDetails>,
+  ) => {
+    const conflict = parseBrowserContextConflict(raw, browserContextId);
+    if (!conflict || conflict.contextId === 'embedded:default') {
+      return;
+    }
+    setBrowserConflict({
+      ...conflict,
+      ...retry,
+    });
+  }, [browserContextId]);
+
+  useEffect(() => {
+    setBrowserConflict((current) => {
+      if (!current || current.contextId === browserContextId) {
+        return current;
+      }
+      return null;
+    });
+  }, [browserContextId]);
+
+  const releaseBrowserConflict = useCallback(async (conflict: BrowserContextConflictState) => {
+    const response = await fetch('/api/browser-providers/runtime-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context_id: conflict.contextId }),
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) {
+      throw new Error(payload.error || '释放浏览器占用失败');
+    }
+  }, []);
+
+  const handleReleaseBrowserConflict = useCallback(async () => {
+    if (!browserConflict || browserConflictAction) return;
+    setBrowserConflictAction('release');
+    setSwitchError(null);
+    try {
+      await releaseBrowserConflict(browserConflict);
+      setBrowserConflict(null);
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '释放浏览器占用失败');
+    } finally {
+      setBrowserConflictAction(null);
+    }
+  }, [browserConflict, browserConflictAction, releaseBrowserConflict]);
+
+  const handleReleaseAndRetryBrowserConflict = useCallback(async () => {
+    if (!browserConflict || browserConflictAction || isStreaming) return;
+    setBrowserConflictAction('retry');
+    setSwitchError(null);
+    try {
+      await releaseBrowserConflict(browserConflict);
+      const retryContent = browserConflict.retryContent;
+      setBrowserConflict(null);
+      if (retryContent) {
+        window.setTimeout(() => {
+          sendMessageRef.current?.(
+            retryContent,
+            browserConflict.retryFiles,
+            browserConflict.retrySystemPromptAppend,
+            browserConflict.retryDisplayOverride,
+            browserConflict.retryKnowledgeOptions,
+          );
+        }, 100);
+      }
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '释放浏览器占用失败');
+    } finally {
+      setBrowserConflictAction(null);
+    }
+  }, [browserConflict, browserConflictAction, isStreaming, releaseBrowserConflict]);
+
+  const handleSwitchBrowserConflictToEmbedded = useCallback(async () => {
+    if (browserConflictAction || isStreaming) return;
+    setBrowserConflictAction('embedded');
+    setSwitchError(null);
+    try {
+      const response = await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ browser_context_id: 'embedded:default' }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || '切换到内置浏览器失败');
+      }
+      onBrowserContextChange?.('embedded:default');
+      setBrowserConflict(null);
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '切换到内置浏览器失败');
+    } finally {
+      setBrowserConflictAction(null);
+    }
+  }, [browserConflictAction, isStreaming, onBrowserContextChange, sessionId]);
 
   // Cleanup on unmount - but don't abort streaming to allow background completion
   useEffect(() => {
@@ -671,8 +789,16 @@ export function ChatView({
     ) => {
       if (isStreaming) return;
       clearIdleMemoryTimer();
+      setBrowserConflict(null);
 
       const displayUserContent = displayOverride || content;
+      const conflictRetry = {
+        retryContent: content,
+        retryFiles: files,
+        retrySystemPromptAppend: systemPromptAppend,
+        retryDisplayOverride: displayOverride,
+        retryKnowledgeOptions: knowledgeOptions,
+      };
 
       let displayContent = displayUserContent;
       if (files && files.length > 0) {
@@ -739,7 +865,7 @@ export function ChatView({
       }
 
       try {
-        const bridgeHeaders = await getBrowserBridgeHeaders();
+        const bridgeHeaders = await getBrowserBridgeHeaders(browserContextId);
         const apiEndpoint = sessionId === 'capability-authoring' ? '/api/capabilities/chat' : '/api/chat';
 
         // 为 capability-authoring 构建消息历史
@@ -845,6 +971,7 @@ export function ChatView({
             markActive();
             setStatusText(undefined);
             setStreamingToolOutput('');
+            recordBrowserConflict(res.content, conflictRetry);
             setToolResults((prev) => {
               const next = [...prev, res];
               toolResultsRef.current = next;
@@ -1021,6 +1148,7 @@ export function ChatView({
         } else {
           shouldMarkStreamError = true;
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          recordBrowserConflict(errMsg, conflictRetry);
           const errorMessage: Message = {
             id: 'temp-error-' + Date.now(),
             session_id: sessionId,
@@ -1074,6 +1202,7 @@ export function ChatView({
     },
     [
       appendMessage,
+      browserContextId,
       clearIdleMemoryTimer,
       completeStreamingSession,
       currentModel,
@@ -1083,6 +1212,7 @@ export function ChatView({
       mode,
       onResolvedModelChange,
       pathname,
+      recordBrowserConflict,
       resetStreamingUi,
       scheduleIdleMemoryTrigger,
       refreshSessionMetadata,
@@ -1252,6 +1382,66 @@ export function ChatView({
       </div>
 
       <TaskStatusBar banner={taskBanner} />
+
+      {browserConflict ? (
+        <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-3">
+          <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">浏览器正在被占用</p>
+              <p className="mt-0.5 truncate text-xs text-amber-900/70 dark:text-amber-100/70">
+                {browserConflict.message}
+                {browserConflict.ownerId ? ` 来源: ${browserConflict.ownerId}` : ''}
+                {browserConflict.waitedMs !== undefined && !browserConflict.message.includes('已等待')
+                  ? ` · 已等待 ${Math.ceil(browserConflict.waitedMs / 1000)} 秒`
+                  : ''}
+                {browserConflict.retryAfterMs !== undefined && browserConflict.retryAfterMs > 0
+                  ? ` · 建议 ${Math.ceil(browserConflict.retryAfterMs / 1000)} 秒后重试`
+                  : ''}
+                {browserConflict.expiresAt ? ` · 自动过期 ${new Date(browserConflict.expiresAt).toLocaleTimeString()}` : ''}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleReleaseBrowserConflict}
+                disabled={Boolean(browserConflictAction)}
+              >
+                {browserConflictAction === 'release' ? '释放中' : '释放占用'}
+              </Button>
+              {browserConflict.retryContent ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleReleaseAndRetryBrowserConflict}
+                  disabled={Boolean(browserConflictAction) || isStreaming}
+                >
+                  {browserConflictAction === 'retry' ? '重试中' : '释放并重试'}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleSwitchBrowserConflictToEmbedded}
+                disabled={Boolean(browserConflictAction) || isStreaming}
+              >
+                {browserConflictAction === 'embedded' ? '切换中' : '切回内置'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setBrowserConflict(null)}
+                disabled={Boolean(browserConflictAction)}
+              >
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <MessageInput
         onSend={sendMessage}

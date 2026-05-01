@@ -8,12 +8,23 @@ const pkg = require("./package.json");
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const customDistDir = process.env.LUMOS_NEXT_DIST_DIR?.trim();
 
+function resolveEdition(): 'open' | 'pro' {
+  const raw = (
+    process.env.NEXT_PUBLIC_LUMOS_EDITION
+    ?? process.env.LUMOS_EDITION
+    ?? 'open'
+  ).trim().toLowerCase();
+  return raw === 'pro' ? 'pro' : 'open';
+}
+
 function createConfig(phase: string): NextConfig {
   // Set real process.env so server-side code (connection.ts) can read it.
   // Next.js `env` config only does compile-time inlining for client bundles.
   if (phase === PHASE_PRODUCTION_BUILD) {
     process.env.LUMOS_BUILD_PHASE = '1';
   }
+  const edition = resolveEdition();
+  process.env.NEXT_PUBLIC_LUMOS_EDITION = edition;
 
   return {
     output: 'standalone',
@@ -48,6 +59,7 @@ function createConfig(phase: string): NextConfig {
     ],
     env: {
       NEXT_PUBLIC_APP_VERSION: pkg.version,
+      NEXT_PUBLIC_LUMOS_EDITION: edition,
     },
     webpack: (config, { isServer }) => {
       if (isServer) {

@@ -7,6 +7,7 @@ import {
   Settings2,
   BookOpen,
   UserGroup02Icon,
+  BrowserIcon,
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ import { ImageProviderSection } from "./ImageProviderSection";
 import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
+import { BrowserProviderSection } from "./BrowserProviderSection";
 import { SchedulingAgentSection } from "./SchedulingAgentSection";
 import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
@@ -26,7 +28,7 @@ import { CodifyAgentSection } from "./CodifyAgentSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
-type Section = "general" | "knowledge" | "providers" | "usage" | "workflow-agents";
+type Section = "general" | "knowledge" | "providers" | "browsers" | "usage" | "workflow-agents";
 
 interface SidebarItem {
   id: Section;
@@ -38,12 +40,16 @@ const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
+  { id: "browsers", label: "Browsers", icon: BrowserIcon },
   { id: "workflow-agents", label: "AI助手", icon: UserGroup02Icon },
   { id: "usage", label: "Usage", icon: Analytics },
 ];
 
 function getSectionFromHash(): Section {
   if (typeof window === "undefined") return "general";
+  if (window.location.pathname === "/settings/browsers") {
+    return "browsers";
+  }
   const hash = window.location.hash.replace("#", "");
   if (hash === "cli") {
     return "providers";
@@ -84,6 +90,7 @@ export function SettingsLayout() {
     'General': 'settings.general',
     'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
+    'Browsers': 'settings.browsers',
     'AI助手': 'settings.workflowAgents',
     'Usage': 'settings.usage',
   };
@@ -134,6 +141,7 @@ export function SettingsLayout() {
               allowMedia={customFlags.media}
             />
           )}
+          {activeSection === "browsers" && <BrowserProviderSection />}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
               <SchedulingAgentSection />

@@ -39,6 +39,7 @@ export interface WorkflowStepRuntimeContext {
   sessionId?: string;
   requestedModel?: string;
   workingDirectory?: string;
+  browserContextId?: string;
 }
 
 export interface WorkflowStepRuntimeCarrier {

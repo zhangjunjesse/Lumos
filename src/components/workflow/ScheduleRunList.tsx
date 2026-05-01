@@ -4,11 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { buildBrowserContextLabelMap, resolveBrowserContextLabel } from '@/lib/browser-provider/labels';
+import type { BrowserProvidersResponse } from '@/types';
 
 interface RunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
+  browserContextId: string;
   status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
@@ -76,7 +79,15 @@ const STATUS_CFG = {
   cancelled: { label: '已取消', cls: 'bg-muted text-muted-foreground border-border' },
 } as const;
 
-function RunItem({ run, scheduleId }: { run: RunRecord; scheduleId: string }) {
+function RunItem({
+  run,
+  scheduleId,
+  browserLabels,
+}: {
+  run: RunRecord;
+  scheduleId: string;
+  browserLabels: Record<string, string>;
+}) {
   const router = useRouter();
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,6 +126,9 @@ function RunItem({ run, scheduleId }: { run: RunRecord; scheduleId: string }) {
       <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors">
         <Badge className={`border text-[10px] px-1.5 py-0 h-4 shrink-0 ${cfg.cls}`}>{cfg.label}</Badge>
         <span className="text-xs flex-1 min-w-0">{formatTime(run.startedAt)}</span>
+        <span className="text-[10px] text-muted-foreground shrink-0">
+          浏览器: {resolveBrowserContextLabel(run.browserContextId, browserLabels)}
+        </span>
         <span className="text-[10px] text-muted-foreground shrink-0">{durationLabel(run.startedAt, run.completedAt)}</span>
         <button
           className="text-xs text-primary hover:text-primary/80 transition-colors shrink-0 px-2 py-0.5 rounded hover:bg-primary/5"
@@ -162,17 +176,25 @@ interface ScheduleRunListProps {
 export function ScheduleRunList({ scheduleId }: ScheduleRunListProps) {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [browserLabels, setBrowserLabels] = useState<Record<string, string>>({});
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/workflow/schedules/${scheduleId}/runs`, { cache: 'no-store' });
-      const data = await res.json() as { runs?: RunRecord[] };
+      const data = await fetch(`/api/workflow/schedules/${scheduleId}/runs`, { cache: 'no-store' })
+        .then(res => res.json() as Promise<{ runs?: RunRecord[] }>);
       setRuns(data.runs ?? []);
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [scheduleId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    fetch('/api/browser-providers', { cache: 'no-store' })
+      .then(res => res.ok ? res.json() as Promise<BrowserProvidersResponse> : null)
+      .then((data) => setBrowserLabels(buildBrowserContextLabelMap(data?.configs ?? [])))
+      .catch(() => setBrowserLabels(buildBrowserContextLabelMap([])));
+  }, []);
 
   const hasRunning = runs.some(r => r.status === 'running');
   useEffect(() => {
@@ -203,7 +225,14 @@ export function ScheduleRunList({ scheduleId }: ScheduleRunListProps) {
         </div>
       ) : (
         <div className="space-y-1.5">
-          {runs.map(run => <RunItem key={run.id} run={run} scheduleId={scheduleId} />)}
+          {runs.map(run => (
+            <RunItem
+              key={run.id}
+              run={run}
+              scheduleId={scheduleId}
+              browserLabels={browserLabels}
+            />
+          ))}
         </div>
       )}
     </div>

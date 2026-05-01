@@ -215,6 +215,7 @@ export function emitRuntimeHelpers(): string[] {
     "  if (typeof reserved.sessionId === 'string' && reserved.sessionId.trim()) runtimeContext.sessionId = reserved.sessionId;",
     "  if (typeof reserved.requestedModel === 'string' && reserved.requestedModel.trim()) runtimeContext.requestedModel = reserved.requestedModel;",
     "  if (typeof reserved.workingDirectory === 'string' && reserved.workingDirectory.trim()) runtimeContext.workingDirectory = reserved.workingDirectory;",
+    "  if (typeof reserved.browserContextId === 'string' && reserved.browserContextId.trim()) runtimeContext.browserContextId = reserved.browserContextId;",
     '  return runtimeContext;',
     '}',
     '',
