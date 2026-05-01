@@ -1,22 +1,8 @@
 import crypto from 'crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'path';
 import type { ChatSession, Message, SettingsMap } from '@/types';
 import { getDb } from './connection';
 import { taskEventBus } from '@/lib/task-event-bus';
-
-const IM_DEBUG_LOG = path.join(
-  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
-  'im-runtime.log',
-);
-function imRuntimeLog(line: string): void {
-  try {
-    fs.appendFileSync(IM_DEBUG_LOG, `[${new Date().toISOString()}] ${line}\n`);
-  } catch {
-    // ignore
-  }
-}
 
 // ==========================================
 // Session Operations
@@ -207,7 +193,6 @@ export function addMessage(
     timestamp: Date.now(),
     data: { reason: 'message-added', role },
   });
-  imRuntimeLog(`[db/addMessage] emit task:updated sessionId=${sessionId} role=${role} listenerCount=${taskEventBus.listenerCount('task-event')}`);
 
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message;
 }
