@@ -14,6 +14,9 @@
  * Adapter 实例化只需 plain config object，不依赖 Next.js DB（DB 读取在 bootstrap endpoint 完成）。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { BRIDGE_RUNTIME_TOKEN_HEADER } from '../../src/lib/bridge/runtime-config';
 import {
   WechatAdapter,
@@ -21,6 +24,21 @@ import {
   FeishuAdapter,
   parseFeishuConfig,
 } from './im-providers';
+
+const IM_DEBUG_LOG = path.join(
+  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
+  'im-runtime.log',
+);
+
+function imDbg(line: string): void {
+  const stamped = `[${new Date().toISOString()}] ${line}\n`;
+  console.info(line);
+  try {
+    fs.appendFileSync(IM_DEBUG_LOG, stamped);
+  } catch {
+    // ignore
+  }
+}
 
 interface ManagerOptions {
   baseUrl: string;
@@ -152,28 +170,36 @@ export class ImRuntimeManager {
   }
 
   private async consumeLoop(providerId: string, entry: RunningEntry): Promise<void> {
+    imDbg(`[im-runtime] consumeLoop start ${providerId}`);
     while (!entry.loopCancelled && entry.adapter.isRunning()) {
       let message: unknown;
       try {
         message = await entry.adapter.consumeOne();
       } catch (err) {
-        console.error(`[im-runtime] consumeOne failed for ${providerId}:`,
-          err instanceof Error ? err.message : err);
+        imDbg(`[im-runtime] consumeOne failed ${providerId}: ${err instanceof Error ? err.message : err}`);
         await delay(2_000);
         continue;
       }
-      if (!message) return;
+      if (!message) {
+        imDbg(`[im-runtime] consumeOne returned null ${providerId} — loop exits`);
+        return;
+      }
+      const summary = summarize(message);
+      imDbg(`[im-runtime] consumeOne got ${providerId} ${summary}`);
       try {
         await this.forwardInbound(providerId, message);
+        imDbg(`[im-runtime] forward OK ${providerId} ${summary}`);
       } catch (err) {
-        console.error(`[im-runtime] ingest failed for ${providerId}:`,
-          err instanceof Error ? err.message : err);
+        imDbg(`[im-runtime] forward FAILED ${providerId}: ${err instanceof Error ? err.message : err}`);
       }
     }
+    imDbg(`[im-runtime] consumeLoop exit ${providerId} cancelled=${entry.loopCancelled} running=${entry.adapter.isRunning()}`);
   }
 
   private async forwardInbound(providerId: string, message: unknown): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/api/im/runtime/ingest`, {
+    const url = `${this.baseUrl}/api/im/runtime/ingest`;
+    imDbg(`[im-runtime] forward POST ${url} provider=${providerId}`);
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -216,4 +242,12 @@ function createAdapter(providerId: string, config: Record<string, string>): Gene
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarize(message: unknown): string {
+  if (!message || typeof message !== 'object') return '<non-object>';
+  const m = message as Record<string, unknown>;
+  const addr = (m.address ?? {}) as Record<string, unknown>;
+  const text = typeof m.text === 'string' ? m.text.slice(0, 40) : '';
+  return `chatId=${addr.chatId} msgId=${m.messageId} text="${text}"`;
 }

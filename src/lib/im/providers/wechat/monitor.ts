@@ -182,8 +182,13 @@ export class WechatMonitor {
     };
 
     const waiter = this.waiters.shift();
-    if (waiter) waiter(inbound);
-    else this.queue.push(inbound);
+    if (waiter) {
+      dbg(`[wechat/monitor] dispatch → waiter (consumeOne in flight) msgId=${messageId} text=${text.slice(0, 40)}`);
+      waiter(inbound);
+    } else {
+      this.queue.push(inbound);
+      dbg(`[wechat/monitor] dispatch → queue msgId=${messageId} queue.size=${this.queue.length} text=${text.slice(0, 40)}`);
+    }
   }
 
   private cancellableDelay(ms: number): Promise<void> {
