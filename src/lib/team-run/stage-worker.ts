@@ -10,6 +10,7 @@ import {
 } from './runtime-result-normalizer'
 import { buildStageRuntimeToolPolicy, getStageExecutionCwd } from './runtime-tool-policy'
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
+import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im'
 import { createKnowledgeMcpServer } from '@/lib/knowledge/workflow-knowledge-tool'
 import {
   buildKnowledgePromptSection,
@@ -537,10 +538,16 @@ export class StageWorker {
         }
       : undefined
 
+    // Workflow agents get the im-tools hint when im-tools MCP is loaded — same
+    // wording as chat / inbound dispatch paths so the agent reliably picks up
+    // "send to wechat / feishu" requests as tool calls instead of just text.
+    const imToolsHint = hasImToolsMcp(lumosMcpServers) ? IM_TOOLS_SYSTEM_HINT : ''
+
     const effectiveSystemPrompt = [
       payload.agent.systemPrompt,
       knowledgeSystemPromptSuffix,
       builtinAgentContext.systemPromptSuffix,
+      imToolsHint,
     ]
       .filter((segment): segment is string => Boolean(segment && segment.trim()))
       .join('\n\n')
