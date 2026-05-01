@@ -30,14 +30,44 @@ export interface TextItem {
   text?: string;
 }
 
+export interface CdnMedia {
+  encrypt_query_param?: string;
+  aes_key?: string;       // base64-wrapped: either 16 raw bytes, or 32-char hex ASCII inside base64
+  encrypt_type?: number;
+}
+
+export interface ImageItem {
+  media?: CdnMedia;
+  thumb_media?: CdnMedia;
+  aeskey?: string;        // 32-char hex; takes precedence over media.aes_key
+  mid_size?: number;
+}
+
 export interface VoiceItem {
-  text?: string; // ASR transcript
+  media?: CdnMedia;
+  text?: string;          // ASR transcript
+  encode_type?: number;
+}
+
+export interface FileItem {
+  media?: CdnMedia;
+  file_name?: string;
+  len?: string;
+}
+
+export interface VideoItem {
+  media?: CdnMedia;
+  thumb_media?: CdnMedia;
+  video_size?: number;
 }
 
 export interface MessageItem {
   type?: number;
   text_item?: TextItem;
+  image_item?: ImageItem;
   voice_item?: VoiceItem;
+  file_item?: FileItem;
+  video_item?: VideoItem;
   ref_msg?: { message_item?: MessageItem; title?: string };
 }
 

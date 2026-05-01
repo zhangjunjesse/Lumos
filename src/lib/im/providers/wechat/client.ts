@@ -20,6 +20,10 @@ import {
   type OutboundMsg,
   type SendMessageResp,
 } from './types';
+import {
+  DEFAULT_CDN_BASE_URL,
+  downloadAndDecryptCdnMedia,
+} from './cdn';
 
 // Re-export 常量与类型，方便 monitor / send / parse 用同一个 ./client 入口
 export * from './types';
@@ -33,6 +37,7 @@ export interface ClientOptions {
   baseUrl: string;
   token: string;
   routeTag?: string;
+  cdnBaseUrl?: string;
 }
 
 export class WechatClient {
@@ -42,6 +47,10 @@ export class WechatClient {
     const base = this.options.baseUrl.replace(/\/+$/, '');
     const p = path.replace(/^\/+/, '');
     return `${base}/${p}`;
+  }
+
+  private cdnBase(): string {
+    return this.options.cdnBaseUrl?.trim() || DEFAULT_CDN_BASE_URL;
   }
 
   private headers(): Record<string, string> {
@@ -127,6 +136,24 @@ export class WechatClient {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'verify failed' };
     }
+  }
+
+  /**
+   * Download a CDN-hosted media blob (image/voice/file) and AES-128-ECB decrypt it.
+   * Caller passes the encrypted_query_param + AES key (16 raw bytes) from the
+   * inbound MessageItem.
+   */
+  async downloadCdnMedia(args: {
+    encryptedQueryParam: string;
+    aesKey: Buffer;
+    signal?: AbortSignal;
+  }): Promise<Buffer> {
+    return downloadAndDecryptCdnMedia({
+      cdnBase: this.cdnBase(),
+      encryptedQueryParam: args.encryptedQueryParam,
+      aesKey: args.aesKey,
+      signal: args.signal,
+    });
   }
 
   /** Send a text reply. context_token must come from the latest inbound message of that peer. */

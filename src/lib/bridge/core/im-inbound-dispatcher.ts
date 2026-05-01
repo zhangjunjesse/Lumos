@@ -127,7 +127,7 @@ export async function dispatchInbound(
       response = await conversationEngine.sendMessage(
         sessionId,
         message.text.trim(),
-        undefined,
+        message.attachments,
         { source: providerId },
         previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)
           ? {

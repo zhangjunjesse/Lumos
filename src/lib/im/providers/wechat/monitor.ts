@@ -9,11 +9,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { InboundMessage } from '../../core/types';
+import type { IMFileAttachment, InboundMessage } from '../../core/types';
 import { WechatClient, MESSAGE_TYPE_USER, type WeixinInboundMsg } from './client';
 import type { WechatConfig } from './config';
 import { isPeerAllowed } from './config';
-import { bodyFromItemList } from './parse';
+import { detectImageMime } from './cdn';
+import { bodyFromItemList, extractInboundImages } from './parse';
 import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
 
 // File-backed debug log so we can diagnose without watching electron stdout.
@@ -138,7 +139,12 @@ export class WechatMonitor {
         dbg(
           `[wechat/monitor] inbound from=${m.from_user_id} type=${m.message_type} msgId=${m.message_id}`,
         );
-        this.ingestMessage(m);
+        // ingestMessage is async because images need to be downloaded from the CDN
+        // before we can build the InboundMessage. Don't block the next getUpdates
+        // iteration — fire-and-forget. Errors swallow into dbg().
+        void this.ingestMessage(m).catch((err) => {
+          dbg(`[wechat/monitor] ingest error msgId=${m.message_id}: ${err instanceof Error ? err.message : err}`);
+        });
       }
 
       // Safety throttle: long-poll is normally seconds; this only kicks in
@@ -151,7 +157,7 @@ export class WechatMonitor {
   }
 
   /** Exposed for tests. */
-  ingestMessage(m: WeixinInboundMsg): void {
+  async ingestMessage(m: WeixinInboundMsg): Promise<void> {
     if (m.message_type !== MESSAGE_TYPE_USER) return;
 
     const from = (m.from_user_id || '').trim();
@@ -171,24 +177,62 @@ export class WechatMonitor {
     }
 
     const text = bodyFromItemList(m.item_list);
-    if (!text) return; // M+1: handle media inbound
+    const attachments = await this.downloadInboundImages(messageId, m.item_list);
+
+    if (!text && attachments.length === 0) {
+      // Pure non-image media (file/video/voice without ASR) — TODO M+1.
+      dbg(`[wechat/monitor] skip msgId=${messageId} (no text, no image attachments)`);
+      return;
+    }
 
     const inbound: InboundMessage = {
       messageId,
       address: { providerId: 'wechat', chatId: from, userId: from },
-      text,
+      text: text || (attachments.length > 0 ? '[图片]' : ''),
       timestamp: m.create_time_ms || Date.now(),
+      attachments: attachments.length > 0 ? attachments : undefined,
       raw: m,
     };
 
     const waiter = this.waiters.shift();
     if (waiter) {
-      dbg(`[wechat/monitor] dispatch → waiter (consumeOne in flight) msgId=${messageId} text=${text.slice(0, 40)}`);
+      dbg(`[wechat/monitor] dispatch → waiter msgId=${messageId} text="${(inbound.text || '').slice(0, 40)}" attachments=${attachments.length}`);
       waiter(inbound);
     } else {
       this.queue.push(inbound);
-      dbg(`[wechat/monitor] dispatch → queue msgId=${messageId} queue.size=${this.queue.length} text=${text.slice(0, 40)}`);
+      dbg(`[wechat/monitor] dispatch → queue msgId=${messageId} queue.size=${this.queue.length} attachments=${attachments.length}`);
     }
+  }
+
+  private async downloadInboundImages(
+    messageId: string,
+    items: WeixinInboundMsg['item_list'],
+  ): Promise<IMFileAttachment[]> {
+    const tasks = extractInboundImages(items);
+    if (tasks.length === 0) return [];
+    const out: IMFileAttachment[] = [];
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      try {
+        const bytes = await this.client.downloadCdnMedia({
+          encryptedQueryParam: task.encryptedQueryParam,
+          aesKey: task.aesKey,
+        });
+        const mime = detectImageMime(bytes);
+        const ext = mime === 'image/png' ? 'png' : mime === 'image/gif' ? 'gif' : mime === 'image/webp' ? 'webp' : 'jpg';
+        out.push({
+          id: `wechat-image-${messageId}-${i}`,
+          name: `wechat-image-${messageId}-${i}.${ext}`,
+          type: mime,
+          size: bytes.length,
+          data: bytes.toString('base64'),
+        });
+        dbg(`[wechat/monitor] image downloaded msgId=${messageId} idx=${i} mime=${mime} size=${bytes.length}`);
+      } catch (err) {
+        dbg(`[wechat/monitor] image download FAILED msgId=${messageId} idx=${i}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return out;
   }
 
   private cancellableDelay(ms: number): Promise<void> {

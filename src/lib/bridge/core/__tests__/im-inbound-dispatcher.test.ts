@@ -86,7 +86,19 @@ class FakeBindingService {
   }
 }
 
-const conversationCalls: Array<{ sessionId: string; text: string; meta: unknown }> = [];
+interface RecordedAttachment {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+}
+
+const conversationCalls: Array<{
+  sessionId: string;
+  text: string;
+  meta: unknown;
+  files: RecordedAttachment[] | undefined;
+}> = [];
 let conversationResponseText = 'AI reply';
 let conversationDelay: Promise<void> | null = null;
 let conversationStreamChunks: string[] = [];
@@ -95,12 +107,17 @@ class FakeConversationEngine {
   async sendMessage(
     sessionId: string,
     text: string,
-    _files?: never,
+    files?: Array<{ id: string; name: string; type: string; size: number }>,
     meta?: { source?: string },
     callbacks?: { onVisibleText?: (chunk: string) => void },
   ) {
     if (conversationDelay) await conversationDelay;
-    conversationCalls.push({ sessionId, text, meta });
+    conversationCalls.push({
+      sessionId,
+      text,
+      meta,
+      files: files?.map((f) => ({ id: f.id, name: f.name, type: f.type, size: f.size })),
+    });
     if (callbacks?.onVisibleText) {
       for (const chunk of conversationStreamChunks) {
         callbacks.onVisibleText(chunk);
@@ -322,6 +339,25 @@ describe('im-inbound-dispatcher', () => {
 
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
       expect(sentArgs.text).toMatch(/📂 项目脑暴/);
+    });
+
+    test('forwards inbound image attachments to conversationEngine', async () => {
+      fakeSessions.set('preset_2', { id: 'preset_2', title: 'photo chat' });
+      routePointer = 'preset_2';
+
+      const msg = {
+        ...wechatMsg(),
+        text: '看下这张图',
+        attachments: [
+          { id: 'wechat-image-100-0', name: 'wechat-image-100-0.jpg', type: 'image/jpeg', size: 12, data: 'AAA=' },
+        ],
+      };
+      await dispatchInbound('wechat', msg);
+
+      expect(conversationCalls).toHaveLength(1);
+      expect(conversationCalls[0].files).toEqual([
+        { id: 'wechat-image-100-0', name: 'wechat-image-100-0.jpg', type: 'image/jpeg', size: 12 },
+      ]);
     });
 
     test('reply with session prefix is single send (no streaming)', async () => {
