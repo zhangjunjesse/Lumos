@@ -5,6 +5,8 @@ interface FakeSession {
   title: string;
   status: 'active' | 'archived';
   updated_at: string; // ISO-ish "YYYY-MM-DD HH:mm:ss"
+  mode?: 'code' | 'plan' | 'ask' | 'workflow';
+  system_prompt?: string;
 }
 
 const sessionsTable: FakeSession[] = [];
@@ -105,6 +107,38 @@ describe('wechat/commands: /list', () => {
     });
     const r = await handleWechatCommand(makeCtx('list'));
     expect(r.reply!.text).not.toMatch(/归档/);
+  });
+
+  test('workflow-related sessions excluded (mode=workflow)', async () => {
+    sessionsTable.push(
+      { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_MAIN_AGENT__' },
+      { id: 'sess_wf_run', title: '[一次性] 工作流执行', status: 'active',
+        updated_at: freshDate(0), mode: 'workflow' },
+    );
+    const r = await handleWechatCommand(makeCtx('list'));
+    expect(r.reply!.text).toMatch(/主对话/);
+    expect(r.reply!.text).not.toMatch(/工作流执行/);
+  });
+
+  test('special internal sessions excluded (workflow editor / app builder / library)', async () => {
+    sessionsTable.push(
+      { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_MAIN_AGENT__' },
+      { id: 'sess_wfedit', title: '工作流 AI 助手', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_WORKFLOW_CHAT__\n你是工作流编辑助手' },
+      { id: 'sess_app', title: '应用开发助手', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_APP_BUILDER_CHAT__\n你是应用开发助手' },
+      { id: 'sess_lib', title: '知识库助手', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_LIBRARY_CHAT__\n你是知识库助手' },
+      { id: 'sess_normal', title: '研究项目', status: 'active', updated_at: freshDate(0) },
+    );
+    const r = await handleWechatCommand(makeCtx('list'));
+    expect(r.reply!.text).toMatch(/主对话/);
+    expect(r.reply!.text).toMatch(/研究项目/);
+    expect(r.reply!.text).not.toMatch(/工作流 AI 助手/);
+    expect(r.reply!.text).not.toMatch(/应用开发助手/);
+    expect(r.reply!.text).not.toMatch(/知识库助手/);
   });
 
   test('pagination', async () => {

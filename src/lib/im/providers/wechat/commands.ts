@@ -54,12 +54,29 @@ export async function handleWechatCommand(
 
 // ---- helpers ---------------------------------------------------------------
 
+// 这些 marker 标记的是 lumos 内部专项会话（工作流编辑器、应用开发助手、知识库
+// 助手）— 微信切换不应该把人带到这些非主线的对话里。`mode='workflow'` 是工作
+// 流执行时自动建的临时调试 session，更不应该让用户切过去。
+const SPECIAL_SESSION_MARKERS = [
+  '__LUMOS_WORKFLOW_CHAT__',
+  '__LUMOS_APP_BUILDER_CHAT__',
+  '__LUMOS_LIBRARY_CHAT__',
+];
+
+function isSwitchableSession(s: ChatSession): boolean {
+  if (s.status !== 'active') return false;
+  if (s.mode === 'workflow') return false;
+  const sp = String(s.system_prompt || '');
+  for (const marker of SPECIAL_SESSION_MARKERS) {
+    if (sp.includes(marker)) return false;
+  }
+  return true;
+}
+
 function listChatSessions(): ChatSession[] {
   const cutoff = Date.now() - ACTIVE_DAYS * 24 * 60 * 60 * 1000;
   return getAllSessions().filter((s) => {
-    // chat_sessions.status: 'active' | 'archived' — 已删除的行被 deleteSession 物理删，
-    // 这里不需要再过滤 'deleted'。但归档的也不参与微信切换。
-    if (s.status !== 'active') return false;
+    if (!isSwitchableSession(s)) return false;
     const ts = parseUpdatedAt(s.updated_at);
     return ts >= cutoff;
   });
