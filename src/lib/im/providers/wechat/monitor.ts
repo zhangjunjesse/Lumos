@@ -123,8 +123,10 @@ export class WechatMonitor {
       }
       if (this.cancelled) return;
       dbg(`[wechat/monitor] iter#${iter} ← ret=${resp.ret} msgs=${(resp.msgs ?? []).length} elapsed=${Date.now() - iterStart}ms`);
-      if (resp.ret !== 0) {
-        console.warn('[wechat/monitor] getUpdates ret', resp.ret, resp.errmsg);
+      // ilink 成功响应不带 ret 字段（仅错误时返回），cc-connect Go 端因零值默认 0 而无碍。
+      // TS 里 undefined !== 0 会误判为错误，扔掉消息。这里把 undefined / null 视为成功。
+      if (resp.ret != null && resp.ret !== 0) {
+        dbg(`[wechat/monitor] iter#${iter} ret=${resp.ret} errmsg=${resp.errmsg}`);
         await this.cancellableDelay(3000);
         continue;
       }
