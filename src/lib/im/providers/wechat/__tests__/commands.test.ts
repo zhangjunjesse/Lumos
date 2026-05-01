@@ -7,6 +7,7 @@ interface FakeSession {
   updated_at: string; // ISO-ish "YYYY-MM-DD HH:mm:ss"
   mode?: 'code' | 'plan' | 'ask' | 'workflow';
   system_prompt?: string;
+  working_directory?: string;
 }
 
 const sessionsTable: FakeSession[] = [];
@@ -119,6 +120,21 @@ describe('wechat/commands: /list', () => {
     const r = await handleWechatCommand(makeCtx('list'));
     expect(r.reply!.text).toMatch(/主对话/);
     expect(r.reply!.text).not.toMatch(/工作流执行/);
+  });
+
+  test('renders scope label (主 agent / 项目 / 自由对话)', async () => {
+    sessionsTable.push(
+      { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
+        system_prompt: '__LUMOS_MAIN_AGENT__' },
+      { id: 'sess_proj', title: '研究 lumos', status: 'active', updated_at: freshDate(0),
+        working_directory: '/Users/me/code/lumos' },
+      { id: 'sess_free', title: '随便聊聊', status: 'active', updated_at: freshDate(0) },
+    );
+    const r = await handleWechatCommand(makeCtx('list'));
+    expect(r.reply!.text).toMatch(/主对话/);
+    expect(r.reply!.text).toMatch(/主 agent/);
+    expect(r.reply!.text).toMatch(/项目: lumos/);
+    expect(r.reply!.text).toMatch(/自由对话/);
   });
 
   test('special internal sessions excluded (workflow editor / app builder / library)', async () => {

@@ -213,7 +213,8 @@ function withSessionPrefix(sessionId: string, body: string): string {
   const display = title && title !== 'New Chat'
     ? title
     : `(未命名 ${sessionId.slice(0, 6)})`;
-  return `📂 ${display}\n─────\n${body}`;
+  // 第一行单独是 session 名，空一行后再正文。微信渲染换行很轻，这样最干净。
+  return `📂 ${display}\n\n${body}`;
 }
 
 export function __resetDispatcherForTesting(): void {

@@ -17,6 +17,7 @@ import { getAllSessions, getSession, createSession } from '@/lib/db';
 import type { ChatSession } from '@/types';
 import type { IMCommandContext, IMCommandResult } from '../../core/types';
 import { handleBuiltinCommand } from '../../core/built-in-commands';
+import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { WECHAT_COMMANDS } from './command-defs';
 import {
   getCurrentRoutedSessionId,
@@ -98,6 +99,22 @@ function shortId(session: ChatSession): string {
   return session.id.slice(0, 6);
 }
 
+/**
+ * 给 /list 用的 session "归属"标签：
+ *   - 主 agent → 「主 agent」
+ *   - 有项目目录 → 「项目: <尾部目录名>」
+ *   - 都没有 → 「自由对话」
+ */
+function sessionScopeLabel(session: ChatSession): string {
+  if (isMainAgentSession(session)) return '主 agent';
+  const wd = (session.working_directory || '').trim();
+  if (wd) {
+    const tail = wd.replace(/\/+$/, '').split('/').pop() || wd;
+    return `项目: ${tail}`;
+  }
+  return '自由对话';
+}
+
 function formatActiveTime(s: string | undefined): string {
   const t = parseUpdatedAt(s);
   if (!t) return '';
@@ -138,9 +155,11 @@ function handleList(ctx: IMCommandContext): IMCommandResult {
   slice.forEach((s, i) => {
     const idx = start + i + 1;
     const isCurrent = s.id === currentId;
-    const marker = isCurrent ? '← 当前' : '';
+    const marker = isCurrent ? '  ← 当前' : '';
     const time = formatActiveTime(s.updated_at);
-    lines.push(`${idx}. ${displayTitle(s)} · ${time} ${marker}`.trim());
+    const scope = sessionScopeLabel(s);
+    lines.push(`${idx}. ${displayTitle(s)}${marker}`);
+    lines.push(`   ${scope} · ${time}`.trimEnd());
   });
   lines.push('');
   lines.push('回复 /switch <编号|名字> 切换；/new 新建');
