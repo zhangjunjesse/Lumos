@@ -75,6 +75,16 @@ async function buildElectron() {
     outfile: 'dist-electron/preload.js',
   });
 
+  // Preload for built-in browser tabs (chrome.runtime stealth patch).
+  // Loaded by BrowserManager.createView(); covers user-opened tabs, AI
+  // chrome-devtools MCP sessions, workflow agent code steps, and
+  // DeepSearch background pages. Sandboxed; only uses electron.webFrame.
+  await build({
+    ...shared,
+    entryPoints: ['electron/browser/browser-tab-preload.ts'],
+    outfile: 'dist-electron/browser-tab-preload.js',
+  });
+
   console.log('Electron build complete');
 
   // Fix standalone symlinks after next build
