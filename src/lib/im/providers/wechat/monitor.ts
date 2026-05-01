@@ -87,17 +87,24 @@ export class WechatMonitor {
 
   private async loop(): Promise<void> {
     let buf = this.bufStore.read();
+    let iter = 0;
+    console.info('[wechat/monitor] loop start; account=', this.config.accountId, 'initial buf len=', buf.length);
     while (!this.cancelled) {
+      iter += 1;
       const iterStart = Date.now();
+      console.info(`[wechat/monitor] iter#${iter} → POST getupdates`);
       let resp;
       try {
         resp = await this.client.getUpdates(buf);
       } catch (err) {
-        console.warn('[wechat/monitor] getUpdates failed, retrying in 3s:', err);
+        console.warn(`[wechat/monitor] iter#${iter} getUpdates failed, retrying in 3s:`, err);
         await this.cancellableDelay(3000);
         continue;
       }
       if (this.cancelled) return;
+      console.info(
+        `[wechat/monitor] iter#${iter} ← ret=${resp.ret} msgs=${(resp.msgs ?? []).length} elapsed=${Date.now() - iterStart}ms`,
+      );
       if (resp.ret !== 0) {
         console.warn('[wechat/monitor] getUpdates ret', resp.ret, resp.errmsg);
         await this.cancellableDelay(3000);
@@ -107,7 +114,17 @@ export class WechatMonitor {
         buf = resp.get_updates_buf;
         this.bufStore.write(buf);
       }
-      for (const m of resp.msgs ?? []) this.ingestMessage(m);
+      for (const m of resp.msgs ?? []) {
+        console.info(
+          '[wechat/monitor] inbound msg from=',
+          m.from_user_id,
+          'type=',
+          m.message_type,
+          'msgId=',
+          m.message_id,
+        );
+        this.ingestMessage(m);
+      }
 
       // Safety throttle: long-poll is normally seconds; this only kicks in
       // if the server returns immediately and would otherwise hot-loop.
