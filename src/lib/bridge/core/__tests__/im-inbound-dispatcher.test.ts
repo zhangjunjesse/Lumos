@@ -179,7 +179,10 @@ describe('im-inbound-dispatcher', () => {
     expect(conversationCalls).toHaveLength(1);
     expect(conversationCalls[0].sessionId).toBe('sess-1');
     expect(conversationCalls[0].text).toBe('hello bot');
-    expect(conversationCalls[0].meta).toEqual({ source: 'wechat-qclaw' });
+    expect(conversationCalls[0].meta).toEqual({
+      source: 'wechat-qclaw',
+      imContext: { providerId: 'wechat-qclaw', chatId: 'gid_a' },
+    });
 
     expect(sendToProvider).toHaveBeenCalledWith('wechat-qclaw', expect.objectContaining({
       address: { providerId: 'wechat-qclaw', chatId: 'gid_a' },

@@ -76,6 +76,23 @@ function stripContentDirectives(content: string): string {
   return content.replace(/<!--[a-zA-Z0-9_-]+:[\s\S]*?-->/g, '').trim();
 }
 
+/**
+ * When an inbound IM message kicks off this turn, the dispatcher knows the
+ * exact chatId we should reply / push to. Tell the model so it doesn't ask
+ * the user "what's your wechat id?" — it already has it.
+ */
+function buildImContextHint(providerId: string, chatId: string): string {
+  return [
+    `**Active IM context** — this turn was triggered by an inbound message on \`${providerId}\`.`,
+    `When the user says "send X to me" / "发给我" / "推到微信" without naming a target, the chatId is already known:`,
+    ``,
+    `  providerId: ${providerId}`,
+    `  chatId:     ${chatId}`,
+    ``,
+    `Call \`mcp__im-tools__im_send_attachment\` (or \`im_send\`) directly with this chatId; do NOT ask the user for their wxid / openid.`,
+  ].join('\n');
+}
+
 function hasDeepSearchMcp(
   servers: Record<string, MCPServerConfig> | undefined,
 ): boolean {
@@ -99,8 +116,14 @@ export class ConversationEngine {
     sessionId: string,
     text: string,
     files?: FileAttachment[],
-    // source: any IM provider id ('feishu' | 'wechat-qclaw' | future...) 或 'lumos'
-    meta?: { source?: string },
+    // source: any IM provider id ('feishu' | 'wechat' | future...) 或 'lumos'
+    // imContext: 当本轮对话由 IM inbound 触发时传入，让 AI 知道"回这条消息
+    //            走哪个 provider / 哪个 chatId"，im_send_attachment 这类工具
+    //            可以直接复用，不必再问用户
+    meta?: {
+      source?: string;
+      imContext?: { providerId: string; chatId: string };
+    },
     callbacks?: ConversationStreamingCallbacks,
   ): Promise<ConversationResponse> {
     const session = getSession(sessionId);
@@ -167,6 +190,9 @@ export class ConversationEngine {
     }
     if (hasImToolsMcp(loadedMcpServers)) {
       hints.push(IM_TOOLS_SYSTEM_HINT);
+      if (meta?.imContext) {
+        hints.push(buildImContextHint(meta.imContext.providerId, meta.imContext.chatId));
+      }
     }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
 

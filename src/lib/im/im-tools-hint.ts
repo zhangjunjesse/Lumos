@@ -26,8 +26,9 @@ Do NOT proactively send messages without an explicit request — silently produc
 - \`mcp__im-tools__im_list_providers\` lists configured IMs if you need to disambiguate.
 
 **Finding the right chat**
+- **First check if there's an "Active IM context" section in this prompt.** When the current turn was triggered by an inbound IM message, the dispatcher injects providerId + chatId there — use them directly without asking the user.
 - Feishu: call \`mcp__im-tools__im_list_targets({ providerId: "feishu", query: "<name>" })\` to look up an open_id / chat_id by name.
-- WeChat: there is **no contact directory API**. The bot can only reply to a peer who has recently messaged it (the bot keeps the latest \`context_token\` per peer). The chatId is that peer's userId from inbound. If you don't already know it (e.g. from the current conversation's \`<!--source:wechat-->\` user message), ask the user to either send something from WeChat first, or paste the chatId.
+- WeChat: there is **no contact directory API**. The bot can only reply to a peer who has recently messaged it (the bot keeps the latest \`context_token\` per peer). The chatId is that peer's userId from inbound. If no Active IM context is present and you don't otherwise know the chatId, ask the user to send something from WeChat first or paste the chatId.
 
 **Sending text**
 - \`mcp__im-tools__im_send_to_default({ chatId, text })\` — uses the user's default IM.

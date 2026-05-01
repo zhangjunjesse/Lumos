@@ -129,7 +129,13 @@ export async function dispatchInbound(
         sessionId,
         message.text.trim(),
         message.attachments,
-        { source: providerId },
+        {
+          source: providerId,
+          imContext: {
+            providerId,
+            chatId: message.address.chatId,
+          },
+        },
         previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)
           ? {
               onVisibleText: (chunk) => {
