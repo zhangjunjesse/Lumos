@@ -32,6 +32,7 @@ export type {
   IMConfigFieldType,
   IMCapabilities,
   ChannelAddress,
+  IMFileAttachment,
   InboundMessage,
   OutboundMessage,
   SendResult,
