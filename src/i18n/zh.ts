@@ -161,6 +161,7 @@ const zh: Record<TranslationKey, string> = {
   'settings.language': '语言',
   'settings.languageDesc': '选择界面显示语言',
   'settings.usage': '用量统计',
+  'settings.im': 'IM 通讯',
 
   // ── Settings: Usage Stats ───────────────────────────────────
   'usage.totalTokens': '总 Token',

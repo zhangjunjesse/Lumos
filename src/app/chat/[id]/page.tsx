@@ -20,7 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { BindingButton } from '@/components/bridge/BindingButton';
+import { ImSessionHeader } from '@/components/im/ImSessionHeader';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -563,7 +563,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 >
                   <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
                 </button>
-                <BindingButton sessionId={id} />
+                <ImSessionHeader sessionId={id} />
                 <BrowserContextSelector
                   sessionId={id}
                   value={sessionBrowserContextId}

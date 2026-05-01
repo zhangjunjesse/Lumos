@@ -1,4 +1,38 @@
-import { getSetting } from '@/lib/db';
+import { getSetting, setSetting } from '@/lib/db';
+
+// ----------------------------------------------------------------------------
+// IM 模块迁移期间的 dual-read / dual-write
+//
+// M2 起 Feishu 桥接代码迁到 src/lib/im/providers/feishu/，配置走 im.feishu.* 命名空间。
+// 旧 settings key（feishu_app_id 等）继续保留以便回退。
+// 读取时优先 new，回退 legacy；写入时双写。
+// ----------------------------------------------------------------------------
+const LEGACY_TO_IM_KEY: Record<string, string> = {
+  feishu_app_id: 'im.feishu.app_id',
+  feishu_app_secret: 'im.feishu.app_secret',
+  feishu_redirect_uri: 'im.feishu.redirect_uri',
+  feishu_oauth_scopes: 'im.feishu.oauth_scopes',
+};
+
+function readDualKey(legacyKey: string): string {
+  const newKey = LEGACY_TO_IM_KEY[legacyKey];
+  if (newKey) {
+    const fromNew = getSetting(newKey);
+    if (fromNew && fromNew.trim()) return fromNew;
+  }
+  return getSetting(legacyKey) || '';
+}
+
+/**
+ * Persist a Feishu setting to both the legacy key and the new im.feishu.* key.
+ * 回调路由（PUT /api/feishu/config）和 OAuth 流程都应通过这个写入，
+ * 保证新旧路径读取一致。
+ */
+export function writeFeishuSetting(legacyKey: string, value: string): void {
+  setSetting(legacyKey, value);
+  const newKey = LEGACY_TO_IM_KEY[legacyKey];
+  if (newKey) setSetting(newKey, value);
+}
 
 const DEFAULT_FEISHU_REDIRECT_URI = 'http://localhost:43127/api/feishu/auth/callback';
 
@@ -62,10 +96,10 @@ function normalizeRedirectUri(uri?: string): string {
 
 export function getStoredFeishuSettings(): FeishuStoredSettings {
   return {
-    appId: pickNonEmpty(getSetting('feishu_app_id')),
-    appSecret: pickNonEmpty(getSetting('feishu_app_secret')),
-    redirectUri: pickNonEmpty(getSetting('feishu_redirect_uri')),
-    oauthScopes: pickNonEmpty(getSetting('feishu_oauth_scopes')),
+    appId: pickNonEmpty(readDualKey('feishu_app_id')),
+    appSecret: pickNonEmpty(readDualKey('feishu_app_secret')),
+    redirectUri: pickNonEmpty(readDualKey('feishu_redirect_uri')),
+    oauthScopes: pickNonEmpty(readDualKey('feishu_oauth_scopes')),
   };
 }
 

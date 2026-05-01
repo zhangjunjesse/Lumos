@@ -8,6 +8,7 @@ import {
   BookOpen,
   UserGroup02Icon,
   BrowserIcon,
+  Message02Icon,
 } from "@hugeicons/core-free-icons";
 import { Plug, Analytics } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -25,10 +26,11 @@ import { SchedulingAgentSection } from "./SchedulingAgentSection";
 import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
 import { CodifyAgentSection } from "./CodifyAgentSection";
+import { ImSection } from "./im/ImSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
-type Section = "general" | "knowledge" | "providers" | "browsers" | "usage" | "workflow-agents";
+type Section = "general" | "knowledge" | "providers" | "browsers" | "usage" | "workflow-agents" | "im";
 
 interface SidebarItem {
   id: Section;
@@ -41,6 +43,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "knowledge", label: "Knowledge", icon: BookOpen },
   { id: "providers", label: "Providers", icon: Plug },
   { id: "browsers", label: "Browsers", icon: BrowserIcon },
+  { id: "im", label: "IM", icon: Message02Icon },
   { id: "workflow-agents", label: "AI助手", icon: UserGroup02Icon },
   { id: "usage", label: "Usage", icon: Analytics },
 ];
@@ -91,6 +94,7 @@ export function SettingsLayout() {
     'Knowledge': 'settings.knowledge',
     'Providers': 'settings.providers',
     'Browsers': 'settings.browsers',
+    'IM': 'settings.im',
     'AI助手': 'settings.workflowAgents',
     'Usage': 'settings.usage',
   };
@@ -142,6 +146,7 @@ export function SettingsLayout() {
             />
           )}
           {activeSection === "browsers" && <BrowserProviderSection />}
+          {activeSection === "im" && <ImSection />}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
               <SchedulingAgentSection />

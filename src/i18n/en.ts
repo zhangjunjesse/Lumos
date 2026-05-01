@@ -164,6 +164,7 @@ const en = {
   'settings.language': 'Language',
   'settings.languageDesc': 'Choose the display language for the interface',
   'settings.usage': 'Usage',
+  'settings.im': 'IM',
 
   // ── Settings: Usage Stats ───────────────────────────────────
   'usage.totalTokens': 'Total Tokens',

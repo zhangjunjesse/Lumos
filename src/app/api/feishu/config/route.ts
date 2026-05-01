@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { setSetting } from '@/lib/db';
 import {
   DEFAULT_FEISHU_OAUTH_SCOPES,
   getFeishuCredentials,
@@ -8,6 +7,7 @@ import {
   isFeishuConfigured,
   maskSecret,
   resolveFeishuRedirectUri,
+  writeFeishuSetting,
 } from '@/lib/feishu-config';
 
 export const runtime = 'nodejs';
@@ -57,13 +57,13 @@ export async function PUT(request: NextRequest) {
     const nextRedirectUri = cleanValue(settings.redirectUri);
     const nextOauthScopes = cleanValue(settings.oauthScopes);
 
-    setSetting('feishu_app_id', nextAppId);
-    setSetting(
+    writeFeishuSetting('feishu_app_id', nextAppId);
+    writeFeishuSetting(
       'feishu_app_secret',
       nextAppSecret.startsWith('***') ? (current.appSecret || effective.appSecret) : nextAppSecret,
     );
-    setSetting('feishu_redirect_uri', nextRedirectUri);
-    setSetting('feishu_oauth_scopes', nextOauthScopes);
+    writeFeishuSetting('feishu_redirect_uri', nextRedirectUri);
+    writeFeishuSetting('feishu_oauth_scopes', nextOauthScopes);
 
     return NextResponse.json({ success: true });
   } catch (error) {

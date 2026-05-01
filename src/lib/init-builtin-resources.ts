@@ -227,7 +227,8 @@ function importMcpServers(): number {
         || config.name === 'deepsearch'
         || config.name === 'office-docs'
         || config.name === 'chrome-devtools'
-        || config.name === 'image-reader';
+        || config.name === 'image-reader'
+        || config.name === 'im-tools';
       createMcpServer({
         name: config.name,
         scope: 'builtin',

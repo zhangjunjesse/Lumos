@@ -451,7 +451,14 @@ export function MessageItem({ message }: MessageItemProps) {
         {isUser && source === 'feishu' && (
           <div className="mb-1">
             <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 border border-blue-200">
-              Feishu
+              飞书
+            </span>
+          </div>
+        )}
+        {isUser && source === 'wechat' && (
+          <div className="mb-1">
+            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+              微信
             </span>
           </div>
         )}

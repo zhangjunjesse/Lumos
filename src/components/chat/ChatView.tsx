@@ -220,7 +220,15 @@ export function ChatView({
   const [taskBanner, setTaskBanner] = useState<TeamBannerProjectionV1 | null>(null);
 
   const syncMessagesFromServer = useCallback(async () => {
-    if (messagesRef.current.some((message) => isTempMessageId(message.id))) {
+    // Skip only while we are actively streaming a local turn — otherwise an
+    // inbound IM message would race with the local temp/append flow. If
+    // streaming already finished but the temp id wasn't swapped out (e.g. the
+    // last stream errored or the page was navigated away mid-stream), let the
+    // server state win — db is the source of truth.
+    const streamingState = useStreamingStore.getState().sessions[sessionId];
+    const activelyStreaming = streamingState?.status === 'streaming';
+    if (activelyStreaming
+      && messagesRef.current.some((message) => isTempMessageId(message.id))) {
       return;
     }
 
@@ -228,9 +236,7 @@ export function ChatView({
       const response = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`, {
         cache: 'no-store',
       });
-      if (!response.ok) {
-        return;
-      }
+      if (!response.ok) return;
 
       const data = await response.json() as MessagesResponse;
       const nextMessages = data.messages || [];
@@ -238,9 +244,7 @@ export function ChatView({
       const sameLength = currentMessages.length === nextMessages.length;
       const sameLastId = sameLength
         && currentMessages[currentMessages.length - 1]?.id === nextMessages[nextMessages.length - 1]?.id;
-      if (sameLength && sameLastId) {
-        return;
-      }
+      if (sameLength && sameLastId) return;
 
       messagesRef.current = nextMessages;
       hasMoreRef.current = data.hasMore ?? false;
@@ -253,7 +257,7 @@ export function ChatView({
         error: null,
       });
     } catch {
-      // Best effort only.
+      // best effort
     }
   }, [sessionId, updateMessagesSession]);
 
