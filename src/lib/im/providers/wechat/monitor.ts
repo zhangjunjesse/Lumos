@@ -6,12 +6,31 @@
  * 之后 send.ts 通过 monitor.getContextToken(peer) 拿到。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import type { InboundMessage } from '../../core/types';
 import { WechatClient, MESSAGE_TYPE_USER, type WeixinInboundMsg } from './client';
 import type { WechatConfig } from './config';
 import { isPeerAllowed } from './config';
 import { bodyFromItemList } from './parse';
 import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
+
+// File-backed debug log so we can diagnose without watching electron stdout.
+const DEBUG_LOG_PATH = path.join(
+  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
+  'wechat-debug.log',
+);
+
+function dbg(line: string): void {
+  const stamped = `[${new Date().toISOString()}] ${line}\n`;
+  console.info(line);
+  try {
+    fs.appendFileSync(DEBUG_LOG_PATH, stamped);
+  } catch {
+    // ignore disk write errors
+  }
+}
 
 const SEEN_LIMIT = 1000;
 const MIN_LOOP_INTERVAL_MS = 100;
@@ -88,23 +107,22 @@ export class WechatMonitor {
   private async loop(): Promise<void> {
     let buf = this.bufStore.read();
     let iter = 0;
-    console.info('[wechat/monitor] loop start; account=', this.config.accountId, 'initial buf len=', buf.length);
+    dbg(`[wechat/monitor] loop start account=${this.config.accountId} buf.len=${buf.length} baseUrl=${this.config.baseUrl}`);
     while (!this.cancelled) {
       iter += 1;
       const iterStart = Date.now();
-      console.info(`[wechat/monitor] iter#${iter} → POST getupdates`);
+      dbg(`[wechat/monitor] iter#${iter} → POST getupdates buf.len=${buf.length}`);
       let resp;
       try {
         resp = await this.client.getUpdates(buf);
       } catch (err) {
-        console.warn(`[wechat/monitor] iter#${iter} getUpdates failed, retrying in 3s:`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        dbg(`[wechat/monitor] iter#${iter} fetch FAILED: ${msg}`);
         await this.cancellableDelay(3000);
         continue;
       }
       if (this.cancelled) return;
-      console.info(
-        `[wechat/monitor] iter#${iter} ← ret=${resp.ret} msgs=${(resp.msgs ?? []).length} elapsed=${Date.now() - iterStart}ms`,
-      );
+      dbg(`[wechat/monitor] iter#${iter} ← ret=${resp.ret} msgs=${(resp.msgs ?? []).length} elapsed=${Date.now() - iterStart}ms`);
       if (resp.ret !== 0) {
         console.warn('[wechat/monitor] getUpdates ret', resp.ret, resp.errmsg);
         await this.cancellableDelay(3000);
@@ -115,13 +133,8 @@ export class WechatMonitor {
         this.bufStore.write(buf);
       }
       for (const m of resp.msgs ?? []) {
-        console.info(
-          '[wechat/monitor] inbound msg from=',
-          m.from_user_id,
-          'type=',
-          m.message_type,
-          'msgId=',
-          m.message_id,
+        dbg(
+          `[wechat/monitor] inbound from=${m.from_user_id} type=${m.message_type} msgId=${m.message_id}`,
         );
         this.ingestMessage(m);
       }
