@@ -1,14 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDefaultProviderId, setDefaultProviderId, hasProvider } from '@/lib/im';
+import {
+  getDefaultProviderId,
+  getEnabledProviders,
+  hasProvider,
+  setDefaultProviderId,
+} from '@/lib/im';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/im/default
+ *
+ * Returns:
+ *   provider:   the explicitly configured default (null when user hasn't set one)
+ *   effective:  what the UI should treat as the active IM right now —
+ *               explicit default → first enabled provider → null
+ *
+ * UI 单选规则（chat header 一次只展示一个 IM 的入口）依赖 effective。
  */
 export async function GET() {
-  return NextResponse.json({ provider: getDefaultProviderId() });
+  const explicit = getDefaultProviderId();
+  let effective = explicit && hasProvider(explicit) ? explicit : null;
+  if (!effective) {
+    const enabled = getEnabledProviders().filter((id) => hasProvider(id));
+    effective = enabled[0] ?? null;
+  }
+  return NextResponse.json({ provider: explicit, effective });
 }
 
 /**
