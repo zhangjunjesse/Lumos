@@ -12,7 +12,11 @@ import { EventEmitter } from 'events';
 import { CDPManager } from './cdp-manager';
 import { getPlatformLayout } from './platform-layout';
 import { setupBrowserContextMenu } from './context-menu';
-import { buildCleanChromeUserAgent } from './user-agent';
+import {
+  buildAcceptLanguage,
+  buildCleanChromeUserAgent,
+  normalizeChromeLikeRequestHeaders,
+} from './user-agent';
 import {
   BrowserCaptureSettings,
   BrowserContextEvent,
@@ -474,22 +478,36 @@ export class BrowserManager extends EventEmitter {
     ses.on('will-download', (_event, item, webContents) => {
       this.handleDownload(item, webContents);
     });
-    this.applyCleanUserAgent(this.sessionPartition);
+    this.applyChromeBrowserIdentity(this.sessionPartition);
   }
 
   /**
-   * Strip "Electron/" and "lumos/" from the default UA so anti-bot vendors
-   * (Akamai on etsy.com, Cloudflare bot fight, etc.) don't 403 us. The
-   * underlying Chromium network stack is real Chrome — only the UA string
-   * leaks app identity. Applies at session level (covers subresources +
-   * fetch/XHR) and is reapplied per-WebContents in createView().
+   * Align the embedded browser's identity headers with Chrome so anti-bot
+   * vendors (Akamai on etsy.com, Cloudflare bot fight, etc.) don't reject the
+   * tab solely because Electron/lumos identifiers leaked through UA or client
+   * hints. Applies at session level and is reapplied per-WebContents in
+   * createView().
    */
-  private applyCleanUserAgent(partition: string): void {
+  private applyChromeBrowserIdentity(partition: string): void {
     const ua = buildCleanChromeUserAgent();
+    const acceptLanguage = buildAcceptLanguage(app.getLocale());
     try {
-      session.fromPartition(partition).setUserAgent(ua);
+      const ses = session.fromPartition(partition);
+      ses.setUserAgent(ua, acceptLanguage);
+      ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        if (!/^https?:\/\//i.test(details.url)) {
+          callback({ requestHeaders: details.requestHeaders });
+          return;
+        }
+
+        callback({
+          requestHeaders: normalizeChromeLikeRequestHeaders(details.requestHeaders, {
+            locale: app.getLocale(),
+          }),
+        });
+      });
     } catch (err) {
-      console.warn(`[browser-manager] Failed to set session UA on ${partition}:`, err);
+      console.warn(`[browser-manager] Failed to set browser identity on ${partition}:`, err);
     }
   }
 
@@ -1132,7 +1150,7 @@ export class BrowserManager extends EventEmitter {
     // Incognito tabs use a non-persist partition (in-memory only, cleared on close)
     const partition = incognito ? 'lumos-incognito' : this.sessionPartition;
     if (incognito) {
-      this.applyCleanUserAgent(partition);
+      this.applyChromeBrowserIdentity(partition);
     }
     // Preload runs in every browser tab (user / AI / workflow / DeepSearch)
     // because all of them flow through this single createView() call. The

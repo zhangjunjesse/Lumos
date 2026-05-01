@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Add, ListVideo, Code, Loading } from "@hugeicons/core-free-icons";
+import { RefreshCw } from "lucide-react";
 import { McpServerList } from "@/components/plugins/McpServerList";
 import { McpServerEditor } from "@/components/plugins/McpServerEditor";
 import { ConfigEditor } from "@/components/plugins/ConfigEditor";
@@ -15,10 +16,32 @@ interface McpManagerProps {
   refreshKey?: number;
 }
 
+export type McpTestState = {
+  status: "checking" | "ok" | "failed" | "skipped";
+  message?: string;
+  tools?: string[];
+  checkedAt?: string;
+};
+
+function healthToTestState(server: MCPServer): McpTestState | undefined {
+  const health = server.health;
+  if (!health || health.status === 'unknown') return undefined;
+  return {
+    status: health.status,
+    message: health.status === 'failed'
+      ? (health.error || health.message)
+      : health.message,
+    tools: health.tools || [],
+    checkedAt: health.checkedAt,
+  };
+}
+
 export function McpManager({ refreshKey = 0 }: McpManagerProps) {
   const { t } = useTranslation();
-  const [servers, setServers] = useState<Record<string, MCPServer & { scope?: string }>>({});
+  const [servers, setServers] = useState<Record<string, MCPServer & { scope?: string; is_enabled?: boolean }>>({});
   const [loading, setLoading] = useState(true);
+  const [checkingAll, setCheckingAll] = useState(false);
+  const [testResults, setTestResults] = useState<Record<string, McpTestState>>({});
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingName, setEditingName] = useState<string | undefined>();
   const [editingServer, setEditingServer] = useState<MCPServer | undefined>();
@@ -32,6 +55,17 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
       const data = await res.json();
       if (data.mcpServers) {
         setServers(data.mcpServers);
+        const persistedResults = Object.fromEntries(
+          Object.entries(data.mcpServers as Record<string, MCPServer>)
+            .map(([name, server]) => [name, healthToTestState(server)] as const)
+            .filter((entry): entry is readonly [string, McpTestState] => Boolean(entry[1])),
+        );
+        setTestResults(prev => {
+          const checking = Object.fromEntries(
+            Object.entries(prev).filter(([, result]) => result.status === 'checking'),
+          );
+          return { ...persistedResults, ...checking };
+        });
       } else if (data.error) {
         setError(data.error);
       }
@@ -91,31 +125,107 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
     }
   }
 
+  async function testMcpServer(name: string, server: MCPServer) {
+    setTestResults(prev => ({
+      ...prev,
+      [name]: { status: "checking" },
+    }));
+
+    try {
+      const res = await fetch("/api/plugins/mcp/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, scope: server.scope || 'user', server }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const checkedAt = new Date().toISOString();
+      if (data?.ok === true) {
+        setTestResults(prev => ({
+          ...prev,
+          [name]: {
+            status: data.skipped ? "skipped" : "ok",
+            message: data.reason,
+            tools: Array.isArray(data.tools) ? data.tools : [],
+            checkedAt,
+          },
+        }));
+      } else {
+        setTestResults(prev => ({
+          ...prev,
+          [name]: {
+            status: "failed",
+            message: data?.error || t("mcp.testFailed"),
+            checkedAt,
+          },
+        }));
+      }
+    } catch (err) {
+      setTestResults(prev => ({
+        ...prev,
+        [name]: {
+          status: "failed",
+          message: err instanceof Error ? err.message : t("mcp.testFailed"),
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    }
+  }
+
+  async function handleTestAll() {
+    setCheckingAll(true);
+    try {
+      for (const [name, server] of Object.entries(servers)) {
+        if (server.is_enabled === false) continue;
+        await testMcpServer(name, server);
+      }
+    } finally {
+      setCheckingAll(false);
+    }
+  }
+
   async function handleSave(name: string, server: MCPServer) {
     if (editingName && editingName !== name) {
       // Rename: delete old and create new
       try {
-        await fetch(`/api/plugins/mcp/${encodeURIComponent(editingName)}`, {
+        const deleteRes = await fetch(`/api/plugins/mcp/${encodeURIComponent(editingName)}`, {
           method: "DELETE",
         });
-        await fetch("/api/plugins/mcp", {
+        if (!deleteRes.ok) {
+          const data = await deleteRes.json().catch(() => ({}));
+          setError(data.error || "Failed to delete old MCP server");
+          return;
+        }
+        const createRes = await fetch("/api/plugins/mcp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, server }),
         });
+        if (!createRes.ok) {
+          const data = await createRes.json().catch(() => ({}));
+          setError(data.error || "Failed to rename MCP server");
+          await fetchServers();
+          return;
+        }
         await fetchServers();
+        await testMcpServer(name, server);
       } catch (err) {
         console.error("Failed to rename MCP server:", err);
       }
     } else if (editingName) {
       // Update existing
       try {
-        await fetch("/api/plugins/mcp", {
+        const res = await fetch("/api/plugins/mcp", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, server }),
         });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error || "Failed to update MCP server");
+          return;
+        }
         await fetchServers();
+        await testMcpServer(name, server);
       } catch (err) {
         console.error("Failed to update MCP server:", err);
       }
@@ -129,6 +239,20 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
         });
         if (res.ok) {
           await fetchServers();
+          await testMcpServer(name, server);
+        } else if (res.status === 409) {
+          const updateRes = await fetch("/api/plugins/mcp", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, server }),
+          });
+          if (updateRes.ok) {
+            await fetchServers();
+            await testMcpServer(name, server);
+          } else {
+            const data = await updateRes.json();
+            console.error("Failed to update MCP server:", data.error);
+          }
         } else {
           const data = await res.json();
           console.error("Failed to add MCP server:", data.error);
@@ -167,10 +291,26 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
             Configure Model Context Protocol servers for Claude
           </p>
         </div>
-        <Button size="sm" className="gap-1" onClick={handleAdd}>
-          <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
-          {t('mcp.addServer')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1"
+            onClick={handleTestAll}
+            disabled={checkingAll || loading || serverCount === 0}
+          >
+            {checkingAll ? (
+              <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {t('mcp.testAll')}
+          </Button>
+          <Button size="sm" className="gap-1" onClick={handleAdd}>
+            <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
+            {t('mcp.addServer')}
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -200,9 +340,11 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
           ) : (
             <McpServerList
               servers={servers}
+              testResults={testResults}
               onEdit={handleEdit}
               onDelete={handleDelete}
               onToggle={handleToggle}
+              onTest={testMcpServer}
             />
           )}
         </TabsContent>

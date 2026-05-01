@@ -2,6 +2,8 @@
   "name": "chrome-devtools",
   "description": "Chrome DevTools integration for Lumos browser workspace (screenshot, DOM inspect, console, network)",
   "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
   "args": ["[RUNTIME_PATH]/mcp-servers/chrome-devtools/lumos_chrome_mcp.mjs"],
   "env": {}
 }

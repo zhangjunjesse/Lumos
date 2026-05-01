@@ -11,6 +11,7 @@ import {
   getExpandedPath,
 } from '@/lib/platform';
 import { sanitizeEnv } from '@/lib/claude/utils';
+import { resolveRuntimeResourcePath } from '@/lib/runtime-resources';
 import {
   clearClaudeAndAnthropicEnv,
   isClaudeLocalAuthProvider,
@@ -96,15 +97,15 @@ function safeJsonParse<T>(value: string): T | null {
 
 function getClaudeRuntimeNodePath(): string {
   const ext = process.platform === 'win32' ? '.exe' : '';
-  const bundledNode = path.join(
-    process.resourcesPath || path.join(process.cwd(), 'resources'),
+  const relativePath = path.join(
     'node-runtime',
     process.platform,
     process.arch,
     `node${ext}`,
   );
+  const bundledNode = resolveRuntimeResourcePath(relativePath);
 
-  return bundledNode;
+  return bundledNode || path.join(process.cwd(), 'resources', relativePath);
 }
 
 function resolveNodeCommand(): string {

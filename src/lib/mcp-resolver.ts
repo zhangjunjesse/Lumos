@@ -19,6 +19,11 @@ import type { MCPServerConfig } from '@/types';
 import { ENRICHER_MAP, type McpEnrichContext } from '@/lib/mcp-env-enrichers';
 import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
+import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
+import {
+  resolveMcpConfigPlaceholders,
+  type McpPlaceholderContext,
+} from '@/lib/mcp-config-placeholders';
 
 export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
@@ -56,6 +61,13 @@ export function resolveEnabledMcpServers(
   const pythonPath = isVenvReady()
     ? getVenvPythonPath()
     : (resolvePythonBinary() || getVenvPythonPath());
+  const placeholderContext: McpPlaceholderContext = {
+    runtimePath,
+    workspacePath,
+    dataDir,
+    pythonPath,
+    userHome: os.homedir(),
+  };
   const enrichContext: McpEnrichContext = {
     sessionWorkingDirectory: options.sessionWorkingDirectory,
     sessionId: options.sessionId,
@@ -77,23 +89,14 @@ export function resolveEnabledMcpServers(
 
     // Step 1a: Resolve path placeholders in command
     if (config.command) {
-      config.command = config.command
-        .replace('[RUNTIME_PATH]', runtimePath)
-        .replace('[PYTHON_PATH]', pythonPath)
-        .replace('[DATA_DIR]', dataDir)
-        .replace(/^~\//, os.homedir() + '/');
+      config.command = resolveMcpConfigPlaceholders(config.command, placeholderContext);
     }
 
     // Step 1b: Resolve path placeholders in args
     if (config.args) {
       config.args = config.args.map(arg => {
         const normalized = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
-        return normalized
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace('[PYTHON_PATH]', pythonPath)
-          .replace(/^~\//, os.homedir() + '/');
+        return resolveMcpConfigPlaceholders(normalized, placeholderContext);
       });
     }
 
@@ -101,12 +104,7 @@ export function resolveEnabledMcpServers(
     if (config.env) {
       const resolved: Record<string, string> = {};
       for (const [key, value] of Object.entries(config.env)) {
-        resolved[key] = value
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace('[PYTHON_PATH]', pythonPath)
-          .replace(/^~\//, os.homedir() + '/');
+        resolved[key] = resolveMcpConfigPlaceholders(value, placeholderContext);
       }
       config.env = resolved;
     }
@@ -185,8 +183,7 @@ function toSdkMcpServerName(name: string): string {
 }
 
 function resolveRuntimePath(): string {
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    return process.resourcesPath;
-  }
-  return path.join(process.cwd(), 'resources');
+  return resolveRuntimeResourceRootFor('mcp-servers')
+    || resolveRuntimeResourceRootFor('feishu-mcp-server')
+    || path.join(process.cwd(), 'resources');
 }

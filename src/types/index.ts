@@ -1253,9 +1253,21 @@ export interface MCPServerConfig {
   args?: string[];
   env?: Record<string, string>;
   type?: 'stdio' | 'sse' | 'http';
+  runMode?: 'on_demand' | 'keep_alive';
+  runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
   url?: string;
   headers?: Record<string, string>;
   description?: string;
+  scope?: 'builtin' | 'user';
+  is_enabled?: boolean;
+  health?: {
+    status: 'unknown' | 'ok' | 'failed' | 'skipped';
+    checkedAt?: string;
+    error?: string;
+    message?: string;
+    tools?: string[];
+    transport?: 'stdio' | 'sse' | 'http';
+  };
 }
 
 export interface MCPConfig {

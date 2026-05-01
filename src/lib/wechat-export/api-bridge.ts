@@ -12,6 +12,7 @@ import path from 'path';
 import { dataDir } from '@/lib/db';
 import { isVenvReady, getVenvPythonPath } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
+import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
 
 const TIMEOUT_MS = 30_000;
 
@@ -33,10 +34,9 @@ function findSqlcipher(): string {
 }
 
 function resolveRuntimePath(): string {
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    return process.resourcesPath;
-  }
-  return path.join(process.cwd(), 'resources');
+  return resolveRuntimeResourceRootFor('mcp-servers')
+    || resolveRuntimeResourceRootFor('feishu-mcp-server')
+    || path.join(process.cwd(), 'resources');
 }
 
 function getPythonBinary(): string | null {

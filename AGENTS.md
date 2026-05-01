@@ -92,11 +92,13 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - 按“完整实现”标准落地 `03 / 04 / 05 / 06` 任务架构文档，而不只是打通最小闭环。
 - 让用户能基于产品界面和明确的阶段结论判断哪些能力已经可验收，哪些还只是内部链路可用。
 - 在不破坏 `01 ~ 06` 主链边界的前提下，为后续系统能力增长补齐 `07 动态能力扩展` 的独立架构定义。
+- `07 动态能力扩展 / 能力生成器` 的产品目标按“小白用户可完成能力开发、安装、更新、使用”收口：优先让用户用自然语言表达需求，由 Lumos 自主生成可安装方案、处理同名更新、路径迁移、基础自检和清晰失败提示；需要凭据、危险权限或外部账号授权时再打扰用户。
 - 以“独立模块优先、聊天与工作流复用其服务”的原则补齐 `08 DeepSearch`，利用内置浏览器共享登录态为反爬站点提供可验收的深度研究能力。
 - 建立本地浏览器 Provider / Browser Context 架构，让 Lumos 后续可在不复制账号资产的前提下接管用户已有的指纹浏览器 profile，并保证 chat、Workflow、Agent 浏览器工具不会串号。
 - 支付模块先收敛到“余额充值”主链：用户充值后增加 Lumos 余额 / new-api token 额度，不做月卡、订阅或会员套餐主线。
 - `lumos-web` 生产后台已切到 HTTPS：`http://lumos.miki.zj.cn` 会 301 到 `https://lumos.miki.zj.cn`，证书使用 Let's Encrypt + 现有 Nginx 自动续期方案。
 - 知识库本地索引必须按跨平台标准收口：macOS 本地开发可索引不等于 Windows exe 可索引；打包版必须在 macOS / Windows 安装包里都能完成“导入内容 -> 向量化 -> 搜索命中”验收。
+- 桌面端更新包体积需要逐步从“每次下载完整安装包”收敛到“主程序包 + 外置稳定运行资源缓存”；Node runtime / Python runtime / Git Bash / 本地模型这类稳定大资源应优先支持按资源清单独立校验、下载和复用，完整安装包只保留为兜底路径。
 - 保持架构边界不扩张：
   - DSL v1 不支持 subworkflow
   - Phase 1 只支持 `agent / browser / notification`
@@ -169,6 +171,8 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 成果：Lumos Cloud DeepSeek 计费差异已完成三轮生产排查和收口；第一轮确认 new-api `CacheRatio` 缺少 `deepseek-v4-flash / deepseek-v4-pro` 别名并修正历史缓存折扣；第二轮确认工作流任务里的 Claude Code Task/subagent 仍会向 DeepSeek 渠道发出 `claude-haiku-4-5*` 辅助调用，导致按 Claude Haiku 倍率放大扣费，生产已补 DeepSeek 兜底别名并修正受影响历史日志、小时统计、token 余额、用户余额/used quota 和渠道 used quota，两轮累计返还 `172,383,838` quota（¥344.7677）；第三轮按后台“聊天服务商加价”重新核对 `lumos_chat_providers.model_catalog.markup_percent -> new-api ModelRatio/CompletionRatio/CacheRatio`，确认 `deepseek-v4-flash` 原价 ¥1/¥2 每百万 token + 40% 加价已正确同步为 `ModelRatio=0.7 / CompletionRatio=2`，`deepseek-v4-pro` 原价 ¥12/¥24 + 20% 加价已同步为 `ModelRatio=7.2 / CompletionRatio=2`，生产 `CacheRatio` 按 DeepSeek 2026-04-26 后的当前官方 cache hit 价格比例保持为 `deepseek-v4-flash=0.02`、`deepseek-v4-pro=0.0083333333`、DeepSeek 兜底 `claude-haiku-4-5* = 0.02`，使缓存命中也按上游当前成本比例叠加后台加价计费；排查期间短暂误设为旧 launch 价比例的 58 条请求已补回 `19,116` quota（¥0.038232）。客户端侧也已补 Claude Agent SDK 内部模型防护，非真实 Claude resolved model 会把 `ANTHROPIC_SMALL_FAST_MODEL / ANTHROPIC_DEFAULT_HAIKU_MODEL / ANTHROPIC_DEFAULT_SONNET_MODEL / ANTHROPIC_DEFAULT_OPUS_MODEL / CLAUDE_CODE_SUBAGENT_MODEL` 全部固定到当前 resolved model，减少工作流 agent / subagent 继续产生 `claude-haiku-*` 账单行；仍需补正式自动化计费回归，防止未来后台保存服务商时遗漏 CacheRatio 审计。
   - 成果：知识库向量化的长期跨平台问题已正式记录并定位；Windows exe 报错 `embedding model initialization failed: Cannot read properties of undefined (reading 'create')` 时，诊断已显示模型文件实际存在于用户 runtime cache 和安装目录，因此不应继续按“模型文件缺失”方向排查。当前判断为 Electron/Next packaged server 中 portable `transformers.web.js` 在 Node 进程里误选 `onnxruntime-node` 空后端，导致 `InferenceSession.create` 为空；修复方向是让打包版索引统一走本地 `onnxruntime-web` WASM 后端，并显式绑定打包内 `ort-wasm-simd-threaded` 文件路径。
   - 待完成：知识库索引仍需完成新安装包级验收；必须分别在 macOS 和 Windows exe 上验证“导入内容 -> 向量化成功 -> 搜索命中”，在此之前不能把跨平台索引问题标为完整完成。
+  - 成果：桌面端更新包体积治理已开始第一阶段前置改造；运行时已新增统一资源解析层，Node runtime / Python runtime / Git Bash / 本地 embedding 模型 / MCP runtime path 可优先从 `LUMOS_EXTERNAL_RESOURCES_DIR` 或 `~/.lumos/runtime-resources` 查找，再回退到安装包资源和开发态 `resources/`；同时已新增发布侧 runtime resources manifest 生成脚本，可先产出 Node/Python/Git-Bash/models 的文件清单、大小与 sha512，为后续独立资源下载、校验和缓存复用做准备。
+  - 待完成：主安装包尚未真正瘦身；还需要补正式资源下载/校验/恢复 UI、资源包发布与 CDN/更新接口接入、首次安装缺资源兜底、跨平台打包验收，然后才能从 `electron-builder` 主包里移除稳定大资源。
   - 成果：已新增 `07-dynamic-capability-extension-design.md`，把“用户通过 LLM 动态新增系统能力，并让工作流后续可正式使用”定义为独立横切架构，不再硬塞进 `03 ~ 06` 任一单层文档。
   - 成果：已为 `07` 补上正式产品入口；左侧侧边栏现已新增“节点开发”菜单，并有独立 `/workflow/nodes` 页面用于展示当前正式节点边界、07 的能力建设方向与剩余缺口。
   - 成果：已按用户最新确认收敛 `07` 的产品形态：`新增能力` 继续以聊天页为主入口，尽量不扩 UI；AI 需先和用户对话确认需求，再直接生成两类待发布能力（`代码节点` / `Prompt 节点`）；“草稿”只保留为内部实现概念，不作为 Phase 1 主要产品心智。
@@ -177,11 +181,13 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 成果：已开始兼容历史遗留能力文件；`~/.lumos/capabilities` 下已有的旧 `ts/md` 能力现已能进入当前能力发现范围，不再只停留在“文件存在但主链不可见”的状态。
   - 成果：主 Agent 的一个高频导出场景已补上第一条自动接能力的链路；当任务要求“整理报告/正文并导出 PDF”且存在可识别的格式转换代码节点时，调度层会在正文生成后自动追加能力步骤执行导出，不再一律回退为“PDF 导出需求已记录”占位话术。
   - 成果：`新增能力` 聊天助手已补上真实能力清单提示；后续只有在当前真实可发现能力列表里存在时，才应对用户说“已经有这个能力”。
+  - 成果：`能力生成器` 的 Skill / MCP 安装链路已补第一轮体验收口；现在同名 Skill / MCP 会自动走更新而不是只显示 `exists`，分享包导入默认按覆盖更新处理，导出 / 导入 / 生成安装方案会把 Lumos 数据目录、用户目录、Python runtime 和 runtime resources 尽量写成可迁移占位符，生成的 Python MCP 模板和内置 JS MCP 入口也会按 `inputSchema` 对字符串化的 number / integer / boolean / array / object 参数做基础类型兜底；对于生成器安装的 stdio MCP，安装后还会执行 `initialize -> tools/list` 的启动自检，并在 UI 里用“已安装 / 已更新 / 自检失败”等用户可理解状态展示。
+  - 成果：正式 `能力 > MCP 服务器` 管理页已补第一版手动健康检查体验；用户现在可以对单个 MCP 点“检测服务器”，也可以点“检测全部”，页面会展示“未检测 / 检测中 / 可用 / 失败”等状态和失败原因；手动新增、更新或同名覆盖 MCP 后也会自动跑一次基础启动检测。同时保存表单会自动拆分误填在 command 输入框里的整条 `npx -y ...` 命令，减少小白用户因 command / args 分不清导致的启动失败。最新还已把 MCP 健康检查结果持久化到本地库，刷新页面后仍能看到上次检测状态、失败原因、检测时间和工具数量；能力生成器安装后的 stdio MCP 自检也会同步写回该状态；MCP 配置也已新增“按需启动 / 长连接声明”运行方式意图和 `auto / Node / Python / Bun / 自定义` 运行时声明，并同步进入管理页表单、列表徽标、导入导出包、内置 MCP 配置和能力生成器计划格式。远程 HTTP / SSE MCP 检测已从基础连通升级为第一版协议级检测：HTTP 会执行 `initialize -> notifications/initialized -> tools/list`，旧 SSE 会先识别 `endpoint` 事件再执行同样的初始化和工具列表检查，`401 / 403 / 404` 不再被误标为可用。
   - 待完成：聊天侧任务标签目前已满足“轻入口 + 点开看正式详情”，但更细的展示策略和交互规则仍可能继续调整，还不是最终完整产品形态。
   - 待完成：把内部完成度和 UI 可见能力进一步对齐，减少“内部已通但 UI 不可验”的区域。
   - 待完成：补齐 `06` 的正式执行代理 UI，并与现有团队设置页分层，避免和旧 team-run 角色预设混淆。
   - 待完成：把 `03` 调度信息与 `06` 运行态角色信息继续收进正式详情页，而不只留在测试页或配置页。
-  - 待完成：`07` 仍未完整打通；虽然对话式确认、能力生成、发布入口，以及 `Prompt 节点` / `代码节点` 的显式任务引用主链都已具备第一段可验收实现，且报告导出到 PDF 已补上一条自动接能力的主链，但更通用的自动发现、自然语言参数提取、审批、回滚和更完整的运行时治理都还没有完成。
+  - 待完成：`07` 仍未完整打通；虽然对话式确认、能力生成、发布入口、`Prompt 节点` / `代码节点` 的显式任务引用、报告导出到 PDF 的自动接能力主链，以及能力生成器的同名覆盖更新、路径变量化、安装后基础自检、参数类型兜底、MCP 管理页手动健康检查、健康状态持久化、运行方式/运行时声明和第一版远程 MCP 协议检测都已具备第一段可验收实现，但更通用的自动发现、自然语言参数提取、审批、回滚、`keep_alive` MCP 后台守护 / 崩溃自动重启、Bun 运行时托管或自动安装、受保护远程 MCP 的登录授权引导和更完整运行时治理都还没有完成。
 - 阶段 4：DeepSearch 独立模块设计
   - 成果：已确认 `08 DeepSearch` 不应先耦合到 Workflow，而应先做独立模块，再由聊天和 Workflow 复用。
   - 成果：已确认产品需要在左侧侧边栏 `扩展` 下新增正式 `DeepSearch` 页，用于登录态配置、历史记录和抓取内容查看。
@@ -273,8 +279,8 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - `07 动态能力扩展`
   - 文档完整度：`基本完成`
   - 主链状态：`已打通`
-  - 当前进展：已新增独立架构文档，明确“动态新增系统能力”不并入 `03 ~ 06`，而是作为横切能力单独定义；最新已按用户要求把产品目标进一步收敛为“尽量复用现有聊天式新增页，不引入复杂草稿流，AI 先确认需求，再直接生成两类待发布能力：`代码节点` 与 `Prompt 节点`，最后由用户发布”；同时文档已进一步明确 Phase 1 的最小改 UI 实施方案：保留当前能力列表页、聊天式新增页和详情页，只调整行为为“对话确认 -> 生成待发布能力 -> 发布 -> 正式可用”；当前产品侧已实现这条第一段主链：`Prompt 节点` 在任务明确提到能力 ID / 名称时，会进入 workflow agent step 的 `tools`；`代码节点` 在任务明确提到能力 ID / 名称并提供结构化 JSON 参数时，会进入真实 `capability` 步骤执行；历史遗留的本地能力文件也已开始进入当前发现范围；正式 `Workflow` 详情页也已开始展示“系统能力节点”和对应能力 ID；此外，报告/正文导出 PDF 场景现在已能在检测到可用格式转换能力时自动追加能力步骤，不再一律停在“需求已记录”的占位结果；最新又已补上正文类 workflow agent step 的纯文本交付模式、Claude SDK `result.result` 文本读取，以及 `md-converter` 在缺少 `pdflatex` 时回退到本机 `weasyprint` 生成 PDF；“给我一份 Claude 使用技巧报告，并导出 PDF” 这条真实任务现已完成一轮端到端验收并产出实际 PDF 文件
-  - 当前缺口：`07` 仍未完整打通；当前可验收的是 UI 里的“对话确认 / 生成 / 发布”、两类能力的显式任务引用，以及报告到 PDF 的一条自动导出主链，但更通用的自动发现、自然语言参数提取、审批、回滚、配额/沙箱治理和更完整的运行态可视化仍未完成，因此还不能按“完整实现”标准验收
+  - 当前进展：已新增独立架构文档，明确“动态新增系统能力”不并入 `03 ~ 06`，而是作为横切能力单独定义；最新已按用户要求把产品目标进一步收敛为“尽量复用现有聊天式新增页，不引入复杂草稿流，AI 先确认需求，再直接生成两类待发布能力：`代码节点` 与 `Prompt 节点`，最后由用户发布”；同时文档已进一步明确 Phase 1 的最小改 UI 实施方案：保留当前能力列表页、聊天式新增页和详情页，只调整行为为“对话确认 -> 生成待发布能力 -> 发布 -> 正式可用”；当前产品侧已实现这条第一段主链：`Prompt 节点` 在任务明确提到能力 ID / 名称时，会进入 workflow agent step 的 `tools`；`代码节点` 在任务明确提到能力 ID / 名称并提供结构化 JSON 参数时，会进入真实 `capability` 步骤执行；历史遗留的本地能力文件也已开始进入当前发现范围；正式 `Workflow` 详情页也已开始展示“系统能力节点”和对应能力 ID；此外，报告/正文导出 PDF 场景现在已能在检测到可用格式转换能力时自动追加能力步骤，不再一律停在“需求已记录”的占位结果；最新又已补上正文类 workflow agent step 的纯文本交付模式、Claude SDK `result.result` 文本读取，以及 `md-converter` 在缺少 `pdflatex` 时回退到本机 `weasyprint` 生成 PDF；“给我一份 Claude 使用技巧报告，并导出 PDF” 这条真实任务现已完成一轮端到端验收并产出实际 PDF 文件；本轮还针对 `能力生成器` 的安装使用体验补了第一轮 P0 收口：同名 Skill / MCP 自动覆盖更新，分享包导入默认覆盖，导出 / 导入 / 生成安装计划会使用 `[DATA_DIR] / [PYTHON_PATH] / [RUNTIME_PATH] / ${USER_HOME}` 等可迁移占位符，MCP 运行时会解析这些占位符，生成 Python MCP 模板与内置 JS MCP 会按 `inputSchema` 对字符串化参数做基础类型兜底，生成器安装 stdio MCP 后会做启动自检并在 UI 显示“已安装 / 已更新 / 自检失败”等可理解状态；正式 `能力 > MCP 服务器` 页也已新增“检测服务器 / 检测全部”手动健康检查入口，手动保存或同名覆盖后会自动执行基础启动检测，并能把失败原因直接显示在 MCP 卡片上；检测结果已持久化，刷新页面后仍保留上次检测状态、检测时间、失败原因和发现的工具数量，生成器安装后的自检结果也会同步进入 MCP 管理页；最新 MCP 配置已支持运行方式和运行时声明，用户能在表单里选择“按需启动 / 长连接声明”和 `auto / Node / Python / Bun / 自定义`，列表页也会直接展示对应徽标，导入导出与能力生成器计划会保留这些声明；远程 HTTP / SSE MCP 检测已升级为第一版协议级检查，会执行初始化与工具列表读取，减少“URL 能访问但不是可用 MCP”的假成功。
+  - 当前缺口：`07` 仍未完整打通；当前可验收的是 UI 里的“对话确认 / 生成 / 发布”、两类能力的显式任务引用、报告到 PDF 的一条自动导出主链，以及能力生成器的一键安装/更新、路径迁移占位符、stdio MCP 基础自检、MCP 管理页手动健康检查、健康状态持久化、运行方式/运行时声明和第一版远程 MCP 协议检测。更通用的自动发现、自然语言参数提取、审批、回滚、配额/沙箱治理、`keep_alive` MCP 后台守护与崩溃自动重启、Bun 运行时托管或自动安装、受保护远程 MCP 的登录授权引导、更完整 MCP 状态面板和更完整运行态可视化仍未完成，因此还不能按“完整实现”标准验收
 - `08 DeepSearch 独立模块`
   - 文档完整度：`基本完成`
   - 主链状态：`未打通`
@@ -286,6 +292,12 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 当前进展：长期问题已定位到打包版 embedding runtime 初始化，而不是模型文件缺失。Windows exe 报错 `Cannot read properties of undefined (reading 'create')` 的同时，模型诊断显示 `config.json / tokenizer.json / vocab.txt / onnx/model_quantized.onnx` 已存在于 `C:\Users\Administrator\.lumos\runtime\embedding-models` 和 `C:\Program Files\Lumos\resources...`，因此后续排查要优先看 `@huggingface/transformers` 与 `onnxruntime-web / onnxruntime-node` 的 packaged runtime 选择。当前代码修复方向已改为 portable embedder 在 Electron packaged server 中强制走本地 `onnxruntime-web` WASM，并把 `wasmPaths` 指向安装包内 `ort-wasm-simd-threaded.mjs/wasm`。
   - UI 可验收范围：暂未进入用户可验收；现有 Windows exe 仍可能复现旧错误，必须等新打包版本安装后在知识库页面真实导入文件并看到“向量化完成 / 搜索命中”。
   - 当前缺口：还需要完成正式打包和跨平台安装包验收；最低验收必须覆盖 macOS 与 Windows exe，两端都要验证“导入内容 -> 向量化成功 -> 搜索命中”，并确认失败诊断会同时报告模型文件与 onnxruntime-web WASM 文件状态。
+- `桌面端更新 / 资源拆包`
+  - 文档完整度：`未开始`
+  - 主链状态：`未打通`
+  - 当前进展：已确认当前 electron-updater 路径仍主要下载完整安装包，macOS `.dmg` 约 406MB、Windows `.exe` 约 486MB；同时已开始第一阶段前置实现，新增运行时资源解析层，让 Node runtime / Python runtime / Git Bash / 本地模型等资源可优先从外置缓存目录读取，并新增 `runtime-resources:manifest` 脚本生成稳定资源文件清单。当前这只是拆包前置能力，不代表用户更新已经变成差分或小包下载。
+  - UI 可验收范围：暂未进入用户可验收；用户现在看到的更新体验仍是下载完整安装包。
+  - 当前缺口：还需要补资源包上传/托管、客户端资源 manifest 获取、断点/校验/解压、缺资源恢复提示、首次安装兜底、正式包移除稳定大资源、macOS/Windows 安装包和自动更新回归；这些完成前不能标为完整实现。
 - `Workflow 编辑体验`
   - 文档完整度：`部分完成`
   - 主链状态：`已打通`

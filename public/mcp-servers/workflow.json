@@ -2,6 +2,8 @@
   "name": "workflow",
   "description": "Validate and compile Workflow DSL v1 into workflow factory modules",
   "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
   "args": [
     "[RUNTIME_PATH]/mcp-servers/workflow/workflow_mcp.mjs"
   ],

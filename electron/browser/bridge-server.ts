@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, session } from 'electron';
 import type { BrowserManager } from './browser-manager';
 import {
   DEFAULT_BROWSER_CONTEXT_ID,
@@ -11,6 +11,7 @@ import {
   type BrowserAutomationSession,
   type BrowserProviderRegistry,
 } from '../browser-provider';
+import { normalizeChromeLikeRequestHeaders } from './user-agent';
 
 interface BridgeContext {
   browserManager: BrowserManager | null;
@@ -1426,14 +1427,14 @@ export class BrowserBridgeServer {
       try {
         const fetchHeaders: Record<string, string> = {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           ...(body.headers || {}),
         };
 
         const response = await ses.fetch(targetUrl, {
           method: 'GET',
-          headers: fetchHeaders,
+          headers: normalizeChromeLikeRequestHeaders(fetchHeaders, {
+            locale: app.getLocale(),
+          }),
         });
 
         const contentType = response.headers.get('content-type') || '';

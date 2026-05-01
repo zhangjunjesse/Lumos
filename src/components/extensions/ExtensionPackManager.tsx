@@ -126,7 +126,7 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
   const [preview, setPreview] = useState<ImportPreviewData | null>(null);
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
-  const [strategy, setStrategy] = useState<ConflictStrategy>("rename");
+  const [strategy, setStrategy] = useState<ConflictStrategy>("replace");
   const [showDetailList, setShowDetailList] = useState(false);
   const [showImportMessages, setShowImportMessages] = useState(false);
 
@@ -427,7 +427,7 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
     setImportError(null);
     setPreviewLoading(false);
     setImporting(false);
-    setStrategy("rename");
+    setStrategy("replace");
     setShowDetailList(false);
     setShowImportMessages(false);
     if (fileInputRef.current) {
@@ -658,14 +658,14 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StrategyButton
-                    active={strategy === "rename"}
-                    label={t("extensions.packStrategyRename")}
-                    onClick={() => setStrategy("rename")}
-                  />
-                  <StrategyButton
                     active={strategy === "replace"}
                     label={t("extensions.packStrategyReplace")}
                     onClick={() => setStrategy("replace")}
+                  />
+                  <StrategyButton
+                    active={strategy === "rename"}
+                    label={t("extensions.packStrategyRename")}
+                    onClick={() => setStrategy("rename")}
                   />
                   <StrategyButton
                     active={strategy === "skip"}

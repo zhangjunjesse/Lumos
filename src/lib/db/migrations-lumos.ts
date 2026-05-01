@@ -678,8 +678,16 @@ export function migrateLumosTables(db: Database.Database): void {
     ['content_hash', "TEXT NOT NULL DEFAULT ''"],
     ['description', "TEXT NOT NULL DEFAULT ''"],
     ['type', "TEXT NOT NULL DEFAULT 'stdio'"],
+    ['run_mode', "TEXT NOT NULL DEFAULT 'on_demand'"],
+    ['runtime_kind', "TEXT NOT NULL DEFAULT 'auto'"],
     ['url', "TEXT NOT NULL DEFAULT ''"],
     ['headers', "TEXT NOT NULL DEFAULT '{}'"],
+    ['health_status', "TEXT NOT NULL DEFAULT 'unknown'"],
+    ['health_checked_at', "TEXT NOT NULL DEFAULT ''"],
+    ['health_error', "TEXT NOT NULL DEFAULT ''"],
+    ['health_message', "TEXT NOT NULL DEFAULT ''"],
+    ['health_tools', "TEXT NOT NULL DEFAULT '[]'"],
+    ['health_transport', "TEXT NOT NULL DEFAULT ''"],
   ];
 
   for (const [col, def] of mcpNewCols) {

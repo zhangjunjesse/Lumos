@@ -19,6 +19,37 @@ import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 
 type ServerType = 'stdio' | 'sse' | 'http';
+type RunMode = 'on_demand' | 'keep_alive';
+type RuntimeKind = 'auto' | 'node' | 'python' | 'bun' | 'custom';
+
+function splitCommandLine(input: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    if ((char === '"' || char === "'") && !quote) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && !quote) {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (current) parts.push(current);
+  return parts;
+}
 
 interface McpServerEditorProps {
   open: boolean;
@@ -41,6 +72,8 @@ export function McpServerEditor({
   const [serverType, setServerType] = useState<ServerType>(
     initialServer?.type || 'stdio'
   );
+  const [runMode, setRunMode] = useState<RunMode>(initialServer?.runMode || 'on_demand');
+  const [runtimeKind, setRuntimeKind] = useState<RuntimeKind>(initialServer?.runtime || 'auto');
   const [command, setCommand] = useState(initialServer?.command || '');
   const [args, setArgs] = useState(initialServer?.args?.join('\n') || '');
   const [url, setUrl] = useState(initialServer?.url || '');
@@ -60,6 +93,8 @@ export function McpServerEditor({
     if (open) {
       setName(initialName || '');
       setServerType(initialServer?.type || 'stdio');
+      setRunMode(initialServer?.runMode || 'on_demand');
+      setRuntimeKind(initialServer?.runtime || 'auto');
       setCommand(initialServer?.command || '');
       setArgs(initialServer?.args?.join('\n') || '');
       setUrl(initialServer?.url || '');
@@ -150,16 +185,22 @@ export function McpServerEditor({
       }
     }
 
-    const serverArgs = args
+    const formArgs = args
       .split('\n')
       .map((s: string) => s.trim())
       .filter(Boolean);
+    const commandParts = splitCommandLine(command.trim());
+    const shouldSplitCommand = serverType === 'stdio' && formArgs.length === 0 && commandParts.length > 1;
+    const commandValue = shouldSplitCommand ? commandParts[0] : command.trim();
+    const serverArgs = shouldSplitCommand ? commandParts.slice(1) : formArgs;
 
     const server: MCPServer = serverType === 'stdio'
       ? {
-          command: command.trim(),
+          command: commandValue,
           ...(serverArgs.length > 0 ? { args: serverArgs } : {}),
           ...(env ? { env } : {}),
+          runMode,
+          runtime: runtimeKind,
         }
       : {
           command: '',
@@ -222,6 +263,8 @@ export function McpServerEditor({
                   if (url) currentConfig.url = url;
                 } else {
                   currentConfig.command = command;
+                  currentConfig.runMode = runMode;
+                  currentConfig.runtime = runtimeKind;
                 }
                 const argsArr = args.split('\n').map(s => s.trim()).filter(Boolean);
                 if (argsArr.length > 0) currentConfig.args = argsArr;
@@ -263,7 +306,12 @@ export function McpServerEditor({
                 <Tabs
                   value={serverType}
                   onValueChange={(v) => {
-                    setServerType(v as ServerType);
+                    const nextType = v as ServerType;
+                    setServerType(nextType);
+                    if (nextType !== 'stdio') {
+                      setRunMode('on_demand');
+                      setRuntimeKind('auto');
+                    }
                     setError(null);
                   }}
                 >
@@ -295,9 +343,58 @@ export function McpServerEditor({
                         setCommand(e.target.value);
                         setError(null);
                       }}
-                      placeholder="npx -y @modelcontextprotocol/server-name"
+                      placeholder="npx"
                       className="font-mono text-sm"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t('mcp.runMode')}</Label>
+                    <Tabs
+                      value={runMode}
+                      onValueChange={(v) => {
+                        setRunMode(v as RunMode);
+                        setError(null);
+                      }}
+                    >
+                      <TabsList className="w-full">
+                        <TabsTrigger value="on_demand" className="flex-1">
+                          {t('mcp.runModeOnDemand')}
+                        </TabsTrigger>
+                        <TabsTrigger value="keep_alive" className="flex-1">
+                          {t('mcp.runModeKeepAlive')}
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                    {runMode === 'keep_alive' && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {t('mcp.runModeKeepAliveHint')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t('mcp.runtimeKind')}</Label>
+                    <Tabs
+                      value={runtimeKind}
+                      onValueChange={(v) => {
+                        setRuntimeKind(v as RuntimeKind);
+                        setError(null);
+                      }}
+                    >
+                      <TabsList className="grid w-full grid-cols-5">
+                        <TabsTrigger value="auto">{t('mcp.runtimeAuto')}</TabsTrigger>
+                        <TabsTrigger value="node">Node</TabsTrigger>
+                        <TabsTrigger value="python">Python</TabsTrigger>
+                        <TabsTrigger value="bun">Bun</TabsTrigger>
+                        <TabsTrigger value="custom">{t('mcp.runtimeCustom')}</TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                    {runtimeKind === 'bun' && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {t('mcp.runtimeBunWarning')}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -306,7 +403,7 @@ export function McpServerEditor({
                       id="server-args"
                       value={args}
                       onChange={(e) => setArgs(e.target.value)}
-                      placeholder={"--flag\nvalue"}
+                      placeholder={"-y\n@modelcontextprotocol/server-name"}
                       className="font-mono text-sm min-h-[80px]"
                     />
                   </div>

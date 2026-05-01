@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { resolveRuntimeResourcePath } from './runtime-resources';
 
 const isWindows = process.platform === 'win32';
 
@@ -8,13 +9,15 @@ const isWindows = process.platform === 'win32';
  * python-build-standalone 解压后的相对路径。
  * install_only 包解压出 python/ 目录。
  */
-function getBundledPythonDir(): string {
-  const resourcesPath = process.resourcesPath || path.resolve('resources');
-  return path.join(resourcesPath, 'python-runtime', process.platform, process.arch, 'python');
+function getBundledPythonDir(): string | null {
+  return resolveRuntimeResourcePath(
+    path.join('python-runtime', process.platform, process.arch, 'python'),
+  );
 }
 
-function getBundledPythonBin(): string {
+function getBundledPythonBin(): string | null {
   const pythonDir = getBundledPythonDir();
+  if (!pythonDir) return null;
   if (isWindows) {
     return path.join(pythonDir, 'python.exe');
   }
@@ -38,7 +41,7 @@ function isExecutable(binPath: string): boolean {
 export function resolvePythonBinary(): string | null {
   // 1. 内置 Python
   const bundled = getBundledPythonBin();
-  if (fs.existsSync(bundled) && isExecutable(bundled)) {
+  if (bundled && fs.existsSync(bundled) && isExecutable(bundled)) {
     return bundled;
   }
 
@@ -75,7 +78,7 @@ export function getPythonVersion(pythonPath: string): string | null {
  */
 export function isBundledPythonAvailable(): boolean {
   const bundled = getBundledPythonBin();
-  return fs.existsSync(bundled);
+  return Boolean(bundled && fs.existsSync(bundled));
 }
 
 /**
@@ -83,5 +86,5 @@ export function isBundledPythonAvailable(): boolean {
  */
 export function getBundledPythonHome(): string | null {
   const dir = getBundledPythonDir();
-  return fs.existsSync(dir) ? dir : null;
+  return dir && fs.existsSync(dir) ? dir : null;
 }

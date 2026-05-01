@@ -1,8 +1,14 @@
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
 import type { MCPServerConfig } from "@/types";
+import {
+  normalizePortableMcpConfig,
+  normalizePortableMcpMap,
+  normalizePortableMcpValue,
+} from "@/lib/mcp-config-placeholders";
 import {
   createMcpServer,
   createSkill,
@@ -115,6 +121,8 @@ const SENSITIVE_KEY_PATTERN =
   /(token|secret|password|api[_-]?key|authorization|cookie|session|private|credential)/i;
 const SENSITIVE_VALUE_PATTERN = /^(bearer|basic|token)\s+/i;
 const SKILL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+const portableContext = () => ({ dataDir, homeDir: os.homedir() });
 
 function calculateHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
@@ -265,18 +273,33 @@ function normalizePack(raw: Partial<ExtensionPack>): ExtensionPack {
       isEnabled: item.isEnabled !== false,
       scope: item.scope === "builtin" ? "builtin" : "user",
       config: {
-        command: String(item.config?.command ?? ""),
-        args: Array.isArray(item.config?.args) ? item.config?.args.map((arg) => String(arg)) : [],
+        command: normalizePortableMcpValue(String(item.config?.command ?? ""), portableContext()),
+        args: Array.isArray(item.config?.args)
+          ? item.config?.args.map((arg) => normalizePortableMcpValue(String(arg), portableContext()))
+          : [],
         env: item.config?.env && typeof item.config.env === "object"
-          ? Object.fromEntries(
-              Object.entries(item.config.env).map(([key, value]) => [key, String(value)])
+          ? normalizePortableMcpMap(
+              Object.fromEntries(
+                Object.entries(item.config.env).map(([key, value]) => [key, String(value)])
+              ),
+              portableContext(),
             )
           : {},
         type: item.config?.type,
-        url: item.config?.url ? String(item.config.url) : undefined,
+        runMode: item.config?.runMode === "keep_alive" ? "keep_alive" : "on_demand",
+        runtime: item.config?.runtime === "node"
+          || item.config?.runtime === "python"
+          || item.config?.runtime === "bun"
+          || item.config?.runtime === "custom"
+          ? item.config.runtime
+          : "auto",
+        url: item.config?.url ? normalizePortableMcpValue(String(item.config.url), portableContext()) : undefined,
         headers: item.config?.headers && typeof item.config.headers === "object"
-          ? Object.fromEntries(
-              Object.entries(item.config.headers).map(([key, value]) => [key, String(value)])
+          ? normalizePortableMcpMap(
+              Object.fromEntries(
+                Object.entries(item.config.headers).map(([key, value]) => [key, String(value)])
+              ),
+              portableContext(),
             )
           : {},
         description: item.config?.description ? String(item.config.description) : undefined,
@@ -373,15 +396,17 @@ async function handleExport(body: ExportActionRequest): Promise<NextResponse> {
         description: record.description || "",
         isEnabled: enabled,
         scope: record.scope,
-        config: {
+        config: normalizePortableMcpConfig({
           command: record.command || "",
           args: parseMcpArray(record.args),
           env: sanitizedEnv.map,
           type: (record.type as "stdio" | "sse" | "http") || "stdio",
+          runMode: record.run_mode || "on_demand",
+          runtime: record.runtime_kind || "auto",
           url: record.url || undefined,
           headers: sanitizedHeaders.map,
           description: record.description || undefined,
-        },
+        }, portableContext()),
       });
     }
   }
@@ -472,7 +497,7 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
   }
 
   const pack = normalizePack(body.pack);
-  const strategy: ConflictStrategy = body.conflictStrategy || "rename";
+  const strategy: ConflictStrategy = body.conflictStrategy || "replace";
 
   const result: ImportResult = {
     skills: {
@@ -577,16 +602,15 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
         targetName = ensureUniqueMcpName(normalizedName);
       }
 
-      const command = server.config.command || "";
-      const args = Array.isArray(server.config.args) ? server.config.args.map((arg) => String(arg)) : [];
-      const env = server.config.env && typeof server.config.env === "object"
-        ? Object.fromEntries(Object.entries(server.config.env).map(([key, value]) => [key, String(value)]))
-        : {};
-      const headers = server.config.headers && typeof server.config.headers === "object"
-        ? Object.fromEntries(Object.entries(server.config.headers).map(([key, value]) => [key, String(value)]))
-        : {};
-      const type = server.config.type || "stdio";
-      const url = server.config.url || "";
+      const portableConfig = normalizePortableMcpConfig(server.config, portableContext());
+      const command = portableConfig.command || "";
+      const args = portableConfig.args || [];
+      const env = portableConfig.env || {};
+      const headers = portableConfig.headers || {};
+      const type = portableConfig.type || "stdio";
+      const runMode = portableConfig.runMode || "on_demand";
+      const runtimeKind = portableConfig.runtime || "auto";
+      const url = portableConfig.url || "";
       const description = server.description || server.config.description || `MCP server: ${targetName}`;
       const enabled = server.isEnabled !== false;
 
@@ -596,6 +620,8 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
           args,
           env,
           type,
+          runMode,
+          runtime: runtimeKind,
           url,
           headers,
           description,
@@ -612,6 +638,8 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
         args,
         env,
         type,
+        runMode,
+        runtime: runtimeKind,
         url,
         headers,
         description,

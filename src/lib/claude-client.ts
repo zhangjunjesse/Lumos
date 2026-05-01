@@ -30,6 +30,7 @@ import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
 import { getClaudeProviderRoutingSnapshot, isClaudeLocalAuthProvider } from './claude/provider-env';
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
 import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
+import { buildRuntimeResourceCandidates, resolveRuntimeResourcePath } from './runtime-resources';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -61,19 +62,18 @@ function findBundledNode(): string | undefined {
   const ext = platform === 'win32' ? '.exe' : '';
   const exeName = `node${ext}`;
 
-  // In packaged app, resources are at process.resourcesPath
-  const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
-  const nodePath = path.join(resourcesPath, 'node-runtime', platform, arch, exeName);
+  const relativeNodePath = path.join('node-runtime', platform, arch, exeName);
+  const nodePath = resolveRuntimeResourcePath(relativeNodePath);
 
   console.log('[claude-client] Looking for bundled Node.js:', {
     platform,
     arch,
-    resourcesPath,
+    candidates: buildRuntimeResourceCandidates(relativeNodePath),
     nodePath,
-    exists: fs.existsSync(nodePath),
+    exists: Boolean(nodePath && fs.existsSync(nodePath)),
   });
 
-  if (fs.existsSync(nodePath)) {
+  if (nodePath && fs.existsSync(nodePath)) {
     console.log('[claude-client] Found bundled Node.js at:', nodePath);
     return nodePath;
   }
