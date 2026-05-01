@@ -121,7 +121,8 @@ export class WechatClient {
   async verifyToken(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await this.getUpdates('', 5_000);
-      if (r.ret === 0) return { ok: true };
+      // ilink 成功响应不带 ret 字段（仅错误时返回）— undefined / null 视为成功。
+      if (r.ret == null || r.ret === 0) return { ok: true };
       return { ok: false, error: `ret=${r.ret} ${r.errmsg ?? ''}`.trim() };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'verify failed' };
@@ -154,7 +155,10 @@ export class WechatClient {
         DEFAULT_API_TIMEOUT_MS,
         'sendMessage',
       )) as SendMessageResp | null;
-      if (!data || data.ret === 0) return { ok: true };
+      // ilink 成功响应不带 ret 字段（仅错误时返回）— undefined / null 视为成功，
+      // 与 getUpdates 一致。之前 `data.ret === 0` 在 undefined 时为 false，每条
+      // AI 回复都被误判为发送失败。
+      if (!data || data.ret == null || data.ret === 0) return { ok: true };
       return {
         ok: false,
         ret: data.ret,
