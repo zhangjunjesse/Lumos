@@ -100,3 +100,6 @@ export {
   sendToDefault,
   probeProvider,
 } from './core/runtime';
+
+// Sandbox helpers (used by tools / dispatcher to gate outbound file paths)
+export { resolveLumosSandboxPath, mimeFromPath } from './core/sandbox';

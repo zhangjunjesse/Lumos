@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   listPlugins,
@@ -8,9 +10,12 @@ import {
   getOrCreateAdapter,
   hasProvider,
   hasTargetDirectory,
+  mimeFromPath,
+  resolveLumosSandboxPath,
   sendToProvider,
   sendToDefault,
 } from '@/lib/im';
+import type { IMFileAttachment } from '@/lib/im';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,6 +37,10 @@ interface ToolRequest {
   text?: string;
   query?: string;
   limit?: number;
+  // im_send_attachment / im_send_to_default_attachment
+  filePath?: string;
+  fileName?: string;
+  mimeType?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -57,6 +66,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(await sendAction(body));
       case 'im_send_to_default':
         return NextResponse.json(await sendDefaultAction(body));
+      case 'im_send_attachment':
+        return NextResponse.json(await sendAttachmentAction(body));
+      case 'im_send_to_default_attachment':
+        return NextResponse.json(await sendToDefaultAttachmentAction(body));
       default:
         return NextResponse.json({ error: `unknown action: ${action}` }, { status: 400 });
     }
@@ -122,5 +135,83 @@ async function sendDefaultAction(body: ToolRequest) {
   return sendToDefault({
     address: { providerId, chatId },
     text,
+  });
+}
+
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024; // 100 MiB — matches wechat CDN cap
+
+function loadSandboxAttachment(args: {
+  filePath: string;
+  fileName?: string;
+  mimeType?: string;
+}): IMFileAttachment {
+  const safe = resolveLumosSandboxPath(args.filePath);
+  if (!safe) {
+    throw new Error(
+      `filePath not allowed: must be under ~/.lumos/.lumos-uploads / .lumos-media / .lumos-images (or legacy .codepilot-*)`,
+    );
+  }
+  let bytes: Buffer;
+  try {
+    bytes = fs.readFileSync(safe);
+  } catch (err) {
+    throw new Error(`cannot read filePath: ${err instanceof Error ? err.message : err}`);
+  }
+  if (bytes.length === 0) throw new Error('file is empty');
+  if (bytes.length > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`file exceeds ${MAX_ATTACHMENT_BYTES} bytes`);
+  }
+  const baseName = path.basename(safe);
+  return {
+    id: `tool-${Date.now()}-${baseName}`,
+    name: (args.fileName || '').trim() || baseName,
+    type: (args.mimeType || '').trim() || mimeFromPath(safe),
+    size: bytes.length,
+    data: bytes.toString('base64'),
+    filePath: safe,
+  };
+}
+
+async function sendAttachmentAction(body: ToolRequest) {
+  const providerId = body.providerId?.trim();
+  const chatId = body.chatId?.trim();
+  const filePath = body.filePath?.trim();
+  const text = body.text?.trim();
+  if (!providerId) throw new Error('providerId required');
+  if (!chatId) throw new Error('chatId required');
+  if (!filePath) throw new Error('filePath required');
+  if (!hasProvider(providerId)) throw new Error(`unknown provider: ${providerId}`);
+
+  const attachment = loadSandboxAttachment({
+    filePath,
+    fileName: body.fileName,
+    mimeType: body.mimeType,
+  });
+  return sendToProvider(providerId, {
+    address: { providerId, chatId },
+    text: text || '',
+    attachments: [attachment],
+  });
+}
+
+async function sendToDefaultAttachmentAction(body: ToolRequest) {
+  const chatId = body.chatId?.trim();
+  const filePath = body.filePath?.trim();
+  const text = body.text?.trim();
+  if (!chatId) throw new Error('chatId required');
+  if (!filePath) throw new Error('filePath required');
+  const providerId = getDefaultProviderId();
+  if (!providerId) {
+    return { ok: false, error: 'no default IM provider configured' };
+  }
+  const attachment = loadSandboxAttachment({
+    filePath,
+    fileName: body.fileName,
+    mimeType: body.mimeType,
+  });
+  return sendToDefault({
+    address: { providerId, chatId },
+    text: text || '',
+    attachments: [attachment],
   });
 }

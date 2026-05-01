@@ -77,4 +77,59 @@ export const TOOLS = [
       required: ['chatId', 'text'],
     },
   },
+  {
+    name: 'im_send_attachment',
+    description: 'Send a local file (image / Word / Excel / PPT / PDF / 任意二进制) to a specific IM chat. Optional text caption. Use after generating an artifact (e.g. a docx via office MCP) when the user wants the file pushed to IM. Returns { ok, messageId, error }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        providerId: {
+          type: 'string',
+          description: 'IM provider id, e.g. "feishu" or "wechat".',
+        },
+        chatId: {
+          type: 'string',
+          description: 'Target chat id (group chat_id, user open_id, wechat peer userId, etc.).',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Absolute path to the local file. Must be inside ~/.lumos/.lumos-uploads / .lumos-media / .lumos-images (lumos sandbox). Server reads the bytes — do NOT pass huge base64 through the tool args.',
+        },
+        fileName: {
+          type: 'string',
+          description: 'Optional display filename. Defaults to basename(filePath). Useful for renaming "1700000-foo.docx" → "report.docx".',
+        },
+        mimeType: {
+          type: 'string',
+          description: 'Optional MIME override. Defaults to extension-based detection.',
+        },
+        text: {
+          type: 'string',
+          description: 'Optional caption text sent alongside the file (after the file in WeChat / before in Feishu).',
+        },
+      },
+      required: ['providerId', 'chatId', 'filePath'],
+    },
+  },
+  {
+    name: 'im_send_to_default_attachment',
+    description: 'Same as im_send_attachment but uses the user\'s default IM provider (so caller only needs chatId + filePath).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chatId: {
+          type: 'string',
+          description: 'Target chat id within the default provider.',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Absolute path to the local file. Must be inside lumos sandbox dirs.',
+        },
+        fileName: { type: 'string' },
+        mimeType: { type: 'string' },
+        text: { type: 'string' },
+      },
+      required: ['chatId', 'filePath'],
+    },
+  },
 ];
