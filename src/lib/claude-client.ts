@@ -285,6 +285,20 @@ function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): stri
   return createHash('sha256').update(payload).digest('hex');
 }
 
+function buildMcpSignatureConfig(
+  mcpServers?: Record<string, MCPServerConfig>,
+  inProcessMcpServers?: ClaudeStreamOptions['inProcessMcpServers'],
+): Record<string, MCPServerConfig> | undefined {
+  const signatureConfig: Record<string, MCPServerConfig> = { ...(mcpServers || {}) };
+  for (const name of Object.keys(inProcessMcpServers || {})) {
+    signatureConfig[name] = {
+      command: '__lumos_in_process_mcp__',
+      args: [name],
+    };
+  }
+  return Object.keys(signatureConfig).length > 0 ? signatureConfig : undefined;
+}
+
 /**
  * Extract text content from an SDK assistant message
  */
@@ -564,7 +578,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // isolated. Project-level MCP may load only when project settings
         // loading is explicitly enabled.
         const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
-        const currentMcpSignature = computeMcpSignature(mcpServers);
+        const mcpSignatureConfig = buildMcpSignatureConfig(mcpServers, inProcessMcpServers);
+        const currentMcpSignature = computeMcpSignature(mcpSignatureConfig);
         const storedMcpSignature = sessionId ? (getSetting(getSessionMcpSignatureKey(sessionId)) || '') : '';
         const mcpSignatureChanged = !!sessionId
           && storedMcpSignature !== ''
@@ -679,6 +694,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (
             toolName.startsWith('mcp__feishu__')
             || toolName.startsWith('mcp__lumos-image__')
+            || toolName.startsWith('mcp__lumos-butler__')
             || toolName.startsWith('mcp__lumos-knowledge__')
             || toolName.startsWith('mcp__wechat-export__')
             || toolName.startsWith('mcp__chrome-devtools__')

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { createLumosButlerMcpServer, LUMOS_BUTLER_MCP_SYSTEM_HINT } from '@/lib/tools/lumos-butler-mcp-server';
 import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
@@ -174,6 +175,22 @@ const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main A
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
 
+function buildAskModeToolAllowance(input: {
+  knowledgeEnabledForRequest: boolean;
+  mainAgentSession: boolean;
+}): string {
+  const tools: string[] = [];
+  if (input.knowledgeEnabledForRequest) {
+    tools.push('read-only Lumos knowledge tools when they are needed to answer from the enabled knowledge base');
+  }
+  if (input.mainAgentSession) {
+    tools.push('read-only Lumos butler tools when the user asks about Lumos status, settings, history, tasks, or installed capabilities');
+  }
+  if (tools.length === 0) {
+    return ' Do not use any tools.';
+  }
+  return ` You may use only ${tools.join(' and ')}.`;
+}
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -918,6 +935,7 @@ export async function POST(request: NextRequest) {
     const sessionSystemPrompt = stripMainAgentSessionMarker(session.system_prompt || '');
 
     // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools)
+    const isPrimaryMainAgentSession = isMainAgentSession(session);
     const effectiveMode = mode || session.mode || 'code';
     let permissionMode: string;
     let systemPromptOverride: string | undefined;
@@ -927,7 +945,7 @@ export async function POST(request: NextRequest) {
         break;
       case 'ask':
         permissionMode = 'default';
-        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not read or write files, do not execute commands.${knowledgeEnabledForRequest ? ' You may use only the read-only Lumos knowledge tools when they are needed to answer from the enabled knowledge base.' : ' Do not use any tools.'} Only respond with text.`;
+        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not read or write files, do not execute commands.${buildAskModeToolAllowance({ knowledgeEnabledForRequest, mainAgentSession: isPrimaryMainAgentSession })} Only respond with text.`;
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
@@ -965,7 +983,7 @@ export async function POST(request: NextRequest) {
       || path.join(os.homedir(), '.lumos');
     const resolvedSessionWorkingDirectory = session.sdk_cwd
       || session.working_directory
-      || (isMainAgentSession(session) ? neutralMainAgentWorkingDirectory : undefined);
+      || (isPrimaryMainAgentSession ? neutralMainAgentWorkingDirectory : undefined);
 
     console.time('[perf] MCP servers loading');
     const browserBridgeOverride = readChromeBridgeEnvFromRequest(request);
@@ -998,11 +1016,11 @@ export async function POST(request: NextRequest) {
     if (systemPromptAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + systemPromptAppend;
     }
-    if (isMainAgentSession(session)) {
+    if (isPrimaryMainAgentSession) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
     }
     finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
-    if (isMainAgentSession(session)) {
+    if (isPrimaryMainAgentSession) {
       const teamConfigurationPrompt = getMainAgentTeamConfigurationPrompt();
       if (teamConfigurationPrompt) {
         finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamConfigurationPrompt;
@@ -1012,6 +1030,9 @@ export async function POST(request: NextRequest) {
       if (teamRuntimePrompt) {
         finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamRuntimePrompt;
       }
+    }
+    if (isPrimaryMainAgentSession && !browserAutomationIntent) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUTLER_MCP_SYSTEM_HINT;
     }
     // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
@@ -1066,7 +1087,7 @@ export async function POST(request: NextRequest) {
       role: m.role as 'user' | 'assistant',
       content: stripFeishuDirectives(m.content),
     }));
-    if (isMainAgentSession(session)) {
+    if (isPrimaryMainAgentSession) {
       historyMsgs = normalizeMainAgentConversationHistoryForTeamRuntime(historyMsgs, teamRuntimeState);
     }
 
@@ -1092,6 +1113,13 @@ export async function POST(request: NextRequest) {
         overrides: sanitizedKnowledgeOverrides,
       });
       inProcessMcpServers[knowledgeMcpServer.name] = knowledgeMcpServer;
+    }
+    if (isPrimaryMainAgentSession && !browserAutomationIntent) {
+      const butlerMcpServer = createLumosButlerMcpServer({
+        sessionId: session_id,
+        userId: lumosUserId,
+      });
+      inProcessMcpServers[butlerMcpServer.name] = butlerMcpServer;
     }
     // Workflow code runner — only for workflow chat sessions
     if (isWorkflowChatSession(session) && !browserAutomationIntent) {

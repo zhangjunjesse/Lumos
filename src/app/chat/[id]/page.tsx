@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { BrowserContextSelector } from '@/components/chat/BrowserContextSelector';
+import { ButlerStatusPanel } from '@/components/main-agent/ButlerStatusPanel';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
@@ -585,6 +586,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
             )}
           </div>
         )}
+
+        {routeEntry === 'main-agent' && <ButlerStatusPanel sessionId={id} compact />}
 
         <ChatView
           sessionId={id}
