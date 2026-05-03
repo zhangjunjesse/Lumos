@@ -173,7 +173,7 @@ jobs:
         # .node files in the standalone bundle so each arch's runtime can
         # require the matching package.
         run: |
-          npm install --no-save --ignore-scripts \
+          npm install --no-save --ignore-scripts --force \
             @node-rs/jieba-darwin-arm64 \
             @img/sharp-darwin-arm64
 
