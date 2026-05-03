@@ -143,11 +143,11 @@ jobs:
     # each upload their own latest-mac.yml and overwrite each other, breaking
     # auto-update for one of the archs.
     #
-    # Runs on macos-13 (last GitHub-hosted Intel runner). When Intel runners
-    # are retired we will need macos-13-large (paid) or drop Intel support.
+    # Runs on GitHub-hosted Intel macOS so the dual-arch DMG can still build
+    # x64 native modules before lipo merges them with arm64 outputs.
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     needs: [create-release, verify-source]
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +168,7 @@ jobs:
         run: npm ci
 
       - name: Force-install darwin-arm64 native packages
-        # macos-13 npm ci only installs darwin-x64 prebuilds for jieba/sharp
+        # Intel macOS npm ci only installs darwin-x64 prebuilds for jieba/sharp
         # (npm honors os/cpu fields). The dual-arch DMG needs both arches'
         # .node files in the standalone bundle so each arch's runtime can
         # require the matching package.
