@@ -1,0 +1,11 @@
+{
+  "name": "goofish",
+  "description": "闲鱼（Goofish）能力：搜索商品、收发消息、查商品详情、AI 类目识别、默认地址。基于 fancyboi999/goofish-cli 反向 mtop API。需在「能力 → 闲鱼」面板登录账号。",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/goofish/launcher.mjs"
+  ],
+  "env": {}
+}

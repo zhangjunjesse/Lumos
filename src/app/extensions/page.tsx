@@ -13,9 +13,10 @@ import { ExtensionPackManager } from "@/components/extensions/ExtensionPackManag
 import { ExtensionBuilderPanel } from "@/components/extensions/ExtensionBuilderPanel";
 import { DeepSearchPanel } from "@/components/deepsearch/DeepSearchPanel";
 import { WeChatExportPanel } from "@/components/wechat-export/WeChatExportPanel";
+import { GoofishPanel } from "@/components/goofish/GoofishPanel";
 import { useTranslation } from "@/hooks/useTranslation";
 
-type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch" | "wechat";
+type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch" | "wechat" | "goofish";
 
 export default function ExtensionsPage() {
   return (
@@ -55,6 +56,7 @@ function ExtensionsPageInner() {
             <TabsTrigger value="builder">{t('extensions.builder')}</TabsTrigger>
             <TabsTrigger value="feishu">{t('extensions.feishu')}</TabsTrigger>
             <TabsTrigger value="wechat">{t('extensions.wechat')}</TabsTrigger>
+            <TabsTrigger value="goofish">{t('extensions.goofish')}</TabsTrigger>
           </TabsList>
         </Tabs>
         <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
@@ -66,6 +68,7 @@ function ExtensionsPageInner() {
         {tab === "builder" && <ExtensionBuilderPanel />}
         {tab === "feishu" && <FeishuPanel />}
         {tab === "wechat" && <WeChatExportPanel />}
+        {tab === "goofish" && <GoofishPanel />}
       </div>
     </div>
   );
