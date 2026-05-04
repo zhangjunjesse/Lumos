@@ -36,7 +36,11 @@ export function GoofishPanel() {
 
   const accounts = status?.accounts ?? [];
   const validAccounts = accounts.filter((a) => a.valid);
-  const hasAnyAccount = validAccounts.length > 0;
+  // "Have any account" = the directory exists with cookies, even if the
+  // token is currently expired (will be auto-refreshed in headless mode
+  // on next mtop call). Hiding expired accounts confuses users who just
+  // logged in moments ago.
+  const hasAnyAccount = accounts.length > 0;
 
   // Switch account: drop selected session in same handler (avoids
   // setState-in-effect). 'all' is also a valid target.
@@ -109,7 +113,7 @@ export function GoofishPanel() {
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <h3 className="font-medium text-sm">已登录账号 ({validAccounts.length})</h3>
+                <h3 className="font-medium text-sm">已登录账号 ({accounts.length})</h3>
                 <p className="text-xs text-muted-foreground">所有账号同时在线，可分别查看或合并</p>
               </div>
               <Button
@@ -121,14 +125,17 @@ export function GoofishPanel() {
               </Button>
             </div>
             <ul className="divide-y divide-border/60">
-              {validAccounts.map((acc) => (
+              {accounts.map((acc) => (
                 <li key={acc.accountUnb} className="flex items-center gap-3 py-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                  {acc.valid
+                    ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                    : <span className="h-4 w-4 rounded-full bg-amber-500 shrink-0" title="登录态过期，下次刷新会自动续命" />}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">
-                      {acc.nick || acc.tracknick || `账号 #${acc.unb}`}
+                      {acc.nick || acc.tracknick || `账号 #${acc.accountUnb}`}
+                      {!acc.valid && <span className="text-xs text-amber-600 ml-2">(token 刷新中)</span>}
                     </div>
-                    <div className="text-xs text-muted-foreground">#{acc.unb}</div>
+                    <div className="text-xs text-muted-foreground">#{acc.accountUnb}</div>
                   </div>
                   <Button
                     variant="ghost"
