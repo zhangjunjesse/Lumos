@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import readline from 'readline';
+import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
 
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'task-management-mcp.log');
 
@@ -14,8 +15,8 @@ function log(msg) {
   const logMsg = `[${timestamp}] ${msg}\n`;
   try {
     fs.appendFileSync(LOG_FILE, logMsg);
-  } catch (err) {
-    // Ignore
+  } catch {
+    // Ignore — logging failure must not break MCP stdio
   }
   console.error(msg);
 }
@@ -102,19 +103,20 @@ async function handleRequest(request) {
 
   if (method === 'tools/call') {
     const { name, arguments: args } = params;
+    const coercedArgs = coerceArgumentsByTools(TOOLS, name, args);
     log(`[task-management-mcp] Tool called: ${name}`);
-    log(`[task-management-mcp] Arguments: ${JSON.stringify(args)}`);
+    log(`[task-management-mcp] Arguments: ${JSON.stringify(coercedArgs)}`);
 
     try {
       let result;
       if (name === 'createTask') {
-        result = await callCreateTask(args);
+        result = await callCreateTask(coercedArgs);
       } else if (name === 'listTasks') {
-        result = await callListTasks(args);
+        result = await callListTasks(coercedArgs);
       } else if (name === 'getTaskDetail') {
-        result = await callGetTaskDetail(args);
+        result = await callGetTaskDetail(coercedArgs);
       } else if (name === 'cancelTask') {
-        result = await callCancelTask(args);
+        result = await callCancelTask(coercedArgs);
       } else {
         throw new Error(`Unknown tool: ${name}`);
       }

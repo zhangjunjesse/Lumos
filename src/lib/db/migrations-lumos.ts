@@ -678,8 +678,16 @@ export function migrateLumosTables(db: Database.Database): void {
     ['content_hash', "TEXT NOT NULL DEFAULT ''"],
     ['description', "TEXT NOT NULL DEFAULT ''"],
     ['type', "TEXT NOT NULL DEFAULT 'stdio'"],
+    ['run_mode', "TEXT NOT NULL DEFAULT 'on_demand'"],
+    ['runtime_kind', "TEXT NOT NULL DEFAULT 'auto'"],
     ['url', "TEXT NOT NULL DEFAULT ''"],
     ['headers', "TEXT NOT NULL DEFAULT '{}'"],
+    ['health_status', "TEXT NOT NULL DEFAULT 'unknown'"],
+    ['health_checked_at', "TEXT NOT NULL DEFAULT ''"],
+    ['health_error', "TEXT NOT NULL DEFAULT ''"],
+    ['health_message', "TEXT NOT NULL DEFAULT ''"],
+    ['health_tools', "TEXT NOT NULL DEFAULT '[]'"],
+    ['health_transport', "TEXT NOT NULL DEFAULT ''"],
   ];
 
   for (const [col, def] of mcpNewCols) {
@@ -989,6 +997,7 @@ export function migrateLumosTables(db: Database.Database): void {
       workflow_dsl TEXT NOT NULL DEFAULT '{}',
       interval_minutes INTEGER NOT NULL DEFAULT 60,
       working_directory TEXT NOT NULL DEFAULT '',
+      browser_context_id TEXT NOT NULL DEFAULT 'embedded:default',
       enabled INTEGER NOT NULL DEFAULT 1,
       notify_on_complete INTEGER NOT NULL DEFAULT 1,
       last_run_at TEXT DEFAULT NULL,
@@ -1009,6 +1018,7 @@ export function migrateLumosTables(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       schedule_id TEXT NOT NULL,
       session_id TEXT,
+      browser_context_id TEXT NOT NULL DEFAULT 'embedded:default',
       status TEXT NOT NULL DEFAULT 'running',
       error TEXT NOT NULL DEFAULT '',
       started_at TEXT NOT NULL,
@@ -1036,6 +1046,9 @@ export function migrateLumosTables(db: Database.Database): void {
   // the DSL as it was at execution time (user-edited DSL after the run shouldn't
   // affect historical record display).
   const srhCols = db.prepare("PRAGMA table_info(schedule_run_history)").all() as { name: string }[];
+  if (!srhCols.some(c => c.name === 'browser_context_id')) {
+    db.exec("ALTER TABLE schedule_run_history ADD COLUMN browser_context_id TEXT NOT NULL DEFAULT 'embedded:default'");
+  }
   if (!srhCols.some(c => c.name === 'workflow_dsl_snapshot')) {
     db.exec("ALTER TABLE schedule_run_history ADD COLUMN workflow_dsl_snapshot TEXT DEFAULT NULL");
   }
@@ -1066,6 +1079,9 @@ export function migrateLumosTables(db: Database.Database): void {
   }
   if (!swCols.some(c => c.name === 'schedule_day_of_week')) {
     db.exec("ALTER TABLE scheduled_workflows ADD COLUMN schedule_day_of_week INTEGER DEFAULT NULL");
+  }
+  if (!swCols.some(c => c.name === 'browser_context_id')) {
+    db.exec("ALTER TABLE scheduled_workflows ADD COLUMN browser_context_id TEXT NOT NULL DEFAULT 'embedded:default'");
   }
 
   // Remove legacy browser MCP (replaced by chrome-devtools, registered via init-builtin-resources)

@@ -10,11 +10,22 @@ import { getDb } from '@/lib/db/connection';
 import { getSetting } from '@/lib/db/sessions';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getRemoteImageProviderId } from '@/lib/cloud/provisioner';
+import { createHttpsProxyAgentForUrl, getProxyForUrl } from '@/lib/net/proxy';
 import type { ApiProvider } from '@/types';
+import https from 'node:https';
 
 const QUOTA_REQUEST_TIMEOUT_MS = 8_000;
 const QUOTA_MAX_ATTEMPTS = 2;
 const QUOTA_RETRY_BACKOFF_MS = 600;
+
+type QuotaFetchInit = {
+  method: 'POST';
+  headers: Record<string, string>;
+  body: string;
+  signal: AbortSignal;
+};
+
+type QuotaFetchResponse = Pick<Response, 'ok' | 'status' | 'statusText' | 'text'>;
 
 function getWebBase(): string {
   return process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
@@ -38,6 +49,73 @@ function describeFetchError(err: unknown): string {
   if (causeCode) parts.push(`cause.code=${causeCode}`);
   if (causeMsg && causeMsg !== err.message) parts.push(`cause=${causeMsg}`);
   return parts.join(' | ');
+}
+
+function nodeHttpsQuotaFetch(url: string, init: QuotaFetchInit): Promise<QuotaFetchResponse> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const agent = createHttpsProxyAgentForUrl(target);
+    const body = Buffer.from(init.body);
+    let settled = false;
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      init.signal.removeEventListener('abort', onAbort);
+      fn();
+    };
+
+    const req = https.request(target, {
+      method: init.method,
+      headers: {
+        ...init.headers,
+        'Content-Length': String(body.byteLength),
+      },
+      agent: agent ?? undefined,
+    }, response => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      response.on('end', () => {
+        const status = response.statusCode ?? 0;
+        const rawText = Buffer.concat(chunks).toString('utf8');
+        finish(() => resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          statusText: response.statusMessage ?? '',
+          text: async () => rawText,
+        }));
+      });
+    });
+
+    function onAbort() {
+      const reason = init.signal.reason instanceof Error
+        ? init.signal.reason
+        : new Error('The operation was aborted');
+      req.destroy(reason);
+    }
+
+    req.on('error', err => finish(() => reject(err)));
+    req.setTimeout(QUOTA_REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Quota request timed out after ${QUOTA_REQUEST_TIMEOUT_MS}ms`));
+    });
+
+    if (init.signal.aborted) {
+      onAbort();
+      return;
+    }
+    init.signal.addEventListener('abort', onAbort, { once: true });
+    req.end(body);
+  });
+}
+
+function quotaFetch(url: string, init: QuotaFetchInit): Promise<QuotaFetchResponse> {
+  const target = new URL(url);
+  if (target.protocol === 'https:' && getProxyForUrl(target)) {
+    return nodeHttpsQuotaFetch(url, init);
+  }
+  return fetch(url, init);
 }
 
 export interface BillingTarget {
@@ -115,11 +193,11 @@ export async function consumeRemoteQuota(
     idempotency_key: params.idempotencyKey,
   });
 
-  let res: Response | undefined;
+  let res: QuotaFetchResponse | undefined;
   const attemptErrors: string[] = [];
   for (let attempt = 1; attempt <= QUOTA_MAX_ATTEMPTS; attempt++) {
     try {
-      res = await fetch(url, {
+      res = await quotaFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body,
@@ -173,7 +251,7 @@ export async function refundRemoteQuota(userId: string, idempotencyKey: string):
   const token = getWebSessionToken(userId);
   if (!token) return;
   try {
-    await fetch(`${getWebBase()}/api/quota/image/consume`, {
+    await quotaFetch(`${getWebBase()}/api/quota/image/consume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ action: 'refund', idempotency_key: idempotencyKey }),

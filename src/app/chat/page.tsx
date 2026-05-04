@@ -15,6 +15,7 @@ import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog';
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
+import { ButlerStatusPanel } from '@/components/main-agent/ButlerStatusPanel';
 import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { stashPendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
@@ -305,6 +306,7 @@ export default function NewChatPage() {
         className="h-8 w-full shrink-0"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       />
+      {isMainAgentEntry && <ButlerStatusPanel compact />}
       <MessageList
         messages={messages}
         streamingContent={streamingContent}

@@ -137,9 +137,17 @@ jobs:
           retention-days: 1
 
   build-macos:
+    # Single mac job that produces both arm64 and x64 DMGs in one electron-builder
+    # invocation, so they share one combined `latest-mac.yml` (electron-updater
+    # picks the right asset by client process.arch). Two parallel jobs would
+    # each upload their own latest-mac.yml and overwrite each other, breaking
+    # auto-update for one of the archs.
+    #
+    # Runs on GitHub-hosted Intel macOS so the dual-arch DMG can still build
+    # x64 native modules before lipo merges them with arm64 outputs.
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     needs: [create-release, verify-source]
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -159,36 +167,88 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download runtime assets and build Next.js
-        run: node scripts/download-node.mjs && npm run build
-
-      - name: Rebuild better-sqlite3 for Electron (arm64)
-        run: npx electron-rebuild -f -o better-sqlite3 -a arm64
-
-      - name: Copy Electron-ABI native module into standalone
+      - name: Force-install darwin-arm64 native packages
+        # Intel macOS npm ci only installs darwin-x64 prebuilds for jieba/sharp
+        # (npm honors os/cpu fields). The dual-arch DMG needs both arches'
+        # .node files in the standalone bundle so each arch's runtime can
+        # require the matching package.
         run: |
-          SRC="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+          npm install --no-save --ignore-scripts --force \
+            @node-rs/jieba-darwin-arm64 \
+            @img/sharp-darwin-arm64
+
+      - name: Download Node.js runtime for both archs
+        run: |
+          npm_config_arch=x64 node scripts/download-node.mjs
+          npm_config_arch=arm64 node scripts/download-node.mjs
+
+      - name: Build Next.js (standalone bundle)
+        run: npm run build
+
+      - name: Rebuild better-sqlite3 for both archs and lipo merge
+        # Build x64 and arm64 .node binaries separately, then lipo-create a
+        # universal binary. The standalone bundle ships one universal
+        # better_sqlite3.node — wastes ~50% of one arch's size but lets us
+        # avoid swapping native modules between the two electron-builder runs.
+        run: |
+          set -e
+
+          npx electron-rebuild -f -o better-sqlite3 -a x64
+          cp node_modules/better-sqlite3/build/Release/better_sqlite3.node /tmp/better_sqlite3-x64.node
+
+          npx electron-rebuild -f -o better-sqlite3 -a arm64
+          cp node_modules/better-sqlite3/build/Release/better_sqlite3.node /tmp/better_sqlite3-arm64.node
+
+          lipo -create /tmp/better_sqlite3-x64.node /tmp/better_sqlite3-arm64.node \
+            -output node_modules/better-sqlite3/build/Release/better_sqlite3.node
+
+          echo "Universal better_sqlite3.node:"
+          lipo -info node_modules/better-sqlite3/build/Release/better_sqlite3.node
+
+      - name: Copy native modules into standalone (both archs available)
+        run: |
+          set -e
+          # better-sqlite3: universal .node
           DEST=".next/standalone/node_modules/better-sqlite3/build/Release/"
           mkdir -p "$DEST"
-          cp "$SRC" "$DEST"
-          echo "Copied better_sqlite3.node ($(wc -c < "$SRC") bytes) into standalone"
+          cp node_modules/better-sqlite3/build/Release/better_sqlite3.node "$DEST"
+
+          # @node-rs/jieba and @img/sharp use platform-specific sub-packages
+          # loaded dynamically by process.arch — copy both arches into
+          # standalone so each DMG can resolve the right one at runtime.
+          for pkg in "@node-rs/jieba-darwin-arm64" "@img/sharp-darwin-arm64"; do
+            if [ -d "node_modules/$pkg" ]; then
+              parent=$(dirname "$pkg")
+              mkdir -p ".next/standalone/node_modules/$parent"
+              cp -R "node_modules/$pkg" ".next/standalone/node_modules/$parent/"
+              echo "Copied $pkg into standalone"
+            else
+              echo "WARN: $pkg not found in node_modules — arm64 build may fail at runtime"
+            fi
+          done
 
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
 
-      - name: Package for macOS (arm64)
+      - name: Package for macOS (arm64 + x64 in one electron-builder run)
+        # Single invocation produces both DMGs and one combined latest-mac.yml.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --arm64 --config electron-builder.yml --publish always
+        run: npx electron-builder --mac --arm64 --x64 --config electron-builder.yml --publish always
 
-      - name: Verify packaged embedding model (macOS)
-        run: node scripts/verify-packaged-embedding-model.mjs release/mac-arm64/Lumos.app
+      - name: Verify packaged embedding model
+        run: |
+          node scripts/verify-packaged-embedding-model.mjs release/mac-arm64/Lumos.app
+          node scripts/verify-packaged-embedding-model.mjs release/mac/Lumos.app
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64-artifacts
-          path: release/*.dmg
+          name: macos-artifacts
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/latest-mac.yml
           retention-days: 1
 
   release:
@@ -244,6 +304,7 @@ jobs:
 
           **macOS**
           - **Lumos-${{ steps.meta.outputs.version }}-arm64.dmg** — macOS Apple Silicon (M1/M2/M3/M4)
+          - **Lumos-${{ steps.meta.outputs.version }}-x64.dmg** — macOS Intel (x86_64)
 
           ## Installation
 
@@ -275,7 +336,7 @@ jobs:
 
           # Upload artifacts by platform to avoid conflicts
           gh release upload "${GITHUB_REF_NAME}" artifacts/windows-artifacts/* --clobber || true
-          gh release upload "${GITHUB_REF_NAME}" artifacts/macos-arm64-artifacts/* --clobber || true
+          gh release upload "${GITHUB_REF_NAME}" artifacts/macos-artifacts/* --clobber || true
 
           # Update the draft release with full notes and publish
           # Note: For private repos, releases are private by default

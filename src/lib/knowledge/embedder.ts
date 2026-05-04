@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // @ts-expect-error onnxruntime-web exports omit types for bundler resolution, but runtime import is valid.
 import * as onnxruntimeWebRuntime from 'onnxruntime-web';
 import { getDb } from '@/lib/db';
+import { buildRuntimeResourceCandidates } from '@/lib/runtime-resources';
 
 const MODEL_NAME = 'Xenova/bge-small-zh-v1.5';
 const DIMENSION = 512;
@@ -178,6 +179,12 @@ function buildOnnxruntimeWebDiagnostics(): string {
 }
 
 function buildLocalModelRootCandidates(): string[] {
+  const candidates = new Set<string>();
+
+  for (const candidate of buildRuntimeResourceCandidates('models')) {
+    candidates.add(candidate);
+  }
+
   const roots = new Set<string>();
 
   addCandidateRoot(roots, process.cwd());
@@ -186,7 +193,6 @@ function buildLocalModelRootCandidates(): string[] {
   addCandidateRoot(roots, path.dirname(process.execPath));
   addCandidateRoot(roots, process.execPath ? path.join(path.dirname(process.execPath), '..', 'Resources') : null);
 
-  const candidates = new Set<string>();
   for (const root of roots) {
     for (const relativePath of LOCAL_MODEL_ROOT_CANDIDATES) {
       candidates.add(path.join(root, relativePath));

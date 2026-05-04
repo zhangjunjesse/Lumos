@@ -33,6 +33,8 @@ export interface StageExecutionPayloadV1 {
   contractVersion: 'stage-execution-payload/v1'
   taskId: string
   sessionId: string
+  /** Browser context bound to this workflow run, e.g. embedded:default or adspower:<profileId>. */
+  browserContextId?: string
   requestedModel?: string
   runId: string
   stageId: string

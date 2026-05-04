@@ -1,0 +1,195 @@
+import { sendOutbound } from '../send';
+import { WechatClient } from '../client';
+
+const fakeFetch = jest.fn();
+const originalFetch = global.fetch;
+
+beforeEach(() => {
+  fakeFetch.mockReset();
+  (global as { fetch: typeof fetch }).fetch = fakeFetch as unknown as typeof fetch;
+});
+afterAll(() => {
+  (global as { fetch: typeof fetch }).fetch = originalFetch;
+});
+
+const client = new WechatClient({ baseUrl: 'https://x', token: 'tk' });
+
+const makeAddr = (chatId = 'alice@im.wechat') => ({
+  providerId: 'wechat',
+  chatId,
+});
+
+describe('wechat/send: sendOutbound', () => {
+  test('rejects empty chatId', async () => {
+    const r = await sendOutbound(client, { address: makeAddr(''), text: 'hi' }, {
+      getContextToken: () => 'ctx',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/chatId/);
+  });
+
+  test('rejects when no context_token in store', async () => {
+    const r = await sendOutbound(client, { address: makeAddr(), text: 'hi' }, {
+      getContextToken: () => '',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/context_token/);
+    expect(fakeFetch).not.toHaveBeenCalled();
+  });
+
+  test('rejects empty text', async () => {
+    const r = await sendOutbound(client, { address: makeAddr(), text: '   ' }, {
+      getContextToken: () => 'ctx',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/empty/);
+  });
+
+  test('sends text with context_token', async () => {
+    fakeFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const r = await sendOutbound(client, { address: makeAddr(), text: 'hello' }, {
+      getContextToken: () => 'ctx-1',
+    });
+    expect(r.ok).toBe(true);
+    expect(r.messageId).toBeTruthy();
+    const [, init] = fakeFetch.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.msg.context_token).toBe('ctx-1');
+    expect(body.msg.item_list[0].text_item.text).toBe('hello');
+  });
+
+  test('splits long text into chunks', async () => {
+    fakeFetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const long = 'x'.repeat(8000); // > MAX_CHUNK 3800 → 3 chunks
+    const r = await sendOutbound(client, { address: makeAddr(), text: long }, {
+      getContextToken: () => 'ctx',
+    });
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test('retries once on ret=-2', async () => {
+    fakeFetch
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: -2, errmsg: 'expired' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const r = await sendOutbound(client, { address: makeAddr(), text: 'hi' }, {
+      getContextToken: () => 'ctx',
+    });
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('file attachment: getuploadurl → CDN upload → sendmessage with file_item', async () => {
+    const fakeDocBytes = Buffer.from('PK\x03\x04 fake docx zip header');
+
+    fakeFetch.mockReset();
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?file=1' }),
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'FILE-DL-PARAM' : null) },
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0 }),
+    });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: '',
+        attachments: [{
+          id: 'doc-1',
+          name: '报告.docx',
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: fakeDocBytes.length,
+          data: fakeDocBytes.toString('base64'),
+        }],
+      },
+      { getContextToken: () => 'ctx' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+
+    // getuploadurl payload should advertise media_type=3 (UPLOAD_MEDIA_FILE)
+    const uploadCall = fakeFetch.mock.calls[0];
+    expect(uploadCall[0]).toMatch(/getuploadurl$/);
+    const uploadBody = JSON.parse(uploadCall[1].body) as { media_type: number };
+    expect(uploadBody.media_type).toBe(3);
+
+    // sendmessage payload contains file_item with file_name + len
+    const sendCall = fakeFetch.mock.calls[2];
+    expect(sendCall[0]).toMatch(/sendmessage$/);
+    const body = JSON.parse(sendCall[1].body) as {
+      msg: { item_list: Array<{ type: number; file_item: { file_name: string; len: string; media: { encrypt_query_param: string } } }> };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(4); // MESSAGE_ITEM_FILE
+    expect(item.file_item.file_name).toBe('报告.docx');
+    expect(item.file_item.len).toBe(String(fakeDocBytes.length));
+    expect(item.file_item.media.encrypt_query_param).toBe('FILE-DL-PARAM');
+  });
+
+  test('image attachment: getuploadurl → CDN upload → sendmessage', async () => {
+    const onePngPixel = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG magic
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    ]);
+
+    fakeFetch.mockReset();
+    // 1) getUploadURL
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?xx=1' }),
+    });
+    // 2) CDN upload (POST) returns x-encrypted-param header
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'DOWNLOAD-PARAM-123' : null) },
+    });
+    // 3) sendMessage
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0 }),
+    });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: '',
+        attachments: [{
+          id: 'img-1',
+          name: 'pic.png',
+          type: 'image/png',
+          size: onePngPixel.length,
+          data: onePngPixel.toString('base64'),
+        }],
+      },
+      { getContextToken: () => 'ctx' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+
+    // verify sendmessage payload contains image_item with download_param + base64(hex(aes))
+    const sendCall = fakeFetch.mock.calls[2];
+    expect(sendCall[0]).toMatch(/sendmessage$/);
+    const body = JSON.parse(sendCall[1].body) as {
+      msg: { item_list: Array<{ type: number; image_item: { media: { encrypt_query_param: string; aes_key: string; encrypt_type: number } } }> };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(2); // MESSAGE_ITEM_IMAGE
+    expect(item.image_item.media.encrypt_query_param).toBe('DOWNLOAD-PARAM-123');
+    expect(item.image_item.media.encrypt_type).toBe(1);
+    // aes_key is base64(hex(rawKey)) — 16 bytes → 32 hex chars → 44-char base64 (with =)
+    expect(item.image_item.media.aes_key).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(item.image_item.media.aes_key.length).toBeGreaterThanOrEqual(40);
+  });
+});

@@ -8,7 +8,9 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const body = await request.json().catch(() => ({})) as { params?: Record<string, unknown> };
+    const body = await request.json().catch(() => ({})) as {
+      params?: Record<string, unknown>;
+    };
     await triggerSchedule(id, body.params);
     return NextResponse.json({ success: true });
   } catch (error) {

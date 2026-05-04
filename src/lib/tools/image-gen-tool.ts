@@ -233,7 +233,7 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
           error: detail,
           error_source: 'image_generation',
           hint: '请向用户原样展示上面的 error 字段（包含具体服务商和错误原因），不要改写为"暂时有问题"等模糊说法。',
-        }, true);
+        });
       }
     },
   );

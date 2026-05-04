@@ -5,6 +5,7 @@ import {
   updateScheduledWorkflow,
   deleteScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { cancelRunningScheduleRuns } from '@/lib/workflow/schedule-run-control';
 
@@ -15,6 +16,7 @@ const updateSchema = z.object({
   scheduleTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   scheduleDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
   workingDirectory: z.string().optional(),
+  browserContextId: z.string().optional(),
   enabled: z.boolean().optional(),
   notifyOnComplete: z.boolean().optional(),
   workflowId: z.string().nullable().optional(),
@@ -62,6 +64,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       }
     }
 
+    const browserContextId = input.browserContextId !== undefined
+      ? validateBrowserContextId(input.browserContextId)
+      : undefined;
+
     const schedule = updateScheduledWorkflow(id, {
       name: input.name,
       runMode: input.runMode,
@@ -69,6 +75,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       scheduleTime: input.scheduleTime,
       scheduleDayOfWeek: input.scheduleDayOfWeek,
       workingDirectory: input.workingDirectory,
+      browserContextId,
       enabled: input.enabled,
       notifyOnComplete: input.notifyOnComplete,
       workflowId: input.workflowId,

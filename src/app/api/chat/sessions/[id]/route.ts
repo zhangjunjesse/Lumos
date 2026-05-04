@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,18 @@ export async function PATCH(
     }
     if (body.provider_id) {
       updateSessionProviderId(id, body.provider_id);
+    }
+    if (typeof body.browser_context_id === 'string') {
+      let browserContextId: string;
+      try {
+        browserContextId = validateBrowserContextId(body.browser_context_id);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : '浏览器上下文无效', code: 'INVALID_BROWSER_CONTEXT' },
+          { status: 400 },
+        );
+      }
+      updateSessionBrowserContext(id, browserContextId);
     }
     if (body.model) {
       updateSessionModel(id, body.model);

@@ -192,7 +192,10 @@ async function callEdits(
   form.append('response_format', 'b64_json')
   for (const img of request.images!) {
     const { blob, fileName } = imageInputToBlob(img)
-    form.append('image[]', blob, fileName)
+    // OpenAI-compatible gateways generally parse repeated `image` fields.
+    // Using `image[]` is ignored by several proxies and produces
+    // "image is required for edits" even though references were attached.
+    form.append('image', blob, fileName)
   }
 
   const resp = await fetch(`${baseUrl}${EDITS_PATH}`, {

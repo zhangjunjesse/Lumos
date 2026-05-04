@@ -131,6 +131,62 @@ describe('createBrowserBridgeApi.waitFor', () => {
     );
   });
 
+  test('overrides the bridge browser context for a browser api instance', async () => {
+    mockPostToBrowserBridge.mockResolvedValueOnce({ ok: true, pageId: 'page-contextual' });
+
+    const api = createBrowserBridgeApi({ browserContextId: 'adspower:profile-001' });
+
+    await api.navigate('https://sellercentral.amazon.com');
+
+    expect(mockPostToBrowserBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:3001',
+        token: 'test-token',
+        browserContextId: 'adspower:profile-001',
+      }),
+      '/v1/pages/navigate',
+      {
+        url: 'https://sellercentral.amazon.com',
+        type: 'url',
+      },
+      {
+        timeoutMs: 120_000,
+      },
+    );
+  });
+
+  test('releases the browser context lease with the resolved owner', async () => {
+    mockResolveBrowserBridgeRuntimeConfig.mockReturnValueOnce({
+      baseUrl: 'http://127.0.0.1:3001',
+      token: 'test-token',
+      source: 'env',
+      lockOwnerId: 'session-001',
+    });
+    mockPostToBrowserBridge.mockResolvedValueOnce({ ok: true, released: true });
+
+    const api = createBrowserBridgeApi({
+      browserContextId: 'adspower:profile-001',
+      lockOwnerId: 'session-001',
+    });
+
+    await api.release();
+
+    expect(mockResolveBrowserBridgeRuntimeConfig).toHaveBeenCalledWith({ lockOwnerId: 'session-001' });
+    expect(mockPostToBrowserBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:3001',
+        token: 'test-token',
+        browserContextId: 'adspower:profile-001',
+        lockOwnerId: 'session-001',
+      }),
+      '/v1/context/release',
+      {},
+      {
+        timeoutMs: 5_000,
+      },
+    );
+  });
+
   test('resolves legacy click-by-text targets through snapshot before clicking', async () => {
     mockPostToBrowserBridge
       .mockResolvedValueOnce({ ok: true, pageId: 'page-wishlist', title: 'My Saved Items', lines: ['[e21] 下载数据', '[e22] 确认'] })

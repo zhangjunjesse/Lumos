@@ -19,12 +19,19 @@ import type { MCPServerConfig } from '@/types';
 import { ENRICHER_MAP, type McpEnrichContext } from '@/lib/mcp-env-enrichers';
 import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
+import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
+import {
+  resolveMcpConfigPlaceholders,
+  type McpPlaceholderContext,
+} from '@/lib/mcp-config-placeholders';
 
 export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
   sessionId?: string;
   /** Browser bridge info from HTTP request headers (chat route only). */
-  browserBridgeOverride?: { url?: string; token?: string };
+  browserBridgeOverride?: { url?: string; token?: string; browserContextId?: string };
+  /** Browser context routed through the bridge. Defaults to the embedded browser. */
+  browserContextId?: string;
   /** MCP names to skip (e.g. chat route skips 'task-management'). */
   skipNames?: Set<string>;
   /** When true, browser MCP operates in background mode (no UI tab switching). */
@@ -54,11 +61,19 @@ export function resolveEnabledMcpServers(
   const pythonPath = isVenvReady()
     ? getVenvPythonPath()
     : (resolvePythonBinary() || getVenvPythonPath());
+  const placeholderContext: McpPlaceholderContext = {
+    runtimePath,
+    workspacePath,
+    dataDir,
+    pythonPath,
+    userHome: os.homedir(),
+  };
   const enrichContext: McpEnrichContext = {
     sessionWorkingDirectory: options.sessionWorkingDirectory,
     sessionId: options.sessionId,
     dataDir,
     browserBridgeOverride: options.browserBridgeOverride,
+    browserContextId: options.browserContextId,
     browserBackground: options.browserBackground,
   };
 
@@ -74,23 +89,14 @@ export function resolveEnabledMcpServers(
 
     // Step 1a: Resolve path placeholders in command
     if (config.command) {
-      config.command = config.command
-        .replace('[RUNTIME_PATH]', runtimePath)
-        .replace('[PYTHON_PATH]', pythonPath)
-        .replace('[DATA_DIR]', dataDir)
-        .replace(/^~\//, os.homedir() + '/');
+      config.command = resolveMcpConfigPlaceholders(config.command, placeholderContext);
     }
 
     // Step 1b: Resolve path placeholders in args
     if (config.args) {
       config.args = config.args.map(arg => {
         const normalized = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
-        return normalized
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace('[PYTHON_PATH]', pythonPath)
-          .replace(/^~\//, os.homedir() + '/');
+        return resolveMcpConfigPlaceholders(normalized, placeholderContext);
       });
     }
 
@@ -98,12 +104,7 @@ export function resolveEnabledMcpServers(
     if (config.env) {
       const resolved: Record<string, string> = {};
       for (const [key, value] of Object.entries(config.env)) {
-        resolved[key] = value
-          .replace('[RUNTIME_PATH]', runtimePath)
-          .replace('[WORKSPACE_PATH]', workspacePath)
-          .replace('[DATA_DIR]', dataDir)
-          .replace('[PYTHON_PATH]', pythonPath)
-          .replace(/^~\//, os.homedir() + '/');
+        resolved[key] = resolveMcpConfigPlaceholders(value, placeholderContext);
       }
       config.env = resolved;
     }
@@ -132,6 +133,7 @@ export function toSdkMcpConfig(
 ): Record<string, McpServerConfig> {
   const result: Record<string, McpServerConfig> = {};
   for (const [name, config] of Object.entries(servers)) {
+    const sdkName = toSdkMcpServerName(name);
     const transport = config.type || 'stdio';
     switch (transport) {
       case 'sse': {
@@ -141,7 +143,7 @@ export function toSdkMcpConfig(
         }
         const sse: McpSSEServerConfig = { type: 'sse', url: config.url };
         if (config.headers && Object.keys(config.headers).length > 0) sse.headers = config.headers;
-        result[name] = sse;
+        result[sdkName] = sse;
         break;
       }
       case 'http': {
@@ -151,7 +153,7 @@ export function toSdkMcpConfig(
         }
         const http: McpHttpServerConfig = { type: 'http', url: config.url };
         if (config.headers && Object.keys(config.headers).length > 0) http.headers = config.headers;
-        result[name] = http;
+        result[sdkName] = http;
         break;
       }
       case 'stdio':
@@ -161,7 +163,7 @@ export function toSdkMcpConfig(
           continue;
         }
         const stdio: McpStdioServerConfig = { command: config.command, args: config.args, env: config.env };
-        result[name] = stdio;
+        result[sdkName] = stdio;
         break;
       }
     }
@@ -173,9 +175,15 @@ export function toSdkMcpConfig(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function resolveRuntimePath(): string {
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    return process.resourcesPath;
+function toSdkMcpServerName(name: string): string {
+  if (name === 'chrome-devtools') {
+    return 'chrome_devtools';
   }
-  return path.join(process.cwd(), 'resources');
+  return name;
+}
+
+function resolveRuntimePath(): string {
+  return resolveRuntimeResourceRootFor('mcp-servers')
+    || resolveRuntimeResourceRootFor('feishu-mcp-server')
+    || path.join(process.cwd(), 'resources');
 }

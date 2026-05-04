@@ -36,6 +36,9 @@ interface McpServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  type?: 'stdio' | 'sse' | 'http';
+  runMode?: 'on_demand' | 'keep_alive';
+  runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
 }
 
 // ==========================================
@@ -210,6 +213,9 @@ function importMcpServers(): number {
           command: config.command,
           args,
           env: mergedEnv,
+          type: config.type || existing.type || 'stdio',
+          runMode: config.runMode || existing.run_mode || 'on_demand',
+          runtime: config.runtime || existing.runtime_kind || 'auto',
           content_hash: contentHash,
         });
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
@@ -221,7 +227,8 @@ function importMcpServers(): number {
         || config.name === 'deepsearch'
         || config.name === 'office-docs'
         || config.name === 'chrome-devtools'
-        || config.name === 'image-reader';
+        || config.name === 'image-reader'
+        || config.name === 'im-tools';
       createMcpServer({
         name: config.name,
         scope: 'builtin',
@@ -229,6 +236,9 @@ function importMcpServers(): number {
         command: config.command,
         args,
         env: config.env,
+        type: config.type || 'stdio',
+        runMode: config.runMode || 'on_demand',
+        runtime: config.runtime || 'auto',
         is_enabled: isEnabled,
         source: 'builtin',
         content_hash: contentHash,

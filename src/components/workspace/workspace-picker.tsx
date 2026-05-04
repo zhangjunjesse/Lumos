@@ -308,61 +308,65 @@ export function WorkspacePicker({ expanded }: WorkspacePickerProps) {
 
             {isExpanded && (
               <div className="ml-4 w-[calc(100%-1rem)] min-w-0 space-y-0.5">
-                {wsSessions.map(session => (
-                  (() => {
-                    const streamingState = streamingSessions[session.id];
-                    const isStreaming = streamingState?.status === "streaming";
-                    const isUnreadCompleted = streamingState?.status === "completed";
-                    const isError = streamingState?.status === "error";
-                    const statusLabel = isStreaming
-                      ? t('chatList.statusReplying')
-                      : isUnreadCompleted
-                        ? t('chatList.statusUnreadCompleted')
-                        : t('chatList.statusIdle');
+                {wsSessions.length > 0 && (
+                  <div className="max-h-[min(40vh,320px)] space-y-0.5 overflow-y-auto overscroll-contain pr-1">
+                    {wsSessions.map(session => (
+                      (() => {
+                        const streamingState = streamingSessions[session.id];
+                        const isStreaming = streamingState?.status === "streaming";
+                        const isUnreadCompleted = streamingState?.status === "completed";
+                        const isError = streamingState?.status === "error";
+                        const statusLabel = isStreaming
+                          ? t('chatList.statusReplying')
+                          : isUnreadCompleted
+                            ? t('chatList.statusUnreadCompleted')
+                            : t('chatList.statusIdle');
 
-                    return (
-                      <button
-                        key={session.id}
-                        type="button"
-                        className={cn(
-                          "flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1 text-left text-xs cursor-pointer",
-                          activeSessionId === session.id
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                            : "text-sidebar-foreground hover:bg-accent"
-                        )}
-                        onClick={() => router.push(`/chat/${session.id}`)}
-                      >
-                        <span
-                          className={cn(
-                            "h-1.5 w-1.5 shrink-0 rounded-full",
-                            isStreaming
-                              ? "bg-green-500 animate-pulse"
-                              : isUnreadCompleted
-                                ? "bg-blue-500"
-                                : isError
-                                  ? "bg-red-500"
-                                  : "bg-muted-foreground/40"
-                          )}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                        <span
-                          className={cn(
-                            "shrink-0 text-[10px]",
-                            isStreaming
-                              ? "text-green-500"
-                              : isUnreadCompleted
-                                ? "text-blue-500"
-                                : isError
-                                  ? "text-red-500"
-                                  : "text-muted-foreground/60"
-                          )}
-                        >
-                          {statusLabel}
-                        </span>
-                      </button>
-                    );
-                  })()
-                ))}
+                        return (
+                          <button
+                            key={session.id}
+                            type="button"
+                            className={cn(
+                              "flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1 text-left text-xs cursor-pointer",
+                              activeSessionId === session.id
+                                ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                                : "text-sidebar-foreground hover:bg-accent"
+                            )}
+                            onClick={() => router.push(`/chat/${session.id}`)}
+                          >
+                            <span
+                              className={cn(
+                                "h-1.5 w-1.5 shrink-0 rounded-full",
+                                isStreaming
+                                  ? "bg-green-500 animate-pulse"
+                                  : isUnreadCompleted
+                                    ? "bg-blue-500"
+                                    : isError
+                                      ? "bg-red-500"
+                                      : "bg-muted-foreground/40"
+                              )}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                            <span
+                              className={cn(
+                                "shrink-0 text-[10px]",
+                                isStreaming
+                                  ? "text-green-500"
+                                  : isUnreadCompleted
+                                    ? "text-blue-500"
+                                    : isError
+                                      ? "text-red-500"
+                                      : "text-muted-foreground/60"
+                              )}
+                            >
+                              {statusLabel}
+                            </span>
+                          </button>
+                        );
+                      })()
+                    ))}
+                  </div>
+                )}
                 <button
                   type="button"
                   className="flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1 text-left text-xs hover:bg-accent cursor-pointer text-muted-foreground"

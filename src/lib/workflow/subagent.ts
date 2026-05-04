@@ -719,6 +719,7 @@ async function buildWorkflowAgentPayload(
     contractVersion: 'stage-execution-payload/v1',
     taskId: runtimeContext.taskId || runtimeContext.workflowRunId,
     sessionId: runtimeContext.sessionId || `workflow:${runtimeContext.workflowRunId}`,
+    ...(runtimeContext.browserContextId ? { browserContextId: runtimeContext.browserContextId } : {}),
     requestedModel,
     runId: runtimeContext.workflowRunId,
     stageId: runtimeContext.stepId,
@@ -740,6 +741,9 @@ async function buildWorkflowAgentPayload(
         // Make it explicit that productive tool calls are encouraged, so
         // plain-text delivery mode is not mis-read as "don't touch tools".
         'You have full access to all tools, including image generation (`mcp__lumos-image__generate_image`), file writes, browser, and MCP tools. Call them whenever the task needs them — describing what you WOULD do is not acceptable when a real tool is available.',
+        ...(runtimeContext.browserContextId
+          ? [`When using browser tools, use the workflow-bound Lumos browser context: ${runtimeContext.browserContextId}. Do not switch to the OS default browser.`]
+          : []),
         ...(dependencies.length > 0
           ? ['Use the provided dependency context to produce an integrated result; do not ignore branch outputs.']
           : []),
@@ -824,6 +828,7 @@ function buildWorkflowAgentExecutionMetadata(input: {
     memoryPolicy: definition.binding.memoryPolicy,
     concurrencyLimit: definition.binding.concurrencyLimit,
     requestedModel: requestedModel ?? null,
+    browserContextId: runtimeContext.browserContextId ?? null,
     timeoutMs: typeof runtimeContext.timeoutMs === 'number' ? runtimeContext.timeoutMs : null,
     ...(typeof cancelled === 'boolean' ? { cancelled } : {}),
     ...(typeof timedOut === 'boolean' ? { timedOut } : {}),

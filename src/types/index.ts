@@ -19,6 +19,7 @@ export interface ChatSession {
   needs_approval?: boolean;
   provider_name: string;
   provider_id: string;
+  browser_context_id: string;
   sdk_cwd: string;
   runtime_status: string;
   runtime_updated_at: string;
@@ -833,6 +834,187 @@ export interface ProviderPreset {
 }
 
 // ==========================================
+// Browser Provider Types
+// ==========================================
+
+export type BrowserProviderType = 'embedded' | 'external-cdp' | 'adspower';
+export type BrowserProviderTestStatus = 'untested' | 'success' | 'failed';
+
+export interface BrowserProviderConfig {
+  id: string;
+  provider_type: BrowserProviderType;
+  display_name: string;
+  enabled: number;
+  api_base_url: string;
+  api_key: string;
+  cdp_endpoint: string;
+  profile_id: string;
+  profile_name: string;
+  notes: string;
+  last_test_status: BrowserProviderTestStatus;
+  last_test_message: string;
+  last_profile_count: number;
+  last_tested_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrowserProviderConfigView extends Omit<BrowserProviderConfig, 'api_key'> {
+  api_key: string;
+  has_api_key: boolean;
+  context_id: string;
+  aliases: string[];
+  usage: BrowserProviderUsageView;
+}
+
+export interface BrowserProfileSummary {
+  id: string;
+  name: string;
+  status?: string;
+  group?: string;
+  serial_number?: string;
+}
+
+export interface BrowserProviderUsageView {
+  chat_session_count: number;
+  schedule_count: number;
+  enabled_schedule_count: number;
+}
+
+export interface BrowserProvidersResponse {
+  embedded_context: {
+    id: 'embedded:default';
+    display_name: string;
+    provider_type: 'embedded';
+  };
+  configs: BrowserProviderConfigView[];
+}
+
+export interface CreateBrowserProviderConfigRequest {
+  provider_type: Exclude<BrowserProviderType, 'embedded'>;
+  display_name: string;
+  enabled?: boolean;
+  api_base_url?: string;
+  api_key?: string;
+  cdp_endpoint?: string;
+  profile_id?: string;
+  profile_name?: string;
+  aliases?: string[];
+  notes?: string;
+}
+
+export interface UpdateBrowserProviderConfigRequest {
+  display_name?: string;
+  enabled?: boolean;
+  api_base_url?: string;
+  api_key?: string;
+  clear_api_key?: boolean;
+  cdp_endpoint?: string;
+  profile_id?: string;
+  profile_name?: string;
+  aliases?: string[];
+  notes?: string;
+}
+
+export interface BrowserProviderConfigResponse {
+  config: BrowserProviderConfigView;
+}
+
+export interface BrowserProviderTestResponse {
+  ok: boolean;
+  status: BrowserProviderTestStatus;
+  message: string;
+  profile_count: number;
+  profiles: BrowserProfileSummary[];
+  config: BrowserProviderConfigView;
+}
+
+export interface BrowserProviderDraftTestRequest {
+  config_id?: string;
+  provider_type: Exclude<BrowserProviderType, 'embedded'>;
+  display_name?: string;
+  api_base_url?: string;
+  api_key?: string;
+  cdp_endpoint?: string;
+  profile_id?: string;
+  profile_name?: string;
+}
+
+export type BrowserProviderDraftTestResponse = Omit<BrowserProviderTestResponse, 'config'>;
+
+export interface BrowserProviderRuntimeStatus {
+  context_id: string;
+  bridge_ready: boolean;
+  occupied: boolean;
+  owner_id?: string;
+  started_at?: string;
+  updated_at?: string;
+  expires_at?: string;
+  last_path?: string;
+  error?: string;
+}
+
+export interface BrowserProviderRuntimeStatusesResponse {
+  statuses: BrowserProviderRuntimeStatus[];
+}
+
+export interface BrowserProviderRuntimeReleaseRequest {
+  context_id: string;
+}
+
+export interface BrowserProviderRuntimeReleaseResponse {
+  ok: boolean;
+  context_id: string;
+  released: boolean;
+  previous_owner_id?: string;
+}
+
+export interface BrowserProviderProfileImportRequest {
+  source_config_id?: string;
+  provider_type: 'adspower';
+  api_base_url?: string;
+  api_key?: string;
+  profiles: BrowserProfileSummary[];
+  enabled?: boolean;
+}
+
+export interface BrowserProviderProfileImportResponse {
+  created: BrowserProviderConfigView[];
+  skipped: Array<{ profile_id: string; name?: string; reason: string }>;
+}
+
+export interface BrowserProviderProfileSyncRequest {
+  source_config_id?: string;
+  api_base_url?: string;
+  api_key?: string;
+  enabled?: boolean;
+  max_profiles?: number;
+  dry_run?: boolean;
+}
+
+export interface BrowserProviderProfileSyncPlanItem {
+  action: 'create' | 'update' | 'unchanged' | 'skip';
+  profile_id: string;
+  name?: string;
+  context_id: string;
+  display_name?: string;
+  group?: string;
+  serial_number?: string;
+  changes: string[];
+  reason?: string;
+}
+
+export interface BrowserProviderProfileSyncResponse {
+  created: BrowserProviderConfigView[];
+  updated: BrowserProviderConfigView[];
+  skipped: Array<{ profile_id: string; name?: string; reason: string }>;
+  profile_count?: number;
+  unchanged?: number;
+  dry_run?: boolean;
+  plan?: BrowserProviderProfileSyncPlanItem[];
+}
+
+// ==========================================
 // Token Usage
 // ==========================================
 
@@ -852,6 +1034,7 @@ export interface CreateSessionRequest {
   title?: string;
   model?: string;
   provider_id?: string;
+  browser_context_id?: string;
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
@@ -1070,9 +1253,21 @@ export interface MCPServerConfig {
   args?: string[];
   env?: Record<string, string>;
   type?: 'stdio' | 'sse' | 'http';
+  runMode?: 'on_demand' | 'keep_alive';
+  runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
   url?: string;
   headers?: Record<string, string>;
   description?: string;
+  scope?: 'builtin' | 'user';
+  is_enabled?: boolean;
+  health?: {
+    status: 'unknown' | 'ok' | 'failed' | 'skipped';
+    checkedAt?: string;
+    error?: string;
+    message?: string;
+    tools?: string[];
+    transport?: 'stdio' | 'sse' | 'http';
+  };
 }
 
 export interface MCPConfig {
@@ -1265,6 +1460,7 @@ export interface ClaudeStreamOptions {
   rawPrompt?: string;
   sessionId: string;
   sdkSessionId?: string; // SDK session ID for resuming conversations
+  forceFreshSession?: boolean;
   model?: string;
   systemPrompt?: string;
   workingDirectory?: string;
@@ -1275,6 +1471,8 @@ export interface ClaudeStreamOptions {
   permissionMode?: string;
   files?: FileAttachment[];
   toolTimeoutSeconds?: number;
+  sdkBuiltinTools?: import('@anthropic-ai/claude-agent-sdk').Options['tools'];
+  disallowedTools?: string[];
   provider?: ApiProvider;
   knowledgeOptions?: ChatKnowledgeOptions;
   /** Recent conversation history from DB — used as fallback context when SDK resume is unavailable or fails */

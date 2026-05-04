@@ -17,6 +17,7 @@ import { INTERVALS, type ScheduledWorkflow } from './ScheduleList';
 import { WorkflowParamForm } from './WorkflowParamForm';
 import type { WorkflowParamDef } from '@/lib/workflow/types';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
+import type { BrowserProviderConfigView, BrowserProvidersResponse } from '@/types';
 
 const EMPTY_DSL = JSON.stringify({ version: 'v3', name: '', nodes: [], edges: [] }, null, 2);
 
@@ -45,10 +46,18 @@ interface FormState {
   scheduleTime: string;
   scheduleDayOfWeek: number;
   workingDirectory: string;
+  browserContextId: string;
   notifyOnComplete: boolean;
   workflowId: string;
   dslText: string;
   defaultParams: Record<string, string>;
+}
+
+interface BrowserContextOption {
+  id: string;
+  label: string;
+  description: string;
+  disabled?: boolean;
 }
 
 function toStringParams(raw: Record<string, unknown> | undefined): Record<string, string> {
@@ -79,11 +88,50 @@ function defaultForm(initial?: ScheduledWorkflow | null): FormState {
     scheduleTime: initial?.scheduleTime ?? '09:00',
     scheduleDayOfWeek: initial?.scheduleDayOfWeek ?? 1,
     workingDirectory: initial?.workingDirectory ?? '',
+    browserContextId: initial?.browserContextId ?? 'embedded:default',
     notifyOnComplete: initial?.notifyOnComplete ?? true,
     workflowId: initial?.workflowId ?? '',
     dslText: initial ? JSON.stringify(initial.workflowDsl, null, 2) : EMPTY_DSL,
     defaultParams: toStringParams(initial?.runParams),
   };
+}
+
+function browserConfigLabel(config: BrowserProviderConfigView): string {
+  const prefix = config.provider_type === 'adspower' ? 'AdsPower' : 'CDP';
+  return `${prefix} · ${config.display_name}`;
+}
+
+function browserConfigDescription(config: BrowserProviderConfigView): string {
+  if (config.provider_type === 'adspower') {
+    const profile = config.profile_name || config.profile_id || '未填写 Profile';
+    return `Profile: ${profile}`;
+  }
+  return config.cdp_endpoint || '未填写 CDP 地址';
+}
+
+function buildBrowserOptions(configs: BrowserProviderConfigView[], selectedId: string): BrowserContextOption[] {
+  const options: BrowserContextOption[] = [{
+    id: 'embedded:default',
+    label: '内置浏览器',
+    description: 'Lumos 内置浏览器登录态',
+  }];
+  for (const config of configs) {
+    options.push({
+      id: config.context_id,
+      label: browserConfigLabel(config),
+      description: browserConfigDescription(config),
+      disabled: config.enabled !== 1,
+    });
+  }
+  if (selectedId && !options.some(option => option.id === selectedId)) {
+    options.push({
+      id: selectedId,
+      label: '未知浏览器上下文',
+      description: selectedId,
+      disabled: true,
+    });
+  }
+  return options;
 }
 
 export function ScheduleEditor({
@@ -94,6 +142,7 @@ export function ScheduleEditor({
   const [dslError, setDslError] = useState('');
   const [showDsl, setShowDsl] = useState(false);
   const [workflows, setWorkflows] = useState<WorkflowOption[]>([]);
+  const [browserConfigs, setBrowserConfigs] = useState<BrowserProviderConfigView[]>([]);
 
   // Load available workflows
   useEffect(() => {
@@ -104,6 +153,19 @@ export function ScheduleEditor({
         setWorkflows(data.workflows ?? []);
       })
       .catch(() => {});
+  }, [open]);
+
+  // Load configured browser contexts
+  useEffect(() => {
+    if (!open) return;
+    fetch('/api/browser-providers', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: BrowserProvidersResponse | null) => {
+        setBrowserConfigs(data?.configs ?? []);
+      })
+      .catch(() => {
+        setBrowserConfigs([]);
+      });
   }, [open]);
 
   // Reset form when dialog opens
@@ -177,6 +239,7 @@ export function ScheduleEditor({
         scheduleTime: (isDaily || isWeekly) ? form.scheduleTime : null,
         scheduleDayOfWeek: isWeekly ? form.scheduleDayOfWeek : null,
         workingDirectory: form.workingDirectory.trim(),
+        browserContextId: form.browserContextId || 'embedded:default',
         notifyOnComplete: form.notifyOnComplete,
         workflowDsl: dsl,
         workflowId: form.workflowId || undefined,
@@ -206,6 +269,8 @@ export function ScheduleEditor({
   })();
 
   const dslParams: WorkflowParamDef[] = (parsedDsl as { params?: WorkflowParamDef[] } | null)?.params ?? [];
+  const browserOptions = buildBrowserOptions(browserConfigs, form.browserContextId);
+  const selectedBrowser = browserOptions.find(option => option.id === form.browserContextId) || browserOptions[0];
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
@@ -314,6 +379,25 @@ export function ScheduleEditor({
           <div className="space-y-1.5">
             <Label>工作目录</Label>
             <Input value={form.workingDirectory} onChange={e => set('workingDirectory', e.target.value)} placeholder="留空使用默认路径" />
+          </div>
+
+          {/* Browser context */}
+          <div className="space-y-1.5">
+            <Label>浏览器</Label>
+            <select
+              value={selectedBrowser.id}
+              onChange={e => set('browserContextId', e.target.value)}
+              className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {browserOptions.map(option => (
+                <option key={option.id} value={option.id} disabled={option.disabled}>
+                  {option.disabled ? `${option.label}（已停用）` : option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {selectedBrowser.description}。工作流中的浏览器 Agent 和 <code className="bg-muted px-1 rounded">ctx.browser</code> 会使用此登录态。
+            </p>
           </div>
 
           {/* Workflow selector */}

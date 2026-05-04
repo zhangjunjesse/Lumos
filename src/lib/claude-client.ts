@@ -30,6 +30,7 @@ import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
 import { getClaudeProviderRoutingSnapshot, isClaudeLocalAuthProvider } from './claude/provider-env';
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
 import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
+import { buildRuntimeResourceCandidates, resolveRuntimeResourcePath } from './runtime-resources';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -61,19 +62,18 @@ function findBundledNode(): string | undefined {
   const ext = platform === 'win32' ? '.exe' : '';
   const exeName = `node${ext}`;
 
-  // In packaged app, resources are at process.resourcesPath
-  const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
-  const nodePath = path.join(resourcesPath, 'node-runtime', platform, arch, exeName);
+  const relativeNodePath = path.join('node-runtime', platform, arch, exeName);
+  const nodePath = resolveRuntimeResourcePath(relativeNodePath);
 
   console.log('[claude-client] Looking for bundled Node.js:', {
     platform,
     arch,
-    resourcesPath,
+    candidates: buildRuntimeResourceCandidates(relativeNodePath),
     nodePath,
-    exists: fs.existsSync(nodePath),
+    exists: Boolean(nodePath && fs.existsSync(nodePath)),
   });
 
-  if (fs.existsSync(nodePath)) {
+  if (nodePath && fs.existsSync(nodePath)) {
     console.log('[claude-client] Found bundled Node.js at:', nodePath);
     return nodePath;
   }
@@ -285,6 +285,20 @@ function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): stri
   return createHash('sha256').update(payload).digest('hex');
 }
 
+function buildMcpSignatureConfig(
+  mcpServers?: Record<string, MCPServerConfig>,
+  inProcessMcpServers?: ClaudeStreamOptions['inProcessMcpServers'],
+): Record<string, MCPServerConfig> | undefined {
+  const signatureConfig: Record<string, MCPServerConfig> = { ...(mcpServers || {}) };
+  for (const name of Object.keys(inProcessMcpServers || {})) {
+    signatureConfig[name] = {
+      command: '__lumos_in_process_mcp__',
+      args: [name],
+    };
+  }
+  return Object.keys(signatureConfig).length > 0 ? signatureConfig : undefined;
+}
+
 /**
  * Extract text content from an SDK assistant message
  */
@@ -391,6 +405,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     rawPrompt,
     sessionId,
     sdkSessionId,
+    forceFreshSession,
     model,
     systemPrompt,
     workingDirectory,
@@ -400,6 +415,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     permissionMode,
     files,
     toolTimeoutSeconds = 0,
+    sdkBuiltinTools,
+    disallowedTools,
     conversationHistory,
     onRuntimeStatusChange,
   } = options;
@@ -461,6 +478,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           env: sanitizeEnv(sdkEnv),
           settingSources: runtimeContext.settingSources,
         };
+
+        if (disallowedTools && disallowedTools.length > 0) {
+          queryOptions.disallowedTools = disallowedTools;
+        }
+        if (sdkBuiltinTools !== undefined) {
+          queryOptions.tools = sdkBuiltinTools;
+        }
 
         if (skipPermissions) {
           queryOptions.allowDangerouslySkipPermissions = true;
@@ -525,6 +549,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Check if we should resume session (needed for MCP config decision)
         let shouldResume = !!sdkSessionId;
+        if (shouldResume && forceFreshSession) {
+          console.log('[claude-client] Force fresh SDK session requested');
+          shouldResume = false;
+          if (sessionId) {
+            try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+          }
+        }
         if (shouldResume && workingDirectory && !fs.existsSync(workingDirectory)) {
           console.warn(`[claude-client] Working directory "${workingDirectory}" does not exist, skipping resume`);
           shouldResume = false;
@@ -547,7 +578,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // isolated. Project-level MCP may load only when project settings
         // loading is explicitly enabled.
         const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
-        const currentMcpSignature = computeMcpSignature(mcpServers);
+        const mcpSignatureConfig = buildMcpSignatureConfig(mcpServers, inProcessMcpServers);
+        const currentMcpSignature = computeMcpSignature(mcpSignatureConfig);
         const storedMcpSignature = sessionId ? (getSetting(getSessionMcpSignatureKey(sessionId)) || '') : '';
         const mcpSignatureChanged = !!sessionId
           && storedMcpSignature !== ''
@@ -651,12 +683,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
+          if (disallowedTools?.includes(toolName)) {
+            return {
+              behavior: 'deny' as const,
+              message: `${toolName} is disabled for this request. Use the selected Lumos browser tools when browser control is requested.`,
+            };
+          }
+
           // Auto-approve built-in in-process MCP server tools (read-only or fully owned by Lumos).
           if (
             toolName.startsWith('mcp__feishu__')
             || toolName.startsWith('mcp__lumos-image__')
+            || toolName.startsWith('mcp__lumos-butler__')
             || toolName.startsWith('mcp__lumos-knowledge__')
             || toolName.startsWith('mcp__wechat-export__')
+            || toolName.startsWith('mcp__chrome-devtools__')
+            || toolName.startsWith('mcp__chrome_devtools__')
           ) {
             return { behavior: 'allow' as const, updatedInput: input };
           }

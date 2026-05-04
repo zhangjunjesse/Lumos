@@ -1,0 +1,120 @@
+/**
+ * Feishu Provider — Adapter
+ *
+ * 把 monitor / send / probe / targets 串起来实现 IMAdapter + IMTargetDirectory。
+ * IMAdapter 是核心契约；IMTargetDirectory 是 P1 mixin（manifest.capabilities 已声明 true）。
+ *
+ * 关于"行为不变"：本 adapter 取代 src/lib/bridge/adapters/feishu-adapter.ts 的逻辑，
+ * 但旧文件仍作为 thin wrapper 保留以兼容 bridge BaseChannelAdapter 接口。
+ */
+
+import type {
+  IMAdapter,
+  IMTargetDirectory,
+  IMCommandHandler,
+  IMCommand,
+  IMCommandContext,
+  IMCommandResult,
+  IMStreamingPreview,
+  IMTarget,
+  ListTargetsOptions,
+  ChannelAddress,
+  InboundMessage,
+  OutboundMessage,
+  PreviewHandle,
+  SendResult,
+  ProbeResult,
+} from '../../core/types';
+import type { FeishuConfig } from './config';
+import { isFeishuConfigValid } from './config';
+import { FeishuClient } from './client';
+import { FeishuMonitor } from './monitor';
+import { sendOutbound } from './send';
+import { probeFeishu } from './probe';
+import { listFeishuTargets, resolveFeishuTarget } from './targets';
+import { BUILTIN_COMMANDS, handleBuiltinCommand } from '../../core/built-in-commands';
+import { FeishuStreamingPreview } from './streaming-preview';
+
+export class FeishuAdapter
+  implements IMAdapter, IMTargetDirectory, IMCommandHandler, IMStreamingPreview {
+  readonly id = 'feishu';
+
+  private readonly client: FeishuClient;
+  private readonly monitor: FeishuMonitor;
+  private readonly streamingPreview: FeishuStreamingPreview;
+
+  constructor(private readonly config: FeishuConfig) {
+    this.client = new FeishuClient(config);
+    this.monitor = new FeishuMonitor(this.client);
+    this.streamingPreview = new FeishuStreamingPreview(config);
+  }
+
+  async start(): Promise<void> {
+    if (this.monitor.isRunning()) return;
+    const reason = this.validateConfig();
+    if (reason) throw new Error(`[feishu/adapter] cannot start: ${reason}`);
+    this.monitor.start();
+  }
+
+  async stop(): Promise<void> {
+    this.monitor.stop();
+    this.client.reset();
+  }
+
+  isRunning(): boolean {
+    return this.monitor.isRunning();
+  }
+
+  consumeOne(): Promise<InboundMessage | null> {
+    return this.monitor.consumeOne();
+  }
+
+  send(message: OutboundMessage): Promise<SendResult> {
+    return sendOutbound(this.client, message);
+  }
+
+  probe(): Promise<ProbeResult> {
+    return probeFeishu(this.client);
+  }
+
+  validateConfig(): string | null {
+    if (!isFeishuConfigValid(this.config)) return 'app_id and app_secret are required';
+    return null;
+  }
+
+  // ------------- IMTargetDirectory -------------
+
+  listTargets(opts?: ListTargetsOptions): Promise<IMTarget[]> {
+    return listFeishuTargets(this.client, this.config, opts);
+  }
+
+  resolveTarget(query: string): Promise<IMTarget | null> {
+    return resolveFeishuTarget(this.client, this.config, query);
+  }
+
+  // ------------- IMCommandHandler -------------
+
+  listCommands(): IMCommand[] {
+    return [...BUILTIN_COMMANDS];
+  }
+
+  async handleCommand(ctx: IMCommandContext): Promise<IMCommandResult> {
+    const builtin = await handleBuiltinCommand(ctx, 'Feishu');
+    if (builtin) return builtin;
+    return { handled: false };
+  }
+
+  // ------------- IMStreamingPreview -------------
+
+  startPreview(address: ChannelAddress, initialText?: string): Promise<PreviewHandle> {
+    return this.streamingPreview.startPreview(address, initialText);
+  }
+
+  updatePreview(handle: PreviewHandle, chunk: string): Promise<void> {
+    return this.streamingPreview.updatePreview(handle, chunk);
+  }
+
+  finalizePreview(handle: PreviewHandle, finalText: string): Promise<void> {
+    return this.streamingPreview.finalizePreview(handle, finalText);
+  }
+}

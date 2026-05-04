@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import path from 'path';
 import type { ChatSession, Message, SettingsMap } from '@/types';
 import { getDb } from './connection';
+import { taskEventBus } from '@/lib/task-event-bus';
 
 // ==========================================
 // Session Operations
@@ -109,6 +110,12 @@ export function updateSessionProviderId(id: string, providerId: string): void {
   db.prepare('UPDATE chat_sessions SET provider_id = ? WHERE id = ?').run(providerId, id);
 }
 
+export function updateSessionBrowserContext(id: string, browserContextId: string): void {
+  const db = getDb();
+  const normalized = browserContextId.trim() || 'embedded:default';
+  db.prepare('UPDATE chat_sessions SET browser_context_id = ? WHERE id = ?').run(normalized, id);
+}
+
 export function updateSessionSystemPrompt(id: string, systemPrompt: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET system_prompt = ? WHERE id = ?').run(systemPrompt, id);
@@ -181,6 +188,17 @@ export function addMessage(
   ).run(id, sessionId, role, content, now, tokenUsage || null, elapsedMs ?? null);
 
   updateSessionTimestamp(sessionId);
+
+  // Notify any open ChatView for this session so 入站 IM 消息（飞书/微信）和后台
+  // 写入的 assistant 回复都能即时同步到 UI。ChatView 在 streaming 时通过 temp-id
+  // 和 `enabled: !isStreaming` 双短路避免重复刷新。
+  taskEventBus.emitTaskEvent({
+    type: 'task:updated',
+    sessionId,
+    taskId: '',
+    timestamp: Date.now(),
+    data: { reason: 'message-added', role },
+  });
 
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message;
 }

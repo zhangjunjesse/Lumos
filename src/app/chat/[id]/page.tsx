@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
+import { BrowserContextSelector } from '@/components/chat/BrowserContextSelector';
+import { ButlerStatusPanel } from '@/components/main-agent/ButlerStatusPanel';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete, Loading, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { Input } from '@/components/ui/input';
@@ -19,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { BindingButton } from '@/components/bridge/BindingButton';
+import { ImSessionHeader } from '@/components/im/ImSessionHeader';
 import { usePanel } from '@/hooks/usePanel';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -77,6 +79,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionModel, setSessionModel] = useState<string>('');
   const [resolvedModel, setResolvedModel] = useState<string>('');
   const [sessionProviderId, setSessionProviderId] = useState<string>('');
+  const [sessionBrowserContextId, setSessionBrowserContextId] = useState<string>('embedded:default');
   const [projectName, setProjectName] = useState<string>('');
   const [sessionWorkingDir, setSessionWorkingDir] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -330,6 +333,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         setSessionModel(data.session.requested_model || data.session.model || '');
         setResolvedModel(data.session.resolved_model || '');
         setSessionProviderId(data.session.provider_id || '');
+        setSessionBrowserContextId(data.session.browser_context_id || 'embedded:default');
         setProjectName(data.session.project_name || '');
       } catch (err) {
         console.error('[ChatSessionPage] Failed to load session:', err);
@@ -560,7 +564,13 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
                 >
                   <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
                 </button>
-                <BindingButton sessionId={id} />
+                <ImSessionHeader sessionId={id} />
+                <BrowserContextSelector
+                  sessionId={id}
+                  value={sessionBrowserContextId}
+                  disabled={sessionStreamingState?.status === 'streaming'}
+                  onChange={setSessionBrowserContextId}
+                />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -577,6 +587,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           </div>
         )}
 
+        {routeEntry === 'main-agent' && <ButlerStatusPanel sessionId={id} compact />}
+
         <ChatView
           sessionId={id}
           initialMessages={messages}
@@ -584,8 +596,10 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           modelName={sessionModel}
           resolvedModelName={resolvedModel}
           providerId={sessionProviderId}
+          browserContextId={sessionBrowserContextId}
           onRequestedModelChange={setSessionModel}
           onResolvedModelChange={setResolvedModel}
+          onBrowserContextChange={setSessionBrowserContextId}
         />
 
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

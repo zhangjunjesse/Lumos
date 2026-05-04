@@ -6,6 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/hooks/useTranslation';
+import {
+  normalizePortableMcpMap,
+  normalizePortableMcpValue,
+} from '@/lib/mcp-config-placeholders';
 
 type ExtensionPlan = {
   type?: string;
@@ -20,6 +24,8 @@ type ExtensionPlan = {
     description?: string;
     config?: {
       type?: 'stdio' | 'sse' | 'http';
+      runMode?: 'on_demand' | 'keep_alive';
+      runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
       command?: string;
       args?: string[];
       env?: Record<string, string>;
@@ -31,10 +37,71 @@ type ExtensionPlan = {
   }>;
 };
 
+type ApplyStatus = 'created' | 'updated' | 'exists' | 'error' | 'invalid';
+
 type ApplyResult = {
-  skills: Array<{ name: string; status: 'created' | 'exists' | 'error' | 'invalid'; message?: string }>;
-  mcps: Array<{ name: string; status: 'created' | 'exists' | 'error' | 'invalid'; message?: string }>;
+  skills: Array<{ name: string; status: ApplyStatus; message?: string }>;
+  mcps: Array<{ name: string; status: ApplyStatus; message?: string }>;
 };
+
+type PlanMcpServer = NonNullable<ExtensionPlan['mcpServers']>[number];
+
+function safeScriptName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function buildInstallMcpServer(name: string, server: PlanMcpServer) {
+  const config = server.config || {};
+  const type = config.type || 'stdio';
+  const hasPythonScript = typeof server.scriptContent === 'string' && server.scriptContent.trim().length > 0;
+  const command = hasPythonScript
+    ? normalizePortableMcpValue(config.command || '[PYTHON_PATH]')
+    : normalizePortableMcpValue(config.command || '');
+  const args = (config.args || []).map((arg) => normalizePortableMcpValue(String(arg)));
+  const normalizedArgs = hasPythonScript && args.length === 0
+    ? [`[DATA_DIR]/mcp-scripts/${safeScriptName(name)}.py`]
+    : args;
+
+  return {
+    command,
+    args: normalizedArgs,
+    env: normalizePortableMcpMap(config.env),
+    type,
+    runMode: config.runMode || 'on_demand',
+    runtime: config.runtime || (hasPythonScript ? 'python' : 'auto'),
+    url: normalizePortableMcpValue(config.url || ''),
+    headers: normalizePortableMcpMap(config.headers),
+    description: server.description || '',
+  };
+}
+
+async function smokeTestMcpServer(name: string, server: ReturnType<typeof buildInstallMcpServer>): Promise<string | undefined> {
+  if (server.type && server.type !== 'stdio') return undefined;
+  try {
+    const res = await fetch('/api/plugins/mcp/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, scope: 'user', server }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (body?.ok === false) {
+      return `MCP self-test failed: ${body.error || 'unknown error'}`;
+    }
+  } catch (error) {
+    return `MCP self-test failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+  }
+  return undefined;
+}
+
+function stripSelfTestPrefix(message: string | undefined): string | undefined {
+  const prefix = 'MCP self-test failed:';
+  if (!message) return undefined;
+  return message.startsWith(prefix) ? message.slice(prefix.length).trim() : message;
+}
+
+function isSelfTestFailure(message: string | undefined): boolean {
+  return Boolean(message?.startsWith('MCP self-test failed:'));
+}
 
 export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
   const { t } = useTranslation();
@@ -47,6 +114,25 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
 
   const skillCount = skills.length;
   const mcpCount = mcps.length;
+
+  const getStatusLabel = (item: { status: ApplyStatus; message?: string }) => {
+    if (isSelfTestFailure(item.message)) return t('extensions.builderStatusSelfTestFailed');
+    switch (item.status) {
+      case 'created':
+        return t('extensions.builderStatusCreated');
+      case 'updated':
+        return t('extensions.builderStatusUpdated');
+      case 'exists':
+        return t('extensions.builderStatusExists');
+      case 'invalid':
+        return t('extensions.builderStatusInvalid');
+      case 'error':
+      default:
+        return t('extensions.builderStatusError');
+    }
+  };
+
+  const getResultMessage = (item: { message?: string }) => stripSelfTestPrefix(item.message);
 
   const applyPlan = async () => {
     if (applying) return;
@@ -62,19 +148,30 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
         continue;
       }
       try {
+        const payload = {
+          name,
+          content,
+          description: skill.description || '',
+        };
         const res = await fetch('/api/skills', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            content,
-            description: skill.description || '',
-          }),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
           skillResults.push({ name, status: 'created' });
         } else if (res.status === 409) {
-          skillResults.push({ name, status: 'exists' });
+          const updateRes = await fetch('/api/skills', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (updateRes.ok) {
+            skillResults.push({ name, status: 'updated' });
+          } else {
+            const body = await updateRes.json().catch(() => ({}));
+            skillResults.push({ name, status: 'error', message: body.error || 'Failed to update skill' });
+          }
         } else {
           const body = await res.json().catch(() => ({}));
           skillResults.push({ name, status: 'error', message: body.error || 'Failed to create skill' });
@@ -96,15 +193,15 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
 
     for (const server of mcps) {
       const name = String(server.name || '').trim();
-      const config = server.config || {};
       if (!name) {
         mcpResults.push({ name: t('extensions.builderUnnamedMcp'), status: 'invalid' });
         continue;
       }
 
-      const type = config.type || 'stdio';
-      const command = config.command || '';
-      const url = config.url || '';
+      const installServer = buildInstallMcpServer(name, server);
+      const type = installServer.type;
+      const command = installServer.command;
+      const url = installServer.url;
 
       // Validate transport type consistency
       if (type === 'stdio' && !command) {
@@ -154,21 +251,28 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name,
-            server: {
-              command,
-              args: config.args || [],
-              env: config.env || {},
-              type,
-              url,
-              headers: config.headers || {},
-              description: server.description || '',
-            },
+            server: installServer,
           }),
         });
         if (res.ok) {
-          mcpResults.push({ name, status: 'created' });
+          const message = await smokeTestMcpServer(name, installServer);
+          mcpResults.push({ name, status: 'created', ...(message ? { message } : {}) });
         } else if (res.status === 409) {
-          mcpResults.push({ name, status: 'exists' });
+          const updateRes = await fetch('/api/plugins/mcp', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name,
+              server: installServer,
+            }),
+          });
+          if (updateRes.ok) {
+            const message = await smokeTestMcpServer(name, installServer);
+            mcpResults.push({ name, status: 'updated', ...(message ? { message } : {}) });
+          } else {
+            const body = await updateRes.json().catch(() => ({}));
+            mcpResults.push({ name, status: 'error', message: body.error || 'Failed to update MCP server' });
+          }
         } else {
           const body = await res.json().catch(() => ({}));
           mcpResults.push({ name, status: 'error', message: body.error || 'Failed to create MCP server' });
@@ -248,7 +352,10 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
                     <div className="font-medium text-muted-foreground">{t('extensions.builderResultSkills')}</div>
                     <ul className="list-disc pl-4">
                       {result.skills.map((item, idx) => (
-                        <li key={`skill-${idx}`}>{item.name}: {item.status}{item.message ? ` (${item.message})` : ''}</li>
+                        <li key={`skill-${idx}`}>
+                          {item.name}: {getStatusLabel(item)}
+                          {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -258,7 +365,10 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
                     <div className="font-medium text-muted-foreground">{t('extensions.builderResultMcps')}</div>
                     <ul className="list-disc pl-4">
                       {result.mcps.map((item, idx) => (
-                        <li key={`mcp-${idx}`}>{item.name}: {item.status}{item.message ? ` (${item.message})` : ''}</li>
+                        <li key={`mcp-${idx}`}>
+                          {item.name}: {getStatusLabel(item)}
+                          {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
+                        </li>
                       ))}
                     </ul>
                   </div>

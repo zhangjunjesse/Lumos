@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
-import { getAllSessions, createSession } from '@/lib/db';
+import { getAllSessions, createSession, getSession, updateSessionBrowserContext } from '@/lib/db';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
 import { isLibraryChatSession } from '@/lib/chat/library-session';
@@ -33,7 +34,19 @@ export async function POST(request: NextRequest) {
     const body: CreateSessionRequest = await request.json();
     const entry = normalizeSessionEntry(body.entry);
     const workingDirectory = body.working_directory?.trim() || '';
+    let browserContextId: string | undefined;
     let resolvedProviderId = '';
+
+    if (body.browser_context_id?.trim()) {
+      try {
+        browserContextId = validateBrowserContextId(body.browser_context_id);
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : '浏览器上下文无效', code: 'INVALID_BROWSER_CONTEXT' },
+          { status: 400 },
+        );
+      }
+    }
 
     try {
       const resolvedProvider = resolveProviderForCapability({
@@ -79,6 +92,12 @@ export async function POST(request: NextRequest) {
       body.folder,
       resolvedProviderId,
     );
+    if (browserContextId) {
+      updateSessionBrowserContext(session.id, browserContextId);
+      const updated = getSession(session.id);
+      const response: SessionResponse = { session: updated || session };
+      return Response.json(response, { status: 201 });
+    }
     const response: SessionResponse = { session };
     return Response.json(response, { status: 201 });
   } catch (error) {

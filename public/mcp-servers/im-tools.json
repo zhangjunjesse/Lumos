@@ -1,0 +1,9 @@
+{
+  "name": "im-tools",
+  "description": "Send messages and list contacts on configured IM channels (Feishu / WeChat / 企业微信). Use when the user asks to notify someone or forward content via IM.",
+  "command": "node",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/im-tools/im_tools_mcp.mjs"
+  ],
+  "env": {}
+}

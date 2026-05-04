@@ -40,6 +40,8 @@ interface CreateBrowserBridgeApiOptions {
   signal?: AbortSignal;
   logger?: BrowserBridgeDebugLogger;
   background?: boolean;
+  browserContextId?: string;
+  lockOwnerId?: string;
 }
 
 function toPageInfo(entry: BridgePageEntry): PageInfo {
@@ -255,12 +257,15 @@ function buildEnrichedErrorMessage(
  * waitFor 等待的是页面文本（不是 CSS selector）
  */
 export function createBrowserBridgeApi(options: CreateBrowserBridgeApiOptions = {}): BrowserBridgeApi {
-  const config = resolveBrowserBridgeRuntimeConfig();
-  const { signal, logger, background } = options;
+  const { signal, logger, background, browserContextId, lockOwnerId } = options;
+  const resolvedConfig = resolveBrowserBridgeRuntimeConfig({ lockOwnerId });
 
-  if (!config) {
+  if (!resolvedConfig) {
     return createDisconnectedApi(logger);
   }
+  const config = browserContextId?.trim()
+    ? { ...resolvedConfig, browserContextId: browserContextId.trim() }
+    : resolvedConfig;
 
   let boundPageId: string | null = null;
 
@@ -643,6 +648,20 @@ export function createBrowserBridgeApi(options: CreateBrowserBridgeApiOptions = 
       });
       clearBoundPageId(id);
     },
+
+    async release() {
+      await runBridgeAction({
+        action: 'release',
+        collectDiagnostics: false,
+        execute: () => postToBrowserBridge(
+          config,
+          '/v1/context/release',
+          {},
+          { timeoutMs: 5_000 },
+        ),
+        summarizeResult: () => undefined,
+      });
+    },
   };
 }
 
@@ -660,5 +679,6 @@ function createDisconnectedApi(logger?: BrowserBridgeDebugLogger): BrowserBridge
     navigate: err, click: err, fill: err, type: err, press: err,
     waitFor: err, evaluate: err, snapshot: err, screenshot: err,
     pages: err, currentPage: err, newPage: err, selectPage: err, closePage: err,
+    release: async () => undefined,
   };
 }

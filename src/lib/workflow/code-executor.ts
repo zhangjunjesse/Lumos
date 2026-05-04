@@ -504,6 +504,8 @@ function buildHandlerContext(
       signal,
       logger: debugLogger,
       background: true,
+      browserContextId: runtimeContext.browserContextId,
+      lockOwnerId: runtimeContext.sessionId,
     }),
     outputDir,
     saveArtifact: (source, name) => saveArtifactToOutput(outputDir, source, name),
@@ -623,6 +625,16 @@ export async function executeCodeHandler(
     } else {
       outcome = await runWithFallback(code!, ctx, runtimeContext, () => handler.execute(ctx), debugLogger);
     }
+  }
+
+  try {
+    await ctx.browser.release();
+  } catch (error) {
+    debugLogger.warn('browser-release', 'Failed to release browser context lease', {
+      error: error instanceof Error ? error.message : String(error),
+      browserContextId: runtimeContext.browserContextId ?? '',
+      sessionId: runtimeContext.sessionId ?? '',
+    });
   }
 
   try {

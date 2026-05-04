@@ -21,6 +21,8 @@ import { isDeepSearchSiteReady } from './site-state';
 import { getSetting, getSession } from '@/lib/db';
 import { archiveDeepSearchRun } from '@/lib/knowledge/deepsearch-importer';
 
+const DEEPSEARCH_BROWSER_CONTEXT_ID = 'embedded:default';
+
 const SITE_ALIASES: Record<string, string[]> = {
   zhihu: ['zhihu', '知乎'],
   xiaohongshu: ['xiaohongshu', 'xhs', '小红书'],
@@ -453,7 +455,7 @@ export async function fetchAccountDataTool(site: string, dataType: string, limit
     throw new Error(`${site} 不支持账号数据获取`);
   }
 
-  const config = resolveBrowserBridgeRuntimeConfig();
+  const config = resolveBrowserBridgeRuntimeConfig({ browserContextId: DEEPSEARCH_BROWSER_CONTEXT_ID });
   if (!config) {
     throw new Error('浏览器桥接未就绪，请确保 Lumos 桌面端正在运行');
   }

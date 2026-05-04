@@ -40,7 +40,7 @@ export async function PUT(
       );
     }
     const body = await request.json();
-    const { command, args, env, enabled, type, url, headers, description } = body;
+    const { command, args, env, enabled, type, runMode, runtime, url, headers, description } = body;
 
     const effectiveType = type || existing.type || 'stdio';
     const effectiveCommand = command ?? existing.command;
@@ -64,6 +64,8 @@ export async function PUT(
       args: args || [],
       env: env || {},
       type: effectiveType,
+      runMode: runMode || existing.run_mode || 'on_demand',
+      runtime: runtime || existing.runtime_kind || 'auto',
       url: effectiveUrl || '',
       headers: headers || {},
       is_enabled: enabled !== undefined ? enabled : true,

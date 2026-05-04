@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { getRuntimeResourceRoots } from './runtime-resources';
 
 const BUNDLED_GIT_BASH_CANDIDATES = [
   path.join('bin', 'bash.exe'),
@@ -76,18 +77,21 @@ function logInvalidGitBash(label: string, bashPath: string): void {
 export function findGitBash(): string | null {
   console.log('[findGitBash] Searching for git-bash on Windows...');
 
-  const resourcesPath = process.resourcesPath || path.join(process.cwd(), '..');
-  const bundledBashPath = getBundledGitBashPath(resourcesPath);
-  if (bundledBashPath) {
-    console.log('[findGitBash] ✓ Found bundled git-bash:', bundledBashPath);
-    return bundledBashPath;
+  for (const resourcesPath of getRuntimeResourceRoots()) {
+    const bundledBashPath = getBundledGitBashPath(resourcesPath);
+    if (bundledBashPath) {
+      console.log('[findGitBash] ✓ Found runtime git-bash:', bundledBashPath);
+      return bundledBashPath;
+    }
   }
 
-  const bundledBaseDir = path.join(resourcesPath, 'git-bash', process.platform, process.arch);
-  for (const relativePath of BUNDLED_GIT_BASH_CANDIDATES) {
-    const candidatePath = path.join(bundledBaseDir, relativePath);
-    if (fs.existsSync(candidatePath)) {
-      logInvalidGitBash('bundled git-bash candidate', candidatePath);
+  for (const resourcesPath of getRuntimeResourceRoots()) {
+    const bundledBaseDir = path.join(resourcesPath, 'git-bash', process.platform, process.arch);
+    for (const relativePath of BUNDLED_GIT_BASH_CANDIDATES) {
+      const candidatePath = path.join(bundledBaseDir, relativePath);
+      if (fs.existsSync(candidatePath)) {
+        logInvalidGitBash('runtime git-bash candidate', candidatePath);
+      }
     }
   }
 

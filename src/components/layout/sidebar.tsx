@@ -125,7 +125,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
   return (
     <aside
       className={cn(
-        "flex h-full shrink-0 flex-col border-r border-border/50 bg-sidebar transition-[width] duration-200 ease-out",
+        "flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-sidebar transition-[width] duration-200 ease-out",
         expanded ? "w-[220px]" : "w-14"
       )}
     >
@@ -147,7 +147,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
         </Link>
       </div>
 
-      <ScrollArea className="sidebar-scroll-area flex-1 px-2 py-1">
+      <ScrollArea className="sidebar-scroll-area min-h-0 flex-1 px-2 py-1">
         {/* 探索 */}
         {expanded && (
           <div className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
@@ -253,7 +253,7 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
       </ScrollArea>
 
       {/* Bottom controls */}
-      <div className="border-t border-border/50 px-2 py-2 space-y-0.5">
+      <div className="shrink-0 border-t border-border/50 px-2 py-2 space-y-0.5">
         {isPro() && <SidebarUserSection expanded={expanded} />}
 
         <SidebarNavItem

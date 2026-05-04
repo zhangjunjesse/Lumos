@@ -6,6 +6,13 @@ export interface BrowserBridgeRuntimeConfig {
   baseUrl: string;
   token: string;
   source: 'env' | 'runtime-file';
+  browserContextId?: string;
+  lockOwnerId?: string;
+}
+
+export interface ResolveBrowserBridgeRuntimeConfigOptions {
+  browserContextId?: string | null;
+  lockOwnerId?: string | null;
 }
 
 export interface BrowserBridgeResponse {
@@ -41,17 +48,39 @@ function buildHeaders(config: BrowserBridgeRuntimeConfig): HeadersInit {
   return {
     'Content-Type': 'application/json',
     'x-lumos-bridge-token': config.token,
+    ...(config.browserContextId ? { 'x-lumos-browser-context-id': config.browserContextId } : {}),
+    ...(config.lockOwnerId ? { 'x-lumos-browser-owner-id': config.lockOwnerId } : {}),
   };
 }
 
-export function resolveBrowserBridgeRuntimeConfig(): BrowserBridgeRuntimeConfig | null {
+function buildBridgeUrl(config: BrowserBridgeRuntimeConfig, pathname: string): string {
+  const url = new URL(`${config.baseUrl}${pathname}`);
+  if (config.browserContextId?.trim()) {
+    url.searchParams.set('browserContextId', config.browserContextId.trim());
+  }
+  return url.toString();
+}
+
+export function resolveBrowserBridgeRuntimeConfig(
+  options: ResolveBrowserBridgeRuntimeConfigOptions = {},
+): BrowserBridgeRuntimeConfig | null {
   const envUrl = pickNonEmpty(process.env.LUMOS_BROWSER_BRIDGE_URL);
   const envToken = pickNonEmpty(process.env.LUMOS_BROWSER_BRIDGE_TOKEN);
+  const requestedBrowserContextId = pickNonEmpty(options.browserContextId || undefined);
+  const envBrowserContextId = pickNonEmpty(process.env.LUMOS_BROWSER_CONTEXT_ID);
+  const requestedLockOwnerId = pickNonEmpty(options.lockOwnerId || undefined);
+  const envLockOwnerId = pickNonEmpty(process.env.LUMOS_BROWSER_LOCK_OWNER, process.env.LUMOS_SESSION_ID);
   if (envUrl && envToken) {
     return {
       baseUrl: normalizeBaseUrl(envUrl),
       token: envToken,
       source: 'env',
+      ...(pickNonEmpty(requestedBrowserContextId, envBrowserContextId)
+        ? { browserContextId: pickNonEmpty(requestedBrowserContextId, envBrowserContextId) }
+        : {}),
+      ...(pickNonEmpty(requestedLockOwnerId, envLockOwnerId)
+        ? { lockOwnerId: pickNonEmpty(requestedLockOwnerId, envLockOwnerId) }
+        : {}),
     };
   }
 
@@ -64,15 +93,26 @@ export function resolveBrowserBridgeRuntimeConfig(): BrowserBridgeRuntimeConfig 
     const parsed = JSON.parse(fs.readFileSync(runtimePath, 'utf-8')) as {
       url?: unknown;
       token?: unknown;
+      browserContextId?: unknown;
     };
     if (typeof parsed.url !== 'string' || typeof parsed.token !== 'string') {
       return null;
     }
 
+    const runtimeBrowserContextId = typeof parsed.browserContextId === 'string' && parsed.browserContextId.trim()
+      ? parsed.browserContextId.trim()
+      : undefined;
+
     return {
       baseUrl: normalizeBaseUrl(parsed.url),
       token: parsed.token,
       source: 'runtime-file',
+      ...(pickNonEmpty(requestedBrowserContextId, runtimeBrowserContextId)
+        ? { browserContextId: pickNonEmpty(requestedBrowserContextId, runtimeBrowserContextId) }
+        : {}),
+      ...(pickNonEmpty(requestedLockOwnerId, envLockOwnerId)
+        ? { lockOwnerId: pickNonEmpty(requestedLockOwnerId, envLockOwnerId) }
+        : {}),
     };
   } catch {
     return null;
@@ -95,7 +135,7 @@ export async function getFromBrowserBridge<T extends BrowserBridgeResponse>(
 ): Promise<T> {
   const timeoutMs = options?.timeoutMs ?? resolveDefaultBridgeTimeoutMs(pathname);
   const response = await fetchFromBrowserBridge(
-    `${config.baseUrl}${pathname}`,
+    buildBridgeUrl(config, pathname),
     {
       method: 'GET',
       headers: buildHeaders(config),
@@ -178,7 +218,7 @@ export async function postToBrowserBridge<T extends BrowserBridgeResponse>(
     : undefined;
   const timeoutMs = options?.timeoutMs ?? bodyTimeoutMs ?? resolveDefaultBridgeTimeoutMs(pathname);
   const response = await fetchFromBrowserBridge(
-    `${config.baseUrl}${pathname}`,
+    buildBridgeUrl(config, pathname),
     {
       method: 'POST',
       headers: buildHeaders(config),
@@ -197,7 +237,7 @@ export async function checkBrowserBridgeReady(
   config: BrowserBridgeRuntimeConfig,
 ): Promise<{ ready: boolean; status: number; error?: string }> {
   try {
-    const response = await fetch(`${config.baseUrl}/health`);
+    const response = await fetch(buildBridgeUrl(config, '/health'));
     const payload = await response.json().catch(() => null) as { ready?: boolean; error?: string } | null;
     return {
       ready: Boolean(response.ok && payload?.ready),

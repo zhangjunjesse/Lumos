@@ -258,6 +258,7 @@ describe('executeCodeHandler', () => {
   });
 
   it('creates the workflow browser api in background mode by default', async () => {
+    const releaseBrowser = jest.fn(async () => undefined);
     const mockBrowser: BrowserBridgeApi = {
       connected: true,
       navigate: async () => undefined,
@@ -274,6 +275,7 @@ describe('executeCodeHandler', () => {
       currentPage: async () => ({ id: 'page-hidden', title: '', url: '' }),
       snapshot: async () => ({ title: '', content: '', url: '' }),
       screenshot: async () => '',
+      release: releaseBrowser,
     };
     const createBrowserBridgeApiSpy = jest
       .spyOn(codeBrowserBridge, 'createBrowserBridgeApi')
@@ -292,12 +294,14 @@ describe('executeCodeHandler', () => {
       makeInput({
         code: { handler: 'background-browser-check', strategy: 'code-only' },
       }),
-      makeRuntimeContext(),
+      makeRuntimeContext({ browserContextId: 'adspower:profile-001' }),
     );
 
     expect(createBrowserBridgeApiSpy).toHaveBeenCalledWith(expect.objectContaining({
       background: true,
+      browserContextId: 'adspower:profile-001',
     }));
+    expect(releaseBrowser).toHaveBeenCalledTimes(1);
   });
 
   it('persists inline script debug logs into the workflow step output directory', async () => {
@@ -363,6 +367,7 @@ describe('executeCodeHandler', () => {
         content: '[e21] Download Data\n[e22] Export CSV',
       }),
       screenshot: async () => screenshotSourcePath,
+      release: async () => undefined,
     };
 
     jest.spyOn(codeBrowserBridge, 'createBrowserBridgeApi').mockReturnValue(mockBrowser);

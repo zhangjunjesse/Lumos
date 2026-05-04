@@ -2,6 +2,8 @@
   "name": "image-reader",
   "description": "Load image files (JPEG/PNG/WebP/GIF) into the conversation as visual content the model can actually see. Purpose-built replacement for generic file-reader tools that return base64 text.",
   "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
   "args": [
     "[RUNTIME_PATH]/mcp-servers/image-reader/image_reader_mcp.mjs"
   ],

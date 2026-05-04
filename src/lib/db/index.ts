@@ -37,6 +37,7 @@ export {
   updateSessionResolvedModel,
   updateSessionProvider,
   updateSessionProviderId,
+  updateSessionBrowserContext,
   updateSessionSystemPrompt,
   getDefaultProviderId,
   setDefaultProviderId,
@@ -81,6 +82,24 @@ export {
   getBuiltinProvider,
   resetBuiltinProvider,
 } from './providers';
+
+// Browser Providers
+export {
+  listBrowserProviderConfigs,
+  listBrowserProviderConfigsRaw,
+  getBrowserProviderConfig,
+  getBrowserProviderConfigRaw,
+  createBrowserProviderConfig,
+  updateBrowserProviderConfig,
+  previewAdsPowerBrowserProfileSync,
+  syncAdsPowerBrowserProfiles,
+  deleteBrowserProviderConfig,
+  getBrowserProviderUsageSummary,
+  updateBrowserProviderTestResult,
+  syncBrowserProviderRuntimeFile,
+  BrowserProviderInUseError,
+  type BrowserProviderUsageSummary,
+} from './browser-providers';
 
 // Token stats
 export {
@@ -147,8 +166,10 @@ export {
   getEnabledMcpServers,
   getMcpServer,
   getMcpServerByNameAndScope,
+  mcpServerRecordToConfig,
   createMcpServer,
   updateMcpServer,
+  updateMcpServerHealth,
   deleteMcpServer,
   toggleMcpServerEnabled,
   getEnabledMcpServersAsConfig,

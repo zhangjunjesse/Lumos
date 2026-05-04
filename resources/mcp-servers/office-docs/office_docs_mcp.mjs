@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { TOOLS } from './tools.mjs';
+import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
 
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'office-docs-mcp.log');
 
@@ -61,7 +62,7 @@ async function handleRequest(request) {
   if (method === 'tools/call') {
     const { name, arguments: args } = params;
     try {
-      const result = await callApi(name, args);
+      const result = await callApi(name, coerceArgumentsByTools(TOOLS, name, args));
       return {
         jsonrpc: '2.0', id,
         result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },

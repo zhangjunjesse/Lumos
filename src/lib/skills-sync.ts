@@ -5,6 +5,7 @@ import { getEnabledSkills, type SkillRecord } from './db/skills';
 import { dataDir } from './db/connection';
 import { getVenvPythonPath } from './python-venv';
 import { resolvePythonBinary } from './python-runtime';
+import { resolveRuntimeResourceRootFor } from './runtime-resources';
 
 const SKILLS_PLUGIN_DIR = path.join(os.homedir(), '.lumos', 'skills-plugin');
 const SKILLS_DIR = path.join(SKILLS_PLUGIN_DIR, 'skills');
@@ -193,10 +194,9 @@ function substitutePlaceholders(text: string): string {
 }
 
 function resolveRuntimePath(): string {
-  if (process.env.NODE_ENV === 'production' && typeof process.resourcesPath === 'string') {
-    return process.resourcesPath;
-  }
-  return path.join(process.cwd(), 'resources');
+  return resolveRuntimeResourceRootFor('mcp-servers')
+    || resolveRuntimeResourceRootFor('feishu-mcp-server')
+    || path.join(process.cwd(), 'resources');
 }
 
 /**

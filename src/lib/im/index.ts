@@ -1,0 +1,108 @@
+/**
+ * IM Module — Public Barrel
+ *
+ * 这是 lumos 其它部分访问 IM 能力的唯一入口。
+ * 外部代码：`import { ... } from '@/lib/im';`
+ * 禁止直接 import providers/* 的内部文件。
+ *
+ * 加新 provider = 在下面的 register 列表添加一行。
+ */
+
+import { registerPlugin } from './core/registry';
+import { feishuPlugin } from './providers/feishu';
+import { wechatPlugin } from './providers/wechat';
+
+// ============================================================================
+// 静态 provider 注册（加新 IM = 在这下面加一行）
+// ============================================================================
+
+registerPlugin(feishuPlugin);
+registerPlugin(wechatPlugin);
+
+// ============================================================================
+// 类型
+// ============================================================================
+
+export type {
+  IMProviderId,
+  IMAdapter,
+  IMPlugin,
+  IMProviderManifest,
+  IMConfigField,
+  IMConfigFieldType,
+  IMCapabilities,
+  ChannelAddress,
+  IMFileAttachment,
+  InboundMessage,
+  OutboundMessage,
+  SendResult,
+  ProbeResult,
+  InlineButton,
+  IMCommand,
+  IMCommandContext,
+  IMCommandResult,
+  IMCommandHandler,
+  IMTarget,
+  IMTargetDirectory,
+  ListTargetsOptions,
+  IMStreamingPreview,
+  PreviewHandle,
+} from './core/types';
+
+export { hasCommands, hasTargetDirectory, hasStreamingPreview } from './core/types';
+
+// Slash command router
+export {
+  parseSlashCommand,
+  routeInboundCommand,
+  maybeInterceptCommand,
+} from './core/command-router';
+export type { ParsedCommand } from './core/command-router';
+export { BUILTIN_COMMANDS, handleBuiltinCommand } from './core/built-in-commands';
+
+// ============================================================================
+// Registry（哪些 IM 已注册）
+// ============================================================================
+
+export { getPlugin, listPlugins, listProviderIds, hasProvider } from './core/registry';
+
+// ============================================================================
+// Config Store（启用/默认/单 IM 配置）
+// ============================================================================
+
+export {
+  getProviderConfig,
+  setProviderConfig,
+  isProviderConfigured,
+  setProviderField,
+  getProviderField,
+  getEnabledProviders,
+  setProviderEnabled,
+  isProviderEnabled,
+  getDefaultProviderId,
+  setDefaultProviderId,
+} from './core/config-store';
+
+// ============================================================================
+// Runtime（启停 + 出站发送）
+// ============================================================================
+
+export {
+  startAdapter,
+  stopAdapter,
+  restartAdapter,
+  startAllEnabled,
+  stopAll,
+  getActiveAdapter,
+  listActiveAdapters,
+  getOrCreateAdapter,
+  sendToProvider,
+  sendToDefault,
+  probeProvider,
+} from './core/runtime';
+
+// Sandbox helpers (used by tools / dispatcher to gate outbound file paths)
+export { resolveLumosSandboxPath, mimeFromPath } from './core/sandbox';
+
+// System prompt fragment for the im-tools MCP — injected when im-tools is loaded
+export { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from './im-tools-hint';

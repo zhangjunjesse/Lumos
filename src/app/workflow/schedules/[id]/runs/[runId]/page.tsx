@@ -11,8 +11,11 @@ import { WorkflowDslGraph, type WorkflowDslStepOverlay } from '@/components/work
 import { WorkflowStepDetailPanel } from '@/components/workflow/WorkflowStepDetailPanel';
 import { RunDetailHeader } from '@/components/workflow/RunDetailHeader';
 import { RunningStepsLivePanel } from '@/components/workflow/RunningStepsLivePanel';
+import { buildBrowserContextLabelMap, resolveBrowserContextLabel } from '@/lib/browser-provider/labels';
+import { parseBrowserContextConflict } from '@/lib/browser-provider/occupancy';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 import type { StepTraceEvent } from '@/lib/workflow/step-trace-stream';
+import type { BrowserProvidersResponse } from '@/types';
 
 function normalizeRunDsl(raw: unknown): WorkflowDSLV3 | null {
   if (
@@ -31,6 +34,7 @@ interface RunRecord {
   id: string;
   scheduleId: string;
   sessionId: string | null;
+  browserContextId: string;
   status: 'running' | 'success' | 'error' | 'cancelled';
   error: string;
   startedAt: string;
@@ -112,8 +116,10 @@ export default function RunDetailPage() {
   const [stepInputSnapshots, setStepInputSnapshots] = useState<Record<string, unknown>>({});
   const [stepLiveTraces, setStepLiveTraces] = useState<Record<string, StepTraceEvent[]>>({});
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [browserLabels, setBrowserLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [releasingBrowser, setReleasingBrowser] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState('');
 
@@ -140,6 +146,13 @@ export default function RunDetailPage() {
   }, [scheduleId, runId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    fetch('/api/browser-providers', { cache: 'no-store' })
+      .then(res => res.ok ? res.json() as Promise<BrowserProvidersResponse> : null)
+      .then((data) => setBrowserLabels(buildBrowserContextLabelMap(data?.configs ?? [])))
+      .catch(() => setBrowserLabels(buildBrowserContextLabelMap([])));
+  }, []);
 
   const isRunning = run?.status === 'running';
   useEffect(() => {
@@ -169,6 +182,28 @@ export default function RunDetailPage() {
       setCancelling(false);
     }
   }, [cancelling, load, runId, scheduleId]);
+
+  const handleReleaseBrowserConflict = useCallback(async (contextId: string) => {
+    if (!contextId || contextId === 'embedded:default' || releasingBrowser) return;
+    setReleasingBrowser(true);
+    setError('');
+    try {
+      const res = await fetch('/api/browser-providers/runtime-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context_id: contextId }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || '释放浏览器占用失败');
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '释放浏览器占用失败');
+    } finally {
+      setReleasingBrowser(false);
+    }
+  }, [load, releasingBrowser]);
 
   if (loading) {
     return (
@@ -200,6 +235,7 @@ export default function RunDetailPage() {
       : hasOutputFiles
         ? 'results'
         : 'process';
+  const browserConflict = parseBrowserContextConflict(run.error, run.browserContextId);
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8 space-y-6">
@@ -218,10 +254,44 @@ export default function RunDetailPage() {
 
       <RunDetailHeader
         run={run}
+        browserLabel={resolveBrowserContextLabel(run.browserContextId, browserLabels)}
         onRefresh={() => void load()}
         onCancel={isRunning ? () => void handleCancel() : undefined}
         cancelling={cancelling}
       />
+
+      {browserConflict && browserConflict.contextId !== 'embedded:default' ? (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-100">浏览器正在被占用</p>
+              <p className="mt-1 text-xs text-amber-900/70 dark:text-amber-100/70">
+                {resolveBrowserContextLabel(browserConflict.contextId, browserLabels)} 当前被其他会话或工作流使用。
+                {browserConflict.expiresAt ? ` 自动过期 ${new Date(browserConflict.expiresAt).toLocaleTimeString()}。` : ''}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleReleaseBrowserConflict(browserConflict.contextId)}
+                disabled={releasingBrowser}
+              >
+                {releasingBrowser ? '释放中...' : '释放占用'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push(`/workflow/schedules/${scheduleId}`)}
+              >
+                回到任务详情
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Tabs: workflow / results / execution process */}
       <Tabs defaultValue={defaultTab}>

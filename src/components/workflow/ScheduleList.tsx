@@ -15,8 +15,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { buildBrowserContextLabelMap, resolveBrowserContextLabel } from '@/lib/browser-provider/labels';
 import { WorkflowRunDialog } from './WorkflowRunDialog';
 import type { WorkflowParamDef } from '@/lib/workflow/types';
+import type { BrowserProvidersResponse } from '@/types';
 
 interface ScheduledWorkflow {
   id: string;
@@ -26,6 +28,7 @@ interface ScheduledWorkflow {
   scheduleTime?: string | null;
   scheduleDayOfWeek?: number | null;
   workingDirectory: string;
+  browserContextId: string;
   enabled: boolean;
   notifyOnComplete: boolean;
   runParams?: Record<string, unknown>;
@@ -95,6 +98,7 @@ function ScheduleCard({
   onToggle,
   onDelete,
   onTrigger,
+  browserLabels,
 }: {
   schedule: ScheduledWorkflow;
   selected: boolean;
@@ -107,6 +111,7 @@ function ScheduleCard({
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
   onTrigger: (s: ScheduledWorkflow) => void;
+  browserLabels: Record<string, string>;
 }) {
   // Selection checkbox is hidden by default to keep the list clean, then
   // fades in on hover. Once anything is selected we keep it visible across
@@ -180,6 +185,7 @@ function ScheduleCard({
               <span className="text-muted-foreground/60">已完成</span>
             )}
             {s.runCount > 0 && <><span className="text-border">|</span><span>共 {s.runCount} 次</span></>}
+            <span>浏览器: {resolveBrowserContextLabel(s.browserContextId, browserLabels)}</span>
           </div>
 
           {s.lastError && (
@@ -225,13 +231,19 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
   const [runDialog, setRunDialog] = useState<{ schedule: ScheduledWorkflow; params: WorkflowParamDef[] } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [browserLabels, setBrowserLabels] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/workflow/schedules');
-      const data = await res.json();
-      setSchedules(data.schedules || []);
+      const [scheduleData, browserData] = await Promise.all([
+        fetch('/api/workflow/schedules').then(res => res.json() as Promise<{ schedules?: ScheduledWorkflow[] }>),
+        fetch('/api/browser-providers', { cache: 'no-store' })
+          .then(res => res.ok ? res.json() as Promise<BrowserProvidersResponse> : null)
+          .catch(() => null),
+      ]);
+      setSchedules(scheduleData.schedules || []);
+      setBrowserLabels(buildBrowserContextLabelMap(browserData?.configs ?? []));
     } catch { /* ignore */ } finally { setLoading(false); }
   }, []);
 
@@ -390,6 +402,7 @@ export function ScheduleList({ onNew, onEdit }: ScheduleListProps) {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onTrigger={handleTrigger}
+                browserLabels={browserLabels}
               />
             ))}
           </div>

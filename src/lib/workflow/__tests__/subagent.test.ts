@@ -128,6 +128,7 @@ describe('executeWorkflowAgentStep', () => {
         sessionId: 'session-001',
         requestedModel: 'claude-sonnet-4-6',
         workingDirectory: '/tmp/workflow-session-001',
+        browserContextId: 'adspower:profile-001',
       },
     });
 
@@ -137,6 +138,7 @@ describe('executeWorkflowAgentStep', () => {
     expect(payload.stageId).toBe('draft');
     expect(payload.taskId).toBe('task-001');
     expect(payload.sessionId).toBe('session-001');
+    expect(payload.browserContextId).toBe('adspower:profile-001');
     expect(payload.requestedModel).toBe('claude-sonnet-4-6');
     expect(payload.workspace.sessionWorkspace).toBe('/tmp/workflow-session-001');
     expect(payload.agent).toMatchObject({
@@ -165,6 +167,7 @@ describe('executeWorkflowAgentStep', () => {
         role: 'coder',
         agentType: 'workflow.coder',
         requestedModel: 'claude-sonnet-4-6',
+        browserContextId: 'adspower:profile-001',
         sessionId: 'session-001',
       },
     });

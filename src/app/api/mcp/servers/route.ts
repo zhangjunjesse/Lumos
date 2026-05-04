@@ -17,7 +17,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name, command, args, env, scope, type, url, headers, description } = body;
+    const { name, command, args, env, scope, type, runMode, runtime, url, headers, description } = body;
     const effectiveType = type || 'stdio';
 
     if (!name) {
@@ -53,6 +53,8 @@ export async function POST(request: Request) {
       args: args || [],
       env: env || {},
       type: effectiveType,
+      runMode: runMode || 'on_demand',
+      runtime: runtime || 'auto',
       url: url || '',
       headers: headers || {},
       description: description || '',

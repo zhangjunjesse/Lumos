@@ -1,6 +1,7 @@
 import {
   addMessage,
   dataDir,
+  getMessages,
   getSession,
   updateSdkSessionId,
   updateSessionResolvedModel,
@@ -9,6 +10,7 @@ import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { getActiveUserId } from '@/lib/auth/user-service';
 import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
@@ -65,6 +67,32 @@ function hasFeishuMcp(
   return Boolean(servers.feishu);
 }
 
+/**
+ * Remove HTML-comment directives like `<!--source:wechat-->`, `<!--files:[...]-->`,
+ * `<!--feishu_mentions:[...]-->` before feeding history back to the model.
+ * They are display / routing metadata, not content the model should see.
+ */
+function stripContentDirectives(content: string): string {
+  return content.replace(/<!--[a-zA-Z0-9_-]+:[\s\S]*?-->/g, '').trim();
+}
+
+/**
+ * When an inbound IM message kicks off this turn, the dispatcher knows the
+ * exact chatId we should reply / push to. Tell the model so it doesn't ask
+ * the user "what's your wechat id?" — it already has it.
+ */
+function buildImContextHint(providerId: string, chatId: string): string {
+  return [
+    `**Active IM context** — this turn was triggered by an inbound message on \`${providerId}\`.`,
+    `When the user says "send X to me" / "发给我" / "推到微信" without naming a target, the chatId is already known:`,
+    ``,
+    `  providerId: ${providerId}`,
+    `  chatId:     ${chatId}`,
+    ``,
+    `Call \`mcp__im-tools__im_send_attachment\` (or \`im_send\`) directly with this chatId; do NOT ask the user for their wxid / openid.`,
+  ].join('\n');
+}
+
 function hasDeepSearchMcp(
   servers: Record<string, MCPServerConfig> | undefined,
 ): boolean {
@@ -88,7 +116,14 @@ export class ConversationEngine {
     sessionId: string,
     text: string,
     files?: FileAttachment[],
-    meta?: { source?: 'feishu' | 'lumos' },
+    // source: any IM provider id ('feishu' | 'wechat' | future...) 或 'lumos'
+    // imContext: 当本轮对话由 IM inbound 触发时传入，让 AI 知道"回这条消息
+    //            走哪个 provider / 哪个 chatId"，im_send_attachment 这类工具
+    //            可以直接复用，不必再问用户
+    meta?: {
+      source?: string;
+      imContext?: { providerId: string; chatId: string };
+    },
     callbacks?: ConversationStreamingCallbacks,
   ): Promise<ConversationResponse> {
     const session = getSession(sessionId);
@@ -124,6 +159,18 @@ export class ConversationEngine {
 
     addMessage(sessionId, 'user', savedContent);
 
+    // SDK resume 是不可靠的兜底（每次 fork 出新 session_id 后，SDK 实际只保留最近
+    // 几轮 turn，老历史可能丢失）。chat/route.ts 在 lumos UI 里走 conversationHistory
+    // 兜底；之前这条路径没传，导致 wechat / 飞书入站消息每次 AI 都说"这是第一条对话"。
+    // 拉最近 50 条作为 fallback context；注释 directive 要 strip 掉，不让模型读到。
+    const { messages: recentMsgs } = getMessages(sessionId, { limit: 50 });
+    const conversationHistory = recentMsgs
+      .slice(0, -1) // exclude the user message we just saved
+      .map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: stripContentDirectives(m.content),
+      }));
+
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: session.working_directory || undefined,
       sessionId,
@@ -141,6 +188,12 @@ export class ConversationEngine {
     if (hasDeepSearchMcp(loadedMcpServers)) {
       hints.push(DEEPSEARCH_MCP_SYSTEM_HINT);
     }
+    if (hasImToolsMcp(loadedMcpServers)) {
+      hints.push(IM_TOOLS_SYSTEM_HINT);
+      if (meta?.imContext) {
+        hints.push(buildImContextHint(meta.imContext.providerId, meta.imContext.chatId));
+      }
+    }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
 
     const stream = streamClaude({
@@ -154,6 +207,7 @@ export class ConversationEngine {
       mcpServers: loadedMcpServers,
       inProcessMcpServers: { [lumosMcpServer.name]: lumosMcpServer },
       systemPrompt,
+      conversationHistory,
     });
 
     const contentBlocks: MessageContentBlock[] = [];

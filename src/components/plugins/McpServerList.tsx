@@ -5,15 +5,19 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Delete, Pencil, ServerStack01Icon, Wifi, Globe } from "@hugeicons/core-free-icons";
+import { Delete, Pencil, ServerStack01Icon, Wifi, Globe, Loading } from "@hugeicons/core-free-icons";
+import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
+import type { McpTestState } from '@/components/plugins/McpManager';
 
 interface McpServerListProps {
   servers: Record<string, MCPServer & { scope?: string; is_enabled?: boolean }>;
+  testResults?: Record<string, McpTestState>;
   onEdit: (name: string, server: MCPServer) => void;
   onDelete: (name: string) => void;
   onToggle: (name: string, scope: string, enabled: boolean) => void;
+  onTest: (name: string, server: MCPServer) => void;
 }
 
 function getServerTypeInfo(server: MCPServer) {
@@ -28,7 +32,73 @@ function getServerTypeInfo(server: MCPServer) {
   }
 }
 
-export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServerListProps) {
+function getRuntimeLabel(server: MCPServer, t: ReturnType<typeof useTranslation>['t']) {
+  switch (server.runtime || 'auto') {
+    case 'node':
+      return 'Node';
+    case 'python':
+      return 'Python';
+    case 'bun':
+      return 'Bun';
+    case 'custom':
+      return t('mcp.runtimeCustom');
+    case 'auto':
+    default:
+      return t('mcp.runtimeAuto');
+  }
+}
+
+function renderTestBadge(result: McpTestState | undefined, t: ReturnType<typeof useTranslation>['t']) {
+  if (!result) {
+    return (
+      <Badge variant="outline" className="gap-1 text-xs shrink-0">
+        {t('mcp.statusNotChecked')}
+      </Badge>
+    );
+  }
+
+  if (result.status === 'checking') {
+    return (
+      <Badge variant="outline" className="gap-1 text-xs shrink-0">
+        <HugeiconsIcon icon={Loading} className="h-3 w-3 animate-spin" />
+        {t('mcp.statusChecking')}
+      </Badge>
+    );
+  }
+
+  if (result.status === 'ok') {
+    return (
+      <Badge variant="secondary" className="gap-1 text-xs shrink-0 text-green-700 dark:text-green-300">
+        <CheckCircle2 className="h-3 w-3" />
+        {t('mcp.statusOk')}
+      </Badge>
+    );
+  }
+
+  if (result.status === 'skipped') {
+    return (
+      <Badge variant="outline" className="gap-1 text-xs shrink-0">
+        {t('mcp.statusSkipped')}
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge variant="destructive" className="gap-1 text-xs shrink-0">
+      <AlertCircle className="h-3 w-3" />
+      {t('mcp.statusFailed')}
+    </Badge>
+  );
+}
+
+function formatCheckedAt(value: string | undefined) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+export function McpServerList({ servers, testResults = {}, onEdit, onDelete, onToggle, onTest }: McpServerListProps) {
   const { t } = useTranslation();
   const entries = Object.entries(servers);
 
@@ -45,13 +115,14 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
   }
 
   // Group servers by scope
-  const builtinServers = entries.filter(([_, server]) => server.scope === 'builtin');
-  const userServers = entries.filter(([_, server]) => server.scope === 'user');
+  const builtinServers = entries.filter(([, server]) => server.scope === 'builtin');
+  const userServers = entries.filter(([, server]) => server.scope === 'user');
 
   const renderServerCard = (name: string, server: MCPServer & { scope?: string; is_enabled?: boolean }) => {
     const typeInfo = getServerTypeInfo(server);
     const isBuiltin = server.scope === 'builtin';
     const isEnabled = server.is_enabled !== false;
+    const testResult = testResults[name];
 
     return (
       <Card key={name} className={!isEnabled ? 'opacity-60' : ''}>
@@ -68,6 +139,16 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
                   Built-in
                 </Badge>
               )}
+              <Badge variant="outline" className="text-xs shrink-0">
+                {getRuntimeLabel(server, t)}
+              </Badge>
+              <Badge
+                variant={server.runMode === 'keep_alive' ? 'secondary' : 'outline'}
+                className="text-xs shrink-0"
+              >
+                {server.runMode === 'keep_alive' ? t('mcp.runModeKeepAlive') : t('mcp.runModeOnDemand')}
+              </Badge>
+              {renderTestBadge(testResult, t)}
             </div>
             {server.description && (
               <CardDescription className="text-xs mt-1">
@@ -85,6 +166,20 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
               checked={isEnabled}
               onCheckedChange={(checked) => onToggle(name, server.scope || 'user', checked)}
             />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onTest(name, server)}
+              disabled={testResult?.status === 'checking'}
+              title={t('mcp.testServer')}
+            >
+              {testResult?.status === 'checking' ? (
+                <HugeiconsIcon icon={Loading} className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </Button>
             {isBuiltin ? (
               <>
                 <Button
@@ -118,6 +213,24 @@ export function McpServerList({ servers, onEdit, onDelete, onToggle }: McpServer
             )}
           </div>
         </CardHeader>
+        {testResult && testResult.status !== 'checking' && (
+          <CardContent className="pt-0 pb-2">
+            <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <div>
+                {testResult.status === 'ok'
+                  ? (testResult.message || t('mcp.testOkDetail', { n: testResult.tools?.length || 0 }))
+                  : testResult.status === 'skipped'
+                    ? (testResult.message || t('mcp.testSkippedDetail'))
+                    : (testResult.message || t('mcp.testFailed'))}
+              </div>
+              {testResult.checkedAt && (
+                <div className="mt-1 text-[11px] opacity-80">
+                  {t('mcp.lastCheckedAt', { time: formatCheckedAt(testResult.checkedAt) })}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        )}
         {(server.env && Object.keys(server.env).length > 0) ||
         (server.args && server.args.length > 0) ? (
           <CardContent className="pt-0">

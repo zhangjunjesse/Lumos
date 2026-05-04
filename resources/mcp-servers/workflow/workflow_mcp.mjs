@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
+import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'workflow-mcp.log');
@@ -117,9 +118,10 @@ export async function handleRequest(request) {
 
   if (method === 'tools/call') {
     const { name, arguments: args } = params;
+    const coercedArgs = coerceArgumentsByTools(TOOLS, name, args);
     try {
       if (name === 'generate_workflow') {
-        const result = await callGenerateWorkflow(args);
+        const result = await callGenerateWorkflow(coercedArgs);
         return { jsonrpc: '2.0', id, result };
       }
 

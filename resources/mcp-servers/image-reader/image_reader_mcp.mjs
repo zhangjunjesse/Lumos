@@ -4,6 +4,7 @@ import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
 import readline from 'readline';
+import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
 
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'image-reader-mcp.log');
 
@@ -117,7 +118,8 @@ async function handleRequest(request) {
       };
     }
     try {
-      const { data, mimeType, sizeBytes, path: absPath } = await readImage(args?.path);
+      const coercedArgs = coerceArgumentsByTools(TOOLS, name, args);
+      const { data, mimeType, sizeBytes, path: absPath } = await readImage(coercedArgs.path);
       return {
         jsonrpc: '2.0', id,
         result: {

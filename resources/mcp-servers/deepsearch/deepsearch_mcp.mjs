@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
+import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'deepsearch-mcp.log');
@@ -245,7 +246,8 @@ async function handleRequest(request) {
       if (!TOOL_NAMES.has(name)) {
         throw new Error(`Unknown tool: ${name}`);
       }
-      const result = await callDeepSearchTool(name, args);
+      const tools = await buildTools();
+      const result = await callDeepSearchTool(name, coerceArgumentsByTools(tools, name, args));
       return { jsonrpc: '2.0', id, result };
     } catch (error) {
       return {

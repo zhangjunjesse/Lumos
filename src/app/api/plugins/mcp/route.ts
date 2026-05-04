@@ -13,6 +13,15 @@ import {
   toggleMcpServerEnabled,
 } from '@/lib/db';
 
+function parseJsonArray(value: string | undefined): string[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorResponse>> {
   try {
     // Load all MCP servers from database (including scope info)
@@ -27,8 +36,18 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
       description: string;
       is_enabled: boolean;
       type?: 'sse' | 'http';
+      runMode?: 'on_demand' | 'keep_alive';
+      runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
       url?: string;
       headers?: Record<string, string>;
+      health?: {
+        status: 'unknown' | 'ok' | 'failed' | 'skipped';
+        checkedAt?: string;
+        error?: string;
+        message?: string;
+        tools?: string[];
+        transport?: 'stdio' | 'sse' | 'http';
+      };
     }> = {};
     for (const server of servers) {
       const entry: {
@@ -39,8 +58,18 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         description: string;
         is_enabled: boolean;
         type?: 'sse' | 'http';
+        runMode?: 'on_demand' | 'keep_alive';
+        runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
         url?: string;
         headers?: Record<string, string>;
+        health?: {
+          status: 'unknown' | 'ok' | 'failed' | 'skipped';
+          checkedAt?: string;
+          error?: string;
+          message?: string;
+          tools?: string[];
+          transport?: 'stdio' | 'sse' | 'http';
+        };
       } = {
         command: server.command,
         args: JSON.parse(server.args || '[]'),
@@ -51,9 +80,24 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
       };
       const type = server.type || 'stdio';
       if (type === 'sse' || type === 'http') entry.type = type;
+      entry.runMode = server.run_mode || 'on_demand';
+      entry.runtime = server.runtime_kind || 'auto';
       if (server.url) entry.url = server.url;
       const headers = JSON.parse(server.headers || '{}');
       if (Object.keys(headers).length > 0) entry.headers = headers;
+      const healthStatus = server.health_status || 'unknown';
+      if (healthStatus !== 'unknown' || server.health_checked_at) {
+        entry.health = {
+          status: healthStatus as 'unknown' | 'ok' | 'failed' | 'skipped',
+          ...(server.health_checked_at ? { checkedAt: server.health_checked_at } : {}),
+          ...(server.health_error ? { error: server.health_error } : {}),
+          ...(server.health_message ? { message: server.health_message } : {}),
+          ...(server.health_transport === 'stdio' || server.health_transport === 'sse' || server.health_transport === 'http'
+            ? { transport: server.health_transport }
+            : {}),
+          tools: parseJsonArray(server.health_tools),
+        };
+      }
       mcpServers[server.name] = entry;
     }
 
@@ -98,6 +142,8 @@ export async function POST(
       args: server.args || [],
       env: server.env || {},
       type: server.type || 'stdio',
+      runMode: server.runMode || 'on_demand',
+      runtime: server.runtime || 'auto',
       url: server.url || '',
       headers: server.headers || {},
       is_enabled: true,
@@ -180,6 +226,8 @@ export async function PUT(
         args: server.args,
         env: server.env,
         type: server.type,
+        runMode: server.runMode,
+        runtime: server.runtime,
         url: server.url,
         headers: server.headers,
       });
@@ -193,6 +241,8 @@ export async function PUT(
         args: server.args || (existingBuiltin ? JSON.parse(existingBuiltin.args || '[]') as string[] : []),
         env: server.env || (existingBuiltin ? JSON.parse(existingBuiltin.env || '{}') as Record<string, string> : {}),
         type: server.type || existingBuiltin?.type || 'stdio',
+        runMode: server.runMode || existingBuiltin?.run_mode || 'on_demand',
+        runtime: server.runtime || existingBuiltin?.runtime_kind || 'auto',
         url: server.url || existingBuiltin?.url || '',
         headers: server.headers || (existingBuiltin ? JSON.parse(existingBuiltin.headers || '{}') as Record<string, string> : {}),
         is_enabled: existingBuiltin ? existingBuiltin.is_enabled === 1 : true,
