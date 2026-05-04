@@ -45,3 +45,19 @@ export interface ExtractProgressEvent {
   keysFound?: number;
   saltsTotal?: number;
 }
+
+export interface WeChatMessageDbDiagnostics {
+  message_db_total?: number;
+  message_db_readable?: number;
+  message_db_unreadable?: number;
+  message_db_names?: string[];
+  readable_message_db_names?: string[];
+  skipped_message_db_names?: string[];
+  latest_message_db_mtime?: number;
+  session_last_timestamp?: number;
+  latest_message_timestamp?: number;
+  is_detail_incomplete?: boolean;
+  is_detail_stale?: boolean;
+  needs_reextract?: boolean;
+  error?: string;
+}

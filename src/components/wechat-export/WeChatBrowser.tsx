@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AlertCircle, Loader2, Search, MessageSquare, ImageOff } from 'lucide-react';
+import type { WeChatMessageDbDiagnostics } from './types';
 
 interface SessionItem {
   wxid: string;
@@ -36,6 +37,7 @@ interface ChatResponse {
   messages: ChatMessage[];
   has_more: boolean;
   total: number;
+  diagnostics?: WeChatMessageDbDiagnostics;
 }
 
 async function postQuery<T>(op: string, args: Record<string, unknown>): Promise<T> {
@@ -318,19 +320,25 @@ function MessageTimelineEmpty() {
 type ChatState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ok'; messages: ChatMessage[]; has_more: boolean; loading_more: boolean };
+  | { kind: 'ok'; messages: ChatMessage[]; has_more: boolean; loading_more: boolean; diagnostics?: WeChatMessageDbDiagnostics };
 
 type ChatAction =
-  | { type: 'initial_loaded'; messages: ChatMessage[]; has_more: boolean }
+  | { type: 'initial_loaded'; messages: ChatMessage[]; has_more: boolean; diagnostics?: WeChatMessageDbDiagnostics }
   | { type: 'initial_failed'; message: string }
   | { type: 'load_more_start' }
-  | { type: 'load_more_done'; messages: ChatMessage[]; has_more: boolean }
+  | { type: 'load_more_done'; messages: ChatMessage[]; has_more: boolean; diagnostics?: WeChatMessageDbDiagnostics }
   | { type: 'load_more_failed' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'initial_loaded':
-      return { kind: 'ok', messages: action.messages, has_more: action.has_more, loading_more: false };
+      return {
+        kind: 'ok',
+        messages: action.messages,
+        has_more: action.has_more,
+        loading_more: false,
+        diagnostics: action.diagnostics,
+      };
     case 'initial_failed':
       return { kind: 'error', message: action.message };
     case 'load_more_start':
@@ -342,12 +350,42 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         messages: [...action.messages, ...state.messages],
         has_more: action.has_more,
         loading_more: false,
+        diagnostics: action.diagnostics ?? state.diagnostics,
       };
     case 'load_more_failed':
       return state.kind === 'ok' ? { ...state, loading_more: false } : state;
     default:
       return state;
   }
+}
+
+function ChatDataWarning({ diagnostics }: { diagnostics?: WeChatMessageDbDiagnostics }) {
+  if (!diagnostics?.is_detail_incomplete && !diagnostics?.is_detail_stale) return null;
+
+  const total = diagnostics.message_db_total ?? 0;
+  const readable = diagnostics.message_db_readable ?? 0;
+  const skipped = diagnostics.message_db_unreadable ?? 0;
+  const skippedNames = diagnostics.skipped_message_db_names?.length
+    ? diagnostics.skipped_message_db_names.join('、')
+    : '';
+
+  return (
+    <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <div className="space-y-1 leading-relaxed">
+        <div>
+          详情消息可能不完整。左侧会话列表来自摘要库，右侧详情来自消息库；当前消息库可读 {readable}/{total}
+          {skipped > 0 ? `，还有 ${skipped} 个消息库未解密` : ''}。
+        </div>
+        {diagnostics.is_detail_stale ? (
+          <div>所以这里可能看不到左侧列表里的最新一条消息。</div>
+        ) : null}
+        {skippedNames ? (
+          <div className="font-mono text-[11px] opacity-80">未解密消息库：{skippedNames}</div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function MessageTimeline({ contact }: { contact: SessionItem }) {
@@ -363,7 +401,12 @@ function MessageTimeline({ contact }: { contact: SessionItem }) {
     postQuery<ChatResponse>('read_chat', { wxid: contact.wxid, limit: 50 })
       .then((res) => {
         if (cancelled) return;
-        dispatch({ type: 'initial_loaded', messages: res.messages, has_more: res.has_more });
+        dispatch({
+          type: 'initial_loaded',
+          messages: res.messages,
+          has_more: res.has_more,
+          diagnostics: res.diagnostics,
+        });
       })
       .catch((err: Error) => {
         if (!cancelled) dispatch({ type: 'initial_failed', message: err.message });
@@ -396,7 +439,12 @@ function MessageTimeline({ contact }: { contact: SessionItem }) {
     preserveAnchor.current = { prevScrollHeight: el.scrollHeight, prevScrollTop: el.scrollTop };
     dispatch({ type: 'load_more_start' });
     postQuery<ChatResponse>('read_chat', { wxid: contact.wxid, before_ts: oldestTs, limit: 50 })
-      .then((res) => dispatch({ type: 'load_more_done', messages: res.messages, has_more: res.has_more }))
+      .then((res) => dispatch({
+        type: 'load_more_done',
+        messages: res.messages,
+        has_more: res.has_more,
+        diagnostics: res.diagnostics,
+      }))
       .catch(() => dispatch({ type: 'load_more_failed' }));
   };
 
@@ -437,11 +485,15 @@ function MessageTimeline({ contact }: { contact: SessionItem }) {
             <div className="text-destructive/90">{state.message}</div>
           </div>
         ) : state.messages.length === 0 ? (
-          <div className="text-center text-xs text-muted-foreground/70 py-12">
-            没有与 {contact.display} 的消息记录
-          </div>
+          <>
+            <ChatDataWarning diagnostics={state.diagnostics} />
+            <div className="text-center text-xs text-muted-foreground/70 py-12">
+              没有读到与 {contact.display} 的消息记录
+            </div>
+          </>
         ) : (
           <div className="space-y-6">
+            <ChatDataWarning diagnostics={state.diagnostics} />
             {state.has_more ? (
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground/65 py-2 justify-center">
                 {state.loading_more ? (

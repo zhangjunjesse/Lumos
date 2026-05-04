@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useWeChatExport } from './use-wechat-export';
 import { WeChatBrowser } from './WeChatBrowser';
+import type { WeChatMessageDbDiagnostics } from './types';
 
 const WECHAT_APP_STORE_URL = 'macappstore://apps.apple.com/cn/app/wechat/id836500024';
 
@@ -255,29 +256,37 @@ function EnvSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
 // Phase 3: relax wechat
 // ─────────────────────────────────────────────────────────────────────────
 
-function PrepareWeChatSection() {
+function PrepareWeChatSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
+  const running = panel.busy === 'resign';
   return (
     <Card tone="highlight">
       <h3 className="text-sm font-semibold mb-2">让 lumos 能读到微信</h3>
       <p className="text-sm text-foreground/85 leading-relaxed">
         微信开了一层系统级保护,让其他程序读不到它。下一步会临时放开,这样 AI 才能拿到你的聊天记录。
       </p>
-      <p className="mt-3 text-xs text-muted-foreground">
-        请在 <span className="text-foreground">终端</span> 里运行下面这条命令(会要 mac 密码),
-        几秒就完成:
-      </p>
-      <div className="mt-2">
-        <CopyableCommand command="sudo codesign --force --deep --sign - /Applications/WeChat.app" />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button disabled={running} onClick={() => void panel.resignWeChat()}>
+          {running ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          退出微信并临时放开读取保护
+        </Button>
       </div>
-      <p className="mt-3 text-sm text-foreground/85">然后:</p>
+      <p className="mt-3 text-sm text-foreground/85">点击后 Lumos 会:</p>
       <ol className="mt-1 space-y-1 text-sm text-foreground/85 list-decimal pl-5">
-        <li>完全退出微信(<kbd className="rounded bg-muted px-1 py-0.5 text-[10px]">⌘Q</kbd>)</li>
-        <li>重新打开微信,正常进入主界面(不需要扫码,会自动登录)</li>
+        <li>让微信完全退出</li>
+        <li>弹出 macOS 管理员授权窗口,临时放开读取保护</li>
+        <li>重新打开微信,你等它进入主界面后继续下一步</li>
       </ol>
       <div className="mt-4 inline-flex items-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
         完成后这里会自动进入下一步
       </div>
+
+      <Disclosure title="如果按钮失败怎么办?">
+        可以在终端里手动运行下面这条命令,然后重新打开微信:
+        <div className="mt-2">
+          <CopyableCommand command="sudo codesign --force --deep --sign - /Applications/WeChat.app" />
+        </div>
+      </Disclosure>
 
       <Disclosure title="为什么要这样做?">
         微信启用了 macOS 的「Hardened Runtime」保护,默认禁止外部程序读取它的内存。
@@ -298,8 +307,8 @@ function ExtractSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
     <Card tone="highlight">
       <h3 className="text-sm font-semibold mb-2">取出聊天记录的解锁密钥</h3>
       <p className="text-sm text-foreground/85 leading-relaxed">
-        最后一步:lumos 在后台扫描微信进程,把每个数据库的解锁密钥取出来,保存到你的本地。
-        首次大约 5-10 分钟,可以放着不管,完成会通知你。
+        最后一步:Lumos 会在本机扫描微信进程,把每个数据库的解锁密钥取出来,保存到你的本地。
+        首次大约 5-10 分钟,页面会显示进度。
       </p>
 
       {!running ? (
@@ -379,6 +388,145 @@ function RestoreSection() {
 // Phase 6: ready & maintenance
 // ─────────────────────────────────────────────────────────────────────────
 
+interface DiagnosticsResponse {
+  diagnostics: WeChatMessageDbDiagnostics;
+}
+
+async function fetchMessageDbDiagnostics(): Promise<WeChatMessageDbDiagnostics> {
+  const res = await fetch('/api/wechat-export/query', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ op: 'diagnostics', args: {} }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = typeof json?.message === 'string'
+      ? json.message
+      : typeof json?.error === 'string'
+        ? json.error
+        : 'diagnostics_failed';
+    throw new Error(message);
+  }
+  return (json as DiagnosticsResponse).diagnostics || {};
+}
+
+function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
+  const [diagnostics, setDiagnostics] = useState<WeChatMessageDbDiagnostics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshDiagnostics = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setDiagnostics(await fetchMessageDbDiagnostics());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '诊断失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshDiagnostics();
+  }, []);
+
+  const unreadable = diagnostics?.message_db_unreadable ?? 0;
+  const total = diagnostics?.message_db_total ?? 0;
+  const readable = diagnostics?.message_db_readable ?? 0;
+  const skipped = diagnostics?.skipped_message_db_names?.join('、') || '';
+  const signed = panel.status?.env?.signed;
+  const runningResign = panel.busy === 'resign';
+  const runningExtract = panel.busy === 'extract';
+  const mustRelaxWeChat = signed === 'tencent' || signed === 'unknown';
+  const runRepair = async () => {
+    if (mustRelaxWeChat) {
+      const relaxed = await panel.resignWeChat();
+      await refreshDiagnostics();
+      if (!relaxed) return;
+      await sleep(8000);
+    }
+    await panel.startExtract();
+    await refreshDiagnostics();
+  };
+
+  if (!loading && !error && unreadable <= 0) return null;
+
+  return (
+    <Card tone="highlight">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <CircleAlert className="h-4 w-4 text-amber-500" />
+            <h3 className="text-sm font-semibold">修复消息读取不完整</h3>
+          </div>
+          <p className="text-sm text-foreground/85 leading-relaxed">
+            左侧会话列表读取的是摘要库，详情读取的是消息库。消息库密钥不完整时，会出现左侧最新、点进去旧消息或空白。
+          </p>
+        </div>
+        <Button variant="ghost" size="sm" disabled={loading} onClick={() => void refreshDiagnostics()}>
+          {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+          重新检测
+        </Button>
+      </div>
+
+      {error ? (
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs text-destructive">
+          {error}
+        </div>
+      ) : loading ? (
+        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          正在检测消息库…
+        </div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-foreground/85">
+            当前消息库可读 <span className="font-mono tabular-nums">{readable}/{total}</span>
+            {unreadable > 0 ? <>，还有 <span className="font-mono tabular-nums">{unreadable}</span> 个未解密。</> : null}
+            {skipped ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">未解密：{skipped}</div> : null}
+          </div>
+
+          {runningExtract ? (
+            <div className="rounded-md border border-border/40 bg-muted/20 p-3">
+              <div className="flex items-center gap-2 text-sm">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                <span className="text-muted-foreground">{panel.busyMessage || '正在重新提取密钥…'}</span>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                已新取出 <span className="font-mono text-foreground tabular-nums">{panel.extractKeys}</span> 个密钥
+              </div>
+              <Button variant="ghost" size="sm" className="mt-2" onClick={panel.cancelExtract}>
+                取消
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={runningExtract || runningResign}
+              onClick={() => void runRepair()}
+            >
+              {runningResign || runningExtract ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+              {mustRelaxWeChat ? '开始修复' : '重新提取消息库密钥'}
+            </Button>
+            {!mustRelaxWeChat ? (
+              <span className="text-xs text-muted-foreground">
+                微信读取保护已临时放开，下一步会直接重新提取。
+              </span>
+            ) : null}
+          </div>
+
+          <div className="text-xs text-muted-foreground leading-relaxed">
+            修复过程会在本机完成。点击开始后，Lumos 会先处理微信读取保护，再自动重新提取消息库密钥；提取完成后，页面会继续提示你把微信恢复成原版。
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const env = panel.status?.env;
   const status = panel.status?.status;
@@ -430,6 +578,8 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
           )}
         </div>
       </Card>
+
+      {enabled ? <RepairIncompleteMessagesSection panel={panel} /> : null}
 
       {enabled ? <WeChatBrowser /> : null}
 
@@ -508,6 +658,10 @@ function formatRelativeTime(epoch: number): string {
   return new Date(epoch).toLocaleDateString('zh-CN');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Top-level orchestrator
 // ─────────────────────────────────────────────────────────────────────────
@@ -563,7 +717,7 @@ export function WeChatExportPanel() {
       {phase === 'needs-resign' && (
         <>
           <EnvSection panel={panel} />
-          <PrepareWeChatSection />
+          <PrepareWeChatSection panel={panel} />
         </>
       )}
       {phase === 'needs-extract' && (

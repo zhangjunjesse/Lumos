@@ -16,7 +16,7 @@ const POLL_MS = 4000;
 export function useWeChatExport() {
   const [status, setStatus] = useState<WeChatExportStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract'>(null);
+  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract' | 'resign'>(null);
   const [busyMessage, setBusyMessage] = useState<string>('');
   const [extractProgress, setExtractProgress] = useState<ExtractProgressEvent | null>(null);
   const [extractKeys, setExtractKeys] = useState<number>(0);
@@ -104,7 +104,36 @@ export function useWeChatExport() {
     }
   }, [refresh]);
 
-  const startExtract = useCallback(async () => {
+  const resignWeChat = useCallback(async (): Promise<boolean> => {
+    setBusy('resign');
+    setBusyMessage('正在准备临时放开微信读取保护…');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/resign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || 'resign_failed');
+      setActionMessage({
+        kind: 'ok',
+        text: data?.message || '已临时放开微信读取保护。请等微信进入主界面后重新提取密钥。',
+      });
+      await refresh();
+      return true;
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '临时放开失败',
+      });
+      return false;
+    } finally {
+      setBusy(null);
+      setBusyMessage('');
+    }
+  }, [refresh]);
+
+  const startExtract = useCallback(async (): Promise<boolean> => {
     setBusy('extract');
     setBusyMessage('准备扫描微信进程内存…');
     setExtractProgress(null);
@@ -114,6 +143,7 @@ export function useWeChatExport() {
     abortRef.current?.abort();
     const ctl = new AbortController();
     abortRef.current = ctl;
+    let completed = false;
     try {
       const res = await fetch('/api/wechat-export/extract-key', {
         method: 'POST',
@@ -147,6 +177,7 @@ export function useWeChatExport() {
             }
             setBusyMessage((data as ExtractProgressEvent).message || busyMessage);
           } else if (event === 'done') {
+            completed = true;
             setBusyMessage(`已恢复 ${data.keysFound ?? 0} 个数据库密钥。`);
             setActionMessage({
               kind: 'ok',
@@ -158,12 +189,14 @@ export function useWeChatExport() {
         }
       }
       await refresh();
+      return completed;
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return;
+      if ((err as Error).name === 'AbortError') return false;
       setActionMessage({
         kind: 'error',
         text: err instanceof Error ? err.message : '提取失败',
       });
+      return false;
     } finally {
       setBusy(null);
       setBusyMessage('');
@@ -187,6 +220,7 @@ export function useWeChatExport() {
     refresh,
     acceptConsent,
     toggle,
+    resignWeChat,
     startExtract,
     cancelExtract,
   };

@@ -86,6 +86,89 @@ def _query_with_key(db_path: str, key: str, sql: str) -> list[dict]:
         return []
     return list(csv.DictReader(io.StringIO("\n".join(lines))))
 
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or default)
+    except (ValueError, TypeError):
+        return default
+
+
+def _message_db_diagnostics() -> dict:
+    """Summarize message shard coverage without exposing chat content."""
+    try:
+        data_dir = server._find_data_dir()
+    except Exception as err:  # noqa: BLE001 - diagnostics should not break reads
+        return {
+            "message_db_total": 0,
+            "message_db_readable": 0,
+            "message_db_unreadable": 0,
+            "message_db_names": [],
+            "readable_message_db_names": [],
+            "skipped_message_db_names": [],
+            "error": str(err),
+        }
+
+    paths = sorted(_glob.glob(os.path.join(data_dir, "message", "message_[0-9].db")))
+    items: list[dict] = []
+    for db_path in paths:
+        name = os.path.basename(db_path)
+        saved_key = _key_for_db(db_path)
+        try:
+            key = server._key_for_db(db_path)
+            readable = server._test_key(key, db_path)
+        except Exception:
+            readable = False
+
+        try:
+            mtime = int(os.path.getmtime(db_path))
+        except OSError:
+            mtime = 0
+
+        items.append({
+            "name": name,
+            "readable": readable,
+            "has_saved_key": bool(saved_key),
+            "mtime": mtime,
+        })
+
+    readable_items = [item for item in items if item["readable"]]
+    unreadable_items = [item for item in items if not item["readable"]]
+    return {
+        "message_db_total": len(items),
+        "message_db_readable": len(readable_items),
+        "message_db_unreadable": len(unreadable_items),
+        "message_db_names": [item["name"] for item in items],
+        "readable_message_db_names": [item["name"] for item in readable_items],
+        "skipped_message_db_names": [item["name"] for item in unreadable_items],
+        "latest_message_db_mtime": max((item["mtime"] for item in items), default=0),
+    }
+
+
+def _session_snapshot(wxid: str) -> dict:
+    """Read the left-list timestamp for this chat from session.db."""
+    try:
+        db_path = SESSION_DB_PATH()
+        key = _key_for_db(db_path)
+        if not key:
+            return {}
+        safe_wxid = wxid.replace("'", "''")
+        rows = _query_with_key(
+            db_path, key,
+            "SELECT sort_timestamp, last_msg_type "
+            f"FROM SessionTable WHERE username='{safe_wxid}' LIMIT 1;",
+        )
+    except Exception:
+        return {}
+    if not rows:
+        return {}
+    row = rows[0]
+    return {
+        "session_last_timestamp": _safe_int(row.get("sort_timestamp")),
+        "session_last_msg_type": _safe_int(row.get("last_msg_type")),
+    }
+
+
 MSG_TYPE_PLACEHOLDERS = {
     "3": "[图片]",
     "34": "[语音]",
@@ -259,18 +342,9 @@ def list_sessions(args: dict) -> dict:
         if not info and wxid.endswith("@chatroom"):
             display = f"群聊({wxid.split('@')[0]})"
 
-        try:
-            ts = int(row.get("sort_timestamp") or 0)
-        except (ValueError, TypeError):
-            ts = 0
-        try:
-            msg_type = int(row.get("last_msg_type") or 0)
-        except (ValueError, TypeError):
-            msg_type = 0
-        try:
-            unread = int(row.get("unread_count") or 0)
-        except (ValueError, TypeError):
-            unread = 0
+        ts = _safe_int(row.get("sort_timestamp"))
+        msg_type = _safe_int(row.get("last_msg_type"))
+        unread = _safe_int(row.get("unread_count"))
 
         items.append({
             "wxid": wxid,
@@ -286,6 +360,13 @@ def list_sessions(args: dict) -> dict:
         })
 
     return {"items": items, "total": len(items)}
+
+
+def diagnostics(args: dict) -> dict:
+    """Current WeChat message-db coverage for the repair UI."""
+    diag = _message_db_diagnostics()
+    diag["needs_reextract"] = diag.get("message_db_unreadable", 0) > 0
+    return {"diagnostics": diag}
 
 
 # ─── Avatars ──────────────────────────────────────────────────────────────
@@ -443,12 +524,23 @@ def read_chat(args: dict) -> dict:
     has_more = len(messages) > limit
     if has_more:
         messages = messages[-limit:]
+    diagnostics = _message_db_diagnostics()
+    session = _session_snapshot(wxid)
+    latest_message_ts = max((m["ts"] for m in messages), default=0)
+    session_last_ts = _safe_int(session.get("session_last_timestamp"))
+    diagnostics.update(session)
+    diagnostics.update({
+        "latest_message_timestamp": latest_message_ts,
+        "is_detail_incomplete": diagnostics.get("message_db_unreadable", 0) > 0,
+        "is_detail_stale": before_ts == 0 and session_last_ts > latest_message_ts,
+    })
     return {
         "wxid": wxid,
         "display": display,
         "messages": messages,
         "has_more": has_more,
         "total": len(messages),
+        "diagnostics": diagnostics,
     }
 
 
@@ -493,6 +585,7 @@ OPS = {
     "list_contacts": list_contacts,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
+    "diagnostics": diagnostics,
     "resolve_image": resolve_image,
     "avatar": avatar,
 }
