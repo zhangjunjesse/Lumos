@@ -52,7 +52,7 @@ export function ensureNovelTropeRadarSchedule(): InstallResult {
     const existingParams =
       existing.runParams as unknown as Partial<NovelTropeRadarRunParams>;
     const runParams = assertRunParamsValid(existingParams ?? {});
-    const dsl = buildWorkflowDsl(runParams);
+    const dsl = buildWorkflowDsl(runParams, { agentPresetId: '' });
     updateScheduledWorkflow(existing.id, { workflowDsl: dsl });
     return { scheduleId: existing.id, status: 'updated', runParams };
   }
@@ -64,7 +64,7 @@ export function ensureNovelTropeRadarSchedule(): InstallResult {
  */
 export function installNovelTropeRadar(input: InstallInput): InstallResult {
   const runParams = assertRunParamsValid(input.runParams ?? {});
-  const dsl = buildWorkflowDsl(runParams);
+  const dsl = buildWorkflowDsl(runParams, { agentPresetId: '' });
   const sched = parseCronToSchedule(runParams.cron);
 
   const existing = findExistingSchedule();

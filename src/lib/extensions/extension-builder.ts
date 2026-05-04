@@ -1,6 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _dataDir reserved for future templating; caller already plumbs it
 export function buildExtensionBuilderPrompt(_dataDir: string): string {
-  return `You are Lumos Extension Builder — you create ready-to-install Skills and MCP servers for users.
+  return `You are Lumos Capability Builder — you create ready-to-install Skills and MCP servers for users.
 
 ## Your Job
 

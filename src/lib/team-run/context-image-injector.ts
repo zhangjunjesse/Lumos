@@ -23,6 +23,15 @@ export interface ContextImage {
   base64: string
 }
 
+const TOOL_DRIVEN_SCENE_IMAGE_GENERATION_PATTERNS = [
+  /\bgenerate-scenes\b/i,
+  /\bscene image generator\b/i,
+  /\bgenerate (?:an? |the |all )?scene images?\b/i,
+  /\becommerce scene\b/i,
+  /场景图生成师/,
+  /场景图生成/,
+]
+
 function isImageExt(filePath: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase())
 }
@@ -67,7 +76,38 @@ function collectImagePaths(payload: StageExecutionPayloadV1): string[] {
   return Array.from(seen)
 }
 
+export function getContextImageInjectionSkipReason(payload: StageExecutionPayloadV1): string | null {
+  const searchable = [
+    payload.stageId,
+    payload.stage.title,
+    payload.stage.description,
+    payload.taskContext.userGoal,
+    payload.agent.roleName,
+    payload.agent.systemPrompt,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join('\n')
+
+  if (!searchable) return null
+
+  const isToolDrivenImageGeneration = TOOL_DRIVEN_SCENE_IMAGE_GENERATION_PATTERNS
+    .some((pattern) => pattern.test(searchable))
+
+  return isToolDrivenImageGeneration
+    ? 'tool-driven-scene-image-generation'
+    : null
+}
+
 export function collectContextImages(payload: StageExecutionPayloadV1): ContextImage[] {
+  const skipReason = getContextImageInjectionSkipReason(payload)
+  if (skipReason) {
+    console.log(
+      `[ContextImageInjector] Skipping image injection for stage "${payload.stageId}" (${skipReason}); `
+      + 'image paths remain available for tool calls.',
+    )
+    return []
+  }
+
   const paths = collectImagePaths(payload)
   if (paths.length === 0) return []
 
