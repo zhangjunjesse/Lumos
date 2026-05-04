@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchMessages, listSessions } from '@/lib/goofish/db';
+import { searchMessages } from '@/lib/goofish/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -61,11 +61,3 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/**
- * GET /api/goofish/sessions — list cached sessions (panel can render
- * instantly from the archive instead of waiting for a fresh fetch).
- */
-export async function _listSessionsHandler() {
-  // Helper retained in case we later add a /sessions endpoint; not exported.
-  return listSessions({ limit: 200 });
-}
