@@ -99,6 +99,38 @@ export function buildDebugRuntimeContext(
   return { sessionId, mode, targetStepId, cache, skipSet, configHashes };
 }
 
+export interface BuildResumeRuntimeContextArgs {
+  sessionId: string;
+  targetStepId: string;
+  dsl: WorkflowDSLV3;
+  cachedSteps: DebugStepOutput[];
+}
+
+/**
+ * Build a run-scoped cache context for production reruns.
+ *
+ * Unlike visual-editor debug modes, production rerun must keep upstream
+ * stepOutputs intact instead of returning generic "skipped" placeholders.
+ * Therefore skipSet stays empty and only cached steps are short-circuited;
+ * the selected target and its downstream are omitted by the caller so they
+ * execute for real in the new run.
+ */
+export function buildResumeRuntimeContext(
+  args: BuildResumeRuntimeContextArgs,
+): DebugRuntimeContext {
+  const cache = new Map<string, DebugStepOutput>();
+  for (const c of args.cachedSteps) cache.set(c.stepId, c);
+  return {
+    sessionId: args.sessionId,
+    mode: 'continue-from',
+    targetStepId: args.targetStepId,
+    cache,
+    skipSet: new Set<string>(),
+    configHashes: buildConfigHashes(args.dsl),
+    persist: false,
+  };
+}
+
 // ── Runtime persistence ─────────────────────────────────────────────────────
 
 // ── Run-scoped runtime context registry ─────────────────────────────────────
@@ -153,7 +185,9 @@ export async function persistDebugCacheResult(
     completedAt: new Date().toISOString(),
     configHash,
   };
-  upsertCachedStep(ctx.sessionId, record);
+  if (ctx.persist !== false) {
+    upsertCachedStep(ctx.sessionId, record);
+  }
   // Update in-memory cache so subsequent steps in the same run see it.
   ctx.cache.set(stepId, record);
 }

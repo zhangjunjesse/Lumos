@@ -42,14 +42,22 @@ export function RunDetailHeader({
   run,
   onRefresh,
   onCancel,
+  onRerunFailed,
+  onRerunSelected,
   cancelling = false,
+  rerunning = false,
   browserLabel,
+  rerunHint,
 }: {
   run: RunDetailHeaderRun;
   onRefresh: () => void;
   onCancel?: () => void;
+  onRerunFailed?: () => void;
+  onRerunSelected?: () => void;
   cancelling?: boolean;
+  rerunning?: boolean;
   browserLabel?: string;
+  rerunHint?: string | null;
 }) {
   const cfg = STATUS_CFG[run.status] ?? STATUS_CFG.running;
   return (
@@ -88,6 +96,16 @@ export function RunDetailHeader({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {onRerunFailed ? (
+            <Button variant="outline" size="sm" onClick={onRerunFailed} disabled={rerunning}>
+              {rerunning ? '重跑中...' : '从失败节点重跑'}
+            </Button>
+          ) : null}
+          {onRerunSelected ? (
+            <Button variant="outline" size="sm" onClick={onRerunSelected} disabled={rerunning}>
+              {rerunning ? '重跑中...' : '从此节点重跑'}
+            </Button>
+          ) : null}
           {run.status === 'running' && onCancel ? (
             <Button variant="outline" size="sm" onClick={onCancel} disabled={cancelling}>
               {cancelling ? '停止中...' : '停止执行'}
@@ -104,6 +122,11 @@ export function RunDetailHeader({
           {formatWorkflowError(run.error)}
         </div>
       )}
+      {rerunHint ? (
+        <div className="mt-3 text-xs text-muted-foreground">
+          {rerunHint}
+        </div>
+      ) : null}
     </div>
   );
 }

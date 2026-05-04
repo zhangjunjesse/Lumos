@@ -1,6 +1,7 @@
 import {
   buildConfigHashes,
   buildDebugRuntimeContext,
+  buildResumeRuntimeContext,
   computeConfigHash,
   computeTransitiveDownstream,
   computeUpstreamClosure,
@@ -255,5 +256,24 @@ describe('buildDebugRuntimeContext', () => {
     expect(ctx.skipSet.has('setup')).toBe(false);
     expect(ctx.skipSet.has('fallback')).toBe(true);
     expect(ctx.skipSet.has('finish')).toBe(true);
+  });
+
+  it('production resume keeps skipSet empty and disables debug persistence', () => {
+    const hashes = buildConfigHashes(dsl);
+    const ctx = buildResumeRuntimeContext({
+      sessionId: 'resume-run',
+      targetStepId: 'c',
+      dsl,
+      cachedSteps: [
+        stubCache('a', hashes.get('a')!),
+        stubCache('b', hashes.get('b')!),
+      ],
+    });
+
+    expect(ctx.skipSet.size).toBe(0);
+    expect(ctx.cache.has('a')).toBe(true);
+    expect(ctx.cache.has('b')).toBe(true);
+    expect(ctx.cache.has('c')).toBe(false);
+    expect(ctx.persist).toBe(false);
   });
 });
