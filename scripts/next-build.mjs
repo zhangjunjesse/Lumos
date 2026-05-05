@@ -1,0 +1,68 @@
+import { spawnSync } from 'child_process';
+import { createRequire } from 'module';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const require = createRequire(import.meta.url);
+const PROJECT_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function configureWindowsBuildHome(env) {
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  const baseDir = path.resolve(
+    env.LUMOS_NEXT_BUILD_HOME
+      || env.RUNNER_TEMP
+      || path.join(os.tmpdir(), 'lumos-next-build-home')
+  );
+  const homeDir = path.join(baseDir, 'home');
+  const appDataDir = path.join(homeDir, 'AppData', 'Roaming');
+  const localAppDataDir = path.join(homeDir, 'AppData', 'Local');
+  const lumosDataDir = path.join(homeDir, '.lumos');
+  const claudeConfigDir = path.join(homeDir, '.claude');
+
+  for (const dir of [homeDir, appDataDir, localAppDataDir, lumosDataDir, claudeConfigDir]) {
+    ensureDir(dir);
+  }
+
+  // Windows user profiles contain protected junctions such as
+  // "Application Data". Some build-time tracing/glob paths can otherwise walk
+  // the real CI profile and fail with EPERM before Next finishes compiling.
+  env.HOME = homeDir;
+  env.USERPROFILE = homeDir;
+  env.APPDATA = appDataDir;
+  env.LOCALAPPDATA = localAppDataDir;
+  env.LUMOS_DATA_DIR = env.LUMOS_DATA_DIR || lumosDataDir;
+  env.CLAUDE_CONFIG_DIR = env.CLAUDE_CONFIG_DIR || claudeConfigDir;
+  env.LUMOS_CLAUDE_CONFIG_DIR = env.LUMOS_CLAUDE_CONFIG_DIR || claudeConfigDir;
+
+  console.log(`[next-build] Using isolated Windows build home: ${homeDir}`);
+}
+
+const env = {
+  ...process.env,
+  LUMOS_BUILD_PHASE: '1',
+};
+
+configureWindowsBuildHome(env);
+
+const nextBin = require.resolve('next/dist/bin/next', { paths: [PROJECT_ROOT] });
+const nextArgs = process.argv.slice(2);
+const result = spawnSync(process.execPath, [nextBin, ...(nextArgs.length > 0 ? nextArgs : ['build', '--webpack'])], {
+  cwd: PROJECT_ROOT,
+  env,
+  stdio: 'inherit',
+});
+
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+}
+
+process.exit(result.status ?? 1);

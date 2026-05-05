@@ -177,6 +177,7 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
   - 成果：知识库向量化的长期跨平台问题已正式记录并定位；Windows exe 报错 `embedding model initialization failed: Cannot read properties of undefined (reading 'create')` 时，诊断已显示模型文件实际存在于用户 runtime cache 和安装目录，因此不应继续按“模型文件缺失”方向排查。当前判断为 Electron/Next packaged server 中 portable `transformers.web.js` 在 Node 进程里误选 `onnxruntime-node` 空后端，导致 `InferenceSession.create` 为空；修复方向是让打包版索引统一走本地 `onnxruntime-web` WASM 后端，并显式绑定打包内 `ort-wasm-simd-threaded` 文件路径。
   - 待完成：知识库索引仍需完成新安装包级验收；必须分别在 macOS 和 Windows exe 上验证“导入内容 -> 向量化成功 -> 搜索命中”，在此之前不能把跨平台索引问题标为完整完成。
   - 成果：桌面端更新包体积治理已开始第一阶段前置改造；运行时已新增统一资源解析层，Node runtime / Python runtime / Git Bash / 本地 embedding 模型 / MCP runtime path 可优先从 `LUMOS_EXTERNAL_RESOURCES_DIR` 或 `~/.lumos/runtime-resources` 查找，再回退到安装包资源和开发态 `resources/`；同时已新增发布侧 runtime resources manifest 生成脚本，可先产出 Node/Python/Git-Bash/models 的文件清单、大小与 sha512，为后续独立资源下载、校验和缓存复用做准备。
+  - 成果：Windows 打包链路里 `Git Bash` 运行时下载后进入 `next build` 时，曾因构建期 glob/trace 误扫 GitHub Actions 的真实用户目录 `C:\Users\runneradmin\Application Data` 而触发 `EPERM scandir`。当前已把 Next 构建入口收敛到项目脚本，并在 Windows 构建时使用隔离的临时 `HOME / USERPROFILE / APPDATA / LOCALAPPDATA`，避免构建期依赖扫描受保护的 Windows profile junction；本地已通过 `npm run typecheck` 和 `npm run build`，但仍需重新跑 GitHub Actions Windows 打包确认。
   - 待完成：主安装包尚未真正瘦身；还需要补正式资源下载/校验/恢复 UI、资源包发布与 CDN/更新接口接入、首次安装缺资源兜底、跨平台打包验收，然后才能从 `electron-builder` 主包里移除稳定大资源。
   - 成果：已新增 `07-dynamic-capability-extension-design.md`，把“用户通过 LLM 动态新增系统能力，并让工作流后续可正式使用”定义为独立横切架构，不再硬塞进 `03 ~ 06` 任一单层文档。
   - 成果：已为 `07` 补上正式产品入口；左侧侧边栏现已新增“节点开发”菜单，并有独立 `/workflow/nodes` 页面用于展示当前正式节点边界、07 的能力建设方向与剩余缺口。
@@ -307,7 +308,7 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - `桌面端更新 / 资源拆包`
   - 文档完整度：`未开始`
   - 主链状态：`未打通`
-  - 当前进展：已确认当前 electron-updater 路径仍主要下载完整安装包，macOS `.dmg` 约 406MB、Windows `.exe` 约 486MB；同时已开始第一阶段前置实现，新增运行时资源解析层，让 Node runtime / Python runtime / Git Bash / 本地模型等资源可优先从外置缓存目录读取，并新增 `runtime-resources:manifest` 脚本生成稳定资源文件清单。当前这只是拆包前置能力，不代表用户更新已经变成差分或小包下载。
+  - 当前进展：已确认当前 electron-updater 路径仍主要下载完整安装包，macOS `.dmg` 约 406MB、Windows `.exe` 约 486MB；同时已开始第一阶段前置实现，新增运行时资源解析层，让 Node runtime / Python runtime / Git Bash / 本地模型等资源可优先从外置缓存目录读取，并新增 `runtime-resources:manifest` 脚本生成稳定资源文件清单。当前这只是拆包前置能力，不代表用户更新已经变成差分或小包下载。本轮还修正了 Windows Git Bash 运行时下载后 `next build` 误扫 `C:\Users\runneradmin\Application Data` 的构建期失败：Windows 构建会使用临时隔离用户目录，避免受保护 profile junction 触发 `EPERM scandir`；本地 `typecheck / build` 已通过，GitHub Actions Windows 打包仍需重新跑。
   - UI 可验收范围：暂未进入用户可验收；用户现在看到的更新体验仍是下载完整安装包。
   - 当前缺口：还需要补资源包上传/托管、客户端资源 manifest 获取、断点/校验/解压、缺资源恢复提示、首次安装兜底、正式包移除稳定大资源、macOS/Windows 安装包和自动更新回归；这些完成前不能标为完整实现。
 - `Workflow 编辑体验`
