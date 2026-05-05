@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { migrateCoreTables } from './migrations';
+import { migrateGoofishTables } from './migrations-goofish';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateTeamRunTables } from './migrations-team-run';
@@ -217,6 +218,7 @@ export function initDb(db: Database.Database): void {
     migrateSyncTables(db);
     migrateTeamRunTables(db);
     migrateAppTables(db);
+    migrateGoofishTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {

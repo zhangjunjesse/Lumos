@@ -6,7 +6,7 @@
  * missing (e.g. `brew install sqlcipher`). Pure read-only operations.
  */
 import fs from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import path from 'path';
 import { WECHAT_APP_PATH, WECHAT_DB_ROOT } from './setup-state';
 
@@ -52,20 +52,13 @@ export function probeWeChat(): ProbeResult & { signed: 'tencent' | 'adhoc' | 'un
     '/usr/bin/defaults',
     ['read', `${WECHAT_APP_PATH}/Contents/Info.plist`, 'CFBundleShortVersionString'],
   ) || '';
-  // `codesign -dv` writes to stderr; capture both for parsing.
-  let signedAuthority = '';
-  try {
-    signedAuthority = execFileSync(
-      '/usr/bin/codesign',
-      ['-dv', WECHAT_APP_PATH],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 3000 },
-    );
-  } catch (e: unknown) {
-    const err = e as { stderr?: Buffer | string };
-    signedAuthority = typeof err.stderr === 'string'
-      ? err.stderr
-      : (err.stderr ? err.stderr.toString() : '');
-  }
+  // `codesign -dv` writes its diagnostic details to stderr even on success.
+  // execFileSync returns stdout only, so use spawnSync and parse both streams.
+  const signResult = spawnSync('/usr/bin/codesign', ['-dv', WECHAT_APP_PATH], {
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  const signedAuthority = `${signResult.stdout || ''}\n${signResult.stderr || ''}`;
   const isAdhoc = /Signature=adhoc/.test(signedAuthority);
   const isTencent = /Authority=.*Tencent/.test(signedAuthority)
     || /Apple Mac OS Application Signing/.test(signedAuthority);

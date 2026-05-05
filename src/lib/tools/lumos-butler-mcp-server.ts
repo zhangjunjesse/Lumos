@@ -15,11 +15,20 @@ import {
 } from '@/lib/db';
 import { getDb } from '@/lib/db/connection';
 import { listDrafts, listPackages, listPublishedCodeCapabilities, listPublishedPromptCapabilities } from '@/lib/db/capabilities';
-import { listScheduledWorkflows } from '@/lib/db/scheduled-workflows';
+import {
+  getRunHistory,
+  getScheduledWorkflow,
+  listScheduledWorkflows,
+} from '@/lib/db/scheduled-workflows';
+import { listRunSteps } from '@/lib/db/schedule-run-steps';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { getExternalRuntimeResourceRoot, getRuntimeResourceRoots, resolveRuntimeResourcePath } from '@/lib/runtime-resources';
 import { listPlugins, getEnabledProviders as getEnabledImProviders, getDefaultProviderId as getDefaultImProviderId, isProviderConfigured as isImProviderConfigured, listActiveAdapters } from '@/lib/im';
 import { providerSupportsCapability } from '@/lib/provider-config';
+import {
+  listActiveWorkflowAgentExecutionSnapshots,
+  type WorkflowAgentExecutionSnapshot,
+} from '@/lib/workflow/subagent';
 import type { ApiProvider, ChatSession, Message, ProviderCapability } from '@/types';
 
 interface CallToolResult {
@@ -43,9 +52,68 @@ interface ButlerDeepSearchSite {
   liveState: { loginState: string } | null;
 }
 
+interface ButlerWorkflowTaskRow {
+  id: string;
+  session_id: string;
+  source_message_id: string | null;
+  source_assistant_message_id: string | null;
+  summary: string;
+  requirements: string;
+  status: string;
+  progress: number | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  estimated_duration: number | null;
+  result: string | null;
+  errors: string | null;
+  metadata: string | null;
+}
+
+interface ParsedWorkflowTask {
+  id: string;
+  sessionId: string;
+  sourceMessageId: string | null;
+  sourceAssistantMessageId: string | null;
+  summary: string;
+  requirements: string[];
+  status: string;
+  progress: number;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  estimatedDuration: number | null;
+  result: unknown;
+  errors: unknown;
+  metadata: Record<string, unknown>;
+}
+
+interface WorkflowProjectionSummary {
+  workflow_id: string;
+  task_id: string;
+  workflow_name: string;
+  workflow_version: string;
+  status: string;
+  progress: number;
+  current_step: string | null;
+  completed_steps: string[];
+  running_steps: string[];
+  skipped_steps: string[];
+  step_ids: string[];
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+  result_summary: string | null;
+  error_summary: string | null;
+}
+
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 20;
 const SESSION_SUMMARY_MESSAGE_LIMIT = 12;
+const DEFAULT_WORKFLOW_LIMIT = 20;
+const MAX_WORKFLOW_LIMIT = 50;
+const WORKFLOW_TASK_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
+const WORKFLOW_RUN_STATUSES = ['pending', 'running', 'success', 'error', 'completed', 'failed', 'cancelled'] as const;
 
 export const LUMOS_BUTLER_MCP_SERVER_NAME = 'lumos-butler';
 
@@ -56,9 +124,15 @@ export const LUMOS_BUTLER_MCP_SYSTEM_HINT = `
 - \`mcp__lumos-butler__get_lumos_status()\`: 查看 Lumos 全局状态、配置概览、最近任务、明显问题和建议入口。
 - \`mcp__lumos-butler__search_lumos_history(query, scope?, limit?)\`: 搜索 Lumos 历史会话、消息、任务、Workflow、DeepSearch 和已发布能力。
 - \`mcp__lumos-butler__get_lumos_session_summary(session_id, message_limit?)\`: 查看任意 Lumos 会话的标题、最近消息和关联任务。
+- \`mcp__lumos-butler__list_workflow_tasks(status?, session_id?, limit?)\`: 查看 Workflow 任务列表和关键状态。
+- \`mcp__lumos-butler__get_workflow_task(task_id)\`: 查看单个 Workflow 任务详情、调度信息和运行态投影。
+- \`mcp__lumos-butler__list_workflow_runs(status?, task_id?, schedule_id?, limit?)\`: 查看最近 Workflow 执行记录和运行态投影。
+- \`mcp__lumos-butler__get_workflow_run(run_id)\`: 查看单次 Workflow 执行详情、步骤状态和失败原因。
+- \`mcp__lumos-butler__list_active_workflow_agents(workflow_run_id?)\`: 查看当前进程里正在运行的 Workflow Agent 会话。
 
 使用规则:
 - 用户问“哪里坏了 / 帮我看看配置 / 上次那个文件或任务在哪 / 某个能力是否安装 / 最近跑了什么”时，先调用这些工具，不要凭记忆猜测状态。
+- 用户问“有哪些工作流任务 / 哪个任务在跑 / 刚才任务为什么失败 / 哪个 Agent 卡住了”时，优先调用 Workflow 任务和执行记录工具，不要回答“没有查询接口”。
 - 这是第一阶段只读管家能力。不要声称已经执行删除、覆盖、付款、发 IM、导出敏感数据、批量操作或回滚；这类动作当前不可用，需要后续有明确确认和专门工具。
 - 面向小白用户回复时，用页面、按钮、状态和下一步动作解释，不要只抛内部表名或实现术语。
 `;
@@ -70,6 +144,11 @@ export function createLumosButlerMcpServer(options: { sessionId?: string; userId
       createGetLumosStatusTool(options),
       createSearchLumosHistoryTool(),
       createGetLumosSessionSummaryTool(),
+      createListWorkflowTasksTool(),
+      createGetWorkflowTaskTool(),
+      createListWorkflowRunsTool(),
+      createGetWorkflowRunTool(),
+      createListActiveWorkflowAgentsTool(),
     ],
   });
 }
@@ -134,6 +213,113 @@ export function createGetLumosSessionSummaryTool() {
       try {
         const summary = getLumosSessionSummary(args.session_id, args.message_limit);
         return jsonResult(summary);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+export function createListWorkflowTasksTool() {
+  return tool(
+    'list_workflow_tasks',
+    'List workflow tasks with runtime projection and schedule metadata for the Main Agent butler.',
+    {
+      status: z.enum(WORKFLOW_TASK_STATUSES).optional()
+        .describe('Optional task status filter.'),
+      session_id: z.string().min(1).optional()
+        .describe('Optional task session id filter.'),
+      limit: z.number().int().min(1).max(MAX_WORKFLOW_LIMIT).optional()
+        .describe(`Result limit. Defaults to ${DEFAULT_WORKFLOW_LIMIT}, max ${MAX_WORKFLOW_LIMIT}.`),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        return jsonResult(listWorkflowTasks({
+          status: args.status,
+          sessionId: args.session_id?.trim() || undefined,
+          limit: args.limit,
+        }));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+export function createGetWorkflowTaskTool() {
+  return tool(
+    'get_workflow_task',
+    'Get a workflow task detail with runtime projection, scheduling metadata, recent runs, and execution history links.',
+    {
+      task_id: z.string().min(1).describe('Workflow task id.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        return jsonResult(getWorkflowTask(args.task_id));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+export function createListWorkflowRunsTool() {
+  return tool(
+    'list_workflow_runs',
+    'List workflow run history with linked task and schedule context.',
+    {
+      status: z.enum(WORKFLOW_RUN_STATUSES).optional()
+        .describe('Optional run status filter.'),
+      task_id: z.string().min(1).optional()
+        .describe('Optional task id filter.'),
+      schedule_id: z.string().min(1).optional()
+        .describe('Optional schedule id filter.'),
+      limit: z.number().int().min(1).max(MAX_WORKFLOW_LIMIT).optional()
+        .describe(`Result limit. Defaults to ${DEFAULT_WORKFLOW_LIMIT}, max ${MAX_WORKFLOW_LIMIT}.`),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        return jsonResult(listWorkflowRuns({
+          status: args.status,
+          taskId: args.task_id?.trim() || undefined,
+          scheduleId: args.schedule_id?.trim() || undefined,
+          limit: args.limit,
+        }));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+export function createGetWorkflowRunTool() {
+  return tool(
+    'get_workflow_run',
+    'Get a workflow run detail with steps, schedule metadata, projection status, and route links.',
+    {
+      run_id: z.string().min(1).describe('Workflow run id.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        return jsonResult(getWorkflowRun(args.run_id));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+export function createListActiveWorkflowAgentsTool() {
+  return tool(
+    'list_active_workflow_agents',
+    'List active workflow agent executions currently held in process memory.',
+    {
+      workflow_run_id: z.string().min(1).optional()
+        .describe('Optional workflow run id filter.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        return jsonResult(listActiveWorkflowAgents(args.workflow_run_id?.trim() || undefined));
       } catch (error) {
         return errorResult(error);
       }
@@ -280,6 +466,11 @@ export function buildLumosStatus(options: {
       'get_lumos_status',
       'search_lumos_history',
       'get_lumos_session_summary',
+      'list_workflow_tasks',
+      'get_workflow_task',
+      'list_workflow_runs',
+      'get_workflow_run',
+      'list_active_workflow_agents',
     ],
   };
 }
@@ -370,6 +561,153 @@ export function getLumosSessionSummary(sessionId: string, messageLimit?: number)
       created_at: message.created_at,
       text: truncateText(extractMessageText(message), 1200),
     })),
+  };
+}
+
+export function listWorkflowTasks(input: {
+  status?: string;
+  sessionId?: string;
+  limit?: number;
+}) {
+  const limit = clampWorkflowLimit(input.limit);
+  const status = normalizeWorkflowTaskStatus(input.status);
+  const sessionId = normalizeText(input.sessionId);
+  const scheduledWorkflows = listScheduledWorkflows();
+
+  const rows = getAllTasks().filter((task) => {
+    if (sessionId && task.sessionId !== sessionId) {
+      return false;
+    }
+    if (status && task.status !== status) {
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    schema: 'lumos-butler-workflow-task-list/v1',
+    total: rows.length,
+    limit,
+    filters: {
+      status: status ?? null,
+      session_id: sessionId || null,
+    },
+    task_management_total: rows.length,
+    tasks: rows.slice(0, limit).map((task) => summarizeWorkflowTask(task)),
+    scheduled_workflows_total: scheduledWorkflows.length,
+    scheduled_workflows: scheduledWorkflows.slice(0, limit).map((schedule) => summarizeScheduledWorkflow(schedule)),
+  };
+}
+
+export function getWorkflowTask(taskId: string) {
+  const task = getTaskById(taskId);
+  if (!task) {
+    return {
+      schema: 'lumos-butler-workflow-task/v1',
+      found: false,
+      task_id: taskId,
+      error: 'Task not found',
+    };
+  }
+
+  const detail = buildWorkflowTaskDetail(task);
+  return {
+    schema: 'lumos-butler-workflow-task/v1',
+    found: true,
+    ...detail,
+  };
+}
+
+export function listWorkflowRuns(input: {
+  status?: string;
+  taskId?: string;
+  scheduleId?: string;
+  limit?: number;
+}) {
+  const limit = clampWorkflowLimit(input.limit);
+  const status = normalizeWorkflowRunStatus(input.status);
+  const taskId = normalizeText(input.taskId);
+  const scheduleId = normalizeText(input.scheduleId);
+
+  const runs = gatherWorkflowRunSummaries().filter((run) => {
+    if (status && run.status !== status) return false;
+    if (taskId && run.task_id !== taskId) return false;
+    if (scheduleId && run.schedule_id !== scheduleId) return false;
+    return true;
+  });
+
+  return {
+    schema: 'lumos-butler-workflow-run-list/v1',
+    total: runs.length,
+    limit,
+    filters: {
+      status: status ?? null,
+      task_id: taskId || null,
+      schedule_id: scheduleId || null,
+    },
+    runs: runs.slice(0, limit),
+  };
+}
+
+export function getWorkflowRun(runId: string) {
+  const run = getRunHistory(runId);
+  if (!run) {
+    return {
+      schema: 'lumos-butler-workflow-run/v1',
+      found: false,
+      run_id: runId,
+      error: 'Run not found',
+    };
+  }
+
+  const schedule = getScheduledWorkflow(run.scheduleId);
+  const steps = listRunSteps(run.id);
+  const task = getTaskById(run.scheduleId) || getTaskByIdFromRun(run.id);
+  const projection = buildRunProjectionSummary(run.id);
+
+  return {
+    schema: 'lumos-butler-workflow-run/v1',
+    found: true,
+    run: {
+      id: run.id,
+      schedule_id: run.scheduleId,
+      schedule_name: schedule?.name ?? null,
+      task_id: task?.id ?? null,
+      task_title: task?.summary ?? null,
+      status: run.status,
+      error: run.error || null,
+      started_at: run.startedAt,
+      completed_at: run.completedAt,
+      browser_context_id: run.browserContextId,
+      workflow_dsl_snapshot: run.workflowDslSnapshot ?? null,
+      route: `/workflow/schedules/${encodeURIComponent(run.scheduleId)}/runs/${encodeURIComponent(run.id)}`,
+    },
+    projection,
+    steps: steps.map((step) => ({
+      id: step.id,
+      step_id: step.stepId,
+      preset_name: step.presetName,
+      status: step.status,
+      error: step.error || null,
+      output_summary: step.outputSummary || null,
+      duration_ms: step.durationMs,
+      started_at: step.startedAt,
+      completed_at: step.completedAt,
+    })),
+  };
+}
+
+export function listActiveWorkflowAgents(workflowRunId?: string) {
+  const sessions = listActiveWorkflowAgentExecutionSnapshots();
+  const filtered = workflowRunId?.trim()
+    ? sessions.filter((session) => session.workflowRunId === workflowRunId.trim())
+    : sessions;
+
+  return {
+    schema: 'lumos-butler-workflow-agent-list/v1',
+    total: filtered.length,
+    workflow_run_id: workflowRunId?.trim() || null,
+    agents: filtered.map((session) => summarizeActiveWorkflowAgent(session)),
   };
 }
 
@@ -580,6 +918,428 @@ function readWorkflowProjectionStats() {
     byStatus,
     running: Number(byStatus.pending || 0) + Number(byStatus.running || 0),
     failed: Number(byStatus.failed || 0),
+  };
+}
+
+function getAllTasks(): ParsedWorkflowTask[] {
+  if (!tableExists('task_management_tasks')) return [];
+  const rows = getDb().prepare(`
+    SELECT *
+    FROM task_management_tasks
+    ORDER BY created_at DESC
+  `).all() as ButlerWorkflowTaskRow[];
+  return rows.map(parseWorkflowTaskRow);
+}
+
+function getTaskById(taskId: string): ParsedWorkflowTask | null {
+  if (!tableExists('task_management_tasks')) return null;
+  const row = getDb().prepare(`
+    SELECT *
+    FROM task_management_tasks
+    WHERE id = ?
+  `).get(taskId) as ButlerWorkflowTaskRow | undefined;
+  return row ? parseWorkflowTaskRow(row) : null;
+}
+
+function getTaskBySessionId(sessionId: string | null | undefined): ParsedWorkflowTask | null {
+  if (!sessionId || !tableExists('task_management_tasks')) return null;
+  const row = getDb().prepare(`
+    SELECT *
+    FROM task_management_tasks
+    WHERE session_id = ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(sessionId) as ButlerWorkflowTaskRow | undefined;
+  return row ? parseWorkflowTaskRow(row) : null;
+}
+
+function getTaskByIdFromRun(runId: string): ParsedWorkflowTask | null {
+  const byProjection = getWorkflowProjectionByRunId(runId);
+  if (byProjection?.task_id) {
+    const byId = getTaskById(byProjection.task_id);
+    if (byId) return byId;
+    const bySession = getTaskBySessionId(byProjection.task_id);
+    if (bySession) return bySession;
+  }
+
+  const run = getRunHistory(runId);
+  if (run?.sessionId) {
+    return getTaskBySessionId(run.sessionId);
+  }
+  return null;
+}
+
+function parseWorkflowTaskRow(row: ButlerWorkflowTaskRow): ParsedWorkflowTask {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    sourceMessageId: row.source_message_id,
+    sourceAssistantMessageId: row.source_assistant_message_id,
+    summary: row.summary,
+    requirements: parseStringArray(row.requirements),
+    status: row.status,
+    progress: Number(row.progress ?? 0),
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    estimatedDuration: row.estimated_duration,
+    result: parseJsonValue(row.result),
+    errors: parseJsonValue(row.errors),
+    metadata: parseJsonObject(row.metadata),
+  };
+}
+
+function summarizeScheduledWorkflow(schedule: ReturnType<typeof listScheduledWorkflows>[number]) {
+  return {
+    id: schedule.id,
+    name: schedule.name,
+    enabled: schedule.enabled,
+    run_mode: schedule.runMode,
+    interval_minutes: schedule.intervalMinutes,
+    schedule_time: schedule.scheduleTime,
+    schedule_day_of_week: schedule.scheduleDayOfWeek,
+    browser_context_id: schedule.browserContextId,
+    run_count: schedule.runCount,
+    last_run_status: schedule.lastRunStatus || null,
+    last_error: truncateText(schedule.lastError, 500) || null,
+    last_run_at: schedule.lastRunAt,
+    next_run_at: schedule.nextRunAt,
+    workflow_id: schedule.workflowId,
+    latest_run: findLatestRunForSchedule(schedule.id),
+    route: `/workflow/schedules/${encodeURIComponent(schedule.id)}`,
+  };
+}
+
+function summarizeWorkflowTask(task: ParsedWorkflowTask) {
+  const workflowMetadata = getWorkflowMetadata(task);
+  const workflowId = getMetadataString(workflowMetadata, 'workflowId');
+  const simpleExecutionId = getMetadataString(workflowMetadata, 'simpleExecutionId');
+  const projection = workflowId ? getWorkflowProjectionSummary(workflowId) : null;
+  const latestRun = findLatestRunForTask(task);
+
+  return {
+    id: task.id,
+    session_id: task.sessionId,
+    title: task.summary,
+    status: task.status,
+    progress: projection?.progress ?? task.progress,
+    strategy: getTaskStrategy(task),
+    created_at: task.createdAt,
+    started_at: projection?.started_at ?? task.startedAt,
+    completed_at: projection?.completed_at ?? task.completedAt,
+    estimated_duration_seconds: task.estimatedDuration,
+    workflow_id: workflowId ?? projection?.workflow_id ?? null,
+    simple_execution_id: simpleExecutionId ?? null,
+    workflow_status: projection?.status ?? getMetadataString(workflowMetadata, 'status') ?? null,
+    current_step: projection?.current_step ?? getMetadataString(workflowMetadata, 'currentStep') ?? null,
+    running_steps: projection?.running_steps ?? [],
+    latest_run: latestRun,
+    error: projection?.error_summary ?? summarizeTaskErrors(task.errors),
+    route: `/workflow?taskId=${encodeURIComponent(task.id)}`,
+  };
+}
+
+function buildWorkflowTaskDetail(task: ParsedWorkflowTask) {
+  const summary = summarizeWorkflowTask(task);
+  const workflowMetadata = getWorkflowMetadata(task);
+  const scheduling = isRecord(task.metadata.scheduling) ? task.metadata.scheduling : {};
+  const workflowId = summary.workflow_id;
+  const projection = workflowId ? getWorkflowProjectionSummary(workflowId) : null;
+  const recentRuns = findRunsForTask(task, 10);
+
+  return {
+    task: summary,
+    requirements: task.requirements,
+    source: {
+      source_message_id: task.sourceMessageId,
+      source_assistant_message_id: task.sourceAssistantMessageId,
+    },
+    scheduling: redactLargeWorkflowDsl(scheduling),
+    workflow: {
+      ...workflowMetadata,
+      projection,
+    },
+    result_summary: summarizeUnknown(task.result, 800),
+    errors: task.errors ?? null,
+    recent_runs: recentRuns,
+  };
+}
+
+function gatherWorkflowRunSummaries(): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  if (tableExists('schedule_run_history')) {
+    rows.push(...(getDb().prepare(`
+      SELECT r.id, r.schedule_id, r.session_id, r.browser_context_id, r.status, r.error,
+             r.started_at, r.completed_at, s.name as schedule_name
+      FROM schedule_run_history r
+      LEFT JOIN scheduled_workflows s ON s.id = r.schedule_id
+      ORDER BY r.started_at DESC
+      LIMIT 200
+    `).all() as Array<Record<string, unknown>>).map((row) => summarizeRunHistoryRow(row)));
+  }
+
+  if (tableExists('workflow_executions')) {
+    const existingIds = new Set(rows.map((row) => String(row.workflow_id ?? '')));
+    const projections = getDb().prepare(`
+      SELECT *
+      FROM workflow_executions
+      ORDER BY updated_at DESC
+      LIMIT 200
+    `).all() as Array<Record<string, unknown>>;
+    for (const projectionRow of projections) {
+      const projection = parseWorkflowProjectionRow(projectionRow);
+      if (!projection || existingIds.has(projection.workflow_id)) continue;
+      const task = getTaskById(projection.task_id) || getTaskBySessionId(projection.task_id);
+      rows.push({
+        type: 'workflow_projection',
+        id: projection.workflow_id,
+        workflow_id: projection.workflow_id,
+        task_id: task?.id ?? projection.task_id,
+        task_title: task?.summary ?? null,
+        schedule_id: null,
+        schedule_name: projection.workflow_name,
+        session_id: projection.task_id,
+        status: projection.status,
+        error: projection.error_summary,
+        started_at: projection.started_at,
+        completed_at: projection.completed_at,
+        updated_at: projection.updated_at,
+        progress: projection.progress,
+        current_step: projection.current_step,
+        route: task ? `/workflow?taskId=${encodeURIComponent(task.id)}` : '/workflow',
+      });
+    }
+  }
+
+  return rows.sort(compareRunLikeRows);
+}
+
+function summarizeRunHistoryRow(row: Record<string, unknown>): Record<string, unknown> {
+  const runId = String(row.id ?? '');
+  const scheduleId = String(row.schedule_id ?? '');
+  const sessionId = row.session_id ? String(row.session_id) : null;
+  const projection = getWorkflowProjectionByTaskId(sessionId || '') || getWorkflowProjectionByRunId(runId);
+  const task = getTaskById(scheduleId) || getTaskBySessionId(sessionId) || (projection ? getTaskById(projection.task_id) : null);
+  return {
+    type: 'schedule_run',
+    id: runId,
+    run_id: runId,
+    workflow_id: projection?.workflow_id ?? null,
+    task_id: task?.id ?? null,
+    task_title: task?.summary ?? null,
+    schedule_id: scheduleId,
+    schedule_name: String(row.schedule_name ?? ''),
+    session_id: sessionId,
+    browser_context_id: row.browser_context_id ? String(row.browser_context_id) : null,
+    status: String(row.status ?? ''),
+    error: truncateText(String(row.error ?? '') || projection?.error_summary || '', 500) || null,
+    started_at: String(row.started_at ?? ''),
+    completed_at: row.completed_at ? String(row.completed_at) : null,
+    updated_at: projection?.updated_at ?? String(row.completed_at ?? row.started_at ?? ''),
+    progress: projection?.progress ?? null,
+    current_step: projection?.current_step ?? null,
+    route: `/workflow/schedules/${encodeURIComponent(scheduleId)}/runs/${encodeURIComponent(runId)}`,
+  };
+}
+
+function summarizeActiveWorkflowAgent(session: WorkflowAgentExecutionSnapshot): Record<string, unknown> {
+  const route = resolveActiveWorkflowAgentRoute(session);
+  return {
+    workflow_run_id: session.workflowRunId,
+    step_id: session.stepId,
+    lifecycle_state: session.lifecycleState,
+    cancel_requested: session.cancelRequested,
+    role: session.role,
+    role_name: session.roleName,
+    agent_type: session.agentType,
+    execution_mode: session.executionMode,
+    requested_model: session.requestedModel ?? null,
+    resolved_model: session.resolvedModel ?? null,
+    allowed_tools: session.allowedTools,
+    capability_tags: session.capabilityTags,
+    memory_policy: session.memoryPolicy,
+    concurrency_limit: session.concurrencyLimit,
+    session_id: session.sessionId ?? null,
+    run_id: session.runId ?? null,
+    stage_id: session.stageId ?? null,
+    started_at: session.startedAt,
+    task_id: route.taskId,
+    schedule_id: route.scheduleId,
+    schedule_run_id: route.scheduleRunId,
+    route: route.route,
+    route_kind: route.kind,
+  };
+}
+
+function resolveActiveWorkflowAgentRoute(session: WorkflowAgentExecutionSnapshot): {
+  kind: 'schedule_run' | 'workflow_task' | 'workflow_overview';
+  route: string;
+  taskId: string | null;
+  scheduleId: string | null;
+  scheduleRunId: string | null;
+} {
+  const scheduleRun = findScheduleRunForActiveAgent(session);
+  if (scheduleRun) {
+    return {
+      kind: 'schedule_run',
+      route: `/workflow/schedules/${encodeURIComponent(scheduleRun.scheduleId)}/runs/${encodeURIComponent(scheduleRun.id)}`,
+      taskId: null,
+      scheduleId: scheduleRun.scheduleId,
+      scheduleRunId: scheduleRun.id,
+    };
+  }
+
+  const projection = getWorkflowProjectionSummary(session.workflowRunId);
+  const projectionTask = projection
+    ? getTaskById(projection.task_id) || getTaskBySessionId(projection.task_id)
+    : null;
+  const simpleTaskId = parseSimpleExecutionTaskId(session.workflowRunId);
+  const simpleTask = simpleTaskId ? getTaskById(simpleTaskId) : null;
+  const sessionTask = getTaskBySessionId(session.sessionId);
+  const task = projectionTask || simpleTask || sessionTask;
+
+  if (task) {
+    return {
+      kind: 'workflow_task',
+      route: `/workflow?taskId=${encodeURIComponent(task.id)}`,
+      taskId: task.id,
+      scheduleId: null,
+      scheduleRunId: null,
+    };
+  }
+
+  return {
+    kind: 'workflow_overview',
+    route: '/workflow',
+    taskId: null,
+    scheduleId: null,
+    scheduleRunId: null,
+  };
+}
+
+function findLatestRunForSchedule(scheduleId: string): Record<string, unknown> | null {
+  if (!scheduleId || !tableExists('schedule_run_history')) return null;
+  const row = getDb().prepare(`
+    SELECT r.id, r.schedule_id, r.session_id, r.browser_context_id, r.status, r.error,
+           r.started_at, r.completed_at, s.name as schedule_name
+    FROM schedule_run_history r
+    LEFT JOIN scheduled_workflows s ON s.id = r.schedule_id
+    WHERE r.schedule_id = ?
+    ORDER BY r.started_at DESC
+    LIMIT 1
+  `).get(scheduleId) as Record<string, unknown> | undefined;
+  return row ? summarizeRunHistoryRow(row) : null;
+}
+
+function findScheduleRunForActiveAgent(session: WorkflowAgentExecutionSnapshot): { id: string; scheduleId: string } | null {
+  if (session.runId) {
+    const direct = getRunHistory(session.runId);
+    if (direct) {
+      return { id: direct.id, scheduleId: direct.scheduleId };
+    }
+  }
+
+  const bySession = findLatestScheduleRunBySessionId(session.sessionId);
+  if (bySession) return bySession;
+
+  const projection = getWorkflowProjectionSummary(session.workflowRunId);
+  return findLatestScheduleRunBySessionId(projection?.task_id);
+}
+
+function findLatestScheduleRunBySessionId(sessionId: string | null | undefined): { id: string; scheduleId: string } | null {
+  const normalized = normalizeText(sessionId);
+  if (!normalized || !tableExists('schedule_run_history')) return null;
+  const row = getDb().prepare(`
+    SELECT id, schedule_id
+    FROM schedule_run_history
+    WHERE session_id = ?
+    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, started_at DESC
+    LIMIT 1
+  `).get(normalized) as { id?: string; schedule_id?: string } | undefined;
+  if (!row?.id || !row.schedule_id) return null;
+  return { id: String(row.id), scheduleId: String(row.schedule_id) };
+}
+
+function parseSimpleExecutionTaskId(workflowRunId: string): string | null {
+  const prefix = 'simple-';
+  if (!workflowRunId.startsWith(prefix)) return null;
+  const taskId = workflowRunId.slice(prefix.length).trim();
+  return taskId || null;
+}
+
+function findLatestRunForTask(task: ParsedWorkflowTask): Record<string, unknown> | null {
+  return findRunsForTask(task, 1)[0] ?? null;
+}
+
+function findRunsForTask(task: ParsedWorkflowTask, limit: number): Array<Record<string, unknown>> {
+  const workflowId = getMetadataString(getWorkflowMetadata(task), 'workflowId');
+  return gatherWorkflowRunSummaries()
+    .filter((run) => (
+      run.task_id === task.id
+      || run.session_id === task.sessionId
+      || (workflowId && run.workflow_id === workflowId)
+    ))
+    .slice(0, limit);
+}
+
+function buildRunProjectionSummary(runId: string): WorkflowProjectionSummary | null {
+  return getWorkflowProjectionByRunId(runId);
+}
+
+function getWorkflowProjectionByRunId(runId: string): WorkflowProjectionSummary | null {
+  if (!tableExists('workflow_task_mapping') || !tableExists('workflow_executions')) return null;
+  const row = getDb().prepare(`
+    SELECT we.*
+    FROM workflow_task_mapping m
+    JOIN workflow_executions we ON we.workflow_id = m.workflow_id
+    WHERE m.execution_id = ?
+    LIMIT 1
+  `).get(runId) as Record<string, unknown> | undefined;
+  return row ? parseWorkflowProjectionRow(row) : null;
+}
+
+function getWorkflowProjectionByTaskId(taskId: string): WorkflowProjectionSummary | null {
+  if (!taskId || !tableExists('workflow_executions')) return null;
+  const row = getDb().prepare(`
+    SELECT *
+    FROM workflow_executions
+    WHERE task_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get(taskId) as Record<string, unknown> | undefined;
+  return row ? parseWorkflowProjectionRow(row) : null;
+}
+
+function getWorkflowProjectionSummary(workflowId: string): WorkflowProjectionSummary | null {
+  if (!workflowId || !tableExists('workflow_executions')) return null;
+  const row = getDb().prepare(`
+    SELECT *
+    FROM workflow_executions
+    WHERE workflow_id = ?
+  `).get(workflowId) as Record<string, unknown> | undefined;
+  return row ? parseWorkflowProjectionRow(row) : null;
+}
+
+function parseWorkflowProjectionRow(row: Record<string, unknown>): WorkflowProjectionSummary | null {
+  const workflowId = normalizeText(row.workflow_id);
+  if (!workflowId) return null;
+  return {
+    workflow_id: workflowId,
+    task_id: String(row.task_id ?? ''),
+    workflow_name: String(row.workflow_name ?? ''),
+    workflow_version: String(row.workflow_version ?? ''),
+    status: String(row.status ?? ''),
+    progress: Number(row.progress ?? 0),
+    current_step: row.current_step ? String(row.current_step) : null,
+    completed_steps: parseStringArray(row.completed_steps_json),
+    running_steps: parseStringArray(row.running_steps_json),
+    skipped_steps: parseStringArray(row.skipped_steps_json),
+    step_ids: parseStringArray(row.step_ids_json),
+    started_at: row.started_at ? String(row.started_at) : null,
+    completed_at: row.completed_at ? String(row.completed_at) : null,
+    updated_at: String(row.updated_at ?? ''),
+    result_summary: summarizeUnknown(parseJsonValue(row.result_json), 500),
+    error_summary: summarizeUnknown(parseJsonValue(row.error_json), 500),
   };
 }
 
@@ -1074,6 +1834,36 @@ function safeJsonArray(raw: unknown): unknown[] {
   }
 }
 
+function parseJsonObject(raw: unknown): Record<string, unknown> {
+  const parsed = parseJsonValue(raw);
+  return isRecord(parsed) ? parsed : {};
+}
+
+function parseJsonValue(raw: unknown): unknown {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== 'string') return raw;
+  const text = raw.trim();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseStringArray(raw: unknown): string[] {
+  const parsed = parseJsonValue(raw);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function countBy<T>(items: T[], picker: (item: T) => string): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const item of items) {
@@ -1087,6 +1877,20 @@ function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeWorkflowTaskStatus(value: unknown): string | undefined {
+  const text = normalizeText(value);
+  return WORKFLOW_TASK_STATUSES.includes(text as (typeof WORKFLOW_TASK_STATUSES)[number])
+    ? text
+    : undefined;
+}
+
+function normalizeWorkflowRunStatus(value: unknown): string | undefined {
+  const text = normalizeText(value);
+  return WORKFLOW_RUN_STATUSES.includes(text as (typeof WORKFLOW_RUN_STATUSES)[number])
+    ? text
+    : undefined;
+}
+
 function truncateText(value: unknown, maxChars: number): string {
   const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
   if (text.length <= maxChars) return text;
@@ -1095,6 +1899,62 @@ function truncateText(value: unknown, maxChars: number): string {
 
 function clampLimit(limit: number | undefined): number {
   return Math.max(1, Math.min(limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT));
+}
+
+function clampWorkflowLimit(limit: number | undefined): number {
+  return Math.max(1, Math.min(limit ?? DEFAULT_WORKFLOW_LIMIT, MAX_WORKFLOW_LIMIT));
+}
+
+function getWorkflowMetadata(task: ParsedWorkflowTask): Record<string, unknown> {
+  const workflow = task.metadata.workflow;
+  return isRecord(workflow) ? workflow : {};
+}
+
+function getMetadataString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function getTaskStrategy(task: ParsedWorkflowTask): string | null {
+  const scheduling = isRecord(task.metadata.scheduling) ? task.metadata.scheduling : {};
+  const strategy = scheduling.strategy;
+  return typeof strategy === 'string' && strategy.trim() ? strategy.trim() : null;
+}
+
+function summarizeTaskErrors(errors: unknown): string | null {
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const first = errors[0];
+  if (isRecord(first)) {
+    const message = typeof first.message === 'string' ? first.message : '';
+    const code = typeof first.code === 'string' ? first.code : '';
+    return truncateText([code, message].filter(Boolean).join(': '), 500) || null;
+  }
+  return summarizeUnknown(first, 500);
+}
+
+function summarizeUnknown(value: unknown, maxChars: number): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return truncateText(value, maxChars) || null;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return truncateText(JSON.stringify(value), maxChars) || null;
+  } catch {
+    return null;
+  }
+}
+
+function redactLargeWorkflowDsl(record: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...record };
+  if (next.workflowDsl !== undefined) {
+    next.workflowDsl = '[omitted: use Workflow detail page for full DSL]';
+  }
+  return next;
+}
+
+function compareRunLikeRows(left: Record<string, unknown>, right: Record<string, unknown>): number {
+  const leftTime = Date.parse(String(left.updated_at || left.completed_at || left.started_at || '')) || 0;
+  const rightTime = Date.parse(String(right.updated_at || right.completed_at || right.started_at || '')) || 0;
+  return rightTime - leftTime;
 }
 
 function safeExists(filePath: string): boolean {

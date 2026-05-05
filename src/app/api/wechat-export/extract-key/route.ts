@@ -59,9 +59,12 @@ export async function POST(): Promise<Response> {
     }, { status: 400 });
   }
   if (env.signed !== 'adhoc') {
+    const message = env.signed === 'tencent'
+      ? '微信仍是官方签名。请回到微信页面点击“开始修复”，让 Lumos 先临时放开微信读取保护。'
+      : '无法确认微信签名状态。请回到微信页面点击“开始修复”，让 Lumos 重新检测并临时放开微信读取保护。';
     return NextResponse.json({
       error: 'wechat_not_resigned',
-      message: '微信仍是官方签名。请先在终端跑 sudo codesign --force --deep --sign - /Applications/WeChat.app,然后重新打开微信。',
+      message,
     }, { status: 400 });
   }
   const pid = findWeChatPid();

@@ -8,7 +8,7 @@ export async function POST() {
   try {
     await fs.mkdir(dataDir, { recursive: true });
     const prompt = buildExtensionBuilderPrompt(dataDir);
-    const session = createSession('Extension Builder', '', prompt, dataDir, 'code');
+    const session = createSession('Capability Builder', '', prompt, dataDir, 'code');
     return NextResponse.json({ session }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to create builder session';

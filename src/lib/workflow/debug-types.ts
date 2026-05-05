@@ -81,6 +81,11 @@ export interface DebugRuntimeContext {
   skipSet: Set<string>;
   /** stepId → 当前节点的 configHash（用于命中前 hash 校验 + 命中后写回） */
   configHashes: Map<string, string>;
+  /**
+   * Whether real step results should be written back to workflow_debug_step_outputs.
+   * Production reruns reuse this runtime cache path but must stay run-scoped.
+   */
+  persist?: boolean;
 }
 
 /** 缓存命中时返回的合成结果（runtime 包装层用）。 */

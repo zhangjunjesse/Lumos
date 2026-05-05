@@ -120,6 +120,7 @@ export default function RunDetailPage() {
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [releasingBrowser, setReleasingBrowser] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState('');
 
@@ -155,6 +156,33 @@ export default function RunDetailPage() {
   }, []);
 
   const isRunning = run?.status === 'running';
+  const failedStepId = Object.entries(stepOverlays).find(([, overlay]) => overlay.status === 'error')?.[0] ?? null;
+  const canRerunFailed = Boolean(run && run.status === 'error' && failedStepId);
+  const canRerunSelected = Boolean(selectedStepId && workflowDsl?.nodes.some((node) => node.id === selectedStepId));
+
+  const rerunRun = useCallback(async (mode: 'from-failed' | 'from-step', stepId?: string | null) => {
+    if (!scheduleId || !runId || rerunning) return;
+    setRerunning(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/workflow/schedules/${encodeURIComponent(scheduleId)}/runs/${encodeURIComponent(runId)}/rerun`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, stepId }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string; runId?: string };
+      if (!res.ok) {
+        throw new Error(data.error || '重跑失败');
+      }
+      const nextRunId = data.runId ?? runId;
+      await router.push(`/workflow/schedules/${scheduleId}/runs/${nextRunId}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '重跑失败');
+    } finally {
+      setRerunning(false);
+    }
+  }, [rerunning, router, runId, scheduleId]);
+
   useEffect(() => {
     if (!isRunning) return;
     pollRef.current = setInterval(() => { void load(); }, 2000);
@@ -258,6 +286,14 @@ export default function RunDetailPage() {
         onRefresh={() => void load()}
         onCancel={isRunning ? () => void handleCancel() : undefined}
         cancelling={cancelling}
+        rerunning={rerunning}
+        onRerunFailed={canRerunFailed ? () => void rerunRun('from-failed', failedStepId) : undefined}
+        onRerunSelected={canRerunSelected ? () => void rerunRun('from-step', selectedStepId) : undefined}
+        rerunHint={selectedStepId
+          ? `当前选中节点：${selectedStepId}`
+          : canRerunFailed
+            ? `检测到失败节点：${failedStepId}`
+            : null}
       />
 
       {browserConflict && browserConflict.contextId !== 'embedded:default' ? (

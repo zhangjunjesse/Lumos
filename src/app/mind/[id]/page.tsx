@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Pin, Archive, Trash2 } from 'lucide-react';
@@ -13,14 +13,16 @@ interface MemoryUsageLog {
   context: string;
 }
 
-export default function MemoryDetailPage({ params }: { params: { id: string } }) {
+export default function MemoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  // Next.js 15+: params is now a Promise; unwrap with React.use().
+  const { id } = use(params);
   const router = useRouter();
   const [memory, setMemory] = useState<MemoryRecord | null>(null);
   const [usageLog, setUsageLog] = useState<MemoryUsageLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/memory/${params.id}`)
+    fetch(`/api/memory/${id}`)
       .then(r => r.json())
       .then(data => {
         setMemory(data.memory);
@@ -28,7 +30,7 @@ export default function MemoryDetailPage({ params }: { params: { id: string } })
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [params.id]);
+  }, [id]);
 
   if (loading) return <div className="p-6">加载中...</div>;
   if (!memory) return <div className="p-6">记忆不存在</div>;

@@ -228,7 +228,14 @@ function importMcpServers(): number {
         || config.name === 'office-docs'
         || config.name === 'chrome-devtools'
         || config.name === 'image-reader'
-        || config.name === 'im-tools';
+        || config.name === 'im-tools'
+        // goofish-search reads from the local SQLite archive — works without
+        // a live login (returns empty for cold-start users) and is the
+        // primary tool the AI uses to inspect goofish state. Always on.
+        || config.name === 'goofish-search';
+      // goofish stays disabled by default — its tools call live mtop, which
+      // fails with "session expired" until the user logs in via the panel.
+      // The auth/login route flips it on automatically on success.
       createMcpServer({
         name: config.name,
         scope: 'builtin',

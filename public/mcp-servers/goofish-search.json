@@ -1,0 +1,11 @@
+{
+  "name": "goofish-search",
+  "description": "闲鱼会话本地存档搜索工具：按关键词找买家/消息，毫秒级。配合 goofish_sync 使用。",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/goofish-search/search_mcp.mjs"
+  ],
+  "env": {}
+}

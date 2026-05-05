@@ -28,11 +28,12 @@ import { executeCodeHandler, shouldExecuteCode } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { sanitizeResolvedInput, writeStepInputSnapshot } from './step-input-snapshot';
 import { appendStepTraceFromSdkEvent, appendStepTraceMeta } from './step-trace-stream';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 function buildPromptCapabilitiesSystemPrompt(_tools?: unknown): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
 import { generateObjectWithClaudeSdk } from '@/lib/claude/structured-output';
+import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import { z } from 'zod';
 
 type RuntimeCapability = AgentExecutionBindingV1['allowedTools'][number];
@@ -60,6 +61,7 @@ interface ActiveWorkflowAgentExecution {
   agentType: string;
   executionMode: Exclude<WorkflowAgentExecutionMode, 'auto'>;
   requestedModel?: string;
+  resolvedModel?: string;
   allowedTools: AgentExecutionBindingV1['allowedTools'];
   capabilityTags: AgentExecutionBindingV1['capabilityTags'];
   memoryPolicy: AgentExecutionBindingV1['memoryPolicy'];
@@ -82,6 +84,7 @@ export interface WorkflowAgentExecutionSnapshot {
   agentType: string;
   executionMode: Exclude<WorkflowAgentExecutionMode, 'auto'>;
   requestedModel?: string;
+  resolvedModel?: string;
   allowedTools: AgentExecutionBindingV1['allowedTools'];
   capabilityTags: AgentExecutionBindingV1['capabilityTags'];
   memoryPolicy: AgentExecutionBindingV1['memoryPolicy'];
@@ -125,6 +128,7 @@ function toWorkflowAgentExecutionSnapshot(
     agentType: execution.agentType,
     executionMode: execution.executionMode,
     requestedModel: execution.requestedModel,
+    resolvedModel: execution.resolvedModel,
     allowedTools: [...execution.allowedTools],
     capabilityTags: [...execution.capabilityTags],
     memoryPolicy: execution.memoryPolicy,
@@ -440,6 +444,7 @@ function buildDefinitionFromPreset(
   const capabilitySelection = resolveAllowedCapabilities(baseAllowedTools, input.tools);
   const capabilityPrompt = buildPromptCapabilitiesSystemPrompt(input.tools);
   const enhancedSystemPrompt = (preset.config.systemPrompt ?? '') + capabilityPrompt;
+  const preferredModel = preset.config.model?.trim() || undefined;
 
   return {
     role,
@@ -455,6 +460,7 @@ function buildDefinitionFromPreset(
       concurrencyLimit: preset.config.concurrencyLimit ?? 1,
     },
     ignoredToolRequests: capabilitySelection.ignoredToolRequests,
+    ...(preferredModel ? { preferredModel } : {}),
   };
 }
 
@@ -802,6 +808,7 @@ function buildWorkflowAgentExecutionMetadata(input: {
   executionMode: Exclude<WorkflowAgentExecutionMode, 'auto'>;
   definition: ResolvedWorkflowAgentDefinition;
   requestedModel?: string;
+  resolvedModel?: string;
   payload?: StageExecutionPayloadV1 | null;
   cancelled?: boolean;
   timedOut?: boolean;
@@ -811,6 +818,7 @@ function buildWorkflowAgentExecutionMetadata(input: {
     executionMode,
     definition,
     requestedModel,
+    resolvedModel,
     payload,
     cancelled,
     timedOut,
@@ -828,6 +836,7 @@ function buildWorkflowAgentExecutionMetadata(input: {
     memoryPolicy: definition.binding.memoryPolicy,
     concurrencyLimit: definition.binding.concurrencyLimit,
     requestedModel: requestedModel ?? null,
+    resolvedModel: resolvedModel ?? null,
     browserContextId: runtimeContext.browserContextId ?? null,
     timeoutMs: typeof runtimeContext.timeoutMs === 'number' ? runtimeContext.timeoutMs : null,
     ...(typeof cancelled === 'boolean' ? { cancelled } : {}),
@@ -1022,6 +1031,7 @@ function toStepResult(input: {
   payload: StageExecutionPayloadV1;
   result: StageExecutionResultV1;
   requestedModel?: string;
+  resolvedModel?: string;
   timedOut?: boolean;
   codeFellBackToAgent?: boolean;
   agentInput?: AgentStepInput;
@@ -1033,6 +1043,7 @@ function toStepResult(input: {
     payload,
     result,
     requestedModel,
+    resolvedModel,
     timedOut,
     codeFellBackToAgent,
     agentInput,
@@ -1083,6 +1094,7 @@ function toStepResult(input: {
         executionMode,
         definition,
         requestedModel,
+        resolvedModel,
         payload,
         timedOut,
       }),
@@ -1179,6 +1191,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     runtimeContext,
     definition.preferredProviderId,
   );
+  const resolvedModel = resolveProviderModelForRequest(workflowProvider, requestedModel);
   const worker = new StageWorker(executionMode === 'claude');
   const abortController = new AbortController();
   const activeExecutionKey = buildActiveExecutionKey(runtimeContext);
@@ -1209,6 +1222,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     agentType: definition.binding.agentType,
     executionMode,
     requestedModel,
+    resolvedModel,
     allowedTools: definition.binding.allowedTools,
     capabilityTags: definition.binding.capabilityTags,
     memoryPolicy: definition.binding.memoryPolicy,
@@ -1264,7 +1278,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     appendStepTraceMeta(payload.workspace.stageWorkspace, {
       providerName: workflowProvider?.name,
       providerId: workflowProvider?.id,
-      model: requestedModel,
+      model: resolvedModel || requestedModel,
     });
 
     if (executionMode === 'synthetic') {
@@ -1404,6 +1418,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
       payload,
       result: finalResult,
       requestedModel,
+      resolvedModel,
       timedOut,
       codeFellBackToAgent,
       agentInput: input,
@@ -1476,6 +1491,7 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
           executionMode,
           definition,
           requestedModel,
+          resolvedModel,
           payload,
           cancelled,
           timedOut,

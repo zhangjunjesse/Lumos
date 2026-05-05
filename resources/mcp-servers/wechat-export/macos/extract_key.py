@@ -43,6 +43,7 @@ WECHAT_DB_ROOT = os.path.expanduser(
 # Regex for literal `x'<hex>'` in memory. SQLCipher format: 64 hex (key) + 32 hex
 # (salt) = 96 hex. Some WCDB build flavours append more; cap at 192 to bound work.
 HEX_PATTERN = re.compile(rb"x'([0-9a-fA-F]{64,192})'")
+KEY_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def find_db_storage_dir() -> str | None:
@@ -50,7 +51,7 @@ def find_db_storage_dir() -> str | None:
     matches = glob.glob(os.path.join(WECHAT_DB_ROOT, "*", "db_storage"))
     if not matches:
         return None
-    return matches[0]
+    return max(matches, key=os.path.getmtime)
 
 
 def collect_db_pages(db_dir: str) -> list[tuple[str, str, str, bytes]]:
@@ -120,12 +121,45 @@ def iter_regions(process: lldb.SBProcess) -> Iterable[tuple[int, int]]:
             yield base, size
 
 
-def scan(process: lldb.SBProcess, db_pages: list, candidates_path: str) -> dict[str, str]:
+def load_existing_keys(path: str, db_pages: list) -> dict[str, str]:
+    """Load and verify previously recovered keys so retries are additive."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as fh:
+            data = json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    salt_to_pages = {salt: page1 for _, _, salt, page1 in db_pages}
+    verified: dict[str, str] = {}
+    for salt, key_hex in data.items():
+        if not isinstance(salt, str) or not isinstance(key_hex, str):
+            continue
+        if salt not in salt_to_pages or not KEY_HEX_PATTERN.match(key_hex):
+            continue
+        if verify_key(bytes.fromhex(key_hex), salt_to_pages[salt]):
+            verified[salt] = key_hex.lower()
+    return verified
+
+
+def scan(
+    process: lldb.SBProcess,
+    db_pages: list,
+    candidates_path: str,
+    known_keys: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Return {salt_hex: key_hex} for every db whose key was recovered."""
     salt_to_pages = {salt: page1 for _, _, salt, page1 in db_pages}
-    remaining = set(salt_to_pages)
-    found: dict[str, str] = {}
+    found: dict[str, str] = dict(known_keys or {})
+    remaining = set(salt_to_pages) - set(found)
     seen_strings: set[str] = set()
+
+    if not remaining:
+        print(f"  all {len(found)} key(s) already verified from existing output", flush=True)
+        return found
 
     err = lldb.SBError()
     chunk_size = 8 * 1024 * 1024
@@ -162,7 +196,7 @@ def scan(process: lldb.SBProcess, db_pages: list, candidates_path: str) -> dict[
                     if salt_hex and salt_hex in remaining:
                         page1 = salt_to_pages[salt_hex]
                         if verify_key(bytes.fromhex(key_hex), page1):
-                            found[salt_hex] = key_hex
+                            found[salt_hex] = key_hex.lower()
                             remaining.discard(salt_hex)
                             print(f"  [FOUND] salt={salt_hex} key={key_hex}", flush=True)
                     elif salt_hex is None:
@@ -170,7 +204,7 @@ def scan(process: lldb.SBProcess, db_pages: list, candidates_path: str) -> dict[
                         kb = bytes.fromhex(key_hex)
                         for s in list(remaining):
                             if verify_key(kb, salt_to_pages[s]):
-                                found[s] = key_hex
+                                found[s] = key_hex.lower()
                                 remaining.discard(s)
                                 print(f"  [FOUND] salt={s} key={key_hex} (key-only match)", flush=True)
                 if not remaining:
@@ -220,12 +254,20 @@ def main() -> int:
     for s, rels in sorted(salts.items()):
         print(f"    salt {s}: {', '.join(rels[:3])}{' …' if len(rels) > 3 else ''}")
 
+    existing = load_existing_keys(args.out, db_pages)
+    if existing:
+        print(f"[*] verified {len(existing)} existing key(s) from {args.out}")
+
     print("[*] attaching to WeChat ...", flush=True)
     t0 = time.time()
     debugger, process = attach(args.pid)
     try:
         print(f"[+] attached pid={process.GetProcessID()}, scanning memory ...", flush=True)
-        found = scan(process, db_pages, candidates_path="candidates.txt")
+        candidates_path = os.path.join(
+            os.path.dirname(os.path.abspath(args.out)) or ".",
+            "candidates.txt",
+        )
+        found = scan(process, db_pages, candidates_path=candidates_path, known_keys=existing)
     finally:
         process.Detach()
         lldb.SBDebugger.Destroy(debugger)
@@ -237,7 +279,11 @@ def main() -> int:
 
     with open(args.out, "w") as fh:
         json.dump(found, fh, indent=2)
-    print(f"[+] wrote {len(found)} key(s) → {args.out}  (elapsed {elapsed:.1f}s)")
+    new_count = len(set(found) - set(existing))
+    print(
+        f"[+] wrote {len(found)} key(s) → {args.out} "
+        f"({new_count} new, elapsed {elapsed:.1f}s)"
+    )
 
     # Pick the key for any message_*.db so the MCP server can immediately use it.
     msg_salts = {salt for rel, _, salt, _ in db_pages

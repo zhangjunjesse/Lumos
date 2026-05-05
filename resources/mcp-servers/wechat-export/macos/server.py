@@ -193,20 +193,46 @@ def _load_key() -> str:
     return open(KEY_FILE).read().strip()
 
 
+def _load_keys_json() -> dict[str, str]:
+    """Load all recovered per-database keys from wechat_keys.json."""
+    keys_path = os.path.join(os.path.dirname(KEY_FILE), "wechat_keys.json")
+    if not os.path.exists(keys_path):
+        return {}
+    try:
+        with open(keys_path, "r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _key_for_db(db_path: str) -> str:
+    """Return the SQLCipher key for this db, falling back to key.txt."""
+    try:
+        with open(db_path, "rb") as fh:
+            salt_hex = fh.read(16).hex()
+        key = _load_keys_json().get(salt_hex)
+        if key:
+            return key
+    except OSError:
+        pass
+    return _load_key()
+
+
 def _find_data_dir() -> str:
     """Find the WeChat db_storage directory."""
     pattern = os.path.expanduser(
         "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/"
-        "xwechat_files/*/db_storage/message/message_0.db"
+        "xwechat_files/*/db_storage/message/message_[0-9].db"
     )
     matches = glob.glob(pattern)
     if not matches:
         raise FileNotFoundError("未找到 WeChat 数据目录")
-    # Use the key to find the right account
-    key = _load_key()
+    # Use recovered per-db keys to find the right account. key.txt may point
+    # at an old message shard after WeChat repair/reinstall.
     for match in sorted(matches, key=os.path.getmtime, reverse=True):
         db_dir = os.path.dirname(os.path.dirname(match))
-        if _test_key(key, match):
+        if _test_key(_key_for_db(match), match):
             return db_dir
     # Fallback to most recent
     best = max(matches, key=os.path.getmtime)
@@ -248,7 +274,7 @@ def _preamble(key: str) -> str:
 
 def _query(db_path: str, sql: str) -> list[dict]:
     """Execute SQL query and return list of dicts."""
-    key = _load_key()
+    key = _key_for_db(db_path)
     cmd = _preamble(key) + ".headers on\n.mode csv\n" + sql
     result = subprocess.run(
         [SQLCIPHER_PATH, db_path],
@@ -267,7 +293,7 @@ def _query(db_path: str, sql: str) -> list[dict]:
 
 def _query_raw(db_path: str, sql: str) -> list[str]:
     """Execute SQL and return raw output lines."""
-    key = _load_key()
+    key = _key_for_db(db_path)
     cmd = _preamble(key) + sql
     result = subprocess.run(
         [SQLCIPHER_PATH, db_path],
@@ -283,8 +309,7 @@ def _get_message_dbs() -> list[str]:
     pattern = os.path.join(data_dir, "message", "message_[0-9].db")
     dbs = sorted(glob.glob(pattern))
     # Only return dbs that are accessible with our key
-    key = _load_key()
-    return [db for db in dbs if _test_key(key, db)]
+    return [db for db in dbs if _test_key(_key_for_db(db), db)]
 
 
 def _get_name2id() -> dict[str, str]:
@@ -378,7 +403,7 @@ def _is_my_message(real_sender_id: str | int, db_path: str) -> bool:
         sid = int(real_sender_id)
     except (ValueError, TypeError):
         return False
-    my_id = get_my_sender_id_for_db(db_path, SQLCIPHER_PATH, _load_key(), self_wxid)
+    my_id = get_my_sender_id_for_db(db_path, SQLCIPHER_PATH, _key_for_db(db_path), self_wxid)
     return my_id is not None and sid == my_id
 
 
