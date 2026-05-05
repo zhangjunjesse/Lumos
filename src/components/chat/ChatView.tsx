@@ -61,6 +61,9 @@ interface ChatViewProps {
   onInputFocus?: () => void;
   fullWidth?: boolean;
   hideEmptyState?: boolean;
+  chatEndpoint?: string;
+  providerModelsEndpoint?: string;
+  onStreamComplete?: () => void;
   onRequestedModelChange?: (model: string) => void;
   onResolvedModelChange?: (model: string) => void;
   onBrowserContextChange?: (contextId: string) => void;
@@ -137,6 +140,9 @@ export function ChatView({
   onInputFocus,
   fullWidth = false,
   hideEmptyState = false,
+  chatEndpoint,
+  providerModelsEndpoint,
+  onStreamComplete,
   onRequestedModelChange,
   onResolvedModelChange,
   onBrowserContextChange,
@@ -870,7 +876,7 @@ export function ChatView({
 
       try {
         const bridgeHeaders = await getBrowserBridgeHeaders(browserContextId);
-        const apiEndpoint = sessionId === 'capability-authoring' ? '/api/capabilities/chat' : '/api/chat';
+        const apiEndpoint = chatEndpoint || (sessionId === 'capability-authoring' ? '/api/capabilities/chat' : '/api/chat');
 
         // 为 capability-authoring 构建消息历史
         const requestBody: Record<string, unknown> = {
@@ -1192,6 +1198,7 @@ export function ChatView({
 
         window.dispatchEvent(new CustomEvent('refresh-file-tree'));
         window.dispatchEvent(new CustomEvent('team-plan-refresh', { detail: { sessionId } }));
+        onStreamComplete?.();
         void refreshSessionMetadata();
         if (shouldScheduleIdleTrigger) {
           scheduleIdleMemoryTrigger();
@@ -1208,6 +1215,7 @@ export function ChatView({
       appendMessage,
       browserContextId,
       clearIdleMemoryTimer,
+      chatEndpoint,
       completeStreamingSession,
       currentModel,
       currentProviderId,
@@ -1215,6 +1223,7 @@ export function ChatView({
       isStreaming,
       mode,
       onResolvedModelChange,
+      onStreamComplete,
       pathname,
       recordBrowserConflict,
       resetStreamingUi,
@@ -1463,6 +1472,7 @@ export function ChatView({
         initialKnowledgeEnabled={initialKnowledgeEnabled}
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
+        providerModelsEndpoint={providerModelsEndpoint}
       />
 
       {switchError && (

@@ -26,6 +26,7 @@ describe('app platform db migrations', () => {
       'lumos_app_builder_artifacts',
       'lumos_app_builder_messages',
       'lumos_app_builder_sessions',
+      'lumos_app_builder_stories',
       'lumos_app_configs',
       'lumos_app_data',
       'lumos_app_permissions',
@@ -44,6 +45,7 @@ describe('app platform db migrations', () => {
     expect(indexes.map(i => i.name)).toEqual([
       'idx_lumos_app_builder_artifacts',
       'idx_lumos_app_builder_msgs',
+      'idx_lumos_app_builder_stories',
       'idx_lumos_app_data_collection',
       'idx_lumos_app_runs_app',
     ]);
@@ -161,5 +163,37 @@ describe('app platform db migrations', () => {
     ).run('s1', 'in_progress', now, now);
 
     expect(insertBadStatus).toThrow(/CHECK constraint failed/);
+  });
+
+  it('cascades builder stories when deleting a builder session', () => {
+    migrateAppTables(db);
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO lumos_app_builder_sessions (id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run('s1', 'gathering', now, now);
+    db.prepare(
+      `INSERT INTO lumos_app_builder_stories
+       (id, session_id, title, story_text, status, priority, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'story1',
+      's1',
+      '记录客户',
+      '作为销售，我希望记录客户信息，这样我能持续跟进。',
+      'pending_confirmation',
+      1,
+      0,
+      now,
+      now,
+    );
+
+    db.prepare('DELETE FROM lumos_app_builder_sessions WHERE id = ?').run('s1');
+
+    const rows = db.prepare(
+      'SELECT COUNT(*) AS c FROM lumos_app_builder_stories',
+    ).get() as { c: number };
+    expect(rows.c).toBe(0);
   });
 });

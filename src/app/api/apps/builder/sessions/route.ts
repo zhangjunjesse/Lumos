@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { createSessionStore } from '@/lib/app/builder/session';
+import {
+  BLANK_APP_BUILDER_TEMPLATE_ID,
+  buildTemplateBlueprintFiles,
+  getAppBuilderTemplate,
+} from '@/lib/app/builder/templates';
 import { getAppPlatformService } from '@/lib/app/service';
 
 /**
@@ -52,16 +57,51 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 400 },
       );
     }
+    const templateId = normalizeTemplateId(body.templateId);
+    const template = getAppBuilderTemplate(templateId);
+    if (templateId && !template) {
+      return NextResponse.json(
+        { error: 'Unknown app builder template' },
+        { status: 400 },
+      );
+    }
     const { db } = getAppPlatformService();
     const store = createSessionStore(db);
     const session = store.createSession({
       appName: body.appName.trim(),
       appDescription: description || undefined,
-      templateId: body.templateId,
+      templateId: templateId || undefined,
       llmModel: body.llmModel,
+      initialStatus: template ? 'demo_review' : 'gathering',
     });
+    if (template) {
+      const files = buildTemplateBlueprintFiles(session, template.id);
+      for (const [filePath, content] of Object.entries(files ?? {})) {
+        store.saveArtifact({ sessionId: session.id, filePath, content });
+      }
+      store.appendMessage({
+        sessionId: session.id,
+        role: 'tool',
+        toolName: 'app_builder_template',
+        content: {
+          summary: `已套用「${template.name}」模板`,
+          files: Object.keys(files ?? {}),
+        },
+      });
+      store.appendMessage({
+        sessionId: session.id,
+        role: 'assistant',
+        content: `我已经把「${template.name}」模板放到左侧预览里了。你可以直接说要改哪些字段、页面、按钮或流程。`,
+      });
+    }
     return NextResponse.json({ session }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
+}
+
+function normalizeTemplateId(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const id = value.trim();
+  return id === BLANK_APP_BUILDER_TEMPLATE_ID ? '' : id;
 }

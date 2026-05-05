@@ -5,14 +5,11 @@ import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
 // SCHEMA_DIR resolution priority:
-//   1. LUMOS_APP_SCHEMA_DIR env var (used by the CLI script after bundling
-//      with esbuild, where __dirname no longer points at the source tree).
-//   2. <__dirname>/../../../../resources/app-schemas — the in-tree path
-//      that works for jest, Next.js, and Electron-packaged builds.
-const SCHEMA_DIR =
-  process.env.LUMOS_APP_SCHEMA_DIR && process.env.LUMOS_APP_SCHEMA_DIR.length > 0
-    ? process.env.LUMOS_APP_SCHEMA_DIR
-    : path.resolve(__dirname, '../../../../resources/app-schemas');
+//   1. LUMOS_APP_SCHEMA_DIR env var (used by the CLI script after bundling).
+//   2. process.cwd()/resources/app-schemas for Next.js route handlers, where
+//      bundling can rewrite __dirname to a virtual location such as /ROOT.
+//   3. <__dirname>/../../../../resources/app-schemas for jest/source-tree use.
+const SCHEMA_DIR = resolveSchemaDir();
 
 export type Validators = {
   app: ValidateFunction;
@@ -44,4 +41,19 @@ export function getValidators(): Validators {
 
 export function resetValidatorCache(): void {
   cached = null;
+}
+
+function resolveSchemaDir(): string {
+  const candidates = [
+    process.env.LUMOS_APP_SCHEMA_DIR,
+    path.resolve(process.cwd(), 'resources/app-schemas'),
+    path.resolve(__dirname, '../../../../resources/app-schemas'),
+  ].filter((candidate): candidate is string => !!candidate && candidate.length > 0);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'app.schema.json'))) {
+      return candidate;
+    }
+  }
+  return candidates[0] ?? path.resolve(process.cwd(), 'resources/app-schemas');
 }

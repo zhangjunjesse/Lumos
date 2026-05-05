@@ -17,6 +17,8 @@ import { getAppPlatformService } from '@/lib/app/service';
 const ALLOWED_STATUS: SessionStatus[] = [
   'gathering',
   'generating',
+  'demo_review',
+  'final_build',
   'installed',
   'iterating',
   'failed',

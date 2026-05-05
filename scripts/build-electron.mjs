@@ -58,7 +58,10 @@ async function buildElectron() {
     bundle: true,
     platform: 'node',
     target: 'node18',
-    external: ['electron', 'better-sqlite3'],
+    // App preview compiles builder drafts at runtime. esbuild's JS API must
+    // stay external because it locates its native binary relative to its own
+    // package files; bundling it into dist-electron/main.js breaks that path.
+    external: ['electron', 'better-sqlite3', 'esbuild'],
     sourcemap: true,
     minify: false,
   };

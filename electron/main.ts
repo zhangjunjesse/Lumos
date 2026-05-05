@@ -15,6 +15,16 @@ import {
   clearBridgeRuntimeConfig,
   initializeBridgeRuntimeConfig,
 } from '../src/lib/bridge/runtime-config';
+import {
+  registerSandboxProtocol,
+  registerSandboxProtocolScheme,
+} from './app-platform/sandbox-protocol';
+import { AppLoader } from '../src/lib/app/sandbox/app-loader';
+import { HttpBuilderSourceProvider } from '../src/lib/app/sandbox/http-source';
+import {
+  RuntimeAssetReader,
+  resolveRuntimeRoot,
+} from '../src/lib/app/sandbox/runtime-assets';
 
 let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;
@@ -51,6 +61,43 @@ function configureUserDataPath(): void {
 }
 
 configureUserDataPath();
+
+// Register `lumos-app://` as a privileged scheme. Must run before
+// app.whenReady() — Electron requires scheme privileges to be declared during
+// the first event-loop tick. The actual handler is wired later, once the
+// local Next.js server is ready.
+registerSandboxProtocolScheme();
+
+let sandboxAppLoader: AppLoader | null = null;
+let sandboxHandlerInstalled = false;
+let unregisterSandboxProtocol: (() => void) | null = null;
+
+function setupSandboxRuntime(): void {
+  if (sandboxHandlerInstalled) return;
+  const sourceProvider = new HttpBuilderSourceProvider({
+    getServerOrigin: () => appOriginPrefix || null,
+  });
+  sandboxAppLoader = new AppLoader({ source: sourceProvider });
+  const runtimeAssets = new RuntimeAssetReader({
+    rootDir: app.isPackaged
+      ? resolveRuntimeRoot(process.resourcesPath)
+      : path.join(__dirname, '..', 'resources', 'app-runtime'),
+    immutable: app.isPackaged,
+  });
+  unregisterSandboxProtocol = registerSandboxProtocol({
+    appLoader: sandboxAppLoader,
+    runtimeAssets,
+  });
+  sandboxHandlerInstalled = true;
+}
+
+function invalidateSandboxApp(appId: string): void {
+  sandboxAppLoader?.invalidate(appId);
+}
+// Keep references so they remain in scope and aren't tree-shaken; will be
+// reachable via IPC in a follow-up commit.
+void invalidateSandboxApp;
+void unregisterSandboxProtocol;
 
 const isPrimaryInstance = app.requestSingleInstanceLock();
 if (!isPrimaryInstance) {
@@ -834,6 +881,7 @@ async function reopenMainWindow(): Promise<void> {
       serverPort = port;
     }
 
+    if (serverPort) setupSandboxRuntime();
     createWindow(serverPort || getPreferredServerPort());
     if (serverPort) {
       await startBridgeRuntime(serverPort);
@@ -1453,6 +1501,7 @@ app.whenReady().then(async () => {
     }
 
     serverPort = port;
+    setupSandboxRuntime();
     createWindow(port);
 
     await ensureBridgeRuntimeReady(port);

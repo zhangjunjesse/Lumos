@@ -53,9 +53,14 @@ export type ApiBridgeResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiBridgeError };
 
+export interface QueryWeChatApiOptions {
+  timeoutMs?: number;
+}
+
 export async function queryWeChatApi<T = unknown>(
   op: string,
   args: Record<string, unknown> = {},
+  options: QueryWeChatApiOptions = {},
 ): Promise<ApiBridgeResult<T>> {
   const py = getPythonBinary();
   if (!py) {
@@ -80,6 +85,7 @@ export async function queryWeChatApi<T = unknown>(
 
   return new Promise<ApiBridgeResult<T>>((resolve) => {
     const child = spawn(py, [apiScript], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
 
     let stdout = '';
     let stderr = '';
@@ -88,8 +94,8 @@ export async function queryWeChatApi<T = unknown>(
       if (settled) return;
       settled = true;
       child.kill('SIGKILL');
-      resolve({ ok: false, error: { code: 'timeout', message: `Python timed out after ${TIMEOUT_MS}ms` } });
-    }, TIMEOUT_MS);
+      resolve({ ok: false, error: { code: 'timeout', message: `Python timed out after ${timeoutMs}ms` } });
+    }, timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });

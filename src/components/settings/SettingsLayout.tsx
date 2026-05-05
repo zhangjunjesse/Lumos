@@ -27,6 +27,7 @@ import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
 import { CodifyAgentSection } from "./CodifyAgentSection";
 import { ImSection } from "./im/ImSection";
+import { AppBuilderLLMSection } from "./AppBuilderLLMSection";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 
@@ -154,6 +155,8 @@ export function SettingsLayout() {
               <AgentCreationLLMSection />
               <div className="h-px bg-border/50" />
               <WorkflowBuilderLLMSection />
+              <div className="h-px bg-border/50" />
+              <AppBuilderLLMSection />
               <div className="h-px bg-border/50" />
               <CodifyAgentSection />
             </div>

@@ -16,6 +16,7 @@ import type {
   DeepSearchSiteStateRecord,
   DeepSearchSiteUpsertInput,
 } from '@/types';
+import { isDeepSearchSiteLoginFree } from '@/lib/deepsearch/site-state';
 import { getDb } from './connection';
 
 interface DeepSearchSiteRow {
@@ -488,10 +489,13 @@ function getSiteNames(rows: DeepSearchSiteRow[], siteKeys: string[]): string[] {
 }
 
 function isSiteReady(row: DeepSearchSiteRow, liveState?: DeepSearchSiteStateRecord | null): boolean {
+  if (isDeepSearchSiteLoginFree(row.site_key)) {
+    return true;
+  }
   if (liveState) {
     return liveState.loginState === 'connected';
   }
-  return row.cookie_status === 'valid';
+  return false;
 }
 
 function buildStatusDecision(

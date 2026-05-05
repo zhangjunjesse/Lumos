@@ -96,7 +96,7 @@ export function migrateAppTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lumos_app_builder_sessions (
       id TEXT PRIMARY KEY,
-      status TEXT NOT NULL CHECK (status IN ('gathering','generating','installed','iterating','failed')),
+      status TEXT NOT NULL CHECK (status IN ('gathering','generating','demo_review','final_build','installed','iterating','failed')),
       needs_summary_json TEXT,
       app_id TEXT,
       template_id TEXT,
@@ -127,6 +127,33 @@ export function migrateAppTables(db: Database.Database): void {
       created_at INTEGER NOT NULL,
       FOREIGN KEY (session_id) REFERENCES lumos_app_builder_sessions(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS lumos_app_builder_stories (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      story_text TEXT NOT NULL,
+      actor TEXT,
+      goal TEXT,
+      benefit TEXT,
+      status TEXT NOT NULL CHECK (status IN (
+        'draft',
+        'pending_confirmation',
+        'confirmed',
+        'in_progress',
+        'implemented',
+        'accepted',
+        'deferred'
+      )),
+      priority INTEGER NOT NULL DEFAULT 2,
+      acceptance_criteria_json TEXT,
+      related_pages_json TEXT,
+      related_collections_json TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES lumos_app_builder_sessions(id) ON DELETE CASCADE
+    );
   `);
 
   if (!indexExists(db, 'idx_lumos_app_data_collection')) {
@@ -153,7 +180,56 @@ export function migrateAppTables(db: Database.Database): void {
         ON lumos_app_builder_artifacts(session_id, file_path, version DESC)
     `);
   }
+  if (!indexExists(db, 'idx_lumos_app_builder_stories')) {
+    db.exec(`
+      CREATE INDEX idx_lumos_app_builder_stories
+        ON lumos_app_builder_stories(session_id, sort_order, created_at)
+    `);
+  }
+
+  migrateBuilderSessionStatusCheck(db);
 
   // Suppress unused warning when only index creation runs.
   void tableExists;
+}
+
+function migrateBuilderSessionStatusCheck(db: Database.Database): void {
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='lumos_app_builder_sessions'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql) return;
+  if (row.sql.includes("'demo_review'") && row.sql.includes("'final_build'")) return;
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    const txn = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE lumos_app_builder_sessions_new (
+          id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK (status IN ('gathering','generating','demo_review','final_build','installed','iterating','failed')),
+          needs_summary_json TEXT,
+          app_id TEXT,
+          template_id TEXT,
+          llm_model TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+      db.exec(`
+        INSERT INTO lumos_app_builder_sessions_new
+          (id, status, needs_summary_json, app_id, template_id, llm_model, created_at, updated_at)
+        SELECT id, status, needs_summary_json, app_id, template_id, llm_model, created_at, updated_at
+        FROM lumos_app_builder_sessions;
+      `);
+      db.exec(`DROP TABLE lumos_app_builder_sessions;`);
+      db.exec(
+        `ALTER TABLE lumos_app_builder_sessions_new RENAME TO lumos_app_builder_sessions;`,
+      );
+    });
+    txn();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
 }

@@ -1,0 +1,64 @@
+{
+  "builtAt": "2026-05-03T02:20:12.488Z",
+  "bundles": [
+    {
+      "file": "react.mjs",
+      "bytes": 21257,
+      "hash": "0e1427c86988"
+    },
+    {
+      "file": "react-jsx-runtime.mjs",
+      "bytes": 1450,
+      "hash": "d6c486b6fe45"
+    },
+    {
+      "file": "scheduler.mjs",
+      "bytes": 12171,
+      "hash": "85d21e259337"
+    },
+    {
+      "file": "react-dom.mjs",
+      "bytes": 8302,
+      "hash": "377296658d57"
+    },
+    {
+      "file": "react-dom-client.mjs",
+      "bytes": 536731,
+      "hash": "407b689a01f4"
+    },
+    {
+      "file": "lumos-app.mjs",
+      "bytes": 4881,
+      "hash": "279bef58ab0b"
+    },
+    {
+      "file": "lumos-ui.mjs",
+      "bytes": 193426,
+      "hash": "504aea17ef06"
+    },
+    {
+      "file": "lucide-react.mjs",
+      "bytes": 681222,
+      "hash": "6a4a0009743c"
+    },
+    {
+      "file": "clsx.mjs",
+      "bytes": 398,
+      "hash": "9f194ef5b9ee"
+    },
+    {
+      "file": "tailwind-merge.mjs",
+      "bytes": 26493,
+      "hash": "3ed5ecae09eb"
+    },
+    {
+      "file": "cva.mjs",
+      "bytes": 689,
+      "hash": "190eb2390d47"
+    }
+  ],
+  "css": {
+    "file": "tailwind.css",
+    "bytes": 257877
+  }
+}

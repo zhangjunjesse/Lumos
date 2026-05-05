@@ -288,6 +288,81 @@ def list_sessions(args: dict) -> dict:
     return {"items": items, "total": len(items)}
 
 
+def _display_for_wxid(wxid: str, contacts: dict) -> str:
+    info = contacts.get(wxid, {})
+    display = _display_name(wxid, info)
+    if not info and wxid.endswith("@chatroom"):
+        display = f"群聊({wxid.split('@')[0]})"
+    return display
+
+
+def _message_table_entries() -> list[tuple[str, str, str]]:
+    """Return all readable message tables as (db_path, table, wxid)."""
+    name2id = server._get_name2id()
+    entries: list[tuple[str, str, str]] = []
+    for db_path in server._get_message_dbs():
+        tables_raw = server._query_raw(
+            db_path, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%';"
+        )
+        for table in [t.strip() for t in tables_raw if t.strip().startswith("Msg_")]:
+            entries.append((db_path, table, name2id.get(table, table)))
+    return entries
+
+
+def _message_table_stats(db_path: str, table: str) -> dict:
+    rows = server._query(
+        db_path,
+        f"SELECT COUNT(*) AS count, MAX(create_time) AS last_timestamp "
+        f"FROM {table} WHERE message_content IS NOT NULL AND message_content != '';",
+    )
+    if not rows:
+        return {"count": 0, "last_timestamp": 0}
+    row = rows[0]
+    try:
+        count = int(row.get("count") or 0)
+    except (ValueError, TypeError):
+        count = 0
+    try:
+        last_timestamp = int(row.get("last_timestamp") or 0)
+    except (ValueError, TypeError):
+        last_timestamp = 0
+    return {"count": count, "last_timestamp": last_timestamp}
+
+
+def _decode_snapshot_message(row: dict, db_path: str, wxid: str, display: str, is_group: bool) -> dict | None:
+    create_time = row.get("create_time") or "0"
+    raw_type = row.get("local_type") or ""
+    try:
+        type_int = int(raw_type) if raw_type else 0
+    except (ValueError, TypeError):
+        type_int = 0
+    low_type = type_int & 0xFFFF
+    ts_int = int(create_time) if str(create_time).isdigit() else 0
+    if ts_int <= 0:
+        return None
+
+    content_raw = row.get("message_content", "") or ""
+    if low_type in (10000, 10002):
+        rendered = "[系统消息]"
+    else:
+        rendered = decode_content(type_int, content_raw)
+    content = (rendered or "").strip()
+    if not content:
+        return None
+
+    sender_id = row.get("real_sender_id", "")
+    is_me = server._is_my_message(sender_id, db_path)
+    return {
+        "wxid": wxid,
+        "display": display,
+        "is_group": is_group,
+        "ts": ts_int,
+        "sender": "me" if is_me else "them",
+        "type": low_type,
+        "content": content,
+    }
+
+
 # ─── Avatars ──────────────────────────────────────────────────────────────
 
 def _avatar_path(wxid: str) -> str:
@@ -452,6 +527,113 @@ def read_chat(args: dict) -> dict:
     }
 
 
+def analyze_snapshot(args: dict) -> dict:
+    """Return a broad cross-session message snapshot for assistant analysis.
+
+    This is intentionally a single Python op so the desktop UI doesn't spawn
+    one Python process per chat while building the first analysis screen.
+    It scans all readable message tables by default, then applies a safety
+    cap to the returned messages until the product has a persistent index.
+    """
+    session_limit_raw = args.get("session_limit")
+    session_limit = int(session_limit_raw) if session_limit_raw not in (None, "", 0) else 0
+    if session_limit > 0:
+        session_limit = min(max(session_limit, 1), 1000)
+    per_session_limit = min(max(int(args.get("per_session_limit") or 0), 0), 2000)
+    max_messages = min(max(int(args.get("max_messages") or 50000), 100), 200000)
+
+    recent_sessions = list_sessions({"limit": max(session_limit, 1000)}).get("items") or []
+    session_meta = {
+        (session.get("wxid") or "").strip(): session
+        for session in recent_sessions
+        if (session.get("wxid") or "").strip()
+    }
+    contacts = server._load_contacts()
+    table_entries = _message_table_entries()
+    table_stats: list[dict] = []
+    total_readable_messages = 0
+
+    for db_path, table, wxid in table_entries:
+        stats = _message_table_stats(db_path, table)
+        count = int(stats.get("count") or 0)
+        total_readable_messages += count
+        if count <= 0:
+            continue
+        meta = session_meta.get(wxid) or {}
+        display = meta.get("display") or _display_for_wxid(wxid, contacts)
+        is_group = bool(meta.get("is_group")) or wxid.endswith("@chatroom")
+        table_stats.append({
+            "db_path": db_path,
+            "table": table,
+            "wxid": wxid,
+            "display": display,
+            "is_group": is_group,
+            "count": count,
+            "last_timestamp": int(stats.get("last_timestamp") or 0),
+            "unread_count": int(meta.get("unread_count") or 0),
+            "summary": meta.get("summary") or "",
+        })
+
+    table_stats.sort(key=lambda item: item["last_timestamp"], reverse=True)
+    if session_limit > 0:
+        table_stats = table_stats[:session_limit]
+
+    sessions = [{
+        "wxid": item["wxid"],
+        "display": item["display"],
+        "summary": item["summary"],
+        "last_timestamp": item["last_timestamp"],
+        "unread_count": item["unread_count"],
+        "is_group": item["is_group"],
+        "message_count": item["count"],
+    } for item in table_stats]
+
+    selected_total = sum(int(item["count"] or 0) for item in table_stats)
+    messages_remaining = max_messages
+    messages: list[dict] = []
+
+    for item in table_stats:
+        if messages_remaining <= 0:
+            break
+        count = int(item["count"] or 0)
+        if count <= 0:
+            continue
+        limit = min(messages_remaining, per_session_limit or count)
+        rows = server._query(
+            item["db_path"],
+            f"SELECT local_id, create_time, local_type, real_sender_id, message_content "
+            f"FROM {item['table']} "
+            f"WHERE message_content IS NOT NULL AND message_content != '' "
+            f"ORDER BY create_time DESC LIMIT {limit};",
+        )
+        messages_remaining -= len(rows)
+        for row in rows:
+            message = _decode_snapshot_message(
+                row,
+                item["db_path"],
+                item["wxid"],
+                item["display"],
+                bool(item["is_group"]),
+            )
+            if message is None:
+                continue
+            messages.append(message)
+
+    messages.sort(key=lambda m: m.get("ts") or 0, reverse=True)
+    messages_truncated = selected_total > len(messages)
+    return {
+        "sessions": sessions,
+        "messages": messages,
+        "sessions_scanned": len(sessions),
+        "messages_scanned": len(messages),
+        "total_readable_messages": total_readable_messages,
+        "selected_readable_messages": selected_total,
+        "messages_truncated": messages_truncated,
+        "scan_scope": "all_readable_wechat_messages" if session_limit <= 0 else "limited_recent_sessions",
+        "safety_limit": max_messages,
+    }
+
+
 def resolve_image(args: dict) -> dict:
     """Return the absolute path of the image file for a (wxid, ts) pair.
 
@@ -493,6 +675,7 @@ OPS = {
     "list_contacts": list_contacts,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
+    "analyze_snapshot": analyze_snapshot,
     "resolve_image": resolve_image,
     "avatar": avatar,
 }
