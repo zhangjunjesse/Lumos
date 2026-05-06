@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import re
+import struct
 import sys
 import time
 import winreg
@@ -28,10 +29,21 @@ TH32CS_SNAPPROCESS = 0x00000002
 TH32CS_SNAPMODULE = 0x00000008
 TH32CS_SNAPMODULE32 = 0x00000010
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+MEM_COMMIT = 0x1000
+PAGE_NOACCESS = 0x01
+PAGE_GUARD = 0x100
+READABLE_PROTECT = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80
 
 MAX_PATH = 260
 MAX_MODULE_NAME32 = 255
+PAGE_SIZE = 4096
+KEY_SIZE = 32
+SALT_SIZE = 16
+V3_RESERVED = 48
+V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
+HEX_PATTERN = re.compile(rb"x'([0-9a-fA-F]{64,192})'")
+KEY_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -66,6 +78,18 @@ class MODULEENTRY32(ctypes.Structure):
     ]
 
 
+class MEMORY_BASIC_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BaseAddress", ctypes.c_void_p),
+        ("AllocationBase", ctypes.c_void_p),
+        ("AllocationProtect", wt.DWORD),
+        ("RegionSize", ctypes.c_size_t),
+        ("State", wt.DWORD),
+        ("Protect", wt.DWORD),
+        ("Type", wt.DWORD),
+    ]
+
+
 CreateToolhelp32Snapshot = kernel32.CreateToolhelp32Snapshot
 CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
 CreateToolhelp32Snapshot.restype = wt.HANDLE
@@ -87,6 +111,9 @@ OpenProcess.restype = wt.HANDLE
 ReadProcessMemory = kernel32.ReadProcessMemory
 ReadProcessMemory.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
 ReadProcessMemory.restype = wt.BOOL
+VirtualQueryEx = kernel32.VirtualQueryEx
+VirtualQueryEx.argtypes = [wt.HANDLE, ctypes.c_void_p, ctypes.POINTER(MEMORY_BASIC_INFORMATION), ctypes.c_size_t]
+VirtualQueryEx.restype = ctypes.c_size_t
 CloseHandle = kernel32.CloseHandle
 CloseHandle.argtypes = [wt.HANDLE]
 CloseHandle.restype = wt.BOOL
@@ -151,22 +178,79 @@ def read_mem(handle: int, address: int, size: int) -> bytes | None:
     return bytes(buf.raw[: read.value])
 
 
-def verify_key(key: bytes, db_path: str) -> bool:
+def iter_readable_regions(handle: int) -> list[tuple[int, int]]:
+    regions: list[tuple[int, int]] = []
+    mbi = MEMORY_BASIC_INFORMATION()
+    address = 0
+    max_address = 0x7FFFFFFFFFFF if sys.maxsize > 2**32 else 0x7FFFFFFF
+    while address < max_address:
+        result = VirtualQueryEx(handle, ctypes.c_void_p(address), ctypes.byref(mbi), ctypes.sizeof(mbi))
+        if not result:
+            address += 0x10000
+            continue
+        base = int(mbi.BaseAddress or 0)
+        size = int(mbi.RegionSize or 0)
+        if size <= 0:
+            address += 0x1000
+            continue
+        if (
+            mbi.State == MEM_COMMIT
+            and (mbi.Protect & PAGE_GUARD) == 0
+            and (mbi.Protect & PAGE_NOACCESS) == 0
+            and (mbi.Protect & READABLE_PROTECT)
+        ):
+            if size < 500 * 1024 * 1024:
+                regions.append((base, size))
+        next_address = base + size
+        if next_address <= address:
+            address += 0x1000
+        else:
+            address = next_address
+    return regions
+
+
+def _page1(db_path: str) -> bytes | None:
     try:
         with open(db_path, "rb") as fh:
-            data = fh.read(5000)
+            data = fh.read(PAGE_SIZE)
     except OSError:
-        return False
-    if len(key) != 32 or len(data) < 4096:
+        return None
+    return data if len(data) >= PAGE_SIZE else None
+
+
+def _verify_key_v3(key: bytes, db_path: str) -> bool:
+    data = _page1(db_path)
+    if len(key) != KEY_SIZE or not data:
         return False
     salt = data[:16]
-    first = data[16:4096]
-    decrypt_key = hashlib.pbkdf2_hmac("sha1", key, salt, 64000, 32)
+    first = data[16:PAGE_SIZE]
+    decrypt_key = hashlib.pbkdf2_hmac("sha1", key, salt, 64000, KEY_SIZE)
     mac_salt = bytes((b ^ 58) for b in salt)
-    mac_key = hashlib.pbkdf2_hmac("sha1", decrypt_key, mac_salt, 2, 32)
+    mac_key = hashlib.pbkdf2_hmac("sha1", decrypt_key, mac_salt, 2, KEY_SIZE)
     digest = hmac.new(mac_key, first[:-32], hashlib.sha1)
     digest.update(b"\x01\x00\x00\x00")
     return hmac.compare_digest(digest.digest(), first[-32:-12])
+
+
+def _verify_key_v4(key: bytes, db_path: str) -> bool:
+    data = _page1(db_path)
+    if len(key) != KEY_SIZE or not data:
+        return False
+    salt = data[:SALT_SIZE]
+    first = data[SALT_SIZE:PAGE_SIZE]
+    mac_salt = bytes((b ^ 0x3A) for b in salt)
+    mac_key = hashlib.pbkdf2_hmac("sha512", key, mac_salt, 2, KEY_SIZE)
+    hmac_data = first[:PAGE_SIZE - V4_RESERVED]
+    stored_hmac = first[PAGE_SIZE - V4_RESERVED:PAGE_SIZE - SALT_SIZE]
+    if len(hmac_data) < 16 or len(stored_hmac) != 64:
+        return False
+    digest = hmac.new(mac_key, hmac_data, hashlib.sha512)
+    digest.update(struct.pack("<I", 1))
+    return hmac.compare_digest(digest.digest(), stored_hmac)
+
+
+def verify_key(key: bytes, db_path: str) -> bool:
+    return _verify_key_v3(key, db_path) or _verify_key_v4(key, db_path)
 
 
 def expand_env(value: str) -> str:
@@ -262,24 +346,52 @@ def selected_roots(root: str) -> list[str]:
     return list(dict.fromkeys(roots))
 
 
-def account_db_layout(wx_dir: str) -> tuple[str, str, str] | None:
+def account_db_layout(wx_dir: str) -> tuple[str, str, str, str] | None:
     msg_dir = child_path(wx_dir, "MSG") or child_path(wx_dir, "Msg")
     if msg_dir:
         micro = os.path.join(msg_dir, "MicroMsg.db")
         if os.path.isfile(micro):
             if has_msg_db(msg_dir):
-                return msg_dir, msg_dir, micro
+                return msg_dir, msg_dir, micro, "v3"
             multi = child_path(msg_dir, "Multi")
             if multi and has_msg_db(multi):
-                return msg_dir, multi, micro
+                return msg_dir, multi, micro, "v3"
 
     db_storage = child_path(wx_dir, "db_storage")
     if db_storage:
         message_dir = child_path(db_storage, "message")
         if message_dir and has_msg_db(message_dir):
             micro = os.path.join(db_storage, "contact", "contact.db")
-            return db_storage, message_dir, micro
+            return db_storage, message_dir, micro, "v4"
     return None
+
+
+def account_db_paths(wx_dir: str) -> list[str]:
+    layout = account_db_layout(wx_dir)
+    if not layout:
+        return []
+    msg_dir, message_db_dir, micro, mode = layout
+    paths: list[str] = []
+    if mode == "v4":
+        for root, _, files in os.walk(msg_dir):
+            for name in files:
+                if name.endswith(".db") and not name.endswith(("-wal", "-shm")):
+                    paths.append(os.path.join(root, name))
+        return list(dict.fromkeys(paths))
+
+    if os.path.isfile(micro):
+        paths.append(micro)
+    if os.path.isdir(message_db_dir):
+        for name in os.listdir(message_db_dir):
+            if MESSAGE_DB_RE.match(name):
+                paths.append(os.path.join(message_db_dir, name))
+    if mode == "v3":
+        alt_multi = child_path(msg_dir, "Multi")
+        if alt_multi and alt_multi != message_db_dir and os.path.isdir(alt_multi):
+            for name in os.listdir(alt_multi):
+                if MESSAGE_DB_RE.match(name):
+                    paths.append(os.path.join(alt_multi, name))
+    return list(dict.fromkeys(paths))
 
 
 def find_accounts() -> list[dict]:
@@ -296,13 +408,15 @@ def find_accounts() -> list[dict]:
         if real in seen:
             return
         seen.add(real)
-        msg_dir, message_db_dir, micro = layout
+        msg_dir, message_db_dir, micro, mode = layout
         accounts.append({
             "wxid": wxid or os.path.basename(wx_dir),
             "wx_dir": wx_dir,
             "msg_dir": msg_dir,
             "message_db_dir": message_db_dir,
             "micro_msg": micro,
+            "mode": mode,
+            "db_paths": account_db_paths(wx_dir),
         })
 
     def scan_container(root: str) -> None:
@@ -374,6 +488,81 @@ def candidate_keys(handle: int, base: int, size: int, ptr_size: int) -> list[byt
     return found
 
 
+def db_salt(db_path: str) -> str | None:
+    page = _page1(db_path)
+    return page[:SALT_SIZE].hex() if page else None
+
+
+def verify_db_key(key: bytes, db_path: str, mode: str) -> bool:
+    if mode == "v4":
+        return _verify_key_v4(key, db_path)
+    if mode == "v3":
+        return _verify_key_v3(key, db_path)
+    return verify_key(key, db_path)
+
+
+def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
+    """Scan readable process memory for SQLCipher4 `x'<key><salt>'` strings."""
+    salt_to_records: dict[str, list[dict]] = {}
+    for account in accounts:
+        for rec in account.get("_db_records") or []:
+            if rec.get("mode") != "v4":
+                continue
+            salt_to_records.setdefault(rec["salt"], []).append({**rec, "account": account})
+    if not salt_to_records:
+        return 0
+
+    found = 0
+    seen_strings: set[str] = set()
+    seen_keys: set[bytes] = set()
+    regions = iter_readable_regions(handle)
+    log(f"[+] scanning memory regions={len(regions)} for SQLCipher4 key strings")
+    chunk_size = 4 * 1024 * 1024
+    overlap = 256
+    for base, size in regions:
+        tail = b""
+        offset = 0
+        while offset < size:
+            to_read = min(chunk_size, size - offset)
+            data = read_mem(handle, base + offset, to_read)
+            if not data:
+                offset += to_read
+                tail = b""
+                continue
+            block = tail + data
+            for match in HEX_PATTERN.finditer(block):
+                hex_str = match.group(1).decode("ascii")
+                if hex_str in seen_strings:
+                    continue
+                seen_strings.add(hex_str)
+                pairs: list[tuple[str, str | None]] = []
+                if len(hex_str) >= 96:
+                    pairs.append((hex_str[:64], hex_str[64:96]))
+                    pairs.append((hex_str[-96:-32], hex_str[-32:]))
+                pairs.append((hex_str[:64], None))
+                for key_hex, salt_hex in pairs:
+                    if not KEY_HEX_PATTERN.match(key_hex):
+                        continue
+                    key = bytes.fromhex(key_hex)
+                    if salt_hex and salt_hex in salt_to_records:
+                        records = salt_to_records.get(salt_hex, [])
+                    elif salt_hex is None and key not in seen_keys:
+                        records = [record for grouped in salt_to_records.values() for record in grouped]
+                    else:
+                        records = []
+                    if not records:
+                        continue
+                    seen_keys.add(key)
+                    for record in records:
+                        if verify_db_key(key, record["path"], record["mode"]):
+                            if mark_key(record["account"], record, key_hex):
+                                found += 1
+            tail = block[-overlap:]
+            offset += to_read
+    log(f"[+] SQLCipher4 string scan found={found} unique_strings={len(seen_strings)}")
+    return found
+
+
 def load_existing_accounts(accounts_out: str) -> list[dict]:
     try:
         with open(accounts_out, "r", encoding="utf-8") as fh:
@@ -398,7 +587,16 @@ def merge_accounts(existing: list[dict], recovered: list[dict]) -> list[dict]:
     for item in recovered:
         wxid = str(item.get("wxid") or "")
         if wxid:
-            by_wxid[wxid] = item
+            previous = by_wxid.get(wxid, {})
+            keys = {}
+            if isinstance(previous.get("keys"), dict):
+                keys.update(previous["keys"])
+            if isinstance(item.get("keys"), dict):
+                keys.update(item["keys"])
+            merged = {**previous, **item, "keys": keys}
+            if not merged.get("key"):
+                merged["key"] = next(iter(keys.values()), "")
+            by_wxid[wxid] = merged
     return sorted(by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
 
 
@@ -425,7 +623,50 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     if not handle:
         raise RuntimeError("无法读取微信进程。请用当前 Windows 用户运行 Lumos，并确认微信已打开。")
 
-    recovered: list[dict] = []
+    for account in accounts:
+        db_records = []
+        for db_path in account.get("db_paths") or []:
+            salt = db_salt(db_path)
+            if salt:
+                db_records.append({
+                    "path": db_path,
+                    "salt": salt,
+                    "mode": account.get("mode") or "v3",
+                })
+        account["_db_records"] = db_records
+        log(f"[+] account wxid={account['wxid']} dbs={len(db_records)} mode={account.get('mode')}")
+
+    recovered_by_wxid: dict[str, dict] = {}
+    recovered_salts: set[str] = set()
+    total_records = sum(len(account.get("_db_records") or []) for account in accounts)
+
+    def mark_key(account: dict, record: dict, key_hex: str) -> bool:
+        wxid = account["wxid"]
+        item = recovered_by_wxid.setdefault(wxid, {
+            "wxid": wxid,
+            "wx_dir": account["wx_dir"],
+            "msg_dir": account.get("msg_dir"),
+            "message_db_dir": account.get("message_db_dir"),
+            "mode": account.get("mode"),
+            "key": "",
+            "keys": {},
+            "pid": pid,
+            "module_path": module_path,
+            "extracted_at": int(time.time() * 1000),
+        })
+        salt = record["salt"]
+        if salt in item["keys"]:
+            return False
+        item["keys"][salt] = key_hex
+        recovered_salts.add(salt)
+        if not item["key"]:
+            item["key"] = key_hex
+        if len(item["keys"]) == 1:
+            log(f"[FOUND] wxid={wxid} salt={salt} key=<redacted>")
+        else:
+            log(f"[FOUND] wxid={wxid} salt={salt} key=<redacted> (extra db)")
+        return True
+
     try:
         seen_keys: set[bytes] = set()
         for ptr_size in ptr_sizes:
@@ -436,28 +677,23 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                 seen_keys.add(key)
                 key_hex = key.hex()
                 for account in accounts:
-                    if any(item["wxid"] == account["wxid"] for item in recovered):
-                        continue
-                    if verify_key(key, account["micro_msg"]):
-                        item = {
-                            "wxid": account["wxid"],
-                            "wx_dir": account["wx_dir"],
-                            "msg_dir": account.get("msg_dir"),
-                            "message_db_dir": account.get("message_db_dir"),
-                            "key": key_hex,
-                            "pid": pid,
-                            "module_path": module_path,
-                            "extracted_at": int(time.time() * 1000),
-                        }
-                        recovered.append(item)
-                        log(f"[FOUND] wxid={account['wxid']} key=<redacted>")
-                if len(recovered) == len(accounts):
+                    for record in account.get("_db_records") or []:
+                        salt = record["salt"]
+                        if salt in recovered_salts:
+                            continue
+                        if verify_db_key(key, record["path"], record["mode"]):
+                            mark_key(account, record, key_hex)
+                if total_records and len(recovered_salts) >= total_records:
                     break
-            if len(recovered) == len(accounts):
+            if total_records and len(recovered_salts) >= total_records:
                 break
+
+        if total_records and len(recovered_salts) < total_records:
+            scan_hex_key_strings(handle, accounts, mark_key)
     finally:
         CloseHandle(handle)
 
+    recovered = sorted(recovered_by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
     if not recovered:
         raise RuntimeError("未找到可验证的数据库密钥。请确认 Windows 微信已登录到主界面后重试。")
 

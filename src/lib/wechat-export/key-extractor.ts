@@ -80,6 +80,16 @@ function redactKeyMaterial(line: string): string {
   return line.replace(/\bkey=([0-9a-fA-F]{64})\b/g, 'key=<redacted>');
 }
 
+function extractPythonError(log: string): string | null {
+  const lines = log.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines.reverse()) {
+    const match = line.match(/^\[ERROR\]\s*(.+)$/);
+    if (match?.[1]) return match[1].trim();
+    if (/^(RuntimeError|FileNotFoundError|PermissionError):/.test(line)) return line;
+  }
+  return null;
+}
+
 /**
  * Run the extractor. `onProgress` fires for every line of stdout/stderr we can
  * classify; the wizard uses it to drive the SSE channel. Returns the final
@@ -206,14 +216,15 @@ export async function extractKeys(
     child.on('close', (code) => {
       const log = extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf);
       if (code !== 0) {
+        const message = extractPythonError(log) || `extract_key.py 退出 code ${code}`;
         onProgress?.({
           phase: 'error',
-          message: `extract_key.py 退出 (code ${code})`,
+          message,
         });
         resolve({
           success: false,
           keysFound: 0,
-          error: `extract_key.py 退出 code ${code}`,
+          error: message,
           log,
         });
         return;
@@ -221,8 +232,17 @@ export async function extractKeys(
       let keysFound = 0;
       try {
         if (platform === 'win32' && fs.existsSync(WINDOWS_ACCOUNTS_FILE)) {
-          const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ key?: string }>;
-          keysFound = accounts.filter((account) => /^[0-9a-fA-F]{64}$/.test(account.key || '')).length;
+          const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ key?: string; keys?: Record<string, string> }>;
+          const keys = new Set<string>();
+          for (const account of accounts) {
+            if (/^[0-9a-fA-F]{64}$/.test(account.key || '')) keys.add(account.key || '');
+            if (account.keys && typeof account.keys === 'object') {
+              for (const value of Object.values(account.keys)) {
+                if (/^[0-9a-fA-F]{64}$/.test(value || '')) keys.add(value);
+              }
+            }
+          }
+          keysFound = keys.size;
         } else if (fs.existsSync(KEYS_JSON_FILE)) {
           const map = JSON.parse(fs.readFileSync(KEYS_JSON_FILE, 'utf8')) as Record<string, string>;
           keysFound = Object.keys(map).length;

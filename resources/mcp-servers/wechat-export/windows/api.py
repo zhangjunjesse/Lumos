@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sqlite3
+import struct
 import sys
 import tempfile
 import time
@@ -28,6 +29,9 @@ from typing import Any
 SQLITE_FILE_HEADER = b"SQLite format 3\x00"
 PAGE_SIZE = 4096
 KEY_SIZE = 32
+SALT_SIZE = 16
+V3_RESERVED = 48
+V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
 
 CACHE_DIR = os.path.dirname(
@@ -86,10 +90,17 @@ def _load_accounts() -> list[dict]:
             if not isinstance(item, dict):
                 continue
             key = str(item.get("key") or "").strip()
+            keys_raw = item.get("keys")
+            keys = {
+                str(salt).lower(): str(value).lower()
+                for salt, value in (keys_raw.items() if isinstance(keys_raw, dict) else [])
+                if re.fullmatch(r"[0-9a-fA-F]{32}", str(salt))
+                and re.fullmatch(r"[0-9a-fA-F]{64}", str(value))
+            }
             wx_dir = str(item.get("wx_dir") or "").strip()
             wxid = str(item.get("wxid") or os.path.basename(wx_dir)).strip()
-            if re.fullmatch(r"[0-9a-fA-F]{64}", key) and wx_dir and os.path.isdir(wx_dir):
-                accounts.append({**item, "key": key, "wx_dir": wx_dir, "wxid": wxid})
+            if (re.fullmatch(r"[0-9a-fA-F]{64}", key) or keys) and wx_dir and os.path.isdir(wx_dir):
+                accounts.append({**item, "key": key, "keys": keys, "wx_dir": wx_dir, "wxid": wxid})
         return accounts
     except (OSError, json.JSONDecodeError):
         return []
@@ -123,6 +134,22 @@ def _encrypted_micro_db() -> str:
     return contact if os.path.exists(contact) else micro
 
 
+def _is_db_storage_layout() -> bool:
+    return os.path.basename(_msg_dir()).lower() == "db_storage"
+
+
+def _encrypted_contact_db() -> str:
+    if _is_db_storage_layout():
+        return os.path.join(_msg_dir(), "contact", "contact.db")
+    return _encrypted_micro_db()
+
+
+def _encrypted_session_db() -> str:
+    if _is_db_storage_layout():
+        return os.path.join(_msg_dir(), "session", "session.db")
+    return _encrypted_micro_db()
+
+
 def _encrypted_message_dbs() -> list[str]:
     account = _account()
     msg_dir = str(account.get("message_db_dir") or "").strip() or _msg_dir()
@@ -139,13 +166,31 @@ def _encrypted_message_dbs() -> list[str]:
     return sorted(dbs)
 
 
-def _verify_key(key_bytes: bytes, db_path: str) -> bool:
+def _db_salt(db_path: str) -> str | None:
     try:
         with open(db_path, "rb") as fh:
-            data = fh.read(5000)
+            data = fh.read(SALT_SIZE)
     except OSError:
-        return False
-    if len(key_bytes) != 32 or len(data) < PAGE_SIZE:
+        return None
+    return data.hex() if len(data) == SALT_SIZE else None
+
+
+def _key_for_db(db_path: str) -> str:
+    account = _account()
+    salt = _db_salt(db_path)
+    keys = account.get("keys")
+    if salt and isinstance(keys, dict):
+        key = str(keys.get(salt) or "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{64}", key):
+            return key
+    key = str(account.get("key") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{64}", key):
+        return key
+    raise RuntimeError(f"未找到可用于 {os.path.basename(db_path)} 的数据库密钥")
+
+
+def _verify_key_v3(key_bytes: bytes, data: bytes) -> bool:
+    if len(key_bytes) != KEY_SIZE or len(data) < PAGE_SIZE:
         return False
     salt = data[:16]
     first = data[16:PAGE_SIZE]
@@ -155,6 +200,35 @@ def _verify_key(key_bytes: bytes, db_path: str) -> bool:
     digest = hmac.new(mac_key, first[:-32], hashlib.sha1)
     digest.update(b"\x01\x00\x00\x00")
     return hmac.compare_digest(digest.digest(), first[-32:-12])
+
+
+def _verify_key_v4(key_bytes: bytes, data: bytes) -> bool:
+    if len(key_bytes) != KEY_SIZE or len(data) < PAGE_SIZE:
+        return False
+    salt = data[:SALT_SIZE]
+    first = data[SALT_SIZE:PAGE_SIZE]
+    mac_salt = bytes((b ^ 0x3A) for b in salt)
+    mac_key = hashlib.pbkdf2_hmac("sha512", key_bytes, mac_salt, 2, KEY_SIZE)
+    hmac_data = first[:PAGE_SIZE - V4_RESERVED]
+    stored_hmac = first[PAGE_SIZE - V4_RESERVED:PAGE_SIZE - SALT_SIZE]
+    if len(stored_hmac) != 64:
+        return False
+    digest = hmac.new(mac_key, hmac_data, hashlib.sha512)
+    digest.update(struct.pack("<I", 1))
+    return hmac.compare_digest(digest.digest(), stored_hmac)
+
+
+def _cipher_mode(key_bytes: bytes, db_path: str) -> str:
+    try:
+        with open(db_path, "rb") as fh:
+            data = fh.read(PAGE_SIZE)
+    except OSError:
+        data = b""
+    if _verify_key_v4(key_bytes, data):
+        return "v4"
+    if _verify_key_v3(key_bytes, data):
+        return "v3"
+    raise RuntimeError(f"数据库密钥不匹配: {os.path.basename(db_path)}")
 
 
 def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
@@ -168,24 +242,25 @@ def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
         return out_path
 
     key = bytes.fromhex(key_hex)
-    if not _verify_key(key, db_path):
-        raise RuntimeError(f"数据库密钥不匹配: {os.path.basename(db_path)}")
-
     with open(db_path, "rb") as fh:
         raw = fh.read()
-    salt = raw[:16]
-    decrypt_key = hashlib.pbkdf2_hmac("sha1", key, salt, 64000, KEY_SIZE)
+    mode = _cipher_mode(key, db_path)
+    salt = raw[:SALT_SIZE]
+    decrypt_key = hashlib.pbkdf2_hmac("sha1", key, salt, 64000, KEY_SIZE) if mode == "v3" else key
+    reserved = V3_RESERVED if mode == "v3" else V4_RESERVED
     fd, tmp_path = tempfile.mkstemp(prefix="lumos-wechat-", suffix=".db", dir=os.path.dirname(out_path))
     os.close(fd)
     try:
         with open(tmp_path, "wb") as out:
             out.write(SQLITE_FILE_HEADER)
             for offset in range(0, len(raw), PAGE_SIZE):
-                page = raw[offset: offset + PAGE_SIZE] if offset > 0 else raw[16: offset + PAGE_SIZE]
-                if len(page) < 64:
+                page = raw[offset: offset + PAGE_SIZE]
+                if offset == 0:
+                    page = page[SALT_SIZE:]
+                if len(page) < reserved + 16:
                     continue
-                out.write(AES.new(decrypt_key, AES.MODE_CBC, page[-48:-32]).decrypt(page[:-48]))
-                out.write(page[-48:])
+                out.write(AES.new(decrypt_key, AES.MODE_CBC, page[-reserved:-reserved + 16]).decrypt(page[:-reserved]))
+                out.write(page[-reserved:])
         os.replace(tmp_path, out_path)
     finally:
         if os.path.exists(tmp_path):
@@ -204,7 +279,7 @@ def _cache_path(db_path: str) -> str:
 
 
 def _decrypted(db_path: str) -> str:
-    return _decrypt_db(_account()["key"], db_path, _cache_path(db_path))
+    return _decrypt_db(_key_for_db(db_path), db_path, _cache_path(db_path))
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -217,6 +292,14 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
         (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _has_table_like(conn: sqlite3.Connection, pattern: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? LIMIT 1",
+        (pattern,),
     ).fetchone()
     return row is not None
 
@@ -235,20 +318,29 @@ def _load_contacts() -> dict[str, dict]:
     if _contacts_cache is not None:
         return _contacts_cache
     contacts: dict[str, dict] = {}
-    db_path = _encrypted_micro_db()
+    db_path = _encrypted_contact_db()
     try:
         with _connect(db_path) as conn:
-            if not _table_exists(conn, "Contact"):
-                _contacts_cache = {}
-                return {}
-            for row in conn.execute("SELECT UserName, NickName, Remark FROM Contact WHERE UserName!=''"):
-                wxid = (row["UserName"] or "").strip()
-                if not wxid:
-                    continue
-                contacts[wxid] = {
-                    "nickname": (row["NickName"] or "").strip(),
-                    "remark": (row["Remark"] or "").strip(),
-                }
+            if _table_exists(conn, "contact"):
+                rows = conn.execute("SELECT username, nick_name, remark FROM contact WHERE username!=''").fetchall()
+                for row in rows:
+                    wxid = (row["username"] or "").strip()
+                    if not wxid:
+                        continue
+                    contacts[wxid] = {
+                        "nickname": (row["nick_name"] or "").strip(),
+                        "remark": (row["remark"] or "").strip(),
+                    }
+            elif _table_exists(conn, "Contact"):
+                rows = conn.execute("SELECT UserName, NickName, Remark FROM Contact WHERE UserName!=''").fetchall()
+                for row in rows:
+                    wxid = (row["UserName"] or "").strip()
+                    if not wxid:
+                        continue
+                    contacts[wxid] = {
+                        "nickname": (row["NickName"] or "").strip(),
+                        "remark": (row["Remark"] or "").strip(),
+                    }
     except Exception:
         contacts = {}
     _contacts_cache = contacts
@@ -266,7 +358,7 @@ def _display_name(wxid: str, info: dict) -> str:
 
 
 def _summary(raw: object, msg_type: int) -> str:
-    text = str(raw or "").strip()
+    text = _render_message(msg_type, 0, raw).strip()
     if msg_type == 1:
         return text[:60] + ("…" if len(text) > 60 else "")
     return MSG_TYPE_PLACEHOLDERS.get(msg_type, text[:60] if text else "[不支持的消息]")
@@ -296,9 +388,35 @@ def list_contacts(args: dict) -> dict:
 def list_sessions(args: dict) -> dict:
     limit = int(args.get("limit") or 100)
     contacts = _load_contacts()
-    db_path = _encrypted_micro_db()
+    db_path = _encrypted_session_db()
     items = []
     with _connect(db_path) as conn:
+        if _table_exists(conn, "SessionTable"):
+            rows = conn.execute(
+                "SELECT username, summary, sort_timestamp, last_msg_type, type, unread_count "
+                "FROM SessionTable WHERE is_hidden=0 ORDER BY sort_timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            for row in rows:
+                wxid = (row["username"] or "").strip()
+                if not wxid:
+                    continue
+                info = contacts.get(wxid, {})
+                msg_type = _safe_int(row["last_msg_type"])
+                items.append({
+                    "wxid": wxid,
+                    "display": _display_name(wxid, info),
+                    "nickname": info.get("nickname", ""),
+                    "remark": info.get("remark", ""),
+                    "has_remark": bool(info.get("remark")),
+                    "summary": _summary(row["summary"], msg_type),
+                    "last_timestamp": _norm_ts(row["sort_timestamp"]),
+                    "last_msg_type": msg_type,
+                    "unread_count": _safe_int(row["unread_count"]),
+                    "is_group": wxid.endswith("@chatroom"),
+                })
+            return {"items": items, "total": len(items)}
+
         if not _table_exists(conn, "Session"):
             return {"items": [], "total": 0, "error": "session_table_unavailable"}
         has_contact_table = _table_exists(conn, "Contact")
@@ -353,7 +471,7 @@ def _message_db_status() -> list[dict]:
         error = ""
         try:
             with _connect(db_path) as conn:
-                readable = _table_exists(conn, "MSG")
+                readable = _table_exists(conn, "MSG") or _has_table_like(conn, "Msg_%")
         except Exception as err:  # noqa: BLE001
             error = str(err)
         try:
@@ -387,11 +505,25 @@ def diagnostics(args: dict) -> dict:
 
 def _session_snapshot(wxid: str) -> dict:
     try:
-        rows = _rows(
-            _encrypted_micro_db(),
-            "SELECT nTime, nMsgType FROM Session WHERE strUsrName=? ORDER BY nTime DESC LIMIT 1",
-            (wxid,),
-        )
+        db_path = _encrypted_session_db()
+        with _connect(db_path) as conn:
+            if _table_exists(conn, "SessionTable"):
+                rows = conn.execute(
+                    "SELECT sort_timestamp, last_msg_type FROM SessionTable WHERE username=? LIMIT 1",
+                    (wxid,),
+                ).fetchall()
+                if rows:
+                    return {
+                        "session_last_timestamp": _norm_ts(rows[0]["sort_timestamp"]),
+                        "session_last_msg_type": _safe_int(rows[0]["last_msg_type"]),
+                    }
+            if _table_exists(conn, "Session"):
+                rows = conn.execute(
+                    "SELECT nTime, nMsgType FROM Session WHERE strUsrName=? ORDER BY nTime DESC LIMIT 1",
+                    (wxid,),
+                ).fetchall()
+            else:
+                rows = []
     except Exception:
         return {}
     if not rows:
@@ -403,7 +535,11 @@ def _session_snapshot(wxid: str) -> dict:
 
 
 def _render_message(msg_type: int, sub_type: int, content: object) -> str:
-    text = str(content or "").replace("\x00", "").strip()
+    if isinstance(content, (bytes, bytearray)):
+        text = bytes(content).decode("utf-8", errors="replace")
+    else:
+        text = str(content or "")
+    text = text.replace("\x00", "").strip()
     if msg_type == 1:
         return text
     if msg_type in (10000, 10002):
@@ -423,37 +559,58 @@ def read_chat(args: dict) -> dict:
     contacts = _load_contacts()
     info = contacts.get(wxid, {})
     messages = []
+    msg_table = f"Msg_{hashlib.md5(wxid.encode()).hexdigest()}"
     for db_path in _encrypted_message_dbs():
         try:
             with _connect(db_path) as conn:
-                if not _table_exists(conn, "MSG"):
-                    continue
-                where = "StrTalker=?"
-                params: list[Any] = [wxid]
-                if before_ts > 0:
-                    before_ms, before_sec = _raw_ts_bounds(before_ts)
-                    where += " AND CASE WHEN CreateTime>10000000000 THEN CreateTime<? ELSE CreateTime<? END"
-                    params.extend([before_ms, before_sec])
-                params.append(limit + 1)
-                rows = conn.execute(
-                    "SELECT localId, CreateTime, Type, SubType, IsSender, StrContent "
-                    f"FROM MSG WHERE {where} ORDER BY CreateTime DESC LIMIT ?",
-                    tuple(params),
-                ).fetchall()
+                if _table_exists(conn, "MSG"):
+                    where = "StrTalker=?"
+                    params: list[Any] = [wxid]
+                    if before_ts > 0:
+                        before_ms, before_sec = _raw_ts_bounds(before_ts)
+                        where += " AND CASE WHEN CreateTime>10000000000 THEN CreateTime<? ELSE CreateTime<? END"
+                        params.extend([before_ms, before_sec])
+                    params.append(limit + 1)
+                    rows = conn.execute(
+                        "SELECT localId, CreateTime, Type, SubType, IsSender, StrContent "
+                        f"FROM MSG WHERE {where} ORDER BY CreateTime DESC LIMIT ?",
+                        tuple(params),
+                    ).fetchall()
+                    for row in rows:
+                        msg_type = _safe_int(row["Type"])
+                        sub_type = _safe_int(row["SubType"])
+                        ts = _norm_ts(row["CreateTime"])
+                        messages.append({
+                            "ts": ts,
+                            "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
+                            "type": msg_type,
+                            "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
+                            "content": _render_message(msg_type, sub_type, row["StrContent"]),
+                            "has_image": False,
+                        })
+                elif _table_exists(conn, msg_table):
+                    where = "create_time < ?" if before_ts > 0 else "1=1"
+                    params = [before_ts] if before_ts > 0 else []
+                    params.append(limit + 1)
+                    rows = conn.execute(
+                        f"SELECT local_id, create_time, local_type, real_sender_id, message_content "
+                        f"FROM {msg_table} WHERE {where} ORDER BY create_time DESC LIMIT ?",
+                        tuple(params),
+                    ).fetchall()
+                    for row in rows:
+                        raw_type = _safe_int(row["local_type"])
+                        msg_type = raw_type & 0xFFFF
+                        ts = _norm_ts(row["create_time"])
+                        messages.append({
+                            "ts": ts,
+                            "sender": "me" if _safe_int(row["real_sender_id"]) == 0 else "them",
+                            "type": msg_type,
+                            "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
+                            "content": _render_message(msg_type, 0, row["message_content"]),
+                            "has_image": False,
+                        })
         except Exception:
             continue
-        for row in rows:
-            msg_type = _safe_int(row["Type"])
-            sub_type = _safe_int(row["SubType"])
-            ts = _norm_ts(row["CreateTime"])
-            messages.append({
-                "ts": ts,
-                "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
-                "type": msg_type,
-                "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
-                "content": _render_message(msg_type, sub_type, row["StrContent"]),
-                "has_image": False,
-            })
 
     messages.sort(key=lambda item: item["ts"])
     has_more = len(messages) > limit
@@ -488,25 +645,50 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
     for db_path in _encrypted_message_dbs():
         try:
             with _connect(db_path) as conn:
-                if not _table_exists(conn, "MSG"):
-                    continue
-                rows = conn.execute(
-                    "SELECT CreateTime, Type, SubType, IsSender, StrContent, StrTalker "
-                    "FROM MSG WHERE CASE WHEN CreateTime>10000000000 THEN CreateTime>? ELSE CreateTime>? END "
-                    "AND StrContent LIKE ? "
-                    "ORDER BY CreateTime DESC LIMIT ?",
-                    (since_ms, since_sec, like, limit),
-                ).fetchall()
+                if _table_exists(conn, "MSG"):
+                    rows = conn.execute(
+                        "SELECT CreateTime, Type, SubType, IsSender, StrContent, StrTalker "
+                        "FROM MSG WHERE CASE WHEN CreateTime>10000000000 THEN CreateTime>? ELSE CreateTime>? END "
+                        "AND StrContent LIKE ? "
+                        "ORDER BY CreateTime DESC LIMIT ?",
+                        (since_ms, since_sec, like, limit),
+                    ).fetchall()
+                    for row in rows:
+                        msg_type = _safe_int(row["Type"])
+                        result.append({
+                            "ts": _norm_ts(row["CreateTime"]),
+                            "wxid": row["StrTalker"],
+                            "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
+                            "content": _render_message(msg_type, _safe_int(row["SubType"]), row["StrContent"]),
+                        })
+                else:
+                    table_rows = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+                    ).fetchall()
+                    wxid_by_table = {}
+                    if _table_exists(conn, "Name2Id"):
+                        for row in conn.execute("SELECT user_name FROM Name2Id WHERE user_name!=''"):
+                            username = str(row["user_name"] or "")
+                            wxid_by_table[f"Msg_{hashlib.md5(username.encode()).hexdigest()}"] = username
+                    for table_row in table_rows:
+                        table = str(table_row["name"] or "")
+                        rows = conn.execute(
+                            f"SELECT create_time, local_type, real_sender_id, message_content "
+                            f"FROM {table} WHERE create_time>? AND message_content LIKE ? "
+                            f"ORDER BY create_time DESC LIMIT ?",
+                            (since, like, limit),
+                        ).fetchall()
+                        for row in rows:
+                            raw_type = _safe_int(row["local_type"])
+                            msg_type = raw_type & 0xFFFF
+                            result.append({
+                                "ts": _norm_ts(row["create_time"]),
+                                "wxid": wxid_by_table.get(table, table),
+                                "sender": "me" if _safe_int(row["real_sender_id"]) == 0 else "them",
+                                "content": _render_message(msg_type, 0, row["message_content"]),
+                            })
         except Exception:
             continue
-        for row in rows:
-            msg_type = _safe_int(row["Type"])
-            result.append({
-                "ts": _norm_ts(row["CreateTime"]),
-                "wxid": row["StrTalker"],
-                "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
-                "content": _render_message(msg_type, _safe_int(row["SubType"]), row["StrContent"]),
-            })
     result.sort(key=lambda item: item["ts"], reverse=True)
     return result[:limit]
 

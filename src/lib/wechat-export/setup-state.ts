@@ -58,6 +58,7 @@ export interface WindowsAccountRecord {
   msg_dir?: string;
   message_db_dir?: string;
   key?: string;
+  keys?: Record<string, string>;
   extracted_at?: number;
 }
 
@@ -137,7 +138,8 @@ function hasMacRecoveredKey(): boolean {
 
 function hasWindowsRecoveredKey(): boolean {
   return readWindowsAccounts().some((account) => {
-    if (!isHexKey(account.key)) return false;
+    const keys = account.keys && typeof account.keys === 'object' ? Object.values(account.keys) : [];
+    if (!isHexKey(account.key) && !keys.some(isHexKey)) return false;
     return typeof account.wx_dir === 'string' && account.wx_dir.trim().length > 0;
   });
 }
@@ -151,7 +153,11 @@ export function ensureFeatureDir(): string {
 
 export function getKeyCount(platform: WeChatExportPlatform = getWeChatExportPlatform() || 'darwin'): number {
   if (platform === 'win32') {
-    return readWindowsAccounts().filter((account) => isHexKey(account.key)).length;
+    return readWindowsAccounts().reduce((total, account) => {
+      const keys = account.keys && typeof account.keys === 'object' ? Object.values(account.keys) : [];
+      const unique = new Set([account.key, ...keys].filter(isHexKey));
+      return total + unique.size;
+    }, 0);
   }
   try {
     if (fs.existsSync(KEYS_JSON_FILE)) {
