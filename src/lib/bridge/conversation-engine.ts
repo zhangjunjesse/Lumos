@@ -90,6 +90,8 @@ function buildImContextHint(providerId: string, chatId: string): string {
     `  chatId:     ${chatId}`,
     ``,
     `Call \`mcp__im-tools__im_send_attachment\` (or \`im_send\`) directly with this chatId; do NOT ask the user for their wxid / openid.`,
+    `If the user asks you to generate/draw/create an image in this IM conversation, call \`mcp__lumos-image__generate_image\` first. Then embed the generated image using the tool_result \`url\` field as Markdown image syntax; the IM dispatcher will convert it into a real image attachment. Do not answer with only a plain image URL.`,
+    `If you already have a public image URL to send, embed it as \`![image](https://.../file.png)\` instead of plain text so the IM dispatcher can download it and send it as an image attachment when safe.`,
   ].join('\n');
 }
 

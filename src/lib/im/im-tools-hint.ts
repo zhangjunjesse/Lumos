@@ -45,6 +45,11 @@ Do NOT proactively send messages without an explicit request — silently produc
 
 The server reads the bytes — do NOT base64-encode the file in your tool args. If you generated a file with another MCP (office-docs, image-gen, etc.) that wrote outside these dirs, copy / move it under \`.lumos-uploads/\` first.
 
+**Image-specific rules**
+- If the user asks you to generate/draw/create an image, call \`mcp__lumos-image__generate_image\` first. Do not describe the image without generating it.
+- When replying inside an active IM conversation, embed generated images as Markdown image syntax using the image tool's \`url\` field: \`![description](url)\`. The dispatcher will send the real image attachment when possible.
+- If you only have a public image URL, prefer \`![image](https://.../file.png)\` over a bare URL so the dispatcher can download and send the picture. If download fails, the URL remains visible as fallback.
+
 **Reporting back to the user**
 After a successful send, briefly confirm what was sent and where (e.g. "已把 Q3 报告发到飞书 oc_xxx 群"). After a failure, surface the error message; do not silently retry — most likely it's a missing context_token (WeChat) or unknown chatId.
 

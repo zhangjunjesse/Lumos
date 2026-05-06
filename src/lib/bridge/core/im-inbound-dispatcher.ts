@@ -13,7 +13,7 @@
 
 import { BindingService } from './binding-service';
 import { ConversationEngine } from '../conversation-engine';
-import { extractInlineAttachments } from './extract-inline-attachments';
+import { extractInlineAttachmentsForIm } from './extract-inline-attachments';
 import {
   sendToProvider,
   getOrCreateAdapter,
@@ -201,7 +201,7 @@ export async function dispatchInbound(
     // AI 生成图片时会把本地路径写成 ![alt](/api/media/serve?path=...)；如果
     // 直接当文本发到微信用户只看到 markdown 字符串。把这些图片变成附件，
     // 文本里替换成 [图片] 占位。
-    const { cleanText, attachments } = extractInlineAttachments(rawReply);
+    const { cleanText, attachments } = await extractInlineAttachmentsForIm(rawReply);
 
     // ---- 5. wechat 加 session 名前缀 ------------------------------------
     const finalText = needsTitlePrefix
