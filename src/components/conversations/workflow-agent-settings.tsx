@@ -21,7 +21,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
 type WorkflowConfigurableAgentRole =
-  | 'scheduling'
   | 'worker'
   | 'researcher'
   | 'coder'
@@ -31,7 +30,7 @@ interface WorkflowAgentRoleProfile {
   role: WorkflowConfigurableAgentRole;
   title: string;
   shortLabel: string;
-  scope: 'planning' | 'execution';
+  scope: 'execution';
   implementationStatus: 'live' | 'partial';
   description: string;
   roleName: string;
@@ -47,18 +46,12 @@ interface WorkflowAgentRoleProfile {
   memoryPolicy?: string;
   concurrencyLimit?: number;
   defaultConcurrencyLimit?: number;
-  plannerTimeoutMs?: number;
-  defaultPlannerTimeoutMs?: number;
-  plannerMaxRetries?: number;
-  defaultPlannerMaxRetries?: number;
 }
 
 interface WorkflowAgentRoleFormState {
   systemPrompt: string;
   allowedTools: string[];
   concurrencyLimit: string;
-  plannerTimeoutMs: string;
-  plannerMaxRetries: string;
 }
 
 interface WorkflowAgentRuntimeSession {
@@ -81,7 +74,6 @@ interface WorkflowAgentRuntimeSession {
   stageId?: string;
   memoryRefs?: {
     taskMemoryId?: string;
-    plannerMemoryId?: string;
     agentMemoryId?: string;
   };
   workspace?: {
@@ -94,7 +86,6 @@ interface WorkflowAgentRuntimeSession {
 }
 
 const SCOPE_CLASSNAME: Record<WorkflowAgentRoleProfile['scope'], string> = {
-  planning: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300',
   execution: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
 };
 
@@ -126,8 +117,6 @@ function createFormState(role: WorkflowAgentRoleProfile | null): WorkflowAgentRo
       systemPrompt: '',
       allowedTools: [],
       concurrencyLimit: '',
-      plannerTimeoutMs: '',
-      plannerMaxRetries: '',
     };
   }
 
@@ -135,8 +124,6 @@ function createFormState(role: WorkflowAgentRoleProfile | null): WorkflowAgentRo
     systemPrompt: role.systemPrompt,
     allowedTools: [...role.tools],
     concurrencyLimit: typeof role.concurrencyLimit === 'number' ? String(role.concurrencyLimit) : '',
-    plannerTimeoutMs: typeof role.plannerTimeoutMs === 'number' ? String(role.plannerTimeoutMs) : '',
-    plannerMaxRetries: typeof role.plannerMaxRetries === 'number' ? String(role.plannerMaxRetries) : '',
   };
 }
 
@@ -190,9 +177,7 @@ function WorkflowAgentRoleDialog({
           <div className="grid gap-3 rounded-2xl border border-border/60 bg-muted/10 px-4 py-4">
             <div className="flex flex-wrap items-center gap-2">
               <Badge className={cn('border font-medium', SCOPE_CLASSNAME[role.scope])}>
-                {role.scope === 'planning'
-                  ? t('workflowAgents.scope.planning')
-                  : t('workflowAgents.scope.execution')}
+                {t('workflowAgents.scope.execution')}
               </Badge>
               <Badge variant="outline">{role.roleName}</Badge>
               <Badge variant="outline">{role.agentType}</Badge>
@@ -213,79 +198,48 @@ function WorkflowAgentRoleDialog({
             />
           </div>
 
-          {role.scope === 'planning' ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="workflow-agent-timeout">{t('workflowAgents.fields.plannerTimeout')}</Label>
-                <Input
-                  id="workflow-agent-timeout"
-                  type="number"
-                  min={5000}
-                  max={120000}
-                  step={1000}
-                  value={form.plannerTimeoutMs}
-                  onChange={(event) => setForm((current) => ({ ...current, plannerTimeoutMs: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="workflow-agent-retries">{t('workflowAgents.fields.plannerRetries')}</Label>
-                <Input
-                  id="workflow-agent-retries"
-                  type="number"
-                  min={0}
-                  max={5}
-                  step={1}
-                  value={form.plannerMaxRetries}
-                  onChange={(event) => setForm((current) => ({ ...current, plannerMaxRetries: event.target.value }))}
-                />
+          <div className="space-y-2">
+            <Label>{t('workflowAgents.fields.allowedTools')}</Label>
+            <div className="grid gap-3 rounded-2xl border border-border/60 bg-background/80 px-4 py-4 md:grid-cols-2">
+              {role.editableToolOptions.map((tool) => {
+                const checked = form.allowedTools.includes(tool);
+                return (
+                  <label key={tool} className="flex items-start gap-3 text-sm text-foreground">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) => toggleTool(tool, value === true)}
+                      aria-label={tool}
+                    />
+                    <div className="space-y-1">
+                      <p className="font-medium">{tool}</p>
+                      <p className="text-xs text-muted-foreground">{t('workflowAgents.fields.allowedToolsHint')}</p>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="workflow-agent-concurrency">{t('workflowAgents.fields.concurrency')}</Label>
+              <Input
+                id="workflow-agent-concurrency"
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                value={form.concurrencyLimit}
+                onChange={(event) => setForm((current) => ({ ...current, concurrencyLimit: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>{t('workflowAgents.fields.memoryPolicy')}</Label>
+              <div className="rounded-xl border border-border/60 bg-muted/10 px-4 py-2 text-sm text-muted-foreground">
+                {role.memoryPolicy || t('workflowAgents.memoryPolicy.unset')}
               </div>
             </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label>{t('workflowAgents.fields.allowedTools')}</Label>
-                <div className="grid gap-3 rounded-2xl border border-border/60 bg-background/80 px-4 py-4 md:grid-cols-2">
-                  {role.editableToolOptions.map((tool) => {
-                    const checked = form.allowedTools.includes(tool);
-                    return (
-                      <label key={tool} className="flex items-start gap-3 text-sm text-foreground">
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={(value) => toggleTool(tool, value === true)}
-                          aria-label={tool}
-                        />
-                        <div className="space-y-1">
-                          <p className="font-medium">{tool}</p>
-                          <p className="text-xs text-muted-foreground">{t('workflowAgents.fields.allowedToolsHint')}</p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="workflow-agent-concurrency">{t('workflowAgents.fields.concurrency')}</Label>
-                  <Input
-                    id="workflow-agent-concurrency"
-                    type="number"
-                    min={1}
-                    max={10}
-                    step={1}
-                    value={form.concurrencyLimit}
-                    onChange={(event) => setForm((current) => ({ ...current, concurrencyLimit: event.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('workflowAgents.fields.memoryPolicy')}</Label>
-                  <div className="rounded-xl border border-border/60 bg-muted/10 px-4 py-2 text-sm text-muted-foreground">
-                    {role.memoryPolicy || t('workflowAgents.memoryPolicy.unset')}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
+          </div>
 
           {error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -328,9 +282,7 @@ function WorkflowAgentRoleCard({
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-base">{role.shortLabel}</CardTitle>
               <Badge className={cn('border font-medium', SCOPE_CLASSNAME[role.scope])}>
-                {role.scope === 'planning'
-                  ? t('workflowAgents.scope.planning')
-                  : t('workflowAgents.scope.execution')}
+                {t('workflowAgents.scope.execution')}
               </Badge>
               <Badge variant="outline">{role.title}</Badge>
               {role.hasOverrides ? (
@@ -358,17 +310,8 @@ function WorkflowAgentRoleCard({
           <div className="space-y-1 text-sm text-muted-foreground">
             <p>{t('workflowAgents.card.roleName')}: {role.roleName}</p>
             <p>{t('workflowAgents.card.agentType')}: {role.agentType}</p>
-            {role.scope === 'planning' ? (
-              <>
-                <p>{t('workflowAgents.card.plannerTimeout')}: {role.plannerTimeoutMs} ms</p>
-                <p>{t('workflowAgents.card.plannerRetries')}: {role.plannerMaxRetries}</p>
-              </>
-            ) : (
-              <>
-                <p>{t('workflowAgents.card.concurrency')}: {role.concurrencyLimit}</p>
-                <p>{t('workflowAgents.card.memoryPolicy')}: {role.memoryPolicy || t('workflowAgents.memoryPolicy.unset')}</p>
-              </>
-            )}
+            <p>{t('workflowAgents.card.concurrency')}: {role.concurrencyLimit}</p>
+            <p>{t('workflowAgents.card.memoryPolicy')}: {role.memoryPolicy || t('workflowAgents.memoryPolicy.unset')}</p>
           </div>
 
           <div className="space-y-1">
@@ -501,13 +444,11 @@ export function WorkflowAgentSettingsSection({
   }, [loadRuntimeSessions, variant]);
 
   const stats = useMemo(() => {
-    const planningCount = roles.filter((role) => role.scope === 'planning').length;
     const executionCount = roles.filter((role) => role.scope === 'execution').length;
     const customizedCount = roles.filter((role) => role.hasOverrides).length;
 
     return {
       total: roles.length,
-      planningCount,
       executionCount,
       customizedCount,
     };
@@ -526,10 +467,6 @@ export function WorkflowAgentSettingsSection({
     };
   }, [runtimeSessions]);
 
-  const planningRoles = useMemo(
-    () => roles.filter((role) => role.scope === 'planning'),
-    [roles],
-  );
   const executionRoles = useMemo(
     () => roles.filter((role) => role.scope === 'execution'),
     [roles],
@@ -544,15 +481,9 @@ export function WorkflowAgentSettingsSection({
     try {
       const payload: Record<string, unknown> = {
         systemPrompt: value.systemPrompt.trim(),
+        allowedTools: value.allowedTools,
+        concurrencyLimit: Number.parseInt(value.concurrencyLimit, 10),
       };
-
-      if (editingRole.scope === 'planning') {
-        payload.plannerTimeoutMs = Number.parseInt(value.plannerTimeoutMs, 10);
-        payload.plannerMaxRetries = Number.parseInt(value.plannerMaxRetries, 10);
-      } else {
-        payload.allowedTools = value.allowedTools;
-        payload.concurrencyLimit = Number.parseInt(value.concurrencyLimit, 10);
-      }
 
       const response = await fetch(`/api/workflow/agents/${editingRole.role}`, {
         method: 'PUT',
@@ -639,9 +570,6 @@ export function WorkflowAgentSettingsSection({
             <Button asChild>
               <Link href="/workflow">{t('workflowAgents.entry.openWorkflow')}</Link>
             </Button>
-            <Button variant="outline" asChild>
-              <Link href="/team/settings#agents">{t('workflowAgents.entry.openTeamPresets')}</Link>
-            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -690,12 +618,6 @@ export function WorkflowAgentSettingsSection({
           <CardHeader className="pb-2">
             <CardDescription>{t('workflowAgents.stats.total')}</CardDescription>
             <CardTitle className="text-2xl">{stats.total}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card className="border-border/60">
-          <CardHeader className="pb-2">
-            <CardDescription>{t('workflowAgents.stats.planning')}</CardDescription>
-            <CardTitle className="text-2xl">{stats.planningCount}</CardTitle>
           </CardHeader>
         </Card>
         <Card className="border-border/60">
@@ -820,7 +742,6 @@ export function WorkflowAgentSettingsSection({
 
                         <div className="space-y-1 text-sm text-muted-foreground">
                           <p>{t('workflowAgents.runtime.fields.taskMemory')}: {session.memoryRefs?.taskMemoryId || t('workflowAgents.runtime.unset')}</p>
-                          <p>{t('workflowAgents.runtime.fields.plannerMemory')}: {session.memoryRefs?.plannerMemoryId || t('workflowAgents.runtime.unset')}</p>
                           <p>{t('workflowAgents.runtime.fields.agentMemory')}: {session.memoryRefs?.agentMemoryId || t('workflowAgents.runtime.unset')}</p>
                           <p>{t('workflowAgents.runtime.fields.sessionWorkspace')}: {session.workspace?.sessionWorkspace || t('workflowAgents.runtime.unset')}</p>
                           <p>{t('workflowAgents.runtime.fields.runWorkspace')}: {session.workspace?.runWorkspace || t('workflowAgents.runtime.unset')}</p>
@@ -904,26 +825,6 @@ export function WorkflowAgentSettingsSection({
             </CardContent>
           </Card>
 
-          <Card className="border-border/60">
-            <CardHeader>
-              <CardTitle>{t('workflowAgents.groups.planningTitle')}</CardTitle>
-              <CardDescription>{t('workflowAgents.groups.planningDescription')}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {planningRoles.map((role) => (
-                <WorkflowAgentRoleCard
-                  key={role.role}
-                  role={role}
-                  busy={busyKey !== ''}
-                  onEdit={(value) => {
-                    setEditingRole(value);
-                    setDialogOpen(true);
-                  }}
-                  onReset={(value) => void resetRole(value)}
-                />
-              ))}
-            </CardContent>
-          </Card>
         </div>
       )}
 

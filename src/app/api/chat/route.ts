@@ -9,20 +9,10 @@ import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
-import {
-  getMainAgentSessionTeamRuntimePrompt,
-  getMainAgentSessionTeamRuntimeState,
-  getMainAgentTeamConfigurationPrompt,
-  upsertTeamPlanTask,
-} from '@/lib/db/tasks';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
-  createTeamRunSkeleton,
   isImageFile,
   parseMessageContent,
-  parseTeamPlanBlock,
-  TEAM_PLAN_BLOCK_KIND,
-  TEAM_PLAN_TASK_KIND,
 } from '@/types';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -36,7 +26,6 @@ import { linkMessageMemory } from '@/lib/db/message-memories';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
-import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import {
   isBrowserAutomationRequest,
@@ -137,40 +126,6 @@ const BROWSER_REQUEST_DISALLOWED_TOOLS = [
   'ExitPlanMode',
 ];
 
-const MAIN_AGENT_TEAM_MODE_SYSTEM_HINT = `You are Lumos Main Agent. Remain the only user-facing entry point in this chat.
-Team Mode is session-scoped under the current Main Agent conversation, never a separate top-level agent.
-When the user explicitly asks for multi-role collaboration, or the task is clearly complex enough to benefit from coordinated roles, do not start execution immediately. First propose a structured Team Mode plan and wait for user confirmation.
-If Team Mode is not warranted, answer normally and keep the work in Main Agent mode.
-When you propose Team Mode, include a fenced \`${TEAM_PLAN_BLOCK_KIND}\` block with valid JSON using this exact schema:
-\`\`\`${TEAM_PLAN_BLOCK_KIND}
-{
-  "summary": "short why-this-team summary",
-  "activationReason": "user_requested" | "main_agent_suggested",
-  "userGoal": "the goal in user terms",
-  "roles": [
-    { "id": "main-agent", "name": "Main Agent", "kind": "main_agent", "responsibility": "user-facing owner" },
-    { "id": "orchestrator", "name": "Team Orchestrator", "kind": "orchestrator", "responsibility": "coordinate execution" }
-  ],
-  "tasks": [
-    {
-      "id": "task-1",
-      "title": "clear task title",
-      "ownerRoleId": "orchestrator",
-      "summary": "what this task covers",
-      "dependsOn": [],
-      "expectedOutput": "specific output"
-    }
-  ],
-  "expectedOutcome": "what the full team should deliver",
-  "risks": ["optional risk"],
-  "confirmationPrompt": "short approval prompt"
-}
-\`\`\`
-Rules for Team Mode proposals:
-- Roles must stay within the MVP hierarchy: Main Agent -> Orchestrator -> Leads -> Workers.
-- Include explicit dependencies and expected outputs for each task.
-- Do not claim Team Run has started until the user confirms.
-- Keep the user-facing explanation concise and decision-oriented.`;
 const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main Agent space, not a project-specific thread.
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
@@ -442,37 +397,6 @@ function stripFeishuDirectives(text: string): string {
   return stripMailDirectives(stripFileDirectives(text));
 }
 
-function extractAssistantTextContent(rawContent: string): string {
-  const blocks = parseMessageContent(rawContent);
-  return blocks
-    .filter((block): block is Extract<MessageContentBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
-}
-
-function persistTeamPlanFromAssistantContent(
-  sessionId: string,
-  rawContent: string,
-  sourceMessageId?: string,
-): void {
-  const textContent = extractAssistantTextContent(rawContent);
-  if (!textContent) return;
-
-  const parsed = parseTeamPlanBlock(textContent);
-  if (!parsed) return;
-
-  upsertTeamPlanTask(sessionId, {
-    kind: TEAM_PLAN_TASK_KIND,
-    plan: parsed.plan,
-    approvalStatus: 'pending',
-    run: createTeamRunSkeleton(parsed.plan),
-    sourceMessageId,
-    approvedAt: null,
-    rejectedAt: null,
-    lastActionAt: null,
-  });
-}
 
 /**
  * Emit SSE comment frames at a regular interval so long-running tool calls
@@ -1000,7 +924,7 @@ export async function POST(request: NextRequest) {
       requestHeaderContextId: browserBridgeOverride.browserContextId,
       sessionContextId: sessionBrowserContextId,
     });
-    const skippedMcpNames = new Set(['task-management']);
+    const skippedMcpNames = new Set<string>();
     if (browserAutomationIntent) {
       skippedMcpNames.add('deepsearch');
     }
@@ -1017,8 +941,6 @@ export async function POST(request: NextRequest) {
     }
     console.timeEnd('[perf] MCP servers loading');
 
-    let teamRuntimeState: ReturnType<typeof getMainAgentSessionTeamRuntimeState> = null;
-
     // Append per-request system prompt (e.g. skill injection for image generation)
     let finalSystemPrompt = systemPromptOverride || sessionSystemPrompt || undefined;
     if (systemPromptAppend) {
@@ -1026,18 +948,6 @@ export async function POST(request: NextRequest) {
     }
     if (isPrimaryMainAgentSession) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
-    }
-    finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_TEAM_MODE_SYSTEM_HINT;
-    if (isPrimaryMainAgentSession) {
-      const teamConfigurationPrompt = getMainAgentTeamConfigurationPrompt();
-      if (teamConfigurationPrompt) {
-        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamConfigurationPrompt;
-      }
-      teamRuntimeState = getMainAgentSessionTeamRuntimeState(session_id);
-      const teamRuntimePrompt = getMainAgentSessionTeamRuntimePrompt(session_id);
-      if (teamRuntimePrompt) {
-        finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + teamRuntimePrompt;
-      }
     }
     if (isPrimaryMainAgentSession && !browserAutomationIntent) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUTLER_MCP_SYSTEM_HINT;
@@ -1091,13 +1001,10 @@ export async function POST(request: NextRequest) {
     // so the model still has conversation context.
     const { messages: recentMsgs } = getMessages(session_id, { limit: 50 });
     // Exclude the user message we just saved (last in the list) — it's already the prompt
-    let historyMsgs = recentMsgs.slice(0, -1).map(m => ({
+    const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
       role: m.role as 'user' | 'assistant',
       content: stripFeishuDirectives(m.content),
     }));
-    if (isPrimaryMainAgentSession) {
-      historyMsgs = normalizeMainAgentConversationHistoryForTeamRuntime(historyMsgs, teamRuntimeState);
-    }
 
     // Stream Claude response, using SDK session ID for resume if available
     console.log('[chat API] streamClaude params:', {
@@ -1359,14 +1266,13 @@ async function collectStreamResponse(
       if (content) {
         const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
-          const storedMessage = addMessage(
+          addMessage(
             sessionId,
             'assistant',
             storedContent,
             tokenUsage ? JSON.stringify(tokenUsage) : null,
             Date.now() - streamStartTime,
           );
-          persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),
@@ -1392,8 +1298,7 @@ async function collectStreamResponse(
       if (content) {
         const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
-          const storedMessage = addMessage(sessionId, 'assistant', storedContent);
-          persistTeamPlanFromAssistantContent(sessionId, content, storedMessage.id);
+          addMessage(sessionId, 'assistant', storedContent);
         }
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),

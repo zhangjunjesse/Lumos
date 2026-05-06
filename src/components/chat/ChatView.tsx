@@ -8,13 +8,10 @@ import type {
   MessagesResponse,
   PermissionRequestEvent,
   FileAttachment,
-  TeamBannerProjectionV1,
 } from '@/types';
 import { useTranslation } from '@/hooks/useTranslation';
-import { useTaskEvents } from '@/hooks/useTaskEvents';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
-import { TaskStatusBar } from './TaskStatusBar';
 import { usePanel } from '@/hooks/usePanel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
@@ -228,49 +225,6 @@ export function ChatView({
     ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
-  const [taskBanner, setTaskBanner] = useState<TeamBannerProjectionV1 | null>(null);
-
-  const syncMessagesFromServer = useCallback(async () => {
-    // Skip only while we are actively streaming a local turn — otherwise an
-    // inbound IM message would race with the local temp/append flow. If
-    // streaming already finished but the temp id wasn't swapped out (e.g. the
-    // last stream errored or the page was navigated away mid-stream), let the
-    // server state win — db is the source of truth.
-    const streamingState = useStreamingStore.getState().sessions[sessionId];
-    const activelyStreaming = streamingState?.status === 'streaming';
-    if (activelyStreaming
-      && messagesRef.current.some((message) => isTempMessageId(message.id))) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`, {
-        cache: 'no-store',
-      });
-      if (!response.ok) return;
-
-      const data = await response.json() as MessagesResponse;
-      const nextMessages = data.messages || [];
-      const currentMessages = messagesRef.current;
-      const sameLength = currentMessages.length === nextMessages.length;
-      const sameLastId = sameLength
-        && currentMessages[currentMessages.length - 1]?.id === nextMessages[nextMessages.length - 1]?.id;
-      if (sameLength && sameLastId) return;
-
-      messagesRef.current = nextMessages;
-      hasMoreRef.current = data.hasMore ?? false;
-      setMessages(nextMessages);
-      setHasMore(data.hasMore ?? false);
-      updateMessagesSession(sessionId, {
-        messages: nextMessages,
-        hasMore: data.hasMore ?? false,
-        loading: false,
-        error: null,
-      });
-    } catch {
-      // best effort
-    }
-  }, [sessionId, updateMessagesSession]);
 
   const refreshSessionMetadata = useCallback(async () => {
     try {
@@ -300,18 +254,6 @@ export function ChatView({
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
-
-  // SSE-based task events — replaces 2-second team-banner polling
-  useTaskEvents({
-    sessionId,
-    enabled: !isStreaming,
-    onEvent: useCallback(() => {
-      void syncMessagesFromServer();
-    }, [syncMessagesFromServer]),
-    onSnapshot: useCallback((banner: unknown) => {
-      setTaskBanner(banner as TeamBannerProjectionV1 | null);
-    }, []),
-  });
 
   const appendMessage = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -1425,8 +1367,6 @@ export function ChatView({
           </>
         ) : null}
       </div>
-
-      <TaskStatusBar banner={taskBanner} />
 
       {browserConflict ? (
         <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-3">

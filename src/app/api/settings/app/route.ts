@@ -41,10 +41,8 @@ const ALLOWED_KEYS = [
   'memory_intelligence_idle_timeout_ms',
   'memory_intelligence_last_run_at',
   'provider_override:knowledge',
-  'provider_override:workflow',
   'provider_override:image',
   'model_override:knowledge',
-  'model_override:workflow',
   'model_override:image',
   'claude_project_settings_enabled',
   'locale',
@@ -63,11 +61,6 @@ const PROVIDER_SETTING_RULES: Partial<Record<string, {
     capability: 'text-gen',
     label: '知识库模块服务商',
     disallowLocalAuth: true,
-  },
-  'provider_override:workflow': {
-    moduleKey: 'workflow',
-    capability: 'text-gen',
-    label: '工作流规划服务商',
   },
   'provider_override:image': {
     moduleKey: 'image',

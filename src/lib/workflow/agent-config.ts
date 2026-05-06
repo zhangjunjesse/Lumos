@@ -4,7 +4,6 @@ import type { AgentExecutionBindingV1 } from '@/lib/team-run/runtime-contracts';
 import type { WorkflowAgentRole } from './types';
 
 export const WORKFLOW_CONFIGURABLE_AGENT_ROLES = [
-  'scheduling',
   'worker',
   'researcher',
   'coder',
@@ -16,22 +15,6 @@ export type WorkflowRuntimeCapability = AgentExecutionBindingV1['allowedTools'][
 
 export function isWorkflowConfigurableAgentRole(value: string): value is WorkflowConfigurableAgentRole {
   return (WORKFLOW_CONFIGURABLE_AGENT_ROLES as readonly string[]).includes(value);
-}
-
-export interface WorkflowPlanningRoleConfig {
-  role: 'scheduling';
-  title: string;
-  shortLabel: string;
-  description: string;
-  roleName: string;
-  agentType: string;
-  systemPrompt: string;
-  tools: string[];
-  notes: string[];
-  plannerTimeoutMs: number;
-  plannerMaxRetries: number;
-  preferredProviderId?: string;
-  preferredModel?: string;
 }
 
 export interface WorkflowExecutionRoleConfig {
@@ -51,15 +34,13 @@ export interface WorkflowExecutionRoleConfig {
   preferredModel?: string;
 }
 
-export type WorkflowAgentRoleConfig =
-  | WorkflowPlanningRoleConfig
-  | WorkflowExecutionRoleConfig;
+export type WorkflowAgentRoleConfig = WorkflowExecutionRoleConfig;
 
 export interface WorkflowAgentRoleProfile {
   role: WorkflowConfigurableAgentRole;
   title: string;
   shortLabel: string;
-  scope: 'planning' | 'execution';
+  scope: 'execution';
   implementationStatus: 'live' | 'partial';
   description: string;
   roleName: string;
@@ -75,10 +56,6 @@ export interface WorkflowAgentRoleProfile {
   memoryPolicy?: AgentExecutionBindingV1['memoryPolicy'];
   concurrencyLimit?: number;
   defaultConcurrencyLimit?: number;
-  plannerTimeoutMs?: number;
-  defaultPlannerTimeoutMs?: number;
-  plannerMaxRetries?: number;
-  defaultPlannerMaxRetries?: number;
   preferredProviderId?: string;
   preferredModel?: string;
 }
@@ -87,8 +64,6 @@ interface WorkflowAgentRoleOverride {
   systemPrompt?: string;
   allowedTools?: WorkflowRuntimeCapability[];
   concurrencyLimit?: number;
-  plannerTimeoutMs?: number;
-  plannerMaxRetries?: number;
   preferredProviderId?: string;
   preferredModel?: string;
 }
@@ -102,8 +77,6 @@ export interface WorkflowAgentRoleUpdateInput {
   systemPrompt?: string;
   allowedTools?: WorkflowRuntimeCapability[];
   concurrencyLimit?: number;
-  plannerTimeoutMs?: number;
-  plannerMaxRetries?: number;
   preferredProviderId?: string;
   preferredModel?: string;
 }
@@ -115,15 +88,12 @@ const workflowAgentRoleOverrideSchema = z.object({
   systemPrompt: z.string().trim().min(1).optional(),
   allowedTools: z.array(runtimeCapabilitySchema).optional(),
   concurrencyLimit: z.number().int().min(1).max(10).optional(),
-  plannerTimeoutMs: z.number().int().min(5_000).max(120_000).optional(),
-  plannerMaxRetries: z.number().int().min(0).max(5).optional(),
   preferredProviderId: z.string().trim().optional(),
   preferredModel: z.string().trim().optional(),
 }).strict();
 const workflowAgentRoleOverrideStoreSchema = z.object({
   version: z.literal('v1').default('v1'),
   roles: z.object({
-    scheduling: workflowAgentRoleOverrideSchema.optional(),
     worker: workflowAgentRoleOverrideSchema.optional(),
     researcher: workflowAgentRoleOverrideSchema.optional(),
     coder: workflowAgentRoleOverrideSchema.optional(),
@@ -132,39 +102,6 @@ const workflowAgentRoleOverrideStoreSchema = z.object({
 }).strict();
 
 const DEFAULT_WORKFLOW_AGENT_CONFIGS: Record<WorkflowConfigurableAgentRole, WorkflowAgentRoleConfig> = {
-  scheduling: {
-    role: 'scheduling',
-    title: 'Scheduling Agent',
-    shortLabel: '调度代理',
-    description: '负责分析任务、决定简单执行或工作流编排，并把任务约束收敛到 Workflow DSL v1。',
-    roleName: 'Workflow Scheduling Agent',
-    agentType: 'workflow.scheduling',
-    systemPrompt: [
-      '你是 Lumos 工作流调度规划层，负责分析任务并决定最优执行策略。',
-      '',
-      '## 策略选择',
-      '- simple：任务单一、一步可完成、无需多 Agent 协作',
-      '- workflow：需要多步骤、并行处理、或多个 Agent 依次/并行协作',
-      '',
-      '## 工作流规范',
-      '- 工作流只包含 agent 步骤',
-      '- 每个步骤必须通过 preset 字段引用 availableWorkflowAgents 中的 Agent id',
-      '- 不使用 role 字段；不引用列表之外的 preset id',
-      '- agent 的 prompt 只能是字面字符串，或精确引用上游输出如 steps.someStep.output / steps.someStep.output.summary（只有明确只消费纯文本结果时才用 summary）',
-      '- 步骤 ID 用 kebab-case；无公共依赖的步骤自动并行',
-      '- 如可用 Agent 不足以完成任务，在 reason 中说明需要补充哪类 Agent，strategy 选 simple',
-      '',
-      '## 输出要求',
-      '严格输出符合 plannerResponseSchema 的 JSON，不添加任何说明文字。',
-    ].join('\n'),
-    tools: ['generate_workflow', 'update_task_status'],
-    notes: [
-      '只允许输出受限 Workflow DSL v1，不允许生成任意脚本或 TypeScript。',
-      '当前由调度层直接调用模型并执行重试、回退和 DSL 校验。',
-    ],
-    plannerTimeoutMs: 90_000,
-    plannerMaxRetries: 2,
-  },
   worker: {
     role: 'worker',
     title: 'Worker Agent',
@@ -261,20 +198,13 @@ function uniqueValues<T>(values: T[]): T[] {
 
 function parseOverrideStore(raw: string | undefined): WorkflowAgentRoleOverrideStore {
   if (!raw || !raw.trim()) {
-    return {
-      version: 'v1',
-      roles: {},
-    };
+    return { version: 'v1', roles: {} };
   }
-
   try {
     const parsed = JSON.parse(raw);
     return workflowAgentRoleOverrideStoreSchema.parse(parsed);
   } catch {
-    return {
-      version: 'v1',
-      roles: {},
-    };
+    return { version: 'v1', roles: {} };
   }
 }
 
@@ -293,11 +223,8 @@ function normalizeExecutionTools(
   if (!Array.isArray(overrideTools)) {
     return [...defaultTools];
   }
-
   const allowed = new Set(defaultTools);
-  return uniqueValues(
-    overrideTools.filter((tool) => allowed.has(tool)),
-  );
+  return uniqueValues(overrideTools.filter((tool) => allowed.has(tool)));
 }
 
 function getRoleOverride(
@@ -307,43 +234,10 @@ function getRoleOverride(
   return store.roles[role];
 }
 
-function isExecutionRoleConfig(
-  config: WorkflowAgentRoleConfig,
-): config is WorkflowExecutionRoleConfig {
-  return config.role !== 'scheduling';
-}
-
 function buildRoleProfile(
   config: WorkflowAgentRoleConfig,
   override: WorkflowAgentRoleOverride | undefined,
 ): WorkflowAgentRoleProfile {
-  if (config.role === 'scheduling') {
-    return {
-      role: config.role,
-      title: config.title,
-      shortLabel: config.shortLabel,
-      scope: 'planning',
-      implementationStatus: 'live',
-      description: config.description,
-      roleName: config.roleName,
-      agentType: config.agentType,
-      systemPrompt: override?.systemPrompt || config.systemPrompt,
-      defaultSystemPrompt: config.systemPrompt,
-      hasOverrides: Boolean(override && Object.keys(override).length > 0),
-      notes: [...config.notes],
-      tools: [...config.tools],
-      defaultTools: [...config.tools],
-      editableToolOptions: [],
-      capabilityTags: ['planning', 'workflow-dsl'],
-      plannerTimeoutMs: override?.plannerTimeoutMs ?? config.plannerTimeoutMs,
-      defaultPlannerTimeoutMs: config.plannerTimeoutMs,
-      plannerMaxRetries: override?.plannerMaxRetries ?? config.plannerMaxRetries,
-      defaultPlannerMaxRetries: config.plannerMaxRetries,
-      preferredProviderId: override?.preferredProviderId,
-      preferredModel: override?.preferredModel,
-    };
-  }
-
   const allowedTools = normalizeExecutionTools(config.allowedTools, override?.allowedTools);
 
   return {
@@ -379,22 +273,6 @@ function normalizeOverrideForStorage(
 
   if (typeof input.systemPrompt === 'string' && input.systemPrompt.trim() && input.systemPrompt.trim() !== config.systemPrompt) {
     nextOverride.systemPrompt = input.systemPrompt.trim();
-  }
-
-  if (config.role === 'scheduling') {
-    if (typeof input.plannerTimeoutMs === 'number' && input.plannerTimeoutMs !== config.plannerTimeoutMs) {
-      nextOverride.plannerTimeoutMs = input.plannerTimeoutMs;
-    }
-    if (typeof input.plannerMaxRetries === 'number' && input.plannerMaxRetries !== config.plannerMaxRetries) {
-      nextOverride.plannerMaxRetries = input.plannerMaxRetries;
-    }
-    if (typeof input.preferredProviderId === 'string' && input.preferredProviderId.trim()) {
-      nextOverride.preferredProviderId = input.preferredProviderId.trim();
-    }
-    if (typeof input.preferredModel === 'string' && input.preferredModel.trim()) {
-      nextOverride.preferredModel = input.preferredModel.trim();
-    }
-    return workflowAgentRoleOverrideSchema.parse(nextOverride);
   }
 
   if (Array.isArray(input.allowedTools)) {
@@ -462,30 +340,10 @@ export function resetWorkflowAgentRoleProfile(role: WorkflowConfigurableAgentRol
   return getWorkflowAgentRoleProfile(role);
 }
 
-export function getSchedulingPlannerConfig(): WorkflowPlanningRoleConfig {
-  const profile = getWorkflowAgentRoleProfile('scheduling');
-  const defaultConfig = DEFAULT_WORKFLOW_AGENT_CONFIGS.scheduling;
-  if (defaultConfig.role !== 'scheduling') {
-    throw new Error('Scheduling role config is invalid');
-  }
-  return {
-    ...defaultConfig,
-    systemPrompt: profile.systemPrompt,
-    plannerTimeoutMs: profile.plannerTimeoutMs ?? defaultConfig.plannerTimeoutMs,
-    plannerMaxRetries: profile.plannerMaxRetries ?? defaultConfig.plannerMaxRetries,
-    preferredProviderId: profile.preferredProviderId,
-    preferredModel: profile.preferredModel,
-  };
-}
-
 export function getWorkflowExecutionRoleConfig(
   role: WorkflowAgentRole,
 ): WorkflowExecutionRoleConfig {
   const defaultConfig = DEFAULT_WORKFLOW_AGENT_CONFIGS[role];
-  if (!isExecutionRoleConfig(defaultConfig)) {
-    throw new Error(`Role "${role}" is not an execution role`);
-  }
-
   const profile = getWorkflowAgentRoleProfile(role);
   return {
     ...defaultConfig,

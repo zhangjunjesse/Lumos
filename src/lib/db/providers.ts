@@ -13,7 +13,6 @@ import {
 import { getDb } from './connection';
 
 const DEFAULT_PROVIDER_SETTING_KEY = 'default_provider_id';
-const WORKFLOW_OVERRIDE_SETTING_KEY = 'provider_override:workflow';
 const KNOWLEDGE_OVERRIDE_SETTING_KEY = 'provider_override:knowledge';
 const IMAGE_OVERRIDE_SETTING_KEY = 'provider_override:image';
 const MEMORY_INTELLIGENCE_PROVIDER_SETTING_KEY = 'memory_intelligence_provider_id';
@@ -59,11 +58,6 @@ const PROVIDER_UPDATE_REFERENCE_RULES: ProviderReferenceRule[] = [
     key: DEFAULT_PROVIDER_SETTING_KEY,
     label: '默认服务商',
     capability: 'agent-chat',
-  },
-  {
-    key: WORKFLOW_OVERRIDE_SETTING_KEY,
-    label: '工作流规划服务商',
-    capability: 'text-gen',
   },
   {
     key: KNOWLEDGE_OVERRIDE_SETTING_KEY,

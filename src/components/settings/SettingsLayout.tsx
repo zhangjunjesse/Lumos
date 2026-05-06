@@ -22,7 +22,6 @@ import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
 import { BrowserProviderSection } from "./BrowserProviderSection";
-import { SchedulingAgentSection } from "./SchedulingAgentSection";
 import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
 import { CodifyAgentSection } from "./CodifyAgentSection";
@@ -149,8 +148,6 @@ export function SettingsLayout() {
           {activeSection === "im" && <ImSection />}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">
-              <SchedulingAgentSection />
-              <div className="h-px bg-border/50" />
               <AgentCreationLLMSection />
               <div className="h-px bg-border/50" />
               <WorkflowBuilderLLMSection />

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { BrowserPanelTabData } from '@/types/browser';
 import { useContentPanelStore, type Tab } from '@/stores/content-panel';
 import { FileTree } from '@/components/project/FileTree';
-import { TaskActivityPanel } from '@/components/workflow/TaskActivityPanel';
 import { EmbeddedBrowserPanel } from '@/components/browser/EmbeddedBrowserPanel';
 import { FavoritesPanel } from '@/components/favorites/FavoritesPanel';
 import { FeishuDocPreview } from '@/components/feishu/FeishuDocPreview';
@@ -641,9 +640,6 @@ function renderContent(
           width={0} // Not used in tab context
         />
       );
-
-    case 'task-activity':
-      return <TaskActivityPanel sessionId={sessionId || ''} />;
 
     case 'settings':
       return <div className="p-4">Settings (Coming Soon)</div>;

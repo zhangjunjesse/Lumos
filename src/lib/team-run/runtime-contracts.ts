@@ -1,5 +1,21 @@
-import type { CompiledStageV1 } from './compiler'
 import type { WorkflowKnowledgeConfig } from '@/lib/workflow/types'
+
+export interface StageInputContractV1 {
+  requiredDependencyOutputs: string[]
+  taskContext: {
+    includeUserGoal: boolean
+    includeExpectedOutcome: boolean
+    includeRunSummary: boolean
+  }
+}
+
+export interface StageOutputContractV1 {
+  primaryFormat: 'markdown' | 'json' | 'plain-text'
+  mayProduceArtifacts: boolean
+  mustProduceSummary: boolean
+  artifactKinds: string[]
+  outputSchema?: unknown
+}
 
 export interface WorkspaceBindingV1 {
   sessionWorkspace: string
@@ -51,8 +67,8 @@ export interface StageExecutionPayloadV1 {
     description: string
     acceptanceCriteria: string[]
     responseMode?: 'structured' | 'plain-text'
-    inputContract: CompiledStageV1['inputContract']
-    outputContract: CompiledStageV1['outputContract']
+    inputContract: StageInputContractV1
+    outputContract: StageOutputContractV1
   }
   dependencies: DependencyResultRefV1[]
   memoryRefs: {

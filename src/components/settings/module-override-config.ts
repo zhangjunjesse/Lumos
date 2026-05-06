@@ -21,11 +21,10 @@ export interface ProviderOption {
 
 export type ModelOverrideKey =
   | 'model_override:knowledge'
-  | 'model_override:workflow'
   | 'model_override:image';
 
 export interface ModuleConfig {
-  key: 'provider_override:knowledge' | 'provider_override:workflow' | 'provider_override:image';
+  key: 'provider_override:knowledge' | 'provider_override:image';
   modelKey: ModelOverrideKey;
   moduleKey: ProviderPresetModule;
   label: string;
@@ -51,17 +50,6 @@ export const TEXT_MODULE_CONFIGS: ModuleConfig[] = [
     emptyValueLabel: '使用默认',
     emptyHint: '未指定时，使用上方「AI 对话」中的服务。',
     createTitle: '为知识库添加服务',
-  },
-  {
-    key: 'provider_override:workflow',
-    modelKey: 'model_override:workflow',
-    moduleKey: 'workflow',
-    label: '工作流规划',
-    description: '规划任务拆解时使用的 AI 服务，不影响工作流的实际执行。',
-    capability: 'text-gen',
-    emptyValueLabel: '使用默认',
-    emptyHint: '未指定时，使用上方「AI 对话」中的服务。支持文本生成能力的服务商均可用于规划。',
-    createTitle: '为工作流规划添加服务',
   },
 ];
 

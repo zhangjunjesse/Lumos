@@ -32,7 +32,7 @@ export interface McpResolveOptions {
   browserBridgeOverride?: { url?: string; token?: string; browserContextId?: string };
   /** Browser context routed through the bridge. Defaults to the embedded browser. */
   browserContextId?: string;
-  /** MCP names to skip (e.g. chat route skips 'task-management'). */
+  /** MCP names to skip when loading. */
   skipNames?: Set<string>;
   /** When true, browser MCP operates in background mode (no UI tab switching). */
   browserBackground?: boolean;

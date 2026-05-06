@@ -221,9 +221,8 @@ function importMcpServers(): number {
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
       }
     } else {
-      // task-management, workflow, and deepsearch are enabled by default for core orchestration flows
-      const isEnabled = config.name === 'task-management'
-        || config.name === 'workflow'
+      // workflow and deepsearch are enabled by default for core orchestration flows
+      const isEnabled = config.name === 'workflow'
         || config.name === 'deepsearch'
         || config.name === 'office-docs'
         || config.name === 'chrome-devtools'

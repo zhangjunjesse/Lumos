@@ -550,10 +550,8 @@ export function getLumosSessionSummary(sessionId: string, messageLimit?: number)
       id: task.id,
       title: task.title,
       status: task.status,
-      kind: task.task_kind ?? 'manual',
-      current_run_id: task.current_run_id ?? null,
       updated_at: task.updated_at,
-      summary: truncateText(task.final_result_summary || task.description || '', 400),
+      summary: truncateText(task.description || '', 400),
     })),
     recent_messages: messages.map((message) => ({
       id: message.id,
@@ -721,7 +719,7 @@ function summarizeProviders(providers: ApiProvider[], defaultProvider: ApiProvid
       severity: 'error',
       area: 'providers',
       title: '默认聊天服务商未配置',
-      message: '主 Agent 和工作流规划可能无法正常调用模型。请到设置里的服务商页面选择默认服务商。',
+      message: '主 Agent 可能无法正常调用模型。请到设置里的服务商页面选择默认服务商。',
       route: '/settings#providers',
     });
   } else if (!providerSupportsCapability(defaultProvider, 'agent-chat')) {
