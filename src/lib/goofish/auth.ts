@@ -285,9 +285,13 @@ async function waitForBuiltinBrowserQrCookies(
   ignoredUnbs: Set<string>,
 ): Promise<Record<string, string>> {
   const deadline = Date.now() + timeoutSecs * 1000;
+  let lastIgnoredUnb = '';
   while (Date.now() < deadline) {
     await sleep(2000);
     const cookies = await collectGoofishCookiesFromBridge(config);
+    if (QR_REQUIRED_COOKIES.every((name) => Boolean(cookies[name])) && ignoredUnbs.has(cookies.unb)) {
+      lastIgnoredUnb = cookies.unb;
+    }
     if (hasAcceptableQrCookies(cookies, ignoredUnbs)) {
       await sleep(2000);
       const finalCookies = await collectGoofishCookiesFromBridge(config);
@@ -296,7 +300,12 @@ async function waitForBuiltinBrowserQrCookies(
       }
     }
   }
-  throw new GoofishCliException({ code: 'AUTH_FAILED', message: '扫码超时或未确认登录' });
+  throw new GoofishCliException({
+    code: 'AUTH_FAILED',
+    message: lastIgnoredUnb
+      ? `当前 Lumos 浏览器仍是已保存账号 #${lastIgnoredUnb}，请在打开的闲鱼页面切换到新账号后重试`
+      : '扫码超时或未确认登录',
+  });
 }
 
 function hasAcceptableQrCookies(cookies: Record<string, string>, ignoredUnbs: Set<string>): boolean {
