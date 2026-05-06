@@ -11,6 +11,8 @@ import {
   updateMcpServer,
   getMcpServerByNameAndScope,
   toggleMcpServerEnabled,
+  parseMcpStringArray,
+  parseMcpStringMap,
 } from '@/lib/db';
 
 function parseJsonArray(value: string | undefined): string[] {
@@ -72,8 +74,8 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         };
       } = {
         command: server.command,
-        args: JSON.parse(server.args || '[]'),
-        env: JSON.parse(server.env || '{}'),
+        args: parseMcpStringArray(server.args),
+        env: parseMcpStringMap(server.env),
         scope: server.scope,
         description: server.description,
         is_enabled: server.is_enabled === 1,
@@ -83,7 +85,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
       entry.runMode = server.run_mode || 'on_demand';
       entry.runtime = server.runtime_kind || 'auto';
       if (server.url) entry.url = server.url;
-      const headers = JSON.parse(server.headers || '{}');
+      const headers = parseMcpStringMap(server.headers);
       if (Object.keys(headers).length > 0) entry.headers = headers;
       const healthStatus = server.health_status || 'unknown';
       if (healthStatus !== 'unknown' || server.health_checked_at) {
@@ -238,13 +240,13 @@ export async function PUT(
         scope: 'user',
         description: server.description || existingBuiltin?.description || `MCP server: ${name}`,
         command: server.command || existingBuiltin?.command || '',
-        args: server.args || (existingBuiltin ? JSON.parse(existingBuiltin.args || '[]') as string[] : []),
-        env: server.env || (existingBuiltin ? JSON.parse(existingBuiltin.env || '{}') as Record<string, string> : {}),
+        args: server.args || (existingBuiltin ? parseMcpStringArray(existingBuiltin.args) : []),
+        env: server.env || (existingBuiltin ? parseMcpStringMap(existingBuiltin.env) : {}),
         type: server.type || existingBuiltin?.type || 'stdio',
         runMode: server.runMode || existingBuiltin?.run_mode || 'on_demand',
         runtime: server.runtime || existingBuiltin?.runtime_kind || 'auto',
         url: server.url || existingBuiltin?.url || '',
-        headers: server.headers || (existingBuiltin ? JSON.parse(existingBuiltin.headers || '{}') as Record<string, string> : {}),
+        headers: server.headers || (existingBuiltin ? parseMcpStringMap(existingBuiltin.headers) : {}),
         is_enabled: existingBuiltin ? existingBuiltin.is_enabled === 1 : true,
         source: 'manual',
       });

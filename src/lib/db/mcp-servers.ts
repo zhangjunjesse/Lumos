@@ -77,15 +77,51 @@ export interface UpdateMcpServerData {
 // Helper Functions
 // ==========================================
 
+export function parseMcpStringArray(raw: string | undefined | null): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item));
+    if (typeof parsed === 'string' && parsed.trim()) return [parsed];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export function parseMcpStringMap(raw: string | undefined | null): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, String(value ?? '')])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function normalizeMcpStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item));
+  if (typeof value === 'string' && value.trim()) return [value];
+  return [];
+}
+
+function normalizeMcpStringMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item ?? '')])
+  );
+}
+
 export function mcpServerRecordToConfig(record: McpServerRecord): MCPServerConfig {
   const config: MCPServerConfig = {
     command: record.command,
   };
 
-  const args = JSON.parse(record.args) as string[];
+  const args = parseMcpStringArray(record.args);
   if (args.length > 0) config.args = args;
 
-  const env = JSON.parse(record.env) as Record<string, string>;
+  const env = parseMcpStringMap(record.env);
   if (Object.keys(env).length > 0) config.env = env;
 
   const type = record.type || 'stdio';
@@ -95,7 +131,7 @@ export function mcpServerRecordToConfig(record: McpServerRecord): MCPServerConfi
 
   if (record.url) config.url = record.url;
 
-  const headers = JSON.parse(record.headers || '{}') as Record<string, string>;
+  const headers = parseMcpStringMap(record.headers);
   if (Object.keys(headers).length > 0) config.headers = headers;
 
   return config;
@@ -152,13 +188,13 @@ export function createMcpServer(data: CreateMcpServerData): McpServerRecord {
     id,
     data.name,
     data.command,
-    JSON.stringify(data.args || []),
-    JSON.stringify(data.env || {}),
+    JSON.stringify(normalizeMcpStringArray(data.args)),
+    JSON.stringify(normalizeMcpStringMap(data.env)),
     data.type || 'stdio',
     data.runMode || 'on_demand',
     data.runtime || 'auto',
     data.url || '',
-    JSON.stringify(data.headers || {}),
+    JSON.stringify(normalizeMcpStringMap(data.headers)),
     data.is_enabled ? 1 : 0,
     data.scope,
     data.source || 'manual',
@@ -178,13 +214,13 @@ export function updateMcpServer(id: string, data: UpdateMcpServerData): McpServe
 
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const command = data.command ?? existing.command;
-  const args = data.args !== undefined ? JSON.stringify(data.args) : existing.args;
-  const env = data.env !== undefined ? JSON.stringify(data.env) : existing.env;
+  const args = data.args !== undefined ? JSON.stringify(normalizeMcpStringArray(data.args)) : existing.args;
+  const env = data.env !== undefined ? JSON.stringify(normalizeMcpStringMap(data.env)) : existing.env;
   const type = data.type ?? existing.type ?? 'stdio';
   const runMode = data.runMode ?? existing.run_mode ?? 'on_demand';
   const runtimeKind = data.runtime ?? existing.runtime_kind ?? 'auto';
   const url = data.url ?? existing.url ?? '';
-  const headers = data.headers !== undefined ? JSON.stringify(data.headers) : (existing.headers || '{}');
+  const headers = data.headers !== undefined ? JSON.stringify(normalizeMcpStringMap(data.headers)) : (existing.headers || '{}');
   const isEnabled = data.is_enabled !== undefined ? (data.is_enabled ? 1 : 0) : existing.is_enabled;
   const description = data.description ?? existing.description;
   const source = data.source ?? existing.source;

@@ -167,6 +167,8 @@ export {
   getMcpServer,
   getMcpServerByNameAndScope,
   mcpServerRecordToConfig,
+  parseMcpStringArray,
+  parseMcpStringMap,
   createMcpServer,
   updateMcpServer,
   updateMcpServerHealth,

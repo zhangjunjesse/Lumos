@@ -73,4 +73,44 @@ describe('mcp server health persistence', () => {
     expect(runtimeChanged?.run_mode).toBe('keep_alive');
     expect(runtimeChanged?.runtime_kind).toBe('node');
   });
+
+  it('normalizes legacy non-array args when reading and writing MCP configs', () => {
+    const {
+      createMcpServer,
+      getMcpServer,
+      mcpServerRecordToConfig,
+      parseMcpStringArray,
+      updateMcpServer,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- see afterEach above
+    } = require('../mcp-servers') as typeof import('../mcp-servers');
+
+    expect(parseMcpStringArray('"legacy-server.mjs"')).toEqual(['legacy-server.mjs']);
+    expect(parseMcpStringArray('{"bad":true}')).toEqual([]);
+
+    const server = createMcpServer({
+      name: 'legacy-args-test',
+      command: 'node',
+      args: 'legacy-server.mjs' as never,
+      env: ['bad-env'] as never,
+      headers: ['bad-header'] as never,
+      scope: 'user',
+      is_enabled: true,
+    });
+
+    expect(getMcpServer(server.id)?.args).toBe('["legacy-server.mjs"]');
+    expect(getMcpServer(server.id)?.env).toBe('{}');
+    expect(getMcpServer(server.id)?.headers).toBe('{}');
+
+    updateMcpServer(server.id, { args: { bad: true } as never });
+    expect(getMcpServer(server.id)?.args).toBe('[]');
+
+    const legacyRecord = {
+      ...server,
+      args: '"legacy-server.mjs"',
+      env: '[]',
+      headers: '[]',
+    };
+    expect(mcpServerRecordToConfig(legacyRecord).args).toEqual(['legacy-server.mjs']);
+    expect(mcpServerRecordToConfig(legacyRecord).env).toBeUndefined();
+  });
 });

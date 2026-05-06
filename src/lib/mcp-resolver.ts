@@ -41,6 +41,12 @@ export interface McpResolveOptions {
 // Re-export enricher utilities that callers may need
 export { readBrowserBridgeFromRuntimeFile } from '@/lib/mcp-env-enrichers';
 
+function normalizeMcpArgsForRuntime(args: unknown): string[] {
+  if (Array.isArray(args)) return args.map((arg) => String(arg));
+  if (typeof args === 'string' && args.trim()) return [args];
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline: load → resolve paths → enrich env → filter → return
 // ---------------------------------------------------------------------------
@@ -93,11 +99,14 @@ export function resolveEnabledMcpServers(
     }
 
     // Step 1b: Resolve path placeholders in args
-    if (config.args) {
-      config.args = config.args.map(arg => {
+    const normalizedArgs = normalizeMcpArgsForRuntime(config.args);
+    if (normalizedArgs.length > 0) {
+      config.args = normalizedArgs.map(arg => {
         const normalized = arg.replace(legacyMcpPathPattern, normalizedMcpPathSegment);
         return resolveMcpConfigPlaceholders(normalized, placeholderContext);
       });
+    } else {
+      delete config.args;
     }
 
     // Step 2: Resolve path placeholders in env
@@ -162,7 +171,12 @@ export function toSdkMcpConfig(
           console.warn(`[mcp] stdio server "${name}" is missing command, skipping`);
           continue;
         }
-        const stdio: McpStdioServerConfig = { command: config.command, args: config.args, env: config.env };
+        const args = normalizeMcpArgsForRuntime(config.args);
+        const stdio: McpStdioServerConfig = {
+          command: config.command,
+          env: config.env,
+        };
+        if (args.length > 0) stdio.args = args;
         result[sdkName] = stdio;
         break;
       }
