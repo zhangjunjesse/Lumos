@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { execFileSync } from 'child_process';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
-import { runEnvProbes } from '@/lib/wechat-export/env-check';
+import { getWindowsWeChatProcessNames, runEnvProbes } from '@/lib/wechat-export/env-check';
 import { extractKeys, type KeyExtractionProgress } from '@/lib/wechat-export/key-extractor';
 import { getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
 
@@ -26,18 +26,20 @@ function findWeChatPid(): number | null {
 
 function findWindowsWeChatPid(): number | null {
   try {
-    const out = execFileSync('tasklist', [
-      '/FI',
-      'IMAGENAME eq WeChat.exe',
-      '/FO',
-      'CSV',
-      '/NH',
-    ], { encoding: 'utf8', timeout: 3000 }).trim();
-    for (const line of out.split(/\r?\n/)) {
-      if (!/WeChat\.exe/i.test(line)) continue;
-      const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
-      const pid = parseInt(fields[1] || '', 10);
-      if (Number.isFinite(pid) && pid > 0) return pid;
+    for (const processName of getWindowsWeChatProcessNames()) {
+      const out = execFileSync('tasklist', [
+        '/FI',
+        `IMAGENAME eq ${processName}`,
+        '/FO',
+        'CSV',
+        '/NH',
+      ], { encoding: 'utf8', timeout: 3000 }).trim();
+      for (const line of out.split(/\r?\n/)) {
+        if (!line.toLowerCase().includes(processName.toLowerCase())) continue;
+        const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
+        const pid = parseInt(fields[1] || '', 10);
+        if (Number.isFinite(pid) && pid > 0) return pid;
+      }
     }
   } catch { /* tasklist is Windows-only */ }
   return null;

@@ -91,7 +91,16 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def wechat_process_names() -> set[str]:
+    raw = os.environ.get("LUMOS_WECHAT_EXPORT_WINDOWS_PROCESS_NAMES", "")
+    names = {part.strip().lower() for part in raw.split(";") if part.strip()}
+    names.add("wechat.exe")
+    names.add("weixin.exe")
+    return names
+
+
 def find_wechat_pids() -> list[int]:
+    process_names = wechat_process_names()
     snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snap == INVALID_HANDLE_VALUE:
         return []
@@ -101,7 +110,7 @@ def find_wechat_pids() -> list[int]:
     try:
         ok = Process32FirstW(snap, ctypes.byref(entry))
         while ok:
-            if entry.szExeFile.lower() == "wechat.exe":
+            if entry.szExeFile.lower() in process_names:
                 pids.append(int(entry.th32ProcessID))
             ok = Process32NextW(snap, ctypes.byref(entry))
     finally:
@@ -185,6 +194,11 @@ def normalize_wechat_root(value: str) -> str | None:
 
 def wechat_roots() -> list[str]:
     roots: list[str] = []
+    manual_roots = os.environ.get("LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS", "")
+    for item in manual_roots.split(os.pathsep):
+        root = normalize_wechat_root(item)
+        if root:
+            roots.append(root)
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Tencent\WeChat")
         value, _ = winreg.QueryValueEx(key, "FileSavePath")
@@ -301,7 +315,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         pids = find_wechat_pids()
         pid = pids[0] if pids else 0
     if not pid:
-        raise RuntimeError("未找到运行中的 WeChat.exe")
+        raise RuntimeError("未找到运行中的 WeChat.exe / Weixin.exe")
 
     accounts = find_accounts()
     if not accounts:

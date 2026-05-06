@@ -19,6 +19,7 @@ export const KEY_FILE = path.join(FEATURE_DIR, 'key.txt');
 export const KEYS_JSON_FILE = path.join(FEATURE_DIR, 'wechat_keys.json');
 export const WINDOWS_ACCOUNTS_FILE = path.join(FEATURE_DIR, 'windows_accounts.json');
 export const WINDOWS_DECRYPT_DIR = path.join(FEATURE_DIR, 'windows-decrypted');
+export const WINDOWS_PATH_CONFIG_FILE = path.join(FEATURE_DIR, 'windows_paths.json');
 export const SETUP_LOG_FILE = path.join(FEATURE_DIR, 'setup.log');
 
 export const WECHAT_APP_PATH = '/Applications/WeChat.app';
@@ -58,6 +59,12 @@ export interface WindowsAccountRecord {
   extracted_at?: number;
 }
 
+export interface WindowsPathConfig {
+  wechatExePath?: string;
+  wechatDataRoot?: string;
+  updatedAt?: number;
+}
+
 function isHexKey(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-fA-F]{64}$/.test(value.trim());
 }
@@ -70,6 +77,50 @@ export function readWindowsAccounts(): WindowsAccountRecord[] {
   } catch {
     return [];
   }
+}
+
+function cleanPathValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function readWindowsPathConfig(): WindowsPathConfig {
+  try {
+    if (!fs.existsSync(WINDOWS_PATH_CONFIG_FILE)) return {};
+    const parsed = JSON.parse(fs.readFileSync(WINDOWS_PATH_CONFIG_FILE, 'utf8')) as Record<string, unknown>;
+    return {
+      wechatExePath: cleanPathValue(parsed.wechatExePath),
+      wechatDataRoot: cleanPathValue(parsed.wechatDataRoot),
+      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export function writeWindowsPathConfig(patch: Partial<WindowsPathConfig>): WindowsPathConfig {
+  ensureFeatureDir();
+  const next: WindowsPathConfig = {
+    ...readWindowsPathConfig(),
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  if (!cleanPathValue(next.wechatExePath)) delete next.wechatExePath;
+  if (!cleanPathValue(next.wechatDataRoot)) delete next.wechatDataRoot;
+  fs.writeFileSync(WINDOWS_PATH_CONFIG_FILE, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return next;
+}
+
+export function clearWindowsPathConfig(kind?: 'wechatExe' | 'dataDir'): WindowsPathConfig {
+  if (!kind) {
+    try {
+      fs.unlinkSync(WINDOWS_PATH_CONFIG_FILE);
+    } catch { /* ignore */ }
+    return {};
+  }
+  const current = readWindowsPathConfig();
+  if (kind === 'wechatExe') delete current.wechatExePath;
+  if (kind === 'dataDir') delete current.wechatDataRoot;
+  return writeWindowsPathConfig(current);
 }
 
 function hasMacRecoveredKey(): boolean {
@@ -140,7 +191,7 @@ export function readKeyFile(): string | null {
 export function wipeFeatureData(): void {
   if (!fs.existsSync(FEATURE_DIR)) return;
   // shred the key files first so a partial rmdir failure still removes secrets.
-  for (const f of [KEY_FILE, KEYS_JSON_FILE, WINDOWS_ACCOUNTS_FILE]) {
+  for (const f of [KEY_FILE, KEYS_JSON_FILE, WINDOWS_ACCOUNTS_FILE, WINDOWS_PATH_CONFIG_FILE]) {
     try {
       if (fs.existsSync(f)) {
         const buf = Buffer.alloc(fs.statSync(f).size, 0);

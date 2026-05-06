@@ -16,9 +16,11 @@ import {
   getWeChatExportPlatform,
   KEY_FILE,
   KEYS_JSON_FILE,
+  readWindowsPathConfig,
   WINDOWS_ACCOUNTS_FILE,
   type WeChatExportPlatform,
 } from './setup-state';
+import { getWindowsWeChatProcessNames } from './env-check';
 
 const SCRIPT_REL_BY_PLATFORM: Record<WeChatExportPlatform, string> = {
   darwin: 'mcp-servers/wechat-export/macos/extract_key.py',
@@ -132,6 +134,11 @@ export async function extractKeys(
         log: '',
       };
     }
+    const windowsConfig = readWindowsPathConfig();
+    if (windowsConfig.wechatDataRoot) {
+      env.LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS = windowsConfig.wechatDataRoot;
+    }
+    env.LUMOS_WECHAT_EXPORT_WINDOWS_PROCESS_NAMES = getWindowsWeChatProcessNames().join(';');
     args.push('--accounts-out', WINDOWS_ACCOUNTS_FILE, '--key-out', KEY_FILE);
   }
 

@@ -16,6 +16,7 @@ import {
   getWeChatExportPlatform,
   hasRecoveredKey,
   readWindowsAccounts,
+  readWindowsPathConfig,
 } from './setup-state';
 import { getPythonVersion, resolvePythonBinary } from '@/lib/python-runtime';
 
@@ -132,7 +133,7 @@ function getWindowsDocumentsCandidates(): string[] {
   return Array.from(new Set(candidates));
 }
 
-function normalizeWindowsWeChatRoot(value: string): string | null {
+export function normalizeWindowsWeChatRoot(value: string): string | null {
   const trimmed = expandWindowsEnv(value.trim());
   if (!trimmed) return null;
   if (trimmed === 'MyDocument:') {
@@ -146,6 +147,9 @@ function normalizeWindowsWeChatRoot(value: string): string | null {
 
 export function getWindowsWeChatRootCandidates(): string[] {
   const candidates: string[] = [];
+  const manualDataRoot = readWindowsPathConfig().wechatDataRoot;
+  if (manualDataRoot) candidates.push(manualDataRoot);
+
   try {
     const out = execFileSync('reg', [
       'query',
@@ -174,7 +178,7 @@ export function getWindowsWeChatRootCandidates(): string[] {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-function findWindowsAccount(root: string): { wxid: string; wxDir: string } | null {
+export function findWindowsAccount(root: string): { wxid: string; wxDir: string } | null {
   try {
     for (const name of fs.readdirSync(root)) {
       if (['All Users', 'Applet', 'WMPF'].includes(name)) continue;
@@ -190,30 +194,88 @@ function findWindowsAccount(root: string): { wxid: string; wxDir: string } | nul
   return null;
 }
 
-function findWindowsWeChatPid(): number | null {
+export function resolveWindowsWeChatDataRootSelection(inputPath: string): { root: string; wxid: string; wxDir: string } | null {
+  const selected = path.resolve(inputPath.trim());
+  if (!selected) return null;
   try {
-    const out = execFileSync('tasklist', [
-      '/FI',
-      'IMAGENAME eq WeChat.exe',
-      '/FO',
-      'CSV',
-      '/NH',
-    ], { encoding: 'utf8', timeout: 3000 }).trim();
-    for (const line of out.split(/\r?\n/)) {
-      if (!/WeChat\.exe/i.test(line)) continue;
-      const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
-      const pid = parseInt(fields[1] || '', 10);
-      if (Number.isFinite(pid) && pid > 0) return pid;
+    const stat = fs.statSync(selected);
+    if (!stat.isDirectory()) return null;
+  } catch {
+    return null;
+  }
+
+  const asMsgDir = path.basename(selected).toLowerCase() === 'msg'
+    ? selected
+    : path.join(selected, 'MSG');
+  const microMsg = path.join(asMsgDir, 'MicroMsg.db');
+  if (fs.existsSync(microMsg)) {
+    const wxDir = path.basename(selected).toLowerCase() === 'msg'
+      ? path.dirname(selected)
+      : selected;
+    return {
+      root: path.dirname(wxDir),
+      wxid: path.basename(wxDir),
+      wxDir,
+    };
+  }
+
+  const directAccount = findWindowsAccount(selected);
+  if (directAccount) {
+    return { root: selected, wxid: directAccount.wxid, wxDir: directAccount.wxDir };
+  }
+
+  const nestedRoot = path.join(selected, 'WeChat Files');
+  const nestedAccount = findWindowsAccount(nestedRoot);
+  if (nestedAccount) {
+    return { root: nestedRoot, wxid: nestedAccount.wxid, wxDir: nestedAccount.wxDir };
+  }
+
+  return null;
+}
+
+function getManualWindowsWeChatProcessName(): string | null {
+  const exe = readWindowsPathConfig().wechatExePath;
+  if (!exe) return null;
+  const name = path.basename(exe).trim();
+  return name.toLowerCase().endsWith('.exe') ? name : null;
+}
+
+export function getWindowsWeChatProcessNames(): string[] {
+  return Array.from(new Set(['WeChat.exe', 'Weixin.exe', getManualWindowsWeChatProcessName()].filter(Boolean) as string[]));
+}
+
+function findWindowsWeChatPid(): number | null {
+  const names = getWindowsWeChatProcessNames();
+  try {
+    for (const name of names) {
+      const out = execFileSync('tasklist', [
+        '/FI',
+        `IMAGENAME eq ${name}`,
+        '/FO',
+        'CSV',
+        '/NH',
+      ], { encoding: 'utf8', timeout: 3000 }).trim();
+      for (const line of out.split(/\r?\n/)) {
+        if (!line.toLowerCase().includes(name.toLowerCase())) continue;
+        const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
+        const pid = parseInt(fields[1] || '', 10);
+        if (Number.isFinite(pid) && pid > 0) return pid;
+      }
     }
   } catch { /* tasklist is Windows-only */ }
   return null;
 }
 
 function findWindowsWeChatExe(): string | null {
+  const manual = readWindowsPathConfig().wechatExePath;
   const candidates = [
+    manual || '',
     process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Tencent', 'WeChat', 'WeChat.exe') : '',
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Tencent', 'Weixin', 'Weixin.exe') : '',
     process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Tencent', 'WeChat', 'WeChat.exe') : '',
+    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Tencent', 'Weixin', 'Weixin.exe') : '',
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Tencent', 'WeChat', 'WeChat.exe') : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Tencent', 'Weixin', 'Weixin.exe') : '',
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {
@@ -230,11 +292,13 @@ export function probeWindowsWeChat(): ProbeResult & { signed: 'not_required'; pi
   }
   const exe = findWindowsWeChatExe();
   if (exe) {
+    const manual = readWindowsPathConfig().wechatExePath;
+    const matchedManual = manual && path.resolve(manual) === path.resolve(exe);
     return {
       ok: true,
       signed: 'not_required',
       running: false,
-      detail: `已安装但未运行: ${exe}`,
+      detail: `${matchedManual ? '已指定' : '已安装但未运行'}: ${exe}`,
       hint: '读取已提取的聊天记录不需要微信保持运行；重新提取密钥时再打开微信。',
     };
   }
@@ -243,7 +307,7 @@ export function probeWindowsWeChat(): ProbeResult & { signed: 'not_required'; pi
     signed: 'not_required',
     running: false,
     detail: '未检测到 Windows 微信',
-    hint: '请先安装并打开 Windows 微信，完成登录后再回来重新检查。',
+    hint: '请先安装并打开 Windows 微信；如果你装在非默认位置，请在下方手动指定微信程序路径。',
   };
 }
 

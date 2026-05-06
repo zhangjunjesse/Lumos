@@ -12,6 +12,11 @@ export interface WeChatExportStatus {
     allOk: boolean;
     signed: 'tencent' | 'adhoc' | 'unknown' | 'not_required';
   };
+  windowsPathConfig?: {
+    wechatExePath?: string;
+    wechatDataRoot?: string;
+    updatedAt?: number;
+  };
   status?: {
     phase:
       | 'needs-consent'

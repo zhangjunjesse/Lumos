@@ -9,7 +9,7 @@ import {
   hasValidConsent,
   getConsent,
 } from '@/lib/wechat-export/disclaimer';
-import { getSetupStatus, getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
+import { getSetupStatus, getWeChatExportPlatform, readWindowsPathConfig } from '@/lib/wechat-export/setup-state';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -38,6 +38,7 @@ export async function GET() {
     supported: true,
     platform,
     env,
+    windowsPathConfig: platform === 'win32' ? readWindowsPathConfig() : undefined,
     status,
     consent: {
       version: DISCLAIMER_VERSION,

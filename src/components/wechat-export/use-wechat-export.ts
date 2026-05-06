@@ -16,7 +16,7 @@ const POLL_MS = 4000;
 export function useWeChatExport() {
   const [status, setStatus] = useState<WeChatExportStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract' | 'resign'>(null);
+  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract' | 'resign' | 'path'>(null);
   const [busyMessage, setBusyMessage] = useState<string>('');
   const [extractProgress, setExtractProgress] = useState<ExtractProgressEvent | null>(null);
   const [extractKeys, setExtractKeys] = useState<number>(0);
@@ -209,6 +209,36 @@ export function useWeChatExport() {
     setBusyMessage('');
   }, []);
 
+  const saveWindowsPath = useCallback(async (kind: 'wechatExe' | 'dataDir', selectedPath: string) => {
+    const normalized = selectedPath.trim();
+    if (!normalized) {
+      setActionMessage({ kind: 'error', text: '请先选择或输入路径。' });
+      return false;
+    }
+    setBusy('path');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/windows-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, path: normalized }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || 'save_path_failed');
+      setActionMessage({ kind: 'ok', text: data?.message || '路径已保存。' });
+      await refresh();
+      return true;
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '路径保存失败',
+      });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
   return {
     status,
     statusError,
@@ -223,5 +253,6 @@ export function useWeChatExport() {
     resignWeChat,
     startExtract,
     cancelExtract,
+    saveWindowsPath,
   };
 }
