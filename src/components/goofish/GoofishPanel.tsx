@@ -49,14 +49,13 @@ export function GoofishPanel() {
     setSelectedSession(null);
   };
   // Wrap login so a successful return closes the "add account" overlay.
-  // QR mode also gates on the optional Playwright + Chromium download — we
-  // ask the user before paying the ~150MB cost. Other login paths (browser
-  // auto-import, paste cookie) skip Playwright entirely so they don't gate.
+  // QR mode now prefers Lumos's built-in browser. The legacy Playwright
+  // download only gates environments where the browser bridge is unavailable.
   const submitLogin = async (input: Parameters<typeof login>[0]) => {
-    if (input.mode === 'qr' && status && !status.qrReady) {
+    if (input.mode === 'qr' && status && (status.qrLoginMode === 'needs-install' || !status.qrReady)) {
       const proceed = window.confirm(
-        '扫码登录需要下载 Playwright 浏览器组件（约 150MB），是否继续？\n\n' +
-        '不想下载？可以选「其他登录方式」用系统浏览器导入或粘贴 cookie。',
+        '当前没有检测到 Lumos 内置浏览器，需要下载备用扫码浏览器组件（约 150MB），是否继续？\n\n' +
+        '桌面端正常情况下会直接使用 Lumos 自带浏览器，不需要下载这个组件。',
       );
       if (!proceed) return;
       const ok = await install('qr');

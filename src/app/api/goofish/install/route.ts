@@ -33,6 +33,7 @@ const PIP_EXTRA_INDEX_URL = process.env.LUMOS_PIP_EXTRA_INDEX_URL
   || 'https://pypi.org/simple';
 const PLAYWRIGHT_DOWNLOAD_HOST = process.env.LUMOS_PLAYWRIGHT_DOWNLOAD_HOST
   || 'https://cdn.npmmirror.com/binaries/playwright';
+const PLAYWRIGHT_OFFICIAL_DOWNLOAD_HOST = 'https://playwright.download.prss.microsoft.com/dbazure/download/playwright';
 
 // Pin playwright to the 1.x line — chromium tarball paths and CLI surface
 // have shifted across major versions historically; staying on 1.x keeps the
@@ -66,6 +67,56 @@ type Scope = 'core' | 'qr';
  */
 const inFlight = new Map<Scope, Promise<void>>();
 
+function buildPlaywrightInstallEnvs(): Array<{ label: string; env: NodeJS.ProcessEnv }> {
+  const out: Array<{ label: string; env: NodeJS.ProcessEnv }> = [];
+  const add = (label: string, host?: string) => {
+    if (host) {
+      out.push({ label, env: { ...process.env, PLAYWRIGHT_DOWNLOAD_HOST: host } });
+      return;
+    }
+    const env = { ...process.env };
+    delete env.PLAYWRIGHT_DOWNLOAD_HOST;
+    out.push({ label, env });
+  };
+
+  add(process.env.LUMOS_PLAYWRIGHT_DOWNLOAD_HOST ? '自定义下载源' : '国内镜像源', PLAYWRIGHT_DOWNLOAD_HOST);
+  if (PLAYWRIGHT_DOWNLOAD_HOST !== PLAYWRIGHT_OFFICIAL_DOWNLOAD_HOST) {
+    add('Playwright 官方源', PLAYWRIGHT_OFFICIAL_DOWNLOAD_HOST);
+  }
+  add('Playwright 默认源');
+  return out;
+}
+
+function isLikelyMissingMirrorArtifact(message: string): boolean {
+  return /NoSuchKey|server returned code 404|HTTP.*404|not found/i.test(message);
+}
+
+async function installPlaywrightChromium(venvPython: string): Promise<void> {
+  const failures: string[] = [];
+  for (const candidate of buildPlaywrightInstallEnvs()) {
+    try {
+      await execFileAsync(venvPython, ['-m', 'playwright', 'install', 'chromium'], {
+        timeout: 480_000,
+        env: candidate.env,
+      });
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push(`${candidate.label}: ${message}`);
+      if (isLikelyMissingMirrorArtifact(message)) {
+        console.warn(`[goofish-install] ${candidate.label} missing Playwright Chromium artifact, retrying next source`);
+      } else {
+        console.warn(`[goofish-install] ${candidate.label} failed, retrying next source:`, message);
+      }
+    }
+  }
+
+  throw new Error(
+    '备用扫码浏览器组件下载失败。已尝试国内镜像和 Playwright 官方源；如果网络需要代理，请配置代理后重试。'
+    + `\n\n${failures.join('\n\n')}`,
+  );
+}
+
 async function performInstall(scope: Scope): Promise<void> {
   const venvPython = await ensureVenv();
   const pip = venvPip();
@@ -80,10 +131,7 @@ async function performInstall(scope: Scope): Promise<void> {
 
   // scope === 'qr'
   await execFileAsync(pip, pipInstallArgs(PLAYWRIGHT_SPEC), { timeout: 240_000 });
-  await execFileAsync(venvPython, ['-m', 'playwright', 'install', 'chromium'], {
-    timeout: 480_000,
-    env: { ...process.env, PLAYWRIGHT_DOWNLOAD_HOST },
-  });
+  await installPlaywrightChromium(venvPython);
 
   // Marker write must not fail the install — the binaries are already on disk
   // and re-running install is fine if the marker can't be written (worst case:

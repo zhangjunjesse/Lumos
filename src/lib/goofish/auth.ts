@@ -12,6 +12,15 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  checkBrowserBridgeReady,
+  getFromBrowserBridge,
+  postToBrowserBridge,
+  resolveBrowserBridgeRuntimeConfig,
+  type BrowserBridgeResponse,
+  type BrowserBridgeRuntimeConfig,
+} from '@/lib/browser-runtime/bridge-client';
+
+import {
   GoofishCliException,
   normalizeNick,
   runJsonCommand,
@@ -19,10 +28,53 @@ import {
 } from './cli';
 import { ensureAccountDir, deleteAccount, listAccounts, cookiesPathFor, migrateLegacyAccount } from './accounts';
 import { findGoofishPython, buildGoofishEnv } from './env';
+import { isQrReady } from './install-state';
 
 const HOME = os.homedir();
 const GOOFISH_HOME = path.join(HOME, '.goofish-cli');
 const COOKIES_FILE = path.join(GOOFISH_HOME, 'cookies.json');
+const BRIDGE_CONTEXT_ID = 'embedded:default';
+const BRIDGE_OWNER_ID = 'goofish-qr-login';
+const GOOFISH_HOME_URL = 'https://www.goofish.com/';
+const QR_REQUIRED_COOKIES = ['_m_h5_tk', 'unb', 'cookie2'] as const;
+const QR_COOKIE_CAPTURE_URLS = [
+  GOOFISH_HOME_URL,
+  'https://h5api.m.goofish.com/',
+  'https://h5api.m.taobao.com/',
+  'https://login.taobao.com/',
+] as const;
+const TAOBAO_COOKIE_NAMES = new Set(['_m_h5_tk', '_m_h5_tk_enc', 'x5sec', 'sgcookie', 'cookie2', '_tb_token_']);
+
+type QrLoginMode = 'builtin-browser' | 'playwright' | 'needs-install';
+
+class BuiltinBrowserQrUnavailableError extends Error {}
+
+interface BridgeCookieWithValue {
+  name?: string;
+  value?: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  session?: boolean;
+  expirationDate?: number | null;
+}
+
+interface BridgeCookiesResponse extends BrowserBridgeResponse {
+  cookies?: BridgeCookieWithValue[];
+}
+
+interface BridgeNewPageResponse extends BrowserBridgeResponse {
+  pageId?: string;
+}
+
+export async function resolveQrLoginMode(): Promise<QrLoginMode> {
+  const config = resolveBuiltinBrowserQrConfig();
+  if (config) {
+    return 'builtin-browser';
+  }
+  return isQrReady() ? 'playwright' : 'needs-install';
+}
 
 /**
  * Status for a SPECIFIC account. Pass `accountUnb` to scope the goofish-cli
@@ -75,9 +127,8 @@ export async function listAccountStatuses(): Promise<AccountStatusEntry[]> {
 
 /**
  * Login modes:
- *   - 'qr':     opens a Playwright Chrome window with goofish.com's passport
- *               page, user scans on phone, captures cookies once login confirms.
- *               Most reliable — works even on a fresh machine.
+ *   - 'qr':     prefers Lumos's built-in browser for扫码登录; falls back to
+ *               the legacy Playwright Chromium sidecar only when needed.
  *   - 'browser': reads cookies from a system browser via browser_cookie3.
  *               Fast, but requires the user to already be logged in.
  *   - 'paste':  takes a raw Cookie header string from devtools.
@@ -124,8 +175,26 @@ export async function login(input: GoofishLoginInput): Promise<AccountStatusEntr
 async function runLoginToCookiesFile(input: GoofishLoginInput, cookiesPath: string): Promise<void> {
   if (input.mode === 'qr') {
     const timeoutSecs = Math.max(60, Math.min(600, input.timeoutSecs ?? 300));
-    await runQrSidecar(timeoutSecs, cookiesPath);
-    return;
+    try {
+      await runBuiltinBrowserQrLogin(timeoutSecs, cookiesPath);
+      return;
+    } catch (err) {
+      if (err instanceof GoofishCliException && err.code === 'AUTH_FAILED') {
+        throw err;
+      }
+      if (!(err instanceof BuiltinBrowserQrUnavailableError)) {
+        throw err;
+      }
+      if (isQrReady()) {
+        console.warn('[goofish-auth] builtin browser QR unavailable, falling back to Playwright:', err.message);
+        await runQrSidecar(timeoutSecs, cookiesPath);
+        return;
+      }
+      throw new GoofishCliException({
+        code: 'NOT_INSTALLED',
+        message: `${err.message}。如果当前不是 Lumos 桌面端，请先下载备用扫码浏览器组件后再试。`,
+      });
+    }
   }
   if (input.mode === 'paste') {
     const items = parseCookieString(input.cookieString);
@@ -161,6 +230,156 @@ function readUnbFromCookies(cookiesPath: string): string {
   } catch {
     return '';
   }
+}
+
+function resolveBuiltinBrowserQrConfig(): BrowserBridgeRuntimeConfig | null {
+  return resolveBrowserBridgeRuntimeConfig({
+    browserContextId: BRIDGE_CONTEXT_ID,
+    lockOwnerId: BRIDGE_OWNER_ID,
+  });
+}
+
+async function runBuiltinBrowserQrLogin(timeoutSecs: number, cookiesOut: string): Promise<void> {
+  const config = resolveBuiltinBrowserQrConfig();
+  if (!config) {
+    throw new BuiltinBrowserQrUnavailableError('Lumos 内置浏览器不可用');
+  }
+
+  const ignoredUnbs = new Set(
+    listAccounts()
+      .filter((account) => account.hasCookies)
+      .map((account) => account.unb),
+  );
+  let pageId = '';
+  try {
+    const health = await checkBrowserBridgeReady(config);
+    if (!health.ready) {
+      console.warn('[goofish-auth] browser bridge health check returned non-ready status, continuing with QR flow:', health.status, health.error || '');
+    }
+
+    const created = await postToBrowserBridge<BridgeNewPageResponse>(
+      config,
+      '/v1/pages/new',
+      { url: GOOFISH_HOME_URL, background: false },
+      { timeoutMs: 60_000 },
+    );
+    pageId = typeof created.pageId === 'string' ? created.pageId : '';
+
+    const cookies = await waitForBuiltinBrowserQrCookies(config, timeoutSecs, ignoredUnbs);
+    writeGoofishCookiesJson(cookiesOut, cookies);
+  } catch (err) {
+    if (err instanceof GoofishCliException || err instanceof BuiltinBrowserQrUnavailableError) {
+      throw err;
+    }
+    throw new BuiltinBrowserQrUnavailableError(`Lumos 内置浏览器扫码登录失败：${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    if (pageId) {
+      await postToBrowserBridge(config, '/v1/pages/close', { pageId }, { timeoutMs: 15_000 }).catch(() => undefined);
+    }
+  }
+}
+
+async function waitForBuiltinBrowserQrCookies(
+  config: BrowserBridgeRuntimeConfig,
+  timeoutSecs: number,
+  ignoredUnbs: Set<string>,
+): Promise<Record<string, string>> {
+  const deadline = Date.now() + timeoutSecs * 1000;
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    const cookies = await collectGoofishCookiesFromBridge(config);
+    if (hasAcceptableQrCookies(cookies, ignoredUnbs)) {
+      await sleep(2000);
+      const finalCookies = await collectGoofishCookiesFromBridge(config);
+      if (hasAcceptableQrCookies(finalCookies, ignoredUnbs)) {
+        return finalCookies;
+      }
+    }
+  }
+  throw new GoofishCliException({ code: 'AUTH_FAILED', message: '扫码超时或未确认登录' });
+}
+
+function hasAcceptableQrCookies(cookies: Record<string, string>, ignoredUnbs: Set<string>): boolean {
+  if (!QR_REQUIRED_COOKIES.every((name) => Boolean(cookies[name]))) {
+    return false;
+  }
+  return ignoredUnbs.size === 0 || !ignoredUnbs.has(cookies.unb);
+}
+
+async function collectGoofishCookiesFromBridge(
+  config: BrowserBridgeRuntimeConfig,
+): Promise<Record<string, string>> {
+  const selected = new Map<string, BridgeCookieWithValue>();
+  for (const url of QR_COOKIE_CAPTURE_URLS) {
+    const response = await getFromBrowserBridge<BridgeCookiesResponse>(
+      config,
+      `/v1/cookies?url=${encodeURIComponent(url)}&includeValues=1`,
+      { timeoutMs: 15_000 },
+    );
+    mergeBridgeCookiesForGoofish(selected, response.cookies ?? []);
+  }
+  return bridgeCookieMapToRecord(selected);
+}
+
+function mergeBridgeCookiesForGoofish(
+  selected: Map<string, BridgeCookieWithValue>,
+  cookies: BridgeCookieWithValue[],
+): void {
+  for (const cookie of cookies) {
+    if (!cookie?.name || typeof cookie.value !== 'string' || cookie.value.length === 0) {
+      continue;
+    }
+    const previous = selected.get(cookie.name);
+    if (!previous || shouldPreferCookie(cookie.name, previous, cookie)) {
+      selected.set(cookie.name, cookie);
+    }
+  }
+}
+
+function bridgeCookieMapToRecord(selected: Map<string, BridgeCookieWithValue>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, cookie] of selected) {
+    if (typeof cookie.value === 'string' && cookie.value) {
+      out[name] = cookie.value;
+    }
+  }
+  return out;
+}
+
+function shouldPreferCookie(name: string, previous: BridgeCookieWithValue, next: BridgeCookieWithValue): boolean {
+  if (TAOBAO_COOKIE_NAMES.has(name)) {
+    const previousTaobao = cookieDomainMatches(previous, 'taobao.com');
+    const nextTaobao = cookieDomainMatches(next, 'taobao.com');
+    if (nextTaobao !== previousTaobao) {
+      return nextTaobao;
+    }
+  }
+
+  const previousGoofish = cookieDomainMatches(previous, 'goofish.com');
+  const nextGoofish = cookieDomainMatches(next, 'goofish.com');
+  if (nextGoofish !== previousGoofish) {
+    return nextGoofish;
+  }
+
+  const previousExpiry = typeof previous.expirationDate === 'number' ? previous.expirationDate : 0;
+  const nextExpiry = typeof next.expirationDate === 'number' ? next.expirationDate : 0;
+  return nextExpiry > previousExpiry;
+}
+
+function cookieDomainMatches(cookie: BridgeCookieWithValue, suffix: string): boolean {
+  const domain = (cookie.domain || '').replace(/^\./, '').toLowerCase();
+  return domain === suffix || domain.endsWith(`.${suffix}`);
+}
+
+function writeGoofishCookiesJson(cookiesOut: string, cookies: Record<string, string>): void {
+  const payload = Object.entries(cookies)
+    .filter(([name, value]) => Boolean(name) && Boolean(value))
+    .map(([name, value]) => ({ name, value }));
+  writeFileSync(cookiesOut, JSON.stringify(payload, null, 2), { mode: 0o600 });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -237,3 +456,12 @@ function parseCookieString(raw: string): Array<Record<string, unknown>> {
   }
   return out;
 }
+
+export const __goofishAuthTestInternals = {
+  bridgeCookieMapToRecord,
+  cookieDomainMatches,
+  hasAcceptableQrCookies,
+  mergeBridgeCookiesForGoofish,
+  shouldPreferCookie,
+  writeGoofishCookiesJson,
+};

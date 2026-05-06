@@ -17,10 +17,15 @@ export interface GoofishStatus {
   loggedIn: boolean;
   mcpEnabled: boolean;
   /**
-   * QR-mode prerequisites (Playwright + Chromium ~150MB) installed.
-   * Drives whether GoofishPanel prompts before running QR login.
+   * Back-compat QR readiness flag. True means either Lumos's built-in browser
+   * bridge is ready or the legacy Playwright fallback was installed.
    */
   qrReady: boolean;
+  /**
+   * QR login transport. Built-in browser is preferred; Playwright is only a
+   * fallback for non-desktop / bridge-unavailable environments.
+   */
+  qrLoginMode?: 'builtin-browser' | 'playwright' | 'needs-install';
   /** Per-account list. New multi-account UI iterates this. */
   accounts?: GoofishAccount[];
   /** Single-account back-compat fields = first valid account in `accounts`. */
@@ -115,7 +120,7 @@ export function useGoofishAuth() {
       }
       setActionMessage({
         kind: 'ok',
-        text: scope === 'core' ? '已安装 goofish-cli' : '已下载浏览器组件',
+        text: scope === 'core' ? '已安装 goofish-cli' : '已安装备用扫码组件',
       });
       await refresh();
       return true;

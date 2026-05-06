@@ -847,6 +847,7 @@ export class BrowserBridgeServer {
       const domain = requestUrl.searchParams.get('domain')?.trim() || undefined;
       const url = requestUrl.searchParams.get('url')?.trim() || undefined;
       const name = requestUrl.searchParams.get('name')?.trim() || undefined;
+      const includeValues = ['1', 'true', 'yes'].includes((requestUrl.searchParams.get('includeValues') || '').trim().toLowerCase());
       const cookies = await manager.getCookies({
         ...(domain ? { domain } : {}),
         ...(url ? { url } : {}),
@@ -857,6 +858,7 @@ export class BrowserBridgeServer {
         browserContextId,
         cookies: cookies.map((cookie) => ({
           name: cookie.name,
+          ...(includeValues ? { value: cookie.value } : {}),
           domain: cookie.domain,
           path: cookie.path,
           secure: cookie.secure,

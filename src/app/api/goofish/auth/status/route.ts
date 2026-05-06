@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { isGoofishInstalled } from '@/lib/goofish/cli';
-import { listAccountStatuses } from '@/lib/goofish/auth';
+import { listAccountStatuses, resolveQrLoginMode } from '@/lib/goofish/auth';
 import { getGoofishMcpEnabled, setGoofishMcpEnabled } from '@/lib/goofish/mcp-toggle';
 import { getCachedNick, setCachedNick } from '@/lib/goofish/nick-cache';
 import { extractCurrentNick } from '@/lib/goofish/messages';
 import { cookiesPathFor } from '@/lib/goofish/accounts';
 import { initGoofishSyncScheduler } from '@/lib/goofish/scheduler';
-import { isQrReady } from '@/lib/goofish/install-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,11 +28,15 @@ export async function GET() {
       loggedIn: false,
       mcpEnabled: false,
       qrReady: false,
+      qrLoginMode: 'needs-install',
       accounts: [],
     });
   }
 
-  const accounts = await listAccountStatuses();
+  const [accounts, qrLoginMode] = await Promise.all([
+    listAccountStatuses(),
+    resolveQrLoginMode(),
+  ]);
   // Enrich each account with cached nick (fallback when API returns empty).
   const enriched = accounts.map((a) => {
     let nick = a.nick;
@@ -64,7 +67,8 @@ export async function GET() {
   return NextResponse.json({
     installed: true,
     mcpEnabled,
-    qrReady: isQrReady(),
+    qrReady: qrLoginMode !== 'needs-install',
+    qrLoginMode,
     accounts: enriched,
     loggedIn: !!primary,
     unb: primary?.unb ?? '',

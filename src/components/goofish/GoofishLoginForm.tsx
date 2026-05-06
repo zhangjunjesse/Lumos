@@ -45,11 +45,11 @@ export function GoofishLoginForm({ hasOtherAccounts, busy, onCancel, onLogin }: 
             {busy === 'login' || busy === 'install'
               ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               : null}
-            {busy === 'install' ? '下载浏览器组件中…' : '扫码登录（推荐）'}
+            {busy === 'install' ? '安装备用组件中…' : '扫码登录（推荐）'}
           </Button>
           <p className="text-xs text-muted-foreground mt-1">
-            会弹一个 Chrome 窗口，最长等 5 分钟。期间你可以扫码、输密码、切账号都行 —
-            我们就盯着 cookie，登成什么样不重要。
+            会打开 Lumos 自带浏览器，最长等 5 分钟。期间你可以扫码、输密码、切账号；
+            登录完成后会自动保存当前账号。
           </p>
         </div>
 
