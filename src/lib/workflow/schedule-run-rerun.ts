@@ -11,7 +11,11 @@ import {
   updateScheduledWorkflow,
   type ScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
-import { hasRunningExecution } from '@/lib/db/schedule-run-steps';
+import {
+  hasRunningExecution,
+  listRunSteps,
+  seedRunStepSnapshot,
+} from '@/lib/db/schedule-run-steps';
 import { createSession, updateSessionBrowserContext } from '@/lib/db/sessions';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { getWorkflowDataDir } from '@/lib/workflow/openworkflow-client';
@@ -19,10 +23,14 @@ import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { submitWorkflow } from '@/lib/workflow/api';
 import { buildResumeRuntimeContext } from './debug-cache';
 import {
+  buildReusedRunStepSnapshots,
   buildCachedStepsForResume,
+  findResumeCacheCoverageIssues,
   findFirstTerminalFailedStep,
+  formatResumeCacheCoverageIssues,
   type ResumeStepAttemptRow,
 } from './schedule-run-rerun-cache';
+import { copyReusedStepOutputArtifacts } from './schedule-run-rerun-artifacts';
 import type { WorkflowDSLV3 } from './types';
 
 export type ScheduleRunRerunMode = 'from-failed' | 'from-step';
@@ -69,16 +77,29 @@ export async function rerunScheduleRunFromNode(
     throw new Error(`节点「${startStepId}」是流程控制节点，暂不支持直接从这里重跑；请选择它后面的实际执行节点`);
   }
 
-  const workflowRunId = sourceRun.sessionId ? getWorkflowExecutionId(sourceRun.sessionId) : null;
-  if (!workflowRunId) throw new Error('找不到原执行对应的底层 workflowRunId，无法复用上游结果');
+  const sourceWorkflowRunId = sourceRun.sessionId ? getWorkflowExecutionId(sourceRun.sessionId) : null;
+  if (!sourceWorkflowRunId) throw new Error('找不到原执行对应的底层 workflowRunId，无法复用上游结果');
 
-  const attempts = loadStepAttempts(workflowRunId);
+  const attempts = loadStepAttempts(sourceWorkflowRunId);
   const cachedSteps = buildCachedStepsForResume({
     dsl,
     attempts,
     sourceRunId: sourceRun.id,
     targetStepId: startStepId,
   });
+  const sourceSteps = listRunSteps(sourceRun.id);
+  const cacheCoverageIssues = findResumeCacheCoverageIssues({
+    dsl,
+    targetStepId: startStepId,
+    cachedSteps,
+    sourceSteps,
+  });
+  if (cacheCoverageIssues.length > 0) {
+    throw new Error(
+      `无法安全从节点「${startStepId}」重跑：${formatResumeCacheCoverageIssues(cacheCoverageIssues)}。`
+      + ' 为避免重新执行上游节点，本次没有创建新的执行记录。',
+    );
+  }
 
   const artifact = generateWorkflowFromDsl(dsl);
   if (!artifact.validation.valid) {
@@ -93,12 +114,22 @@ export async function rerunScheduleRunFromNode(
   updateSessionBrowserContext(session.id, browserContextId);
   const newRunId = insertRunHistory(schedule.id, session.id, dsl, browserContextId);
   tagRunAsProductionRerun(newRunId);
+  const reusedStepSnapshots = buildReusedRunStepSnapshots({
+    cachedSteps,
+    sourceSteps,
+    dsl,
+    targetStepId: startStepId,
+  });
+  for (const snapshot of reusedStepSnapshots) {
+    seedRunStepSnapshot(newRunId, snapshot);
+  }
 
   const resumeContext = buildResumeRuntimeContext({
     sessionId: `rerun:${newRunId}`,
     targetStepId: startStepId,
     dsl,
     cachedSteps,
+    reusedStepIds: reusedStepSnapshots.map((snapshot) => snapshot.stepId),
   });
 
   let terminalResultHandled = false;
@@ -129,6 +160,19 @@ export async function rerunScheduleRunFromNode(
       updateRunHistory(newRunId, 'error', err);
       terminalResultHandled = true;
       throw new Error(`工作流提交失败: ${err}`);
+    }
+
+    const artifactCopy = await copyReusedStepOutputArtifacts({
+      sourceWorkflowRunId,
+      targetWorkflowRunId: result.workflowId,
+      stepIds: reusedStepSnapshots.map((snapshot) => snapshot.stepId),
+    });
+    if (artifactCopy.warnings.length > 0) {
+      console.warn('[workflow-rerun] Failed to copy some reused step artifacts:', {
+        sourceWorkflowRunId,
+        targetWorkflowRunId: result.workflowId,
+        warnings: artifactCopy.warnings,
+      });
     }
 
     return {

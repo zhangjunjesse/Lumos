@@ -10,13 +10,13 @@ interface I18nContextValue {
 }
 
 export const I18nContext = createContext<I18nContextValue>({
-  locale: 'en',
+  locale: 'zh',
   setLocale: () => {},
   t: (key) => key,
 });
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>('en');
+  const [locale, setLocaleState] = useState<Locale>('zh');
 
   // Load persisted locale on mount
   useEffect(() => {
@@ -31,7 +31,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch {
-        // ignore — default to 'en'
+        // ignore — default to Chinese on first launch
       }
     }
     loadLocale();

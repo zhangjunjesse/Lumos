@@ -14,6 +14,17 @@ export interface ScheduleRunStep {
   completedAt: string | null;
 }
 
+export interface ScheduleRunStepSnapshot {
+  stepId: string;
+  presetName?: string;
+  status: ScheduleRunStep['status'];
+  error?: string;
+  outputSummary?: string;
+  durationMs?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
 function hasTable(): boolean {
   const row = getDb()
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schedule_run_steps'")
@@ -55,6 +66,67 @@ export function insertRunStep(runId: string, stepId: string, presetName = ''): s
   getDb().prepare(
     'INSERT INTO schedule_run_steps (id, run_id, step_id, preset_name, status, started_at) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(id, runId, stepId, presetName, 'running', now);
+  return id;
+}
+
+export function seedRunStepSnapshot(runId: string, snapshot: ScheduleRunStepSnapshot): string {
+  if (!hasTable()) return '';
+  const stepId = snapshot.stepId.trim();
+  if (!stepId) return '';
+  const existing = getExistingRunStep(runId, stepId);
+  const now = new Date().toISOString();
+  const startedAt = snapshot.startedAt || snapshot.completedAt || now;
+  const completedAt = snapshot.completedAt || (snapshot.status === 'running' || snapshot.status === 'pending' ? null : startedAt);
+  const durationMs = typeof snapshot.durationMs === 'number' && Number.isFinite(snapshot.durationMs)
+    ? Math.max(0, Math.floor(snapshot.durationMs))
+    : null;
+  const outputSummary = (snapshot.outputSummary || '').slice(0, 2000);
+  const presetName = snapshot.presetName || '';
+  const error = snapshot.error || '';
+
+  if (existing) {
+    getDb().prepare(`
+      UPDATE schedule_run_steps
+      SET preset_name = CASE WHEN ? <> '' THEN ? ELSE preset_name END,
+          status = ?,
+          error = ?,
+          output_summary = CASE WHEN ? <> '' THEN ? ELSE output_summary END,
+          duration_ms = COALESCE(?, duration_ms),
+          started_at = COALESCE(started_at, ?),
+          completed_at = COALESCE(?, completed_at)
+      WHERE id = ?
+    `).run(
+      presetName,
+      presetName,
+      snapshot.status,
+      error,
+      outputSummary,
+      outputSummary,
+      durationMs,
+      startedAt,
+      completedAt,
+      existing.id,
+    );
+    return existing.id;
+  }
+
+  const id = randomUUID();
+  getDb().prepare(`
+    INSERT INTO schedule_run_steps
+      (id, run_id, step_id, preset_name, status, error, output_summary, duration_ms, started_at, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    runId,
+    stepId,
+    presetName,
+    snapshot.status,
+    error,
+    outputSummary,
+    durationMs,
+    startedAt,
+    completedAt,
+  );
   return id;
 }
 

@@ -104,6 +104,7 @@ export interface BuildResumeRuntimeContextArgs {
   targetStepId: string;
   dsl: WorkflowDSLV3;
   cachedSteps: DebugStepOutput[];
+  reusedStepIds?: string[];
 }
 
 /**
@@ -128,6 +129,7 @@ export function buildResumeRuntimeContext(
     skipSet: new Set<string>(),
     configHashes: buildConfigHashes(args.dsl),
     persist: false,
+    reusedStepIds: new Set(args.reusedStepIds ?? args.cachedSteps.map((step) => step.stepId)),
   };
 }
 
@@ -156,6 +158,11 @@ export function registerDebugContext(runId: string, ctx: DebugRuntimeContext): v
 export function getDebugContext(runId: string | undefined): DebugRuntimeContext | undefined {
   if (!runId) return undefined;
   return debugContextByRunId.get(runId);
+}
+
+export function isReusedDebugStep(runId: string | undefined, stepId: string | undefined): boolean {
+  if (!runId || !stepId) return false;
+  return Boolean(debugContextByRunId.get(runId)?.reusedStepIds?.has(stepId));
 }
 
 export function clearDebugContext(runId: string): void {

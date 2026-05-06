@@ -37,6 +37,7 @@ export {
   updateSessionProvider,
   updateSessionProviderId,
   updateSessionBrowserContext,
+  updateSessionKnowledgeOptions,
   updateSessionSystemPrompt,
   getDefaultProviderId,
   setDefaultProviderId,

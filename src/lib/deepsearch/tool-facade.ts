@@ -417,7 +417,7 @@ export async function getDeepSearchToolResult(runId: string) {
     (view.status === 'completed' || view.status === 'partial')
     && !run.archivedAt
   ) {
-    const archiveMode = getSetting('deepsearch.archive_mode') ?? 'confirm';
+    const archiveMode = getSetting('deepsearch.archive_mode') ?? 'auto';
 
     // In workflow context there's no UI to confirm — treat 'confirm' as 'auto'
     const isWorkflowSession = run.requestedBySessionId

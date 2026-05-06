@@ -38,6 +38,9 @@ export function migrateCoreTables(db: Database.Database): void {
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN browser_context_id TEXT NOT NULL DEFAULT 'embedded:default'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN knowledge_enabled INTEGER NOT NULL DEFAULT 0");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN knowledge_tag_ids TEXT NOT NULL DEFAULT '[]'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN knowledge_overrides TEXT NOT NULL DEFAULT '{}'");
 
   const colNames = columns.map(c => c.name);
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN sdk_cwd TEXT NOT NULL DEFAULT ''");

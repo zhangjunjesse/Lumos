@@ -360,11 +360,21 @@ interface ChatProviderUpsertFields {
  * 同时派生 new-api admin-token 后缀和 `Specific-Channel-Id` 兼容头,精确路由
  * 到对应 channel。无 channel id 时返回空 JSON 对象字符串,避免污染 extra_env。
  */
-function buildChatProviderExtraEnv(channelId: number | null | undefined): string {
+function buildChatProviderExtraEnv(
+  channelId: number | null | undefined,
+  defaultModel?: string | null,
+): string {
+  const env: Record<string, string> = {};
   if (typeof channelId !== 'number' || !Number.isFinite(channelId) || channelId <= 0) {
-    return '{}';
+    // no channel routing
+  } else {
+    env.LUMOS_UPSTREAM_CHANNEL_ID = String(channelId);
   }
-  return JSON.stringify({ LUMOS_UPSTREAM_CHANNEL_ID: String(channelId) });
+  const normalizedDefaultModel = defaultModel?.trim() || '';
+  if (normalizedDefaultModel) {
+    env.LUMOS_DEFAULT_MODEL = normalizedDefaultModel;
+  }
+  return Object.keys(env).length > 0 ? JSON.stringify(env) : '{}';
 }
 
 function buildChatProviderFields(config: CloudChatProviderConfig): ChatProviderUpsertFields {
@@ -393,7 +403,7 @@ function buildChatProviderFields(config: CloudChatProviderConfig): ChatProviderU
     auth_mode: 'api_key',
     base_url: config.base_url,
     api_key: config.api_key,
-    extra_env: buildChatProviderExtraEnv(config.newapi_channel_id),
+    extra_env: buildChatProviderExtraEnv(config.newapi_channel_id, config.default_model),
     model_catalog: JSON.stringify(catalog),
     notes: `Lumos Cloud 内置对话服务商 (remote_id=${config.id})。默认模型: ${config.default_model || '(未指定)'}`,
   };
@@ -442,9 +452,8 @@ async function upsertOneChatProvider(
  * - 入参空 → 删除所有已 provision 的云对话 provider，清 map。
  * - 入参非空 → 按 `remote_id` 一对一 upsert。旧的 / 不在新列表里的 → 删除。
  * - 每个 provider 用 `provider_origin='system'`，桌面端 UI 据此锁定为只读。
- * - default_provider_id 跟随云端权威：configs 中 is_default 的那条即覆盖。
- *   对齐 provisionImageProviders 的行为，避免"云端改默认、桌面端永远卡在
- *   首次登录快照"的死锁。Pro 强制路由依赖这个值反映云端意志才成立。
+ * - default_provider_id 只在首次缺失或指向已删除 provider 时使用云端默认兜底。
+ *   用户在桌面端切换到其它 system provider 后，后续云端同步不得覆盖该选择。
  */
 export async function provisionChatProviders(
   configs: CloudChatProviderConfig[],
@@ -480,9 +489,7 @@ export async function provisionChatProviders(
   await removeOrphanSystemProviders(db, 'agent-chat', new Set(Object.values(nextMap)));
 
   if (defaultLocalId) {
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES ('default_provider_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(defaultLocalId);
+    ensureDefaultProviderFallback(db, defaultLocalId);
   }
 
   return Object.values(nextMap);

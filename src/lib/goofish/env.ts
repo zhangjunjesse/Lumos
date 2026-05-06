@@ -14,7 +14,24 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { getVenvDir, getVenvPythonPath, isVenvReady } from '../python-venv';
+
+const IS_WINDOWS = process.platform === 'win32';
+
 export function findGoofishPython(): string {
+  // Lumos-managed venv: when goofish-cli was installed via the install API,
+  // the venv-python is the right interpreter — its site-packages already
+  // has goofish_cli, no LUMOS_USER_SITE injection needed.
+  if (isVenvReady()) {
+    const venvGoofish = path.join(
+      getVenvDir(),
+      IS_WINDOWS ? 'Scripts' : 'bin',
+      IS_WINDOWS ? 'goofish.exe' : 'goofish',
+    );
+    if (existsSync(venvGoofish)) {
+      return getVenvPythonPath();
+    }
+  }
   const home = os.homedir();
   for (const c of [
     path.join(home, '.local', 'bin', 'goofish'),

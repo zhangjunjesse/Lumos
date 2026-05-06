@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { buildGoofishEnv } from './env';
+import { getVenvDir, isVenvReady } from '../python-venv';
 
 const HOME = os.homedir();
 const IS_WINDOWS = process.platform === 'win32';
@@ -50,6 +51,25 @@ export class GoofishCliException extends Error {
 function findGoofishBin(): string | null {
   if (process.env.GOOFISH_BIN && existsSync(process.env.GOOFISH_BIN)) {
     return process.env.GOOFISH_BIN;
+  }
+
+  // Lumos-managed venv first. The install API (POST /api/goofish/install)
+  // writes into this venv, so a successful one-click install shows up here
+  // before any user-scoped install.
+  //
+  // Note: this probe targets the `goofish` CLI binary (used by runJsonCommand
+  // to spawn `goofish auth status` etc), while launcher.mjs probes for
+  // `goofish-mcp` (the MCP stdio entry point). pip ships both entries from
+  // the same goofish-cli package, so either being present implies both are.
+  // The two paths intentionally probe different files because each is the
+  // executable that path actually needs to spawn.
+  if (isVenvReady()) {
+    const venvBin = path.join(
+      getVenvDir(),
+      IS_WINDOWS ? 'Scripts' : 'bin',
+      IS_WINDOWS ? 'goofish.exe' : 'goofish',
+    );
+    if (existsSync(venvBin)) return venvBin;
   }
 
   const candidates: string[] = [];

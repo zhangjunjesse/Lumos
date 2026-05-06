@@ -9,7 +9,7 @@ const GOOFISH_HOMEPAGE = 'https://www.goofish.com';
 
 interface Props {
   hasOtherAccounts: boolean;
-  busy: null | 'login' | 'logout';
+  busy: null | 'login' | 'logout' | 'install';
   onCancel?: () => void;
   onLogin: (input: LoginMode) => void;
 }
@@ -42,8 +42,10 @@ export function GoofishLoginForm({ hasOtherAccounts, busy, onCancel, onLogin }: 
       <div className="space-y-3">
         <div>
           <Button size="sm" onClick={() => onLogin({ mode: 'qr' })} disabled={busy !== null}>
-            {busy === 'login' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-            扫码登录（推荐）
+            {busy === 'login' || busy === 'install'
+              ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              : null}
+            {busy === 'install' ? '下载浏览器组件中…' : '扫码登录（推荐）'}
           </Button>
           <p className="text-xs text-muted-foreground mt-1">
             会弹一个 Chrome 窗口，最长等 5 分钟。期间你可以扫码、输密码、切账号都行 —

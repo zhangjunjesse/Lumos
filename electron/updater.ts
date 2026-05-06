@@ -3,9 +3,74 @@ import type { BrowserWindow } from 'electron';
 import { ipcMain, session } from 'electron';
 
 let mainWindow: BrowserWindow | null = null;
+let updaterInitialized = false;
+let downloadInFlight: Promise<unknown> | null = null;
+let downloadedInfo: {
+  version: string;
+  releaseNotes?: string;
+  releaseName?: string | null;
+  releaseDate?: string;
+} | null = null;
 
 function sendStatus(data: Record<string, unknown>) {
   mainWindow?.webContents.send('updater:status', data);
+}
+
+function formatReleaseNotes(releaseNotes: unknown): string {
+  if (typeof releaseNotes === 'string') {
+    return releaseNotes;
+  }
+  if (Array.isArray(releaseNotes)) {
+    return releaseNotes
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return '';
+        }
+        const note = 'note' in item ? item.note : null;
+        return typeof note === 'string' ? note : '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return '';
+}
+
+function formatUpdateInfo(info: {
+  version: string;
+  releaseNotes?: unknown;
+  releaseName?: string | null;
+  releaseDate?: string;
+}) {
+  return {
+    version: info.version,
+    releaseNotes: formatReleaseNotes(info.releaseNotes),
+    releaseName: info.releaseName,
+    releaseDate: info.releaseDate,
+  };
+}
+
+function startBackgroundDownload(reason: 'auto' | 'manual'): Promise<unknown> {
+  if (downloadedInfo) {
+    sendStatus({ status: 'downloaded', info: downloadedInfo, reason, cached: true });
+    return Promise.resolve({ status: 'downloaded', info: formatUpdateInfo(downloadedInfo) });
+  }
+  if (downloadInFlight) {
+    return downloadInFlight;
+  }
+
+  console.log(`[updater] Starting ${reason} update download`);
+  sendStatus({ status: 'download-started', reason });
+  downloadInFlight = autoUpdater.downloadUpdate()
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[updater] Download failed:', message);
+      sendStatus({ status: 'error', error: message });
+      return { status: 'error', error: message };
+    })
+    .finally(() => {
+      downloadInFlight = null;
+    });
+  return downloadInFlight;
 }
 
 /**
@@ -36,7 +101,13 @@ async function configureProxy() {
 export function initAutoUpdater(win: BrowserWindow) {
   mainWindow = win;
 
-  // Configuration — don't auto-download, let user trigger manually
+  if (updaterInitialized) {
+    return;
+  }
+  updaterInitialized = true;
+
+  // Configuration — download updates in the background and only prompt after
+  // the installer is already cached locally.
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
@@ -58,15 +129,16 @@ export function initAutoUpdater(win: BrowserWindow) {
   });
 
   autoUpdater.on('update-available', (info) => {
+    const formattedInfo = formatUpdateInfo(info);
+    if (downloadedInfo?.version !== formattedInfo.version) {
+      downloadedInfo = null;
+    }
     sendStatus({
       status: 'available',
-      info: {
-        version: info.version,
-        releaseNotes: info.releaseNotes,
-        releaseName: info.releaseName,
-        releaseDate: info.releaseDate,
-      },
+      info: formattedInfo,
+      autoDownload: true,
     });
+    void startBackgroundDownload('auto');
   });
 
   autoUpdater.on('update-not-available', () => {
@@ -86,35 +158,33 @@ export function initAutoUpdater(win: BrowserWindow) {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    downloadedInfo = formatUpdateInfo(info);
     sendStatus({
       status: 'downloaded',
-      info: {
-        version: info.version,
-        releaseNotes: info.releaseNotes,
-        releaseName: info.releaseName,
-        releaseDate: info.releaseDate,
-      },
+      info: downloadedInfo,
     });
   });
 
   autoUpdater.on('error', (err) => {
+    downloadInFlight = null;
     sendStatus({ status: 'error', error: err.message });
   });
 
   // --- IPC handlers ---
+  ipcMain.removeHandler('updater:check');
+  ipcMain.removeHandler('updater:download');
+  ipcMain.removeHandler('updater:quit-and-install');
+
   ipcMain.handle('updater:check', async () => {
+    if (downloadedInfo) {
+      sendStatus({ status: 'downloaded', info: downloadedInfo, reason: 'manual', cached: true });
+      return { status: 'downloaded', info: downloadedInfo };
+    }
     return autoUpdater.checkForUpdates();
   });
 
   ipcMain.handle('updater:download', async () => {
-    try {
-      return await autoUpdater.downloadUpdate();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error('[updater] Download failed:', message);
-      sendStatus({ status: 'error', error: message });
-      throw err;
-    }
+    return startBackgroundDownload('manual');
   });
 
   ipcMain.handle('updater:quit-and-install', () => {

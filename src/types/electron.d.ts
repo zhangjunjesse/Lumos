@@ -20,13 +20,16 @@ interface ElectronInstallAPI {
 }
 
 interface UpdateStatusEvent {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: 'checking' | 'available' | 'not-available' | 'download-started' | 'downloading' | 'downloaded' | 'error';
   info?: {
     version: string;
-    releaseNotes?: string | { version: string; note: string }[] | null;
+    releaseNotes?: string | null;
     releaseName?: string | null;
     releaseDate?: string;
   };
+  reason?: 'auto' | 'manual';
+  autoDownload?: boolean;
+  cached?: boolean;
   progress?: {
     percent: number;
     bytesPerSecond: number;

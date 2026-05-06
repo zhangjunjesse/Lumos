@@ -86,6 +86,12 @@ export interface DebugRuntimeContext {
    * Production reruns reuse this runtime cache path but must stay run-scoped.
    */
   persist?: boolean;
+  /**
+   * Production reruns seed these steps from a previous run. Lifecycle callbacks
+   * should not overwrite their visible run-step rows when the runtime returns
+   * the cached output.
+   */
+  reusedStepIds?: Set<string>;
 }
 
 /** 缓存命中时返回的合成结果（runtime 包装层用）。 */

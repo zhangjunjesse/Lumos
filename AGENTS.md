@@ -316,9 +316,9 @@ These rules exist because a prior version-upgrade path tried to delete Chromium 
 - `桌面端更新 / 资源拆包`
   - 文档完整度：`未开始`
   - 主链状态：`未打通`
-  - 当前进展：已确认当前 electron-updater 路径仍主要下载完整安装包，macOS `.dmg` 约 406MB、Windows `.exe` 约 486MB；同时已开始第一阶段前置实现，新增运行时资源解析层，让 Node runtime / Python runtime / Git Bash / 本地模型等资源可优先从外置缓存目录读取，并新增 `runtime-resources:manifest` 脚本生成稳定资源文件清单。当前这只是拆包前置能力，不代表用户更新已经变成差分或小包下载。本轮还修正了 Windows Git Bash 运行时下载后 `next build` 误扫 `C:\Users\runneradmin\Application Data` 的构建期失败：Windows 构建会使用临时隔离用户目录，避免受保护 profile junction 触发 `EPERM scandir`；本地 `typecheck / build` 已通过，GitHub Actions Windows 打包仍需重新跑。
-  - UI 可验收范围：暂未进入用户可验收；用户现在看到的更新体验仍是下载完整安装包。
-  - 当前缺口：还需要补资源包上传/托管、客户端资源 manifest 获取、断点/校验/解压、缺资源恢复提示、首次安装兜底、正式包移除稳定大资源、macOS/Windows 安装包和自动更新回归；这些完成前不能标为完整实现。
+  - 当前进展：已确认当前 electron-updater 路径仍主要下载完整安装包，macOS `.dmg` 约 406MB、Windows `.exe` 约 486MB；同时已开始第一阶段前置实现，新增运行时资源解析层，让 Node runtime / Python runtime / Git Bash / 本地模型等资源可优先从外置缓存目录读取，并新增 `runtime-resources:manifest` 脚本生成稳定资源文件清单。当前这只是拆包前置能力，不代表用户更新已经变成差分或小包下载。本轮还修正了 Windows Git Bash 运行时下载后 `next build` 误扫 `C:\Users\runneradmin\Application Data` 的构建期失败：Windows 构建会使用临时隔离用户目录，避免受保护 profile junction 触发 `EPERM scandir`；最新又把自动更新提示体验改为“发现新版本后后台下载，下载完成后才弹出重启安装提示”，设置页可在下载中展示进度，已下载缓存下用户手动检查会直接进入可重启安装状态，后台周期检查不会因缓存命中反复弹窗。本地针对本轮改动的 `lint / typecheck / diff --check` 已通过，完整 `next build` 因当前已有另一个 build 进程占用 `.next/lock` 尚未重跑。
+  - UI 可验收范围：安装包仍是完整更新包；可验收的体验范围是“自动检查发现新版本后不立即弹窗，后台下载完成后才提示重启安装”，以及“设置页能看到下载进度 / 已下载可重启安装”。
+  - 当前缺口：还需要补资源包上传/托管、客户端资源 manifest 获取、断点/校验/解压、缺资源恢复提示、首次安装兜底、正式包移除稳定大资源、macOS/Windows 安装包和自动更新回归；本轮自动更新提示时机还未做真实打包版更新服务器端到端验收，且完整 `next build` 需要等当前并发 build 释放后重跑；这些完成前不能标为完整实现。
 - `Workflow 编辑体验`
   - 文档完整度：`部分完成`
   - 主链状态：`已打通`

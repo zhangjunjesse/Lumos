@@ -22,7 +22,10 @@ export function initDb(db: Database.Database): void {
       resolved_model TEXT NOT NULL DEFAULT '',
       system_prompt TEXT NOT NULL DEFAULT '',
       working_directory TEXT NOT NULL DEFAULT '',
-      sdk_session_id TEXT NOT NULL DEFAULT ''
+      sdk_session_id TEXT NOT NULL DEFAULT '',
+      knowledge_enabled INTEGER NOT NULL DEFAULT 0,
+      knowledge_tag_ids TEXT NOT NULL DEFAULT '[]',
+      knowledge_overrides TEXT NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS messages (

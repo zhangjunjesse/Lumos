@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 
@@ -66,6 +66,17 @@ export async function PATCH(
     }
     if (body.model) {
       updateSessionModel(id, body.model);
+    }
+    if (typeof body.knowledge_enabled === 'boolean') {
+      updateSessionKnowledgeOptions(id, {
+        enabled: body.knowledge_enabled,
+        tagIds: Array.isArray(body.knowledge_tag_ids)
+          ? body.knowledge_tag_ids.map((tagId: unknown) => String(tagId).trim()).filter(Boolean)
+          : [],
+        overrides: body.knowledge_overrides && typeof body.knowledge_overrides === 'object'
+          ? body.knowledge_overrides
+          : undefined,
+      });
     }
     if (typeof body.system_prompt === 'string') {
       updateSessionSystemPrompt(id, body.system_prompt);

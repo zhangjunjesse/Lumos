@@ -7,7 +7,7 @@ import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import {
   getMainAgentSessionTeamRuntimePrompt,
@@ -807,6 +807,14 @@ export async function POST(request: NextRequest) {
         sessionId: session_id,
         score: weakSignal.score,
         labels: weakSignal.labels,
+      });
+    }
+
+    if (typeof knowledge_enabled === 'boolean') {
+      updateSessionKnowledgeOptions(session_id, {
+        enabled: knowledgeEnabledForRequest,
+        tagIds: selectedKnowledgeTagIds,
+        overrides: sanitizedKnowledgeOverrides,
       });
     }
 

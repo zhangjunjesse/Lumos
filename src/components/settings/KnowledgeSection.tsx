@@ -16,7 +16,7 @@ export function KnowledgeSection() {
   const [rewriteEnabled, setRewriteEnabled] = useState(true);
   const [topK, setTopK] = useState(4);
   const [candidatePool, setCandidatePool] = useState(40);
-  const [archiveMode, setArchiveMode] = useState<ArchiveMode>("confirm");
+  const [archiveMode, setArchiveMode] = useState<ArchiveMode>("auto");
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -32,7 +32,7 @@ export function KnowledgeSection() {
       setMode((settings.kb_retrieval_mode || "").toLowerCase() === "enhanced" ? "enhanced" : "reference");
       setRewriteEnabled(settings.kb_query_rewrite_enabled !== "false");
       const rawArchiveMode = settings["deepsearch.archive_mode"];
-      setArchiveMode(rawArchiveMode === "auto" || rawArchiveMode === "disabled" ? rawArchiveMode : "confirm");
+      setArchiveMode(rawArchiveMode === "confirm" || rawArchiveMode === "disabled" ? rawArchiveMode : "auto");
       const parsedTopK = Number(settings.kb_context_top_k || "4");
       if (Number.isFinite(parsedTopK) && parsedTopK > 0) {
         setTopK(Math.max(2, Math.min(10, Math.floor(parsedTopK))));
@@ -223,8 +223,8 @@ export function KnowledgeSection() {
 
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           {([
-            { value: "confirm", label: "提示后保存", desc: "搜索完成后弹出确认，默认推荐" },
-            { value: "auto", label: "自动保存", desc: "搜索完成后静默归档，无需操作" },
+            { value: "auto", label: "自动保存", desc: "搜索完成后静默归档，默认推荐" },
+            { value: "confirm", label: "提示后保存", desc: "搜索完成后弹出确认，再决定是否归档" },
             { value: "disabled", label: "不提示", desc: "仅保留手动保存按钮" },
           ] as const).map(({ value, label, desc }) => (
             <button

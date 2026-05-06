@@ -1300,7 +1300,7 @@ const en = {
   'update.restartToUpdate': 'Restart to Update',
   'update.restartNow': 'Restart Now',
   'update.readyToInstall': 'Lumos v{version} is ready — restart to update',
-  'update.installUpdate': 'Download & Install',
+  'update.installUpdate': 'Download Update',
   'update.later': 'Later',
 
   // ── Image Generation ──────────────────────────────────────

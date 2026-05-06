@@ -33,7 +33,6 @@ import {
   getChatStreamController,
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
-import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 interface ToolUseInfo {
   id: string;
@@ -54,6 +53,7 @@ interface ChatViewProps {
   modelName?: string;
   resolvedModelName?: string;
   initialKnowledgeEnabled?: boolean;
+  initialKnowledgeOptions?: ChatKnowledgeOptions;
   providerId?: string;
   browserContextId?: string;
   workingDirectoryOverride?: string;
@@ -64,6 +64,7 @@ interface ChatViewProps {
   onRequestedModelChange?: (model: string) => void;
   onResolvedModelChange?: (model: string) => void;
   onBrowserContextChange?: (contextId: string) => void;
+  onKnowledgeOptionsChange?: (options: ChatKnowledgeOptions) => void;
 }
 
 interface MemoryIdleTriggerConfig {
@@ -82,6 +83,13 @@ interface BrowserContextConflictState extends BrowserContextConflictDetails {
 const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
 const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
 const EMPTY_MESSAGES: Message[] = [];
+
+function getInitialKnowledgeOptions(
+  initialKnowledgeOptions: ChatKnowledgeOptions | undefined,
+  initialKnowledgeEnabled: boolean,
+): ChatKnowledgeOptions {
+  return initialKnowledgeOptions || { enabled: initialKnowledgeEnabled, tagIds: [] };
+}
 
 async function getBrowserBridgeHeaders(browserContextId?: string): Promise<Record<string, string>> {
   if (typeof window === 'undefined' || !window.electronAPI?.browser?.getBridgeConfig) {
@@ -130,6 +138,7 @@ export function ChatView({
   modelName,
   resolvedModelName,
   initialKnowledgeEnabled = false,
+  initialKnowledgeOptions,
   providerId,
   browserContextId = 'embedded:default',
   workingDirectoryOverride,
@@ -140,6 +149,7 @@ export function ChatView({
   onRequestedModelChange,
   onResolvedModelChange,
   onBrowserContextChange,
+  onKnowledgeOptionsChange,
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
@@ -178,10 +188,11 @@ export function ChatView({
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>(() => cachedStreamingState?.toolUses || []);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>(() => initialStreamingToolResults);
   const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
-  const [currentModel, setCurrentModel] = useState(
-    modelName || (typeof window !== 'undefined' ? (localStorage.getItem('lumos:last-model') || localStorage.getItem('codepilot:last-model')) : null) || BUILTIN_CLAUDE_MODEL_IDS.sonnet
-  );
+  const [currentModel, setCurrentModel] = useState(modelName || '');
   const [currentProviderId, setCurrentProviderId] = useState(providerId || '');
+  const [currentKnowledgeOptions, setCurrentKnowledgeOptions] = useState<ChatKnowledgeOptions>(
+    () => getInitialKnowledgeOptions(initialKnowledgeOptions, initialKnowledgeEnabled),
+  );
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(
     () => cachedStreamingState?.pendingPermission || null
@@ -366,7 +377,10 @@ export function ChatView({
   const handleProviderModelChange = useCallback(async (newProviderId: string, model: string) => {
     const nextProviderId = newProviderId.trim();
     const currentProvider = currentProviderId.trim();
-    const providerChanged = Boolean(nextProviderId && currentProvider && nextProviderId !== currentProvider);
+    const nextModel = model.trim();
+    const currentModelValue = currentModel.trim();
+    const providerChanged = Boolean(nextProviderId && nextProviderId !== currentProvider);
+    const modelChanged = Boolean(nextModel && nextModel !== currentModelValue);
 
     if (providerChanged && isStreaming) {
       setSwitchError('AI 回复中，暂时不能切换');
@@ -375,17 +389,17 @@ export function ChatView({
 
     setSwitchError(null);
     setCurrentProviderId(nextProviderId);
-    setCurrentModel(model);
-    onRequestedModelChange?.(model);
+    setCurrentModel(nextModel);
+    onRequestedModelChange?.(nextModel);
 
     // 所有 provider 都走同一个 new-api 网关（base_url / key 统一），
     // 切换本质上只是把后续请求挂到不同的 model 上，不需要 fork 会话。
-    if (providerChanged && sessionId) {
+    if ((providerChanged || modelChanged) && sessionId) {
       try {
         const response = await fetch(`/api/chat/sessions/${sessionId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider_id: nextProviderId, model }),
+          body: JSON.stringify({ provider_id: nextProviderId, model: nextModel }),
         });
         if (!response.ok) {
           const data = await response.json().catch(() => ({})) as { error?: string };
@@ -395,7 +409,26 @@ export function ChatView({
         setSwitchError(error instanceof Error ? error.message : '切换失败');
       }
     }
-  }, [currentProviderId, isStreaming, onRequestedModelChange, sessionId]);
+  }, [currentModel, currentProviderId, isStreaming, onRequestedModelChange, sessionId]);
+
+  const handleKnowledgeOptionsChange = useCallback((options: ChatKnowledgeOptions) => {
+    setCurrentKnowledgeOptions(options);
+    onKnowledgeOptionsChange?.(options);
+    if (!sessionId) {
+      return;
+    }
+    fetch(`/api/chat/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        knowledge_enabled: options.enabled,
+        knowledge_tag_ids: options.tagIds,
+        knowledge_overrides: options.overrides || {},
+      }),
+    }).catch(() => {
+      // Send-message POST also persists these options; this PATCH keeps toggles sticky before sending.
+    });
+  }, [onKnowledgeOptionsChange, sessionId]);
 
   const recordBrowserConflict = useCallback((
     raw: unknown,
@@ -673,6 +706,10 @@ export function ChatView({
   useEffect(() => {
     setCurrentProviderId(providerId || '');
   }, [providerId]);
+
+  useEffect(() => {
+    setCurrentKnowledgeOptions(getInitialKnowledgeOptions(initialKnowledgeOptions, initialKnowledgeEnabled));
+  }, [initialKnowledgeEnabled, initialKnowledgeOptions]);
 
   useEffect(() => {
     if (resolvedModelName) {
@@ -1237,6 +1274,10 @@ export function ChatView({
       return;
     }
 
+    if (pendingBootstrap.knowledgeOptions) {
+      handleKnowledgeOptionsChange(pendingBootstrap.knowledgeOptions);
+    }
+
     void sendMessage(
       pendingBootstrap.content,
       pendingBootstrap.files,
@@ -1244,7 +1285,7 @@ export function ChatView({
       pendingBootstrap.displayOverride,
       pendingBootstrap.knowledgeOptions,
     );
-  }, [sendMessage, sessionId]);
+  }, [handleKnowledgeOptionsChange, sendMessage, sessionId]);
 
   const handleCommand = useCallback((command: string) => {
     switch (command) {
@@ -1461,6 +1502,8 @@ export function ChatView({
         onProviderModelChange={handleProviderModelChange}
         workingDirectory={effectiveWorkingDirectory}
         initialKnowledgeEnabled={initialKnowledgeEnabled}
+        initialKnowledgeOptions={currentKnowledgeOptions}
+        onKnowledgeOptionsChange={handleKnowledgeOptionsChange}
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
       />

@@ -17,7 +17,6 @@ import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
 import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { stashPendingChatBootstrap } from '@/lib/chat/session-bootstrap';
-import { BUILTIN_CLAUDE_MODEL_IDS } from '@/lib/model-metadata';
 
 interface ToolUseInfo {
   id: string;
@@ -52,7 +51,7 @@ export default function NewChatPage() {
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [workingDir, setWorkingDir] = useState('');
-  const [currentModel, setCurrentModel] = useState<string>(BUILTIN_CLAUDE_MODEL_IDS.sonnet);
+  const [currentModel, setCurrentModel] = useState<string>('');
   const [currentProviderId, setCurrentProviderId] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);

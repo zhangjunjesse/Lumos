@@ -7,6 +7,54 @@ interface UpdateProviderProps {
   children: ReactNode;
 }
 
+type NativeUpdateStatusEvent = {
+  status: string;
+  info?: {
+    version?: string;
+    releaseNotes?: unknown;
+    releaseName?: string | null;
+    releaseDate?: string;
+  };
+  progress?: {
+    percent?: number;
+  };
+  reason?: "auto" | "manual";
+  autoDownload?: boolean;
+  cached?: boolean;
+  error?: string;
+};
+
+type NativeUpdateCheckResult = {
+  status?: string;
+};
+
+function normalizeReleaseNotes(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function buildNativeUpdateInfo(
+  data: NativeUpdateStatusEvent,
+  previous: UpdateInfo | null,
+  overrides: Partial<UpdateInfo> = {}
+): UpdateInfo {
+  const latestVersion = data.info?.version || previous?.latestVersion || "";
+  return {
+    updateAvailable: true,
+    latestVersion,
+    currentVersion: previous?.currentVersion || process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0",
+    releaseName: data.info?.releaseName || previous?.releaseName || (latestVersion ? `v${latestVersion}` : ""),
+    releaseNotes: normalizeReleaseNotes(data.info?.releaseNotes) || previous?.releaseNotes || "",
+    releaseUrl: latestVersion
+      ? `https://github.com/zhangjunjesse/Lumos/releases/tag/v${latestVersion}`
+      : previous?.releaseUrl || "",
+    publishedAt: data.info?.releaseDate || previous?.publishedAt || "",
+    downloadProgress: null,
+    readyToInstall: false,
+    isNativeUpdate: true,
+    ...overrides,
+  };
+}
+
 export function UpdateProvider({ children }: UpdateProviderProps) {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checking, setChecking] = useState(false);
@@ -51,7 +99,7 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
 
     setChecking(true);
     try {
-      const result: any = await window.electronAPI.updater.checkForUpdates();
+      const result = await window.electronAPI.updater.checkForUpdates() as NativeUpdateCheckResult | null;
       if (result?.status === 'not-available' || result?.status === 'disabled') {
         setChecking(false);
         setUpdateInfo({
@@ -96,47 +144,55 @@ export function UpdateProvider({ children }: UpdateProviderProps) {
   useEffect(() => {
     if (!isElectron || !window.electronAPI) return;
 
-    const unsubscribe = window.electronAPI.updater.onStatus((data: any) => {
+    const unsubscribe = window.electronAPI.updater.onStatus((data: NativeUpdateStatusEvent) => {
       console.log("[UpdateProvider] Status:", data);
 
       if (data.status === "checking") {
         setChecking(true);
       } else if (data.status === "available") {
         setChecking(false);
-        setUpdateInfo({
-          updateAvailable: true,
-          latestVersion: data.info?.version || "",
-          currentVersion: process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0",
-          releaseName: data.info?.releaseName || `v${data.info?.version}`,
-          releaseNotes: data.info?.releaseNotes || "",
-          releaseUrl: `https://github.com/zhangjunjesse/Lumos/releases/tag/v${data.info?.version}`,
-          publishedAt: data.info?.releaseDate || "",
-          downloadProgress: null,
-          readyToInstall: false,
-          isNativeUpdate: true,
-        });
-        setShowDialog(true);
-      } else if (data.status === "not-available") {
+        setUpdateInfo((prev) =>
+          buildNativeUpdateInfo(data, prev, {
+            downloadProgress: data.autoDownload ? 0 : null,
+          })
+        );
+        setShowDialog(false);
+      } else if (data.status === "download-started") {
         setChecking(false);
-      } else if (data.status === "downloading") {
+        setShowDialog(false);
         setUpdateInfo((prev) =>
           prev
             ? {
                 ...prev,
-                downloadProgress: data.progress?.percent || 0,
+                downloadProgress: 0,
+                readyToInstall: false,
+              }
+            : null
+        );
+      } else if (data.status === "not-available") {
+        setChecking(false);
+      } else if (data.status === "downloading") {
+        setChecking(false);
+        setUpdateInfo((prev) =>
+          prev
+            ? {
+                ...prev,
+                downloadProgress: data.progress?.percent ?? 0,
+                readyToInstall: false,
               }
             : null
         );
       } else if (data.status === "downloaded") {
+        setChecking(false);
         setUpdateInfo((prev) =>
-          prev
-            ? {
-                ...prev,
-                downloadProgress: 100,
-                readyToInstall: true,
-              }
-            : null
+          buildNativeUpdateInfo(data, prev, {
+            downloadProgress: 100,
+            readyToInstall: true,
+          })
         );
+        if (!data.cached || data.reason === "manual") {
+          setShowDialog(true);
+        }
       } else if (data.status === "error") {
         setChecking(false);
         console.error("[UpdateProvider] Update error:", data.error);

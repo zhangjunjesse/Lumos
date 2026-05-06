@@ -38,6 +38,14 @@ import {
   doesResolvedModelMatchRequested,
 } from '@/lib/model-metadata';
 import {
+  CHAT_DEFAULT_MODEL_STORAGE_KEY,
+  CHAT_DEFAULT_PROVIDER_STORAGE_KEY,
+  LEGACY_CHAT_DEFAULT_MODEL_STORAGE_KEY,
+  LEGACY_CODEPILOT_MODEL_STORAGE_KEY,
+  filterVisibleChatProviderGroups,
+  resolveChatProviderModelSelection,
+} from '@/lib/chat/provider-selection';
+import {
   PromptInput,
   PromptInputTextarea,
   PromptInputFooter,
@@ -84,6 +92,8 @@ interface MessageInputProps {
   onProviderModelChange?: (providerId: string, model: string) => void;
   workingDirectory?: string;
   initialKnowledgeEnabled?: boolean;
+  initialKnowledgeOptions?: ChatKnowledgeOptions;
+  onKnowledgeOptionsChange?: (options: ChatKnowledgeOptions) => void;
   onInputFocus?: () => void;
   fullWidth?: boolean;
 }
@@ -140,6 +150,42 @@ const IMAGE_REQUEST_HINT_REGEX = /(生成图片|生成一张图|做图|改图|�
 interface ChatDraftPayload {
   text: string;
   mode?: 'replace' | 'append';
+}
+
+function readStorageValue(key: string): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(key)?.trim() || '';
+}
+
+function readStoredChatProviderId(): string {
+  return readStorageValue(CHAT_DEFAULT_PROVIDER_STORAGE_KEY);
+}
+
+function readStoredChatModel(): string {
+  return readStorageValue(CHAT_DEFAULT_MODEL_STORAGE_KEY)
+    || readStorageValue(LEGACY_CHAT_DEFAULT_MODEL_STORAGE_KEY)
+    || readStorageValue(LEGACY_CODEPILOT_MODEL_STORAGE_KEY);
+}
+
+function persistStoredChatSelection(providerId: string, model: string): void {
+  if (typeof window === 'undefined') return;
+  const normalizedProviderId = providerId.trim();
+  const normalizedModel = model.trim();
+  if (normalizedProviderId) {
+    localStorage.setItem(CHAT_DEFAULT_PROVIDER_STORAGE_KEY, normalizedProviderId);
+  }
+  if (normalizedModel) {
+    localStorage.setItem(CHAT_DEFAULT_MODEL_STORAGE_KEY, normalizedModel);
+    localStorage.setItem(LEGACY_CHAT_DEFAULT_MODEL_STORAGE_KEY, normalizedModel);
+  }
+}
+
+function clearStoredChatSelection(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(CHAT_DEFAULT_PROVIDER_STORAGE_KEY);
+  localStorage.removeItem(CHAT_DEFAULT_MODEL_STORAGE_KEY);
+  localStorage.removeItem(LEGACY_CHAT_DEFAULT_MODEL_STORAGE_KEY);
+  localStorage.removeItem(LEGACY_CODEPILOT_MODEL_STORAGE_KEY);
 }
 
 /**
@@ -348,6 +394,8 @@ export function MessageInput({
   onProviderModelChange,
   workingDirectory,
   initialKnowledgeEnabled = false,
+  initialKnowledgeOptions,
+  onKnowledgeOptionsChange,
   onInputFocus,
   fullWidth = false,
 }: MessageInputProps) {
@@ -368,12 +416,15 @@ export function MessageInput({
   const [badge, setBadge] = useState<CommandBadge | null>(null);
   const [providerGroups, setProviderGroups] = useState<ProviderModelGroup[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState<string>('');
+  const [defaultModel, setDefaultModel] = useState<string>('');
+  const [storedProviderId, setStoredProviderId] = useState(readStoredChatProviderId);
+  const [storedModel, setStoredModel] = useState(readStoredChatModel);
   const [aiSuggestions, setAiSuggestions] = useState<PopoverItem[]>([]);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
-  const [knowledgeEnabled, setKnowledgeEnabled] = useState(initialKnowledgeEnabled);
+  const [knowledgeEnabled, setKnowledgeEnabled] = useState(initialKnowledgeOptions?.enabled ?? initialKnowledgeEnabled);
   const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
-  const [selectedKnowledgeTagIds, setSelectedKnowledgeTagIds] = useState<string[]>([]);
-  const [knowledgeOverrides, setKnowledgeOverrides] = useState<KnowledgeOverrides>({});
+  const [selectedKnowledgeTagIds, setSelectedKnowledgeTagIds] = useState<string[]>(initialKnowledgeOptions?.tagIds ?? []);
+  const [knowledgeOverrides, setKnowledgeOverrides] = useState<KnowledgeOverrides>(initialKnowledgeOptions?.overrides ?? {});
   const [imageProviderConfig, setImageProviderConfig] = useState<ImageProviderUiConfigResponse | null>(null);
   const [imageOptionsOpen, setImageOptionsOpen] = useState(false);
   const [imageAspectRatio, setImageAspectRatio] = useState('1:1');
@@ -387,8 +438,10 @@ export function MessageInput({
   const lastAutoImagePanelPromptRef = useRef('');
 
   useEffect(() => {
-    setKnowledgeEnabled(initialKnowledgeEnabled);
-  }, [initialKnowledgeEnabled]);
+    setKnowledgeEnabled(initialKnowledgeOptions?.enabled ?? initialKnowledgeEnabled);
+    setSelectedKnowledgeTagIds(initialKnowledgeOptions?.tagIds ?? []);
+    setKnowledgeOverrides(initialKnowledgeOptions?.overrides ?? {});
+  }, [initialKnowledgeEnabled, initialKnowledgeOptions]);
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
@@ -397,10 +450,12 @@ export function MessageInput({
       .then((data) => {
         setProviderGroups(data.groups || []);
         setDefaultProviderId(data.default_provider_id || '');
+        setDefaultModel(data.default_model || '');
       })
       .catch(() => {
         setProviderGroups([]);
         setDefaultProviderId('');
+        setDefaultModel('');
       });
   }, []);
 
@@ -475,25 +530,45 @@ export function MessageInput({
     (s) => isPro() && s.user?.allow_custom_providers?.chat === false,
   );
   const visibleProviderGroups = useMemo(
-    () => (chatReadOnly
-      ? providerGroups.filter((g) => g.provider_origin === 'system')
-      : providerGroups),
+    () => filterVisibleChatProviderGroups(providerGroups, chatReadOnly),
     [providerGroups, chatReadOnly],
   );
+  const selectableProviderGroups = useMemo(
+    () => visibleProviderGroups.map((group) => (
+      group.models.length > 0 ? group : { ...group, models: DEFAULT_PROVIDER_MODEL_OPTIONS }
+    )),
+    [visibleProviderGroups],
+  );
+
+  useEffect(() => {
+    if (!chatReadOnly || !storedProviderId) return;
+    if (selectableProviderGroups.some((group) => group.provider_id === storedProviderId)) return;
+    clearStoredChatSelection();
+    setStoredProviderId('');
+    setStoredModel('');
+  }, [chatReadOnly, selectableProviderGroups, storedProviderId]);
 
   // Derive active provider + model for the selector.
-  const hasExplicitProvider = !!providerId && visibleProviderGroups.some((group) => group.provider_id === providerId);
-  const hasDefaultProvider = !!defaultProviderId && visibleProviderGroups.some((group) => group.provider_id === defaultProviderId);
-  const currentProviderIdValue = hasExplicitProvider
-    ? (providerId as string)
-    : hasDefaultProvider
-      ? defaultProviderId
-      : (visibleProviderGroups[0]?.provider_id ?? '');
-  const hasProviders = visibleProviderGroups.length > 0;
-  const currentGroup = visibleProviderGroups.find(g => g.provider_id === currentProviderIdValue) || visibleProviderGroups[0];
+  const selection = useMemo(
+    () => resolveChatProviderModelSelection({
+      groups: selectableProviderGroups,
+      sessionProviderId: providerId,
+      currentModel: modelName,
+      storedProviderId,
+      storedModel,
+      defaultProviderId,
+      backendDefaultModel: defaultModel,
+    }),
+    [defaultModel, defaultProviderId, modelName, providerId, selectableProviderGroups, storedModel, storedProviderId],
+  );
+  const hasExplicitProvider = selection.sessionProviderAvailable;
+  const currentProviderIdValue = selection.providerId;
+  const currentModelValue = selection.model;
+  const hasProviders = selectableProviderGroups.length > 0;
+  const currentGroup = selection.provider || selectableProviderGroups[0];
   const MODEL_OPTIONS = useMemo(
-    () => currentGroup?.models || (hasProviders ? DEFAULT_PROVIDER_MODEL_OPTIONS : []),
-    [currentGroup, hasProviders],
+    () => currentGroup?.models || [],
+    [currentGroup],
   );
   const imageSupportedAspectRatios = useMemo<string[]>(
     () => imageProviderConfig?.uiConfig.supportedAspectRatios ?? ['1:1'],
@@ -524,25 +599,24 @@ export function MessageInput({
   }, [imageCount, imageMaxCount]);
 
   useEffect(() => {
-    if (MODEL_OPTIONS.length === 0) return;
+    if (MODEL_OPTIONS.length === 0 || !currentProviderIdValue || !currentModelValue) return;
 
     const nextProviderId = currentProviderIdValue;
-    const currentValue = modelName || '';
-    const hasSelectedModel = MODEL_OPTIONS.some((model) => model.value === currentValue);
-    const fallbackModel = hasSelectedModel ? currentValue : MODEL_OPTIONS[0].value;
+    const currentValue = modelName?.trim() || '';
     const providerMissing = !providerId || !hasExplicitProvider;
-    const modelChanged = currentValue !== fallbackModel;
+    const modelChanged = currentValue !== currentModelValue;
 
-    if (providerMissing && nextProviderId && onProviderModelChange) {
-      onProviderModelChange(nextProviderId, fallbackModel);
+    if ((providerMissing || modelChanged) && onProviderModelChange) {
+      onProviderModelChange(nextProviderId, currentModelValue);
       return;
     }
 
     if (modelChanged) {
-      onModelChange?.(fallbackModel);
+      onModelChange?.(currentModelValue);
     }
   }, [
     MODEL_OPTIONS,
+    currentModelValue,
     currentProviderIdValue,
     hasExplicitProvider,
     modelName,
@@ -1206,11 +1280,33 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [knowledgeMenuOpen]);
 
-  const currentModelValue = MODEL_OPTIONS.length > 0
-    ? (MODEL_OPTIONS.some((model) => model.value === (modelName || ''))
-        ? (modelName || '')
-        : MODEL_OPTIONS[0].value)
-    : '';
+  const handleKnowledgeEnabledChange = useCallback((nextEnabled: boolean) => {
+    setKnowledgeEnabled(nextEnabled);
+    onKnowledgeOptionsChange?.({
+      enabled: nextEnabled,
+      tagIds: selectedKnowledgeTagIds,
+      ...(Object.keys(knowledgeOverrides).length > 0 ? { overrides: knowledgeOverrides } : {}),
+    });
+  }, [knowledgeOverrides, onKnowledgeOptionsChange, selectedKnowledgeTagIds]);
+
+  const handleKnowledgeTagIdsChange = useCallback((nextTagIds: string[]) => {
+    setSelectedKnowledgeTagIds(nextTagIds);
+    onKnowledgeOptionsChange?.({
+      enabled: knowledgeEnabled,
+      tagIds: nextTagIds,
+      ...(Object.keys(knowledgeOverrides).length > 0 ? { overrides: knowledgeOverrides } : {}),
+    });
+  }, [knowledgeEnabled, knowledgeOverrides, onKnowledgeOptionsChange]);
+
+  const handleKnowledgeOverridesChange = useCallback((nextOverrides: KnowledgeOverrides) => {
+    setKnowledgeOverrides(nextOverrides);
+    onKnowledgeOptionsChange?.({
+      enabled: knowledgeEnabled,
+      tagIds: selectedKnowledgeTagIds,
+      ...(Object.keys(nextOverrides).length > 0 ? { overrides: nextOverrides } : {}),
+    });
+  }, [knowledgeEnabled, onKnowledgeOptionsChange, selectedKnowledgeTagIds]);
+
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0] || null;
   const hasResolvedModel = Boolean(resolvedModelName?.trim());
   const runtimeModelMismatch = hasResolvedModel
@@ -1383,11 +1479,11 @@ export function MessageInput({
             >
               <KnowledgeMenuPanel
                 enabled={knowledgeEnabled}
-                onEnabledChange={setKnowledgeEnabled}
+                onEnabledChange={handleKnowledgeEnabledChange}
                 selectedTagIds={selectedKnowledgeTagIds}
-                onSelectedTagIdsChange={setSelectedKnowledgeTagIds}
+                onSelectedTagIdsChange={handleKnowledgeTagIdsChange}
                 overrides={knowledgeOverrides}
-                onOverridesChange={setKnowledgeOverrides}
+                onOverridesChange={handleKnowledgeOverridesChange}
               />
             </div>
           )}
@@ -1565,7 +1661,7 @@ export function MessageInput({
 
                       {modelMenuOpen && (
                         <div className="absolute bottom-full left-0 mb-1.5 w-72 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-96 overflow-y-auto">
-                          {visibleProviderGroups.map((group, groupIndex) => {
+                          {selectableProviderGroups.map((group, groupIndex) => {
                             const isCurrent = group.provider_id === currentProviderIdValue;
                             return (
                               <div
@@ -1605,9 +1701,11 @@ export function MessageInput({
                                             : "hover:bg-accent/50"
                                         )}
                                         onClick={() => {
+                                          persistStoredChatSelection(group.provider_id, opt.value);
+                                          setStoredProviderId(group.provider_id);
+                                          setStoredModel(opt.value);
                                           onModelChange?.(opt.value);
                                           onProviderModelChange?.(group.provider_id, opt.value);
-                                          localStorage.setItem('lumos:last-model', opt.value);
                                           setModelMenuOpen(false);
                                         }}
                                       >

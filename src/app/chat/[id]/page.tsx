@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, use } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import type { MessagesResponse, ChatSession, SessionsResponse } from '@/types';
+import type { ChatKnowledgeOptions, KnowledgeOverrides, MessagesResponse, ChatSession, SessionsResponse } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { BrowserContextSelector } from '@/components/chat/BrowserContextSelector';
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -57,6 +57,29 @@ function triggerMemoryOnSessionSwitch(sessionId: string): void {
   });
 }
 
+function parseJsonArray(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => String(item).trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function parseKnowledgeOverrides(raw: string | undefined): KnowledgeOverrides {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as KnowledgeOverrides
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const { id } = use(params);
   const pathname = usePathname();
@@ -79,6 +102,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [resolvedModel, setResolvedModel] = useState<string>('');
   const [sessionProviderId, setSessionProviderId] = useState<string>('');
   const [sessionBrowserContextId, setSessionBrowserContextId] = useState<string>('embedded:default');
+  const [sessionKnowledgeOptions, setSessionKnowledgeOptions] = useState<ChatKnowledgeOptions>({
+    enabled: false,
+    tagIds: [],
+    overrides: {},
+  });
   const [projectName, setProjectName] = useState<string>('');
   const [sessionWorkingDir, setSessionWorkingDir] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -333,6 +361,11 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         setResolvedModel(data.session.resolved_model || '');
         setSessionProviderId(data.session.provider_id || '');
         setSessionBrowserContextId(data.session.browser_context_id || 'embedded:default');
+        setSessionKnowledgeOptions({
+          enabled: data.session.knowledge_enabled === 1,
+          tagIds: parseJsonArray(data.session.knowledge_tag_ids),
+          overrides: parseKnowledgeOverrides(data.session.knowledge_overrides),
+        });
         setProjectName(data.session.project_name || '');
       } catch (err) {
         console.error('[ChatSessionPage] Failed to load session:', err);
@@ -594,6 +627,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           resolvedModelName={resolvedModel}
           providerId={sessionProviderId}
           browserContextId={sessionBrowserContextId}
+          initialKnowledgeOptions={sessionKnowledgeOptions}
+          onKnowledgeOptionsChange={setSessionKnowledgeOptions}
           onRequestedModelChange={setSessionModel}
           onResolvedModelChange={setResolvedModel}
           onBrowserContextChange={setSessionBrowserContextId}

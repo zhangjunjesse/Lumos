@@ -30,7 +30,7 @@ import {
 } from '@/lib/db/schedule-run-steps';
 import { DEFAULT_AGENT_STEP_TIMEOUT_MS } from './compiler-helpers';
 import { createInstrumentedWorkflowRuntimeBindings } from './runtime';
-import { clearDebugContext, registerDebugContext } from './debug-cache';
+import { clearDebugContext, isReusedDebugStep, registerDebugContext } from './debug-cache';
 import { clearRunAttempts, clearStepAttempt, recordStepAttempt } from './step-attempts';
 import { getSupportedStepTypes } from './step-registry';
 import { cancelWorkflowAgentExecution } from './subagent';
@@ -303,10 +303,13 @@ async function loadWorkflowDefinition(
   const workflow = buildWorkflow(createInstrumentedWorkflowRuntimeBindings({
     onStepStarted: async (event) => {
       const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
-      if (runHistoryId) {
+      const reusedStep = isReusedDebugStep(event.workflowRunId, event.stepId);
+      if (runHistoryId && !reusedStep) {
         insertRunStep(runHistoryId, event.stepId);
       }
-      recordStepAttempt(event.workflowRunId, event.stepId, event.attempt, event.maxAttempts);
+      if (!reusedStep) {
+        recordStepAttempt(event.workflowRunId, event.stepId, event.attempt, event.maxAttempts);
+      }
       const projection = markWorkflowStepStarted(event.workflowRunId, event.stepId);
       if (projection) {
         syncExecutionStateFromProjection(projection);
@@ -315,7 +318,7 @@ async function loadWorkflowDefinition(
     },
     onStepOutput: async (event) => {
       const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
-      if (runHistoryId) {
+      if (runHistoryId && !isReusedDebugStep(event.workflowRunId, event.stepId)) {
         const summary = summarizeWorkflowStepOutput(event.output);
         if (summary) {
           setRunStepOutputSummary(runHistoryId, event.stepId, summary);
@@ -324,7 +327,7 @@ async function loadWorkflowDefinition(
     },
     onStepCompleted: async (event) => {
       const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
-      if (runHistoryId) {
+      if (runHistoryId && !isReusedDebugStep(event.workflowRunId, event.stepId)) {
         updateRunStep(runHistoryId, event.stepId, 'success');
       }
       clearStepAttempt(event.workflowRunId, event.stepId);
@@ -336,7 +339,7 @@ async function loadWorkflowDefinition(
     },
     onStepSkipped: async (event) => {
       const runHistoryId = workflowExecutions.get(event.workflowRunId)?.runHistoryId;
-      if (runHistoryId) {
+      if (runHistoryId && !isReusedDebugStep(event.workflowRunId, event.stepId)) {
         insertRunStep(runHistoryId, event.stepId);
         updateRunStep(runHistoryId, event.stepId, 'skipped');
       }

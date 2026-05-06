@@ -20,6 +20,9 @@ export interface ChatSession {
   provider_name: string;
   provider_id: string;
   browser_context_id: string;
+  knowledge_enabled: number;
+  knowledge_tag_ids: string;
+  knowledge_overrides: string;
   sdk_cwd: string;
   runtime_status: string;
   runtime_updated_at: string;
@@ -766,6 +769,7 @@ export interface ProviderModelGroup {
    *  custom-provider category (mirrors ChatProvidersCard readOnly filter). */
   provider_origin: string;
   models: ProviderModelOption[];
+  default_model?: string;
   model_catalog_source: ProviderModelCatalogSource;
   model_catalog_updated_at: string | null;
   model_catalog_uses_default: boolean;

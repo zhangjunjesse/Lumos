@@ -21,6 +21,9 @@ export function UpdateDialog() {
 
   const { isNativeUpdate, readyToInstall, downloadProgress } = updateInfo;
   const isDownloading = isNativeUpdate && !readyToInstall && downloadProgress != null;
+  const title = isNativeUpdate && readyToInstall
+    ? t('install.readyToInstall')
+    : t('update.newVersionAvailable');
 
   return (
     <Dialog open={showDialog} onOpenChange={(open) => {
@@ -28,7 +31,7 @@ export function UpdateDialog() {
     }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('update.newVersionAvailable')}</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {updateInfo.releaseName}
             {updateInfo.publishedAt && (

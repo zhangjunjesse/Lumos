@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, ChevronDown, ExternalLink, Loader2, LogOut, RefreshCw } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Download, ExternalLink, Loader2, LogOut, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useGoofishAuth } from './use-goofish-auth';
@@ -20,7 +20,7 @@ import { GoofishLoginForm } from './GoofishLoginForm';
  * 留给后续版本，避免用户在未充分验证前误触发 mtop 风控。
  */
 export function GoofishPanel() {
-  const { status, statusError, busy, actionMessage, refresh, login, logout } = useGoofishAuth();
+  const { status, statusError, busy, actionMessage, refresh, login, logout, install } = useGoofishAuth();
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [cookieInput, setCookieInput] = useState('');
   const [addingAccount, setAddingAccount] = useState(false);
@@ -49,7 +49,19 @@ export function GoofishPanel() {
     setSelectedSession(null);
   };
   // Wrap login so a successful return closes the "add account" overlay.
-  const submitLogin = (input: Parameters<typeof login>[0]) => {
+  // QR mode also gates on the optional Playwright + Chromium download — we
+  // ask the user before paying the ~150MB cost. Other login paths (browser
+  // auto-import, paste cookie) skip Playwright entirely so they don't gate.
+  const submitLogin = async (input: Parameters<typeof login>[0]) => {
+    if (input.mode === 'qr' && status && !status.qrReady) {
+      const proceed = window.confirm(
+        '扫码登录需要下载 Playwright 浏览器组件（约 150MB），是否继续？\n\n' +
+        '不想下载？可以选「其他登录方式」用系统浏览器导入或粘贴 cookie。',
+      );
+      if (!proceed) return;
+      const ok = await install('qr');
+      if (!ok) return;
+    }
     void login(input).then(() => setAddingAccount(false));
   };
   // If the selected account vanished from the list (logout / sync), fall
@@ -84,20 +96,38 @@ export function GoofishPanel() {
                   fancyboi999/goofish-cli
                   <ExternalLink className="h-3 w-3" />
                 </a>
-                {' '}（Apache-2.0）调用闲鱼。在终端运行：
-              </p>
-              <pre className="text-xs bg-muted/40 px-3 py-2 rounded font-mono">
-                pip install --user goofish-cli
-              </pre>
-              <p className="text-xs text-muted-foreground">
-                安装完成后点下方刷新。
+                {' '}（Apache-2.0）调用闲鱼。约 20MB，会装到 Lumos 内置 Python 环境，不污染系统 Python。
               </p>
             </div>
           </AlertDescription>
         </Alert>
-        <Button variant="outline" size="sm" onClick={refresh}>
-          <RefreshCw className="h-4 w-4 mr-2" /> 重新检测
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => void install('core')} disabled={busy !== null}>
+            {busy === 'install'
+              ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              : <Download className="h-4 w-4 mr-2" />}
+            {busy === 'install' ? '安装中…' : '一键安装'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={refresh} disabled={busy !== null}>
+            <RefreshCw className="h-4 w-4 mr-1" /> 重新检测
+          </Button>
+        </div>
+        {actionMessage && (
+          <Alert className={actionMessage.kind === 'error' ? 'border-red-500/50' : 'border-green-500/40'}>
+            <AlertDescription>{actionMessage.text}</AlertDescription>
+          </Alert>
+        )}
+        <details>
+          <summary className="text-xs text-muted-foreground cursor-pointer select-none">
+            想自己装？
+          </summary>
+          <pre className="text-xs bg-muted/40 px-3 py-2 rounded font-mono mt-2">
+            pip install --user goofish-cli
+          </pre>
+          <p className="text-xs text-muted-foreground mt-1">
+            装到系统/用户 Python 后，点上方「重新检测」。
+          </p>
+        </details>
         {statusError && (
           <p className="text-xs text-red-500">状态获取失败：{statusError}</p>
         )}

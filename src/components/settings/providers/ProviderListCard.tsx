@@ -83,7 +83,7 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
   const activeConfig = filtered.find((c) => c.id === defaultId) || null;
   const inactiveConfigs = filtered.filter((c) => c.id !== activeConfig?.id);
 
-  const handleSwitch = async (id: string) => {
+  const handleSwitch = useCallback(async (id: string) => {
     setSwitching(id);
     setSwitchError('');
     try {
@@ -104,7 +104,14 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
     } finally {
       setSwitching(null);
     }
-  };
+  }, [fetchConfigs]);
+
+  useEffect(() => {
+    if (!readOnly || loading || switching || activeConfig || filtered.length === 0) {
+      return;
+    }
+    void handleSwitch(filtered[0].id);
+  }, [activeConfig, filtered, handleSwitch, loading, readOnly, switching]);
 
   const handleSaved = async () => {
     await fetchConfigs();

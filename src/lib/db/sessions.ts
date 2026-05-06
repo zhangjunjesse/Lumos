@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
-import type { ChatSession, Message, SettingsMap } from '@/types';
+import type { ChatKnowledgeOptions, ChatSession, KnowledgeOverrides, Message, SettingsMap } from '@/types';
 import { getDb } from './connection';
 import { taskEventBus } from '@/lib/task-event-bus';
 
@@ -114,6 +114,41 @@ export function updateSessionBrowserContext(id: string, browserContextId: string
   const db = getDb();
   const normalized = browserContextId.trim() || 'embedded:default';
   db.prepare('UPDATE chat_sessions SET browser_context_id = ? WHERE id = ?').run(normalized, id);
+}
+
+function normalizeKnowledgeTagIds(tagIds: string[] | undefined): string[] {
+  if (!Array.isArray(tagIds)) return [];
+  return Array.from(new Set(tagIds.map((tagId) => String(tagId).trim()).filter(Boolean)));
+}
+
+function normalizeKnowledgeOverrides(overrides: KnowledgeOverrides | undefined): KnowledgeOverrides {
+  const out: KnowledgeOverrides = {};
+  if (!overrides || typeof overrides !== 'object') return out;
+  if (overrides.retrievalMode === 'reference' || overrides.retrievalMode === 'enhanced') {
+    out.retrievalMode = overrides.retrievalMode;
+  }
+  if (typeof overrides.rewriteEnabled === 'boolean') {
+    out.rewriteEnabled = overrides.rewriteEnabled;
+  }
+  if (typeof overrides.topK === 'number' && Number.isFinite(overrides.topK) && overrides.topK > 0) {
+    out.topK = Math.max(1, Math.min(10, Math.floor(overrides.topK)));
+  }
+  if (typeof overrides.candidatePool === 'number' && Number.isFinite(overrides.candidatePool) && overrides.candidatePool > 0) {
+    out.candidatePool = Math.max(16, Math.min(120, Math.floor(overrides.candidatePool)));
+  }
+  return out;
+}
+
+export function updateSessionKnowledgeOptions(id: string, options: ChatKnowledgeOptions): void {
+  const db = getDb();
+  db.prepare(
+    'UPDATE chat_sessions SET knowledge_enabled = ?, knowledge_tag_ids = ?, knowledge_overrides = ? WHERE id = ?',
+  ).run(
+    options.enabled ? 1 : 0,
+    JSON.stringify(normalizeKnowledgeTagIds(options.tagIds)),
+    JSON.stringify(normalizeKnowledgeOverrides(options.overrides)),
+    id,
+  );
 }
 
 export function updateSessionSystemPrompt(id: string, systemPrompt: string): void {

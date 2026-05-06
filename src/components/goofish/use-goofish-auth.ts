@@ -16,6 +16,11 @@ export interface GoofishStatus {
   installed: boolean;
   loggedIn: boolean;
   mcpEnabled: boolean;
+  /**
+   * QR-mode prerequisites (Playwright + Chromium ~150MB) installed.
+   * Drives whether GoofishPanel prompts before running QR login.
+   */
+  qrReady: boolean;
   /** Per-account list. New multi-account UI iterates this. */
   accounts?: GoofishAccount[];
   /** Single-account back-compat fields = first valid account in `accounts`. */
@@ -39,7 +44,7 @@ export type LoginMode =
 export function useGoofishAuth() {
   const [status, setStatus] = useState<GoofishStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | 'login' | 'logout'>(null);
+  const [busy, setBusy] = useState<null | 'login' | 'logout' | 'install'>(null);
   const [actionMessage, setActionMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const refreshRef = useRef<() => void>(() => {});
 
@@ -95,6 +100,36 @@ export function useGoofishAuth() {
     }
   }, [refresh]);
 
+  const install = useCallback(async (scope: 'core' | 'qr'): Promise<boolean> => {
+    setBusy('install');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/goofish/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message || data?.error || 'install_failed');
+      }
+      setActionMessage({
+        kind: 'ok',
+        text: scope === 'core' ? '已安装 goofish-cli' : '已下载浏览器组件',
+      });
+      await refresh();
+      return true;
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '安装失败',
+      });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
   const logout = useCallback(async (account?: string) => {
     setBusy('logout');
     setActionMessage(null);
@@ -128,5 +163,6 @@ export function useGoofishAuth() {
     refresh,
     login,
     logout,
+    install,
   };
 }

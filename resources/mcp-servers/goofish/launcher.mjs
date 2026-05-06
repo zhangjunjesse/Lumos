@@ -7,6 +7,35 @@
  * https://github.com/fancyboi999/goofish-cli) — installed via
  * `pip install --user goofish-cli`.
  *
+ * --- IMPORTANT: Lumos does NOT use Playwright for the goofish data path. ---
+ *
+ * It's tempting to read this file and assume goofish needs a heavy browser
+ * stack. It does not. Lumos has already redirected the load-bearing surfaces
+ * away from the upstream's Playwright-based tools:
+ *
+ *   - 商品搜索 → src/lib/goofish/browser-search.ts uses Lumos's own
+ *     BrowserManager + browser bridge (same one DeepSearch / Zhihu /
+ *     Xiaohongshu use). NO Playwright.
+ *   - 会话/历史抓取 → chats_fat.py / history_fat.py talk mtop HTTP +
+ *     WebSocket directly, only borrowing goofish_cli.core.{session,ws,token,
+ *     sign,mtop} as a Python signing/auth library. NO browser, headed or
+ *     headless.
+ *   - 系统浏览器登录态导入 → goofish-cli's `_pull_from_browser` uses
+ *     browser_cookie3 to read existing Chrome/Edge cookies. NO Playwright.
+ *
+ * Where Playwright is still touched (and why it's not on the critical path):
+ *   - qr_login_fat.py opens a headful Chromium so the user can scan the
+ *     goofish QR. Optional: the panel also offers "browser auto-import" and
+ *     "paste cookie", both of which skip Playwright entirely.
+ *   - goofish-cli's internal `auth refresh` (gated by GOOFISH_AUTO_REFRESH_TOKEN
+ *     +GOOFISH_HEADLESS) can fall back to a headless Chromium to refresh
+ *     `_m_h5_tk`. In practice this rarely fires because mtop pushes a fresh
+ *     `_m_h5_tk` on most signed calls.
+ *
+ * So a "real" install can ship goofish-cli (PyPI deps only, ~20MB) and skip
+ * Playwright + the ~150MB Chromium download until the user actually picks
+ * QR mode. Don't lump them together.
+ *
  * Why a Node launcher instead of pointing `command` directly at the python
  * binary or the `goofish-mcp` script:
  *   - Lumos's `[PYTHON_PATH]` placeholder resolves to the bundled venv, which
@@ -51,10 +80,22 @@ function buildCandidates() {
     candidates.push([process.env.GOOFISH_PYTHON, '-m', 'goofish_cli.mcp_server']);
   }
 
-  // 2. `goofish-mcp` directly on PATH
+  // 2. Lumos-managed venv at ~/.lumos/python-venv. The GoofishPanel "一键安装"
+  //    button POSTs /api/goofish/install which runs `pip install goofish-cli`
+  //    into this venv. Probing it BEFORE PATH means the bundled flow always
+  //    wins over a stale system install.
+  const lumosData = process.env.LUMOS_DATA_DIR || path.join(HOME, '.lumos');
+  const venvBinDir = path.join(lumosData, 'python-venv', IS_WINDOWS ? 'Scripts' : 'bin');
+  candidates.push([path.join(venvBinDir, IS_WINDOWS ? 'goofish-mcp.exe' : 'goofish-mcp')]);
+  candidates.push([
+    path.join(venvBinDir, IS_WINDOWS ? 'python.exe' : 'python3'),
+    '-m', 'goofish_cli.mcp_server',
+  ]);
+
+  // 3. `goofish-mcp` directly on PATH
   candidates.push([IS_WINDOWS ? 'goofish-mcp.exe' : 'goofish-mcp']);
 
-  // 3. pip user-install bin dirs
+  // 4. pip user-install bin dirs
   if (IS_WINDOWS) {
     // Windows pip --user puts scripts under %APPDATA%\Python\Python3X\Scripts
     const appdata = process.env.APPDATA;
@@ -75,7 +116,7 @@ function buildCandidates() {
     }
   }
 
-  // 4. As a last resort, ask any python on PATH to load the module. Useful
+  // 5. As a last resort, ask any python on PATH to load the module. Useful
   //    if the user installed the package but the script entry is broken
   //    (mismatched shebang etc).
   candidates.push(['python3', '-m', 'goofish_cli.mcp_server']);

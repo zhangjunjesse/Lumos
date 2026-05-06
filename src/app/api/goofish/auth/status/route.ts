@@ -6,6 +6,7 @@ import { getCachedNick, setCachedNick } from '@/lib/goofish/nick-cache';
 import { extractCurrentNick } from '@/lib/goofish/messages';
 import { cookiesPathFor } from '@/lib/goofish/accounts';
 import { initGoofishSyncScheduler } from '@/lib/goofish/scheduler';
+import { isQrReady } from '@/lib/goofish/install-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +24,13 @@ export async function GET() {
   initGoofishSyncScheduler();
   const installed = isGoofishInstalled();
   if (!installed) {
-    return NextResponse.json({ installed: false, loggedIn: false, mcpEnabled: false, accounts: [] });
+    return NextResponse.json({
+      installed: false,
+      loggedIn: false,
+      mcpEnabled: false,
+      qrReady: false,
+      accounts: [],
+    });
   }
 
   const accounts = await listAccountStatuses();
@@ -57,6 +64,7 @@ export async function GET() {
   return NextResponse.json({
     installed: true,
     mcpEnabled,
+    qrReady: isQrReady(),
     accounts: enriched,
     loggedIn: !!primary,
     unb: primary?.unb ?? '',
