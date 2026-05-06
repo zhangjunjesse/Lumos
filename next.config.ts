@@ -46,6 +46,17 @@ function createConfig(phase: string): NextConfig {
         'node_modules/onnxruntime-node/bin/**/*',
       ],
     },
+    outputFileTracingExcludes: {
+      '/*': [
+        // Stable desktop runtime resources are copied by electron-builder
+        // extraResources. Letting Next trace them makes cross-platform builds
+        // walk thousands of Windows runtime files and can exhaust Node heap.
+        'resources/git-bash/**/*',
+        'resources/node-runtime/**/*',
+        'resources/python-runtime/**/*',
+        'release/**/*',
+      ],
+    },
     serverExternalPackages: [
       'better-sqlite3',
       '@anthropic-ai/claude-agent-sdk',

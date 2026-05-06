@@ -195,6 +195,14 @@ function enrichWeChatExportEnv(
       env.LUMOS_WECHAT_EXPORT_SQLCIPHER,
       findSqlcipherBinary(),
     ),
+    LUMOS_WECHAT_EXPORT_WINDOWS_ACCOUNTS_FILE: pickNonEmpty(
+      env.LUMOS_WECHAT_EXPORT_WINDOWS_ACCOUNTS_FILE,
+      path.join(baseDir, 'windows_accounts.json'),
+    ),
+    LUMOS_WECHAT_EXPORT_WINDOWS_DECRYPT_DIR: pickNonEmpty(
+      env.LUMOS_WECHAT_EXPORT_WINDOWS_DECRYPT_DIR,
+      path.join(baseDir, 'windows-decrypted'),
+    ),
   };
 }
 

@@ -13,8 +13,10 @@ import { dataDir } from '@/lib/db';
 import { isVenvReady, getVenvPythonPath } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
 import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
+import { getWeChatExportPlatform, WINDOWS_ACCOUNTS_FILE, WINDOWS_DECRYPT_DIR } from './setup-state';
 
 const TIMEOUT_MS = 30_000;
+const WINDOWS_TIMEOUT_MS = 60_000;
 
 const SQLCIPHER_CANDIDATES = [
   '/opt/homebrew/opt/sqlcipher/bin/sqlcipher',
@@ -62,21 +64,39 @@ export async function queryWeChatApi<T = unknown>(
     return { ok: false, error: { code: 'no_python', message: 'No usable Python runtime' } };
   }
 
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
+    return {
+      ok: false,
+      error: { code: 'python_error', message: `Unsupported platform: ${process.platform}` },
+    };
+  }
+
   const apiScript = path.join(
     resolveRuntimePath(),
     'mcp-servers',
     'wechat-export',
-    'macos',
+    platform === 'win32' ? 'windows' : 'macos',
     'api.py',
   );
+  if (!fs.existsSync(apiScript)) {
+    return {
+      ok: false,
+      error: { code: 'python_error', message: `api.py not found at ${apiScript}` },
+    };
+  }
 
   const baseDir = path.join(dataDir, 'wechat-export');
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    LUMOS_WECHAT_EXPORT_PLATFORM: platform,
     LUMOS_WECHAT_EXPORT_KEY_FILE: path.join(baseDir, 'key.txt'),
     LUMOS_WECHAT_EXPORT_CONTACTS_FILE: path.join(baseDir, 'contacts.json'),
     LUMOS_WECHAT_EXPORT_SQLCIPHER: findSqlcipher(),
+    LUMOS_WECHAT_EXPORT_WINDOWS_ACCOUNTS_FILE: WINDOWS_ACCOUNTS_FILE,
+    LUMOS_WECHAT_EXPORT_WINDOWS_DECRYPT_DIR: WINDOWS_DECRYPT_DIR,
   };
+  const timeoutMs = platform === 'win32' ? WINDOWS_TIMEOUT_MS : TIMEOUT_MS;
 
   return new Promise<ApiBridgeResult<T>>((resolve) => {
     const child = spawn(py, [apiScript], { env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -88,8 +108,8 @@ export async function queryWeChatApi<T = unknown>(
       if (settled) return;
       settled = true;
       child.kill('SIGKILL');
-      resolve({ ok: false, error: { code: 'timeout', message: `Python timed out after ${TIMEOUT_MS}ms` } });
-    }, TIMEOUT_MS);
+      resolve({ ok: false, error: { code: 'timeout', message: `Python timed out after ${timeoutMs}ms` } });
+    }, timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });

@@ -9,7 +9,7 @@ import {
   hasValidConsent,
   getConsent,
 } from '@/lib/wechat-export/disclaimer';
-import { getSetupStatus } from '@/lib/wechat-export/setup-state';
+import { getSetupStatus, getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -23,19 +23,20 @@ export const dynamic = 'force-dynamic';
  * endpoint on focus / after each user action.
  */
 export async function GET() {
-  if (process.platform !== 'darwin') {
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
     return NextResponse.json({
       supported: false,
       platform: process.platform,
-      message: '微信导出能力目前仅支持 macOS。Windows 支持在路线图上。',
+      message: '微信导出能力目前支持 macOS 和 Windows。',
     });
   }
-  const env = runEnvProbes();
-  const status = getSetupStatus(env.allOk, env.signed);
+  const env = runEnvProbes(platform);
+  const status = getSetupStatus(env.allOk, env.signed, platform);
   const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
   return NextResponse.json({
     supported: true,
-    platform: 'darwin',
+    platform,
     env,
     status,
     consent: {

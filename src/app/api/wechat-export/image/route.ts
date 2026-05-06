@@ -2,7 +2,11 @@ import { NextRequest } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
-import { hasRecoveredKey } from '@/lib/wechat-export/setup-state';
+import {
+  getWeChatExportPlatform,
+  hasRecoveredKey,
+  WINDOWS_ACCOUNTS_FILE,
+} from '@/lib/wechat-export/setup-state';
 import { queryWeChatApi } from '@/lib/wechat-export/api-bridge';
 
 export const runtime = 'nodejs';
@@ -17,6 +21,20 @@ const ALLOWED_PREFIX = path.join(
   'Documents',
   'xwechat_files',
 );
+
+function isAllowedWindowsWeChatPath(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(WINDOWS_ACCOUNTS_FILE)) return false;
+    const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ wx_dir?: string }>;
+    return accounts.some((account) => {
+      if (!account.wx_dir) return false;
+      const root = path.resolve(account.wx_dir);
+      return filePath === root || filePath.startsWith(root + path.sep);
+    });
+  } catch {
+    return false;
+  }
+}
 
 function sniffMime(buf: Buffer): string {
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
@@ -35,8 +53,9 @@ function sniffMime(buf: Buffer): string {
  * just needs the right Content-Type.
  */
 export async function GET(request: NextRequest) {
-  if (process.platform !== 'darwin') {
-    return new Response('macOS only', { status: 400 });
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
+    return new Response('unsupported_platform', { status: 400 });
   }
   if (!hasValidConsent() || !hasRecoveredKey()) {
     return new Response('not_ready', { status: 403 });
@@ -58,7 +77,10 @@ export async function GET(request: NextRequest) {
   }
 
   const filePath = path.resolve(result.data.path);
-  if (!filePath.startsWith(ALLOWED_PREFIX)) {
+  const allowed = platform === 'darwin'
+    ? filePath.startsWith(ALLOWED_PREFIX)
+    : isAllowedWindowsWeChatPath(filePath);
+  if (!allowed) {
     return new Response('forbidden', { status: 403 });
   }
   if (!fs.existsSync(filePath)) {

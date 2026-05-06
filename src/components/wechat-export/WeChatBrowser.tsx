@@ -292,7 +292,7 @@ function MessageTimelineEmpty() {
       </div>
       <div className="text-sm font-medium text-foreground/85">从左侧选择一个会话</div>
       <div className="text-xs text-muted-foreground mt-2 leading-relaxed max-w-[260px]">
-        消息只在你这台 mac 上本地解密。lumos 不上传任何聊天内容,
+        消息只在你这台电脑上本地解密。lumos 不上传任何聊天内容,
         除非你主动让 AI 引用其中的片段。
       </div>
       <div className="mt-6 grid w-full max-w-sm gap-1.5 text-left">

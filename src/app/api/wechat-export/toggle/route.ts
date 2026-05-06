@@ -2,21 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { runEnvProbes } from '@/lib/wechat-export/env-check';
-import { hasRecoveredKey, wipeFeatureData } from '@/lib/wechat-export/setup-state';
+import { getWeChatExportPlatform, hasRecoveredKey, wipeFeatureData } from '@/lib/wechat-export/setup-state';
 import {
   getMcpServerByNameAndScope,
   updateMcpServer,
 } from '@/lib/db';
 import { ensureVenv, installPackage, listPackages } from '@/lib/python-venv';
 
-const REQUIRED_PYPI_PACKAGES = ['mcp[cli]>=1.0.0', 'zstandard>=0.23'];
+const REQUIRED_PYPI_PACKAGES_BY_PLATFORM = {
+  darwin: ['mcp[cli]>=1.0.0', 'zstandard>=0.23'],
+  win32: ['mcp[cli]>=1.0.0', 'pycryptodomex>=3.20'],
+} as const;
 
 /**
  * Make sure the lumos-managed Python venv has every package the wechat-export
  * MCP server imports. Idempotent — listPackages tells us what's already there.
  * Errors out only when a real install fails, not when packages are present.
  */
-async function ensureVenvPackages(): Promise<{ ok: boolean; error?: string }> {
+async function ensureVenvPackages(packages: readonly string[]): Promise<{ ok: boolean; error?: string }> {
   try {
     await ensureVenv();
   } catch (err) {
@@ -31,7 +34,7 @@ async function ensureVenvPackages(): Promise<{ ok: boolean; error?: string }> {
   const installedNames = new Set(
     installed.map((spec) => spec.split('==')[0].toLowerCase().replace(/\[.*\]$/, '')),
   );
-  for (const spec of REQUIRED_PYPI_PACKAGES) {
+  for (const spec of packages) {
     const baseName = spec.split('[')[0].split('>=')[0].split('==')[0].toLowerCase();
     if (installedNames.has(baseName)) continue;
     try {
@@ -65,8 +68,9 @@ const schema = z.object({
  *     linger on the box
  */
 export async function POST(request: NextRequest) {
-  if (process.platform !== 'darwin') {
-    return NextResponse.json({ error: 'macOS only' }, { status: 400 });
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
+    return NextResponse.json({ error: 'unsupported_platform' }, { status: 400 });
   }
 
   let body: unknown;
@@ -90,14 +94,14 @@ export async function POST(request: NextRequest) {
     if (!hasValidConsent()) {
       return NextResponse.json({ error: 'consent_required' }, { status: 400 });
     }
-    const env = runEnvProbes();
+    const env = runEnvProbes(platform);
     if (!env.allOk) {
       return NextResponse.json({ error: 'env_not_ready', detail: env }, { status: 400 });
     }
     if (!hasRecoveredKey()) {
       return NextResponse.json({ error: 'no_key', message: '请先完成密钥提取。' }, { status: 400 });
     }
-    const venvResult = await ensureVenvPackages();
+    const venvResult = await ensureVenvPackages(REQUIRED_PYPI_PACKAGES_BY_PLATFORM[platform]);
     if (!venvResult.ok) {
       return NextResponse.json({
         error: 'venv_install_failed',

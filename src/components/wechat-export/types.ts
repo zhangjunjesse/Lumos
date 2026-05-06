@@ -1,15 +1,16 @@
 /** Shape of GET /api/wechat-export/status. Mirrors the route handler. */
 export interface WeChatExportStatus {
   supported: boolean;
-  platform: string;
+  platform: 'darwin' | 'win32' | string;
   message?: string;
   env?: {
-    wechat: { ok: boolean; detail: string; hint?: string; signed: 'tencent' | 'adhoc' | 'unknown' };
+    platform: 'darwin' | 'win32';
+    wechat: { ok: boolean; detail: string; hint?: string; signed: 'tencent' | 'adhoc' | 'unknown' | 'not_required'; pid?: number; running?: boolean };
     sqlcipher: { ok: boolean; detail: string; hint?: string };
     xcodeCLT: { ok: boolean; detail: string; hint?: string };
-    dataDir: { ok: boolean; detail: string; hint?: string; wxid?: string };
+    dataDir: { ok: boolean; detail: string; hint?: string; wxid?: string; root?: string; wxDir?: string };
     allOk: boolean;
-    signed: 'tencent' | 'adhoc' | 'unknown';
+    signed: 'tencent' | 'adhoc' | 'unknown' | 'not_required';
   };
   status?: {
     phase:

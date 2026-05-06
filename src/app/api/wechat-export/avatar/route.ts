@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { dataDir } from '@/lib/db';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
-import { hasRecoveredKey } from '@/lib/wechat-export/setup-state';
+import { getWeChatExportPlatform, hasRecoveredKey } from '@/lib/wechat-export/setup-state';
 import { queryWeChatApi } from '@/lib/wechat-export/api-bridge';
 
 export const runtime = 'nodejs';
@@ -24,7 +24,7 @@ function sniffMime(buf: Buffer): string {
  * On miss, ask api.py to extract bytes from head_image.db and try again.
  */
 export async function GET(request: NextRequest) {
-  if (process.platform !== 'darwin') return new Response('macOS only', { status: 400 });
+  if (!getWeChatExportPlatform()) return new Response('unsupported_platform', { status: 400 });
   if (!hasValidConsent() || !hasRecoveredKey()) return new Response('not_ready', { status: 403 });
 
   const url = new URL(request.url);

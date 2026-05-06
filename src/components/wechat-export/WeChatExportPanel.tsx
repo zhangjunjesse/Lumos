@@ -179,36 +179,58 @@ function ConsentSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
 function EnvSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const env = panel.status?.env;
   if (!env) return null;
+  const isWindows = panel.status?.platform === 'win32';
 
   type Row = { label: string; ok: boolean; detail: string; hint?: string; copy?: string };
-  const rows: Row[] = [
-    {
-      label: '微信',
-      ok: env.wechat.ok,
-      detail: env.wechat.ok ? `已检测到版本 ${env.wechat.detail.split(' ')[0]}` : env.wechat.detail,
-      hint: env.wechat.hint,
-    },
-    {
-      label: '系统辅助工具',
-      ok: env.xcodeCLT.ok,
-      detail: env.xcodeCLT.ok ? '已就绪' : env.xcodeCLT.detail,
-      hint: env.xcodeCLT.hint,
-      copy: env.xcodeCLT.hint?.startsWith('xcode-select') ? env.xcodeCLT.hint : undefined,
-    },
-    {
-      label: '本地数据库工具',
-      ok: env.sqlcipher.ok,
-      detail: env.sqlcipher.ok ? '已就绪' : '需要安装',
-      hint: env.sqlcipher.hint,
-      copy: env.sqlcipher.hint?.startsWith('brew') ? env.sqlcipher.hint : undefined,
-    },
-    {
-      label: '微信账号数据',
-      ok: env.dataDir.ok,
-      detail: env.dataDir.ok && env.dataDir.wxid ? `账号 ${env.dataDir.wxid}` : env.dataDir.detail,
-      hint: env.dataDir.hint,
-    },
-  ];
+  const rows: Row[] = isWindows
+    ? [
+        {
+          label: 'Windows 微信',
+          ok: env.wechat.ok,
+          detail: env.wechat.detail,
+          hint: env.wechat.hint,
+        },
+        {
+          label: '微信账号数据',
+          ok: env.dataDir.ok,
+          detail: env.dataDir.ok && env.dataDir.wxid ? `账号 ${env.dataDir.wxid}` : env.dataDir.detail,
+          hint: env.dataDir.hint,
+        },
+        {
+          label: '本地读取组件',
+          ok: env.xcodeCLT.ok && env.sqlcipher.ok,
+          detail: env.xcodeCLT.ok && env.sqlcipher.ok ? '已就绪' : '需要修复',
+          hint: env.xcodeCLT.hint || env.sqlcipher.hint,
+        },
+      ]
+    : [
+        {
+          label: '微信',
+          ok: env.wechat.ok,
+          detail: env.wechat.ok ? `已检测到版本 ${env.wechat.detail.split(' ')[0]}` : env.wechat.detail,
+          hint: env.wechat.hint,
+        },
+        {
+          label: '系统辅助工具',
+          ok: env.xcodeCLT.ok,
+          detail: env.xcodeCLT.ok ? '已就绪' : env.xcodeCLT.detail,
+          hint: env.xcodeCLT.hint,
+          copy: env.xcodeCLT.hint?.startsWith('xcode-select') ? env.xcodeCLT.hint : undefined,
+        },
+        {
+          label: '本地数据库工具',
+          ok: env.sqlcipher.ok,
+          detail: env.sqlcipher.ok ? '已就绪' : '需要安装',
+          hint: env.sqlcipher.hint,
+          copy: env.sqlcipher.hint?.startsWith('brew') ? env.sqlcipher.hint : undefined,
+        },
+        {
+          label: '微信账号数据',
+          ok: env.dataDir.ok,
+          detail: env.dataDir.ok && env.dataDir.wxid ? `账号 ${env.dataDir.wxid}` : env.dataDir.detail,
+          hint: env.dataDir.hint,
+        },
+      ];
 
   return (
     <Card>
@@ -303,17 +325,30 @@ function PrepareWeChatSection({ panel }: { panel: ReturnType<typeof useWeChatExp
 
 function ExtractSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const running = panel.busy === 'extract';
+  const isWindows = panel.status?.platform === 'win32';
+  const windowsWechatRunning = panel.status?.env?.wechat.running !== false;
+  const canStart = !isWindows || windowsWechatRunning;
   return (
     <Card tone="highlight">
       <h3 className="text-sm font-semibold mb-2">取出聊天记录的解锁密钥</h3>
       <p className="text-sm text-foreground/85 leading-relaxed">
-        最后一步:Lumos 会在本机扫描微信进程,把每个数据库的解锁密钥取出来,保存到你的本地。
-        首次大约 5-10 分钟,页面会显示进度。
+        {isWindows
+          ? 'Lumos 会读取当前运行中的 Windows 微信进程，找到本机账号数据库的解锁密钥，并保存到你的本地。微信需要保持登录在主界面。'
+          : '最后一步:Lumos 会在本机扫描微信进程,把每个数据库的解锁密钥取出来,保存到你的本地。首次大约 5-10 分钟,页面会显示进度。'}
       </p>
+
+      {isWindows && !windowsWechatRunning ? (
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-foreground/85">
+          <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <div>
+            已找到 Windows 微信安装和本地数据，但提取密钥时必须让微信正在运行。请先打开微信并停留在主界面，然后点击“重新检查”。
+          </div>
+        </div>
+      ) : null}
 
       {!running ? (
         <div className="mt-4">
-          <Button onClick={() => void panel.startExtract()}>
+          <Button disabled={!canStart} onClick={() => void panel.startExtract()}>
             <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5" />
             开始
           </Button>
@@ -334,9 +369,19 @@ function ExtractSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
       )}
 
       <Disclosure title="这一步在做什么?">
-        微信把聊天记录用密码加密存在你 mac 上。这个密码只在微信运行时存在内存里。
-        lumos 用 macOS 自带的调试工具暂时附着到微信进程,从内存里把密码读出来,之后所有解密都本地完成。
-        密码不会发送给任何服务器,包括 lumos 自己。
+        {isWindows ? (
+          <>
+            微信把聊天记录用密码加密存在你的 Windows 电脑上。这个密码只在微信运行时存在内存里。
+            Lumos 会在本机读取 WeChat.exe 进程并验证密钥是否能打开你自己的 MicroMsg.db；验证通过后才保存。
+            密钥不会发送给任何服务器,包括 lumos 自己。
+          </>
+        ) : (
+          <>
+            微信把聊天记录用密码加密存在你 mac 上。这个密码只在微信运行时存在内存里。
+            lumos 用 macOS 自带的调试工具暂时附着到微信进程,从内存里把密码读出来,之后所有解密都本地完成。
+            密码不会发送给任何服务器,包括 lumos 自己。
+          </>
+        )}
       </Disclosure>
     </Card>
   );
@@ -436,10 +481,16 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const readable = diagnostics?.message_db_readable ?? 0;
   const skipped = diagnostics?.skipped_message_db_names?.join('、') || '';
   const signed = panel.status?.env?.signed;
+  const isWindows = panel.status?.platform === 'win32';
+  const windowsWechatRunning = panel.status?.env?.wechat.running !== false;
   const runningResign = panel.busy === 'resign';
   const runningExtract = panel.busy === 'extract';
-  const mustRelaxWeChat = signed === 'tencent' || signed === 'unknown';
+  const mustRelaxWeChat = panel.status?.platform === 'darwin' && (signed === 'tencent' || signed === 'unknown');
   const runRepair = async () => {
+    if (isWindows && !windowsWechatRunning) {
+      setError('请先打开 Windows 微信并停留在主界面，然后重新检测。');
+      return;
+    }
     if (mustRelaxWeChat) {
       const relaxed = await panel.resignWeChat();
       await refreshDiagnostics();
@@ -505,13 +556,21 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
-              disabled={runningExtract || runningResign}
+              disabled={runningExtract || runningResign || (isWindows && !windowsWechatRunning)}
               onClick={() => void runRepair()}
             >
               {runningResign || runningExtract ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
               {mustRelaxWeChat ? '开始修复' : '重新提取消息库密钥'}
             </Button>
-            {!mustRelaxWeChat ? (
+            {isWindows && !windowsWechatRunning ? (
+              <span className="text-xs text-muted-foreground">
+                重新提取时需要先打开 Windows 微信。
+              </span>
+            ) : isWindows ? (
+              <span className="text-xs text-muted-foreground">
+                下一步会读取当前运行中的 Windows 微信进程。
+              </span>
+            ) : !mustRelaxWeChat ? (
               <span className="text-xs text-muted-foreground">
                 微信读取保护已临时放开，下一步会直接重新提取。
               </span>
@@ -519,7 +578,9 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
           </div>
 
           <div className="text-xs text-muted-foreground leading-relaxed">
-            修复过程会在本机完成。点击开始后，Lumos 会先处理微信读取保护，再自动重新提取消息库密钥；提取完成后，页面会继续提示你把微信恢复成原版。
+            {isWindows
+              ? '修复过程会在本机完成。点击后，Lumos 会重新读取 WeChat.exe 里的数据库密钥，并合并保存到本地。'
+              : '修复过程会在本机完成。点击开始后，Lumos 会先处理微信读取保护，再自动重新提取消息库密钥；提取完成后，页面会继续提示你把微信恢复成原版。'}
           </div>
         </div>
       )}
@@ -531,6 +592,7 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const env = panel.status?.env;
   const status = panel.status?.status;
   const enabled = !!panel.status?.mcp?.enabled;
+  const isMac = panel.status?.platform === 'darwin';
 
   return (
     <div className="flex flex-col gap-3">
@@ -589,7 +651,7 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
             数据完全本地处理。只有你向 AI 提问、需要引用微信内容时,
             <span className="text-foreground">仅当次涉及的片段</span>会被发送到你配置的 AI 服务商。
           </p>
-          {env?.signed === 'adhoc' ? (
+          {isMac && env?.signed === 'adhoc' ? (
             <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs">
               <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
               <div className="text-foreground/85 leading-relaxed">

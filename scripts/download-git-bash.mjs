@@ -1,12 +1,53 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
+
+const require = createRequire(import.meta.url);
 
 // Git for Windows portable version
 const GIT_VERSION = '2.48.1';
 const GIT_BUILD = '1';
 
-const platform = process.platform;
+function parseArgs() {
+  const args = process.argv.slice(2);
+  let platform = process.platform;
+  let arch = process.env.npm_config_arch || process.arch;
+
+  const platformIdx = args.indexOf('--platform');
+  if (platformIdx !== -1 && args[platformIdx + 1]) {
+    platform = args[platformIdx + 1];
+  }
+  const archIdx = args.indexOf('--arch');
+  if (archIdx !== -1 && args[archIdx + 1]) {
+    arch = args[archIdx + 1];
+  }
+
+  return { platform, arch };
+}
+
+function find7za() {
+  try {
+    return require('7zip-bin').path7za;
+  } catch {
+    return process.env.SEVEN_ZIP || process.env.SEVEN_ZIP_PATH || '';
+  }
+}
+
+function extractPortableGit(downloadPath, gitBashDir) {
+  if (process.platform === 'win32') {
+    execFileSync(downloadPath, [`-o${gitBashDir}`, '-y'], { stdio: 'inherit' });
+    return;
+  }
+
+  const sevenZip = find7za();
+  if (!sevenZip || !fs.existsSync(sevenZip)) {
+    throw new Error('7zip-bin is unavailable; cannot extract PortableGit on this platform');
+  }
+  execFileSync(sevenZip, ['x', downloadPath, `-o${gitBashDir}`, '-y'], { stdio: 'inherit' });
+}
+
+const { platform, arch: targetArch } = parseArgs();
 
 // Only download for Windows
 if (platform !== 'win32') {
@@ -14,8 +55,6 @@ if (platform !== 'win32') {
   process.exit(0);
 }
 
-// Only download the architecture matching the current build target
-const targetArch = process.env.npm_config_arch || process.arch;
 const architectures = [targetArch];
 
 for (const arch of architectures) {
@@ -49,11 +88,11 @@ for (const arch of architectures) {
   try {
     // Download the portable Git
     console.log(`  Downloading from: ${downloadUrl}`);
-    execSync(`curl -L -o "${downloadPath}" "${downloadUrl}"`, { stdio: 'inherit' });
+    execFileSync('curl', ['-L', '-o', downloadPath, downloadUrl], { stdio: 'inherit' });
 
     // Preserve the original PortableGit layout so bash can resolve /tmp and cygpath.
     console.log(`  Extracting...`);
-    execSync(`"${downloadPath}" -o"${gitBashDir}" -y`, { stdio: 'inherit' });
+    extractPortableGit(downloadPath, gitBashDir);
 
     const extractedBashPath = bashCandidates.find((candidatePath) => fs.existsSync(candidatePath));
     if (!extractedBashPath) {

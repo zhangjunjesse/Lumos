@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
-import { hasRecoveredKey } from '@/lib/wechat-export/setup-state';
+import { getWeChatExportPlatform, hasRecoveredKey } from '@/lib/wechat-export/setup-state';
 import { queryWeChatApi } from '@/lib/wechat-export/api-bridge';
 
 export const runtime = 'nodejs';
@@ -20,8 +20,8 @@ const schema = z.object({
  * (contacts.json is written on first call).
  */
 export async function POST(request: NextRequest) {
-  if (process.platform !== 'darwin') {
-    return NextResponse.json({ error: 'macOS only' }, { status: 400 });
+  if (!getWeChatExportPlatform()) {
+    return NextResponse.json({ error: 'unsupported_platform' }, { status: 400 });
   }
   if (!hasValidConsent()) {
     return NextResponse.json({ error: 'consent_required' }, { status: 400 });

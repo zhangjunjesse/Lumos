@@ -1,15 +1,17 @@
 {
   "name": "wechat-export",
-  "description": "本地解密微信 macOS 4.x 数据库,让 AI 读取你的聊天记录。仅本地处理,不上传。需要先在「能力 → 微信导出」中完成 setup(重签名微信 + 提取密钥)。",
+  "description": "本地解密微信数据库,让 AI 读取你的聊天记录。支持 macOS 与 Windows,仅本地处理,不上传。需要先在「能力 → 微信」中完成授权与密钥提取。",
   "command": "[PYTHON_PATH]",
   "runtime": "python",
   "runMode": "on_demand",
   "args": [
-    "[RUNTIME_PATH]/mcp-servers/wechat-export/macos/server.py"
+    "[RUNTIME_PATH]/mcp-servers/wechat-export/server.py"
   ],
   "env": {
     "LUMOS_WECHAT_EXPORT_KEY_FILE": "[DATA_DIR]/wechat-export/key.txt",
     "LUMOS_WECHAT_EXPORT_CONTACTS_FILE": "[DATA_DIR]/wechat-export/contacts.json",
-    "LUMOS_WECHAT_EXPORT_SQLCIPHER": ""
+    "LUMOS_WECHAT_EXPORT_SQLCIPHER": "",
+    "LUMOS_WECHAT_EXPORT_WINDOWS_ACCOUNTS_FILE": "[DATA_DIR]/wechat-export/windows_accounts.json",
+    "LUMOS_WECHAT_EXPORT_WINDOWS_DECRYPT_DIR": "[DATA_DIR]/wechat-export/windows-decrypted"
   }
 }

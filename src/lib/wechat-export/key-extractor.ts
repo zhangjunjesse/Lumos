@@ -1,24 +1,33 @@
 /**
- * Drive `extract_key.py` (vendored under resources/mcp-servers/wechat-export/macos/)
- * and stream its progress to a callback.
+ * Drive the platform-specific `extract_key.py` and stream progress to the UI.
  *
- * lldb's Python module isn't pip-installable, so we have to point Python at it
- * via PYTHONPATH=$(lldb -P). The script itself does the rest — attach, scan,
- * verify candidates, write `wechat_keys.json` + `key.txt`.
+ * macOS uses lldb's Python module via PYTHONPATH=$(lldb -P). Windows uses the
+ * Lumos managed Python runtime and reads WeChat.exe with Win32 APIs.
  */
 import { spawn } from 'child_process';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { ensureFeatureDir, KEY_FILE, KEYS_JSON_FILE } from './setup-state';
+import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
+import { resolvePythonBinary } from '@/lib/python-runtime';
+import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
+import {
+  ensureFeatureDir,
+  getWeChatExportPlatform,
+  KEY_FILE,
+  KEYS_JSON_FILE,
+  WINDOWS_ACCOUNTS_FILE,
+  type WeChatExportPlatform,
+} from './setup-state';
 
-const SCRIPT_REL = 'mcp-servers/wechat-export/macos/extract_key.py';
+const SCRIPT_REL_BY_PLATFORM: Record<WeChatExportPlatform, string> = {
+  darwin: 'mcp-servers/wechat-export/macos/extract_key.py',
+  win32: 'mcp-servers/wechat-export/windows/extract_key.py',
+};
 
 function getRuntimePath(): string {
-  // Mirror src/lib/mcp-resolver.ts:resolveRuntimePath
-  const isPackaged = !!process.resourcesPath
-    && fs.existsSync(path.join(process.resourcesPath, 'mcp-servers'));
-  if (isPackaged) return process.resourcesPath;
+  const resolved = resolveRuntimeResourceRootFor('mcp-servers');
+  if (resolved) return resolved;
   return path.join(process.cwd(), 'resources');
 }
 
@@ -36,6 +45,11 @@ function findSystemPython3(): string | null {
   // than the user's anaconda / pyenv to avoid ABI mismatches.
   if (fs.existsSync('/usr/bin/python3')) return '/usr/bin/python3';
   return null;
+}
+
+function findManagedPython(): string | null {
+  if (isVenvReady()) return getVenvPythonPath();
+  return resolvePythonBinary();
 }
 
 export interface KeyExtractionProgress {
@@ -60,6 +74,10 @@ export interface KeyExtractionResult {
   log: string;
 }
 
+function redactKeyMaterial(line: string): string {
+  return line.replace(/\bkey=([0-9a-fA-F]{64})\b/g, 'key=<redacted>');
+}
+
 /**
  * Run the extractor. `onProgress` fires for every line of stdout/stderr we can
  * classify; the wizard uses it to drive the SSE channel. Returns the final
@@ -70,76 +88,91 @@ export async function extractKeys(
   onProgress?: (p: KeyExtractionProgress) => void,
 ): Promise<KeyExtractionResult> {
   ensureFeatureDir();
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
+    return { success: false, keysFound: 0, error: `当前平台不支持微信读取: ${process.platform}`, log: '' };
+  }
   const runtimePath = getRuntimePath();
-  const scriptPath = path.join(runtimePath, SCRIPT_REL);
+  const scriptPath = path.join(runtimePath, SCRIPT_REL_BY_PLATFORM[platform]);
   if (!fs.existsSync(scriptPath)) {
     return { success: false, keysFound: 0, error: `extract_key.py not found at ${scriptPath}`, log: '' };
   }
-  const lldbPy = findLldbPythonPath();
-  if (!lldbPy) {
-    return {
-      success: false,
-      keysFound: 0,
-      error: 'lldb 未安装。请先运行 `xcode-select --install` 安装 Xcode 命令行工具。',
-      log: '',
-    };
-  }
-  const py = findSystemPython3();
-  if (!py) {
-    return {
-      success: false,
-      keysFound: 0,
-      error: '/usr/bin/python3 未找到 (Xcode 命令行工具未完整安装)',
-      log: '',
-    };
-  }
+  let py: string | null = null;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  const args = [scriptPath, '--pid', String(pid)];
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    PYTHONPATH: lldbPy,
-  };
+  if (platform === 'darwin') {
+    const lldbPy = findLldbPythonPath();
+    if (!lldbPy) {
+      return {
+        success: false,
+        keysFound: 0,
+        error: 'lldb 未安装。请先运行 `xcode-select --install` 安装 Xcode 命令行工具。',
+        log: '',
+      };
+    }
+    py = findSystemPython3();
+    if (!py) {
+      return {
+        success: false,
+        keysFound: 0,
+        error: '/usr/bin/python3 未找到 (Xcode 命令行工具未完整安装)',
+        log: '',
+      };
+    }
+    env.PYTHONPATH = lldbPy;
+    args.push('--out', KEYS_JSON_FILE, '--key-out', KEY_FILE);
+  } else {
+    py = findManagedPython();
+    if (!py) {
+      return {
+        success: false,
+        keysFound: 0,
+        error: '未找到可用 Python 运行时。',
+        log: '',
+      };
+    }
+    args.push('--accounts-out', WINDOWS_ACCOUNTS_FILE, '--key-out', KEY_FILE);
+  }
 
   return new Promise<KeyExtractionResult>((resolve) => {
-    const child = spawn(py, [
-      scriptPath,
-      '--pid', String(pid),
-      '--out', KEYS_JSON_FILE,
-      '--key-out', KEY_FILE,
-    ], { env });
+    const child = spawn(py, args, { env });
 
     let stdoutBuf = '';
     let stderrBuf = '';
+    let extractionLog = '';
 
     const handleLine = (line: string) => {
       if (!line) return;
+      const safeLine = redactKeyMaterial(line);
       if (line.includes('attaching pid')) {
-        onProgress?.({ phase: 'starting', message: line });
+        onProgress?.({ phase: 'starting', message: safeLine });
         return;
       }
-      if (line.includes('scanning memory')) {
-        onProgress?.({ phase: 'scanning', message: line });
+      if (line.includes('scanning memory') || line.includes('scanning WeChatWin.dll')) {
+        onProgress?.({ phase: 'scanning', message: safeLine });
         return;
       }
-      const found = line.match(/\[FOUND\]\s+salt=([0-9a-f]+)\s+key=([0-9a-f]+)/);
+      const found = line.match(/\[FOUND\]\s+(?:salt=([0-9a-f]+)\s+)?(?:wxid=([\w@.\-]+)\s+)?(?:key=(?:[0-9a-f]+|\*+|<redacted>)\s*)?/);
       if (found) {
-        onProgress?.({ phase: 'found', message: line });
+        onProgress?.({ phase: 'found', message: safeLine });
         return;
       }
       const summary = line.match(/scanned\s+(\d+)\s+regions/);
       if (summary) {
-        onProgress?.({ phase: 'scanning', message: line });
+        onProgress?.({ phase: 'scanning', message: safeLine });
         return;
       }
       if (line.startsWith('[+] wrote') || line.startsWith('[+] message_*.db key')) {
-        onProgress?.({ phase: 'done', message: line });
+        onProgress?.({ phase: 'done', message: safeLine });
       }
     };
 
-    const flush = (buf: string, append: (chunk: string) => void): string => {
+    const flush = (buf: string): string => {
       const lines = buf.split(/\r?\n/);
       const tail = lines.pop() ?? '';
       for (const line of lines) {
-        append(line);
+        extractionLog += `${redactKeyMaterial(line)}\n`;
         handleLine(line.trim());
       }
       return tail;
@@ -147,11 +180,11 @@ export async function extractKeys(
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBuf += chunk.toString('utf8');
-      stdoutBuf = flush(stdoutBuf, () => { /* keep buf */ });
+      stdoutBuf = flush(stdoutBuf);
     });
     child.stderr.on('data', (chunk: Buffer) => {
       stderrBuf += chunk.toString('utf8');
-      stderrBuf = flush(stderrBuf, () => { /* keep buf */ });
+      stderrBuf = flush(stderrBuf);
     });
 
     child.on('error', (err) => {
@@ -159,12 +192,12 @@ export async function extractKeys(
         success: false,
         keysFound: 0,
         error: `进程启动失败: ${err.message}`,
-        log: stdoutBuf + stderrBuf,
+        log: extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf),
       });
     });
 
     child.on('close', (code) => {
-      const log = stdoutBuf + stderrBuf;
+      const log = extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf);
       if (code !== 0) {
         onProgress?.({
           phase: 'error',
@@ -180,7 +213,10 @@ export async function extractKeys(
       }
       let keysFound = 0;
       try {
-        if (fs.existsSync(KEYS_JSON_FILE)) {
+        if (platform === 'win32' && fs.existsSync(WINDOWS_ACCOUNTS_FILE)) {
+          const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ key?: string }>;
+          keysFound = accounts.filter((account) => /^[0-9a-fA-F]{64}$/.test(account.key || '')).length;
+        } else if (fs.existsSync(KEYS_JSON_FILE)) {
           const map = JSON.parse(fs.readFileSync(KEYS_JSON_FILE, 'utf8')) as Record<string, string>;
           keysFound = Object.keys(map).length;
         }

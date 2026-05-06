@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { runEnvProbes } from '@/lib/wechat-export/env-check';
 import { extractKeys, type KeyExtractionProgress } from '@/lib/wechat-export/key-extractor';
+import { getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,25 @@ function findWeChatPid(): number | null {
   }
 }
 
+function findWindowsWeChatPid(): number | null {
+  try {
+    const out = execFileSync('tasklist', [
+      '/FI',
+      'IMAGENAME eq WeChat.exe',
+      '/FO',
+      'CSV',
+      '/NH',
+    ], { encoding: 'utf8', timeout: 3000 }).trim();
+    for (const line of out.split(/\r?\n/)) {
+      if (!/WeChat\.exe/i.test(line)) continue;
+      const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
+      const pid = parseInt(fields[1] || '', 10);
+      if (Number.isFinite(pid) && pid > 0) return pid;
+    }
+  } catch { /* tasklist is Windows-only */ }
+  return null;
+}
+
 /**
  * POST /api/wechat-export/extract-key
  *
@@ -37,8 +57,9 @@ function findWeChatPid(): number | null {
  *   - WeChat process is live
  */
 export async function POST(): Promise<Response> {
-  if (process.platform !== 'darwin') {
-    return NextResponse.json({ error: 'macOS only' }, { status: 400 });
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
+    return NextResponse.json({ error: 'unsupported_platform' }, { status: 400 });
   }
   if (!hasValidConsent()) {
     return NextResponse.json({
@@ -46,7 +67,7 @@ export async function POST(): Promise<Response> {
       message: '请先接受免责声明。',
     }, { status: 400 });
   }
-  const env = runEnvProbes();
+  const env = runEnvProbes(platform);
   if (!env.allOk) {
     return NextResponse.json({
       error: 'env_not_ready',
@@ -58,7 +79,7 @@ export async function POST(): Promise<Response> {
       ].filter(Boolean).join('; '),
     }, { status: 400 });
   }
-  if (env.signed !== 'adhoc') {
+  if (platform === 'darwin' && env.signed !== 'adhoc') {
     const message = env.signed === 'tencent'
       ? '微信仍是官方签名。请回到微信页面点击“开始修复”，让 Lumos 先临时放开微信读取保护。'
       : '无法确认微信签名状态。请回到微信页面点击“开始修复”，让 Lumos 重新检测并临时放开微信读取保护。';
@@ -67,11 +88,13 @@ export async function POST(): Promise<Response> {
       message,
     }, { status: 400 });
   }
-  const pid = findWeChatPid();
+  const pid = platform === 'win32' ? findWindowsWeChatPid() : findWeChatPid();
   if (!pid) {
     return NextResponse.json({
       error: 'wechat_not_running',
-      message: '未找到运行中的微信进程。请确认重签名后已重新打开微信。',
+      message: platform === 'win32'
+        ? '未找到运行中的 Windows 微信进程。请先打开微信并完成登录。'
+        : '未找到运行中的微信进程。请确认重签名后已重新打开微信。',
     }, { status: 400 });
   }
 

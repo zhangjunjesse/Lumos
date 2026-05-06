@@ -11,40 +11,52 @@
 import crypto from 'crypto';
 import { getSetting, setSetting } from '@/lib/db';
 
-export const DISCLAIMER_VERSION = 'v1';
-export const DISCLAIMER_EFFECTIVE_AT = '2026-04-27';
+export const DISCLAIMER_VERSION = 'v2';
+export const DISCLAIMER_EFFECTIVE_AT = '2026-05-05';
 
 /** Short summary shown above the [展开完整声明] toggle in the wizard. */
 export const DISCLAIMER_SUMMARY: ReadonlyArray<string> = [
   '微信用户协议不允许此类操作 — 启用属于你的个人选择,腾讯有可能据此封禁微信账号。',
-  '数据完全本地处理 — 聊天记录只在你这台 mac 上解密,不会上传 lumos 云端、不会发给第三方,除非你主动让 AI 引用其内容回答问题。',
+  '数据完全本地处理 — 聊天记录只在你这台电脑上解密,不会上传 lumos 云端、不会发给第三方,除非你主动让 AI 引用其内容回答问题。',
   '仅限你自己的账号 — 不得用于他人账号(经授权除外)、群发、商业数据转售。法律责任由你自负。',
-  'setup 期间临时影响系统权限 — 5-15 分钟内截屏 / 录屏 / 辅助功能可能失效,setup 完成后会引导你恢复,之后永久正常。',
+  'setup 会读取本机微信进程内存以提取数据库密钥；macOS 还会临时改变微信签名,完成后会引导恢复。',
 ];
 
 /** Full disclaimer body (Markdown). Hash this for re-consent on changes. */
-export const DISCLAIMER_BODY = `# 微信导出能力 · 用户须知与免责声明 (v1)
+export const DISCLAIMER_BODY = `# 微信导出能力 · 用户须知与免责声明 (v2)
 
 生效:${DISCLAIMER_EFFECTIVE_AT}
-适用:Lumos 桌面端 macOS 平台「微信导出」(WeChat Export) 能力
+适用:Lumos 桌面端 macOS / Windows 平台「微信导出」(WeChat Export) 能力
 
 ## 一、什么是这个能力
 
-Lumos 在你的 mac 本地解密微信加密数据库,让 AI 助手能读取你的聊天记录用于
+Lumos 在你的电脑本地解密微信加密数据库,让 AI 助手能读取你的聊天记录用于
 回答问题、整理摘要、查找信息等。
 
 ## 二、技术机制简述
 
-启用过程中,Lumos 会:
+启用过程中,Lumos 会在本机读取微信进程内存,提取数据库解锁密钥,并只把密钥
+保存在本机的 Lumos 数据目录。
+
+macOS 路径会:
   1. 临时改变 /Applications/WeChat.app 的代码签名(adhoc),使得调试器(lldb)
      能读取微信进程内存。
   2. 从微信进程内存中提取 SQLCipher 加密密钥(64 位十六进制)。
   3. 用密钥 + sqlcipher 工具读取微信数据库文件。
   4. 引导你从 App Store 恢复微信原签名。
 
-数据库文件路径:
+macOS 数据库文件路径:
   ~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/
   <wxid>/db_storage/
+
+Windows 路径会:
+  1. 检测运行中的 WeChat.exe 和本机 WeChat Files 数据目录。
+  2. 从微信进程内存中提取当前账号的数据库密钥。
+  3. 将 MicroMsg.db / MSG*.db 解密为 Lumos 本地只读缓存后查询。
+
+Windows 数据库文件路径通常为:
+  WeChat Files/<wxid>/MSG/MicroMsg.db
+  WeChat Files/<wxid>/MSG/MSG*.db
 
 ## 三、合规与风险
 
@@ -59,13 +71,16 @@ Lumos 在你的 mac 本地解密微信加密数据库,让 AI 助手能读取你�
   - 在中国大陆,《个人信息保护法》《数据安全法》《网络安全法》对个人数据
     处理有明确规定。**仅处理你本人合法授权范围内的数据**。
 
-### 3.3 系统权限变化(macOS)
-启用流程涉及 sudo codesign 命令,这会:
+### 3.3 系统权限变化与进程读取
+Windows 路径会读取当前用户自己运行的 WeChat.exe 进程内存,用于查找数据库
+密钥。请只在你自己的电脑、自己的微信账号或明确授权的数据上使用。
+
+macOS 路径涉及 sudo codesign 命令,这会:
   - 临时让微信失去 macOS Hardened Runtime 保护;
   - 临时使微信原本获得的隐私权限(屏幕录制、辅助功能、剪贴板等)失效,
     直到你重装微信恢复签名。
 
-详情见 setup wizard 第 5 步「恢复微信原签名」。
+macOS 详情见 setup wizard 第 5 步「恢复微信原签名」。
 
 ## 四、Lumos 的位置
 

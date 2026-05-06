@@ -41,8 +41,22 @@ Implementation rewritten in-house against lldb's Python API to:
 License: WTFPL v2 (Do What The F*** You Want To Public License) for the algorithm,
        which is compatible with both MIT and the Lumos repo's terms.
 
-## Windows implementation (Phase 3, not yet vendored)
+## Windows implementation
 
-Planned: https://github.com/alanhzw/PyWxDump (MIT) plus an in-house stdio MCP
-wrapper. Will land in `resources/mcp-servers/wechat-export/windows/` when Phase 3
-ships.
+### key extraction / database layout / decrypt algorithm references
+
+Reference: https://github.com/xaoyaoo/PyWxDump
+License: MIT
+
+Copyright (c) xaoyaoo
+Copyright (c) 2026 Lumos contributors (new implementation)
+
+The Lumos Windows implementation is an in-house stdio/UI/MCP wrapper with a
+small Python reader under `resources/mcp-servers/wechat-export/windows/`.
+It follows the public PyWxDump Windows layout and SQLCipher-compatible decrypt
+algorithm:
+
+- WeChat account data under `WeChat Files/<wxid>/MSG/`.
+- Core databases `MicroMsg.db` and `MSG*.db`.
+- Account key verification against `MicroMsg.db` before saving.
+- Local-only decrypt copies under `~/.lumos/wechat-export/windows-decrypted/`.
