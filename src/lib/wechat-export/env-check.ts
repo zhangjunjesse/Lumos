@@ -40,6 +40,8 @@ const XCODE_CLT_CANDIDATES = [
   '/Applications/Xcode.app/Contents/Developer',
 ];
 
+const WINDOWS_MESSAGE_DB_RE = /^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$/i;
+
 function tryExec(cmd: string, args: readonly string[]): string | null {
   try {
     return execFileSync(cmd, args, { encoding: 'utf8', timeout: 3000 }).trim();
@@ -107,6 +109,15 @@ function parseRegValue(output: string): string | null {
   return null;
 }
 
+function readRegValue(key: string, value: string): string | null {
+  try {
+    const out = execFileSync('reg', ['query', key, '/v', value], { encoding: 'utf8', timeout: 3000 });
+    return parseRegValue(out);
+  } catch {
+    return null;
+  }
+}
+
 function expandWindowsEnv(input: string): string {
   return input.replace(/%([^%]+)%/g, (_, key: string) => process.env[key] || process.env[key.toUpperCase()] || '');
 }
@@ -137,64 +148,118 @@ export function normalizeWindowsWeChatRoot(value: string): string | null {
   const trimmed = expandWindowsEnv(value.trim());
   if (!trimmed) return null;
   if (trimmed === 'MyDocument:') {
-    const doc = getWindowsDocumentsCandidates()[0];
-    return doc ? path.join(doc, 'WeChat Files') : null;
+    return getWindowsDocumentsCandidates()[0] || null;
   }
-  return path.basename(trimmed).toLowerCase() === 'wechat files'
-    ? trimmed
-    : path.join(trimmed, 'WeChat Files');
+  return path.resolve(trimmed);
+}
+
+function pushWindowsRootCandidate(candidates: string[], root: string | null | undefined): void {
+  if (!root) return;
+  candidates.push(root);
+  const base = path.basename(root).toLowerCase();
+  if (base !== 'wechat files' && base !== 'xwechat_files') {
+    candidates.push(path.join(root, 'WeChat Files'));
+    candidates.push(path.join(root, 'xwechat_files'));
+  }
 }
 
 export function getWindowsWeChatRootCandidates(): string[] {
   const candidates: string[] = [];
   const manualDataRoot = readWindowsPathConfig().wechatDataRoot;
-  if (manualDataRoot) candidates.push(manualDataRoot);
+  pushWindowsRootCandidate(candidates, manualDataRoot);
 
-  try {
-    const out = execFileSync('reg', [
-      'query',
-      'HKCU\\Software\\Tencent\\WeChat',
-      '/v',
-      'FileSavePath',
-    ], { encoding: 'utf8', timeout: 3000 });
-    const regPath = parseRegValue(out);
-    const normalized = regPath ? normalizeWindowsWeChatRoot(regPath) : null;
-    if (normalized) candidates.push(normalized);
-  } catch { /* keep scanning fallback locations */ }
+  const regPath = readRegValue('HKCU\\Software\\Tencent\\WeChat', 'FileSavePath');
+  const normalizedRegPath = regPath ? normalizeWindowsWeChatRoot(regPath) : null;
+  pushWindowsRootCandidate(candidates, normalizedRegPath);
 
   const appData = process.env.APPDATA;
   if (appData) {
     const iniPath = path.join(appData, 'Tencent', 'WeChat', 'All Users', 'config', '3ebffe94.ini');
     try {
       const fromIni = normalizeWindowsWeChatRoot(fs.readFileSync(iniPath, 'utf8'));
-      if (fromIni) candidates.push(fromIni);
+      pushWindowsRootCandidate(candidates, fromIni);
     } catch { /* ignore */ }
   }
 
   for (const doc of getWindowsDocumentsCandidates()) {
-    candidates.push(path.join(doc, 'WeChat Files'));
+    pushWindowsRootCandidate(candidates, doc);
   }
 
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-export function findWindowsAccount(root: string): { wxid: string; wxDir: string } | null {
+export interface WindowsAccountDiscovery {
+  wxid: string;
+  wxDir: string;
+  msgDir: string;
+  messageDbDir: string;
+}
+
+function findChildPath(parent: string, wantedName: string): string | null {
+  try {
+    const wanted = wantedName.toLowerCase();
+    for (const name of fs.readdirSync(parent)) {
+      if (name.toLowerCase() === wanted) return path.join(parent, name);
+    }
+    const exact = path.join(parent, wantedName);
+    if (fs.existsSync(exact)) return exact;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function hasWindowsMessageDb(dir: string): boolean {
+  try {
+    return fs.readdirSync(dir).some((file) => WINDOWS_MESSAGE_DB_RE.test(file));
+  } catch {
+    return false;
+  }
+}
+
+function findLegacyWindowsMessageLayout(wxDir: string): Pick<WindowsAccountDiscovery, 'msgDir' | 'messageDbDir'> | null {
+  const msgDir = findChildPath(wxDir, 'MSG') || findChildPath(wxDir, 'Msg');
+  if (!msgDir) return null;
+  const microMsg = path.join(msgDir, 'MicroMsg.db');
+  if (!fs.existsSync(microMsg)) return null;
+  if (hasWindowsMessageDb(msgDir)) {
+    return { msgDir, messageDbDir: msgDir };
+  }
+  const multiDir = findChildPath(msgDir, 'Multi');
+  if (multiDir && hasWindowsMessageDb(multiDir)) {
+    return { msgDir, messageDbDir: multiDir };
+  }
+  return null;
+}
+
+function findDbStorageLayout(wxDir: string): Pick<WindowsAccountDiscovery, 'msgDir' | 'messageDbDir'> | null {
+  const dbStorageDir = findChildPath(wxDir, 'db_storage');
+  if (!dbStorageDir) return null;
+  const messageDbDir = findChildPath(dbStorageDir, 'message');
+  if (!messageDbDir || !hasWindowsMessageDb(messageDbDir)) return null;
+  return { msgDir: dbStorageDir, messageDbDir };
+}
+
+function inspectWindowsAccountDir(wxDir: string): Pick<WindowsAccountDiscovery, 'msgDir' | 'messageDbDir'> | null {
+  return findLegacyWindowsMessageLayout(wxDir) || findDbStorageLayout(wxDir);
+}
+
+export function findWindowsAccount(root: string): WindowsAccountDiscovery | null {
+  const selfLayout = inspectWindowsAccountDir(root);
+  if (selfLayout) {
+    return { wxid: path.basename(root), wxDir: root, ...selfLayout };
+  }
   try {
     for (const name of fs.readdirSync(root)) {
       if (['All Users', 'Applet', 'WMPF'].includes(name)) continue;
       const wxDir = path.join(root, name);
       if (!fs.statSync(wxDir).isDirectory()) continue;
-      const msgDir = path.join(wxDir, 'MSG');
-      const microMsg = path.join(msgDir, 'MicroMsg.db');
-      if (!fs.existsSync(microMsg)) continue;
-      const hasMsgDb = fs.readdirSync(msgDir).some((file) => /^MSG\d*\.db$/i.test(file));
-      if (hasMsgDb) return { wxid: name, wxDir };
+      const legacy = inspectWindowsAccountDir(wxDir);
+      if (legacy) return { wxid: name, wxDir, ...legacy };
     }
   } catch { /* ignore */ }
   return null;
 }
 
-export function resolveWindowsWeChatDataRootSelection(inputPath: string): { root: string; wxid: string; wxDir: string } | null {
+export function resolveWindowsWeChatDataRootSelection(inputPath: string): WindowsAccountDiscovery & { root: string } | null {
   const selected = path.resolve(inputPath.trim());
   if (!selected) return null;
   try {
@@ -204,30 +269,54 @@ export function resolveWindowsWeChatDataRootSelection(inputPath: string): { root
     return null;
   }
 
-  const asMsgDir = path.basename(selected).toLowerCase() === 'msg'
-    ? selected
-    : path.join(selected, 'MSG');
-  const microMsg = path.join(asMsgDir, 'MicroMsg.db');
-  if (fs.existsSync(microMsg)) {
-    const wxDir = path.basename(selected).toLowerCase() === 'msg'
-      ? path.dirname(selected)
-      : selected;
-    return {
-      root: path.dirname(wxDir),
-      wxid: path.basename(wxDir),
-      wxDir,
-    };
+  const selectedAndParents: string[] = [];
+  for (let current = selected, depth = 0; depth < 8; depth += 1) {
+    selectedAndParents.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
 
-  const directAccount = findWindowsAccount(selected);
-  if (directAccount) {
-    return { root: selected, wxid: directAccount.wxid, wxDir: directAccount.wxDir };
+  for (const candidate of selectedAndParents) {
+    const layout = inspectWindowsAccountDir(candidate);
+    if (layout) {
+      return {
+        root: path.dirname(candidate),
+        wxid: path.basename(candidate),
+        wxDir: candidate,
+        ...layout,
+      };
+    }
   }
 
-  const nestedRoot = path.join(selected, 'WeChat Files');
-  const nestedAccount = findWindowsAccount(nestedRoot);
-  if (nestedAccount) {
-    return { root: nestedRoot, wxid: nestedAccount.wxid, wxDir: nestedAccount.wxDir };
+  for (const candidate of selectedAndParents) {
+    const directAccount = findWindowsAccount(candidate);
+    if (directAccount) {
+      return {
+        root: candidate,
+        wxid: directAccount.wxid,
+        wxDir: directAccount.wxDir,
+        msgDir: directAccount.msgDir,
+        messageDbDir: directAccount.messageDbDir,
+      };
+    }
+
+    const nestedRoots = [
+      path.join(candidate, 'WeChat Files'),
+      path.join(candidate, 'xwechat_files'),
+    ];
+    for (const nestedRoot of nestedRoots) {
+      const nestedAccount = findWindowsAccount(nestedRoot);
+      if (nestedAccount) {
+        return {
+          root: nestedRoot,
+          wxid: nestedAccount.wxid,
+          wxDir: nestedAccount.wxDir,
+          msgDir: nestedAccount.msgDir,
+          messageDbDir: nestedAccount.messageDbDir,
+        };
+      }
+    }
   }
 
   return null;
@@ -266,17 +355,65 @@ function findWindowsWeChatPid(): number | null {
   return null;
 }
 
+function cleanWindowsExecutablePath(value: string | null | undefined): string | null {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return null;
+  const quoted = trimmed.match(/^"([^"]+\.exe)"(?:\s*,\d+)?/i);
+  if (quoted?.[1]) return path.resolve(expandWindowsEnv(quoted[1]));
+  const withoutIconIndex = trimmed.replace(/,\d+$/, '');
+  const exe = withoutIconIndex.match(/^[A-Z]:\\.*?\.exe$/i)
+    ? withoutIconIndex
+    : withoutIconIndex.match(/(.+?\.exe)(?:\s|$)/i)?.[1];
+  return exe ? path.resolve(expandWindowsEnv(exe)) : null;
+}
+
+function findRunningWindowsWeChatExe(): string | null {
+  const names = getWindowsWeChatProcessNames();
+  for (const name of names) {
+    const out = tryExec('wmic', ['process', 'where', `name='${name.replace(/'/g, "''")}'`, 'get', 'ExecutablePath', '/value']);
+    const match = out?.match(/^ExecutablePath=(.+)$/im);
+    const exe = cleanWindowsExecutablePath(match?.[1]);
+    if (exe && fs.existsSync(exe)) return exe;
+  }
+
+  const quotedNames = names.map((name) => `'${name.replace(/'/g, "''").toLowerCase()}'`).join(',');
+  const script = `$names=@(${quotedNames}); Get-Process | Where-Object { $names -contains (($_.Name + '.exe').ToLower()) -and $_.Path } | Select-Object -First 1 -ExpandProperty Path`;
+  const exe = cleanWindowsExecutablePath(tryExec('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script]));
+  if (exe && fs.existsSync(exe)) return exe;
+  return null;
+}
+
+function windowsWeChatExeCandidatesFromRoot(root: string | null | undefined): string[] {
+  const directExe = cleanWindowsExecutablePath(root);
+  const selected = directExe || (root ? path.resolve(expandWindowsEnv(root.trim())) : '');
+  if (!selected) return [];
+  return [
+    selected,
+    path.join(selected, 'WeChat.exe'),
+    path.join(selected, 'Weixin.exe'),
+    path.join(selected, 'WeChat', 'WeChat.exe'),
+    path.join(selected, 'Weixin', 'Weixin.exe'),
+    path.join(selected, 'Tencent', 'WeChat', 'WeChat.exe'),
+    path.join(selected, 'Tencent', 'Weixin', 'Weixin.exe'),
+  ];
+}
+
 function findWindowsWeChatExe(): string | null {
   const manual = readWindowsPathConfig().wechatExePath;
   const candidates = [
     manual || '',
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Tencent', 'WeChat', 'WeChat.exe') : '',
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Tencent', 'Weixin', 'Weixin.exe') : '',
-    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Tencent', 'WeChat', 'WeChat.exe') : '',
-    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Tencent', 'Weixin', 'Weixin.exe') : '',
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Tencent', 'WeChat', 'WeChat.exe') : '',
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Tencent', 'Weixin', 'Weixin.exe') : '',
-  ].filter(Boolean);
+    findRunningWindowsWeChatExe() || '',
+    readRegValue('HKCU\\Software\\Tencent\\WeChat', 'InstallPath') || '',
+    readRegValue('HKLM\\Software\\Tencent\\WeChat', 'InstallPath') || '',
+    readRegValue('HKLM\\Software\\WOW6432Node\\Tencent\\WeChat', 'InstallPath') || '',
+    readRegValue('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WeChat', 'InstallLocation') || '',
+    readRegValue('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WeChat', 'DisplayIcon') || '',
+    readRegValue('HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WeChat', 'InstallLocation') || '',
+    readRegValue('HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WeChat', 'DisplayIcon') || '',
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Tencent') : '',
+    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'Tencent') : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Tencent') : '',
+  ].flatMap(windowsWeChatExeCandidatesFromRoot);
   for (const candidate of candidates) {
     try {
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
@@ -389,25 +526,49 @@ export function probeWeChatDataDir(): ProbeResult & { wxid?: string } {
   return { ok: true, detail: `已检测到 wxid: ${foundWxid}`, wxid: foundWxid };
 }
 
-export function probeWindowsWeChatDataDir(): ProbeResult & { wxid?: string; root?: string; wxDir?: string } {
+export function probeWindowsWeChatDataDir(): ProbeResult & {
+  wxid?: string;
+  root?: string;
+  wxDir?: string;
+  msgDir?: string;
+  messageDbDir?: string;
+} {
   for (const account of readWindowsAccounts()) {
     const wxDir = typeof account.wx_dir === 'string' ? account.wx_dir.trim() : '';
     const wxid = typeof account.wxid === 'string' ? account.wxid.trim() : '';
     if (!wxDir) continue;
     try {
-      const msgDir = path.join(wxDir, 'MSG');
-      const microMsg = path.join(msgDir, 'MicroMsg.db');
-      const hasMsgDb = fs.existsSync(msgDir) && fs.readdirSync(msgDir).some((file) => /^MSG\d*\.db$/i.test(file));
-      if (fs.existsSync(microMsg) && hasMsgDb) {
+      const layout = inspectWindowsAccountDir(wxDir);
+      const msgDir = (typeof account.msg_dir === 'string' && account.msg_dir.trim()) || layout?.msgDir || '';
+      const messageDbDir = (typeof account.message_db_dir === 'string' && account.message_db_dir.trim()) || layout?.messageDbDir || '';
+      if (msgDir && messageDbDir && fs.existsSync(msgDir) && hasWindowsMessageDb(messageDbDir)) {
         return {
           ok: true,
           detail: `已使用已保存账号 ${wxid || path.basename(wxDir)}`,
           wxid: wxid || path.basename(wxDir),
           root: path.dirname(wxDir),
           wxDir,
+          msgDir,
+          messageDbDir,
         };
       }
     } catch { /* fall through to fresh discovery */ }
+  }
+
+  const manualDataRoot = readWindowsPathConfig().wechatDataRoot;
+  if (manualDataRoot) {
+    const account = resolveWindowsWeChatDataRootSelection(manualDataRoot);
+    if (account) {
+      return {
+        ok: true,
+        detail: `已使用手动选择的账号 ${account.wxid}`,
+        wxid: account.wxid,
+        root: account.root,
+        wxDir: account.wxDir,
+        msgDir: account.msgDir,
+        messageDbDir: account.messageDbDir,
+      };
+    }
   }
 
   const candidates = getWindowsWeChatRootCandidates();
@@ -421,13 +582,15 @@ export function probeWindowsWeChatDataDir(): ProbeResult & { wxid?: string; root
         wxid: account.wxid,
         root,
         wxDir: account.wxDir,
+        msgDir: account.msgDir,
+        messageDbDir: account.messageDbDir,
       };
     }
   }
   return {
     ok: false,
     detail: '未找到 Windows 微信账号数据',
-    hint: '请确认微信已登录，并且“文件管理”里的保存位置仍可访问。',
+    hint: '请确认微信已登录；在微信设置 > 文件管理里查看保存位置，并在下方选择该目录、WeChat Files、xwechat_files、账号目录、MSG 或 db_storage。',
   };
 }
 

@@ -14,9 +14,10 @@ import { WechatClient, MESSAGE_TYPE_USER, type WeixinInboundMsg } from './client
 import type { WechatConfig } from './config';
 import { isPeerAllowed } from './config';
 import { detectImageMime } from './cdn';
-import { bodyFromItemList, extractInboundFiles, extractInboundImages } from './parse';
+import { bodyFromItemList, extractInboundFiles, extractInboundImages, extractInboundVoices } from './parse';
 import { mimeFromFileName } from './mime';
 import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
+import { detectAudioFormat, transcribeAudioAttachment } from '../../core/speech';
 
 // File-backed debug log so we can diagnose without watching electron stdout.
 const DEBUG_LOG_PATH = path.join(
@@ -177,13 +178,27 @@ export class WechatMonitor {
       if (oldest) this.seenIds.delete(oldest);
     }
 
-    const text = bodyFromItemList(m.item_list);
+    let text = bodyFromItemList(m.item_list);
     const imageAttachments = await this.downloadInboundImages(messageId, m.item_list);
     const fileAttachments = await this.downloadInboundFiles(messageId, m.item_list);
-    const attachments = [...imageAttachments, ...fileAttachments];
+    const voiceAttachments = text ? [] : await this.downloadInboundVoices(messageId, m.item_list);
+
+    if (!text && voiceAttachments.length > 0) {
+      const transcript = await transcribeAudioAttachment(voiceAttachments[0]);
+      if (transcript) {
+        text = transcript;
+        dbg(`[wechat/monitor] voice transcribed msgId=${messageId} chars=${transcript.length}`);
+      }
+    }
+
+    const attachments = [
+      ...imageAttachments,
+      ...fileAttachments,
+      ...(!text ? voiceAttachments : []),
+    ];
 
     if (!text && attachments.length === 0) {
-      // Pure non-image / non-file media (video / voice without ASR) — TODO.
+      // Pure unsupported media (for example video without a file payload).
       dbg(`[wechat/monitor] skip msgId=${messageId} (no text, no usable attachments)`);
       return;
     }
@@ -194,6 +209,9 @@ export class WechatMonitor {
       if (imageAttachments.length > 0) labels.push(`[图片×${imageAttachments.length}]`);
       if (fileAttachments.length > 0) {
         labels.push(...fileAttachments.map((a) => `[文件: ${a.name}]`));
+      }
+      if (voiceAttachments.length > 0) {
+        labels.push(...voiceAttachments.map((a) => `[语音: ${a.name}，未收到微信转写文本]`));
       }
       placeholder = labels.join(' ');
     }
@@ -272,6 +290,36 @@ export class WechatMonitor {
         dbg(`[wechat/monitor] file downloaded msgId=${messageId} idx=${i} name="${task.fileName}" size=${bytes.length}`);
       } catch (err) {
         dbg(`[wechat/monitor] file download FAILED msgId=${messageId} idx=${i} name="${task.fileName}": ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return out;
+  }
+
+  private async downloadInboundVoices(
+    messageId: string,
+    items: WeixinInboundMsg['item_list'],
+  ): Promise<IMFileAttachment[]> {
+    const tasks = extractInboundVoices(items);
+    if (tasks.length === 0) return [];
+    const out: IMFileAttachment[] = [];
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      try {
+        const bytes = await this.client.downloadCdnMedia({
+          encryptedQueryParam: task.encryptedQueryParam,
+          aesKey: task.aesKey,
+        });
+        const format = detectAudioFormat(bytes);
+        out.push({
+          id: `wechat-voice-${messageId}-${i}`,
+          name: `wechat-voice-${messageId}-${i}.${format.ext}`,
+          type: format.mime,
+          size: bytes.length,
+          data: bytes.toString('base64'),
+        });
+        dbg(`[wechat/monitor] voice downloaded msgId=${messageId} idx=${i} mime=${format.mime} size=${bytes.length}`);
+      } catch (err) {
+        dbg(`[wechat/monitor] voice download FAILED msgId=${messageId} idx=${i}: ${err instanceof Error ? err.message : err}`);
       }
     }
     return out;

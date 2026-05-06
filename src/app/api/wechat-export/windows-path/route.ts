@@ -101,18 +101,21 @@ export async function POST(request: Request) {
   if (!resolved) {
     return NextResponse.json({
       error: 'invalid_wechat_data_dir',
-      message: '没有找到微信聊天数据。请选择 WeChat Files 目录、某个微信账号目录，或账号目录里的 MSG 目录。',
+      message: '没有找到微信聊天数据。请选择微信设置里“文件管理”显示的保存目录，或该账号目录 / MSG / db_storage 目录。',
     }, { status: 400 });
   }
-  const config = writeWindowsPathConfig({ wechatDataRoot: resolved.root });
+  const config = writeWindowsPathConfig({ wechatDataRoot: rawPath });
   return NextResponse.json({
     ok: true,
     kind,
-    path: resolved.root,
+    path: rawPath,
     wxid: resolved.wxid,
     wxDir: resolved.wxDir,
+    msgDir: resolved.msgDir,
+    messageDbDir: resolved.messageDbDir,
+    rootAccount: resolved.wxid,
     config,
-    message: `已保存微信数据目录: ${resolved.root}`,
+    message: `已保存微信数据目录: ${rawPath}`,
   });
 }
 

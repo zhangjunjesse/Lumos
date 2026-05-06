@@ -1,7 +1,29 @@
 // Mock heavy transitive imports at the dispatcher boundary so jest doesn't try
 // to load @anthropic-ai/claude-agent-sdk and other ESM deps.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const sendToProvider = jest.fn(async () => ({ ok: true, messageId: 'reply-1' }));
+
+const mockGetDefaultProvider = jest.fn((): unknown => undefined);
+jest.mock('@/lib/db/providers', () => ({
+  getDefaultProvider: () => mockGetDefaultProvider(),
+}));
+
+const mockParseProviderExtraEnv = jest.fn(() => ({}));
+const mockResolveProviderRequestApiKey = jest.fn(() => '');
+jest.mock('@/lib/provider-model-discovery', () => ({
+  parseProviderExtraEnv: (raw: string | undefined) => mockParseProviderExtraEnv(raw),
+  resolveProviderRequestApiKey: (provider: unknown) => mockResolveProviderRequestApiKey(provider),
+}));
+
+const mockResolveProviderModelForRequest = jest.fn(() => undefined);
+jest.mock('@/lib/model-metadata', () => ({
+  resolveProviderModelForRequest: (provider: unknown, model?: string | null) =>
+    mockResolveProviderModelForRequest(provider, model),
+}));
 
 // Streaming-preview-capable fake adapter, switched on per-test
 const previewAdapter = {
@@ -34,6 +56,7 @@ jest.mock('@/lib/im', () => ({
 // jest.requireMock pattern if needed.
 jest.mock('@/lib/im/providers/wechat/commands', () => ({
   handleWechatCommand: jest.fn(async () => ({ handled: false })),
+  maybeHandleWechatVoiceModePhrase: jest.fn(() => null),
 }));
 
 // In-memory mocks for db + wechat route-pointer (used by wechat path)
@@ -71,6 +94,32 @@ jest.mock('@/lib/im/providers/wechat/route-pointer', () => ({
   setCurrentRoutedSessionId: (id: string) => {
     routePointer = id;
   },
+}));
+
+let voiceModeEnabled = false;
+jest.mock('@/lib/im/providers/wechat/voice-mode', () => ({
+  isWechatVoiceModeEnabled: () => voiceModeEnabled,
+}));
+
+const speechAttachment = {
+  id: 'tts-1',
+  name: 'tts-1.wav',
+  type: 'audio/wav',
+  size: 123,
+  data: 'UklGRg==',
+};
+const synthesizeSpeechAttachment = jest.fn(async () => ({
+  ok: true,
+  attachment: speechAttachment,
+}));
+const mockResolveExplicitAsrProviderTarget = jest.fn(() => null);
+const mockTranscribeAudioAttachmentWithTarget = jest.fn(async () => '');
+jest.mock('@/lib/im/core/speech', () => ({
+  normalizeOpenAIBaseUrl: (value: string) => value.trim().replace(/\/+$/, ''),
+  resolveExplicitAsrProviderTarget: () => mockResolveExplicitAsrProviderTarget(),
+  synthesizeSpeechAttachment: (text: string) => synthesizeSpeechAttachment(text),
+  transcribeAudioAttachmentWithTarget: (attachment: unknown, target: unknown) =>
+    mockTranscribeAudioAttachmentWithTarget(attachment, target),
 }));
 
 let mockBinding: { id: number; sessionId: string; status: string } | null = {
@@ -166,6 +215,24 @@ beforeEach(() => {
   fakeSessions.clear();
   createSessionCounter = 0;
   routePointer = null;
+  voiceModeEnabled = false;
+  synthesizeSpeechAttachment.mockClear();
+  synthesizeSpeechAttachment.mockResolvedValue({
+    ok: true,
+    attachment: speechAttachment,
+  });
+  mockGetDefaultProvider.mockReset();
+  mockGetDefaultProvider.mockReturnValue(undefined);
+  mockParseProviderExtraEnv.mockReset();
+  mockParseProviderExtraEnv.mockReturnValue({});
+  mockResolveProviderRequestApiKey.mockReset();
+  mockResolveProviderRequestApiKey.mockReturnValue('');
+  mockResolveProviderModelForRequest.mockReset();
+  mockResolveProviderModelForRequest.mockReturnValue(undefined);
+  mockResolveExplicitAsrProviderTarget.mockReset();
+  mockResolveExplicitAsrProviderTarget.mockReturnValue(null);
+  mockTranscribeAudioAttachmentWithTarget.mockReset();
+  mockTranscribeAudioAttachmentWithTarget.mockResolvedValue('');
 });
 
 describe('im-inbound-dispatcher', () => {
@@ -363,10 +430,139 @@ describe('im-inbound-dispatcher', () => {
       ]);
     });
 
+    test('uses server default ASR fallback for voice placeholder before AI dispatch', async () => {
+      mockGetDefaultProvider.mockReturnValue({
+        id: 'provider-openai',
+        name: 'OpenAI Compatible',
+        api_protocol: 'openai-compatible',
+        auth_mode: 'api_key',
+        base_url: 'https://asr.example/v1',
+        api_key: 'stored-key',
+        extra_env: JSON.stringify({ OPENAI_ASR_MODEL: 'whisper-test' }),
+      });
+      mockParseProviderExtraEnv.mockReturnValue({ OPENAI_ASR_MODEL: 'whisper-test' });
+      mockResolveProviderRequestApiKey.mockReturnValue('asr-key');
+      mockTranscribeAudioAttachmentWithTarget.mockResolvedValueOnce('帮我总结一下今天的安排');
+
+      fakeSessions.set('preset_3', { id: 'preset_3', title: 'voice chat' });
+      routePointer = 'preset_3';
+
+      await dispatchInbound('wechat', {
+        ...wechatMsg('[语音: wechat-voice-100-0.wav，未收到微信转写文本]'),
+        attachments: [
+          {
+            id: 'wechat-voice-100-0',
+            name: 'wechat-voice-100-0.wav',
+            type: 'audio/wav',
+            size: 8,
+            data: Buffer.from('RIFFxxxx').toString('base64'),
+          },
+        ],
+      });
+
+      expect(mockTranscribeAudioAttachmentWithTarget).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'wechat-voice-100-0.wav' }),
+        expect.objectContaining({
+          baseUrl: 'https://asr.example/v1',
+          apiKey: 'asr-key',
+          model: 'whisper-test',
+        }),
+      );
+      expect(conversationCalls).toHaveLength(1);
+      expect(conversationCalls[0].text).toBe('帮我总结一下今天的安排');
+      expect(conversationCalls[0].files).toBeUndefined();
+    });
+
     test('reply with session prefix is single send (no streaming)', async () => {
       const r = await dispatchInbound('wechat', wechatMsg());
       expect(r.ok).toBe(true);
       expect(sendToProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test('voice mode sends synthesized audio attachment instead of text reply', async () => {
+      voiceModeEnabled = true;
+      conversationResponseText = '这是一段语音回复';
+
+      const r = await dispatchInbound('wechat', wechatMsg());
+
+      expect(r.ok).toBe(true);
+      expect(synthesizeSpeechAttachment).toHaveBeenCalledWith('这是一段语音回复');
+      expect(sendToProvider).toHaveBeenCalledWith('wechat', expect.objectContaining({
+        address: { providerId: 'wechat', chatId: 'peer1' },
+        text: '',
+        attachments: [speechAttachment],
+      }));
+    });
+
+    test('voice mode falls back to text when speech synthesis fails', async () => {
+      voiceModeEnabled = true;
+      synthesizeSpeechAttachment.mockResolvedValueOnce({ ok: false, error: 'tts unavailable' });
+      conversationResponseText = 'hi from AI';
+
+      const r = await dispatchInbound('wechat', wechatMsg());
+
+      expect(r.ok).toBe(true);
+      const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
+      expect(sentArgs.text).toMatch(/📂 \(未命名 auto_1\)/);
+      expect(sentArgs.text).toMatch(/hi from AI/);
+    });
+
+    test('voice mode does not resend inline attachments when voice send falls back to text', async () => {
+      voiceModeEnabled = true;
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-im-dispatcher-'));
+      const mediaDir = path.join(tempRoot, '.lumos-media');
+      fs.mkdirSync(mediaDir, { recursive: true });
+      const imagePath = path.join(mediaDir, 'reply.png');
+      fs.writeFileSync(imagePath, Buffer.from('fake image bytes'));
+      conversationResponseText = `这里是图片\n![图](${imagePath})`;
+      sendToProvider
+        .mockResolvedValueOnce({ ok: true, messageId: 'media-1' })
+        .mockResolvedValueOnce({ ok: false, error: 'voice send failed' })
+        .mockResolvedValueOnce({ ok: true, messageId: 'text-1' });
+
+      try {
+        const r = await dispatchInbound('wechat', wechatMsg());
+        expect(r.ok).toBe(true);
+        expect(r.replyMessageId).toBe('text-1');
+        expect(sendToProvider).toHaveBeenCalledTimes(3);
+
+        const mediaSend = sendToProvider.mock.calls[0][1] as { text: string; attachments?: Array<{ name: string }> };
+        expect(mediaSend.text).toBe('');
+        expect(mediaSend.attachments).toHaveLength(1);
+        expect(mediaSend.attachments?.[0].name).toBe('reply.png');
+
+        const voiceSend = sendToProvider.mock.calls[1][1] as { text: string; attachments?: Array<{ id: string }> };
+        expect(voiceSend.text).toBe('');
+        expect(voiceSend.attachments).toEqual([speechAttachment]);
+
+        const fallbackSend = sendToProvider.mock.calls[2][1] as { text: string; attachments?: unknown[] };
+        expect(fallbackSend.text).toMatch(/这里是图片/);
+        expect(fallbackSend.attachments).toBeUndefined();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('spoken voice-mode phrase is handled before AI dispatch', async () => {
+      const commands = jest.requireMock('@/lib/im/providers/wechat/commands') as {
+        maybeHandleWechatVoiceModePhrase: jest.Mock;
+      };
+      commands.maybeHandleWechatVoiceModePhrase.mockReturnValueOnce({
+        handled: true,
+        reply: {
+          address: { providerId: 'wechat', chatId: 'peer1', userId: 'peer1' },
+          text: '✓ 已切到语音模式。',
+        },
+      });
+
+      const r = await dispatchInbound('wechat', wechatMsg('开启语音模式'));
+
+      expect(r.ok).toBe(true);
+      expect(r.reason).toBe('voice-mode-command-handled');
+      expect(conversationCalls).toHaveLength(0);
+      expect(sendToProvider).toHaveBeenCalledWith('wechat', expect.objectContaining({
+        text: '✓ 已切到语音模式。',
+      }));
     });
   });
 });

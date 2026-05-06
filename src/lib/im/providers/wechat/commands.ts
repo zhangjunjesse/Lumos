@@ -7,6 +7,7 @@
  *   /switch <编号|名字>  切换当前路由目标
  *   /current             显示当前路由到哪个 session
  *   /new [名字]          新建 session 并设为路由目标
+ *   /voice on|off|status 切换当前微信对话的 AI 回复模式
  *   /help                显示命令清单（含上面 + builtin /ping /whoami）
  *
  * 入站消息以 / 开头时由 command-router 拦截，进 handleWechatCommand。
@@ -15,7 +16,7 @@
 
 import { getAllSessions, getSession, createSession } from '@/lib/db';
 import type { ChatSession } from '@/types';
-import type { IMCommandContext, IMCommandResult } from '../../core/types';
+import type { IMCommandContext, IMCommandResult, InboundMessage } from '../../core/types';
 import { handleBuiltinCommand } from '../../core/built-in-commands';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { WECHAT_COMMANDS } from './command-defs';
@@ -23,6 +24,7 @@ import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
 } from './route-pointer';
+import { isWechatVoiceModeEnabled, setWechatVoiceMode } from './voice-mode';
 
 // Re-export so existing callers (tests, dispatcher) see WECHAT_COMMANDS from this module too.
 export { WECHAT_COMMANDS };
@@ -45,12 +47,44 @@ export async function handleWechatCommand(
       return handleCurrent(ctx);
     case 'new':
       return handleNew(ctx);
+    case 'voice':
+    case '语音':
+      return handleVoice(ctx);
   }
 
   // 内置命令兜底
   const builtin = await handleBuiltinCommand(ctx, '微信', WECHAT_COMMANDS);
   if (builtin) return builtin;
   return { handled: false };
+}
+
+export function maybeHandleWechatVoiceModePhrase(message: InboundMessage): IMCommandResult | null {
+  const normalized = normalizeVoiceModePhrase(message.text);
+  if (!normalized) return null;
+  const peer = message.address.chatId;
+
+  if (NATURAL_VOICE_ON_PHRASES.has(normalized)) {
+    setWechatVoiceMode(peer, true);
+    return replyForAddress(message, [
+      '✓ 已切到语音模式。',
+      '之后 AI 会优先发语音；你随时发语音，Lumos 都会先识别后再处理。',
+      '退出：说“关闭语音模式”或发送 /voice off',
+    ].join('\n'));
+  }
+
+  if (NATURAL_VOICE_OFF_PHRASES.has(normalized)) {
+    setWechatVoiceMode(peer, false);
+    return replyForAddress(message, '✓ 已切到文本模式。你发送的语音仍会被识别。');
+  }
+
+  if (NATURAL_VOICE_STATUS_PHRASES.has(normalized)) {
+    const enabled = isWechatVoiceModeEnabled(peer);
+    return replyForAddress(message, enabled
+      ? '当前是语音模式。退出：说“关闭语音模式”或发送 /voice off'
+      : '当前是文本模式。开启：说“开启语音模式”或发送 /voice on');
+  }
+
+  return null;
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -246,11 +280,95 @@ function handleNew(ctx: IMCommandContext): IMCommandResult {
   return reply(ctx, `✓ 已新建并切到\n${label}`);
 }
 
+// ---- /voice ----------------------------------------------------------------
+
+function handleVoice(ctx: IMCommandContext): IMCommandResult {
+  const arg = (ctx.args[0] || 'status').trim().toLowerCase();
+  const peer = ctx.message.address.chatId;
+
+  if (isOnArg(arg)) {
+    setWechatVoiceMode(peer, true);
+    return reply(ctx, [
+      '✓ 已切到语音模式。',
+      '之后 AI 会优先发语音；你随时发语音，Lumos 都会先识别后再处理。',
+      '退出：/voice off',
+    ].join('\n'));
+  }
+
+  if (isOffArg(arg)) {
+    setWechatVoiceMode(peer, false);
+    return reply(ctx, '✓ 已切到文本模式。你发送的语音仍会被识别。');
+  }
+
+  if (arg === 'status' || arg === '状态' || arg === '当前') {
+    const enabled = isWechatVoiceModeEnabled(peer);
+    return reply(ctx, enabled
+      ? '当前是语音模式。退出：/voice off'
+      : '当前是文本模式。开启：/voice on');
+  }
+
+  return reply(ctx, '用法：/voice on 开启语音回复；/voice off 切回文本；/voice status 查看状态。');
+}
+
+function isOnArg(arg: string): boolean {
+  return ['on', '1', 'true', 'yes', 'y', 'enable', 'enabled', 'open', 'voice', '语音', '开', '开启', '打开'].includes(arg);
+}
+
+function isOffArg(arg: string): boolean {
+  return ['off', '0', 'false', 'no', 'n', 'disable', 'disabled', 'close', 'text', '文本', '关', '关闭'].includes(arg);
+}
+
+const NATURAL_VOICE_ON_PHRASES = new Set([
+  '开启语音模式',
+  '打开语音模式',
+  '进入语音模式',
+  '切到语音模式',
+  '切换到语音模式',
+  '用语音回复',
+  '以后用语音回复',
+  '后面用语音回复',
+  '语音回复',
+]);
+
+const NATURAL_VOICE_OFF_PHRASES = new Set([
+  '关闭语音模式',
+  '退出语音模式',
+  '关掉语音模式',
+  '切回文本模式',
+  '切到文本模式',
+  '切换到文本模式',
+  '用文字回复',
+  '用文本回复',
+  '以后用文字回复',
+  '以后用文本回复',
+  '文本回复',
+]);
+
+const NATURAL_VOICE_STATUS_PHRASES = new Set([
+  '语音模式状态',
+  '当前语音模式',
+  '现在是什么模式',
+  '当前是什么模式',
+]);
+
+function normalizeVoiceModePhrase(text: string): string {
+  return (text || '')
+    .trim()
+    .replace(/[\s,，.。!！?？:：;；"'“”‘’`~～、]/g, '');
+}
+
 // ---- shared ----------------------------------------------------------------
 
 function reply(ctx: IMCommandContext, text: string): IMCommandResult {
   return {
     handled: true,
     reply: { address: ctx.message.address, text },
+  };
+}
+
+function replyForAddress(message: InboundMessage, text: string): IMCommandResult {
+  return {
+    handled: true,
+    reply: { address: message.address, text },
   };
 }

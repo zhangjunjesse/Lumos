@@ -19,6 +19,7 @@ import {
   type FileItem,
   type ImageItem,
   type MessageItem,
+  type VoiceItem,
 } from './client';
 import { parseAesKey, parseAesKeyHex } from './cdn';
 
@@ -37,6 +38,10 @@ export interface CdnDownloadTask {
 export interface InboundFileTask extends CdnDownloadTask {
   fileName: string;
   declaredLen?: number;
+}
+
+export interface InboundVoiceTask extends CdnDownloadTask {
+  encodeType?: number;
 }
 
 /**
@@ -117,6 +122,30 @@ export function extractInboundFiles(
       declaredLen: Number.isFinite(declared) ? declared : undefined,
     });
     idx += 1;
+  }
+  return out;
+}
+
+export function extractInboundVoices(items: MessageItem[] | undefined): InboundVoiceTask[] {
+  if (!items || items.length === 0) return [];
+  const out: InboundVoiceTask[] = [];
+  for (const item of items) {
+    if (item.type !== MESSAGE_ITEM_VOICE) continue;
+    const v: VoiceItem | undefined = item.voice_item;
+    if (!v) continue;
+    const enc = (v.media?.encrypt_query_param || '').trim();
+    if (!enc) continue;
+    const keyB64 = (v.media?.aes_key || '').trim();
+    if (!keyB64) continue;
+    try {
+      out.push({
+        encryptedQueryParam: enc,
+        aesKey: parseAesKey(keyB64),
+        encodeType: v.encode_type,
+      });
+    } catch {
+      continue;
+    }
   }
   return out;
 }

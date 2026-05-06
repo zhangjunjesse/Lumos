@@ -8,7 +8,16 @@ export interface WeChatExportStatus {
     wechat: { ok: boolean; detail: string; hint?: string; signed: 'tencent' | 'adhoc' | 'unknown' | 'not_required'; pid?: number; running?: boolean };
     sqlcipher: { ok: boolean; detail: string; hint?: string };
     xcodeCLT: { ok: boolean; detail: string; hint?: string };
-    dataDir: { ok: boolean; detail: string; hint?: string; wxid?: string; root?: string; wxDir?: string };
+    dataDir: {
+      ok: boolean;
+      detail: string;
+      hint?: string;
+      wxid?: string;
+      root?: string;
+      wxDir?: string;
+      msgDir?: string;
+      messageDbDir?: string;
+    };
     allOk: boolean;
     signed: 'tencent' | 'adhoc' | 'unknown' | 'not_required';
   };
@@ -16,6 +25,13 @@ export interface WeChatExportStatus {
     wechatExePath?: string;
     wechatDataRoot?: string;
     updatedAt?: number;
+  };
+  windowsPathHint?: {
+    path?: string;
+    wxid?: string;
+    wxDir?: string;
+    msgDir?: string;
+    messageDbDir?: string;
   };
   status?: {
     phase:

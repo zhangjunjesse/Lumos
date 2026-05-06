@@ -3,6 +3,10 @@
 The script only reads the local WeChat.exe process selected by the user in
 Lumos. It verifies every candidate key against the user's own MicroMsg.db before
 persisting it under ~/.lumos/wechat-export.
+
+Path discovery accepts both legacy WeChat Files/<wxid>/MSG layouts and newer
+xwechat_files/<wxid>/db_storage layouts, including when the user selected a
+child folder from WeChat's file-management settings.
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 MAX_PATH = 260
 MAX_MODULE_NAME32 = 255
+MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -186,53 +191,140 @@ def normalize_wechat_root(value: str) -> str | None:
     if not value:
         return None
     if value == "MyDocument:":
-        return os.path.join(documents_dir(), "WeChat Files")
-    if os.path.basename(value).lower() == "wechat files":
-        return value
-    return os.path.join(value, "WeChat Files")
+        return documents_dir()
+    return os.path.abspath(value)
 
 
 def wechat_roots() -> list[str]:
     roots: list[str] = []
+    def add_root(root: str | None) -> None:
+        if not root:
+            return
+        roots.append(root)
+        base = os.path.basename(root).lower()
+        if base not in {"wechat files", "xwechat_files"}:
+            roots.append(os.path.join(root, "WeChat Files"))
+            roots.append(os.path.join(root, "xwechat_files"))
+
     manual_roots = os.environ.get("LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS", "")
     for item in manual_roots.split(os.pathsep):
         root = normalize_wechat_root(item)
-        if root:
-            roots.append(root)
+        add_root(root)
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Tencent\WeChat")
         value, _ = winreg.QueryValueEx(key, "FileSavePath")
         winreg.CloseKey(key)
         root = normalize_wechat_root(value)
-        if root:
-            roots.append(root)
+        add_root(root)
     except OSError:
         pass
     appdata = os.environ.get("APPDATA", "")
     ini = os.path.join(appdata, "Tencent", "WeChat", "All Users", "config", "3ebffe94.ini")
     try:
         root = normalize_wechat_root(open(ini, "r", encoding="utf-8").read())
-        if root:
-            roots.append(root)
+        add_root(root)
     except OSError:
         pass
-    roots.append(os.path.join(documents_dir(), "WeChat Files"))
+    add_root(documents_dir())
     return list(dict.fromkeys(roots))
+
+
+def child_path(parent: str, wanted: str) -> str | None:
+    exact = os.path.join(parent, wanted)
+    if os.path.exists(exact):
+        return exact
+    try:
+        wanted_lower = wanted.lower()
+        for name in os.listdir(parent):
+            if name.lower() == wanted_lower:
+                return os.path.join(parent, name)
+    except OSError:
+        pass
+    return None
+
+
+def has_msg_db(directory: str) -> bool:
+    try:
+        return any(MESSAGE_DB_RE.match(f) for f in os.listdir(directory))
+    except OSError:
+        return False
+
+
+def selected_roots(root: str) -> list[str]:
+    roots: list[str] = []
+    current = os.path.abspath(root)
+    for _ in range(8):
+        roots.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return list(dict.fromkeys(roots))
+
+
+def account_db_layout(wx_dir: str) -> tuple[str, str, str] | None:
+    msg_dir = child_path(wx_dir, "MSG") or child_path(wx_dir, "Msg")
+    if msg_dir:
+        micro = os.path.join(msg_dir, "MicroMsg.db")
+        if os.path.isfile(micro):
+            if has_msg_db(msg_dir):
+                return msg_dir, msg_dir, micro
+            multi = child_path(msg_dir, "Multi")
+            if multi and has_msg_db(multi):
+                return msg_dir, multi, micro
+
+    db_storage = child_path(wx_dir, "db_storage")
+    if db_storage:
+        message_dir = child_path(db_storage, "message")
+        if message_dir and has_msg_db(message_dir):
+            micro = os.path.join(db_storage, "contact", "contact.db")
+            return db_storage, message_dir, micro
+    return None
 
 
 def find_accounts() -> list[dict]:
     accounts: list[dict] = []
-    for root in wechat_roots():
-        if not os.path.isdir(root):
-            continue
-        for name in os.listdir(root):
+    seen: set[str] = set()
+
+    def add_account(wx_dir: str, wxid: str | None = None) -> None:
+        if not os.path.isdir(wx_dir):
+            return
+        layout = account_db_layout(wx_dir)
+        if not layout:
+            return
+        real = os.path.abspath(wx_dir)
+        if real in seen:
+            return
+        seen.add(real)
+        msg_dir, message_db_dir, micro = layout
+        accounts.append({
+            "wxid": wxid or os.path.basename(wx_dir),
+            "wx_dir": wx_dir,
+            "msg_dir": msg_dir,
+            "message_db_dir": message_db_dir,
+            "micro_msg": micro,
+        })
+
+    def scan_container(root: str) -> None:
+        add_account(root)
+        try:
+            names = os.listdir(root)
+        except OSError:
+            return
+        for name in names:
             if name in {"All Users", "Applet", "WMPF"}:
                 continue
-            wx_dir = os.path.join(root, name)
-            msg_dir = os.path.join(wx_dir, "MSG")
-            micro = os.path.join(msg_dir, "MicroMsg.db")
-            if os.path.isfile(micro) and any(re.match(r"MSG\d*\.db$", f, re.I) for f in os.listdir(msg_dir)):
-                accounts.append({"wxid": name, "wx_dir": wx_dir, "micro_msg": micro})
+            add_account(os.path.join(root, name), name)
+
+    for raw_root in wechat_roots():
+        for root in selected_roots(raw_root):
+            if not os.path.isdir(root):
+                continue
+            scan_container(root)
+            for nested_name in ("WeChat Files", "xwechat_files"):
+                nested = child_path(root, nested_name)
+                if nested:
+                    scan_container(nested)
     return accounts
 
 
@@ -350,6 +442,8 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                         item = {
                             "wxid": account["wxid"],
                             "wx_dir": account["wx_dir"],
+                            "msg_dir": account.get("msg_dir"),
+                            "message_db_dir": account.get("message_db_dir"),
                             "key": key_hex,
                             "pid": pid,
                             "module_path": module_path,

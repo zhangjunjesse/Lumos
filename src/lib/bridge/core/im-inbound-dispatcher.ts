@@ -21,16 +21,27 @@ import {
   parseSlashCommand,
 } from '@/lib/im';
 import type { InboundMessage, PreviewHandle } from '@/lib/im';
+import { getDefaultProvider } from '@/lib/db/providers';
 import { getSession, getAllSessions, createSession } from '@/lib/db';
 import {
   isMainAgentSession,
   withSessionEntryMarker,
 } from '@/lib/chat/session-entry';
+import { parseProviderExtraEnv, resolveProviderRequestApiKey } from '@/lib/provider-model-discovery';
+import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
 } from '@/lib/im/providers/wechat/route-pointer';
-import { handleWechatCommand } from '@/lib/im/providers/wechat/commands';
+import { handleWechatCommand, maybeHandleWechatVoiceModePhrase } from '@/lib/im/providers/wechat/commands';
+import { isWechatVoiceModeEnabled } from '@/lib/im/providers/wechat/voice-mode';
+import {
+  normalizeOpenAIBaseUrl,
+  resolveExplicitAsrProviderTarget,
+  synthesizeSpeechAttachment,
+  transcribeAudioAttachmentWithTarget,
+  type OpenAICompatibleAsrTarget,
+} from '@/lib/im/core/speech';
 
 export interface DispatchResult {
   ok: boolean;
@@ -54,7 +65,9 @@ export async function dispatchInbound(
     conversationEngine?: ConversationEngine;
   } = {},
 ): Promise<DispatchResult> {
-  if (!message.text?.trim()) {
+  const hasAudioAttachment = providerId === 'wechat'
+    && Boolean(message.attachments?.some((attachment) => isAudioAttachment(attachment)));
+  if (!message.text?.trim() && !hasAudioAttachment) {
     return { ok: false, reason: IGNORE_REASONS.EMPTY_TEXT };
   }
 
@@ -65,15 +78,19 @@ export async function dispatchInbound(
   inFlight.add(dedupeKey);
 
   try {
+    const inboundMessage = providerId === 'wechat'
+      ? await normalizeWechatInboundMessage(message)
+      : message;
+
     // ---- 0. wechat 斜杠命令短路 -------------------------------------------
     // 命令在 server 侧（Next.js）独立处理，不走 AI 对话；不加 session 前缀。
     if (providerId === 'wechat') {
-      const parsed = parseSlashCommand(message.text);
+      const parsed = parseSlashCommand(inboundMessage.text);
       if (parsed) {
         const result = await handleWechatCommand({
           command: parsed.name,
           args: parsed.args,
-          message,
+          message: inboundMessage,
         });
         if (result.handled) {
           if (result.reply) {
@@ -82,6 +99,14 @@ export async function dispatchInbound(
           return { ok: true, reason: 'command-handled' };
         }
         // not handled — fall through to AI dispatch with the raw "/xxx" text
+      }
+
+      const naturalVoiceMode = maybeHandleWechatVoiceModePhrase(inboundMessage);
+      if (naturalVoiceMode?.handled) {
+        if (naturalVoiceMode.reply) {
+          await sendToProvider(providerId, naturalVoiceMode.reply);
+        }
+        return { ok: true, reason: 'voice-mode-command-handled' };
       }
     }
 
@@ -95,7 +120,7 @@ export async function dispatchInbound(
       const bindingService = deps.bindingService ?? new BindingService();
       const binding = bindingService.getBindingByChannel(
         providerId,
-        message.address.chatId,
+        inboundMessage.address.chatId,
       );
       if (!binding || binding.status !== 'active') {
         return { ok: false, reason: IGNORE_REASONS.NO_BINDING };
@@ -116,7 +141,7 @@ export async function dispatchInbound(
     }
     if (streamingAdapter && hasStreamingPreview(streamingAdapter)) {
       try {
-        previewHandle = await streamingAdapter.startPreview(message.address, '正在思考...');
+        previewHandle = await streamingAdapter.startPreview(inboundMessage.address, '正在思考...');
       } catch (err) {
         console.warn('[im-dispatcher] startPreview failed:', err);
         previewHandle = null;
@@ -127,13 +152,13 @@ export async function dispatchInbound(
     try {
       response = await conversationEngine.sendMessage(
         sessionId,
-        message.text.trim(),
-        message.attachments,
+        inboundMessage.text.trim(),
+        inboundMessage.attachments,
         {
           source: providerId,
           imContext: {
             providerId,
-            chatId: message.address.chatId,
+            chatId: inboundMessage.address.chatId,
           },
         },
         previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)
@@ -180,8 +205,60 @@ export async function dispatchInbound(
       ? withSessionPrefix(sessionId, cleanText)
       : cleanText;
 
+    const voiceMode = providerId === 'wechat'
+      && isWechatVoiceModeEnabled(inboundMessage.address.chatId);
+
+    if (voiceMode) {
+      let baseAttachmentsSent = false;
+      if (attachments.length > 0) {
+        const baseAttachmentResult = await sendToProvider(providerId, {
+          address: { providerId, chatId: inboundMessage.address.chatId },
+          text: '',
+          attachments,
+        });
+        if (baseAttachmentResult.ok) {
+          baseAttachmentsSent = true;
+        } else {
+          console.warn('[im-dispatcher] voice reply base attachments send failed; will keep going:', baseAttachmentResult.error);
+        }
+      }
+
+      const speech = await synthesizeSpeechAttachment(cleanText);
+      if (speech.ok && speech.attachment) {
+        const voiceSendResult = await sendToProvider(providerId, {
+          address: { providerId, chatId: inboundMessage.address.chatId },
+          text: '',
+          attachments: [speech.attachment],
+        });
+        if (voiceSendResult.ok) {
+          return {
+            ok: true,
+            sessionId,
+            replyMessageId: voiceSendResult.messageId,
+          };
+        }
+        console.warn('[im-dispatcher] voice reply send failed; falling back to text:', voiceSendResult.error);
+      } else {
+        console.warn('[im-dispatcher] voice reply synthesis failed; falling back to text:', speech.error);
+      }
+
+      const fallbackResult = await sendToProvider(providerId, {
+        address: { providerId, chatId: inboundMessage.address.chatId },
+        text: finalText,
+        attachments: baseAttachmentsSent || attachments.length === 0
+          ? undefined
+          : attachments,
+      });
+      return {
+        ok: fallbackResult.ok,
+        reason: fallbackResult.ok ? undefined : fallbackResult.error,
+        sessionId,
+        replyMessageId: fallbackResult.messageId,
+      };
+    }
+
     const sendResult = await sendToProvider(providerId, {
-      address: { providerId, chatId: message.address.chatId },
+      address: { providerId, chatId: inboundMessage.address.chatId },
       text: finalText,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
@@ -229,6 +306,79 @@ function withSessionPrefix(sessionId: string, body: string): string {
     : `(未命名 ${sessionId.slice(0, 6)})`;
   // 第一行单独是 session 名，空一行后再正文。微信渲染换行很轻，这样最干净。
   return `📂 ${display}\n\n${body}`;
+}
+
+function isAudioAttachment(attachment: { type?: string }): boolean {
+  return (attachment.type || '').toLowerCase().startsWith('audio/');
+}
+
+function isWechatVoicePlaceholderText(text: string): boolean {
+  const normalized = (text || '').trim();
+  return normalized.includes('未收到微信转写文本') || normalized.startsWith('[语音:');
+}
+
+async function normalizeWechatInboundMessage(message: InboundMessage): Promise<InboundMessage> {
+  const attachments = message.attachments || [];
+  const voiceAttachments = attachments.filter(isAudioAttachment);
+  if (voiceAttachments.length === 0) return message;
+
+  const hasRealText = Boolean(message.text?.trim()) && !isWechatVoicePlaceholderText(message.text);
+  if (hasRealText) return message;
+
+  const asrTarget = resolveWechatVoiceAsrTarget();
+  if (!asrTarget) return withVoicePlaceholderIfEmpty(message);
+
+  const transcripts: string[] = [];
+  for (const attachment of voiceAttachments) {
+    const transcript = await transcribeAudioAttachmentWithTarget(attachment, asrTarget);
+    if (transcript) transcripts.push(transcript);
+  }
+
+  const text = transcripts.join('\n').trim();
+  if (!text) return withVoicePlaceholderIfEmpty(message);
+
+  const filteredAttachments = attachments.filter((attachment) => !isAudioAttachment(attachment));
+  return {
+    ...message,
+    text,
+    attachments: filteredAttachments.length > 0 ? filteredAttachments : undefined,
+  };
+}
+
+function withVoicePlaceholderIfEmpty(message: InboundMessage): InboundMessage {
+  if (message.text?.trim()) return message;
+  return { ...message, text: '[语音消息，未收到转写文本]' };
+}
+
+function resolveWechatVoiceAsrTarget(): OpenAICompatibleAsrTarget | null {
+  const explicit = resolveExplicitAsrProviderTarget();
+  if (explicit) return explicit;
+
+  const provider = getDefaultProvider();
+  if (!provider || provider.api_protocol !== 'openai-compatible' || provider.auth_mode === 'local_auth') {
+    return null;
+  }
+
+  const apiKey = resolveProviderRequestApiKey(provider);
+  if (!apiKey) return null;
+
+  const extraEnv = parseProviderExtraEnv(provider.extra_env);
+  const baseUrl = normalizeOpenAIBaseUrl(
+    extraEnv.OPENAI_TRANSCRIPTION_BASE_URL?.trim()
+      || extraEnv.OPENAI_ASR_BASE_URL?.trim()
+      || extraEnv.OPENAI_BASE_URL?.trim()
+      || extraEnv.OPENAI_API_BASE?.trim()
+      || provider.base_url,
+  );
+  if (!baseUrl) return null;
+
+  const model = process.env.IM_VOICE_ASR_MODEL?.trim()
+    || extraEnv.OPENAI_TRANSCRIPTION_MODEL?.trim()
+    || extraEnv.OPENAI_ASR_MODEL?.trim()
+    || resolveProviderModelForRequest(provider, undefined)
+    || 'whisper-1';
+
+  return { baseUrl, apiKey, model };
 }
 
 export function __resetDispatcherForTesting(): void {

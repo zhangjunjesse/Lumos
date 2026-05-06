@@ -37,6 +37,8 @@ describe('Windows WeChat manual path resolution', () => {
       root,
       wxid: 'wxid_test',
       wxDir,
+      msgDir: path.join(wxDir, 'MSG'),
+      messageDbDir: path.join(wxDir, 'MSG'),
     });
   });
 
@@ -48,16 +50,86 @@ describe('Windows WeChat manual path resolution', () => {
       root,
       wxid: 'wxid_test',
       wxDir,
+      msgDir: path.join(wxDir, 'MSG'),
+      messageDbDir: path.join(wxDir, 'MSG'),
     });
   });
 
-  it('accepts an account directory or MSG directory', () => {
+  it('accepts a db_storage-based account directory', () => {
+    const root = path.join(tmp, 'xwechat_files');
+    const wxDir = path.join(root, 'wxid_test');
+    const dbStorage = path.join(wxDir, 'db_storage');
+    const messageDir = path.join(dbStorage, 'message');
+    fs.mkdirSync(messageDir, { recursive: true });
+    fs.writeFileSync(path.join(messageDir, 'message_0.db'), 'msg');
+    fs.mkdirSync(path.join(dbStorage, 'contact'), { recursive: true });
+    fs.writeFileSync(path.join(dbStorage, 'contact', 'contact.db'), 'contact');
+
+    const expected = {
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir: dbStorage,
+      messageDbDir: messageDir,
+    };
+
+    expect(resolveWindowsWeChatDataRootSelection(root)).toEqual(expected);
+    expect(resolveWindowsWeChatDataRootSelection(messageDir)).toEqual(expected);
+  });
+
+  it('accepts an account directory, MSG directory, or account subdirectory', () => {
     const root = path.join(tmp, 'WeChat Files');
     const wxDir = makeAccount(root);
     const msgDir = path.join(wxDir, 'MSG');
+    const fileStorage = path.join(wxDir, 'FileStorage');
+    fs.mkdirSync(fileStorage, { recursive: true });
 
-    expect(resolveWindowsWeChatDataRootSelection(wxDir)?.root).toBe(root);
-    expect(resolveWindowsWeChatDataRootSelection(msgDir)?.wxDir).toBe(wxDir);
+    expect(resolveWindowsWeChatDataRootSelection(wxDir)).toEqual({
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir,
+      messageDbDir: msgDir,
+    });
+    expect(resolveWindowsWeChatDataRootSelection(msgDir)).toEqual({
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir,
+      messageDbDir: msgDir,
+    });
+    expect(resolveWindowsWeChatDataRootSelection(fileStorage)).toEqual({
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir,
+      messageDbDir: msgDir,
+    });
+  });
+
+  it('accepts a Msg/Multi message shard layout', () => {
+    const root = path.join(tmp, 'WeChat Files');
+    const wxDir = path.join(root, 'wxid_test');
+    const msgDir = path.join(wxDir, 'Msg');
+    const multiDir = path.join(msgDir, 'Multi');
+    fs.mkdirSync(multiDir, { recursive: true });
+    fs.writeFileSync(path.join(msgDir, 'MicroMsg.db'), 'micro');
+    fs.writeFileSync(path.join(multiDir, 'MSG0.db'), 'msg');
+
+    expect(resolveWindowsWeChatDataRootSelection(root)).toEqual({
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir,
+      messageDbDir: multiDir,
+    });
+    expect(resolveWindowsWeChatDataRootSelection(multiDir)).toEqual({
+      root,
+      wxid: 'wxid_test',
+      wxDir,
+      msgDir,
+      messageDbDir: multiDir,
+    });
   });
 
   it('recognizes both Windows WeChat executable names by default', () => {

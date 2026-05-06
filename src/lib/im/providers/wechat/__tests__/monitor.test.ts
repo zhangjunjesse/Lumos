@@ -12,6 +12,12 @@ afterAll(() => {
   (global as { fetch: typeof fetch }).fetch = originalFetch;
 });
 
+const mockTranscribeAudioAttachment = jest.fn(async () => '');
+jest.mock('../../../core/speech', () => ({
+  detectAudioFormat: () => ({ mime: 'audio/wav', ext: 'wav' }),
+  transcribeAudioAttachment: (attachment: unknown) => mockTranscribeAudioAttachment(attachment),
+}));
+
 import { WechatMonitor } from '../monitor';
 import { bodyFromItemList } from '../parse';
 import { WechatClient, MESSAGE_ITEM_TEXT, MESSAGE_ITEM_VOICE, MESSAGE_TYPE_USER, MESSAGE_TYPE_BOT } from '../client';
@@ -35,9 +41,7 @@ const fakeTokenStore = {
   set(p: string, t: string) { this.__m.set(p, t); },
 };
 
-function makeMonitor(): WechatMonitor {
-  // client unused for ingestMessage path
-  const client = new WechatClient({ baseUrl: config.baseUrl, token: config.token });
+function makeMonitor(client = new WechatClient({ baseUrl: config.baseUrl, token: config.token })): WechatMonitor {
   return new WechatMonitor(client, config, {
     contextTokenStore: fakeTokenStore as never,
     syncBuf: fakeBufStore,
@@ -46,6 +50,8 @@ function makeMonitor(): WechatMonitor {
 
 beforeEach(() => {
   fakeTokenStore.__m.clear();
+  mockTranscribeAudioAttachment.mockClear();
+  mockTranscribeAudioAttachment.mockResolvedValue('');
 });
 
 function userMsg(overrides: Partial<WeixinInboundMsg> = {}): WeixinInboundMsg {
@@ -169,6 +175,57 @@ describe('wechat/monitor: ingestMessage', () => {
       new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 30)),
     ]);
     expect(settled).toBe('timeout');
+    await m.stop();
+  });
+
+  test('queues voice without WeChat ASR as audio placeholder instead of dropping it', async () => {
+    const client = new WechatClient({ baseUrl: config.baseUrl, token: config.token });
+    jest.spyOn(client, 'downloadCdnMedia').mockResolvedValue(Buffer.from('RIFF fake wav bytes'));
+    const m = makeMonitor(client);
+    m.start();
+    await m.ingestMessage(userMsg({
+      item_list: [{
+        type: MESSAGE_ITEM_VOICE,
+        voice_item: {
+          media: {
+            encrypt_query_param: 'enc-param',
+            aes_key: Buffer.alloc(16).toString('base64'),
+          },
+        },
+      }],
+    }));
+    const inbound = await m.consumeOne();
+    expect(inbound).not.toBeNull();
+    expect(inbound!.text).toMatch(/语音/);
+    expect(inbound!.attachments).toHaveLength(1);
+    expect(inbound!.attachments![0]).toMatchObject({
+      name: 'wechat-voice-100-0.wav',
+      type: 'audio/wav',
+    });
+    await m.stop();
+  });
+
+  test('uses local voice transcription fallback when WeChat ASR text is missing', async () => {
+    mockTranscribeAudioAttachment.mockResolvedValueOnce('local transcript');
+    const client = new WechatClient({ baseUrl: config.baseUrl, token: config.token });
+    jest.spyOn(client, 'downloadCdnMedia').mockResolvedValue(Buffer.from('RIFF fake wav bytes'));
+    const m = makeMonitor(client);
+    m.start();
+    await m.ingestMessage(userMsg({
+      item_list: [{
+        type: MESSAGE_ITEM_VOICE,
+        voice_item: {
+          media: {
+            encrypt_query_param: 'enc-param',
+            aes_key: Buffer.alloc(16).toString('base64'),
+          },
+        },
+      }],
+    }));
+    const inbound = await m.consumeOne();
+    expect(inbound).not.toBeNull();
+    expect(inbound!.text).toBe('local transcript');
+    expect(inbound!.attachments).toBeUndefined();
     await m.stop();
   });
 

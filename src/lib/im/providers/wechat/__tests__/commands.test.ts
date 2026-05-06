@@ -38,7 +38,7 @@ jest.mock('@/lib/db', () => ({
   },
 }));
 
-import { handleWechatCommand, WECHAT_COMMANDS } from '../commands';
+import { handleWechatCommand, maybeHandleWechatVoiceModePhrase, WECHAT_COMMANDS } from '../commands';
 import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
@@ -70,9 +70,9 @@ beforeEach(() => {
 });
 
 describe('wechat/commands: WECHAT_COMMANDS list', () => {
-  test('contains 4 custom + builtin commands', () => {
+  test('contains custom + builtin commands', () => {
     const names = WECHAT_COMMANDS.map((c) => c.name);
-    expect(names).toEqual(expect.arrayContaining(['list', 'switch', 'current', 'new']));
+    expect(names).toEqual(expect.arrayContaining(['list', 'switch', 'current', 'new', 'voice']));
     expect(names).toEqual(expect.arrayContaining(['help', 'ping', 'whoami']));
   });
 });
@@ -260,6 +260,54 @@ describe('wechat/commands: /new', () => {
   });
 });
 
+describe('wechat/commands: /voice', () => {
+  test('enables voice mode for current peer', async () => {
+    const r = await handleWechatCommand(makeCtx('voice', ['on']));
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toMatch(/语音模式/);
+    expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('1');
+  });
+
+  test('disables voice mode for current peer', async () => {
+    await handleWechatCommand(makeCtx('voice', ['on']));
+    const r = await handleWechatCommand(makeCtx('voice', ['off']));
+    expect(r.reply!.text).toMatch(/文本模式/);
+    expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('0');
+  });
+
+  test('reports current voice mode status', async () => {
+    let r = await handleWechatCommand(makeCtx('voice'));
+    expect(r.reply!.text).toMatch(/文本模式/);
+    await handleWechatCommand(makeCtx('voice', ['开启']));
+    r = await handleWechatCommand(makeCtx('voice', ['status']));
+    expect(r.reply!.text).toMatch(/语音模式/);
+  });
+
+  test('accepts Chinese command alias', async () => {
+    const r = await handleWechatCommand(makeCtx('语音', ['开启']));
+    expect(r.reply!.text).toMatch(/语音模式/);
+    expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('1');
+  });
+
+  test('handles natural voice mode phrases for spoken commands', () => {
+    const on = maybeHandleWechatVoiceModePhrase({
+      ...makeCtx('voice').message,
+      text: '开启语音模式',
+    });
+    expect(on?.handled).toBe(true);
+    expect(on?.reply?.text).toMatch(/语音模式/);
+    expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('1');
+
+    const off = maybeHandleWechatVoiceModePhrase({
+      ...makeCtx('voice').message,
+      text: '切回文本模式。',
+    });
+    expect(off?.handled).toBe(true);
+    expect(off?.reply?.text).toMatch(/文本模式/);
+    expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('0');
+  });
+});
+
 describe('wechat/commands: builtin fallback', () => {
   test('/ping still works', async () => {
     const r = await handleWechatCommand(makeCtx('ping'));
@@ -279,5 +327,6 @@ describe('wechat/commands: /help with custom', () => {
     expect(r.reply!.text).toMatch(/list/);
     expect(r.reply!.text).toMatch(/switch/);
     expect(r.reply!.text).toMatch(/new/);
+    expect(r.reply!.text).toMatch(/voice/);
   });
 });

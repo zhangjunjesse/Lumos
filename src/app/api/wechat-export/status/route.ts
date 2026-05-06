@@ -9,7 +9,7 @@ import {
   hasValidConsent,
   getConsent,
 } from '@/lib/wechat-export/disclaimer';
-import { getSetupStatus, getWeChatExportPlatform, readWindowsPathConfig } from '@/lib/wechat-export/setup-state';
+import { getSetupStatus, getWeChatExportPlatform, readWindowsAccounts, readWindowsPathConfig } from '@/lib/wechat-export/setup-state';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -34,11 +34,26 @@ export async function GET() {
   const env = runEnvProbes(platform);
   const status = getSetupStatus(env.allOk, env.signed, platform);
   const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
+  const pathHint = platform === 'win32' ? readWindowsAccounts()[0] : undefined;
+  const dataDirHint = platform === 'win32' && 'wxDir' in env.dataDir ? env.dataDir : undefined;
   return NextResponse.json({
     supported: true,
     platform,
     env,
     windowsPathConfig: platform === 'win32' ? readWindowsPathConfig() : undefined,
+    windowsPathHint: pathHint ? {
+      path: pathHint.wx_dir,
+      wxid: pathHint.wxid,
+      wxDir: pathHint.wx_dir,
+      msgDir: pathHint.msg_dir,
+      messageDbDir: pathHint.message_db_dir,
+    } : dataDirHint ? {
+      path: dataDirHint.wxDir || dataDirHint.root,
+      wxid: dataDirHint.wxid,
+      wxDir: dataDirHint.wxDir,
+      msgDir: dataDirHint.msgDir,
+      messageDbDir: dataDirHint.messageDbDir,
+    } : undefined,
     status,
     consent: {
       version: DISCLAIMER_VERSION,

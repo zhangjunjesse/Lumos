@@ -55,6 +55,8 @@ export interface SetupStatus {
 export interface WindowsAccountRecord {
   wxid?: string;
   wx_dir?: string;
+  msg_dir?: string;
+  message_db_dir?: string;
   key?: string;
   extracted_at?: number;
 }

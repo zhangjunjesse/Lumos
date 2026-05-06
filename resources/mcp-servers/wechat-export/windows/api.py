@@ -3,6 +3,9 @@
 Windows WeChat stores one account under:
   WeChat Files/<wxid>/MSG/MicroMsg.db
   WeChat Files/<wxid>/MSG/MSG*.db
+or newer data roots such as:
+  xwechat_files/<wxid>/db_storage/contact/contact.db
+  xwechat_files/<wxid>/db_storage/message/message_*.db
 
 The files are SQLCipher-style encrypted with one account key. Lumos extracts
 that key once, decrypts read-only copies into ~/.lumos/wechat-export, and opens
@@ -25,6 +28,7 @@ from typing import Any
 SQLITE_FILE_HEADER = b"SQLite format 3\x00"
 PAGE_SIZE = 4096
 KEY_SIZE = 32
+MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
 
 CACHE_DIR = os.path.dirname(
     os.environ.get(
@@ -100,20 +104,37 @@ def _account() -> dict:
 
 
 def _msg_dir() -> str:
-    return os.path.join(_account()["wx_dir"], "MSG")
+    account = _account()
+    msg_dir = str(account.get("msg_dir") or "").strip()
+    if msg_dir and os.path.isdir(msg_dir):
+        return msg_dir
+    for name in ("MSG", "Msg"):
+        candidate = os.path.join(account["wx_dir"], name)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(account["wx_dir"], "MSG")
 
 
 def _encrypted_micro_db() -> str:
-    return os.path.join(_msg_dir(), "MicroMsg.db")
+    micro = os.path.join(_msg_dir(), "MicroMsg.db")
+    if os.path.exists(micro):
+        return micro
+    contact = os.path.join(_msg_dir(), "contact", "contact.db")
+    return contact if os.path.exists(contact) else micro
 
 
 def _encrypted_message_dbs() -> list[str]:
-    msg_dir = _msg_dir()
+    account = _account()
+    msg_dir = str(account.get("message_db_dir") or "").strip() or _msg_dir()
+    if not os.path.isdir(msg_dir):
+        multi_dir = os.path.join(_msg_dir(), "Multi")
+        if os.path.isdir(multi_dir):
+            msg_dir = multi_dir
     if not os.path.isdir(msg_dir):
         return []
     dbs = []
     for name in os.listdir(msg_dir):
-        if re.fullmatch(r"MSG\d*\.db", name, re.I):
+        if MESSAGE_DB_RE.fullmatch(name):
             dbs.append(os.path.join(msg_dir, name))
     return sorted(dbs)
 

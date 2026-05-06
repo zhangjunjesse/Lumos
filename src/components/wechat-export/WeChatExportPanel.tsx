@@ -180,6 +180,7 @@ function ConsentSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
 
 function WindowsManualPathControls({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const config = panel.status?.windowsPathConfig;
+  const hint = panel.status?.windowsPathHint;
   const wechatExePath = config?.wechatExePath || '';
   const dataRootPath = config?.wechatDataRoot || '';
   return (
@@ -188,6 +189,7 @@ function WindowsManualPathControls({ panel }: { panel: ReturnType<typeof useWeCh
       panel={panel}
       initialWechatExePath={wechatExePath}
       initialDataRootPath={dataRootPath}
+      hint={hint}
     />
   );
 }
@@ -196,10 +198,12 @@ function WindowsManualPathFields({
   panel,
   initialWechatExePath,
   initialDataRootPath,
+  hint,
 }: {
   panel: ReturnType<typeof useWeChatExport>;
   initialWechatExePath: string;
   initialDataRootPath: string;
+  hint?: { path?: string; wxid?: string; wxDir?: string; msgDir?: string; messageDbDir?: string };
 }) {
   const [wechatExePath, setWechatExePath] = useState(initialWechatExePath);
   const [dataRootPath, setDataRootPath] = useState(initialDataRootPath);
@@ -230,7 +234,7 @@ function WindowsManualPathFields({
       return;
     }
     const result = await api.openFolder({
-      title: '选择 WeChat Files 或账号数据目录',
+      title: '选择微信设置里的保存目录或账号数据目录',
     });
     const selected = result.canceled ? '' : result.filePaths[0] || '';
     if (selected) {
@@ -246,9 +250,18 @@ function WindowsManualPathFields({
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-medium">自动检测失败时，手动指定路径</h4>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            微信装在非默认位置、聊天数据放在 D 盘或 OneDrive 时，Lumos 可能读不到注册表里的位置。
-            你可以直接选择微信程序和聊天数据目录，保存后点“重新检查”继续。
+            Lumos 会先从正在运行的微信、注册表和常见安装目录自动发现。仍失败时，手动选择微信程序和聊天数据目录。
           </p>
+          <div className="mt-2 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+            <p>程序路径：右键微信图标，打开文件所在位置，选择 WeChat.exe 或 Weixin.exe。</p>
+            <p>聊天数据：在微信设置 / 文件管理里查看保存位置；也可以选择 WeChat Files、xwechat_files、账号目录、MSG、db_storage 或它下面的子目录。</p>
+          </div>
+          {hint?.wxid ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              当前已识别到账号 <span className="font-mono">{hint.wxid}</span>
+              {hint.messageDbDir ? `，消息库目录是 ${hint.messageDbDir}` : ''}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -279,7 +292,7 @@ function WindowsManualPathFields({
           <Input
             value={dataRootPath}
             onChange={(event) => setDataRootPath(event.target.value)}
-            placeholder="聊天数据目录，例如 D:\\WeChat Files，或某个账号目录 / MSG 目录"
+            placeholder="聊天数据目录，例如 D:\\WeChat Files、D:\\xwechat_files、账号目录、MSG 或 db_storage"
             className="h-8 text-xs"
           />
           <Button type="button" size="sm" variant="outline" className="h-8" disabled={running} onClick={chooseDataDir}>
@@ -296,6 +309,13 @@ function WindowsManualPathFields({
             保存
           </Button>
         </div>
+
+        {hint?.path ? (
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            如果你不确定选哪一层，优先选微信设置里显示的“保存目录”；当前识别到的是 {hint.path}
+            {hint.msgDir ? `，消息目录 ${hint.msgDir}` : ''}
+          </p>
+        ) : null}
       </div>
     </div>
   );
