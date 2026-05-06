@@ -24,6 +24,12 @@ export const ERR_SESSION_EXPIRED = -14;
 export const UPLOAD_MEDIA_IMAGE = 1;
 export const UPLOAD_MEDIA_VIDEO = 2;
 export const UPLOAD_MEDIA_FILE = 3;
+export const UPLOAD_MEDIA_VOICE = 4;
+
+export const VOICE_FORMAT_AMR = 0;
+export const VOICE_FORMAT_MP3 = 2;
+export const VOICE_FORMAT_WAVE = 3;
+export const VOICE_FORMAT_SILK = 4;
 
 // ---- JSON shapes -----------------------------------------------------------
 
@@ -52,6 +58,9 @@ export interface VoiceItem {
   media?: CdnMedia;
   text?: string;          // ASR transcript
   encode_type?: number;
+  sample_rate?: number;
+  bits_per_sample?: number;
+  playtime?: number;
 }
 
 export interface FileItem {

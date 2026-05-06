@@ -16,10 +16,12 @@ import {
   MESSAGE_ITEM_FILE,
   MESSAGE_ITEM_IMAGE,
   MESSAGE_ITEM_TEXT,
+  MESSAGE_ITEM_VOICE,
   MESSAGE_TYPE_BOT,
   MESSAGE_STATE_FINISH,
   UPLOAD_MEDIA_FILE,
   UPLOAD_MEDIA_IMAGE,
+  UPLOAD_MEDIA_VOICE,
   type GetUpdatesResp,
   type GetUploadUrlReq,
   type GetUploadUrlResp,
@@ -374,6 +376,118 @@ export class WechatClient {
             file_name: fileName,
             len: String(rawsize),
           },
+        },
+      ],
+      context_token: args.contextToken,
+    };
+
+    try {
+      const data = (await this.post(
+        'ilink/bot/sendmessage',
+        { msg, base_info: { channel_version: CHANNEL_VERSION } },
+        DEFAULT_API_TIMEOUT_MS,
+        'sendMessage',
+      )) as SendMessageResp | null;
+      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
+      return {
+        ok: false,
+        ret: data.ret,
+        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
+    }
+  }
+
+  /**
+   * Experimental: send an outbound voice_item so WeChat can render a native
+   * voice bubble instead of a generic file attachment. The iLink channel does
+   * not publicly guarantee bot-side voice delivery, so callers should keep a
+   * file_item fallback if this returns an error.
+   */
+  async sendVoice(args: {
+    toUserId: string;
+    bytes: Buffer;
+    contextToken: string;
+    encodeType: number;
+    sampleRate?: number;
+    bitsPerSample?: number;
+    playtime?: number;
+    clientId?: string;
+  }): Promise<{ ok: boolean; ret?: number; error?: string; clientId?: string }> {
+    if (!args.contextToken.trim()) {
+      return { ok: false, error: 'context_token required (reply to an inbound message first)' };
+    }
+    if (args.bytes.length === 0) {
+      return { ok: false, error: 'empty voice' };
+    }
+
+    const aesKey = randomAesKey();
+    const filekey = randomHex(8);
+    const rawsize = args.bytes.length;
+    const filesize = aesEcbPaddedSize(rawsize);
+    const clientId = args.clientId ?? newClientId();
+
+    let upload: GetUploadUrlResp;
+    try {
+      upload = await this.getUploadUrl({
+        filekey,
+        media_type: UPLOAD_MEDIA_VOICE,
+        to_user_id: args.toUserId,
+        rawsize,
+        rawfilemd5: md5Hex(args.bytes),
+        filesize,
+        no_need_thumb: true,
+        aeskey: aesKey.toString('hex'),
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'getUploadURL failed' };
+    }
+    if (upload.ret != null && upload.ret !== 0) {
+      return { ok: false, ret: upload.ret, error: `getUploadURL ret=${upload.ret} ${upload.errmsg ?? ''}`.trim() };
+    }
+
+    const uploadUrl = upload.upload_full_url
+      || (upload.upload_param
+        ? buildCdnUploadUrl(this.cdnBase(), upload.upload_param, filekey)
+        : '');
+    if (!uploadUrl) {
+      return { ok: false, error: 'getUploadURL returned no upload URL' };
+    }
+
+    let downloadParam: string;
+    try {
+      downloadParam = await uploadEncryptedToCdn({
+        uploadUrl,
+        plaintext: args.bytes,
+        aesKey,
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'CDN upload failed' };
+    }
+
+    const voiceItem = {
+      media: {
+        encrypt_query_param: downloadParam,
+        aes_key: formatAesKeyForApi(aesKey),
+        encrypt_type: 1,
+      },
+      encode_type: args.encodeType,
+      sample_rate: args.sampleRate,
+      bits_per_sample: args.bitsPerSample,
+      playtime: args.playtime,
+    };
+
+    const msg: OutboundMsg = {
+      from_user_id: '',
+      to_user_id: args.toUserId,
+      client_id: clientId,
+      message_type: MESSAGE_TYPE_BOT,
+      message_state: MESSAGE_STATE_FINISH,
+      item_list: [
+        {
+          type: MESSAGE_ITEM_VOICE,
+          voice_item: voiceItem,
         },
       ],
       context_token: args.contextToken,

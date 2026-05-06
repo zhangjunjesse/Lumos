@@ -97,8 +97,10 @@ jest.mock('@/lib/im/providers/wechat/route-pointer', () => ({
 }));
 
 let voiceModeEnabled = false;
+let nativeVoiceReplyEnabled = true;
 jest.mock('@/lib/im/providers/wechat/voice-mode', () => ({
   isWechatVoiceModeEnabled: () => voiceModeEnabled,
+  isWechatNativeVoiceReplyEnabled: () => nativeVoiceReplyEnabled,
 }));
 
 const speechAttachment = {
@@ -216,6 +218,7 @@ beforeEach(() => {
   createSessionCounter = 0;
   routePointer = null;
   voiceModeEnabled = false;
+  nativeVoiceReplyEnabled = true;
   synthesizeSpeechAttachment.mockClear();
   synthesizeSpeechAttachment.mockResolvedValue({
     ok: true,
@@ -490,7 +493,12 @@ describe('im-inbound-dispatcher', () => {
       expect(sendToProvider).toHaveBeenCalledWith('wechat', expect.objectContaining({
         address: { providerId: 'wechat', chatId: 'peer1' },
         text: '',
-        attachments: [speechAttachment],
+        attachments: [
+          expect.objectContaining({
+            id: speechAttachment.id,
+            providerHints: { wechat: { nativeVoice: true } },
+          }),
+        ],
       }));
     });
 
@@ -533,7 +541,12 @@ describe('im-inbound-dispatcher', () => {
 
         const voiceSend = sendToProvider.mock.calls[1][1] as { text: string; attachments?: Array<{ id: string }> };
         expect(voiceSend.text).toBe('');
-        expect(voiceSend.attachments).toEqual([speechAttachment]);
+        expect(voiceSend.attachments).toEqual([
+          expect.objectContaining({
+            id: speechAttachment.id,
+            providerHints: { wechat: { nativeVoice: true } },
+          }),
+        ]);
 
         const fallbackSend = sendToProvider.mock.calls[2][1] as { text: string; attachments?: unknown[] };
         expect(fallbackSend.text).toMatch(/这里是图片/);

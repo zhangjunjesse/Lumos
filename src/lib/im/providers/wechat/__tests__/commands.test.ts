@@ -67,6 +67,7 @@ beforeEach(() => {
   sessionsTable.length = 0;
   settings.clear();
   createCounter = 0;
+  delete process.env.WECHAT_NATIVE_VOICE_REPLY;
 });
 
 describe('wechat/commands: WECHAT_COMMANDS list', () => {
@@ -287,6 +288,19 @@ describe('wechat/commands: /voice', () => {
     const r = await handleWechatCommand(makeCtx('语音', ['开启']));
     expect(r.reply!.text).toMatch(/语音模式/);
     expect(settings.get('im.wechat.voice_mode.cGVlcjE')).toBe('1');
+  });
+
+  test('toggles native WeChat voice bubble experiment', async () => {
+    let r = await handleWechatCommand(makeCtx('voice', ['native', 'status']));
+    expect(r.reply!.text).toMatch(/原生语音气泡/);
+
+    r = await handleWechatCommand(makeCtx('voice', ['native', 'off']));
+    expect(r.reply!.text).toMatch(/wav 文件附件/);
+    expect(settings.get('im.wechat.native_voice_reply.cGVlcjE')).toBe('0');
+
+    r = await handleWechatCommand(makeCtx('voice', ['native', 'on']));
+    expect(r.reply!.text).toMatch(/原生语音气泡/);
+    expect(settings.get('im.wechat.native_voice_reply.cGVlcjE')).toBe('1');
   });
 
   test('handles natural voice mode phrases for spoken commands', () => {

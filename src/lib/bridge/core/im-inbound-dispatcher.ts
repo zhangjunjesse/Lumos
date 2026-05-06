@@ -34,7 +34,10 @@ import {
   setCurrentRoutedSessionId,
 } from '@/lib/im/providers/wechat/route-pointer';
 import { handleWechatCommand, maybeHandleWechatVoiceModePhrase } from '@/lib/im/providers/wechat/commands';
-import { isWechatVoiceModeEnabled } from '@/lib/im/providers/wechat/voice-mode';
+import {
+  isWechatNativeVoiceReplyEnabled,
+  isWechatVoiceModeEnabled,
+} from '@/lib/im/providers/wechat/voice-mode';
 import {
   normalizeOpenAIBaseUrl,
   resolveExplicitAsrProviderTarget,
@@ -225,10 +228,14 @@ export async function dispatchInbound(
 
       const speech = await synthesizeSpeechAttachment(cleanText);
       if (speech.ok && speech.attachment) {
+        const speechAttachment = withWechatNativeVoiceHint(
+          speech.attachment,
+          inboundMessage.address.chatId,
+        );
         const voiceSendResult = await sendToProvider(providerId, {
           address: { providerId, chatId: inboundMessage.address.chatId },
           text: '',
-          attachments: [speech.attachment],
+          attachments: [speechAttachment],
         });
         if (voiceSendResult.ok) {
           return {
@@ -310,6 +317,22 @@ function withSessionPrefix(sessionId: string, body: string): string {
 
 function isAudioAttachment(attachment: { type?: string }): boolean {
   return (attachment.type || '').toLowerCase().startsWith('audio/');
+}
+
+function withWechatNativeVoiceHint<T extends { providerHints?: { wechat?: { nativeVoice?: boolean } } }>(
+  attachment: T,
+  peer: string,
+): T {
+  return {
+    ...attachment,
+    providerHints: {
+      ...attachment.providerHints,
+      wechat: {
+        ...attachment.providerHints?.wechat,
+        nativeVoice: isWechatNativeVoiceReplyEnabled(peer),
+      },
+    },
+  };
 }
 
 function isWechatVoicePlaceholderText(text: string): boolean {

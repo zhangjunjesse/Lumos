@@ -23,6 +23,11 @@ export interface IMFileAttachment {
   size: number;
   data: string;
   filePath?: string;
+  providerHints?: {
+    wechat?: {
+      nativeVoice?: boolean;
+    };
+  };
 }
 type FileAttachment = IMFileAttachment;
 

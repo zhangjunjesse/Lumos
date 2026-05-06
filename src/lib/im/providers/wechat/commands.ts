@@ -8,6 +8,7 @@
  *   /current             显示当前路由到哪个 session
  *   /new [名字]          新建 session 并设为路由目标
  *   /voice on|off|status 切换当前微信对话的 AI 回复模式
+ *   /voice native on|off 切换是否优先尝试微信原生语音气泡
  *   /help                显示命令清单（含上面 + builtin /ping /whoami）
  *
  * 入站消息以 / 开头时由 command-router 拦截，进 handleWechatCommand。
@@ -24,7 +25,12 @@ import {
   getCurrentRoutedSessionId,
   setCurrentRoutedSessionId,
 } from './route-pointer';
-import { isWechatVoiceModeEnabled, setWechatVoiceMode } from './voice-mode';
+import {
+  isWechatNativeVoiceReplyEnabled,
+  isWechatVoiceModeEnabled,
+  setWechatNativeVoiceReply,
+  setWechatVoiceMode,
+} from './voice-mode';
 
 // Re-export so existing callers (tests, dispatcher) see WECHAT_COMMANDS from this module too.
 export { WECHAT_COMMANDS };
@@ -67,7 +73,8 @@ export function maybeHandleWechatVoiceModePhrase(message: InboundMessage): IMCom
     setWechatVoiceMode(peer, true);
     return replyForAddress(message, [
       '✓ 已切到语音模式。',
-      '之后 AI 会优先发语音；你随时发语音，Lumos 都会先识别后再处理。',
+      nativeVoiceLine(peer),
+      '你随时发语音，Lumos 都会先识别后再处理。',
       '退出：说“关闭语音模式”或发送 /voice off',
     ].join('\n'));
   }
@@ -80,7 +87,7 @@ export function maybeHandleWechatVoiceModePhrase(message: InboundMessage): IMCom
   if (NATURAL_VOICE_STATUS_PHRASES.has(normalized)) {
     const enabled = isWechatVoiceModeEnabled(peer);
     return replyForAddress(message, enabled
-      ? '当前是语音模式。退出：说“关闭语音模式”或发送 /voice off'
+      ? `当前是语音模式。${nativeVoiceLine(peer)}\n退出：说“关闭语音模式”或发送 /voice off`
       : '当前是文本模式。开启：说“开启语音模式”或发送 /voice on');
   }
 
@@ -286,11 +293,16 @@ function handleVoice(ctx: IMCommandContext): IMCommandResult {
   const arg = (ctx.args[0] || 'status').trim().toLowerCase();
   const peer = ctx.message.address.chatId;
 
+  if (isNativeArg(arg)) {
+    return handleNativeVoice(ctx, ctx.args.slice(1));
+  }
+
   if (isOnArg(arg)) {
     setWechatVoiceMode(peer, true);
     return reply(ctx, [
       '✓ 已切到语音模式。',
-      '之后 AI 会优先发语音；你随时发语音，Lumos 都会先识别后再处理。',
+      nativeVoiceLine(peer),
+      '你随时发语音，Lumos 都会先识别后再处理。',
       '退出：/voice off',
     ].join('\n'));
   }
@@ -303,11 +315,11 @@ function handleVoice(ctx: IMCommandContext): IMCommandResult {
   if (arg === 'status' || arg === '状态' || arg === '当前') {
     const enabled = isWechatVoiceModeEnabled(peer);
     return reply(ctx, enabled
-      ? '当前是语音模式。退出：/voice off'
+      ? `当前是语音模式。${nativeVoiceLine(peer)}\n退出：/voice off`
       : '当前是文本模式。开启：/voice on');
   }
 
-  return reply(ctx, '用法：/voice on 开启语音回复；/voice off 切回文本；/voice status 查看状态。');
+  return reply(ctx, '用法：/voice on 开启语音回复；/voice off 切回文本；/voice native on/off 切换微信原生语音气泡；/voice status 查看状态。');
 }
 
 function isOnArg(arg: string): boolean {
@@ -316,6 +328,40 @@ function isOnArg(arg: string): boolean {
 
 function isOffArg(arg: string): boolean {
   return ['off', '0', 'false', 'no', 'n', 'disable', 'disabled', 'close', 'text', '文本', '关', '关闭'].includes(arg);
+}
+
+function isNativeArg(arg: string): boolean {
+  return ['native', 'wechat', 'bubble', '原生', '气泡', '微信语音', '语音气泡'].includes(arg);
+}
+
+function handleNativeVoice(ctx: IMCommandContext, args: string[]): IMCommandResult {
+  const peer = ctx.message.address.chatId;
+  const arg = (args[0] || 'status').trim().toLowerCase();
+
+  if (isOnArg(arg)) {
+    setWechatNativeVoiceReply(peer, true);
+    return reply(ctx, [
+      '✓ 已开启微信原生语音气泡实验。',
+      '语音模式下会先尝试发送原生语音；如果 iLink 服务端拒绝，会自动退回 wav 文件。',
+      '如果手机端收不到语音，发送 /voice native off 回到文件模式。',
+    ].join('\n'));
+  }
+
+  if (isOffArg(arg)) {
+    setWechatNativeVoiceReply(peer, false);
+    return reply(ctx, '✓ 已关闭微信原生语音气泡实验。语音模式会回到 wav 文件附件。');
+  }
+
+  const enabled = isWechatNativeVoiceReplyEnabled(peer);
+  return reply(ctx, enabled
+    ? '当前会优先尝试微信原生语音气泡。关闭：/voice native off'
+    : '当前使用 wav 文件附件。开启：/voice native on');
+}
+
+function nativeVoiceLine(peer: string): string {
+  return isWechatNativeVoiceReplyEnabled(peer)
+    ? '之后 AI 会优先尝试微信原生语音气泡；失败会回退 wav 文件。'
+    : '之后 AI 会以 wav 文件附件回复；可发送 /voice native on 试用微信原生语音气泡。';
 }
 
 const NATURAL_VOICE_ON_PHRASES = new Set([

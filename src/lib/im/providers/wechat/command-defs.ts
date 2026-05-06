@@ -18,5 +18,5 @@ export const WECHAT_COMMANDS: IMCommand[] = [
   { name: 'switch', description: '切换当前会话（/switch <编号|名字>）' },
   { name: 'current', description: '查看当前路由到哪个会话' },
   { name: 'new', description: '新建会话并设为路由目标（/new <名字>）' },
-  { name: 'voice', description: '切换 AI 回复模式（/voice on|off|status）' },
+  { name: 'voice', description: '切换 AI 回复模式（/voice on|off|status；/voice native on|off）' },
 ];

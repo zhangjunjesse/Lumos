@@ -135,6 +135,134 @@ describe('wechat/send: sendOutbound', () => {
     expect(item.file_item.media.encrypt_query_param).toBe('FILE-DL-PARAM');
   });
 
+  test('audio attachment with native hint: getuploadurl → CDN upload → sendmessage with voice_item', async () => {
+    const wavBytes = makeTinyWav();
+
+    fakeFetch.mockReset();
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?voice=1' }),
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'VOICE-DL-PARAM' : null) },
+    });
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ ret: 0 }),
+    });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: '',
+        attachments: [{
+          id: 'voice-1',
+          name: 'reply.wav',
+          type: 'audio/wav',
+          size: wavBytes.length,
+          data: wavBytes.toString('base64'),
+          providerHints: { wechat: { nativeVoice: true } },
+        }],
+      },
+      { getContextToken: () => 'ctx' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(3);
+
+    const uploadCall = fakeFetch.mock.calls[0];
+    expect(uploadCall[0]).toMatch(/getuploadurl$/);
+    const uploadBody = JSON.parse(uploadCall[1].body) as { media_type: number };
+    expect(uploadBody.media_type).toBe(4);
+
+    const sendCall = fakeFetch.mock.calls[2];
+    expect(sendCall[0]).toMatch(/sendmessage$/);
+    const body = JSON.parse(sendCall[1].body) as {
+      msg: {
+        item_list: Array<{
+          type: number;
+          voice_item: {
+            encode_type: number;
+            sample_rate: number;
+            bits_per_sample: number;
+            playtime: number;
+            media: { encrypt_query_param: string };
+          };
+        }>;
+      };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(3); // MESSAGE_ITEM_VOICE
+    expect(item.voice_item.encode_type).toBe(3); // VOICE_FORMAT_WAVE
+    expect(item.voice_item.sample_rate).toBe(16000);
+    expect(item.voice_item.bits_per_sample).toBe(16);
+    expect(item.voice_item.playtime).toBe(100);
+    expect(item.voice_item.media.encrypt_query_param).toBe('VOICE-DL-PARAM');
+  });
+
+  test('audio native send error falls back to file_item', async () => {
+    const wavBytes = makeTinyWav();
+
+    fakeFetch.mockReset();
+    fakeFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?voice=1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'VOICE-DL-PARAM' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ ret: 40001, errmsg: 'voice not allowed' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ ret: 0, upload_full_url: 'https://cdn.example/c2c/upload?file=1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: (k: string) => (k === 'x-encrypted-param' ? 'FILE-DL-PARAM' : null) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ ret: 0 }),
+      });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: '',
+        attachments: [{
+          id: 'voice-1',
+          name: 'reply.wav',
+          type: 'audio/wav',
+          size: wavBytes.length,
+          data: wavBytes.toString('base64'),
+          providerHints: { wechat: { nativeVoice: true } },
+        }],
+      },
+      { getContextToken: () => 'ctx' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(6);
+    const fallbackSendCall = fakeFetch.mock.calls[5];
+    const body = JSON.parse(fallbackSendCall[1].body) as {
+      msg: { item_list: Array<{ type: number; file_item: { file_name: string } }> };
+    };
+    const item = body.msg.item_list[0];
+    expect(item.type).toBe(4);
+    expect(item.file_item.file_name).toBe('reply.wav');
+  });
+
   test('image attachment: getuploadurl → CDN upload → sendmessage', async () => {
     const onePngPixel = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG magic
@@ -193,3 +321,26 @@ describe('wechat/send: sendOutbound', () => {
     expect(item.image_item.media.aes_key.length).toBeGreaterThanOrEqual(40);
   });
 });
+
+function makeTinyWav(): Buffer {
+  const sampleRate = 16_000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const samples = 1600; // 100 ms
+  const dataSize = samples * channels * (bitsPerSample / 8);
+  const bytes = Buffer.alloc(44 + dataSize);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(36 + dataSize, 4);
+  bytes.write('WAVE', 8, 'ascii');
+  bytes.write('fmt ', 12, 'ascii');
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(channels, 22);
+  bytes.writeUInt32LE(sampleRate, 24);
+  bytes.writeUInt32LE(sampleRate * channels * (bitsPerSample / 8), 28);
+  bytes.writeUInt16LE(channels * (bitsPerSample / 8), 32);
+  bytes.writeUInt16LE(bitsPerSample, 34);
+  bytes.write('data', 36, 'ascii');
+  bytes.writeUInt32LE(dataSize, 40);
+  return bytes;
+}
