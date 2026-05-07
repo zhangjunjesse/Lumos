@@ -27,6 +27,13 @@ const HOST_WITH_DOT_PATTERN = /^[^\s/]+\.[^\s/]+/;
 const LOCALHOST_PATTERN = /^localhost(?::\d+)?(?:\/.*)?$/i;
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/.*)?$/;
 
+const GOOGLE_SIGN_IN_HOSTS = new Set([
+  "accounts.google.com",
+  "accounts.youtube.com",
+  "myaccount.google.com",
+  "signin.youtube.com",
+]);
+
 function normalizeBrowserInput(rawInput: string): string | null {
   const input = rawInput.trim();
   if (!input) return null;
@@ -44,6 +51,46 @@ function normalizeBrowserInput(rawInput: string): string | null {
   }
 
   return `${SEARCH_BASE_URL}${encodeURIComponent(input)}`;
+}
+
+function isGoogleSignInSensitiveUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const pathname = parsed.pathname.toLowerCase();
+  const search = parsed.search.toLowerCase();
+
+  if (GOOGLE_SIGN_IN_HOSTS.has(hostname)) {
+    return true;
+  }
+
+  if (hostname === "youtube.com" || hostname.endsWith(".youtube.com")) {
+    return (
+      pathname.includes("signin") ||
+      pathname.includes("login") ||
+      search.includes("accounts.google.com") ||
+      search.includes("oauth") ||
+      search.includes("service=youtube") ||
+      search.includes("signin")
+    );
+  }
+
+  if (hostname === "google.com" || hostname.endsWith(".google.com")) {
+    return (
+      pathname.includes("signin") ||
+      pathname.includes("servicelogin") ||
+      pathname.includes("oauth") ||
+      search.includes("service=youtube") ||
+      search.includes("signin")
+    );
+  }
+
+  return false;
 }
 
 function runBrowserAction(action: void | Promise<void>, onError: (error: unknown) => void) {
@@ -126,6 +173,10 @@ export function EmbeddedBrowserPanel({
     return `${Math.round(viewportSize.height / fitScale)}px`;
   }, [fitScale, shouldFitWidth, viewportSize.height]);
   const effectiveLoading = nativeHost ? controlledLoading || pendingLoading : pendingLoading;
+  const showGoogleSignInWarning = useMemo(
+    () => isGoogleSignInSensitiveUrl(resolvedUrl),
+    [resolvedUrl],
+  );
 
   const handleNavigateCurrent = useCallback(() => {
     const normalized = normalizeBrowserInput(inputValue);
@@ -330,6 +381,28 @@ export function EmbeddedBrowserPanel({
           </Button>
         </div>
       </div>
+
+      {showGoogleSignInWarning && (
+        <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="font-medium">{t("browser.googleSignInBlockedTitle")}</div>
+              <div className="mt-0.5 text-amber-800 dark:text-amber-200">
+                {t("browser.googleSignInBlockedDesc")}
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 border-amber-300 bg-background px-2.5 text-xs text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-100 dark:hover:bg-amber-900/40"
+              onClick={handleOpenExternal}
+            >
+              {t("browser.openInSystemBrowser")}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div
         ref={viewportRef}
