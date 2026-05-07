@@ -236,106 +236,94 @@ export function ImageProviderSection({ readOnly = false }: ImageProviderSectionP
     <>
       <Card className="border-border/50">
         <CardHeader>
-          <CardTitle className="text-base font-semibold">图片生成服务</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {readOnly
-              ? '管理员已关闭自定义服务商，以下是可用的图片生成服务。'
-              : '为图片生成选择独立的 AI 服务。'}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-base font-semibold">{config.label}</CardTitle>
+            {(saving === config.key || saving === config.modelKey) && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">{config.description}</p>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           {error && (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
               <p className="text-xs text-destructive">{error}</p>
             </div>
           )}
 
-          <div className="rounded-lg border border-border/60 p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-medium">{config.label}</p>
-                  {(saving === config.key || saving === config.modelKey) && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">{config.description}</p>
-                <p className="text-xs text-muted-foreground">
-                  {currentProvider ? `当前：${currentProvider.name}` : config.emptyValueLabel}
-                  {modelId ? ` / ${modelId}` : ''}
-                </p>
-              </div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {currentProvider ? `当前：${currentProvider.name}` : config.emptyValueLabel}
+              {modelId ? ` / ${modelId}` : ''}
+            </p>
 
-              <div className="flex w-full flex-col gap-2 lg:w-[280px]">
+            <div className="flex w-full flex-col gap-2 lg:w-[280px]">
+              <Select
+                value={providerId || PLACEHOLDER_VALUE}
+                onValueChange={(v) => { void handleProviderChange(v); }}
+              >
+                <SelectTrigger className="w-full h-9">
+                  <SelectValue placeholder={config.emptyValueLabel} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PLACEHOLDER_VALUE}>{config.emptyValueLabel}</SelectItem>
+                  {eligible.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {models.length > 1 && (
                 <Select
-                  value={providerId || PLACEHOLDER_VALUE}
-                  onValueChange={(v) => { void handleProviderChange(v); }}
+                  value={modelId || PLACEHOLDER_VALUE}
+                  onValueChange={(v) => { void handleModelChange(v); }}
                 >
                   <SelectTrigger className="w-full h-9">
-                    <SelectValue placeholder={config.emptyValueLabel} />
+                    <SelectValue placeholder="自动（第一个模型）" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={PLACEHOLDER_VALUE}>{config.emptyValueLabel}</SelectItem>
-                    {eligible.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    <SelectItem value={PLACEHOLDER_VALUE}>自动（第一个模型）</SelectItem>
+                    {models.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {models.length > 1 && (
-                  <Select
-                    value={modelId || PLACEHOLDER_VALUE}
-                    onValueChange={(v) => { void handleModelChange(v); }}
-                  >
-                    <SelectTrigger className="w-full h-9">
-                      <SelectValue placeholder="自动（第一个模型）" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={PLACEHOLDER_VALUE}>自动（第一个模型）</SelectItem>
-                      {models.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {!readOnly && (
-                  <Button
-                    variant="outline" size="sm"
-                    className="w-full justify-center gap-1.5 text-xs"
-                    onClick={() => setCreateOpen(true)}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    添加服务
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-3 space-y-1">
-              {!currentValid && providerId && (
-                <p className="text-xs text-destructive">之前选择的服务已不可用，请重新选择。</p>
               )}
-              {eligible.length === 0 ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  {readOnly ? '管理员尚未配置图片生成服务。' : `还没有可用的服务。${config.emptyHint}`}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
+              {!readOnly && (
+                <Button
+                  variant="outline" size="sm"
+                  className="w-full justify-center gap-1.5 text-xs"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加服务
+                </Button>
               )}
             </div>
-
-            {currentProvider && currentValid && (
-              <ImageProviderDetail
-                provider={currentProvider}
-                readOnly={readOnly}
-                onEdit={() => { void openEditDialog(currentProvider.id); }}
-                onDelete={() => {
-                  setDeleteTargetId(currentProvider.id);
-                  setDeleteTargetName(currentProvider.name);
-                  setDeleteError('');
-                }}
-              />
-            )}
           </div>
+
+          {!currentValid && providerId && (
+            <p className="text-xs text-destructive">之前选择的服务已不可用，请重新选择。</p>
+          )}
+          {eligible.length === 0 ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {readOnly ? '管理员尚未配置图片生成服务。' : `还没有可用的服务。${config.emptyHint}`}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
+          )}
+
+          {currentProvider && currentValid && (
+            <ImageProviderDetail
+              provider={currentProvider}
+              readOnly={readOnly}
+              onEdit={() => { void openEditDialog(currentProvider.id); }}
+              onDelete={() => {
+                setDeleteTargetId(currentProvider.id);
+                setDeleteTargetName(currentProvider.name);
+                setDeleteError('');
+              }}
+            />
+          )}
         </CardContent>
       </Card>
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, Plus } from 'lucide-react';
@@ -25,8 +25,12 @@ import {
 
 /**
  * Renders per-module provider overrides for text/chat category modules
- * (knowledge base, workflow planner). Image generation lives in its own
- * section because its management surface (edit/delete) is unique.
+ * (knowledge base, workflow agent). Each module gets its own top-level
+ * Card so it sits side-by-side with AI 对话 / 图片生成 — they're peer
+ * functional categories, not nested under "其他 AI 对话服务".
+ *
+ * The ImageProviderSection stays separate because its management surface
+ * (per-provider edit / delete) is unique to image providers.
  */
 export function ModuleOverrideSection() {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
@@ -136,107 +140,96 @@ export function ModuleOverrideSection() {
 
   return (
     <>
-      <Card className="border-border/50">
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">其他 AI 对话服务</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            为知识库、Workflow Agent 等模块单独选择 AI 服务。不设置则统一使用上方的对话服务。
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-              <p className="text-xs text-destructive">{error}</p>
-            </div>
-          )}
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 mb-3">
+          <p className="text-xs text-destructive">{error}</p>
+        </div>
+      )}
+      {TEXT_MODULE_CONFIGS.map((config, index) => {
+        const eligible = providers.filter((p) => providerEligibleForModule(p, config));
+        const currentId = overrides[config.key] || '';
+        const currentProvider = currentId ? providerMap.get(currentId) || null : null;
+        const currentValid = !currentId || eligible.some((p) => p.id === currentId);
+        const currentModelId = overrides[config.modelKey] || '';
+        const models = currentProvider ? parseModelCatalog(currentProvider.model_catalog) : [];
 
-          <div className="space-y-3">
-            {TEXT_MODULE_CONFIGS.map((config) => {
-              const eligible = providers.filter((p) => providerEligibleForModule(p, config));
-              const currentId = overrides[config.key] || '';
-              const currentProvider = currentId ? providerMap.get(currentId) || null : null;
-              const currentValid = !currentId || eligible.some((p) => p.id === currentId);
-              const currentModelId = overrides[config.modelKey] || '';
-              const models = currentProvider ? parseModelCatalog(currentProvider.model_catalog) : [];
+        return (
+          <Fragment key={config.key}>
+            {index > 0 && <div className="h-px bg-border/50" />}
+            <Card className="border-border/50">
+              <CardHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle className="text-base font-semibold">{config.label}</CardTitle>
+                  {(saving === config.key || saving === config.modelKey) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">{config.description}</p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {currentProvider ? `当前：${currentProvider.name}` : config.emptyValueLabel}
+                    {currentModelId ? ` / ${currentModelId}` : ''}
+                  </p>
 
-              return (
-                <div key={config.key} className="rounded-lg border border-border/60 p-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium">{config.label}</p>
-                        {(saving === config.key || saving === config.modelKey) && (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">{config.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {currentProvider ? `当前：${currentProvider.name}` : config.emptyValueLabel}
-                        {currentModelId ? ` / ${currentModelId}` : ''}
-                      </p>
-                    </div>
-
-                    <div className="flex w-full flex-col gap-2 lg:w-[280px]">
+                  <div className="flex w-full flex-col gap-2 lg:w-[280px]">
+                    <Select
+                      value={currentId || PLACEHOLDER_VALUE}
+                      onValueChange={(v) => { void handleProviderChange(config, v); }}
+                    >
+                      <SelectTrigger className="w-full h-9">
+                        <SelectValue placeholder={config.emptyValueLabel} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={PLACEHOLDER_VALUE}>{config.emptyValueLabel}</SelectItem>
+                        {eligible.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {models.length > 1 && (
                       <Select
-                        value={currentId || PLACEHOLDER_VALUE}
-                        onValueChange={(v) => { void handleProviderChange(config, v); }}
+                        value={currentModelId || PLACEHOLDER_VALUE}
+                        onValueChange={(v) => { void handleChange(config.modelKey, v); }}
                       >
                         <SelectTrigger className="w-full h-9">
-                          <SelectValue placeholder={config.emptyValueLabel} />
+                          <SelectValue placeholder="自动（第一个模型）" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={PLACEHOLDER_VALUE}>{config.emptyValueLabel}</SelectItem>
-                          {eligible.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          <SelectItem value={PLACEHOLDER_VALUE}>自动（第一个模型）</SelectItem>
+                          {models.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {models.length > 1 && (
-                        <Select
-                          value={currentModelId || PLACEHOLDER_VALUE}
-                          onValueChange={(v) => { void handleChange(config.modelKey, v); }}
-                        >
-                          <SelectTrigger className="w-full h-9">
-                            <SelectValue placeholder="自动（第一个模型）" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={PLACEHOLDER_VALUE}>自动（第一个模型）</SelectItem>
-                            {models.map((m) => (
-                              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                      <Button
-                        variant="outline" size="sm"
-                        className="w-full justify-center gap-1.5 text-xs"
-                        onClick={() => setCreateTarget(config)}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        添加服务
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 space-y-1">
-                    {!currentValid && currentId && (
-                      <p className="text-xs text-destructive">之前选择的服务已不可用，请重新选择。</p>
                     )}
-                    {eligible.length === 0 ? (
-                      <p className="text-xs text-amber-700 dark:text-amber-400">
-                        还没有可用的服务。{config.emptyHint}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
-                    )}
+                    <Button
+                      variant="outline" size="sm"
+                      className="w-full justify-center gap-1.5 text-xs"
+                      onClick={() => setCreateTarget(config)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      添加服务
+                    </Button>
                   </div>
                 </div>
-              );
-            })}
 
-          </div>
-        </CardContent>
-      </Card>
+                {!currentValid && currentId && (
+                  <p className="text-xs text-destructive">之前选择的服务已不可用，请重新选择。</p>
+                )}
+                {eligible.length === 0 ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    还没有可用的服务。{config.emptyHint}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
+                )}
+              </CardContent>
+            </Card>
+          </Fragment>
+        );
+      })}
 
       <AddProviderDialog
         open={!!createTarget}
