@@ -113,6 +113,11 @@ export async function generateObjectWithClaudeSdk<T>(
     provider: params.provider,
     sessionId: params.sessionId,
     requestedModel: params.model,
+    requestMetadata: {
+      module: 'workflow',
+      operation: 'structured-output',
+      sessionId: params.sessionId,
+    },
   });
   await ensureClaudeLocalAuthReady(runtimeContext.activeProvider);
   const abortController = new AbortController();

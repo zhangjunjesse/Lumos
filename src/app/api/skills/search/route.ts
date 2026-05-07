@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { BUILTIN_CLAUDE_MODEL_IDS, resolveBuiltInClaudeModelId } from '@/lib/model-metadata';
+import { startLlmRequestLog } from '@/lib/llm-request-log';
+import { buildLumosLlmRequestHeaders, type LumosLlmRequestMetadata } from '@/lib/llm-request-metadata';
 import type { ApiProvider } from '@/types';
 
 interface SkillInfo {
@@ -24,6 +26,7 @@ const MODEL_MAP: Record<string, string> = {
 
 interface ApiConfig {
   supported: boolean;
+  provider?: ApiProvider;
   url?: string;
   headers?: Record<string, string>;
   model?: string;
@@ -122,7 +125,7 @@ function resolveApiConfig(model?: string): ApiConfig {
     headers['x-api-key'] = apiKey;
   }
 
-  return { supported: true, url: messagesUrl, headers, model: modelId };
+  return { supported: true, provider, url: messagesUrl, headers, model: modelId };
 }
 
 export async function POST(request: Request) {
@@ -152,6 +155,21 @@ export async function POST(request: Request) {
 
     const userMessage = `Available skills:\n${skillList}\n\nUser query: "${query}"\n\nReturn the matching skill names as a JSON array:`;
 
+    const requestMetadata: LumosLlmRequestMetadata = {
+      module: 'skills',
+      operation: 'search',
+      requestId: `skills-search-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    };
+
+    const requestLog = startLlmRequestLog({
+      provider: config.provider,
+      model: config.model,
+      requestMetadata,
+      prompt: `${systemPrompt}\n\n${userMessage}`,
+      maxTokens: 200,
+      transport: 'anthropic-fetch',
+    });
+
     // 5 second hard timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -159,7 +177,10 @@ export async function POST(request: Request) {
     try {
       const res = await fetch(config.url, {
         method: 'POST',
-        headers: config.headers,
+        headers: {
+          ...config.headers,
+          ...buildLumosLlmRequestHeaders(requestMetadata),
+        },
         signal: controller.signal,
         body: JSON.stringify({
           model: config.model,
@@ -172,6 +193,7 @@ export async function POST(request: Request) {
       clearTimeout(timeout);
 
       if (!res.ok) {
+        requestLog.finish({ status: 'failed', error: new Error(`skills search LLM returned HTTP ${res.status}`) });
         return NextResponse.json({ suggestions: [] });
       }
 
@@ -181,11 +203,13 @@ export async function POST(request: Request) {
       // Extract JSON array from response
       const match = text.match(/\[[\s\S]*\]/);
       if (!match) {
+        requestLog.finish({ status: 'failed', error: new Error('skills search LLM returned no JSON array') });
         return NextResponse.json({ suggestions: [] });
       }
 
       const parsed = JSON.parse(match[0]);
       if (!Array.isArray(parsed)) {
+        requestLog.finish({ status: 'failed', error: new Error('skills search LLM returned non-array JSON') });
         return NextResponse.json({ suggestions: [] });
       }
 
@@ -195,9 +219,11 @@ export async function POST(request: Request) {
         .filter((name: unknown) => typeof name === 'string' && validNames.has(name))
         .slice(0, 5);
 
+      requestLog.finish({ status: 'succeeded' });
       return NextResponse.json({ suggestions });
-    } catch {
+    } catch (error) {
       clearTimeout(timeout);
+      requestLog.finish({ status: 'failed', error });
       return NextResponse.json({ suggestions: [] });
     }
   } catch {

@@ -14,6 +14,11 @@ import {
   injectClaudeProviderEnv,
 } from './provider-env'
 import { getVenvDir, getVenvPythonPath } from '@/lib/python-venv'
+import {
+  buildLumosLlmRequestHeaders,
+  mergeHeaderLines,
+  type LumosLlmRequestMetadata,
+} from '@/lib/llm-request-metadata'
 
 export interface ClaudeSdkRuntimeBootstrap {
   activeProvider?: ApiProvider
@@ -34,6 +39,7 @@ export interface ClaudeSdkRuntimeBootstrapOptions {
 
 export interface ClaudeSdkInvocationContextOptions extends ClaudeSdkRuntimeBootstrapOptions {
   requestedModel?: string
+  requestMetadata?: LumosLlmRequestMetadata
 }
 
 function findBundledCliPath(): string | undefined {
@@ -209,6 +215,11 @@ export function buildClaudeSdkInvocationContext(
   const runtime = buildClaudeSdkRuntimeBootstrap(options)
   const requestedModel = options?.requestedModel?.trim() || undefined
   const resolvedModel = resolveProviderModelForRequest(runtime.activeProvider, requestedModel)
+  const lumosHeaders = buildLumosLlmRequestHeaders(options?.requestMetadata)
+  const mergedHeaders = mergeHeaderLines(runtime.env.ANTHROPIC_CUSTOM_HEADERS, lumosHeaders)
+  if (mergedHeaders) {
+    runtime.env.ANTHROPIC_CUSTOM_HEADERS = mergedHeaders
+  }
   pinSdkAuxiliaryModelsToResolvedModel(runtime.env, runtime.activeProvider, resolvedModel)
 
   return {

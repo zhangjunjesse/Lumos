@@ -10,6 +10,15 @@ import {
   resolveProviderRequestApiKey,
 } from '@/lib/provider-model-discovery';
 import { getUpstreamChannelIdFromExtraEnv } from '@/lib/claude/provider-env';
+import {
+  assertLlmProviderCircuitClosed,
+  recordLlmProviderFailure,
+} from '@/lib/llm-circuit-breaker';
+import {
+  buildLumosLlmRequestHeaders,
+  type LumosLlmRequestMetadata,
+} from '@/lib/llm-request-metadata';
+import { startLlmRequestLog } from '@/lib/llm-request-log';
 import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import type { ApiProvider } from '@/types';
 import type { ZodType } from 'zod';
@@ -29,6 +38,7 @@ export interface StreamTextParams {
   messages?: ChatMessage[];
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  requestMetadata?: LumosLlmRequestMetadata;
 }
 
 export interface GenerateObjectParams<T> {
@@ -39,6 +49,7 @@ export interface GenerateObjectParams<T> {
   schema: ZodType<T>;
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  requestMetadata?: LumosLlmRequestMetadata;
 }
 
 function getObjectGenerationProviderOptions(provider: ApiProvider): SharedV3ProviderOptions | undefined {
@@ -104,15 +115,26 @@ function resolveTextGenerationBaseUrl(provider: ApiProvider): string | undefined
  * new-api's admin-token `-<channelId>` suffix, while this compatibility header
  * keeps older gateways that still inspect `Specific-Channel-Id` working.
  */
-function resolveProviderRequestHeaders(provider: ApiProvider): Record<string, string> | undefined {
+function resolveProviderRequestHeaders(
+  provider: ApiProvider,
+  requestMetadata?: LumosLlmRequestMetadata,
+): Record<string, string> | undefined {
   const channelId = getUpstreamChannelIdFromExtraEnv(parseProviderExtraEnv(provider.extra_env));
-  return channelId ? { 'Specific-Channel-Id': channelId } : undefined;
+  const headers = {
+    ...(channelId ? { 'Specific-Channel-Id': channelId } : {}),
+    ...(buildLumosLlmRequestHeaders(requestMetadata) ?? {}),
+  };
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 /**
  * Create an AI SDK language model instance from a provider config.
  */
-function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
+function createLanguageModel(
+  provider: ApiProvider,
+  requestedModelId: string,
+  requestMetadata?: LumosLlmRequestMetadata,
+) {
   const apiKey = resolveProviderRequestApiKey(provider);
   const resolvedModelId = resolveProviderModelForRequest(provider, requestedModelId);
   const modelId = resolvedModelId || requestedModelId.trim();
@@ -121,7 +143,7 @@ function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
     throw new Error(`服务商“${provider.name}”未解析出可用模型。`);
   }
 
-  const headers = resolveProviderRequestHeaders(provider);
+  const headers = resolveProviderRequestHeaders(provider, requestMetadata);
 
   if (provider.api_protocol === 'anthropic-messages') {
     const anthropic = createAnthropic({
@@ -154,18 +176,45 @@ function createLanguageModel(provider: ApiProvider, requestedModelId: string) {
  */
 export async function* streamTextFromProvider(params: StreamTextParams): AsyncIterable<string> {
   const provider = resolveProvider(params.providerId);
-  const model = createLanguageModel(provider, params.model);
-
-  const result = streamText({
-    model,
-    system: params.system,
-    ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
-    maxOutputTokens: params.maxTokens || 4096,
-    abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+  const resolvedModel = resolveProviderModelForRequest(provider, params.model) || params.model;
+  const requestLog = startLlmRequestLog({
+    provider,
+    model: resolvedModel,
+    requestMetadata: params.requestMetadata,
+    prompt: params.prompt,
+    messages: params.messages,
+    maxTokens: params.maxTokens,
+    transport: 'ai-sdk',
   });
 
-  for await (const chunk of result.textStream) {
-    yield chunk;
+  try {
+    assertLlmProviderCircuitClosed(provider.id, provider.name);
+    const model = createLanguageModel(provider, params.model, params.requestMetadata);
+    const result = streamText({
+      model,
+      system: params.system,
+      ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
+      maxOutputTokens: params.maxTokens || 4096,
+      abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+    });
+
+    for await (const chunk of result.textStream) {
+      yield chunk;
+    }
+    requestLog.finish({ status: 'succeeded' });
+  } catch (error) {
+    recordLlmProviderFailure({
+      providerId: provider.id,
+      providerName: provider.name,
+      error,
+    });
+    requestLog.finish({
+      status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+        ? 'blocked'
+        : 'failed',
+      error,
+    });
+    throw error;
   }
 }
 
@@ -175,33 +224,86 @@ export async function* streamTextFromProvider(params: StreamTextParams): AsyncIt
  */
 export async function generateTextFromProvider(params: StreamTextParams): Promise<string> {
   const provider = resolveProvider(params.providerId);
-  const model = createLanguageModel(provider, params.model);
-  const result = await generateText({
-    model,
-    system: params.system,
-    ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
-    maxOutputTokens: params.maxTokens || 4096,
-    abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+  const resolvedModel = resolveProviderModelForRequest(provider, params.model) || params.model;
+  const requestLog = startLlmRequestLog({
+    provider,
+    model: resolvedModel,
+    requestMetadata: params.requestMetadata,
+    prompt: params.prompt,
+    messages: params.messages,
+    maxTokens: params.maxTokens,
+    transport: 'ai-sdk',
   });
+  try {
+    assertLlmProviderCircuitClosed(provider.id, provider.name);
+    const model = createLanguageModel(provider, params.model, params.requestMetadata);
+    const result = await generateText({
+      model,
+      system: params.system,
+      ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
+      maxOutputTokens: params.maxTokens || 4096,
+      abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+    });
 
-  return result.text;
+    requestLog.finish({ status: 'succeeded' });
+    return result.text;
+  } catch (error) {
+    recordLlmProviderFailure({
+      providerId: provider.id,
+      providerName: provider.name,
+      error,
+    });
+    requestLog.finish({
+      status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+        ? 'blocked'
+        : 'failed',
+      error,
+    });
+    throw error;
+  }
 }
 
 export async function generateObjectFromProvider<T>(params: GenerateObjectParams<T>): Promise<T> {
   const provider = resolveProvider(params.providerId);
-  const model = createLanguageModel(provider, params.model);
-  const result = await generateObject({
-    model,
-    output: 'object',
-    system: params.system,
+  const resolvedModel = resolveProviderModelForRequest(provider, params.model) || params.model;
+  const requestLog = startLlmRequestLog({
+    provider,
+    model: resolvedModel,
+    requestMetadata: params.requestMetadata,
     prompt: params.prompt,
-    schema: params.schema,
-    maxOutputTokens: params.maxTokens || 4096,
-    providerOptions: getObjectGenerationProviderOptions(provider),
-    abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+    maxTokens: params.maxTokens,
+    transport: 'ai-sdk',
   });
+  try {
+    assertLlmProviderCircuitClosed(provider.id, provider.name);
+    const model = createLanguageModel(provider, params.model, params.requestMetadata);
+    const result = await generateObject({
+      model,
+      output: 'object',
+      system: params.system,
+      prompt: params.prompt,
+      schema: params.schema,
+      maxOutputTokens: params.maxTokens || 4096,
+      providerOptions: getObjectGenerationProviderOptions(provider),
+      abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
+    });
 
-  return result.object;
+    requestLog.finish({ status: 'succeeded' });
+    return result.object;
+  } catch (error) {
+    recordLlmProviderFailure({
+      providerId: provider.id,
+      providerName: provider.name,
+      error,
+    });
+    requestLog.finish({
+      status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+        ? 'blocked'
+        : 'failed',
+      error,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -233,6 +335,7 @@ export async function generateObjectWithFallback<T>(params: GenerateObjectParams
     prompt: params.prompt,
     maxTokens: params.maxTokens,
     abortSignal: params.abortSignal,
+    requestMetadata: params.requestMetadata,
   });
 
   const jsonMatch = text.match(/\{[\s\S]*\}/);

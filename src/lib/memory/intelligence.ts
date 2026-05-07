@@ -396,6 +396,10 @@ async function callMemoryModel(params: {
     prompt: params.prompt,
     maxTokens: params.maxTokens,
     abortSignal: AbortSignal.timeout(20_000),
+    requestMetadata: {
+      module: 'memory',
+      operation: 'intelligence',
+    },
   });
 }
 

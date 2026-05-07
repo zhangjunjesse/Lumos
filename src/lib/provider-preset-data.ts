@@ -60,7 +60,7 @@ const LUMOS_CLOUD_PRESET: ProviderPreset = {
   capabilities: ['agent-chat'],
   provider_origin: 'system',
   auth_mode: 'api_key',
-  base_url: 'http://api.miki.zj.cn',
+  base_url: 'https://api.miki.zj.cn',
   tags: ['主聊天', 'Agent', 'Lumos Cloud'],
   supported_modules: ['chat', 'agent'],
   default_models: LUMOS_CLOUD_MODELS,

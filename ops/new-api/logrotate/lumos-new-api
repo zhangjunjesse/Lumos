@@ -1,0 +1,11 @@
+/var/log/lumos-new-api-healthcheck.log
+/var/log/lumos-new-api-backup.log
+/var/log/lumos-new-api-restore-check.log
+/var/log/lumos-new-api-alert.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    create 0600 root root
+}

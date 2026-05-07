@@ -93,6 +93,10 @@ export async function POST(request: NextRequest) {
       system: systemPrompt,
       messages,
       maxTokens: 4000,
+      requestMetadata: {
+        module: 'workflow',
+        operation: 'builder-refine',
+      },
     });
 
     const parsedInitial = parseWorkflowDslFromText(raw);
@@ -115,6 +119,10 @@ export async function POST(request: NextRequest) {
           ...buildRepairTurn(input.instruction, dsl, formatIssuesForLlm(report.issues)).slice(2),
         ],
         maxTokens: 4000,
+        requestMetadata: {
+          module: 'workflow',
+          operation: 'builder-refine-repair',
+        },
       });
       const repairedParsed = parseWorkflowDslFromText(repairedRaw);
       if (!repairedParsed.error) {

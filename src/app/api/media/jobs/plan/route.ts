@@ -138,6 +138,10 @@ ${docContent ? `Document content:\n${docContent}` : 'No document provided — ge
             system: PLANNER_SYSTEM_PROMPT,
             prompt: userPrompt,
             maxTokens: 4096,
+            requestMetadata: {
+              module: 'media',
+              operation: 'job-plan',
+            },
           })) {
             fullText += chunk;
             send('text', { chunk });

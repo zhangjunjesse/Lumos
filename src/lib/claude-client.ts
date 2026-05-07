@@ -431,6 +431,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         provider: options.provider,
         sessionId,
         requestedModel: model,
+        requestMetadata: {
+          module: 'chat',
+          operation: 'stream',
+          sessionId,
+          requestId: sdkSessionId,
+        },
       });
       const activeProvider: ApiProvider | undefined = runtimeContext.activeProvider;
       console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');

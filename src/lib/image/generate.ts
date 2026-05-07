@@ -10,6 +10,7 @@ import fs from 'fs'
 import path from 'path'
 import { resolveProviderForCapability } from '@/lib/provider-resolver'
 import { getSetting } from '@/lib/db/sessions'
+import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env'
 import type { ApiProvider } from '@/types'
 import { ensureProvidersRegistered, resolveImageProvider } from './registry'
 import { saveBase64Images, copyToSessionDirectory, createMediaRecord } from './persist'
@@ -216,9 +217,12 @@ async function executeGenerate(
   // 2. Build image inputs (with path security validation)
   const images = validateAndCollectImages(params)
 
-  // 3. Resolve model (explicit > setting override > provider default)
+  // 3. Resolve model: explicit > model_override:image > provider effective
+  // default (user override > admin-synced LUMOS_DEFAULT_MODEL) > undefined
+  // (let upstream SDK pick its own).
   const modelOverride = getSetting('model_override:image')?.trim()
-  const model = params.model || modelOverride || undefined
+  const effectiveDefault = getProviderEffectiveDefaultModel(provider)
+  const model = params.model || modelOverride || effectiveDefault || undefined
 
   // 4. Call provider
   const imageProvider = resolveImageProvider(

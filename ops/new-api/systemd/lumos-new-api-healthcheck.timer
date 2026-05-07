@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Lumos new-api health check every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=lumos-new-api-healthcheck.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Lumos new-api SQLite backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=lumos-new-api-backup.service
+
+[Install]
+WantedBy=timers.target

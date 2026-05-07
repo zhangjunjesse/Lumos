@@ -4,6 +4,7 @@ import * as store from '@/lib/knowledge/store';
 import { parseFileForKnowledge } from '@/lib/knowledge/parsers';
 import { processImport } from '@/lib/knowledge/importer';
 import {
+  cancelIngestJob,
   claimNextIngestItem,
   completeIngestItemDuplicate,
   completeIngestItemFailed,
@@ -13,6 +14,7 @@ import {
   resetRunningIngestQueue,
   type ClaimedIngestItem,
 } from './ingest-queue';
+import { classifyTerminalLlmError } from '@/lib/llm-error-classifier';
 
 interface IngestWorkerState {
   started: boolean;
@@ -43,6 +45,10 @@ function normalizeErrorMessage(error: unknown): string {
   return 'ingest_failed';
 }
 
+export function getTerminalIngestFailureReason(error: unknown): string | null {
+  return classifyTerminalLlmError(error)?.userMessage ?? null;
+}
+
 function isRecoverableAccessError(errorText: string): boolean {
   const normalized = (errorText || '').trim().toLowerCase();
   if (!normalized) return false;
@@ -69,7 +75,7 @@ function parseTagList(raw: string): string[] {
 }
 
 async function processClaimedItem(claim: ClaimedIngestItem): Promise<void> {
-  const { collectionId, itemId, filePath, sourceKey, maxFileSize, forceReprocess } = claim;
+  const { jobId, collectionId, itemId, filePath, sourceKey, maxFileSize, forceReprocess } = claim;
 
   try {
     if (!fs.existsSync(filePath)) {
@@ -132,7 +138,12 @@ async function processClaimedItem(claim: ClaimedIngestItem): Promise<void> {
       parseError: parsed.parseError,
     });
   } catch (error) {
-    completeIngestItemFailed(itemId, normalizeErrorMessage(error));
+    const terminalReason = getTerminalIngestFailureReason(error);
+    const message = terminalReason ?? normalizeErrorMessage(error);
+    completeIngestItemFailed(itemId, message);
+    if (terminalReason) {
+      cancelIngestJob(jobId, message);
+    }
   }
 }
 

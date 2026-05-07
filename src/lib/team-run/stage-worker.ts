@@ -19,6 +19,12 @@ import {
 import { resolveTagNames, listTagCatalog } from '@/lib/knowledge/tag-resolver'
 import { buildBuiltinAgentContext } from '@/lib/claude/builtin-agent-context'
 import { getActiveUserId } from '@/lib/auth/user-service'
+import { classifyTerminalLlmError } from '@/lib/llm-error-classifier'
+import {
+  assertLlmProviderCircuitClosed,
+  recordLlmProviderFailure,
+} from '@/lib/llm-circuit-breaker'
+import { startLlmRequestLog } from '@/lib/llm-request-log'
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { collectContextImages, buildMultimodalPrompt } from './context-image-injector'
 
@@ -206,6 +212,7 @@ function isAbortError(error: unknown): boolean {
 
 function isRetryableApiError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
+  if (classifyTerminalLlmError(error)) return false
   const msg = error.message.toLowerCase()
   const code = (error as { code?: string }).code ?? ''
   // HTTP 429 rate limit
@@ -307,6 +314,7 @@ export class StageWorker {
 
       console.error(`[StageWorker] Execution error ${payload.stageId}: ${JSON.stringify(diagnostics)}`)
       const sanitized = ErrorSanitizer.sanitize(error instanceof Error ? error : new Error('Unknown error'))
+      const terminalLlmError = classifyTerminalLlmError(error)
 
       return {
         contractVersion: 'stage-execution-result/v1',
@@ -317,9 +325,9 @@ export class StageWorker {
         summary: '',
         artifacts: [],
         error: {
-          code: 'execution_failed',
-          message: sanitized.userMessage,
-          retryable: true,
+          code: terminalLlmError?.code ?? 'execution_failed',
+          message: terminalLlmError?.userMessage ?? sanitized.userMessage,
+          retryable: terminalLlmError?.retryable ?? true,
         },
         diagnostics,
         memoryAppend: [{
@@ -484,9 +492,44 @@ export class StageWorker {
       provider,
       sessionId: payload.sessionId,
       requestedModel: payload.requestedModel,
+      requestMetadata: {
+        module: 'workflow',
+        operation: 'stage-worker',
+        sessionId: payload.sessionId,
+        runId: payload.runId,
+        stageId: payload.stageId,
+      },
     })
-    await ensureClaudeLocalAuthReady(runtimeContext.activeProvider)
     const requestedModel = runtimeContext.resolvedModel
+    const requestMetadata = {
+      module: 'workflow',
+      operation: 'stage-worker',
+      sessionId: payload.sessionId,
+      runId: payload.runId,
+      stageId: payload.stageId,
+    }
+    const requestLog = startLlmRequestLog({
+      provider: runtimeContext.activeProvider,
+      model: requestedModel,
+      requestMetadata,
+      prompt,
+      transport: 'claude-agent-sdk',
+    })
+    try {
+      assertLlmProviderCircuitClosed(
+        runtimeContext.activeProvider?.id,
+        runtimeContext.activeProvider?.name,
+      )
+      await ensureClaudeLocalAuthReady(runtimeContext.activeProvider)
+    } catch (error) {
+      requestLog.finish({
+        status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+          ? 'blocked'
+          : 'failed',
+        error,
+      })
+      throw error
+    }
     let stderrOutput = ''
     let output = ''
     let structuredOutput: unknown
@@ -591,6 +634,7 @@ export class StageWorker {
           throw missingOutputError
         }
 
+        requestLog.finish({ status: 'succeeded' })
         return plainTextResult
       }
 
@@ -647,9 +691,11 @@ export class StageWorker {
       }
 
       if (normalized.memoryAppend?.length) {
+        requestLog.finish({ status: 'succeeded' })
         return normalized
       }
 
+      requestLog.finish({ status: 'succeeded' })
       return {
         ...normalized,
         memoryAppend: [{
@@ -658,6 +704,17 @@ export class StageWorker {
         }],
       }
     } catch (error) {
+      recordLlmProviderFailure({
+        providerId: runtimeContext.activeProvider?.id,
+        providerName: runtimeContext.activeProvider?.name,
+        error,
+      })
+      requestLog.finish({
+        status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+          ? 'blocked'
+          : 'failed',
+        error,
+      })
       if (error instanceof Error) {
         const diagnosticError = error as StageWorkerDiagnosticError
         diagnosticError.providerId = runtimeContext.activeProvider?.id

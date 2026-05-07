@@ -1,0 +1,7 @@
+[Unit]
+Description=Lumos new-api SQLite backup
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lumos-new-api-backup.sh

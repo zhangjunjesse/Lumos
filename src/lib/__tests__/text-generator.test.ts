@@ -23,10 +23,12 @@ jest.mock('@/lib/db', () => ({
 }));
 
 import { generateTextFromProvider } from '@/lib/text-generator';
+import { clearAllLlmProviderCircuitsForTest } from '@/lib/llm-circuit-breaker';
 
 describe('text-generator', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    clearAllLlmProviderCircuitsForTest();
     streamTextMock.mockReturnValue({
       textStream: (async function* textStream() {
         yield 'ok';
@@ -130,6 +132,97 @@ describe('text-generator', () => {
       model: {
         provider: 'anthropic',
         modelId: 'doubao-seed-2-0-lite-260215',
+      },
+    }));
+  });
+
+  test('opens a provider circuit after terminal quota exhaustion', async () => {
+    getProviderMock.mockReturnValue({
+      id: 'provider-lumos-cloud',
+      name: 'Lumos Cloud',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["text-gen"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
+      ]),
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-10 00:00:00',
+      updated_at: '2026-04-10 00:00:00',
+    });
+    generateTextMock.mockRejectedValueOnce(new Error('该令牌额度已用尽 TokenStatusExhausted[sk-O3G***wxK]'));
+
+    await expect(generateTextFromProvider({
+      providerId: 'provider-lumos-cloud',
+      model: 'claude-sonnet-4-6',
+      system: '',
+      prompt: 'hello',
+    })).rejects.toThrow('TokenStatusExhausted');
+
+    await expect(generateTextFromProvider({
+      providerId: 'provider-lumos-cloud',
+      model: 'claude-sonnet-4-6',
+      system: '',
+      prompt: 'hello again',
+    })).rejects.toThrow('临时停止自动重试');
+
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('passes Lumos request metadata headers to provider SDKs', async () => {
+    getProviderMock.mockReturnValue({
+      id: 'provider-1',
+      name: 'Lumos Cloud',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["text-gen"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-test',
+      is_active: 1,
+      sort_order: 0,
+      extra_env: '{}',
+      model_catalog: JSON.stringify([
+        { value: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
+      ]),
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-10 00:00:00',
+      updated_at: '2026-04-10 00:00:00',
+    });
+
+    await generateTextFromProvider({
+      providerId: 'provider-1',
+      model: 'claude-sonnet-4-6',
+      system: '',
+      prompt: 'hello',
+      requestMetadata: {
+        module: 'knowledge',
+        operation: 'text',
+        sessionId: 'session-001',
+      },
+    });
+
+    expect(createAnthropicMock).toHaveBeenCalledWith(expect.objectContaining({
+      headers: {
+        'X-Lumos-Module': 'knowledge',
+        'X-Lumos-Operation': 'text',
+        'X-Lumos-Session-Id': 'session-001',
       },
     }));
   });

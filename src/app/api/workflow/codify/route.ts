@@ -66,6 +66,10 @@ export async function POST(request: NextRequest) {
       system: systemPrompt,
       prompt: userMessage,
       maxTokens: 4096,
+      requestMetadata: {
+        module: 'workflow',
+        operation: 'codify',
+      },
     });
 
     // 提取代码块内容

@@ -1,0 +1,7 @@
+[Unit]
+Description=Lumos new-api health check
+After=docker.service nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lumos-new-api-healthcheck.sh

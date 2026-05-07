@@ -3,8 +3,6 @@ import * as os from 'os'
 import * as path from 'path'
 import { StageWorker } from '../stage-worker'
 import type { StageExecutionPayloadV1 } from '../runtime-contracts'
-import Database from 'better-sqlite3'
-import { migrateTeamRunTables } from '../../db/migrations-team-run'
 
 const mockQuery = jest.fn()
 const mockBuildClaudeSdkRuntimeBootstrap = jest.fn((options?: { provider?: unknown; requestedModel?: string }) => ({
@@ -135,15 +133,11 @@ async function* streamMessages(messages: unknown[]) {
 }
 
 describe('StageWorker', () => {
-  let db: Database.Database
   let worker: StageWorker
   let tempDir: string
   let consoleErrorSpy: jest.SpyInstance
 
   beforeEach(() => {
-    db = new Database(':memory:')
-    migrateTeamRunTables(db)
-
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-worker-test-'))
     worker = new StageWorker()
     mockQuery.mockReset()
@@ -154,7 +148,6 @@ describe('StageWorker', () => {
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true })
     consoleErrorSpy.mockRestore()
-    db.close()
   })
 
   describe('execute', () => {
@@ -262,6 +255,13 @@ describe('StageWorker', () => {
         provider: undefined,
         sessionId: 'session-test-001',
         requestedModel: 'claude-sonnet-4-6',
+        requestMetadata: {
+          module: 'workflow',
+          operation: 'stage-worker',
+          sessionId: 'session-test-001',
+          runId: 'run-test-001',
+          stageId: 'stage-test-001',
+        },
       })
     })
 
@@ -374,6 +374,29 @@ describe('StageWorker', () => {
           },
         },
       })
+    })
+
+    test('真实执行分支遇到 token 额度耗尽时不重试并返回终止错误', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+
+      mockQuery.mockReturnValue({
+        async *[Symbol.asyncIterator]() {
+          throw new Error('429 Too Many Requests: 该令牌额度已用尽 TokenStatusExhausted[sk-O3G***wxK]')
+        },
+      })
+
+      const result = await realWorker.execute(payload)
+
+      expect(mockQuery).toHaveBeenCalledTimes(1)
+      expect(result).toMatchObject({
+        outcome: 'failed',
+        error: {
+          code: 'llm_quota_exhausted',
+          retryable: false,
+        },
+      })
+      expect(result.error?.message).toContain('余额或令牌额度已耗尽')
     })
 
     test('纯文本交付模式会直接请求正文文本而不要求 structured_output', async () => {

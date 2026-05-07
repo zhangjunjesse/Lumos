@@ -46,6 +46,34 @@ interface UsageStatsResponse {
   granularity: Granularity;
 }
 
+interface LlmRequestLogRow {
+  id: string;
+  transport: string;
+  module: string;
+  operation: string;
+  provider_name: string;
+  model: string;
+  prompt_chars: number;
+  status: 'started' | 'succeeded' | 'failed' | 'blocked';
+  error_message: string;
+  duration_ms: number;
+  created_at: string;
+}
+
+interface LlmRequestSummaryRow {
+  module: string;
+  operation: string;
+  status: string;
+  count: number;
+  avg_duration_ms: number;
+  last_at: string;
+}
+
+interface LlmRequestLogResponse {
+  rows: LlmRequestLogRow[];
+  summary: LlmRequestSummaryRow[];
+}
+
 // ---------------------------------------------------------------------------
 // Number formatting helpers
 // ---------------------------------------------------------------------------
@@ -71,6 +99,19 @@ function formatPercent(n: number | undefined): string {
   if (n === 0) return "0%";
   if (n === 100) return "100%";
   return n.toFixed(1) + "%";
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function statusClass(status: string): string {
+  if (status === 'succeeded') return 'bg-emerald-500/10 text-emerald-600';
+  if (status === 'blocked') return 'bg-amber-500/10 text-amber-600';
+  if (status === 'failed') return 'bg-red-500/10 text-red-600';
+  return 'bg-muted text-muted-foreground';
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +261,7 @@ export function UsageStatsSection() {
   const { t } = useTranslation();
   const [rangeIdx, setRangeIdx] = useState(DEFAULT_RANGE_IDX);
   const [data, setData] = useState<UsageStatsResponse | null>(null);
+  const [llmLogData, setLlmLogData] = useState<LlmRequestLogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -243,6 +285,15 @@ export function UsageStatsSection() {
         throw new Error(body.error || `HTTP ${res.status}`);
       }
       setData(await res.json());
+      const llmRes = await fetch(
+        `/api/usage/llm-requests?window_hours=${windowHours}&limit=50`,
+        { signal: controller.signal },
+      );
+      if (llmRes.ok) {
+        setLlmLogData(await llmRes.json());
+      } else {
+        setLlmLogData(null);
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : String(t('usage.loadError')));
@@ -390,6 +441,93 @@ export function UsageStatsSection() {
               ))}
             </BarChart>
           </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-border/50 p-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">LLM 请求账本</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              按模块记录最近请求；默认只保存 prompt 长度和 hash，不保存完整正文。
+            </p>
+          </div>
+          <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+            最近 {range.label}
+          </span>
+        </div>
+
+        {llmLogData?.summary?.length ? (
+          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {llmLogData.summary.slice(0, 4).map((item) => (
+              <div
+                key={`${item.module}:${item.operation}:${item.status}`}
+                className="rounded-md border border-border/50 px-3 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-xs font-medium">
+                    {item.module || 'unknown'} / {item.operation || 'unknown'}
+                  </span>
+                  <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] ${statusClass(item.status)}`}>
+                    {item.status}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {item.count} 次 · 平均 {formatDurationMs(item.avg_duration_ms)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {!llmLogData?.rows?.length ? (
+          <div className="rounded-md border border-dashed border-border/60 py-8 text-center text-sm text-muted-foreground">
+            暂无 LLM 请求记录
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-xs">
+              <thead className="border-b border-border/60 text-muted-foreground">
+                <tr>
+                  <th className="py-2 pr-3 font-medium">时间</th>
+                  <th className="py-2 pr-3 font-medium">模块</th>
+                  <th className="py-2 pr-3 font-medium">Provider / Model</th>
+                  <th className="py-2 pr-3 font-medium">Prompt</th>
+                  <th className="py-2 pr-3 font-medium">耗时</th>
+                  <th className="py-2 pr-3 font-medium">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {llmLogData.rows.map((row) => (
+                  <tr key={row.id} className="border-b border-border/40 last:border-0">
+                    <td className="py-2 pr-3 text-muted-foreground">{row.created_at}</td>
+                    <td className="py-2 pr-3">
+                      <div className="font-medium">{row.module || 'unknown'}</div>
+                      <div className="text-muted-foreground">{row.operation || 'unknown'}</div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="font-medium">{row.provider_name || 'unknown'}</div>
+                      <div className="text-muted-foreground">{row.model || '-'}</div>
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">
+                      {row.prompt_chars.toLocaleString()} chars
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground">{formatDurationMs(row.duration_ms)}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${statusClass(row.status)}`}>
+                        {row.status}
+                      </span>
+                      {row.error_message ? (
+                        <div className="mt-1 max-w-[220px] truncate text-[11px] text-muted-foreground" title={row.error_message}>
+                          {row.error_message}
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

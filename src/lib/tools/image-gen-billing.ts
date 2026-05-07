@@ -10,6 +10,7 @@ import { getDb } from '@/lib/db/connection';
 import { getSetting } from '@/lib/db/sessions';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getRemoteImageProviderId } from '@/lib/cloud/provisioner';
+import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
 import { createHttpsProxyAgentForUrl, getProxyForUrl } from '@/lib/net/proxy';
 import type { ApiProvider } from '@/types';
 import https from 'node:https';
@@ -125,11 +126,15 @@ export interface BillingTarget {
 }
 
 /**
- * Resolve the model to use for this provider. The override setting
- * (`model_override:image`) is validated against the provider's catalog before
- * being trusted — otherwise a stale override (from a prior provider whose
- * catalog has since been rewritten by the login-time provisioner) would pin
- * generation to a model that no longer exists and every call would fail.
+ * Resolve the model to use for this provider for billing purposes. Each
+ * candidate is validated against the provider's catalog before being
+ * trusted — otherwise a stale value would pin generation to a model that no
+ * longer exists and every call would fail.
+ *
+ * Fallback (mirrors chat / knowledge / generate.ts):
+ *   model_override:image (UI override) →
+ *     provider effective default (user override > admin LUMOS_DEFAULT_MODEL) →
+ *     catalog[0]
  */
 function resolveModelForProvider(provider: ApiProvider): string {
   let catalog: Array<{ value?: string }> = [];
@@ -137,9 +142,19 @@ function resolveModelForProvider(provider: ApiProvider): string {
     catalog = JSON.parse(provider.model_catalog || '[]') as Array<{ value?: string }>;
   } catch { /* catalog stays empty → fallback path */ }
 
+  const validValues = new Set(
+    catalog
+      .map(m => (typeof m?.value === 'string' ? m.value : ''))
+      .filter(Boolean),
+  );
   const firstModel = catalog.find(m => typeof m?.value === 'string' && m.value)?.value ?? '';
+
   const override = getSetting('model_override:image')?.trim();
-  if (override && catalog.some(m => m?.value === override)) return override;
+  if (override && validValues.has(override)) return override;
+
+  const effectiveDefault = getProviderEffectiveDefaultModel(provider);
+  if (effectiveDefault && validValues.has(effectiveDefault)) return effectiveDefault;
+
   return firstModel;
 }
 

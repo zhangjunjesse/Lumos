@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Lumos new-api backup restore check daily
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=lumos-new-api-restore-check.service
+
+[Install]
+WantedBy=timers.target

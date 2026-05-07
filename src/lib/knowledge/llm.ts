@@ -8,6 +8,7 @@ import {
 } from '@/lib/model-metadata';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
+import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
 import {
   generateObjectFromProvider,
   generateTextFromProvider,
@@ -54,15 +55,21 @@ function isSupportedProvider(provider: ApiProvider | undefined): provider is Api
 
 /**
  * Resolve the default model for knowledge operations.
- * Uses the provider's first configured model instead of hardcoding Claude Haiku.
+ *
+ * Fallback chain matches chat / workflow:
+ *   model_override:knowledge → provider effective default (user override
+ *   beats admin-synced LUMOS_DEFAULT_MODEL) → catalog[0] → built-in haiku
+ *   for anthropic-messages providers.
  */
 export function getKnowledgeDefaultModel(): string {
   const override = getSetting('model_override:knowledge')?.trim();
   if (override) return override;
 
   const provider = resolveKnowledgeProvider();
-  const options = getProviderModelOptions(provider);
+  const effective = getProviderEffectiveDefaultModel(provider);
+  if (effective) return effective;
 
+  const options = getProviderModelOptions(provider);
   if (options.length > 0) {
     return options[0].value;
   }
@@ -213,6 +220,10 @@ async function callKnowledgeModelOnce(params: {
     prompt: params.prompt,
     maxTokens: params.maxTokens,
     abortSignal: AbortSignal.timeout(params.timeoutMs),
+    requestMetadata: {
+      module: 'knowledge',
+      operation: 'text',
+    },
   });
 }
 
@@ -233,6 +244,10 @@ async function callKnowledgeObjectModelOnce<T>(params: {
     schema: params.schema,
     maxTokens: params.maxTokens,
     abortSignal: AbortSignal.timeout(params.timeoutMs),
+    requestMetadata: {
+      module: 'knowledge',
+      operation: 'object',
+    },
   });
 }
 

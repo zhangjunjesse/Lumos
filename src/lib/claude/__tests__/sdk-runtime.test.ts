@@ -240,6 +240,51 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toBe('Specific-Channel-Id: 3')
   })
 
+  test('adds Lumos request metadata to Claude SDK custom headers', () => {
+    mockGetDefaultProvider.mockReturnValue({
+      id: 'provider-fox',
+      name: 'Fox Provider',
+      provider_type: 'anthropic',
+      api_protocol: 'anthropic-messages',
+      capabilities: '["agent-chat"]',
+      provider_origin: 'system',
+      auth_mode: 'api_key',
+      base_url: 'http://api.miki.zj.cn',
+      api_key: 'sk-fox',
+      is_active: 0,
+      sort_order: 0,
+      extra_env: JSON.stringify({
+        LUMOS_UPSTREAM_CHANNEL_ID: '3',
+      }),
+      model_catalog: '[]',
+      model_catalog_source: 'default',
+      model_catalog_updated_at: null,
+      notes: '',
+      is_builtin: 1,
+      user_modified: 0,
+      created_at: '2026-04-24 00:00:00',
+      updated_at: '2026-04-24 00:00:00',
+    })
+
+    const runtime = buildClaudeSdkInvocationContext({
+      requestedModel: 'claude-sonnet-4-6',
+      requestMetadata: {
+        module: 'workflow',
+        operation: 'stage-worker',
+        sessionId: 'session-001',
+        runId: 'run-001',
+        stageId: 'stage-001',
+      },
+    })
+
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('Specific-Channel-Id: 3')
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Lumos-Module: workflow')
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Lumos-Operation: stage-worker')
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Lumos-Session-Id: session-001')
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Lumos-Run-Id: run-001')
+    expect(runtime.env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Lumos-Stage-Id: stage-001')
+  })
+
   test('prefers the session provider before the default or active provider when sessionId is provided', () => {
     mockGetSession.mockReturnValue({
       id: 'session-001',

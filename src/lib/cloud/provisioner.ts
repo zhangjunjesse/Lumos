@@ -8,7 +8,7 @@
 import { fetchCloudAvailableModels } from '@/lib/lumos-cloud-models';
 import type { CloudChatProviderConfig, CloudImageProviderConfig } from './types';
 
-const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'http://api.miki.zj.cn';
+const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'https://api.miki.zj.cn';
 const CLOUD_PROVIDER_NAME = 'Lumos Cloud';
 
 /** settings key: JSON map from remote provider id → local provider id. */
@@ -132,8 +132,23 @@ interface ImageProviderUpsertFields {
   auth_mode: 'api_key';
   base_url: string;
   api_key: string;
+  /** Carries admin-side defaults like LUMOS_DEFAULT_MODEL so the desktop
+   *  consumer (generate.ts / billing) can pick them up via
+   *  getProviderEffectiveDefaultModel — same shape as chat providers. */
+  extra_env: string;
   model_catalog: string;
   notes: string;
+}
+
+/**
+ * Mirror chat 路径的 LUMOS_DEFAULT_MODEL 注入。Image 不需要 channel id,
+ * 所以这里只关心 default_model。空值返回 '{}' 保持 extra_env 干净。
+ */
+function buildImageProviderExtraEnv(defaultModel?: string | null): string {
+  const env: Record<string, string> = {};
+  const normalized = defaultModel?.trim() || '';
+  if (normalized) env.LUMOS_DEFAULT_MODEL = normalized;
+  return Object.keys(env).length > 0 ? JSON.stringify(env) : '{}';
 }
 
 function buildImageProviderFields(config: CloudImageProviderConfig): ImageProviderUpsertFields {
@@ -147,6 +162,7 @@ function buildImageProviderFields(config: CloudImageProviderConfig): ImageProvid
     auth_mode: 'api_key',
     base_url: config.base_url,
     api_key: config.api_key,
+    extra_env: buildImageProviderExtraEnv(config.default_model),
     model_catalog: JSON.stringify(config.model_catalog || []),
     notes: `Lumos Cloud 内置图片服务商 (remote_id=${config.id})。默认模型: ${config.default_model || '(未指定)'}`,
   };
