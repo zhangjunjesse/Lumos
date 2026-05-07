@@ -7,44 +7,7 @@ import {
   getMcpServerByNameAndScope,
   updateMcpServer,
 } from '@/lib/db';
-import { ensureVenv, installPackage, listPackages } from '@/lib/python-venv';
-
-const REQUIRED_PYPI_PACKAGES = ['mcp[cli]>=1.0.0', 'zstandard>=0.23'];
-
-/**
- * Make sure the lumos-managed Python venv has every package the wechat-export
- * MCP server imports. Idempotent — listPackages tells us what's already there.
- * Errors out only when a real install fails, not when packages are present.
- */
-async function ensureVenvPackages(): Promise<{ ok: boolean; error?: string }> {
-  try {
-    await ensureVenv();
-  } catch (err) {
-    return { ok: false, error: `venv 创建失败: ${err instanceof Error ? err.message : String(err)}` };
-  }
-  let installed: string[];
-  try {
-    installed = await listPackages();
-  } catch {
-    installed = [];
-  }
-  const installedNames = new Set(
-    installed.map((spec) => spec.split('==')[0].toLowerCase().replace(/\[.*\]$/, '')),
-  );
-  for (const spec of REQUIRED_PYPI_PACKAGES) {
-    const baseName = spec.split('[')[0].split('>=')[0].split('==')[0].toLowerCase();
-    if (installedNames.has(baseName)) continue;
-    try {
-      await installPackage(spec);
-    } catch (err) {
-      return {
-        ok: false,
-        error: `安装 ${spec} 失败: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-  return { ok: true };
-}
+import { ensureWeChatExportPythonEnv } from '@/lib/wechat-export/python-env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -97,11 +60,12 @@ export async function POST(request: NextRequest) {
     if (!hasRecoveredKey()) {
       return NextResponse.json({ error: 'no_key', message: '请先完成密钥提取。' }, { status: 400 });
     }
-    const venvResult = await ensureVenvPackages();
-    if (!venvResult.ok) {
+    try {
+      await ensureWeChatExportPythonEnv({ includeMcp: true });
+    } catch (err) {
       return NextResponse.json({
         error: 'venv_install_failed',
-        message: venvResult.error,
+        message: err instanceof Error ? err.message : String(err),
       }, { status: 500 });
     }
     updateMcpServer(mcp.id, { is_enabled: true });

@@ -5,6 +5,7 @@ import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateTeamRunTables } from './migrations-team-run';
 import { migrateAppTables } from './migrations-app';
+import { migrateWeChatAssistantTables } from './migrations-wechat-assistant';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
 function isBuildPhase(): boolean {
@@ -219,6 +220,7 @@ export function initDb(db: Database.Database): void {
     migrateTeamRunTables(db);
     migrateAppTables(db);
     migrateGoofishTables(db);
+    migrateWeChatAssistantTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {

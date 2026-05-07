@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteScheduledWorkflow } from '@/lib/db/scheduled-workflows';
-import { cancelRunningScheduleRuns } from '@/lib/workflow/schedule-run-control';
+import {
+  assertScheduleCancellationResolved,
+  cancelRunningScheduleRuns,
+} from '@/lib/workflow/schedule-run-control';
 
 const schema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1).max(200),
@@ -11,6 +14,7 @@ interface BatchDeleteResult {
   id: string;
   deleted: boolean;
   cancelledRuns: number;
+  unresolvedRuns?: number;
   error?: string;
 }
 
@@ -39,11 +43,13 @@ export async function POST(request: NextRequest) {
       const cancel = await cancelRunningScheduleRuns(id, '批量删除任务，停止执行中的工作流', {
         updateScheduleSummary: false,
       });
+      assertScheduleCancellationResolved(cancel, '删除任务');
       const deleted = deleteScheduledWorkflow(id);
       results.push({
         id,
         deleted,
         cancelledRuns: cancel.cancelledRuns.length,
+        unresolvedRuns: cancel.unresolvedRuns.length,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -56,6 +62,7 @@ export async function POST(request: NextRequest) {
     deleted: results.filter((r) => r.deleted).length,
     failed: results.filter((r) => !r.deleted).length,
     cancelledRuns: results.reduce((sum, r) => sum + r.cancelledRuns, 0),
+    unresolvedRuns: results.reduce((sum, r) => sum + (r.unresolvedRuns ?? 0), 0),
   };
 
   return NextResponse.json({ success: true, summary, results });

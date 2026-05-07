@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, type ReactNode } from 'react';
+import { ChevronUp } from 'lucide-react';
 
 export interface BottomChatRenderProps {
   collapsed: boolean;
@@ -42,9 +43,7 @@ export function BottomChatPanel({
                 className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 收起
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />
-                </svg>
+                <ChevronUp className="size-3.5" />
               </button>
             </div>
           )}

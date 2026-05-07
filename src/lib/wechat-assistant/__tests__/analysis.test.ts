@@ -129,4 +129,80 @@ describe('buildWeChatAssistantAnalysis', () => {
     ]);
     expect(analysis.contentInsights.channelSuggestions[0].nextAction).toContain('改写');
   });
+
+  test('keeps visible analysis fields free of internal ids', () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const snapshot: WeChatSnapshot = {
+      sessions: [
+        {
+          wxid: '45434442516@chatroom',
+          display: '45434442516@chatroom',
+          unread_count: 1,
+          last_timestamp: nowSeconds,
+          is_group: true,
+        },
+        {
+          wxid: '25984985930267888@openim',
+          display: '25984985930267888@openim',
+          unread_count: 0,
+          last_timestamp: nowSeconds - 60,
+        },
+      ],
+      messages: [
+        {
+          wxid: '45434442516@chatroom',
+          display: '45434442516@chatroom',
+          isGroup: true,
+          ts: nowSeconds,
+          sender: 'them',
+          type: 1,
+          content: '25984985930267888@openim: 麻烦今天确认合同付款',
+        },
+        {
+          wxid: '25984985930267888@openim',
+          display: '25984985930267888@openim',
+          isGroup: false,
+          ts: nowSeconds - 60,
+          sender: 'me',
+          type: 1,
+          content: '25984985930267888@openim: 我明天发方案',
+        },
+      ],
+      sessionsScanned: 2,
+      messagesScanned: 2,
+      totalReadableMessages: 2,
+      selectedReadableMessages: 2,
+      messagesTruncated: false,
+      scanScope: 'all_readable_wechat_messages',
+      safetyLimit: 50000,
+    };
+
+    const analysis = buildWeChatAssistantAnalysis(snapshot);
+    const displayed = JSON.stringify({
+      summary: analysis.summary,
+      metrics: analysis.metrics,
+      highlights: analysis.highlights.map((item) => ({
+        title: item.title,
+        description: item.description,
+        display: item.display,
+      })),
+      todos: analysis.todos.map((item) => ({ text: item.text, display: item.display })),
+      topConversations: analysis.topConversations.map((item) => item.display),
+      contentInsights: {
+        topics: analysis.contentInsights.topics.map((topic) => ({
+          examples: topic.examples,
+          sources: topic.sources.map((source) => source.display),
+        })),
+        relationships: analysis.contentInsights.relationshipSignals.map((signal) => ({
+          contacts: signal.contacts.map((contact) => contact.display),
+        })),
+      },
+    });
+
+    expect(displayed).toContain('微信群聊');
+    expect(displayed).toContain('微信联系人');
+    expect(displayed).not.toContain('@openim');
+    expect(displayed).not.toContain('@chatroom');
+    expect(displayed).not.toContain('45434442516');
+  });
 });

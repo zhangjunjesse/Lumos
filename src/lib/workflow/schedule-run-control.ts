@@ -11,17 +11,23 @@ import {
 import { getDb } from '@/lib/db/connection';
 import { cancelRunningRunSteps } from '@/lib/db/schedule-run-steps';
 import { cancelWorkflow } from '@/lib/workflow/api';
+import { getWorkflowProjection } from '@/lib/workflow/projection';
 
 export interface CancelScheduleRunResult {
   runId: string | null;
   workflowId: string | null;
   cancelled: boolean;
+  resolved: boolean;
   message: string;
 }
 
 export interface CancelRunningScheduleRunsResult {
   cancelledRuns: CancelScheduleRunResult[];
+  unresolvedRuns: CancelScheduleRunResult[];
+  allResolved: boolean;
 }
+
+const TERMINAL_WORKFLOW_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function resolveWorkflowRunId(run: ScheduleRunRecord): string | null {
   return run.sessionId ? getWorkflowExecutionId(run.sessionId) : null;
@@ -32,6 +38,42 @@ function disableOneTimeScheduleAfterCancellation(scheduleId: string): void {
   if (schedule?.runMode === 'once' && schedule.enabled) {
     updateScheduledWorkflow(scheduleId, { enabled: false });
   }
+}
+
+function isWorkflowCancellationResolved(workflowId: string): boolean {
+  const projection = getWorkflowProjection(workflowId);
+  return !projection || TERMINAL_WORKFLOW_STATUSES.has(projection.status);
+}
+
+function createCancelRunningResult(
+  cancelledRuns: CancelScheduleRunResult[],
+): CancelRunningScheduleRunsResult {
+  const unresolvedRuns = cancelledRuns.filter((result) => !result.resolved);
+  return {
+    cancelledRuns,
+    unresolvedRuns,
+    allResolved: unresolvedRuns.length === 0,
+  };
+}
+
+export function assertScheduleCancellationResolved(
+  result: CancelRunningScheduleRunsResult,
+  actionLabel = '继续操作',
+): void {
+  const unresolvedRuns = Array.isArray(result.unresolvedRuns)
+    ? result.unresolvedRuns
+    : result.cancelledRuns.filter((item) => !item.resolved);
+  if (result.allResolved || unresolvedRuns.length === 0) return;
+  const messages = Array.from(new Set(
+    unresolvedRuns
+      .map((item) => item.message.trim())
+      .filter(Boolean),
+  )).slice(0, 2);
+  throw new Error([
+    `${actionLabel}前还有 ${unresolvedRuns.length} 个运行中的执行未确认停止`,
+    messages.length > 0 ? `原因：${messages.join('；')}` : '',
+    '请稍后重试，避免页面已删除但底层仍在运行。',
+  ].filter(Boolean).join('。'));
 }
 
 function findRunningWorkflowIdsForSchedule(scheduleId: string): string[] {
@@ -76,19 +118,25 @@ async function cancelWorkflowIds(
   for (const workflowId of Array.from(new Set(workflowIds))) {
     try {
       const cancelled = await cancelWorkflow(workflowId);
+      const resolved = cancelled || isWorkflowCancellationResolved(workflowId);
       results.push({
         runId,
         workflowId,
         cancelled,
+        resolved,
         message: cancelled
           ? '已向 workflow engine 发送取消请求'
-          : '底层执行已不在可取消状态',
+          : resolved
+            ? '底层执行已不在可取消状态'
+            : '底层执行仍在运行，取消请求未生效',
       });
     } catch (error) {
+      const resolved = isWorkflowCancellationResolved(workflowId);
       results.push({
         runId,
         workflowId,
         cancelled: false,
+        resolved,
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -110,6 +158,7 @@ export async function cancelScheduleRun(
       runId,
       workflowId: null,
       cancelled: false,
+      resolved: false,
       message: '执行记录不存在',
     };
   }
@@ -119,6 +168,7 @@ export async function cancelScheduleRun(
       runId,
       workflowId: resolveWorkflowRunId(run),
       cancelled: false,
+      resolved: true,
       message: '执行记录已经结束',
     };
   }
@@ -145,6 +195,9 @@ export async function cancelScheduleRun(
     runId: run.id,
     workflowId: firstWorkflowResult?.workflowId ?? workflowId,
     cancelled: workflowResults.some((result) => result.cancelled),
+    resolved: workflowResults.length > 0
+      ? workflowResults.every((result) => result.resolved)
+      : true,
     message: workflowResults.length > 0
       ? workflowResults.map((result) => result.message).join('; ')
       : '执行记录已标记为取消；未找到关联的 workflowRunId',
@@ -181,5 +234,5 @@ export async function cancelRunningScheduleRuns(
     disableOneTimeScheduleAfterCancellation(scheduleId);
   }
 
-  return { cancelledRuns };
+  return createCancelRunningResult(cancelledRuns);
 }

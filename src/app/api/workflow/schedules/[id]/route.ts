@@ -7,7 +7,10 @@ import {
 } from '@/lib/db/scheduled-workflows';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
-import { cancelRunningScheduleRuns } from '@/lib/workflow/schedule-run-control';
+import {
+  assertScheduleCancellationResolved,
+  cancelRunningScheduleRuns,
+} from '@/lib/workflow/schedule-run-control';
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
@@ -86,24 +89,30 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const cancelResult = existing.enabled && input.enabled === false
       ? await cancelRunningScheduleRuns(id, '任务已关闭，停止执行中的工作流')
       : undefined;
+    if (cancelResult) {
+      assertScheduleCancellationResolved(cancelResult, '关闭任务');
+    }
     return NextResponse.json({ schedule, ...(cancelResult ? { cancelResult } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update schedule';
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = message.includes('未确认停止') ? 409 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
 export async function DELETE(_request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    await cancelRunningScheduleRuns(id, '任务已删除，停止执行中的工作流', {
+    const cancelResult = await cancelRunningScheduleRuns(id, '任务已删除，停止执行中的工作流', {
       updateScheduleSummary: false,
     });
+    assertScheduleCancellationResolved(cancelResult, '删除任务');
     const deleted = deleteScheduledWorkflow(id);
     if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete schedule';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes('未确认停止') ? 409 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

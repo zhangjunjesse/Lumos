@@ -4,6 +4,10 @@ import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { createLumosButlerMcpServer, LUMOS_BUTLER_MCP_SYSTEM_HINT } from '@/lib/tools/lumos-butler-mcp-server';
 import { validateSession } from '@/lib/auth/session';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
+import {
+  createWeChatAssistantMcpServer,
+  WECHAT_ASSISTANT_MCP_SYSTEM_HINT,
+} from '@/lib/tools/wechat-assistant-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
@@ -36,6 +40,7 @@ import { linkMessageMemory } from '@/lib/db/message-memories';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
+import { isWeChatAssistantChatSession } from '@/lib/chat/wechat-assistant-session';
 import { normalizeMainAgentConversationHistoryForTeamRuntime } from '@/lib/chat/team-runtime-history';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import {
@@ -1050,6 +1055,9 @@ export async function POST(request: NextRequest) {
     if (permissionMode !== 'default' && hasImToolsMcp(loadedMcpServers)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IM_TOOLS_SYSTEM_HINT;
     }
+    if (permissionMode !== 'default' && isWeChatAssistantChatSession(session)) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + WECHAT_ASSISTANT_MCP_SYSTEM_HINT;
+    }
     if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
       const selectedBrowserLabel = matchedBrowserContext
@@ -1125,6 +1133,10 @@ export async function POST(request: NextRequest) {
     if (isWorkflowChatSession(session) && !browserAutomationIntent) {
       const workflowMcp = createWorkflowMcpServer();
       inProcessMcpServers[workflowMcp.name] = workflowMcp;
+    }
+    if (isWeChatAssistantChatSession(session) && !browserAutomationIntent) {
+      const wechatAssistantMcp = createWeChatAssistantMcpServer();
+      inProcessMcpServers[wechatAssistantMcp.name] = wechatAssistantMcp;
     }
 
     const claudeStream = streamClaude({

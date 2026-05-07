@@ -1,4 +1,5 @@
 import { buildWeChatPortrait, type WeChatPortrait } from './portrait';
+import { displayWechatName, safeSanitizedWechatText } from './wechat-text';
 
 export type { WeChatPortrait } from './portrait';
 
@@ -17,6 +18,8 @@ export interface WeChatSnapshotMessage {
   isGroup: boolean;
   ts: number;
   sender: 'me' | 'them';
+  senderWxid?: string | null;
+  senderDisplay?: string | null;
   type: number;
   content: string;
 }
@@ -278,12 +281,14 @@ const TENSION_KEYWORDS = ['问题', '不行', '失败', '风险', '投诉', '麻
 export function buildWeChatAssistantAnalysis(snapshot: WeChatSnapshot): WeChatAssistantAnalysis {
   const now = Date.now();
   const todayStart = startOfTodaySeconds();
+  const sessions = snapshot.sessions.map(sanitizeSnapshotSession);
   const usefulMessages = snapshot.messages
+    .map(sanitizeSnapshotMessage)
     .filter((message) => message.content.trim() && message.type !== 10000 && message.type !== 10002)
     .sort((a, b) => b.ts - a.ts);
   const todayMessages = usefulMessages.filter((message) => message.ts >= todayStart);
   const receivedToday = todayMessages.filter((message) => message.sender === 'them');
-  const unreadSessions = snapshot.sessions.filter((session) => (session.unread_count ?? 0) > 0).length;
+  const unreadSessions = sessions.filter((session) => (session.unread_count ?? 0) > 0).length;
   const activeMap = new Map<string, {
     wxid: string;
     display: string;
@@ -293,7 +298,7 @@ export function buildWeChatAssistantAnalysis(snapshot: WeChatSnapshot): WeChatAs
     isGroup: boolean;
   }>();
 
-  for (const session of snapshot.sessions) {
+  for (const session of sessions) {
     activeMap.set(session.wxid, {
       wxid: session.wxid,
       display: session.display,
@@ -878,4 +883,26 @@ function isContentTextMessage(message: WeChatSnapshotMessage): boolean {
 function cleanMessage(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim();
   return normalized.length > 120 ? `${normalized.slice(0, 120)}...` : normalized;
+}
+
+function sanitizeSnapshotSession(session: WeChatSnapshotSession): WeChatSnapshotSession {
+  return {
+    ...session,
+    display: displayChatName(session.display, session.wxid),
+  };
+}
+
+function sanitizeSnapshotMessage(message: WeChatSnapshotMessage): WeChatSnapshotMessage {
+  return {
+    ...message,
+    display: displayChatName(message.display, message.wxid),
+    content: safeSanitizedWechatText(message.content, ''),
+  };
+}
+
+function displayChatName(display: string | null | undefined, wxid: string): string {
+  return displayWechatName(display, wxid, {
+    groupFallback: '微信群聊',
+    contactFallback: '微信联系人',
+  });
 }

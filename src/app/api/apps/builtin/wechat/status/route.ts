@@ -29,7 +29,7 @@ export async function GET() {
         platform: process.platform,
         ready: false,
         phase: 'unsupported',
-        message: '微信消息读取 Demo 目前先支持 macOS 本机微信。Windows 后续补齐。',
+        message: '当前版本先支持 macOS 本机微信消息读取，Windows 支持后续补齐。',
       },
       im: {
         configured: imConfigured,
