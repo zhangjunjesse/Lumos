@@ -388,7 +388,7 @@ export interface ProviderResponse {
   provider: ApiProvider;
 }
 
-export type ProviderPresetModule = 'chat' | 'knowledge' | 'workflow' | 'image';
+export type ProviderPresetModule = 'chat' | 'knowledge' | 'agent' | 'image';
 
 export interface ProviderPreset {
   id: string;

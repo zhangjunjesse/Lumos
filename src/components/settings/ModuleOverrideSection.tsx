@@ -140,7 +140,7 @@ export function ModuleOverrideSection() {
         <CardHeader>
           <CardTitle className="text-base font-semibold">其他 AI 对话服务</CardTitle>
           <p className="text-sm text-muted-foreground">
-            为知识库选择 AI 服务。不设置则统一使用上方的对话服务。
+            为知识库、Workflow Agent 等模块单独选择 AI 服务。不设置则统一使用上方的对话服务。
           </p>
         </CardHeader>
         <CardContent className="space-y-4">

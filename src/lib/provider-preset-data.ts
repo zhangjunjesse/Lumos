@@ -62,7 +62,7 @@ const LUMOS_CLOUD_PRESET: ProviderPreset = {
   auth_mode: 'api_key',
   base_url: 'http://api.miki.zj.cn',
   tags: ['主聊天', 'Agent', 'Lumos Cloud'],
-  supported_modules: ['chat', 'workflow'],
+  supported_modules: ['chat', 'agent'],
   default_models: LUMOS_CLOUD_MODELS,
 };
 
@@ -82,7 +82,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://api.anthropic.com',
     tags: ['主聊天', 'Agent', 'Claude'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
   },
   {
     id: 'claude-local-auth',
@@ -95,7 +95,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'local_auth',
     base_url: 'https://api.anthropic.com',
     tags: ['主聊天', 'Agent', 'Claude'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
   },
   {
     id: 'bedrock-claude',
@@ -109,7 +109,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     base_url: '',
     notes: '请填写 Bedrock 的区域端点 URL，如 https://bedrock-runtime.us-east-1.amazonaws.com。',
     tags: ['主聊天', 'Agent', 'AWS'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     requires_base_url: true,
   },
   {
@@ -124,7 +124,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     base_url: '',
     notes: '请填写 Vertex AI 端点 URL，如 https://us-east5-aiplatform.googleapis.com。',
     tags: ['主聊天', 'Agent', 'GCP'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     requires_base_url: true,
   },
   {
@@ -139,7 +139,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     base_url: '',
     notes: '请填写可兼容 Anthropic Messages 协议的 base URL。',
     tags: ['主聊天', '兼容端点'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     requires_base_url: true,
   },
 
@@ -156,7 +156,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://api.xiaomimimo.com/anthropic',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: XIAOMI_MODELS,
   },
   {
@@ -170,7 +170,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://api.deepseek.com/anthropic',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: DEEPSEEK_AGENT_MODELS,
   },
   {
@@ -184,7 +184,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://open.bigmodel.cn/api/anthropic',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: ZHIPU_AGENT_MODELS,
   },
   {
@@ -198,7 +198,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://api.hunyuan.cloud.tencent.com/anthropic',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: HUNYUAN_AGENT_MODELS,
   },
   {
@@ -213,7 +213,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     base_url: 'https://api.minimaxi.com/anthropic',
     notes: '国内端点 api.minimaxi.com；国际端点 api.minimax.io/anthropic。',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: MINIMAX_AGENT_MODELS,
   },
   {
@@ -227,7 +227,7 @@ const AGENT_CHAT_PRESETS: ProviderPreset[] = [
     auth_mode: 'api_key',
     base_url: 'https://ark.cn-beijing.volces.com/api/coding',
     tags: ['主聊天', 'Agent', '国产'],
-    supported_modules: ['chat', 'workflow'],
+    supported_modules: ['chat', 'agent'],
     default_models: DOUBAO_AGENT_MODELS,
   },
 ];

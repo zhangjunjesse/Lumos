@@ -7,7 +7,7 @@ import { canUseCustomProvider } from '@/lib/edition-runtime';
 import { customProviderCapFor } from '@/lib/auth/custom-provider-capabilities';
 import type { ApiProvider, ProviderCapability } from '@/types';
 
-export type ProviderModuleKey = 'chat' | 'knowledge' | 'workflow' | 'image';
+export type ProviderModuleKey = 'chat' | 'knowledge' | 'agent' | 'image';
 
 export class ProviderResolutionError extends Error {
   constructor(message: string) {

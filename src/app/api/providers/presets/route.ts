@@ -23,8 +23,8 @@ function normalizeModule(raw: string | null): ProviderPresetModule | null {
       return 'chat';
     case 'knowledge':
       return 'knowledge';
-    case 'workflow':
-      return 'workflow';
+    case 'agent':
+      return 'agent';
     case 'image':
       return 'image';
     default:

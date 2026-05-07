@@ -1191,10 +1191,10 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   let preferredProviderId = definition.preferredProviderId;
   let agentDefaultModel: string | undefined;
   if (!preferredProviderId) {
-    const pinnedProviderId = (getSetting('agent_default_provider_id') || '').trim();
+    const pinnedProviderId = (getSetting('provider_override:agent') || '').trim();
     if (pinnedProviderId) {
       preferredProviderId = pinnedProviderId;
-      agentDefaultModel = (getSetting('agent_default_model') || '').trim() || undefined;
+      agentDefaultModel = (getSetting('model_override:agent') || '').trim() || undefined;
     }
   }
   const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(

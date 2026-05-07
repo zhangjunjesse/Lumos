@@ -21,10 +21,11 @@ export interface ProviderOption {
 
 export type ModelOverrideKey =
   | 'model_override:knowledge'
+  | 'model_override:agent'
   | 'model_override:image';
 
 export interface ModuleConfig {
-  key: 'provider_override:knowledge' | 'provider_override:image';
+  key: 'provider_override:knowledge' | 'provider_override:agent' | 'provider_override:image';
   modelKey: ModelOverrideKey;
   moduleKey: ProviderPresetModule;
   label: string;
@@ -50,6 +51,17 @@ export const TEXT_MODULE_CONFIGS: ModuleConfig[] = [
     emptyValueLabel: '使用默认',
     emptyHint: '未指定时，使用上方「AI 对话」中的服务。',
     createTitle: '为知识库添加服务',
+  },
+  {
+    key: 'provider_override:agent',
+    modelKey: 'model_override:agent',
+    moduleKey: 'agent',
+    label: 'Workflow Agent',
+    description: 'Workflow agent 步骤未显式指定时使用的 AI 服务。覆盖右上角的对话服务商。',
+    capability: 'agent-chat',
+    emptyValueLabel: '使用默认',
+    emptyHint: '未指定时，沿用上方「AI 对话」中当前选中的服务。',
+    createTitle: '为 Workflow Agent 添加服务',
   },
 ];
 

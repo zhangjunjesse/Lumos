@@ -41,11 +41,11 @@ const ALLOWED_KEYS = [
   'memory_intelligence_idle_timeout_ms',
   'memory_intelligence_last_run_at',
   'provider_override:knowledge',
+  'provider_override:agent',
   'provider_override:image',
   'model_override:knowledge',
+  'model_override:agent',
   'model_override:image',
-  'agent_default_provider_id',
-  'agent_default_model',
   'claude_project_settings_enabled',
   'locale',
   'deepsearch.archive_mode',
@@ -69,10 +69,10 @@ const PROVIDER_SETTING_RULES: Partial<Record<string, {
     capability: 'image-gen',
     label: '图片模块服务商',
   },
-  agent_default_provider_id: {
-    moduleKey: 'chat',
+  'provider_override:agent': {
+    moduleKey: 'agent',
     capability: 'agent-chat',
-    label: 'Workflow Agent 默认服务商',
+    label: 'Workflow Agent 服务商',
   },
   memory_intelligence_provider_id: {
     moduleKey: 'knowledge',
