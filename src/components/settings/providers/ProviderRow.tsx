@@ -50,11 +50,12 @@ export function ProviderRow({
   const localAuth = isLocalAuthAnthropic(config);
   const authBadge = getLocalAuthBadge(localAuthStatus);
   const system = isSystemProvider(config);
-  // system provider 永远本地只读(provisioner 下发,改了也会被覆盖)
+  // system provider 的连接配置(base_url / api_key / model_catalog)由
+  // provisioner 下发,本地改会被同步覆盖 → 编辑/删除按钮锁。
   const canModify = !readOnly && !system;
-  // 默认模型字段也跟随只读策略：system / readOnly 时只展示，不允许改。
-  // 改也会被云端 provisioner 同步覆盖，徒劳。
-  const canEditDefaultModel = canModify && meta.models.length > 0;
+  // default_model 是用户偏好(我用这个服务商时默认用哪个模型),不是 admin
+  // 配置范畴。provisioner 不写这一列,所以 system 服务商也允许 user 设。
+  const canEditDefaultModel = !readOnly && meta.models.length > 0;
 
   const wrapperClass = isActive
     ? 'rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 transition-all'
@@ -101,9 +102,9 @@ export function ProviderRow({
                 onChange={(e) => onSetDefaultModel(e.target.value)}
                 disabled={!canEditDefaultModel || savingDefaultModel}
                 className="h-7 max-w-[260px] flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary/30"
-                title={system ? '系统服务商默认模型由管理员配置' : '新会话和工作流 agent 未指定模型时使用'}
+                title="新会话和 workflow agent 没显式选择时,用这个模型。留空 = 按模型列表里第一个走。"
               >
-                <option value="">未指定（由客户端选择）</option>
+                <option value="">不指定（用列表第一个）</option>
                 {meta.models.map((m) => (
                   <option key={m.value} value={m.value}>{m.label || m.value}</option>
                 ))}

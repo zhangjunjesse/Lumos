@@ -57,10 +57,17 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
 
     if (existing.provider_origin === 'system') {
-      return NextResponse.json<ErrorResponse>(
-        { error: '系统下发的服务商不可修改，如需调整请联系管理员在后台更新' },
-        { status: 409 }
-      );
+      // system 服务商的连接配置由管理员下发,本地修改会被同步覆盖。
+      // 但 default_model 是用户偏好(默认用哪个模型),user 可以自由设定,
+      // 不会被 provisioner 覆盖——provisioner 不写这一列。
+      const fieldsTouched = Object.keys(body).filter((k) => body[k as keyof UpdateProviderRequest] !== undefined);
+      const onlyDefaultModel = fieldsTouched.length === 1 && fieldsTouched[0] === 'default_model';
+      if (!onlyDefaultModel) {
+        return NextResponse.json<ErrorResponse>(
+          { error: '系统下发的服务商连接信息不可修改，如需调整请联系管理员在后台更新' },
+          { status: 409 }
+        );
+      }
     }
 
     // If api_key starts with ***, the client sent back a masked value — don't update it
