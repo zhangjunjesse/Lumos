@@ -14,6 +14,7 @@ const CLAUDE_AUTH_ENV_KEYS = [
  */
 const UPSTREAM_CHANNEL_ENV_KEY = 'LUMOS_UPSTREAM_CHANNEL_ID';
 const NEWAPI_SPECIFIC_CHANNEL_HEADER = 'Specific-Channel-Id';
+const ADMIN_DEFAULT_MODEL_ENV_KEY = 'LUMOS_DEFAULT_MODEL';
 
 export type ClaudeAuthEnvKey = typeof CLAUDE_AUTH_ENV_KEYS[number];
 export type AnthropicProvider = ApiProvider & {
@@ -69,6 +70,37 @@ export function getUpstreamChannelIdFromExtraEnv(
 ): string | null {
   const raw = (extraEnv[UPSTREAM_CHANNEL_ENV_KEY] || '').trim();
   return raw.length > 0 ? raw : null;
+}
+
+/**
+ * Pull the admin-configured default model from a system provider's extra_env.
+ * Provisioner writes it under LUMOS_DEFAULT_MODEL. Empty string means the
+ * admin didn't set one — caller should fall back to model_catalog[0].
+ */
+export function getAdminDefaultModelFromExtraEnv(
+  extraEnv: Record<string, string>,
+): string {
+  return (extraEnv[ADMIN_DEFAULT_MODEL_ENV_KEY] || '').trim();
+}
+
+/**
+ * Effective default model for a provider in priority order:
+ *   1. user-set api_providers.default_model column (UI override)
+ *   2. admin-set extra_env.LUMOS_DEFAULT_MODEL (provisioner sync)
+ *   3. empty (let consumer fall back to catalog[0])
+ *
+ * UI shows the admin value when the user hasn't overridden it; consumer
+ * code (chat route, workflow subagent) uses this same precedence so what
+ * the user sees in 设置 → 服务商 matches what runs.
+ */
+export function getProviderEffectiveDefaultModel(
+  provider: { default_model?: string; extra_env?: string } | null | undefined,
+): string {
+  if (!provider) return '';
+  const userOverride = (provider.default_model || '').trim();
+  if (userOverride) return userOverride;
+  const env = parseProviderExtraEnv(provider.extra_env);
+  return getAdminDefaultModelFromExtraEnv(env);
 }
 
 /**

@@ -6,6 +6,7 @@ import path from 'path';
 import { resolveProviderApiKey } from '@/lib/provider-model-discovery';
 import { getSession, addMessage, getSetting } from '@/lib/db';
 import { getDefaultProvider, getProvider } from '@/lib/db/providers';
+import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
 import type { ApiProvider } from '@/types';
 import type {
   AgentExecutionBindingV1,
@@ -1201,14 +1202,14 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
     preferredProviderId,
   );
   // Model priority: DSL `model` > preset preferredModel > runtime-context
-  // request > the workflow-agent default (only when its provider was the
-  // one we picked above) > the chosen provider's own default_model (set per
-  // provider in the AI 对话 list).
+  // request > pinned agent default (only when its provider was the one we
+  // picked above) > the chosen provider's effective default model (user
+  // override > admin-synced value).
   const requestedModel = input.model
     || definition.preferredModel
     || runtimeContext.requestedModel
     || agentDefaultModel
-    || workflowProvider?.default_model
+    || getProviderEffectiveDefaultModel(workflowProvider)
     || undefined;
   const resolvedModel = resolveProviderModelForRequest(workflowProvider, requestedModel);
   const worker = new StageWorker(executionMode === 'claude');

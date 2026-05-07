@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Check, Edit2, Loader2, Trash2 } from 'lucide-react';
 import { getProviderModelCatalogMeta } from '@/lib/model-metadata';
+import { getAdminDefaultModelFromExtraEnv } from '@/lib/claude/provider-env';
 import {
   getModelCatalogSourceLabel,
   isLocalAuthAnthropic,
@@ -53,9 +54,15 @@ export function ProviderRow({
   // system provider 的连接配置(base_url / api_key / model_catalog)由
   // provisioner 下发,本地改会被同步覆盖 → 编辑/删除按钮锁。
   const canModify = !readOnly && !system;
-  // default_model 是用户偏好(我用这个服务商时默认用哪个模型),不是 admin
-  // 配置范畴。provisioner 不写这一列,所以 system 服务商也允许 user 设。
+  // default_model 是用户偏好,user 选了立刻覆盖 admin 设的;留空 = 跟随
+  // admin 下发的(从 extra_env.LUMOS_DEFAULT_MODEL 读)。
   const canEditDefaultModel = !readOnly && meta.models.length > 0;
+  const adminDefaultModel = getAdminDefaultModelFromExtraEnv(
+    (() => { try { return JSON.parse(config.extra_env || '{}'); } catch { return {}; } })(),
+  );
+  const adminDefaultLabel = adminDefaultModel
+    ? meta.models.find((m) => m.value === adminDefaultModel)?.label || adminDefaultModel
+    : '';
 
   const wrapperClass = isActive
     ? 'rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 transition-all'
@@ -102,9 +109,13 @@ export function ProviderRow({
                 onChange={(e) => onSetDefaultModel(e.target.value)}
                 disabled={!canEditDefaultModel || savingDefaultModel}
                 className="h-7 max-w-[260px] flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary/30"
-                title="新会话和 workflow agent 没显式选择时,用这个模型。留空 = 按模型列表里第一个走。"
+                title="新会话和 workflow agent 没显式选择时用这个模型。留空 = 跟随管理员下发的默认。"
               >
-                <option value="">不指定（用列表第一个）</option>
+                <option value="">
+                  {adminDefaultLabel
+                    ? `跟随管理员（${adminDefaultLabel}）`
+                    : '不指定（用列表第一个）'}
+                </option>
                 {meta.models.map((m) => (
                   <option key={m.value} value={m.value}>{m.label || m.value}</option>
                 ))}

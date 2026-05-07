@@ -855,13 +855,14 @@ export async function POST(request: NextRequest) {
       updateSessionProviderId(session_id, effectiveProviderId);
     }
 
-    // Determine model: explicit request override > session memory >
-    // resolved provider's default_model (configured in 设置 → 服务商 → AI 对话)
-    // > legacy global default_model setting.
+    // Model fallback: explicit request > session memory > provider's effective
+    // default (user override beats admin-synced value, see
+    // getProviderEffectiveDefaultModel) > legacy global default_model setting.
+    const { getProviderEffectiveDefaultModel } = await import('@/lib/claude/provider-env');
     const effectiveModel = model
       || session.requested_model
       || session.model
-      || resolvedProvider.default_model
+      || getProviderEffectiveDefaultModel(resolvedProvider)
       || getSetting('default_model')
       || undefined;
 

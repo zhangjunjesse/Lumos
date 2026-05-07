@@ -15,6 +15,10 @@ export interface SavedConfig {
   model_catalog_updated_at: string | null;
   is_active: number;
   default_model: string;
+  /** Cloud-provisioner stuffs admin-side defaults (LUMOS_DEFAULT_MODEL,
+   *  LUMOS_UPSTREAM_CHANNEL_ID, ...) into this JSON blob. UI reads it to
+   *  show the admin-default model when the user hasn't overridden it. */
+  extra_env: string;
   created_at: string;
   updated_at: string;
 }
