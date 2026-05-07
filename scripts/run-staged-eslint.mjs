@@ -31,6 +31,6 @@ console.log(`[hooks] Linting ${stagedFiles.length} staged file(s)`);
 
 execFileSync(
   npmCommand,
-  ['run', 'lint', '--', '--max-warnings=0', ...stagedFiles],
+  ['run', 'lint', '--', '--max-warnings=0', '--no-warn-ignored', ...stagedFiles],
   { cwd: repoRoot, stdio: 'inherit' },
 );

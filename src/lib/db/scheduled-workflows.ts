@@ -66,6 +66,7 @@ export interface CreateScheduledWorkflowInput {
   browserContextId?: string;
   notifyOnComplete?: boolean;
   runParams?: Record<string, unknown>;
+  nextRunAt?: string | null;
 }
 
 export type UpdateScheduledWorkflowInput = Partial<{
@@ -76,6 +77,7 @@ export type UpdateScheduledWorkflowInput = Partial<{
   intervalMinutes: number;
   scheduleTime: string | null;
   scheduleDayOfWeek: number | null;
+  nextRunAt: string | null;
   workingDirectory: string;
   browserContextId: string;
   enabled: boolean;
@@ -217,7 +219,7 @@ export function createScheduledWorkflow(
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const runMode: RunMode = input.runMode || 'scheduled';
-  const nextRunAt = runMode === 'once' ? now : computeNextRunAt(input);
+  const nextRunAt = input.nextRunAt || (runMode === 'once' ? now : computeNextRunAt(input));
 
   db.prepare(`
     INSERT INTO scheduled_workflows
@@ -259,12 +261,18 @@ export function updateScheduledWorkflow(
   const intervalMinutes = input.intervalMinutes ?? existing.intervalMinutes;
   const scheduleTime = input.scheduleTime !== undefined ? input.scheduleTime : existing.scheduleTime;
   const scheduleDayOfWeek = input.scheduleDayOfWeek !== undefined ? input.scheduleDayOfWeek : existing.scheduleDayOfWeek;
+  const runMode = input.runMode ?? existing.runMode;
   const timingChanged = input.intervalMinutes !== undefined
     || input.scheduleTime !== undefined
     || input.scheduleDayOfWeek !== undefined;
-  const nextRunAt = timingChanged
-    ? computeNextRunAt({ intervalMinutes, scheduleTime, scheduleDayOfWeek })
-    : existing.nextRunAt;
+  const explicitNextRunAt = Object.prototype.hasOwnProperty.call(input, 'nextRunAt');
+  const nextRunAt = explicitNextRunAt
+    ? input.nextRunAt ?? null
+    : timingChanged
+      ? runMode === 'once'
+        ? (existing.runMode === 'once' ? existing.nextRunAt : new Date().toISOString())
+        : computeNextRunAt({ intervalMinutes, scheduleTime, scheduleDayOfWeek })
+      : existing.nextRunAt;
 
   db.prepare(`
     UPDATE scheduled_workflows SET
@@ -287,7 +295,7 @@ export function updateScheduledWorkflow(
     input.name ?? existing.name,
     input.workflowDsl ? JSON.stringify(input.workflowDsl) : JSON.stringify(existing.workflowDsl),
     input.workflowId !== undefined ? input.workflowId : existing.workflowId,
-    input.runMode ?? existing.runMode,
+    runMode,
     intervalMinutes,
     scheduleTime || null,
     scheduleDayOfWeek ?? null,
@@ -309,6 +317,11 @@ export function advanceScheduleTimer(id: string): void {
   if (!hasTable()) return;
   const schedule = getScheduledWorkflow(id);
   if (!schedule) return;
+  if (schedule.runMode === 'once') {
+    getDb().prepare('UPDATE scheduled_workflows SET enabled = 0, next_run_at = NULL WHERE id = ?')
+      .run(id);
+    return;
+  }
   getDb().prepare('UPDATE scheduled_workflows SET next_run_at = ? WHERE id = ?')
     .run(computeNextRunAt(schedule), id);
 }
@@ -324,7 +337,7 @@ export function recordScheduleRun(
   if (!schedule) return;
 
   const now = new Date().toISOString();
-  const nextRunAt = computeNextRunAt(schedule);
+  const nextRunAt = schedule.runMode === 'once' ? null : computeNextRunAt(schedule);
 
   db.prepare(`
     UPDATE scheduled_workflows SET

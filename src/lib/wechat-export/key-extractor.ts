@@ -111,8 +111,9 @@ export async function extractKeys(
   }
   let py: string | null = null;
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.PYTHONIOENCODING = 'utf-8';
+  env.PYTHONIOENCODING = 'utf-8:backslashreplace';
   env.PYTHONUTF8 = '1';
+  env.PYTHONUNBUFFERED = '1';
   const args = [scriptPath, '--pid', String(pid)];
 
   if (platform === 'darwin') {

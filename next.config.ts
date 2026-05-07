@@ -67,6 +67,7 @@ function createConfig(phase: string): NextConfig {
       'onnxruntime-web',
       'onnxruntime-common',
       'openworkflow',
+      'esbuild',
     ],
     env: {
       NEXT_PUBLIC_APP_VERSION: pkg.version,

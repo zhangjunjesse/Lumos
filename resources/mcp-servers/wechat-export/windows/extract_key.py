@@ -57,6 +57,35 @@ KEY_MODULE_PATH_HINTS = ("wechat", "weixin", "tencent")
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 
+def configure_stdio() -> None:
+    """Avoid GBK stdio crashes when Windows paths, nicknames, or messages contain emoji."""
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if not stream:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+
+configure_stdio()
+
+
+def safe_stream_write(stream, text: str) -> None:
+    try:
+        stream.write(text)
+        stream.flush()
+    except UnicodeEncodeError:
+        buffer = getattr(stream, "buffer", None)
+        if buffer:
+            buffer.write(text.encode("utf-8", errors="backslashreplace"))
+            buffer.flush()
+        else:
+            stream.write(text.encode("ascii", errors="backslashreplace").decode("ascii"))
+            stream.flush()
+
+
 class PROCESSENTRY32(ctypes.Structure):
     _fields_ = [
         ("dwSize", wt.DWORD),
@@ -129,7 +158,7 @@ CloseHandle.restype = wt.BOOL
 
 
 def log(message: str) -> None:
-    print(message, flush=True)
+    safe_stream_write(sys.stdout, f"{message}\n")
 
 
 def wechat_process_names() -> set[str]:
@@ -780,7 +809,7 @@ def main() -> int:
         log(f"[+] done keys={count}")
         return 0
     except Exception as err:  # noqa: BLE001
-        print(f"[ERROR] {err}", file=sys.stderr, flush=True)
+        safe_stream_write(sys.stderr, f"[ERROR] {err}\n")
         return 1
 
 

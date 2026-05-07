@@ -20,6 +20,8 @@ import { startApprovalTimeoutSweeper, stopApprovalTimeoutSweeper } from '@/lib/w
 import { taskEventBus } from '@/lib/task-event-bus';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
+import { updateArchivedWeChatAutomationReportStatus } from '@/lib/wechat-assistant/report-archive';
+import { runDueTopicExtractions } from '@/lib/wechat-assistant/topic-extractor';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -59,6 +61,9 @@ async function runTick(): Promise<void> {
       recordScheduleRun(schedule.id, 'error', msg);
     });
   }
+  runDueTopicExtractions().catch((error: unknown) => {
+    console.warn('[wechat-assistant] daily topic extraction tick failed:', error);
+  });
 }
 
 async function runSchedule(
@@ -70,6 +75,7 @@ async function runSchedule(
   if (!artifact.validation.valid) {
     const err = artifact.validation.errors.join('; ');
     recordScheduleRun(schedule.id, 'error', `DSL invalid: ${err}`);
+    disableOneTimeSchedule(schedule);
     emitNotification(schedule, 'error', `工作流 DSL 无效: ${err}`);
     return;
   }
@@ -84,6 +90,7 @@ async function runSchedule(
     const runId = insertRunHistory(schedule.id, null, schedule.workflowDsl, browserContextId);
     recordScheduleRun(schedule.id, 'error', msg);
     updateRunHistory(runId, 'error', msg);
+    disableOneTimeSchedule(schedule);
     emitNotification(schedule, 'error', msg);
     return;
   }
@@ -116,10 +123,8 @@ async function runSchedule(
 
         recordScheduleRun(schedule.id, finalStatus, errorMsg);
         updateRunHistory(runId, finalStatus, errorMsg || undefined);
-        // Disable one-time tasks after execution
-        if (schedule.runMode === 'once') {
-          updateScheduledWorkflow(schedule.id, { enabled: false });
-        }
+        updateArchivedWeChatAutomationReportStatus(runId, finalStatus, errorMsg);
+        disableOneTimeSchedule(schedule);
         if (finalStatus === 'success') {
           if (schedule.notifyOnComplete) emitNotification(schedule, 'success');
         } else {
@@ -130,9 +135,8 @@ async function runSchedule(
         const msg = event.error.message || '工作流执行失败';
         recordScheduleRun(schedule.id, 'error', msg);
         updateRunHistory(runId, 'error', msg);
-        if (schedule.runMode === 'once') {
-          updateScheduledWorkflow(schedule.id, { enabled: false });
-        }
+        updateArchivedWeChatAutomationReportStatus(runId, 'error', msg);
+        disableOneTimeSchedule(schedule);
         emitNotification(schedule, 'error', msg);
       },
     });
@@ -141,6 +145,8 @@ async function runSchedule(
       const err = (result.errors || []).join('; ');
       recordScheduleRun(schedule.id, 'error', err);
       updateRunHistory(runId, 'error', err);
+      updateArchivedWeChatAutomationReportStatus(runId, 'error', err);
+      disableOneTimeSchedule(schedule);
       emitNotification(schedule, 'error', `工作流提交失败: ${err}`);
     }
     // 注意：不再在这里标记 success —— 交给 onCompleted 回调
@@ -148,6 +154,8 @@ async function runSchedule(
     const msg = err instanceof Error ? err.message : String(err);
     recordScheduleRun(schedule.id, 'error', msg);
     updateRunHistory(runId, 'error', msg);
+    updateArchivedWeChatAutomationReportStatus(runId, 'error', msg);
+    disableOneTimeSchedule(schedule);
     emitNotification(schedule, 'error', msg);
   }
 }
@@ -220,4 +228,9 @@ function emitNotification(
   } catch {
     // Non-fatal
   }
+}
+
+function disableOneTimeSchedule(schedule: ScheduledWorkflow): void {
+  if (schedule.runMode !== 'once') return;
+  updateScheduledWorkflow(schedule.id, { enabled: false, nextRunAt: null });
 }

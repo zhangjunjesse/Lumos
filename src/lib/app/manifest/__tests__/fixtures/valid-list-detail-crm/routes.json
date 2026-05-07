@@ -1,0 +1,7 @@
+{
+  "menu": [
+    { "id": "customers", "label": "客户", "icon": "users", "page": "pages/customers.json" },
+    { "id": "settings", "label": "设置", "icon": "settings", "page": "pages/settings.json" }
+  ],
+  "default": "customers"
+}

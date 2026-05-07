@@ -96,6 +96,7 @@ interface MessageInputProps {
   onKnowledgeOptionsChange?: (options: ChatKnowledgeOptions) => void;
   onInputFocus?: () => void;
   fullWidth?: boolean;
+  providerModelsEndpoint?: string;
 }
 
 interface PopoverItem {
@@ -398,6 +399,7 @@ export function MessageInput({
   onKnowledgeOptionsChange,
   onInputFocus,
   fullWidth = false,
+  providerModelsEndpoint = '/api/providers/models',
 }: MessageInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -445,19 +447,20 @@ export function MessageInput({
 
   // Fetch provider groups from API
   const fetchProviderModels = useCallback(() => {
-    fetch('/api/providers/models')
+    fetch(providerModelsEndpoint)
       .then((r) => r.json())
       .then((data) => {
-        setProviderGroups(data.groups || []);
-        setDefaultProviderId(data.default_provider_id || '');
-        setDefaultModel(data.default_model || '');
+        const providerModels = data.providerModels || data;
+        setProviderGroups(providerModels.groups || []);
+        setDefaultProviderId(providerModels.default_provider_id || '');
+        setDefaultModel(providerModels.default_model || '');
       })
       .catch(() => {
         setProviderGroups([]);
         setDefaultProviderId('');
         setDefaultModel('');
       });
-  }, []);
+  }, [providerModelsEndpoint]);
 
   // Load models on mount and listen for provider changes
   useEffect(() => {

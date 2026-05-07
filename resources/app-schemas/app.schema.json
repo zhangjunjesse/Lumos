@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumos.io/schemas/app.v1.json",
+  "title": "Lumos App Manifest",
+  "description": "app.json — root manifest for a Lumos application package (.lumos-app)",
+  "type": "object",
+  "required": ["id", "name", "version", "icon", "entry"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$",
+      "description": "Globally unique app id, kebab-case, 3-64 chars"
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[\\w.]+)?(\\+[\\w.]+)?$",
+      "description": "Semantic version"
+    },
+    "description": { "type": "string", "maxLength": 500 },
+    "author": { "type": "string", "maxLength": 128 },
+    "icon": {
+      "type": "string",
+      "pattern": "^\\./.+\\.png$",
+      "description": "Relative path to a 512x512 PNG icon"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["office", "creative", "data", "communication", "research", "developer", "lifestyle", "other"]
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "maxLength": 32 }
+    },
+
+    "entry": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Default route id (must match a routes.json menu item)"
+    },
+
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lumos": {
+          "type": "string",
+          "pattern": "^>=\\d+\\.\\d+\\.\\d+$",
+          "description": "Minimum Lumos version, e.g. >=1.0.0"
+        },
+        "mcp": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+          "description": "Required MCP server ids; must exist on host at install"
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["bash", "python", "file", "web-fetch"] },
+          "uniqueItems": true
+        },
+        "llm": {
+          "type": "string",
+          "enum": ["chat", "reasoning", "fast"]
+        },
+        "knowledge": {
+          "type": "string",
+          "enum": ["required", "optional", "none"],
+          "default": "none"
+        },
+        "agentTeams": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" }
+        },
+        "browser": { "type": "boolean", "default": false },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" }
+        }
+      }
+    },
+
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/fsPath" },
+              "uniqueItems": true
+            },
+            "write": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/fsPath" },
+              "uniqueItems": true
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["disabled", "whitelist"] },
+            "domains": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/domain" },
+              "uniqueItems": true
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": { "mode": { "const": "whitelist" } },
+                "required": ["mode"]
+              },
+              "then": {
+                "type": "object",
+                "required": ["domains"],
+                "properties": { "domains": { "type": "array", "minItems": 1 } }
+              }
+            }
+          ]
+        },
+        "data": {
+          "type": "string",
+          "enum": ["isolated", "shared"],
+          "default": "isolated",
+          "description": "v1 enforces 'isolated'; 'shared' is reserved for v3+"
+        },
+        "system": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["notification", "schedule", "clipboard"] },
+          "uniqueItems": true
+        }
+      }
+    },
+
+    "config": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/configItem" }
+    },
+
+    "triggers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/trigger" }
+    }
+  },
+
+  "$defs": {
+    "fsPath": {
+      "type": "string",
+      "description": "Absolute or ~/-prefixed path; no '..' segments; supports {id} placeholder",
+      "pattern": "^(~/|/)[^*?<>|]+$",
+      "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+    },
+    "domain": {
+      "type": "string",
+      "description": "Hostname only; no scheme, no port, no path, no wildcards",
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$",
+      "maxLength": 253
+    },
+    "configItem": {
+      "type": "object",
+      "required": ["key", "label", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "label": { "type": "string", "maxLength": 64 },
+        "type": {
+          "type": "string",
+          "enum": ["string", "textarea", "number", "boolean", "select", "secret", "file", "knowledge-collection"]
+        },
+        "required": { "type": "boolean", "default": false },
+        "secret": { "type": "boolean", "default": false },
+        "default": {},
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "value": { "type": ["string", "number", "boolean"] },
+              "label": { "type": "string" }
+            }
+          }
+        },
+        "description": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "manual" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "cron", "workflow"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "schedule" },
+            "cron": {
+              "type": "string",
+              "description": "5-field cron expression"
+            },
+            "workflow": { "type": "string", "minLength": 1 },
+            "input": { "type": "object" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "event", "workflow"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "event" },
+            "event": { "type": "string", "minLength": 1 },
+            "workflow": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

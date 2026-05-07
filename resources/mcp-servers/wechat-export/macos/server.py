@@ -10,7 +10,26 @@ import subprocess
 import time
 from datetime import datetime
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ModuleNotFoundError:
+    class FastMCP:  # type: ignore[no-redef]
+        """Small import-time fallback for api.py, which only reuses helpers."""
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def tool(self, *args, **_kwargs):
+            if args and callable(args[0]):
+                return args[0]
+
+            def decorator(fn):
+                return fn
+
+            return decorator
+
+        def run(self):
+            raise RuntimeError("Python package 'mcp' is required to run the MCP server")
 
 # Local helpers — zstd decode, self-wxid resolution, per-db sender lookup.
 # Lives next to this file (vendored alongside cocohahaha sources).

@@ -34,6 +34,36 @@ V3_RESERVED = 48
 V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
 
+
+def configure_stdio() -> None:
+    """Windows defaults to GBK in many packaged runs; WeChat data may contain emoji."""
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if not stream:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+
+configure_stdio()
+
+
+def safe_stream_write(stream, text: str) -> None:
+    try:
+        stream.write(text)
+        stream.flush()
+    except UnicodeEncodeError:
+        buffer = getattr(stream, "buffer", None)
+        if buffer:
+            buffer.write(text.encode("utf-8", errors="backslashreplace"))
+            buffer.flush()
+        else:
+            stream.write(text.encode("ascii", errors="backslashreplace").decode("ascii"))
+            stream.flush()
+
+
 CACHE_DIR = os.path.dirname(
     os.environ.get(
         "LUMOS_WECHAT_EXPORT_KEY_FILE",
@@ -715,17 +745,17 @@ def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError as err:
-        sys.stderr.write(f"invalid json: {err}\n")
+        safe_stream_write(sys.stderr, f"invalid json: {err}\n")
         return 1
     op = payload.get("op")
     if op not in OPS:
-        sys.stderr.write(f"unknown op: {op!r}\n")
+        safe_stream_write(sys.stderr, f"unknown op: {op!r}\n")
         return 1
     try:
-        sys.stdout.write(json.dumps(OPS[op](payload.get("args") or {}), ensure_ascii=False))
+        safe_stream_write(sys.stdout, json.dumps(OPS[op](payload.get("args") or {}), ensure_ascii=True))
         return 0
     except Exception as err:  # noqa: BLE001
-        sys.stderr.write(f"{type(err).__name__}: {err}\n")
+        safe_stream_write(sys.stderr, f"{type(err).__name__}: {err}\n")
         return 1
 
 

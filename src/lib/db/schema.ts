@@ -3,6 +3,8 @@ import { migrateCoreTables } from './migrations';
 import { migrateGoofishTables } from './migrations-goofish';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
+import { migrateAppTables } from './migrations-app';
+import { migrateWeChatAssistantTables } from './migrations-wechat-assistant';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
 function isBuildPhase(): boolean {
@@ -218,7 +220,9 @@ export function initDb(db: Database.Database): void {
     migrateCoreTables(db);
     migrateLumosTables(db);
     migrateSyncTables(db);
+    migrateAppTables(db);
     migrateGoofishTables(db);
+    migrateWeChatAssistantTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {

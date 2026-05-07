@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumos.io/schemas/app-data-schema.v1.json",
+  "title": "Lumos App Data Schema",
+  "description": "data-schema.json — declarative data collections for an app",
+  "type": "object",
+  "required": ["collections"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "collections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/collection" }
+    }
+  },
+
+  "$defs": {
+    "collection": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "description": "Collection name; used as namespace in {{ db.<name> }} bindings"
+        },
+        "label": { "type": "string", "maxLength": 64 },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/field" }
+        },
+        "indexes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": { "type": "string" },
+            "description": "Composite index by field names"
+          }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "uuid",
+            "string",
+            "text",
+            "number",
+            "integer",
+            "boolean",
+            "enum",
+            "date",
+            "datetime",
+            "json",
+            "ref"
+          ]
+        },
+        "label": { "type": "string", "maxLength": 64 },
+        "primary": { "type": "boolean", "default": false },
+        "required": { "type": "boolean", "default": false },
+        "indexed": { "type": "boolean", "default": false },
+        "unique": { "type": "boolean", "default": false },
+        "default": {},
+        "auto": {
+          "type": "string",
+          "enum": ["uuid", "now"],
+          "description": "Auto-fill on create"
+        },
+        "options": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Enum values; required when type='enum'"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "description": "Target collection name; required when type='ref'"
+        },
+        "description": { "type": "string", "maxLength": 256 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "enum" } } },
+          "then": {
+            "required": ["options"],
+            "properties": { "options": { "minItems": 1 } }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ref" } } },
+          "then": { "required": ["ref"] }
+        }
+      ]
+    }
+  }
+}

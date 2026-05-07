@@ -37,6 +37,7 @@ export interface StreamTextParams {
   /** Multi-turn messages. Use this OR `prompt`, not both. */
   messages?: ChatMessage[];
   maxTokens?: number;
+  temperature?: number;
   abortSignal?: AbortSignal;
   requestMetadata?: LumosLlmRequestMetadata;
 }
@@ -48,6 +49,7 @@ export interface GenerateObjectParams<T> {
   prompt: string;
   schema: ZodType<T>;
   maxTokens?: number;
+  temperature?: number;
   abortSignal?: AbortSignal;
   requestMetadata?: LumosLlmRequestMetadata;
 }
@@ -195,6 +197,7 @@ export async function* streamTextFromProvider(params: StreamTextParams): AsyncIt
       system: params.system,
       ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
       maxOutputTokens: params.maxTokens || 4096,
+      ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
       abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
     });
 
@@ -242,6 +245,7 @@ export async function generateTextFromProvider(params: StreamTextParams): Promis
       system: params.system,
       ...(params.messages ? { messages: params.messages } : { prompt: params.prompt! }),
       maxOutputTokens: params.maxTokens || 4096,
+      ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
       abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
     });
 
@@ -284,6 +288,7 @@ export async function generateObjectFromProvider<T>(params: GenerateObjectParams
       prompt: params.prompt,
       schema: params.schema,
       maxOutputTokens: params.maxTokens || 4096,
+      ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
       providerOptions: getObjectGenerationProviderOptions(provider),
       abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
     });
@@ -307,23 +312,14 @@ export async function generateObjectFromProvider<T>(params: GenerateObjectParams
 }
 
 /**
- * Try generateObject first; if the provider returns 400 (no structured output support),
+ * Try generateObject first; if the provider cannot produce a valid structured object,
  * fall back to plain text generation with manual JSON extraction and Zod validation.
  */
 export async function generateObjectWithFallback<T>(params: GenerateObjectParams<T>): Promise<T> {
   try {
     return await generateObjectFromProvider(params);
   } catch (error) {
-    const is400 = error instanceof Error && (
-      error.message.toLowerCase().includes('bad request')
-      || error.message.includes('400')
-      || (
-        'statusCode' in error
-        && typeof (error as unknown as { statusCode: unknown }).statusCode === 'number'
-        && (error as unknown as { statusCode: number }).statusCode === 400
-      )
-    );
-    if (!is400) throw error;
+    if (!shouldFallbackToTextObjectGeneration(error)) throw error;
   }
 
   // Fallback: plain text → JSON extraction → Zod parse
@@ -334,15 +330,92 @@ export async function generateObjectWithFallback<T>(params: GenerateObjectParams
     system: fallbackSystem,
     prompt: params.prompt,
     maxTokens: params.maxTokens,
+    temperature: params.temperature,
     abortSignal: params.abortSignal,
     requestMetadata: params.requestMetadata,
   });
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
+  const jsonText = extractJsonObjectText(text);
+  if (!jsonText) {
     throw new Error('Model response did not contain a JSON object (text fallback)');
   }
 
-  const parsed: unknown = JSON.parse(jsonMatch[0]);
+  const parsed: unknown = JSON.parse(jsonText);
   return params.schema.parse(parsed);
+}
+
+function shouldFallbackToTextObjectGeneration(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  const statusCode =
+    'statusCode' in error && typeof (error as unknown as { statusCode: unknown }).statusCode === 'number'
+      ? (error as unknown as { statusCode: number }).statusCode
+      : undefined;
+  const name = 'name' in error && typeof error.name === 'string' ? error.name : '';
+
+  return (
+    statusCode === 400
+    || message.includes('bad request')
+    || message.includes('400')
+    || name === 'AI_NoObjectGeneratedError'
+    || message.includes('no object generated')
+    || message.includes('response did not match schema')
+    || message.includes('could not parse the response')
+  );
+}
+
+function extractJsonObjectText(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim();
+  if (fenced?.startsWith('{')) return fenced;
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
+
+  return findFirstBalancedJsonObject(trimmed);
+}
+
+function findFirstBalancedJsonObject(text: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (start === -1) {
+      if (char === '{') {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
 }

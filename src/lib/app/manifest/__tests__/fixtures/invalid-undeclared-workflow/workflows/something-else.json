@@ -1,0 +1,5 @@
+{
+  "id": "something-else",
+  "version": 2,
+  "steps": [{ "id": "noop", "type": "agent" }]
+}

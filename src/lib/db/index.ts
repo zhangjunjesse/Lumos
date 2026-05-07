@@ -2,6 +2,7 @@ export { getDb, closeDb, dataDir, DB_PATH } from './connection';
 export { initDb } from './schema';
 export { migrateCoreTables } from './migrations';
 export { migrateLumosTables } from './migrations-lumos';
+export { migrateAppTables } from './migrations-app';
 export {
   listDeepSearchSites,
   getDeepSearchSite,

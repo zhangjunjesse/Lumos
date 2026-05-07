@@ -1,5 +1,6 @@
 const streamTextMock = jest.fn();
 const generateTextMock = jest.fn();
+const generateObjectMock = jest.fn();
 const createAnthropicMock = jest.fn();
 const createOpenAIMock = jest.fn();
 const getProviderMock = jest.fn();
@@ -7,7 +8,7 @@ const getProviderMock = jest.fn();
 jest.mock('ai', () => ({
   streamText: (...args: unknown[]) => streamTextMock(...args),
   generateText: (...args: unknown[]) => generateTextMock(...args),
-  generateObject: jest.fn(),
+  generateObject: (...args: unknown[]) => generateObjectMock(...args),
 }));
 
 jest.mock('@ai-sdk/anthropic', () => ({
@@ -22,8 +23,34 @@ jest.mock('@/lib/db', () => ({
   getProvider: (...args: unknown[]) => getProviderMock(...args),
 }));
 
-import { generateTextFromProvider } from '@/lib/text-generator';
+import { z } from 'zod';
+import { generateObjectWithFallback, generateTextFromProvider } from '@/lib/text-generator';
 import { clearAllLlmProviderCircuitsForTest } from '@/lib/llm-circuit-breaker';
+
+function mockOpenAiTextProvider() {
+  getProviderMock.mockReturnValue({
+    id: 'provider-openai',
+    name: 'OpenAI Compat',
+    provider_type: 'openai',
+    api_protocol: 'openai-compatible',
+    capabilities: '["text-gen"]',
+    provider_origin: 'custom',
+    auth_mode: 'api_key',
+    base_url: 'https://api.example.com/v1',
+    api_key: 'sk-test',
+    is_active: 1,
+    sort_order: 0,
+    extra_env: '{}',
+    model_catalog: '[]',
+    model_catalog_source: 'default',
+    model_catalog_updated_at: null,
+    notes: '',
+    is_builtin: 0,
+    user_modified: 0,
+    created_at: '2026-03-25 00:00:00',
+    updated_at: '2026-03-25 00:00:00',
+  });
+}
 
 describe('text-generator', () => {
   beforeEach(() => {
@@ -35,6 +62,7 @@ describe('text-generator', () => {
       })(),
     });
     generateTextMock.mockResolvedValue({ text: 'ok' });
+    generateObjectMock.mockResolvedValue({ object: { ok: true } });
     createAnthropicMock.mockReturnValue((modelId: string) => ({ provider: 'anthropic', modelId }));
     createOpenAIMock.mockReturnValue((modelId: string) => ({ provider: 'openai', modelId }));
   });
@@ -71,12 +99,16 @@ describe('text-generator', () => {
       model: 'claude-haiku-4-5',
       system: '',
       prompt: 'hello',
+      temperature: 0.4,
     })).resolves.toBe('ok');
 
     expect(createAnthropicMock).toHaveBeenCalledWith({
       apiKey: 'sk-extra',
       baseURL: 'https://proxy.example.com/anthropic/v1',
     });
+    expect(generateTextMock).toHaveBeenCalledWith(expect.objectContaining({
+      temperature: 0.4,
+    }));
   });
 
   test('maps requested model onto provider catalog before creating the language model', async () => {
@@ -225,5 +257,43 @@ describe('text-generator', () => {
         'X-Lumos-Session-Id': 'session-001',
       },
     }));
+  });
+
+  test('falls back to text JSON when structured object validation fails', async () => {
+    mockOpenAiTextProvider();
+    generateObjectMock.mockRejectedValueOnce(
+      Object.assign(new Error('No object generated: response did not match schema.'), {
+        name: 'AI_NoObjectGeneratedError',
+      }),
+    );
+    generateTextMock.mockResolvedValueOnce({
+      text: '```json\n{"ok":true}\n```',
+    });
+
+    await expect(generateObjectWithFallback({
+      providerId: 'provider-openai',
+      model: 'model-a',
+      system: 'system',
+      prompt: 'prompt',
+      schema: z.object({ ok: z.boolean() }),
+    })).resolves.toEqual({ ok: true });
+
+    expect(generateObjectMock).toHaveBeenCalledTimes(1);
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not use text fallback for unrelated provider errors', async () => {
+    mockOpenAiTextProvider();
+    generateObjectMock.mockRejectedValueOnce(new Error('provider unavailable'));
+
+    await expect(generateObjectWithFallback({
+      providerId: 'provider-openai',
+      model: 'model-a',
+      system: 'system',
+      prompt: 'prompt',
+      schema: z.object({ ok: z.boolean() }),
+    })).rejects.toThrow('provider unavailable');
+
+    expect(generateTextMock).not.toHaveBeenCalled();
   });
 });

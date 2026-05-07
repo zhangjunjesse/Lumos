@@ -1,0 +1,18 @@
+{
+  "$schema": "https://lumos.io/schemas/app.v1.json",
+  "id": "mini-crm",
+  "name": "迷你 CRM",
+  "version": "0.1.0",
+  "description": "Mode 2 fixture: list-detail with data-schema",
+  "icon": "./icon.png",
+  "category": "office",
+  "entry": "customers",
+  "requires": { "lumos": ">=1.0.0", "llm": "chat" },
+  "permissions": {
+    "network": { "mode": "disabled" },
+    "data": "isolated"
+  },
+  "config": [
+    { "key": "default_status", "label": "默认状态", "type": "string", "default": "active" }
+  ]
+}

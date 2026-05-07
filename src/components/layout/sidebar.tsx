@@ -27,6 +27,7 @@ import {
   MagicWandIcon,
   AlarmClockIcon,
   UserGroup02Icon,
+  AppStoreIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -164,6 +165,13 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
               active={isActive(item.href)}
             />
           ))}
+          <SidebarNavItem
+            icon={AppStoreIcon}
+            label="应用"
+            href="/apps"
+            expanded={expanded}
+            active={isActive("/apps")}
+          />
         </nav>
 
         {/* Secondary nav - only show if not empty */}

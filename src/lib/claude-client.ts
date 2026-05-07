@@ -702,6 +702,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             || toolName.startsWith('mcp__lumos-image__')
             || toolName.startsWith('mcp__lumos-butler__')
             || toolName.startsWith('mcp__lumos-knowledge__')
+            || toolName.startsWith('mcp__lumos-wechat-assistant__')
             || toolName.startsWith('mcp__wechat-export__')
             || toolName.startsWith('mcp__chrome-devtools__')
             || toolName.startsWith('mcp__chrome_devtools__')

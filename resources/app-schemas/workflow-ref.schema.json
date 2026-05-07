@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "title": "Lumos App Workflow Reference",
+  "description": "Minimal contract for workflow files inside an app package. The full workflow DSL (V3) is owned by src/lib/workflow/; this schema only validates the fields the app platform itself reads (id, name, description, inputs, outputs). Any other engine-specific fields (e.g. version, params, nodes, edges, spec, steps) pass through without app-platform validation — they're validated downstream by the workflow engine when the workflow runs.",
+  "type": "object",
+  "required": ["id"],
+  "additionalProperties": true,
+
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$",
+      "description": "Workflow id; referenced from page events as 'workflow:<id>' and from triggers as 'workflow'"
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "description": { "type": "string", "maxLength": 500 },
+    "inputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/inputDef" },
+      "description": "Input parameters; used by 'workflow promotion' to derive a form page"
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/outputDef" },
+      "description": "Output declaration; used to derive a result page renderer"
+    }
+  },
+
+  "$defs": {
+    "inputDef": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "label": { "type": "string", "maxLength": 64 },
+        "type": {
+          "type": "string",
+          "enum": ["string", "text", "number", "boolean", "select", "file", "date", "json"]
+        },
+        "required": { "type": "boolean", "default": false },
+        "default": {},
+        "options": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "description": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "outputDef": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "type": {
+          "type": "string",
+          "enum": ["string", "markdown", "json", "table", "file"]
+        },
+        "label": { "type": "string", "maxLength": 64 }
+      }
+    }
+  }
+}

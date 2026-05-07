@@ -53,6 +53,10 @@ export async function ensureVenv(): Promise<string> {
     return venvPython;
   }
 
+  if (fs.existsSync(VENV_DIR)) {
+    fs.rmSync(VENV_DIR, { recursive: true, force: true });
+  }
+
   const python = resolvePythonBinary();
   if (!python) {
     throw new Error('Python runtime not available. Cannot create virtual environment.');

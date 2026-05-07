@@ -102,6 +102,20 @@ describe('wechat/monitor: bodyFromItemList', () => {
 });
 
 describe('wechat/monitor: ingestMessage', () => {
+  test('does not print routine monitor logs to console by default', async () => {
+    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+    const m = makeMonitor();
+    m.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await m.stop();
+
+    const lines = infoSpy.mock.calls.map((call) => String(call[0] ?? ''));
+    expect(lines).toEqual([]);
+    expect(lines.some((line) => line.includes('POST getupdates'))).toBe(false);
+    expect(lines.some((line) => line.includes('msgs=0'))).toBe(false);
+    infoSpy.mockRestore();
+  });
+
   test('queues user text message', async () => {
     const m = makeMonitor();
     m.start();

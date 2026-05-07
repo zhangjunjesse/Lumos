@@ -59,9 +59,11 @@ export function TopBar() {
     || (pathname.startsWith("/chat/") ? "topbar.chat" : undefined);
   const breadcrumb = routeKey
     ? t(routeKey as Parameters<typeof t>[0])
-    : pathname.startsWith("/documents/")
-      ? t('topbar.document')
-      : pathname.slice(1);
+    : pathname === "/apps" || pathname.startsWith("/apps/")
+      ? "应用"
+      : pathname.startsWith("/documents/")
+        ? t('topbar.document')
+        : pathname.slice(1);
 
   const handleOpenWorkingDirectory = () => {
     if (!showWorkingDirectory) return;

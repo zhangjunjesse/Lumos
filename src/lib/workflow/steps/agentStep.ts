@@ -1,3 +1,5 @@
+import '@/lib/wechat-assistant/workflow-handlers';
+
 import { executeWorkflowAgentStep } from '../subagent';
 import type { AgentStepInput, StepResult } from '../types';
 

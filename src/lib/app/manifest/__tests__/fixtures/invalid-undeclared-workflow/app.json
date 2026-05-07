@@ -1,0 +1,7 @@
+{
+  "id": "undeclared-wf",
+  "name": "Undeclared workflow",
+  "version": "1.0.0",
+  "icon": "./icon.png",
+  "entry": "main"
+}

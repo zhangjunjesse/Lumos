@@ -22,9 +22,16 @@ import xml.etree.ElementTree as ET
 import csv
 import io
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import server  # noqa: E402  (sibling module)
-from message_decoder import _maybe_decompress, decode_content  # noqa: E402
+from message_decoder import (  # noqa: E402
+    _maybe_decompress,
+    decode_content,
+    extract_self_wxid,
+    get_my_sender_id_for_db,
+)
 
 CACHE_DIR = os.path.dirname(
     os.environ.get(
@@ -34,6 +41,7 @@ CACHE_DIR = os.path.dirname(
 )
 AVATAR_DIR = os.path.join(CACHE_DIR, "avatars")
 KEYS_JSON_PATH = os.path.join(CACHE_DIR, "wechat_keys.json")
+_SENDER_NAME2ID_CACHE: dict[str, dict[int, str]] = {}
 
 
 def _load_keys_json() -> dict:
@@ -362,6 +370,111 @@ def list_sessions(args: dict) -> dict:
     return {"items": items, "total": len(items)}
 
 
+def _display_for_wxid(wxid: str, contacts: dict) -> str:
+    info = contacts.get(wxid, {})
+    display = _display_name(wxid, info)
+    if not info and wxid.endswith("@chatroom"):
+        display = f"群聊({wxid.split('@')[0]})"
+    return display
+
+
+def _message_table_entries() -> list[tuple[str, str, str]]:
+    """Return all readable message tables as (db_path, table, wxid)."""
+    name2id = server._get_name2id()
+    entries: list[tuple[str, str, str]] = []
+    for db_path in server._get_message_dbs():
+        tables_raw = server._query_raw(
+            db_path, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%';"
+        )
+        for table in [t.strip() for t in tables_raw if t.strip().startswith("Msg_")]:
+            entries.append((db_path, table, name2id.get(table, table)))
+    return entries
+
+
+def _message_table_stats(db_path: str, table: str) -> dict:
+    rows = server._query(
+        db_path,
+        f"SELECT COUNT(*) AS count, MAX(create_time) AS last_timestamp "
+        f"FROM {table} WHERE message_content IS NOT NULL AND message_content != '';",
+    )
+    if not rows:
+        return {"count": 0, "last_timestamp": 0}
+    row = rows[0]
+    try:
+        count = int(row.get("count") or 0)
+    except (ValueError, TypeError):
+        count = 0
+    try:
+        last_timestamp = int(row.get("last_timestamp") or 0)
+    except (ValueError, TypeError):
+        last_timestamp = 0
+    return {"count": count, "last_timestamp": last_timestamp}
+
+
+def _sender_name2id_for_db(db_path: str) -> dict[int, str]:
+    cached = _SENDER_NAME2ID_CACHE.get(db_path)
+    if cached is not None:
+        return cached
+    mapping: dict[int, str] = {}
+    try:
+        for row in server._query(db_path, "SELECT rowid AS rowid, user_name FROM Name2Id;"):
+            try:
+                rowid = int(row.get("rowid") or 0)
+            except (TypeError, ValueError):
+                continue
+            user_name = (row.get("user_name") or "").strip()
+            if rowid > 0 and user_name:
+                mapping[rowid] = user_name
+    except Exception:  # noqa: BLE001
+        mapping = {}
+    _SENDER_NAME2ID_CACHE[db_path] = mapping
+    return mapping
+
+
+def _decode_snapshot_message(row: dict, db_path: str, wxid: str, display: str, is_group: bool, contacts: dict) -> dict | None:
+    create_time = row.get("create_time") or "0"
+    raw_type = row.get("local_type") or ""
+    try:
+        type_int = int(raw_type) if raw_type else 0
+    except (ValueError, TypeError):
+        type_int = 0
+    low_type = type_int & 0xFFFF
+    ts_int = int(create_time) if str(create_time).isdigit() else 0
+    if ts_int <= 0:
+        return None
+
+    content_raw = row.get("message_content", "") or ""
+    if low_type in (10000, 10002):
+        rendered = "[系统消息]"
+    else:
+        rendered = decode_content(type_int, content_raw)
+    content = (rendered or "").strip()
+    if not content:
+        return None
+
+    sender_id = row.get("real_sender_id", "")
+    is_me = server._is_my_message(sender_id, db_path)
+    sender_wxid = ""
+    try:
+        sender_rowid = int(sender_id) if sender_id not in (None, "") else 0
+    except (TypeError, ValueError):
+        sender_rowid = 0
+    if sender_rowid > 0:
+        sender_wxid = _sender_name2id_for_db(db_path).get(sender_rowid, "")
+    sender_display = "我" if is_me else (_display_for_wxid(sender_wxid, contacts) if sender_wxid else "")
+    return {
+        "wxid": wxid,
+        "display": display,
+        "is_group": is_group,
+        "ts": ts_int,
+        "sender": "me" if is_me else "them",
+        "sender_wxid": sender_wxid or "",
+        "sender_display": sender_display or "",
+        "type": low_type,
+        "content": content,
+    }
+
+
 def diagnostics(args: dict) -> dict:
     """Current WeChat message-db coverage for the repair UI."""
     diag = _message_db_diagnostics()
@@ -544,6 +657,398 @@ def read_chat(args: dict) -> dict:
     }
 
 
+def analyze_snapshot(args: dict) -> dict:
+    """Return a broad cross-session message snapshot for assistant analysis.
+
+    This is intentionally a single Python op so the desktop UI doesn't spawn
+    one Python process per chat while building the first analysis screen.
+    It scans all readable message tables by default, then applies a safety
+    cap to the returned messages until the product has a persistent index.
+    """
+    session_limit_raw = args.get("session_limit")
+    session_limit = int(session_limit_raw) if session_limit_raw not in (None, "", 0) else 0
+    if session_limit > 0:
+        session_limit = min(max(session_limit, 1), 1000)
+    per_session_limit = min(max(int(args.get("per_session_limit") or 0), 0), 2000)
+    max_messages = min(max(int(args.get("max_messages") or 50000), 100), 200000)
+    since_raw = args.get("since_timestamp")
+    try:
+        since_timestamp = int(since_raw) if since_raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        since_timestamp = 0
+    if since_timestamp < 0:
+        since_timestamp = 0
+
+    recent_sessions = list_sessions({"limit": max(session_limit, 1000)}).get("items") or []
+    session_meta = {
+        (session.get("wxid") or "").strip(): session
+        for session in recent_sessions
+        if (session.get("wxid") or "").strip()
+    }
+    contacts = server._load_contacts()
+    table_entries = _message_table_entries()
+    table_stats: list[dict] = []
+    total_readable_messages = 0
+
+    for db_path, table, wxid in table_entries:
+        stats = _message_table_stats(db_path, table)
+        count = int(stats.get("count") or 0)
+        total_readable_messages += count
+        if count <= 0:
+            continue
+        meta = session_meta.get(wxid) or {}
+        display = meta.get("display") or _display_for_wxid(wxid, contacts)
+        is_group = bool(meta.get("is_group")) or wxid.endswith("@chatroom")
+        table_stats.append({
+            "db_path": db_path,
+            "table": table,
+            "wxid": wxid,
+            "display": display,
+            "is_group": is_group,
+            "count": count,
+            "last_timestamp": int(stats.get("last_timestamp") or 0),
+            "unread_count": int(meta.get("unread_count") or 0),
+            "summary": meta.get("summary") or "",
+        })
+
+    table_stats.sort(key=lambda item: item["last_timestamp"], reverse=True)
+    if session_limit > 0:
+        table_stats = table_stats[:session_limit]
+
+    sessions = [{
+        "wxid": item["wxid"],
+        "display": item["display"],
+        "summary": item["summary"],
+        "last_timestamp": item["last_timestamp"],
+        "unread_count": item["unread_count"],
+        "is_group": item["is_group"],
+        "message_count": item["count"],
+    } for item in table_stats]
+
+    selected_total = sum(int(item["count"] or 0) for item in table_stats)
+    messages_remaining = max_messages
+    messages: list[dict] = []
+
+    for item in table_stats:
+        if messages_remaining <= 0:
+            break
+        count = int(item["count"] or 0)
+        if count <= 0:
+            continue
+        # Skip sessions whose latest message is older than the requested
+        # window — they cannot contribute any in-window rows.
+        if since_timestamp > 0 and int(item.get("last_timestamp") or 0) < since_timestamp:
+            continue
+        limit = min(messages_remaining, per_session_limit or count)
+        where_clause = "WHERE message_content IS NOT NULL AND message_content != ''"
+        if since_timestamp > 0:
+            where_clause += f" AND create_time >= {since_timestamp}"
+        rows = server._query(
+            item["db_path"],
+            f"SELECT local_id, create_time, local_type, real_sender_id, message_content "
+            f"FROM {item['table']} "
+            f"{where_clause} "
+            f"ORDER BY create_time DESC LIMIT {limit};",
+        )
+        messages_remaining -= len(rows)
+        for row in rows:
+            message = _decode_snapshot_message(
+                row,
+                item["db_path"],
+                item["wxid"],
+                item["display"],
+                bool(item["is_group"]),
+                contacts,
+            )
+            if message is None:
+                continue
+            messages.append(message)
+
+    messages.sort(key=lambda m: m.get("ts") or 0, reverse=True)
+    messages_truncated = selected_total > len(messages)
+    return {
+        "sessions": sessions,
+        "messages": messages,
+        "sessions_scanned": len(sessions),
+        "messages_scanned": len(messages),
+        "total_readable_messages": total_readable_messages,
+        "selected_readable_messages": selected_total,
+        "messages_truncated": messages_truncated,
+        "scan_scope": "all_readable_wechat_messages" if session_limit <= 0 else "limited_recent_sessions",
+        "safety_limit": max_messages,
+    }
+
+
+_EMIT_LOCK = threading.Lock()
+
+
+def _emit_jsonl(obj: dict) -> None:
+    """Stream a JSON record to stdout, one per line, flushing immediately.
+
+    Lock-protected so concurrent DB workers (ThreadPoolExecutor) can't
+    interleave halves of two records.
+    """
+    line = json.dumps(obj, ensure_ascii=False) + "\n"
+    with _EMIT_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+
+def _stream_db_messages(
+    db_path: str,
+    tables: list[str],
+    since_timestamp: int,
+    my_sender_id: int | None,
+    sender_rowid_map: dict[int, str],
+    name2id: dict[str, str],
+    contacts: dict,
+    session_meta: dict[str, dict],
+) -> int:
+    """Pull all in-window messages from one db in a SINGLE sqlcipher process.
+
+    The PBKDF2 key-derivation cost dominates per-process startup, so we
+    batch every Msg_ table SELECT into one stdin payload. Output is parsed
+    incrementally via csv.reader streaming over the subprocess stdout.
+    Returns the number of messages emitted.
+    """
+    key = server._key_for_db(db_path)
+    if not key:
+        return 0
+    sql_lines = [
+        f'PRAGMA key = "x\'{key}\'";',
+        "PRAGMA cipher_compatibility = 4;",
+        "PRAGMA cipher_page_size = 4096;",
+        ".headers off",
+        ".mode csv",
+    ]
+    where_extra = (
+        f" AND create_time >= {int(since_timestamp)}" if since_timestamp > 0 else ""
+    )
+    for tbl in tables:
+        sql_lines.append(
+            f"SELECT '{tbl}', local_id, create_time, local_type, real_sender_id, message_content "
+            f"FROM {tbl} "
+            f"WHERE message_content IS NOT NULL AND message_content != ''{where_extra} "
+            f"ORDER BY create_time DESC;"
+        )
+    sql_input = "\n".join(sql_lines) + "\n"
+
+    proc = subprocess.Popen(
+        [server.SQLCIPHER_PATH, db_path],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdin and proc.stdout and proc.stderr
+
+    proc.stdin.write(sql_input.encode("utf-8"))
+    proc.stdin.close()
+
+    text_stream = io.TextIOWrapper(
+        proc.stdout, encoding="utf-8", errors="surrogateescape", newline=""
+    )
+    reader = csv.reader(text_stream)
+    emitted = 0
+
+    try:
+        for row in reader:
+            if not row:
+                continue
+            if len(row) == 1 and row[0].strip() == "ok":
+                continue
+            if len(row) < 6:
+                continue
+            tbl_name = row[0]
+            wxid = name2id.get(tbl_name, tbl_name)
+            try:
+                create_time = int(row[2])
+            except (TypeError, ValueError):
+                continue
+            if create_time <= 0:
+                continue
+            try:
+                local_type = int(row[3]) if row[3] else 0
+            except (TypeError, ValueError):
+                local_type = 0
+            try:
+                sender_rowid = int(row[4]) if row[4] else None
+            except (TypeError, ValueError):
+                sender_rowid = None
+
+            low_type = local_type & 0xFFFF
+            # Decode strategy:
+            #   - text (1)        → decode (fast path for plain UTF-8)
+            #   - system (10000+) → fixed placeholder
+            #   - media (others)  → SKIP zstd/XML decode entirely; we only
+            #     need the count + type for overview metrics. The decode
+            #     tax (~1ms each × 200k rows) was the user-visible bottleneck.
+            if low_type == 1:
+                decoded = decode_content(local_type, row[5])
+                content = (decoded or "").strip()
+                if not content:
+                    continue  # broken text row — drop
+            elif low_type in (10000, 10002):
+                content = "[系统消息]"
+            else:
+                content = ""
+
+            is_me = my_sender_id is not None and sender_rowid == my_sender_id
+            sender_wxid = sender_rowid_map.get(sender_rowid) if sender_rowid is not None else ""
+            sender_display = "我" if is_me else (_display_for_wxid(sender_wxid, contacts) if sender_wxid else "")
+            # Per-msg JSON keeps only fields the mirror needs. wxid maps to
+            # display/is_group via the meta record emitted earlier.
+            _emit_jsonl({
+                "type": "msg",
+                "wxid": wxid,
+                "ts": create_time,
+                "sender": "me" if is_me else "them",
+                "sender_wxid": sender_wxid or "",
+                "sender_display": sender_display or "",
+                "msg_type": low_type,
+                "content": content,
+            })
+            emitted += 1
+    finally:
+        try:
+            proc.wait(timeout=600)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        if proc.returncode and proc.returncode != 0:
+            err_text = ""
+            try:
+                err_text = proc.stderr.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            sys.stderr.write(
+                f"[sync_stream] sqlcipher exit {proc.returncode} on {os.path.basename(db_path)}: {err_text.strip()[:500]}\n"
+            )
+    return emitted
+
+
+def sync_stream(args: dict) -> None:
+    """Streaming op: emit JSONL records straight to stdout.
+
+    Wire (line-by-line):
+        {"type":"meta","sessions":[…]}
+        {"type":"db_start","db":"message_0.db","tables":120}
+        {"type":"msg","wxid":…,"ts":…,…}     × N
+        {"type":"db_done","db":"message_0.db","messages":15234}
+        …
+        {"type":"done","cursor":<max ts seen>,"messages":<grand total>}
+
+    Args:
+        since_timestamp: unix seconds — only messages with create_time >= since.
+                         0 (default) means full historical sync.
+    """
+    since_raw = args.get("since_timestamp")
+    try:
+        since_timestamp = int(since_raw) if since_raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        since_timestamp = 0
+    if since_timestamp < 0:
+        since_timestamp = 0
+
+    t0 = time.monotonic()
+    sys.stderr.write(f"[sync_stream] start since={since_timestamp}\n")
+    sys.stderr.flush()
+
+    # Pull session metadata for as many chats as the user has.
+    # The earlier 1000 cap silently dropped messages from long-tail chats
+    # because compute filtered out wxids without a session entry.
+    sessions_data = list_sessions({"limit": 10000}).get("items") or []
+    contacts = server._load_contacts()
+    name2id = server._get_name2id()
+    session_meta = {(s.get("wxid") or "").strip(): s for s in sessions_data if s.get("wxid")}
+
+    _emit_jsonl({"type": "meta", "sessions": sessions_data})
+    sys.stderr.write(
+        f"[sync_stream] meta loaded ({len(sessions_data)} sessions) in {time.monotonic()-t0:.2f}s\n"
+    )
+    sys.stderr.flush()
+
+    db_paths = server._get_message_dbs()
+    max_ts_seen = since_timestamp
+    for s in sessions_data:
+        ts = int(s.get("last_timestamp") or 0)
+        if ts > max_ts_seen:
+            max_ts_seen = ts
+
+    def process_db(db_path: str) -> int:
+        db_basename = os.path.basename(db_path)
+        self_wxid = extract_self_wxid(db_path)
+        my_sender_id = None
+        if self_wxid:
+            try:
+                my_sender_id = get_my_sender_id_for_db(
+                    db_path, server.SQLCIPHER_PATH, server._key_for_db(db_path), self_wxid
+                )
+            except Exception as err:  # noqa: BLE001
+                sys.stderr.write(f"[sync_stream] {db_basename} my_sender lookup failed: {err}\n")
+
+        sender_rowid_map: dict[int, str] = {}
+        try:
+            for row in server._query(db_path, "SELECT rowid AS rowid, user_name FROM Name2Id;"):
+                try:
+                    rowid = int(row.get("rowid") or 0)
+                except (TypeError, ValueError):
+                    continue
+                user_name = (row.get("user_name") or "").strip()
+                if rowid > 0 and user_name:
+                    sender_rowid_map[rowid] = user_name
+        except Exception as err:  # noqa: BLE001
+            sys.stderr.write(f"[sync_stream] {db_basename} sender lookup failed: {err}\n")
+
+        try:
+            tables_raw = server._query_raw(
+                db_path,
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%';",
+            )
+        except Exception as err:  # noqa: BLE001
+            sys.stderr.write(f"[sync_stream] {db_basename} table list failed: {err}\n")
+            return 0
+        tables = [t.strip() for t in tables_raw if t.strip().startswith("Msg_")]
+
+        _emit_jsonl({"type": "db_start", "db": db_basename, "tables": len(tables)})
+        if not tables:
+            _emit_jsonl({"type": "db_done", "db": db_basename, "messages": 0})
+            return 0
+
+        emitted_for_db = _stream_db_messages(
+            db_path,
+            tables,
+            since_timestamp,
+            my_sender_id,
+            sender_rowid_map,
+            name2id,
+            contacts,
+            session_meta,
+        )
+        _emit_jsonl({"type": "db_done", "db": db_basename, "messages": emitted_for_db})
+        sys.stderr.write(
+            f"[sync_stream] {db_basename} → {emitted_for_db} msgs at {time.monotonic()-t0:.1f}s\n"
+        )
+        sys.stderr.flush()
+        return emitted_for_db
+
+    # Process message DBs in parallel — each gets its own sqlcipher process,
+    # so they're independent at the OS level. Python threads only handle CSV
+    # parse + emit, which the GIL serialises but doesn't actually block on
+    # since the heavy work is in the subprocess.
+    grand_total = 0
+    if db_paths:
+        worker_count = min(len(db_paths), 4)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            for emitted in pool.map(process_db, db_paths):
+                grand_total += emitted
+
+    _emit_jsonl({"type": "done", "cursor": max_ts_seen, "messages": grand_total})
+    sys.stderr.write(
+        f"[sync_stream] done total={grand_total} cursor={max_ts_seen} in {time.monotonic()-t0:.1f}s\n"
+    )
+    sys.stderr.flush()
+
+
 def resolve_image(args: dict) -> dict:
     """Return the absolute path of the image file for a (wxid, ts) pair.
 
@@ -585,10 +1090,16 @@ OPS = {
     "list_contacts": list_contacts,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
+    "analyze_snapshot": analyze_snapshot,
     "diagnostics": diagnostics,
     "resolve_image": resolve_image,
     "avatar": avatar,
+    "sync_stream": sync_stream,
 }
+
+# Streaming ops write JSONL straight to stdout themselves; main() must not
+# wrap their return value in a JSON envelope.
+STREAMING_OPS = {"sync_stream"}
 
 
 def main() -> int:
@@ -606,9 +1117,13 @@ def main() -> int:
     try:
         result = OPS[op](payload.get("args") or {})
     except Exception as err:  # noqa: BLE001  surface as JSON error
+        if op in STREAMING_OPS:
+            _emit_jsonl({"type": "error", "message": f"{type(err).__name__}: {err}"})
         sys.stderr.write(f"{type(err).__name__}: {err}\n")
         return 1
 
+    if op in STREAMING_OPS:
+        return 0
     sys.stdout.write(json.dumps(result, ensure_ascii=False))
     return 0
 

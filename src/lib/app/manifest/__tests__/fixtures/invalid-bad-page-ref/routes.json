@@ -1,0 +1,6 @@
+{
+  "menu": [
+    { "id": "home", "label": "Home", "page": "pages/missing.json" }
+  ],
+  "default": "home"
+}

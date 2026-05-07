@@ -1,0 +1,18 @@
+{
+  "$schema": "https://lumos.io/schemas/app.v1.json",
+  "id": "weekly-summary",
+  "name": "周报小工具",
+  "version": "1.0.0",
+  "description": "Mode 1 fixture: form → run workflow → render result",
+  "icon": "./icon.png",
+  "category": "office",
+  "entry": "main",
+  "requires": {
+    "lumos": ">=1.0.0",
+    "llm": "chat"
+  },
+  "permissions": {
+    "network": { "mode": "disabled" },
+    "data": "isolated"
+  }
+}

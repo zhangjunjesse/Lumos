@@ -29,7 +29,7 @@ import { executeCodeHandler, shouldExecuteCode } from './code-executor';
 import { getWorkflowExecutionRoleConfig } from './agent-config';
 import { sanitizeResolvedInput, writeStepInputSnapshot } from './step-input-snapshot';
 import { appendStepTraceFromSdkEvent, appendStepTraceMeta } from './step-trace-stream';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 function buildPromptCapabilitiesSystemPrompt(_tools?: unknown): string { return ''; }
 import { getWorkflowAgentPreset, type WorkflowAgentPreset } from '@/lib/db/workflow-agent-presets';
 import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
