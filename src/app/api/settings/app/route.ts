@@ -72,7 +72,7 @@ const PROVIDER_SETTING_RULES: Partial<Record<string, {
   'provider_override:agent': {
     moduleKey: 'agent',
     capability: 'agent-chat',
-    label: 'Workflow Agent 服务商',
+    label: '工作流服务商',
   },
   memory_intelligence_provider_id: {
     moduleKey: 'knowledge',
