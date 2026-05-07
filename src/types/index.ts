@@ -303,6 +303,9 @@ export interface ApiProvider {
   notes: string;
   is_builtin: number; // SQLite boolean: 0 or 1, only one provider can be 1
   user_modified: number; // SQLite boolean: 0 or 1, tracks if builtin provider was modified
+  /** Selected default model id from `model_catalog`. Empty means "no preference"
+   *  — falls through to whatever the consumer (chat UI / workflow agent) picks. */
+  default_model: string;
   created_at: string;
   updated_at: string;
 }
@@ -354,6 +357,7 @@ export interface CreateProviderRequest {
   model_catalog_source?: ProviderModelCatalogSource;
   model_catalog_updated_at?: string | null;
   notes?: string;
+  default_model?: string;
 }
 
 export interface UpdateProviderRequest {
@@ -372,6 +376,7 @@ export interface UpdateProviderRequest {
   notes?: string;
   sort_order?: number;
   is_active?: number;
+  default_model?: string;
 }
 
 export interface ProvidersResponse {

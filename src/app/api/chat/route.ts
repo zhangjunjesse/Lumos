@@ -809,15 +809,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Determine model: request override > session model > default setting
-    const effectiveModel = model || session.requested_model || session.model || getSetting('default_model') || undefined;
-
-    // Persist model and provider to session so usage stats can group by model+provider.
-    // This runs on every message but the DB writes are cheap (single UPDATE by PK).
-    if (effectiveModel && effectiveModel !== (session.requested_model || session.model)) {
-      updateSessionModel(session_id, effectiveModel);
-    }
-
     // Resolve provider: an explicit picker choice on this request overrides the
     // older session binding. This keeps the backend aligned with the chat UI
     // even if the "switch provider" PATCH and the send-message POST race.
@@ -862,6 +853,22 @@ export async function POST(request: NextRequest) {
       resolvedProviderId: effectiveProviderId,
     })) {
       updateSessionProviderId(session_id, effectiveProviderId);
+    }
+
+    // Determine model: explicit request override > session memory >
+    // resolved provider's default_model (configured in 设置 → 服务商 → AI 对话)
+    // > legacy global default_model setting.
+    const effectiveModel = model
+      || session.requested_model
+      || session.model
+      || resolvedProvider.default_model
+      || getSetting('default_model')
+      || undefined;
+
+    // Persist model to the session so usage stats can group by model+provider.
+    // Cheap single-row UPDATE; only writes when the resolved value drifts.
+    if (effectiveModel && effectiveModel !== (session.requested_model || session.model)) {
+      updateSessionModel(session_id, effectiveModel);
     }
 
     const sessionSystemPrompt = stripMainAgentSessionMarker(session.system_prompt || '');

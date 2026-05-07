@@ -18,16 +18,18 @@ interface ProviderRowProps {
   isActive: boolean;
   readOnly: boolean;
   switching: boolean;
+  savingDefaultModel: boolean;
   localAuthStatus: ClaudeLocalAuthStatus | undefined;
   onSwitch: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onSetDefaultModel: (model: string) => void;
 }
 
 function getMeta(config: SavedConfig) {
   const catalog = getProviderModelCatalogMeta(config);
   return {
-    count: catalog.models.length,
+    models: catalog.models,
     sourceLabel: getModelCatalogSourceLabel(catalog.source, catalog.usesDefault),
   };
 }
@@ -37,10 +39,12 @@ export function ProviderRow({
   isActive,
   readOnly,
   switching,
+  savingDefaultModel,
   localAuthStatus,
   onSwitch,
   onEdit,
   onDelete,
+  onSetDefaultModel,
 }: ProviderRowProps) {
   const meta = getMeta(config);
   const localAuth = isLocalAuthAnthropic(config);
@@ -48,6 +52,9 @@ export function ProviderRow({
   const system = isSystemProvider(config);
   // system provider 永远本地只读(provisioner 下发,改了也会被覆盖)
   const canModify = !readOnly && !system;
+  // 默认模型字段也跟随只读策略：system / readOnly 时只展示，不允许改。
+  // 改也会被云端 provisioner 同步覆盖，徒劳。
+  const canEditDefaultModel = canModify && meta.models.length > 0;
 
   const wrapperClass = isActive
     ? 'rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 transition-all'
@@ -84,8 +91,28 @@ export function ProviderRow({
                 {authBadge.label}
               </span>
             )}
-            <span>{meta.count} 个模型可用</span>
+            <span>{meta.models.length} 个模型可用</span>
           </div>
+          {meta.models.length > 0 && (
+            <div className="mt-2 flex items-center gap-2">
+              <label className="text-[11px] text-muted-foreground whitespace-nowrap">默认模型</label>
+              <select
+                value={config.default_model || ''}
+                onChange={(e) => onSetDefaultModel(e.target.value)}
+                disabled={!canEditDefaultModel || savingDefaultModel}
+                className="h-7 max-w-[260px] flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary/30"
+                title={system ? '系统服务商默认模型由管理员配置' : '新会话和工作流 agent 未指定模型时使用'}
+              >
+                <option value="">未指定（由客户端选择）</option>
+                {meta.models.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label || m.value}</option>
+                ))}
+              </select>
+              {savingDefaultModel && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {!isActive && (

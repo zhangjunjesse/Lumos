@@ -70,6 +70,7 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
 
   const [switching, setSwitching] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState('');
+  const [savingDefaultModelId, setSavingDefaultModelId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<SavedConfig | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavedConfig | null>(null);
@@ -82,6 +83,29 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
   );
   const activeConfig = filtered.find((c) => c.id === defaultId) || null;
   const inactiveConfigs = filtered.filter((c) => c.id !== activeConfig?.id);
+
+  const handleSetDefaultModel = useCallback(async (id: string, model: string) => {
+    setSavingDefaultModelId(id);
+    setSwitchError('');
+    try {
+      const res = await fetch(`/api/providers/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ default_model: model }),
+      });
+      if (res.ok) {
+        await fetchConfigs();
+        window.dispatchEvent(new Event('provider-changed'));
+      } else {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setSwitchError(data.error || '保存默认模型失败');
+      }
+    } catch (error) {
+      setSwitchError(error instanceof Error ? error.message : '保存默认模型失败');
+    } finally {
+      setSavingDefaultModelId(null);
+    }
+  }, [fetchConfigs]);
 
   const handleSwitch = useCallback(async (id: string) => {
     setSwitching(id);
@@ -155,10 +179,12 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
             isActive
             readOnly={readOnly}
             switching={false}
+            savingDefaultModel={savingDefaultModelId === activeConfig.id}
             localAuthStatus={localAuth.statuses[activeConfig.id]}
             onSwitch={() => {}}
             onEdit={() => setEditingConfig(activeConfig)}
             onDelete={() => setDeleteTarget(activeConfig)}
+            onSetDefaultModel={(model) => handleSetDefaultModel(activeConfig.id, model)}
           />
         )}
 
@@ -171,10 +197,12 @@ export function ProviderListCard({ embedded = false, capabilityFilter, readOnly 
                 isActive={false}
                 readOnly={readOnly}
                 switching={switching === config.id}
+                savingDefaultModel={savingDefaultModelId === config.id}
                 localAuthStatus={localAuth.statuses[config.id]}
                 onSwitch={() => handleSwitch(config.id)}
                 onEdit={() => setEditingConfig(config)}
                 onDelete={() => setDeleteTarget(config)}
+                onSetDefaultModel={(model) => handleSetDefaultModel(config.id, model)}
               />
             ))}
           </div>

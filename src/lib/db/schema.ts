@@ -82,6 +82,7 @@ export function initDb(db: Database.Database): void {
       notes TEXT NOT NULL DEFAULT '',
       is_builtin INTEGER NOT NULL DEFAULT 0,
       user_modified INTEGER NOT NULL DEFAULT 0,
+      default_model TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );

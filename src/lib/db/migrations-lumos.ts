@@ -570,6 +570,9 @@ export function migrateLumosTables(db: Database.Database): void {
   if (!providerColNames.includes('model_catalog_updated_at')) {
     db.exec("ALTER TABLE api_providers ADD COLUMN model_catalog_updated_at TEXT DEFAULT NULL");
   }
+  if (!providerColNames.includes('default_model')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''");
+  }
   if (!providerColNames.includes('api_protocol')) {
     db.exec("ALTER TABLE api_providers ADD COLUMN api_protocol TEXT NOT NULL DEFAULT 'anthropic-messages'");
   }

@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { resolveProviderApiKey } from '@/lib/provider-model-discovery';
-import { getSession, addMessage } from '@/lib/db';
+import { getSession, addMessage, getSetting } from '@/lib/db';
 import { getDefaultProvider, getProvider } from '@/lib/db/providers';
 import type { ApiProvider } from '@/types';
 import type {
@@ -1181,14 +1181,35 @@ export async function executeWorkflowAgentStep(input: AgentStepInput): Promise<S
   const codeFellBackToAgent = shouldAttemptCode;
 
   const definition = resolveWorkflowAgentDefinition(input);
-  // Priority: DSL-level `model` field > preset's preferredModel > runtime-context
-  // model. DSL wins so a single workflow step can override the preset; the
-  // preset wins over session defaults so the team-editor's model picker sticks.
-  const requestedModel = input.model || definition.preferredModel || runtimeContext.requestedModel;
+  // Workflow-level "agent default" (set in 设置 → 服务商 → AI 对话 顶部)
+  // pins a global provider+model pair for agent steps that don't carry an
+  // explicit preset. It takes precedence over the user's active chat
+  // provider so that runs scheduled from cron / kicked off without a chat
+  // session don't accidentally pull whatever the user happened to select
+  // last in the chat picker.
+  let preferredProviderId = definition.preferredProviderId;
+  let agentDefaultModel: string | undefined;
+  if (!preferredProviderId) {
+    const pinnedProviderId = (getSetting('agent_default_provider_id') || '').trim();
+    if (pinnedProviderId) {
+      preferredProviderId = pinnedProviderId;
+      agentDefaultModel = (getSetting('agent_default_model') || '').trim() || undefined;
+    }
+  }
   const { mode: executionMode, provider: workflowProvider } = await resolveExecutionMode(
     runtimeContext,
-    definition.preferredProviderId,
+    preferredProviderId,
   );
+  // Model priority: DSL `model` > preset preferredModel > runtime-context
+  // request > the workflow-agent default (only when its provider was the
+  // one we picked above) > the chosen provider's own default_model (set per
+  // provider in the AI 对话 list).
+  const requestedModel = input.model
+    || definition.preferredModel
+    || runtimeContext.requestedModel
+    || agentDefaultModel
+    || workflowProvider?.default_model
+    || undefined;
   const resolvedModel = resolveProviderModelForRequest(workflowProvider, requestedModel);
   const worker = new StageWorker(executionMode === 'claude');
   const abortController = new AbortController();

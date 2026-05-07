@@ -268,6 +268,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
     providerOrigin: data.provider_origin,
     authMode: data.auth_mode,
   });
+  const defaultModel = (data.default_model || '').trim();
   const nextProvider: ApiProvider = {
     id,
     name: data.name,
@@ -287,6 +288,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
     notes: data.notes || '',
     is_builtin: 0,
     user_modified: 0,
+    default_model: defaultModel,
     created_at: now,
     updated_at: now,
   };
@@ -294,7 +296,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
   assertProviderConnectionFieldsValid(nextProvider);
 
   db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, default_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     data.name,
@@ -314,6 +316,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
     data.notes || '',
     0,
     0,
+    defaultModel,
     now,
     now,
   );
@@ -339,7 +342,7 @@ export function cloneProvider(id: string, name: string): ApiProvider | undefined
   });
 
   db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, api_protocol, capabilities, provider_origin, auth_mode, base_url, api_key, is_active, sort_order, extra_env, model_catalog, model_catalog_source, model_catalog_updated_at, notes, is_builtin, user_modified, default_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     nextId,
     name,
@@ -359,6 +362,7 @@ export function cloneProvider(id: string, name: string): ApiProvider | undefined
     existing.notes || '',
     0,
     0,
+    existing.default_model || '',
     now,
     now,
   );
@@ -396,6 +400,9 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
   const notes = data.notes ?? existing.notes;
   const sortOrder = data.sort_order ?? existing.sort_order;
   const isActive = existing.is_active;
+  const defaultModel = data.default_model !== undefined
+    ? data.default_model.trim()
+    : existing.default_model;
 
   // If this is a builtin provider, mark it as user_modified
   const userModified = existing.is_builtin ? 1 : existing.user_modified;
@@ -417,6 +424,7 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
     sort_order: sortOrder,
     is_active: isActive,
     user_modified: userModified,
+    default_model: defaultModel,
     updated_at: now,
   };
 
@@ -425,7 +433,7 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
 
   const transaction = db.transaction(() => {
     db.prepare(
-      'UPDATE api_providers SET name = ?, provider_type = ?, api_protocol = ?, capabilities = ?, provider_origin = ?, auth_mode = ?, base_url = ?, api_key = ?, extra_env = ?, model_catalog = ?, model_catalog_source = ?, model_catalog_updated_at = ?, notes = ?, sort_order = ?, is_active = ?, user_modified = ?, updated_at = ? WHERE id = ?'
+      'UPDATE api_providers SET name = ?, provider_type = ?, api_protocol = ?, capabilities = ?, provider_origin = ?, auth_mode = ?, base_url = ?, api_key = ?, extra_env = ?, model_catalog = ?, model_catalog_source = ?, model_catalog_updated_at = ?, notes = ?, sort_order = ?, is_active = ?, user_modified = ?, default_model = ?, updated_at = ? WHERE id = ?'
     ).run(
       name,
       providerType,
@@ -443,6 +451,7 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
       sortOrder,
       isActive,
       userModified,
+      defaultModel,
       now,
       id,
     );

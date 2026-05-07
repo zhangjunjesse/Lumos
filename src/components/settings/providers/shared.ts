@@ -14,6 +14,7 @@ export interface SavedConfig {
   model_catalog_source: ProviderModelCatalogSource;
   model_catalog_updated_at: string | null;
   is_active: number;
+  default_model: string;
   created_at: string;
   updated_at: string;
 }
