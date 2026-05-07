@@ -796,7 +796,6 @@ async function buildWorkflowAgentPayload(
     dependencies,
     memoryRefs: {
       taskMemoryId: `workflow-task-memory:${runtimeContext.workflowRunId}`,
-      plannerMemoryId: `workflow-planner-memory:${runtimeContext.workflowRunId}`,
       agentMemoryId: `workflow-agent-memory:${runtimeContext.stepId}`,
     },
     ...(input.knowledge?.enabled ? { knowledgeConfig: input.knowledge } : {}),
@@ -848,7 +847,6 @@ function buildWorkflowAgentExecutionMetadata(input: {
           stageId: payload.stageId,
           memoryRefs: {
             taskMemoryId: payload.memoryRefs.taskMemoryId,
-            plannerMemoryId: payload.memoryRefs.plannerMemoryId,
             agentMemoryId: payload.memoryRefs.agentMemoryId,
           },
           workspace: {

@@ -3,7 +3,6 @@ import { migrateCoreTables } from './migrations';
 import { migrateGoofishTables } from './migrations-goofish';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
-import { migrateTeamRunTables } from './migrations-team-run';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
 function isBuildPhase(): boolean {
@@ -218,7 +217,6 @@ export function initDb(db: Database.Database): void {
     migrateCoreTables(db);
     migrateLumosTables(db);
     migrateSyncTables(db);
-    migrateTeamRunTables(db);
     migrateGoofishTables(db);
     db.exec('COMMIT');
 

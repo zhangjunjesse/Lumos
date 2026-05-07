@@ -63,7 +63,6 @@ function buildPayload(tempDir: string): StageExecutionPayloadV1 {
     dependencies: [],
     memoryRefs: {
       taskMemoryId: 'memory-task',
-      plannerMemoryId: 'memory-planner',
       agentMemoryId: 'memory-agent',
     },
   }

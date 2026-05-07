@@ -74,7 +74,6 @@ function buildPayload(
     dependencies: [],
     memoryRefs: {
       taskMemoryId: 'memory-task',
-      plannerMemoryId: 'memory-planner',
       agentMemoryId: 'memory-agent',
     },
   }

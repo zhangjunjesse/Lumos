@@ -76,7 +76,6 @@ function buildPayload(tempDir: string, imagePath: string): StageExecutionPayload
     }],
     memoryRefs: {
       taskMemoryId: 'task-memory',
-      plannerMemoryId: 'planner-memory',
       agentMemoryId: 'agent-memory',
     },
   }

@@ -922,7 +922,6 @@ export class StageWorker {
     const memoryRefs = [
       '# Memory Refs',
       `Task Memory: ${payload.memoryRefs.taskMemoryId}`,
-      `Planner Memory: ${payload.memoryRefs.plannerMemoryId}`,
       `Agent Memory: ${payload.memoryRefs.agentMemoryId}`,
     ]
 

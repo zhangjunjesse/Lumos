@@ -73,7 +73,6 @@ export interface StageExecutionPayloadV1 {
   dependencies: DependencyResultRefV1[]
   memoryRefs: {
     taskMemoryId: string
-    plannerMemoryId: string
     agentMemoryId: string
   }
   /** 步骤级别知识库访问配置(仅 workflow agent 步骤使用,可选) */
