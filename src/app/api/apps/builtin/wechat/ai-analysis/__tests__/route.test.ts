@@ -15,7 +15,7 @@ jest.mock('@/lib/wechat-assistant/ai-runner', () => ({
   },
 }));
 
-import { normalizeSnapshot } from '../route';
+import { normalizeSnapshot } from '@/lib/wechat-assistant/snapshot-normalizer';
 
 describe('wechat ai-analysis route helpers', () => {
   it('keeps group sender metadata from analyze_snapshot', () => {
