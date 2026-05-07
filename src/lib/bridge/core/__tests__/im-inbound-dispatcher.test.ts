@@ -205,6 +205,14 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 beforeEach(() => {
   __resetDispatcherForTesting();
   sendToProvider.mockClear();
+  const commands = jest.requireMock('@/lib/im/providers/wechat/commands') as {
+    handleWechatCommand: jest.Mock;
+    maybeHandleWechatVoiceModePhrase: jest.Mock;
+  };
+  commands.handleWechatCommand.mockReset();
+  commands.handleWechatCommand.mockResolvedValue({ handled: false });
+  commands.maybeHandleWechatVoiceModePhrase.mockReset();
+  commands.maybeHandleWechatVoiceModePhrase.mockReturnValue(null);
   previewAdapter.startPreview.mockClear();
   previewAdapter.updatePreview.mockClear();
   previewAdapter.finalizePreview.mockClear();
@@ -480,6 +488,39 @@ describe('im-inbound-dispatcher', () => {
       const r = await dispatchInbound('wechat', wechatMsg());
       expect(r.ok).toBe(true);
       expect(sendToProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test('passes inbound context_token to WeChat reply send', async () => {
+      const r = await dispatchInbound('wechat', {
+        ...wechatMsg(),
+        raw: { context_token: 'ctx-from-current-message' },
+      });
+
+      expect(r.ok).toBe(true);
+      const sentArgs = sendToProvider.mock.calls[0][1] as {
+        providerHints?: { wechat?: { contextToken?: string } };
+      };
+      expect(sentArgs.providerHints?.wechat?.contextToken).toBe('ctx-from-current-message');
+    });
+
+    test('slash command reply reports send failure', async () => {
+      const commands = jest.requireMock('@/lib/im/providers/wechat/commands') as {
+        handleWechatCommand: jest.Mock;
+      };
+      commands.handleWechatCommand.mockResolvedValueOnce({
+        handled: true,
+        reply: {
+          address: { providerId: 'wechat', chatId: 'peer1', userId: 'peer1' },
+          text: '命令回复',
+        },
+      });
+      sendToProvider.mockResolvedValueOnce({ ok: false, error: 'wechat send failed' });
+
+      const r = await dispatchInbound('wechat', wechatMsg('/help'));
+
+      expect(r.ok).toBe(false);
+      expect(r.reason).toBe('wechat send failed');
+      expect(conversationCalls).toHaveLength(0);
     });
 
     test('voice mode sends synthesized audio attachment instead of text reply', async () => {

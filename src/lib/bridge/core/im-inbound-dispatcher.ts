@@ -20,7 +20,7 @@ import {
   hasStreamingPreview,
   parseSlashCommand,
 } from '@/lib/im';
-import type { InboundMessage, PreviewHandle } from '@/lib/im';
+import type { InboundMessage, OutboundMessage, PreviewHandle } from '@/lib/im';
 import { getDefaultProvider } from '@/lib/db/providers';
 import { getSession, getAllSessions, createSession } from '@/lib/db';
 import {
@@ -84,6 +84,8 @@ export async function dispatchInbound(
     const inboundMessage = providerId === 'wechat'
       ? await normalizeWechatInboundMessage(message)
       : message;
+    const sendReply = (reply: OutboundMessage) =>
+      sendToProvider(providerId, withInboundProviderHints(providerId, inboundMessage, reply));
 
     // ---- 0. wechat 斜杠命令短路 -------------------------------------------
     // 命令在 server 侧（Next.js）独立处理，不走 AI 对话；不加 session 前缀。
@@ -97,7 +99,12 @@ export async function dispatchInbound(
         });
         if (result.handled) {
           if (result.reply) {
-            await sendToProvider(providerId, result.reply);
+            const commandSendResult = await sendReply(result.reply);
+            return {
+              ok: commandSendResult.ok,
+              reason: commandSendResult.ok ? 'command-handled' : commandSendResult.error,
+              replyMessageId: commandSendResult.messageId,
+            };
           }
           return { ok: true, reason: 'command-handled' };
         }
@@ -107,7 +114,12 @@ export async function dispatchInbound(
       const naturalVoiceMode = maybeHandleWechatVoiceModePhrase(inboundMessage);
       if (naturalVoiceMode?.handled) {
         if (naturalVoiceMode.reply) {
-          await sendToProvider(providerId, naturalVoiceMode.reply);
+          const voiceCommandSendResult = await sendReply(naturalVoiceMode.reply);
+          return {
+            ok: voiceCommandSendResult.ok,
+            reason: voiceCommandSendResult.ok ? 'voice-mode-command-handled' : voiceCommandSendResult.error,
+            replyMessageId: voiceCommandSendResult.messageId,
+          };
         }
         return { ok: true, reason: 'voice-mode-command-handled' };
       }
@@ -214,7 +226,7 @@ export async function dispatchInbound(
     if (voiceMode) {
       let baseAttachmentsSent = false;
       if (attachments.length > 0) {
-        const baseAttachmentResult = await sendToProvider(providerId, {
+        const baseAttachmentResult = await sendReply({
           address: { providerId, chatId: inboundMessage.address.chatId },
           text: '',
           attachments,
@@ -232,7 +244,7 @@ export async function dispatchInbound(
           speech.attachment,
           inboundMessage.address.chatId,
         );
-        const voiceSendResult = await sendToProvider(providerId, {
+        const voiceSendResult = await sendReply({
           address: { providerId, chatId: inboundMessage.address.chatId },
           text: '',
           attachments: [speechAttachment],
@@ -249,7 +261,7 @@ export async function dispatchInbound(
         console.warn('[im-dispatcher] voice reply synthesis failed; falling back to text:', speech.error);
       }
 
-      const fallbackResult = await sendToProvider(providerId, {
+      const fallbackResult = await sendReply({
         address: { providerId, chatId: inboundMessage.address.chatId },
         text: finalText,
         attachments: baseAttachmentsSent || attachments.length === 0
@@ -264,7 +276,7 @@ export async function dispatchInbound(
       };
     }
 
-    const sendResult = await sendToProvider(providerId, {
+    const sendResult = await sendReply({
       address: { providerId, chatId: inboundMessage.address.chatId },
       text: finalText,
       attachments: attachments.length > 0 ? attachments : undefined,
@@ -333,6 +345,33 @@ function withWechatNativeVoiceHint<T extends { providerHints?: { wechat?: { nati
       },
     },
   };
+}
+
+function withInboundProviderHints(
+  providerId: string,
+  inboundMessage: InboundMessage,
+  reply: OutboundMessage,
+): OutboundMessage {
+  if (providerId !== 'wechat') return reply;
+  const contextToken = extractWechatContextToken(inboundMessage.raw);
+  if (!contextToken) return reply;
+
+  return {
+    ...reply,
+    providerHints: {
+      ...reply.providerHints,
+      wechat: {
+        ...reply.providerHints?.wechat,
+        contextToken,
+      },
+    },
+  };
+}
+
+function extractWechatContextToken(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return '';
+  const value = (raw as { context_token?: unknown }).context_token;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function isWechatVoicePlaceholderText(text: string): boolean {

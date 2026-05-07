@@ -16,6 +16,15 @@
  * core/* 不该依赖 app 级别类型（R6 单向依赖）。
  * 字段是 src/types/FileAttachment 的子集，结构兼容、按结构性 typing 互操作。
  */
+export interface WechatProviderHints {
+  nativeVoice?: boolean;
+  contextToken?: string;
+}
+
+export interface IMProviderHints {
+  wechat?: WechatProviderHints;
+}
+
 export interface IMFileAttachment {
   id: string;
   name: string;
@@ -23,11 +32,7 @@ export interface IMFileAttachment {
   size: number;
   data: string;
   filePath?: string;
-  providerHints?: {
-    wechat?: {
-      nativeVoice?: boolean;
-    };
-  };
+  providerHints?: IMProviderHints;
 }
 type FileAttachment = IMFileAttachment;
 
@@ -70,6 +75,7 @@ export interface OutboundMessage {
   inlineButtons?: InlineButton[][];
   replyToMessageId?: string;
   attachments?: FileAttachment[];
+  providerHints?: IMProviderHints;
 }
 
 export interface SendResult {

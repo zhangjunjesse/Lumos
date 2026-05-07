@@ -58,6 +58,40 @@ describe('wechat/send: sendOutbound', () => {
     expect(body.msg.item_list[0].text_item.text).toBe('hello');
   });
 
+  test('uses inbound provider hint context_token before persisted store', async () => {
+    fakeFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: 'hello',
+        providerHints: { wechat: { contextToken: 'ctx-from-inbound' } },
+      },
+      { getContextToken: () => 'ctx-from-store' },
+    );
+
+    expect(r.ok).toBe(true);
+    const [, init] = fakeFetch.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.msg.context_token).toBe('ctx-from-inbound');
+  });
+
+  test('uses inbound provider hint even when persisted store is empty', async () => {
+    fakeFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: 'hello',
+        providerHints: { wechat: { contextToken: 'ctx-from-inbound' } },
+      },
+      { getContextToken: () => '' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+  });
+
   test('splits long text into chunks', async () => {
     fakeFetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
     const long = 'x'.repeat(8000); // > MAX_CHUNK 3800 → 3 chunks

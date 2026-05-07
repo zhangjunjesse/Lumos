@@ -39,7 +39,8 @@ export async function sendOutbound(
   const peer = message.address.chatId.trim();
   if (!peer) return { ok: false, error: 'chatId (peer userId) required' };
 
-  let contextToken = deps.getContextToken(peer);
+  let contextToken = message.providerHints?.wechat?.contextToken?.trim()
+    || deps.getContextToken(peer);
   if (!contextToken) {
     return {
       ok: false,
