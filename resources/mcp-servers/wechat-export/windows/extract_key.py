@@ -44,6 +44,15 @@ V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
 HEX_PATTERN = re.compile(rb"x'([0-9a-fA-F]{64,192})'")
 KEY_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+PREFERRED_KEY_MODULE_NAMES = (
+    "wechatwin.dll",
+    "weixin.dll",
+    "wechat.dll",
+    "wechatappex.exe",
+    "wechat.exe",
+    "weixin.exe",
+)
+KEY_MODULE_PATH_HINTS = ("wechat", "weixin", "tencent")
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -150,21 +159,66 @@ def find_wechat_pids() -> list[int]:
     return pids
 
 
-def get_wechatwin_module(pid: int) -> tuple[int, int, str] | None:
+def list_process_modules(pid: int) -> list[tuple[int, int, str, str]]:
     snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
     if snap == INVALID_HANDLE_VALUE:
-        return None
+        log(f"[!] unable to enumerate process modules pid={pid} last_error={ctypes.get_last_error()}")
+        return []
     entry = MODULEENTRY32()
     entry.dwSize = ctypes.sizeof(MODULEENTRY32)
+    modules: list[tuple[int, int, str, str]] = []
     try:
         ok = Module32FirstW(snap, ctypes.byref(entry))
         while ok:
-            if entry.szModule.lower() == "wechatwin.dll":
-                return int(entry.modBaseAddr or 0), int(entry.modBaseSize), entry.szExePath
+            name = str(entry.szModule or "").strip()
+            path_value = str(entry.szExePath or "").strip()
+            base = int(entry.modBaseAddr or 0)
+            size = int(entry.modBaseSize)
+            if name and base and size:
+                modules.append((base, size, path_value, name))
             ok = Module32NextW(snap, ctypes.byref(entry))
     finally:
         CloseHandle(snap)
-    return None
+    return modules
+
+
+def get_key_scan_modules(pid: int) -> list[tuple[int, int, str, str]]:
+    """Return likely modules that may contain legacy WeChat key anchors.
+
+    Older Windows WeChat builds kept the useful anchors in WeChatWin.dll. Newer
+    Windows WeChat/Weixin builds may expose different module names, so keep
+    scanning exact known names first and then any module whose path clearly
+    belongs to WeChat. The SQLCipher4 string scan below remains the fallback
+    when no module is discoverable.
+    """
+    modules = list_process_modules(pid)
+    if not modules:
+        return []
+
+    priority = {name: index for index, name in enumerate(PREFERRED_KEY_MODULE_NAMES)}
+
+    def module_rank(module: tuple[int, int, str, str]) -> tuple[int, int]:
+        _base, size, module_path, module_name = module
+        name = module_name.lower()
+        haystack = f"{name} {module_path.lower()}"
+        if name in priority:
+            return priority[name], -size
+        if any(hint in haystack for hint in KEY_MODULE_PATH_HINTS):
+            return len(priority), -size
+        return len(priority) + 1, -size
+
+    exact = [module for module in modules if module[3].lower() in priority]
+    if exact:
+        exact.sort(key=module_rank)
+        return exact
+
+    hinted = [
+        module
+        for module in modules
+        if any(hint in f"{module[3].lower()} {module[2].lower()}" for hint in KEY_MODULE_PATH_HINTS)
+    ]
+    hinted.sort(key=module_rank)
+    return hinted[:16]
 
 
 def read_mem(handle: int, address: int, size: int) -> bytes | None:
@@ -611,13 +665,16 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     if not accounts:
         raise RuntimeError("未找到 Windows 微信数据目录")
 
-    module = get_wechatwin_module(pid)
-    if not module:
-        raise RuntimeError("未找到 WeChatWin.dll")
-    base, size, module_path = module
+    modules = get_key_scan_modules(pid)
+    module_path = modules[0][2] if modules else ""
     ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
     log(f"[+] attaching pid={pid}")
-    log(f"[+] scanning WeChatWin.dll base=0x{base:x} size={size} path={module_path}")
+    if modules:
+        names = ", ".join(module[3] for module in modules[:8])
+        suffix = " ..." if len(modules) > 8 else ""
+        log(f"[+] key scan modules={len(modules)} names={names}{suffix}")
+    else:
+        log("[!] 未找到 WeChatWin.dll/Weixin.dll 等微信模块，将跳过旧版指针扫描并尝试全进程 SQLCipher4 字符串扫描")
 
     handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
     if not handle:
@@ -669,24 +726,29 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
 
     try:
         seen_keys: set[bytes] = set()
-        for ptr_size in ptr_sizes:
-            log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
-            for key in candidate_keys(handle, base, size, ptr_size):
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                key_hex = key.hex()
-                for account in accounts:
-                    for record in account.get("_db_records") or []:
-                        salt = record["salt"]
-                        if salt in recovered_salts:
+        if modules:
+            for ptr_size in ptr_sizes:
+                log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
+                for base, size, module_path_candidate, module_name in modules:
+                    log(f"[+] scanning module {module_name} base=0x{base:x} size={size} path={module_path_candidate}")
+                    for key in candidate_keys(handle, base, size, ptr_size):
+                        if key in seen_keys:
                             continue
-                        if verify_db_key(key, record["path"], record["mode"]):
-                            mark_key(account, record, key_hex)
+                        seen_keys.add(key)
+                        key_hex = key.hex()
+                        for account in accounts:
+                            for record in account.get("_db_records") or []:
+                                salt = record["salt"]
+                                if salt in recovered_salts:
+                                    continue
+                                if verify_db_key(key, record["path"], record["mode"]):
+                                    mark_key(account, record, key_hex)
+                        if total_records and len(recovered_salts) >= total_records:
+                            break
+                    if total_records and len(recovered_salts) >= total_records:
+                        break
                 if total_records and len(recovered_salts) >= total_records:
                     break
-            if total_records and len(recovered_salts) >= total_records:
-                break
 
         if total_records and len(recovered_salts) < total_records:
             scan_hex_key_strings(handle, accounts, mark_key)

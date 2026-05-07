@@ -111,6 +111,8 @@ export async function extractKeys(
   }
   let py: string | null = null;
   const env: NodeJS.ProcessEnv = { ...process.env };
+  env.PYTHONIOENCODING = 'utf-8';
+  env.PYTHONUTF8 = '1';
   const args = [scriptPath, '--pid', String(pid)];
 
   if (platform === 'darwin') {
@@ -166,7 +168,13 @@ export async function extractKeys(
         onProgress?.({ phase: 'starting', message: safeLine });
         return;
       }
-      if (line.includes('scanning memory') || line.includes('scanning WeChatWin.dll')) {
+      if (
+        line.includes('scanning memory')
+        || line.includes('scanning WeChatWin.dll')
+        || line.includes('scanning module')
+        || line.includes('scanning candidate pointers')
+        || line.includes('key scan modules=')
+      ) {
         onProgress?.({ phase: 'scanning', message: safeLine });
         return;
       }
