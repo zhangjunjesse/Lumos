@@ -6,6 +6,8 @@ import { useParams } from 'next/navigation';
 import { AppContainer } from '@/components/app/container/AppContainer';
 import { createApiRendererBridge } from '@/components/app/declarative/api-bridge';
 import type { AppManifest, AppPage, AppRoutes, MenuItem } from '@/lib/app/manifest/types';
+import { parseNativeAppSpecForUi, type NativeAppSpecForUi } from '@/lib/app/native-spec';
+import type { NativeAppStatusSummary } from '@/lib/app/status-service';
 
 interface AppDetailResponse {
   id: string;
@@ -29,12 +31,16 @@ export default function AppEntryPage(): React.ReactElement {
   const [routes, setRoutes] = React.useState<AppRoutes | null>(null);
   const [pages, setPages] = React.useState<Record<string, AppPage>>({});
   const [config, setConfig] = React.useState<Record<string, string>>({});
+  const [appStatus, setAppStatus] = React.useState<NativeAppStatusSummary | null>(null);
+  const [nativeSpec, setNativeSpec] = React.useState<NativeAppSpecForUi | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
+        setNativeSpec(null);
+        setAppStatus(null);
         const detailRes = await fetch(`/api/apps/${appId}`);
         if (!detailRes.ok) {
           throw new Error(`Detail fetch failed: ${detailRes.status}`);
@@ -64,6 +70,32 @@ export default function AppEntryPage(): React.ReactElement {
         );
         if (cancelled) return;
         setPages(Object.fromEntries(pageEntries));
+
+        try {
+          const specRes = await fetch(`/api/apps/${appId}/assets/native-app-spec.json`, {
+            cache: 'no-store',
+          });
+          if (specRes.ok) {
+            const specJson = await specRes.json();
+            if (cancelled) return;
+            setNativeSpec(parseNativeAppSpecForUi(specJson));
+          } else if (!cancelled) {
+            setNativeSpec(null);
+          }
+        } catch {
+          // native-app-spec.json is optional for older installed apps
+        }
+
+        try {
+          const statusRes = await fetch(`/api/apps/${appId}/status`, { cache: 'no-store' });
+          if (statusRes.ok) {
+            const statusJson = (await statusRes.json()) as { status: NativeAppStatusSummary };
+            if (cancelled) return;
+            setAppStatus(statusJson.status);
+          }
+        } catch {
+          // status is advisory; page rendering should not fail because of it
+        }
 
         // Non-secret config (secrets aren't returned by the API).
         try {
@@ -138,6 +170,8 @@ export default function AppEntryPage(): React.ReactElement {
       routes={routes}
       pages={pages}
       config={config}
+      status={appStatus}
+      nativeSpec={nativeSpec}
       bridge={bridge}
     />
   );

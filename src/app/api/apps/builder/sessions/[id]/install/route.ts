@@ -4,8 +4,18 @@ import path from 'path';
 
 import { type NextRequest, NextResponse } from 'next/server';
 
+import {
+  NATIVE_APP_SPEC_FILE,
+  validateNativeGradeAppSpec,
+} from '@/lib/app/builder/native-grade-spec';
+import {
+  getNativeSpecReview,
+  isNativeSpecReviewAcceptedForArtifact,
+} from '@/lib/app/builder/native-spec-review';
 import { createSessionStore } from '@/lib/app/builder/session';
 import { installApp, type ConsentRequest } from '@/lib/app/installer';
+import { validateNativeAppPackageFiles } from '@/lib/app/native-app-package-validation';
+import { recordNativeInstallSelfCheck } from '@/lib/app/native-install-self-check';
 import { buildInstallContext, getAppPlatformService } from '@/lib/app/service';
 
 /**
@@ -38,6 +48,59 @@ export async function POST(
     if (artifacts.length === 0) {
       return NextResponse.json(
         { error: 'No generated files to install' },
+        { status: 400 },
+      );
+    }
+
+    const nativeSpecArtifact = artifacts.find((artifact) => artifact.filePath === NATIVE_APP_SPEC_FILE);
+    if (!nativeSpecArtifact) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'NativeSpecRequired',
+          message: '安装前必须生成 native-app-spec.json，并在「项目状态」接受当前内置级规格。',
+        },
+        { status: 400 },
+      );
+    }
+    const nativeSpecIssues = validateNativeGradeAppSpec(
+      new Map(artifacts.map((artifact) => [artifact.filePath, artifact.content])),
+    );
+    if (nativeSpecIssues.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'NativeSpecInvalid',
+          message: 'native-app-spec.json 未通过内置级规格校验，不能安装。',
+          issues: nativeSpecIssues,
+        },
+        { status: 400 },
+      );
+    }
+    const nativeSpecReview = getNativeSpecReview(session.needsSummary);
+    if (!isNativeSpecReviewAcceptedForArtifact(nativeSpecReview, nativeSpecArtifact.version)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'NativeSpecReviewRequired',
+          message: '请先在「项目状态」查看并接受当前版本的内置级规格，再保存并安装。',
+          nativeSpecReview,
+          artifactVersion: nativeSpecArtifact.version,
+        },
+        { status: 409 },
+      );
+    }
+    const nativePackageValidation = validateNativeAppPackageFiles(
+      new Map(artifacts.map((artifact) => [artifact.filePath, artifact.content])),
+    );
+    if (!nativePackageValidation.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'NativeAppPackageInvalid',
+          message: '应用包未达到内置级应用结构和验收合同，不能安装。',
+          issues: nativePackageValidation.issues,
+        },
         { status: 400 },
       );
     }
@@ -82,12 +145,17 @@ export async function POST(
     );
 
     if (result.ok) {
+      const selfCheck = recordNativeInstallSelfCheck(svc.db, {
+        appId: result.installed.appId,
+        installPath: result.installed.installPath,
+      });
       store.commitArtifacts(id);
       store.bindToApp(id, result.installed.appId);
       store.updateStatus(id, 'installed');
       return NextResponse.json({
         ok: true,
         installed: result.installed,
+        selfCheck,
         warnings: result.warnings,
       });
     }

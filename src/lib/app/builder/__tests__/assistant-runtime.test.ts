@@ -1,6 +1,75 @@
 import { parseToolLoopResponseCandidate } from '../assistant-runtime-schema';
 import { validateAppCapabilityContracts } from '../capability-contracts';
 
+function filesWithNativeSpec(entries: Array<[string, string]>): Map<string, string> {
+  return new Map([
+    ['native-app-spec.json', JSON.stringify(validNativeSpec())],
+    ...entries,
+  ]);
+}
+
+function validNativeSpec() {
+  return {
+    version: 1,
+    summary: '测试应用：用于验证内置级应用规格。',
+    userVisibleScope: ['打开应用首页并查看主要内容。', '修改设置后查看状态反馈。'],
+    status: {
+      states: ['not_configured', 'ready', 'running', 'failed', 'not_connected'],
+      readyCriteria: ['应用页面可打开。'],
+      notConnectedBehavior: '缺少底层能力时显示未接入和失败原因。',
+    },
+    settings: [{ id: 'general', label: '基础设置', fields: ['系统提示词'] }],
+    data: {
+      entities: [
+        'reports',
+        'app_settings',
+        'app_automations',
+        'run_history',
+        'assistant_messages',
+        'app_notifications',
+        'app_command_runs',
+        'acceptance_checks',
+      ],
+      reusableStores: ['settings', 'drafts', 'notifications', 'command_runs', 'run_history', 'user_marks'],
+    },
+    ai: {
+      enabled: true,
+      promptSettings: true,
+      draftBeforeWrite: true,
+      visibleFailureHandling: true,
+    },
+    automations: {
+      enabled: true,
+      controls: ['enable', 'pause', 'run_now', 'edit', 'delete'],
+      visibleRunResults: true,
+    },
+    runResults: {
+      visible: true,
+      states: ['running', 'success', 'failed', 'cancelled'],
+      failureReasons: true,
+      retry: true,
+    },
+    im: {
+      enabled: false,
+      lowRiskCommands: [],
+      confirmationRequiredFor: ['所有写操作'],
+      visibleCommandResults: true,
+    },
+    risk: {
+      writeActionsRequireConfirmation: true,
+      highRiskActions: ['删除数据'],
+      outOfScope: ['未声明权限的外部操作'],
+    },
+    acceptance: [
+      { id: 'open-app', label: '打开应用', howToVerify: '进入应用首页。' },
+      { id: 'view-status', label: '查看状态', howToVerify: '状态区域显示当前状态。' },
+      { id: 'edit-settings', label: '编辑设置', howToVerify: '设置可以保存。' },
+      { id: 'run-action', label: '运行操作', howToVerify: '触发操作后看到运行状态。' },
+      { id: 'handle-error', label: '错误提示', howToVerify: '失败时显示原因。' },
+    ],
+  };
+}
+
 describe('app builder assistant runtime structured output parsing', () => {
   it('normalizes a single-string acceptanceCriteria value from the model', () => {
     const parsed = parseToolLoopResponseCandidate({
@@ -114,8 +183,25 @@ describe('app builder assistant runtime structured output parsing', () => {
 });
 
 describe('app builder capability contract checks', () => {
-  it('rejects ai.complete without manifest permission', () => {
+  it('requires a native-grade app spec file', () => {
     const issues = validateAppCapabilityContracts(new Map([
+      ['manifest.json', JSON.stringify({
+        id: 'plain-app',
+        name: '普通应用',
+        version: '0.1.0',
+        entry: 'home',
+        routes: [{ id: 'home', path: '/', page: 'pages/index.tsx' }],
+        permissions: {},
+        runtime: { engine: 'react-v2', react: '19' },
+      })],
+      ['pages/index.tsx', 'export default function Page() { return <div>Home</div>; }'],
+    ]));
+
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('native-app-spec.json');
+  });
+
+  it('rejects ai.complete without manifest permission', () => {
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'ai-report',
         name: 'AI 报告',
@@ -138,7 +224,7 @@ export default function Page() {
   });
 
   it('rejects ai.stream in generated apps for now', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'ai-report',
         name: 'AI 报告',
@@ -161,7 +247,7 @@ export default function Page() {
   });
 
   it('allows ai.complete when manifest declares permission', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'ai-report',
         name: 'AI 报告',
@@ -201,7 +287,7 @@ export default function Settings() {
   });
 
   it('rejects ai.complete without visible agent settings UI', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'ai-report',
         name: 'AI 报告',
@@ -224,7 +310,7 @@ export default function Page() {
   });
 
   it('rejects workflow.run without bundled workflow file and management UI', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'workflow-app',
         name: '工作流应用',
@@ -249,7 +335,7 @@ export default function Page() {
   });
 
   it('allows workflow.run with bundled workflow file and management UI', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'workflow-app',
         name: '工作流应用',
@@ -293,7 +379,7 @@ export default function WorkflowSettings() {
   });
 
   it('rejects deepsearch calls without visible DeepSearch status UI', () => {
-    const issues = validateAppCapabilityContracts(new Map([
+    const issues = validateAppCapabilityContracts(filesWithNativeSpec([
       ['manifest.json', JSON.stringify({
         id: 'deepsearch-app',
         name: 'DeepSearch 应用',

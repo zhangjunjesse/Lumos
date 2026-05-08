@@ -82,10 +82,10 @@ export function SetupSection({
           <StatusRow ok={!!status?.export.supported} value={status?.export.supported ? 'macOS' : '不支持'} label="平台" />
           <StatusRow ok={!!status?.export.keyCount} value={`${status?.export.keyCount ?? 0}`} label="密钥" />
           <StatusRow ok={!!status?.export.mcp?.enabled} value={status?.export.mcp?.enabled ? '已启用' : '未启用'} label="读取服务" />
-          <StatusRow ok={status?.im.enabled ?? false} value={status?.im.enabled ? '已启用' : '未启用'} label="IM 路由" />
+          <StatusRow ok={status?.im.enabled ?? false} value={status?.im.enabled ? '已启用' : '未启用'} label="IM 入口" />
           {status?.im.routedSessionId ? (
             <Button asChild variant="outline" size="sm" className="w-fit">
-              <Link href={`/main-agent/${status.im.routedSessionId}`}>打开路由会话</Link>
+              <Link href={`/main-agent/${status.im.routedSessionId}`}>打开主 Agent</Link>
             </Button>
           ) : null}
           <Button variant="ghost" size="sm" onClick={onStatusRefresh} className="w-fit">

@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumos.io/schemas/native-app-spec.v1.json",
+  "title": "Lumos Native-grade App Spec",
+  "description": "native-app-spec.json — user-facing quality contract for a Lumos native-grade generated app.",
+  "type": "object",
+  "required": [
+    "version",
+    "summary",
+    "userVisibleScope",
+    "status",
+    "settings",
+    "data",
+    "ai",
+    "automations",
+    "runResults",
+    "im",
+    "risk",
+    "acceptance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "summary": { "type": "string", "minLength": 8, "maxLength": 500 },
+    "userVisibleScope": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "type": "string", "minLength": 4, "maxLength": 200 }
+    },
+    "status": {
+      "type": "object",
+      "required": ["states", "readyCriteria", "notConnectedBehavior"],
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["not_configured", "needs_auth", "ready", "syncing", "running", "failed", "not_connected"]
+          }
+        },
+        "readyCriteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 4, "maxLength": 200 }
+        },
+        "notConnectedBehavior": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 300
+        }
+      }
+    },
+    "settings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+          }
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "required": ["entities", "reusableStores"],
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "type": "array",
+          "description": "Business collections plus common native-grade collections: app_settings, app_automations, run_history, assistant_messages, app_notifications, app_command_runs, acceptance_checks.",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+        },
+        "reusableStores": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["settings", "drafts", "notifications", "command_runs", "run_history", "user_marks"]
+          }
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "required": ["enabled", "promptSettings", "draftBeforeWrite", "visibleFailureHandling"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "promptSettings": { "type": "boolean" },
+        "draftBeforeWrite": { "type": "boolean" },
+        "visibleFailureHandling": { "type": "boolean" }
+      }
+    },
+    "automations": {
+      "type": "object",
+      "required": ["enabled", "controls", "visibleRunResults"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "controls": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["enable", "pause", "run_now", "edit", "delete"]
+          }
+        },
+        "visibleRunResults": { "type": "boolean" }
+      }
+    },
+    "runResults": {
+      "type": "object",
+      "required": ["visible", "states", "failureReasons", "retry"],
+      "additionalProperties": false,
+      "properties": {
+        "visible": { "type": "boolean" },
+        "states": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["running", "success", "failed", "cancelled"]
+          }
+        },
+        "failureReasons": { "type": "boolean" },
+        "retry": { "type": "boolean" }
+      }
+    },
+    "im": {
+      "type": "object",
+      "required": ["enabled", "lowRiskCommands", "confirmationRequiredFor", "visibleCommandResults"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "lowRiskCommands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2, "maxLength": 120 }
+        },
+        "confirmationRequiredFor": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2, "maxLength": 120 }
+        },
+        "visibleCommandResults": { "type": "boolean" }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["writeActionsRequireConfirmation", "highRiskActions", "outOfScope"],
+      "additionalProperties": false,
+      "properties": {
+        "writeActionsRequireConfirmation": { "type": "boolean" },
+        "highRiskActions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2, "maxLength": 120 }
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 2, "maxLength": 160 }
+        }
+      }
+    },
+    "acceptance": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "howToVerify"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "label": { "type": "string", "minLength": 2, "maxLength": 80 },
+          "howToVerify": { "type": "string", "minLength": 4, "maxLength": 240 }
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,7 @@
 """WeChat MCP Server - Read and analyze WeChat chat history on macOS."""
 
+from __future__ import annotations
+
 import csv
 import glob
 import hashlib

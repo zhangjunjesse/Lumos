@@ -53,7 +53,12 @@ export function buildRequiresAndPermissions(
 
   for (const need of needs) {
     if (need === 'browser') { requires.browser = true; continue; }
-    if (need === 'notification' || need === 'schedule' || need === 'clipboard') {
+    if (
+      need === 'notification'
+      || need === 'schedule'
+      || need === 'clipboard'
+      || need === 'im-notification'
+    ) {
       system.push(need); continue;
     }
     if (need === 'knowledge:required') { requires.knowledge = 'required'; continue; }

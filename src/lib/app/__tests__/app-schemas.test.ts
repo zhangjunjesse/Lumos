@@ -84,7 +84,7 @@ describe('app.schema.json — positive & negative fixtures', () => {
           domains: ['open.feishu.cn'],
         },
         data: 'isolated',
-        system: ['notification'],
+        system: ['notification', 'im-notification'],
       },
       config: [
         { key: 'feishu_token', label: '飞书 Token', type: 'secret', required: true, secret: true },
@@ -245,6 +245,7 @@ describe('page.schema.json — 4 layouts', () => {
           { type: 'markdown', content: '本月新增 **{{ db.customers.count }}** 个客户' },
         ] },
         { type: 'button', label: '生成报告', primary: true, run: 'workflow:report' },
+        { type: 'button', label: '同步闲鱼数据', run: 'native:goofish:sync' },
       ],
     })).toBe(true);
   });

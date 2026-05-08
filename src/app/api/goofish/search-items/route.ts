@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchGoofishItems } from '@/lib/goofish/browser-search';
 import { listAccounts } from '@/lib/goofish/accounts';
+import { goofishAuthExpiredResponse, isGoofishAuthExpiredError } from '@/lib/goofish/auth-error';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,9 @@ export async function GET(req: NextRequest) {
       fallbackUsed: result.fallbackUsed,
     });
   } catch (err) {
+    if (isGoofishAuthExpiredError(err)) {
+      return goofishAuthExpiredResponse({ accountUnb: account });
+    }
     return NextResponse.json({
       ok: false,
       message: err instanceof Error ? err.message : String(err),

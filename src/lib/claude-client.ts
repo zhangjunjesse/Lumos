@@ -27,6 +27,7 @@ import path from 'path';
 import { searchWithMeta, buildContext } from '@/lib/knowledge/searcher';
 import { sanitizeEnv } from './claude/utils';
 import { buildMindRuntimePack } from '@/lib/mind/runtime-pack';
+import { buildMemoryV2PackForPrompt } from '@/lib/memory-v2/runtime';
 import { getClaudeProviderRoutingSnapshot, isClaudeLocalAuthProvider } from './claude/provider-env';
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
 import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
@@ -767,13 +768,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                   sessionId,
                   projectPath: workingDirectory || queryOptions.cwd,
                   prompt: rawPrompt || userInput.prompt || prompt,
+                  includeLegacyMemory: false,
+                });
+                const actionMemoryPack = buildMemoryV2PackForPrompt({
+                  sessionId,
+                  projectPath: workingDirectory || queryOptions.cwd,
+                  prompt: rawPrompt || userInput.prompt || prompt,
                 });
 
-                if (!runtimePack.additionalContext) return {};
+                const additionalContext = [
+                  runtimePack.additionalContext,
+                  actionMemoryPack.text,
+                ].filter(Boolean).join('\n\n');
+
+                if (!additionalContext) return {};
                 return {
                   hookSpecificOutput: {
                     hookEventName: 'UserPromptSubmit',
-                    additionalContext: runtimePack.additionalContext,
+                    additionalContext,
                   },
                 };
               } catch (error) {

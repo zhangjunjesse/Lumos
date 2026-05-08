@@ -42,21 +42,6 @@ interface BridgeInboundEventPayload {
   previewText?: string;
 }
 
-function triggerMemoryOnSessionSwitch(sessionId: string): void {
-  if (!sessionId) return;
-  fetch('/api/memory/trigger', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    keepalive: true,
-    body: JSON.stringify({
-      sessionId,
-      trigger: 'session_switch',
-    }),
-  }).catch(() => {
-    // Best effort only.
-  });
-}
-
 function parseJsonArray(raw: string | undefined): string[] {
   if (!raw) return [];
   try {
@@ -408,13 +393,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       permissionResolved: null,
     });
   }, [id, sessionStreamingState?.status, updateStreamingSession]);
-
-  useEffect(() => {
-    const current = id;
-    return () => {
-      triggerMemoryOnSessionSwitch(current);
-    };
-  }, [id]);
 
   // Refresh messages when tab becomes visible (SSE handles real-time updates)
   useEffect(() => {

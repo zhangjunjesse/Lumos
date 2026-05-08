@@ -5,8 +5,9 @@
 //   - '<appId>'               → reads from installed app on disk (next session)
 //
 // Compilation uses the runtime/compiler.ts pipeline with per-app module cache.
+// Keep the compiler behind a lazy import so an optional packaging miss in the
+// preview compiler cannot prevent Electron's main process from starting.
 
-import { compileApp, createModuleCache, type ModuleCache } from '@/lib/app/compile/compiler';
 import type {
   AppFile, ManifestV2, CompiledModule, RuntimeCompileResult,
 } from '@/lib/app/compile/types';
@@ -23,6 +24,16 @@ export interface AppSourceProvider {
 
 export interface AppLoaderOptions {
   source: AppSourceProvider;
+}
+
+type ModuleCache = Map<string, { hash: string; module: CompiledModule }>;
+type CompilerModule = typeof import('../compile/compiler');
+
+let compilerModulePromise: Promise<CompilerModule> | null = null;
+
+function loadCompiler(): Promise<CompilerModule> {
+  compilerModulePromise ??= import('../compile/compiler');
+  return compilerModulePromise;
 }
 
 interface CacheEntry {
@@ -62,6 +73,7 @@ export class AppLoader {
       throw new AppLoaderError(`app ${appId} manifest.json is not valid JSON: ${(err as Error).message}`);
     }
 
+    const { compileApp, createModuleCache } = await loadCompiler();
     const moduleCache = cached?.cache ?? createModuleCache();
     const result: RuntimeCompileResult = await compileApp(sources, {
       appId,

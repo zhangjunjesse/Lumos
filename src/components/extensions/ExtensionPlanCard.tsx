@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -105,15 +104,16 @@ function isSelfTestFailure(message: string | undefined): boolean {
 
 export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
   const { t } = useTranslation();
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState<ApplyResult | null>(null);
+  const autoApplyStartedRef = useRef(false);
 
   const skills = useMemo(() => plan.skills || [], [plan.skills]);
   const mcps = useMemo(() => plan.mcpServers || [], [plan.mcpServers]);
 
   const skillCount = skills.length;
   const mcpCount = mcps.length;
+  const autoApplySafePlan = skillCount > 0 && mcpCount === 0;
 
   const getStatusLabel = (item: { status: ApplyStatus; message?: string }) => {
     if (isSelfTestFailure(item.message)) return t('extensions.builderStatusSelfTestFailed');
@@ -134,7 +134,7 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
 
   const getResultMessage = (item: { message?: string }) => stripSelfTestPrefix(item.message);
 
-  const applyPlan = async () => {
+  const applyPlan = useCallback(async () => {
     if (applying) return;
     setApplying(true);
     const skillResults: ApplyResult['skills'] = [];
@@ -289,7 +289,16 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
     window.dispatchEvent(new CustomEvent('extensions-updated'));
     setResult({ skills: skillResults, mcps: mcpResults });
     setApplying(false);
-  };
+  }, [applying, mcps, skills, t]);
+
+  useEffect(() => {
+    if (!autoApplySafePlan || result || applying || autoApplyStartedRef.current) return;
+    autoApplyStartedRef.current = true;
+    const timer = window.setTimeout(() => {
+      void applyPlan();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [applyPlan, applying, autoApplySafePlan, result]);
 
   if (skillCount === 0 && mcpCount === 0) return null;
 
@@ -308,84 +317,42 @@ export function ExtensionPlanCard({ plan }: { plan: ExtensionPlan }) {
             <Badge variant="secondary">{t('extensions.builderPlanMcps', { n: mcpCount })}</Badge>
           )}
         </div>
-        <Button size="sm" onClick={() => setDialogOpen(true)}>
-          {t('extensions.builderApplyPlan')}
-        </Button>
-        {result && (
+        {!autoApplySafePlan && (
+          <Button size="sm" onClick={applyPlan} disabled={applying}>
+            {applying ? t('extensions.builderApplying') : t('extensions.builderApplyPlan')}
+          </Button>
+        )}
+        {autoApplySafePlan && !result && (
           <div className="text-xs text-muted-foreground">
-            {t('extensions.builderApplyDone')}
+            {applying ? t('extensions.builderApplying') : t('extensions.builderApplying')}
+          </div>
+        )}
+        {result && (
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <div>{t('extensions.builderApplyDone')}</div>
+            {result.skills.length > 0 && (
+              <ul className="list-disc pl-4">
+                {result.skills.map((item, idx) => (
+                  <li key={`skill-${idx}`}>
+                    {item.name}: {getStatusLabel(item)}
+                    {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {result.mcps.length > 0 && (
+              <ul className="list-disc pl-4">
+                {result.mcps.map((item, idx) => (
+                  <li key={`mcp-${idx}`}>
+                    {item.name}: {getStatusLabel(item)}
+                    {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </CardContent>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t('extensions.builderApplyConfirmTitle')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <p className="text-muted-foreground">{t('extensions.builderApplyConfirmDesc')}</p>
-            {skillCount > 0 && (
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">{t('extensions.builderPlanSkills', { n: skillCount })}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {skills.map((skill, idx) => (
-                    <Badge key={`${skill.name || 'skill'}-${idx}`} variant="outline">{skill.name || t('extensions.builderUnnamedSkill')}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {mcpCount > 0 && (
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">{t('extensions.builderPlanMcps', { n: mcpCount })}</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {mcps.map((server, idx) => (
-                    <Badge key={`${server.name || 'mcp'}-${idx}`} variant="outline">{server.name || t('extensions.builderUnnamedMcp')}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {result && (
-              <div className="space-y-2 text-xs">
-                {result.skills.length > 0 && (
-                  <div>
-                    <div className="font-medium text-muted-foreground">{t('extensions.builderResultSkills')}</div>
-                    <ul className="list-disc pl-4">
-                      {result.skills.map((item, idx) => (
-                        <li key={`skill-${idx}`}>
-                          {item.name}: {getStatusLabel(item)}
-                          {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {result.mcps.length > 0 && (
-                  <div>
-                    <div className="font-medium text-muted-foreground">{t('extensions.builderResultMcps')}</div>
-                    <ul className="list-disc pl-4">
-                      {result.mcps.map((item, idx) => (
-                        <li key={`mcp-${idx}`}>
-                          {item.name}: {getStatusLabel(item)}
-                          {getResultMessage(item) ? ` (${getResultMessage(item)})` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={applying}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={applyPlan} disabled={applying}>
-              {applying ? t('extensions.builderApplying') : t('extensions.builderApplyAndSync')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }

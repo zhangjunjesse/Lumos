@@ -168,6 +168,26 @@ describe('host RPC dispatcher', () => {
     expect('result' in ok && (ok.result as { runId: string }).runId).toBe('run-1');
   });
 
+  test('im.notify requires im-notification permission and adapter', async () => {
+    const noPerm = await dispatchRpc(req('im.notify', { text: 'hi' }), ctx({}));
+    expect('error' in noPerm && noPerm.error?.code).toBe('PERM_DENIED');
+
+    const noAdapter = await dispatchRpc(
+      req('im.notify', { text: 'hi' }),
+      ctx({ system: ['im-notification'] }),
+    );
+    expect('error' in noAdapter && noAdapter.error?.code).toBe('UNSUPPORTED');
+
+    const ok = await dispatchRpc(
+      req('im.notify', { text: 'hi' }),
+      ctx(
+        { system: ['im-notification'] },
+        { im: { notify: async (input) => ({ ok: true, input }) } },
+      ),
+    );
+    expect('result' in ok && (ok.result as { ok: boolean }).ok).toBe(true);
+  });
+
   test('secrets.get scoped per key', async () => {
     const c = ctx(
       { secrets: ['OPENAI_KEY'] },

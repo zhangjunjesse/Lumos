@@ -50,7 +50,7 @@ export interface PermissionGate {
   canFetchUrl(url: string): boolean;
   canReadPath(absolutePath: string): boolean;
   canWritePath(absolutePath: string): boolean;
-  canUseSystem(cap: 'notification' | 'schedule' | 'clipboard' | 'browser'): boolean;
+  canUseSystem(cap: 'notification' | 'schedule' | 'clipboard' | 'browser' | 'im-notification'): boolean;
 }
 
 export interface PermissionGateOptions {
@@ -97,7 +97,7 @@ export function createPermissionGate(
   function canUseTool(name: string): boolean {
     return isGranted(`tool:${name}`);
   }
-  function canUseSystem(cap: 'notification' | 'schedule' | 'clipboard' | 'browser'): boolean {
+  function canUseSystem(cap: 'notification' | 'schedule' | 'clipboard' | 'browser' | 'im-notification'): boolean {
     return isGranted(`system:${cap}`);
   }
 

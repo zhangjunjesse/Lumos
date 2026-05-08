@@ -24,6 +24,8 @@ files:
   - node_modules/bindings/**/*
   - node_modules/prebuild-install/**/*
   - node_modules/file-uri-to-path/**/*
+  - node_modules/esbuild/**/*
+  - node_modules/@esbuild/**/*
   - "!src"
   - "!electron"
   - "!.next"
@@ -100,6 +102,8 @@ afterPack: scripts/after-pack-ensure-models.js
 asarUnpack:
   - "**/*.node"
   - "**/better-sqlite3/**"
+  - "**/esbuild/**"
+  - "**/@esbuild/**"
 mac:
   icon: build/icon.icns
   category: public.app-category.developer-tools

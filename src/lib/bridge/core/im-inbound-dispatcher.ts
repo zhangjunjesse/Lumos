@@ -6,8 +6,7 @@
  *
  * 路由策略：
  *   - feishu: 由 inbound-pipeline 处理（不走这里）
- *   - wechat: 用「当前路由 session 指针」(route-pointer.ts)，没有就自动建。
- *             AI 回复加 session 名前缀送回（防止用户切来切去搞混）。
+ *   - wechat: 固定进入 Lumos 主 Agent；旧 route-pointer 不再决定入站归属。
  *   - 其它  : 走 BindingService.getBindingByChannel（chat ↔ session 1:1 绑定）。
  */
 
@@ -22,18 +21,13 @@ import {
 } from '@/lib/im';
 import type { InboundMessage, OutboundMessage, PreviewHandle } from '@/lib/im';
 import { getDefaultProvider } from '@/lib/db/providers';
-import { getSession, getAllSessions, createSession } from '@/lib/db';
-import {
-  isMainAgentSession,
-  withSessionEntryMarker,
-} from '@/lib/chat/session-entry';
+import { getSession } from '@/lib/db';
 import { parseProviderExtraEnv, resolveProviderRequestApiKey } from '@/lib/provider-model-discovery';
 import { resolveProviderModelForRequest } from '@/lib/model-metadata';
-import {
-  getCurrentRoutedSessionId,
-  setCurrentRoutedSessionId,
-} from '@/lib/im/providers/wechat/route-pointer';
+import { setCurrentRoutedSessionId } from '@/lib/im/providers/wechat/route-pointer';
+import { resolveWechatMainAgentSession } from '@/lib/im/providers/wechat/main-agent-route';
 import { handleWechatCommand, maybeHandleWechatVoiceModePhrase } from '@/lib/im/providers/wechat/commands';
+import { recordDefaultUserImTarget } from '@/lib/app/im-bridge';
 import {
   isWechatNativeVoiceReplyEnabled,
   isWechatVoiceModeEnabled,
@@ -84,6 +78,18 @@ export async function dispatchInbound(
     const inboundMessage = providerId === 'wechat'
       ? await normalizeWechatInboundMessage(message)
       : message;
+    if (providerId === 'wechat') {
+      try {
+        recordDefaultUserImTarget({
+          providerId,
+          chatId: inboundMessage.address.chatId,
+          label: '微信会话',
+          source: 'wechat-inbound',
+        });
+      } catch (err) {
+        console.warn('[im-dispatcher] failed to persist default IM target:', err);
+      }
+    }
     const sendReply = (reply: OutboundMessage) =>
       sendToProvider(providerId, withInboundProviderHints(providerId, inboundMessage, reply));
 
@@ -295,26 +301,15 @@ export async function dispatchInbound(
 
 // ---- helpers ---------------------------------------------------------------
 
-function resolveWechatSession(): { sessionId: string; needsTitlePrefix: true } {
-  // 1. 用户用 /switch 显式切到的指针优先
-  const explicit = getCurrentRoutedSessionId();
-  if (explicit) return { sessionId: explicit, needsTitlePrefix: true };
-
-  // 2. 默认 = 主 agent 会话（lumos 的"主对话"）
-  const main = getAllSessions().find((s) => isMainAgentSession(s));
-  if (main) {
-    setCurrentRoutedSessionId(main.id);
-    return { sessionId: main.id, needsTitlePrefix: true };
+function resolveWechatSession(): { sessionId: string; needsTitlePrefix: boolean } {
+  const main = resolveWechatMainAgentSession({ createIfMissing: true });
+  if (!main) {
+    throw new Error('Unable to create Main Agent session for WeChat inbound message');
   }
-
-  // 3. 一个 main-agent session 都没有 → 建一个（带 marker 标记为 main-agent）
-  const created = createSession(
-    undefined,
-    undefined,
-    withSessionEntryMarker(undefined, 'main-agent'),
-  );
-  setCurrentRoutedSessionId(created.id);
-  return { sessionId: created.id, needsTitlePrefix: true };
+  // Keep the legacy read-only pointer aligned for existing UI/status surfaces,
+  // but never read it as the source of truth for inbound routing.
+  setCurrentRoutedSessionId(main.id);
+  return { sessionId: main.id, needsTitlePrefix: false };
 }
 
 function withSessionPrefix(sessionId: string, body: string): string {

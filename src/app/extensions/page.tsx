@@ -14,9 +14,10 @@ import { ExtensionBuilderPanel } from "@/components/extensions/ExtensionBuilderP
 import { DeepSearchPanel } from "@/components/deepsearch/DeepSearchPanel";
 import { WeChatExportPanel } from "@/components/wechat-export/WeChatExportPanel";
 import { GoofishPanel } from "@/components/goofish/GoofishPanel";
+import { XPanel } from "@/components/x-platform/XPanel";
 import { useTranslation } from "@/hooks/useTranslation";
 
-type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch" | "wechat" | "goofish";
+type ExtTab = "skills" | "mcp" | "feishu" | "builder" | "deepsearch" | "wechat" | "goofish" | "x";
 
 export default function ExtensionsPage() {
   return (
@@ -35,6 +36,7 @@ export default function ExtensionsPage() {
 function ExtensionsPageInner() {
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get("tab") as ExtTab) || "skills";
+  const builderSessionId = searchParams.get("builderSessionId") || "";
   const [tab, setTab] = useState<ExtTab>(initialTab);
   const [refreshKey, setRefreshKey] = useState(0);
   const { t } = useTranslation();
@@ -57,6 +59,7 @@ function ExtensionsPageInner() {
             <TabsTrigger value="feishu">{t('extensions.feishu')}</TabsTrigger>
             <TabsTrigger value="wechat">{t('extensions.wechat')}</TabsTrigger>
             <TabsTrigger value="goofish">{t('extensions.goofish')}</TabsTrigger>
+            <TabsTrigger value="x">X</TabsTrigger>
           </TabsList>
         </Tabs>
         <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
@@ -65,10 +68,11 @@ function ExtensionsPageInner() {
         {tab === "skills" && <SkillsManager refreshKey={refreshKey} />}
         {tab === "mcp" && <McpManager refreshKey={refreshKey} />}
         {tab === "deepsearch" && <DeepSearchPanel />}
-        {tab === "builder" && <ExtensionBuilderPanel />}
+        {tab === "builder" && <ExtensionBuilderPanel initialSessionId={builderSessionId} />}
         {tab === "feishu" && <FeishuPanel />}
         {tab === "wechat" && <WeChatExportPanel />}
         {tab === "goofish" && <GoofishPanel />}
+        {tab === "x" && <XPanel />}
       </div>
     </div>
   );

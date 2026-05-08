@@ -2,6 +2,7 @@ import type { SiteAdapter } from './adapter-types';
 import { zhihuAdapter } from './adapters/zhihu';
 import { wechatAdapter } from './adapters/wechat';
 import { xiaohongshuAdapter } from './adapters/xhs';
+import { xAdapter } from './adapters/x';
 import { wikisourceZhAdapter } from './adapters/wikisource-zh';
 import { ctextAdapter } from './adapters/ctext';
 import { projectGutenbergAdapter } from './adapters/gutenberg';
@@ -13,6 +14,7 @@ const adapters = new Map<string, SiteAdapter>([
   ['zhihu', zhihuAdapter],
   ['wechat', wechatAdapter],
   ['xiaohongshu', xiaohongshuAdapter],
+  ['x', xAdapter],
   ['wikisource_zh', wikisourceZhAdapter],
   ['ctext', ctextAdapter],
   ['project_gutenberg', projectGutenbergAdapter],

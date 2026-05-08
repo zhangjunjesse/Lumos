@@ -1,11 +1,13 @@
 /**
  * WeChat Route Pointer
  *
- * 当前 wechat 入站消息路由到哪个 lumos session（全局单值）。
- * 用户在微信里发 /switch 切换，重启后保留。
+ * Legacy WeChat route pointer.
  *
  * 存储：settings 表 key = 'im.wechat.current_session_id'
- * 失效降级：指针指向已删除 session → 调用方需要重新建并 set。
+ *
+ * 该值曾用于让微信入站消息切到任意 Lumos session。现在产品规则已经
+ * 收敛为“微信入口固定进入主 Agent”，因此该指针只保留给旧 UI / 迁移 /
+ * 调试状态使用，不再作为入站路由真源。
  */
 
 import { getSetting, setSetting, getSession } from '@/lib/db';

@@ -8,7 +8,7 @@ import type { AppManifest } from '../manifest/types';
  *   net:<domain>
  *   mcp:<server>       | mcp.tool:<server>:<tool>     (M2+)
  *   tool:<name>
- *   system:<cap>       (notification | schedule | clipboard)
+ *   system:<cap>       (notification | schedule | clipboard | im-notification)
  *   data:shared        (v3+)
  */
 
@@ -166,6 +166,8 @@ function describeSystem(s: string): string {
       return '注册定时任务（cron）';
     case 'clipboard':
       return '读写系统剪贴板';
+    case 'im-notification':
+      return '向用户自己的 IM 通道发送应用通知（用户回复仍进入主 Agent）';
     default:
       return `系统能力：${s}`;
   }

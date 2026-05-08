@@ -38,11 +38,13 @@ jest.mock('@/lib/db', () => ({
   },
 }));
 
+const mockRunInstalledNativeAppImCommand = jest.fn();
+
+jest.mock('@/lib/app/native-command-im-bridge', () => ({
+  runInstalledNativeAppImCommand: mockRunInstalledNativeAppImCommand,
+}));
+
 import { handleWechatCommand, maybeHandleWechatVoiceModePhrase, WECHAT_COMMANDS } from '../commands';
-import {
-  getCurrentRoutedSessionId,
-  setCurrentRoutedSessionId,
-} from '../route-pointer';
 import type { IMCommandContext } from '../../../core/types';
 
 function makeCtx(command: string, args: string[] = []): IMCommandContext {
@@ -67,13 +69,19 @@ beforeEach(() => {
   sessionsTable.length = 0;
   settings.clear();
   createCounter = 0;
+  mockRunInstalledNativeAppImCommand.mockReset();
+  mockRunInstalledNativeAppImCommand.mockResolvedValue({
+    handled: false,
+    ok: false,
+    message: '',
+  });
   delete process.env.WECHAT_NATIVE_VOICE_REPLY;
 });
 
 describe('wechat/commands: WECHAT_COMMANDS list', () => {
   test('contains custom + builtin commands', () => {
     const names = WECHAT_COMMANDS.map((c) => c.name);
-    expect(names).toEqual(expect.arrayContaining(['list', 'switch', 'current', 'new', 'voice']));
+    expect(names).toEqual(expect.arrayContaining(['list', 'switch', 'current', 'new', 'voice', 'app', 'goofish']));
     expect(names).toEqual(expect.arrayContaining(['help', 'ping', 'whoami']));
   });
 });
@@ -85,15 +93,16 @@ describe('wechat/commands: /list', () => {
     expect(r.reply!.text).toMatch(/没有最近 30 天活跃过的会话/);
   });
 
-  test('lists active sessions, marks current', async () => {
+  test('lists active sessions, marks main agent entry', async () => {
     sessionsTable.push(
+      { id: 'sess_main', title: '主 Agent', status: 'active', updated_at: freshDate(0), system_prompt: '__LUMOS_MAIN_AGENT__' },
       { id: 'sess_a1', title: '项目脑暴', status: 'active', updated_at: freshDate(0) },
       { id: 'sess_b2', title: '阅读笔记', status: 'active', updated_at: freshDate(1) },
       { id: 'sess_c3', title: '老的', status: 'active', updated_at: freshDate(40) }, // out of 30d
     );
-    setCurrentRoutedSessionId('sess_a1');
 
     const r = await handleWechatCommand(makeCtx('list'));
+    expect(r.reply!.text).toMatch(/主 Agent/);
     expect(r.reply!.text).toMatch(/项目脑暴/);
     expect(r.reply!.text).toMatch(/阅读笔记/);
     expect(r.reply!.text).not.toMatch(/老的/); // out of cutoff
@@ -185,78 +194,71 @@ describe('wechat/commands: /switch', () => {
 
   test('without args shows usage', async () => {
     const r = await handleWechatCommand(makeCtx('switch'));
-    expect(r.reply!.text).toMatch(/用法/);
+    expect(r.reply!.text).toMatch(/固定进入主 Agent/);
   });
 
-  test('by index', async () => {
+  test('by index no longer mutates route pointer', async () => {
     const r = await handleWechatCommand(makeCtx('switch', ['1']));
-    expect(r.reply!.text).toMatch(/已切到/);
-    expect(getCurrentRoutedSessionId()).toBe('sess_a1');
+    expect(r.reply!.text).toMatch(/不再切换到普通会话/);
+    expect(settings.get('im.wechat.current_session_id')).toBeUndefined();
   });
 
-  test('by short id', async () => {
+  test('by short id returns guidance without switching', async () => {
     const r = await handleWechatCommand(makeCtx('switch', ['sess_b']));
     // short_id is first 6 chars; sess_b is exact for 'sess_b' but short_id is 'sess_b'
-    expect(r.reply!.text).toMatch(/已切到/);
-    expect(getCurrentRoutedSessionId()).toBe('sess_b2');
+    expect(r.reply!.text).toMatch(/已找到「阅读笔记」/);
+    expect(settings.get('im.wechat.current_session_id')).toBeUndefined();
   });
 
-  test('by exact name', async () => {
+  test('by exact name returns guidance without switching', async () => {
     const r = await handleWechatCommand(makeCtx('switch', ['项目脑暴']));
-    expect(getCurrentRoutedSessionId()).toBe('sess_a1');
-    expect(r.reply!.text).toMatch(/已切到/);
+    expect(r.reply!.text).toMatch(/已找到「项目脑暴」/);
+    expect(settings.get('im.wechat.current_session_id')).toBeUndefined();
   });
 
   test('fuzzy match with multiple results asks for disambiguation', async () => {
     const r = await handleWechatCommand(makeCtx('switch', ['脑暴']));
-    expect(getCurrentRoutedSessionId()).toBeNull();
     expect(r.reply!.text).toMatch(/找到多个/);
+    expect(settings.get('im.wechat.current_session_id')).toBeUndefined();
   });
 
   test('no match', async () => {
     const r = await handleWechatCommand(makeCtx('switch', ['not-a-thing-xyz']));
     expect(r.reply!.text).toMatch(/没找到/);
-    expect(getCurrentRoutedSessionId()).toBeNull();
+    expect(settings.get('im.wechat.current_session_id')).toBeUndefined();
   });
 });
 
 describe('wechat/commands: /current', () => {
-  test('no pointer', async () => {
+  test('no main agent session', async () => {
     const r = await handleWechatCommand(makeCtx('current'));
-    expect(r.reply!.text).toMatch(/没有路由目标/);
+    expect(r.reply!.text).toMatch(/还没有主 Agent 会话/);
   });
 
-  test('with valid pointer', async () => {
+  test('with main agent session', async () => {
     sessionsTable.push({
       id: 'sess_a1',
-      title: '项目脑暴',
+      title: '主 Agent',
       status: 'active',
       updated_at: freshDate(0),
+      system_prompt: '__LUMOS_MAIN_AGENT__',
     });
-    setCurrentRoutedSessionId('sess_a1');
     const r = await handleWechatCommand(makeCtx('current'));
-    expect(r.reply!.text).toMatch(/项目脑暴/);
-  });
-
-  test('pointer points to deleted session', async () => {
-    setCurrentRoutedSessionId('sess_ghost');
-    const r = await handleWechatCommand(makeCtx('current'));
-    expect(r.reply!.text).toMatch(/已不存在|没有路由目标/);
+    expect(r.reply!.text).toMatch(/主 Agent/);
   });
 });
 
 describe('wechat/commands: /new', () => {
-  test('without name creates session and sets pointer', async () => {
+  test('without name returns main agent guidance', async () => {
     const r = await handleWechatCommand(makeCtx('new'));
     expect(r.handled).toBe(true);
-    expect(sessionsTable).toHaveLength(1);
-    expect(getCurrentRoutedSessionId()).toBe(sessionsTable[0].id);
-    expect(r.reply!.text).toMatch(/新建/);
+    expect(sessionsTable).toHaveLength(0);
+    expect(r.reply!.text).toMatch(/固定进入主 Agent/);
   });
 
   test('with name uses name', async () => {
     const r = await handleWechatCommand(makeCtx('new', ['出差', '日报']));
-    expect(sessionsTable[0].title).toBe('出差 日报');
+    expect(sessionsTable).toHaveLength(0);
     expect(r.reply!.text).toMatch(/出差 日报/);
   });
 });
@@ -335,6 +337,125 @@ describe('wechat/commands: builtin fallback', () => {
   });
 });
 
+describe('wechat/commands: /goofish', () => {
+  test('routes explicit Goofish commands to installed app command bridge', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '「闲鱼助手」\n当前没有未读买家会话。',
+    });
+
+    const r = await handleWechatCommand(makeCtx('goofish', ['unread']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toBe('「闲鱼助手」\n当前没有未读买家会话。');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/goofish unread',
+      confirmed: false,
+    });
+  });
+
+  test('routes Goofish draft commands with the buyer query intact', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '「闲鱼助手」\n已保存回复草稿。',
+    });
+
+    const r = await handleWechatCommand(makeCtx('goofish', ['draft', '张三']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toContain('已保存回复草稿');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/goofish draft 张三',
+      confirmed: false,
+    });
+  });
+
+  test('routes Goofish confirm commands with the draft code intact', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '「闲鱼助手」\n已确认发送。',
+    });
+
+    const r = await handleWechatCommand(makeCtx('goofish', ['confirm', 'draftabc']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toContain('已确认发送');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/goofish confirm draftabc',
+      confirmed: false,
+    });
+  });
+
+  test('routes Goofish reject commands with the draft code intact', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '「闲鱼助手」\n已拒绝草稿。',
+    });
+
+    const r = await handleWechatCommand(makeCtx('goofish', ['reject', 'draftabc']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toContain('已拒绝草稿');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/goofish reject draftabc',
+      confirmed: false,
+    });
+  });
+
+  test('keeps unsupported Goofish commands handled when bridge rejects them', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: false,
+      message: '当前微信入口只支持低风险闲鱼应用命令。',
+    });
+
+    const r = await handleWechatCommand(makeCtx('goofish', ['change-price']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toMatch(/低风险闲鱼应用命令/);
+  });
+});
+
+describe('wechat/commands: /app', () => {
+  test('routes generic app commands to installed app command bridge', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '「客户记录」\n客户记录 状态：',
+    });
+
+    const r = await handleWechatCommand(makeCtx('app', ['客户记录', 'status']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toContain('客户记录 状态');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/app 客户记录 status',
+      confirmed: false,
+    });
+  });
+
+  test('routes Chinese /应用 alias to the same bridge', async () => {
+    mockRunInstalledNativeAppImCommand.mockResolvedValueOnce({
+      handled: true,
+      ok: true,
+      message: '通用应用命令：',
+    });
+
+    const r = await handleWechatCommand(makeCtx('应用', ['help']));
+
+    expect(r.handled).toBe(true);
+    expect(r.reply!.text).toContain('通用应用命令');
+    expect(mockRunInstalledNativeAppImCommand).toHaveBeenCalledWith({
+      commandText: '/应用 help',
+      confirmed: false,
+    });
+  });
+});
+
 describe('wechat/commands: /help with custom', () => {
   test('lists custom commands', async () => {
     const r = await handleWechatCommand(makeCtx('help'));
@@ -342,5 +463,7 @@ describe('wechat/commands: /help with custom', () => {
     expect(r.reply!.text).toMatch(/switch/);
     expect(r.reply!.text).toMatch(/new/);
     expect(r.reply!.text).toMatch(/voice/);
+    expect(r.reply!.text).toMatch(/app/);
+    expect(r.reply!.text).toMatch(/goofish/);
   });
 });

@@ -383,7 +383,7 @@ describe('im-inbound-dispatcher', () => {
     });
   });
 
-  describe('wechat path: route pointer + auto-create + session prefix', () => {
+  describe('wechat path: fixed Main Agent entry', () => {
     function wechatMsg(text = 'hello bot'): Parameters<typeof dispatchInbound>[1] {
       return {
         messageId: `wmsg-${Date.now()}-${Math.random()}`,
@@ -393,33 +393,36 @@ describe('im-inbound-dispatcher', () => {
       };
     }
 
-    test('empty pointer → auto-creates session, sets pointer, prefixes reply', async () => {
+    test('empty main agent → auto-creates main agent session and aligns legacy pointer', async () => {
       conversationResponseText = 'hi from AI';
       const r = await dispatchInbound('wechat', wechatMsg());
       expect(r.ok).toBe(true);
       expect(r.sessionId).toBe('auto_1');
       expect(routePointer).toBe('auto_1');
       expect(fakeSessions.has('auto_1')).toBe(true);
+      expect(fakeSessions.get('auto_1')?.system_prompt).toContain('__LUMOS_MAIN_AGENT__');
 
-      // Reply text should be prefixed with session title block (title on first line,
-      // blank line separator, then body)
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
-      expect(sentArgs.text).toMatch(/📂 \(未命名 auto_1\)/);
-      expect(sentArgs.text).toMatch(/hi from AI/);
-      expect(sentArgs.text).toMatch(/^📂 \(未命名 auto_1\)\n\n/);
+      expect(sentArgs.text).toBe('hi from AI');
     });
 
-    test('reuses pointer when already set', async () => {
+    test('ignores legacy pointer to a normal session and uses existing main agent', async () => {
       fakeSessions.set('preset_1', { id: 'preset_1', title: '项目脑暴' });
+      fakeSessions.set('main_1', {
+        id: 'main_1',
+        title: 'Lumos 主 Agent',
+        system_prompt: '__LUMOS_MAIN_AGENT__',
+      });
       routePointer = 'preset_1';
 
       const r = await dispatchInbound('wechat', wechatMsg());
-      expect(r.sessionId).toBe('preset_1');
+      expect(r.sessionId).toBe('main_1');
+      expect(routePointer).toBe('main_1');
       // Should NOT create a new session
-      expect(fakeSessions.size).toBe(1);
+      expect(fakeSessions.size).toBe(2);
 
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
-      expect(sentArgs.text).toMatch(/📂 项目脑暴/);
+      expect(sentArgs.text).toBe('AI reply');
     });
 
     test('forwards inbound image attachments to conversationEngine', async () => {
@@ -484,7 +487,7 @@ describe('im-inbound-dispatcher', () => {
       expect(conversationCalls[0].files).toBeUndefined();
     });
 
-    test('reply with session prefix is single send (no streaming)', async () => {
+    test('wechat reply is a single send (no streaming)', async () => {
       const r = await dispatchInbound('wechat', wechatMsg());
       expect(r.ok).toBe(true);
       expect(sendToProvider).toHaveBeenCalledTimes(1);
@@ -552,8 +555,7 @@ describe('im-inbound-dispatcher', () => {
 
       expect(r.ok).toBe(true);
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
-      expect(sentArgs.text).toMatch(/📂 \(未命名 auto_1\)/);
-      expect(sentArgs.text).toMatch(/hi from AI/);
+      expect(sentArgs.text).toBe('hi from AI');
     });
 
     test('voice mode does not resend inline attachments when voice send falls back to text', async () => {

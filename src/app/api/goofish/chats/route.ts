@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoofishCliException } from '@/lib/goofish/cli';
 import { listChatsEnriched } from '@/lib/goofish/messages';
 import { getAuthStatus } from '@/lib/goofish/auth';
+import { goofishAuthExpiredResponse, isGoofishAuthExpiredError } from '@/lib/goofish/auth-error';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,9 @@ export async function GET(req: NextRequest) {
       watchFell: result.watchFell,
     });
   } catch (err) {
+    if (isGoofishAuthExpiredError(err)) {
+      return goofishAuthExpiredResponse();
+    }
     if (err instanceof GoofishCliException) {
       const httpStatus = err.code === 'NOT_INSTALLED' ? 503 : 400;
       return NextResponse.json({

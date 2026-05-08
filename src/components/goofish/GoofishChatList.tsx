@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ChatRow, formatRelativeTime, type ChatSessionLite as ChatSession } from './chat-list-utils';
+import { GoofishAuthExpiredHint } from './GoofishAuthExpiredHint';
 
 interface Props {
   /** Account filter: a specific unb or 'all' to merge across accounts. */
@@ -22,6 +23,7 @@ export function GoofishChatList({ onSelect, account = 'all' }: Props) {
   const [lastSyncMs, setLastSyncMs] = useState<number>(0);
   const [intervalMs, setIntervalMs] = useState<number>(60_000);
   const [error, setError] = useState<string | null>(null);
+  const [authExpired, setAuthExpired] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [query, setQuery] = useState('');
   const [locallyRead, setLocallyRead] = useState<Set<string>>(new Set());
@@ -81,9 +83,15 @@ export function GoofishChatList({ onSelect, account = 'all' }: Props) {
         body: JSON.stringify({ account }),
       });
       const data = await res.json();
+      if (res.status === 401 && data?.code === 'GOOFISH_AUTH_EXPIRED') {
+        setAuthExpired(true);
+        setError(null);
+        return;
+      }
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
       }
+      setAuthExpired(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : '同步失败');
     } finally {
@@ -189,12 +197,17 @@ export function GoofishChatList({ onSelect, account = 'all' }: Props) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="按昵称或消息内容搜索"
+          placeholder="按昵称或最近消息搜索"
           className="w-full pl-7 pr-3 py-1.5 text-sm bg-muted/30 rounded-md focus:outline-none focus:ring-1 focus:ring-primary/30"
         />
       </div>
 
-      {error && (
+      {authExpired && (
+        <div className="px-5 py-3 border-b border-border/60">
+          <GoofishAuthExpiredHint />
+        </div>
+      )}
+      {error && !authExpired && (
         <div className="px-5 py-3 text-sm text-red-500 border-b border-border/60">
           拉取失败：{error}
         </div>

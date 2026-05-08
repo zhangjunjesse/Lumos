@@ -38,6 +38,18 @@ describe('parseEventDsl', () => {
     });
   });
 
+  it('parses im notification action', () => {
+    expect(parseEventDsl('im:notify')).toEqual({ kind: 'im', op: 'notify' });
+  });
+
+  it('parses native integration actions', () => {
+    expect(parseEventDsl('native:goofish:sync')).toEqual({
+      kind: 'native',
+      integration: 'goofish',
+      action: 'sync',
+    });
+  });
+
   it.each([
     [''],
     ['unknown:foo'],
@@ -47,6 +59,10 @@ describe('parseEventDsl', () => {
     ['db:create'],
     ['db:wipe:customers'],
     ['db:create:Bad-Collection'],
+    ['im:send'],
+    ['native:goofish'],
+    ['native:Goofish:sync'],
+    ['native:goofish:BadAction'],
     ['page:'],
     ['dialog:'],
   ])('rejects invalid: %s', (dsl) => {
@@ -61,6 +77,8 @@ describe('dispatchEvent', () => {
       onDbCreate: jest.fn().mockResolvedValue({ id: 'new-row' }),
       onDbUpdate: jest.fn().mockResolvedValue(undefined),
       onDbDelete: jest.fn().mockResolvedValue(true),
+      onImNotify: jest.fn().mockResolvedValue({ ok: true }),
+      onNativeAction: jest.fn().mockResolvedValue({ ok: true }),
       onPage: jest.fn(),
       onDialog: jest.fn(),
     };
@@ -122,6 +140,40 @@ describe('dispatchEvent', () => {
       h,
     );
     expect(h.onDbDelete).toHaveBeenCalledWith('customers', 'r1');
+  });
+
+  it('routes im:notify with payload data', async () => {
+    const h = makeHandlers();
+    await dispatchEvent(
+      parseEventDsl('im:notify'),
+      { data: { title: '提醒', text: 'hello' } },
+      h,
+    );
+    expect(h.onImNotify).toHaveBeenCalledWith({ title: '提醒', text: 'hello' });
+  });
+
+  it('routes native actions with payload data', async () => {
+    const h = makeHandlers();
+    await dispatchEvent(
+      parseEventDsl('native:goofish:sync'),
+      { data: { sessionLimit: 10 } },
+      h,
+    );
+    expect(h.onNativeAction).toHaveBeenCalledWith('goofish', 'sync', { sessionLimit: 10 });
+  });
+
+  it('routes native actions with row id for row-level confirmations', async () => {
+    const h = makeHandlers();
+    await dispatchEvent(
+      parseEventDsl('native:goofish:send-draft'),
+      { rowId: 'draft-1', data: { confirmed: true } },
+      h,
+    );
+    expect(h.onNativeAction).toHaveBeenCalledWith(
+      'goofish',
+      'send-draft',
+      { confirmed: true, rowId: 'draft-1' },
+    );
   });
 
   it('routes page navigation', async () => {

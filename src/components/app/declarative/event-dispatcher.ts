@@ -4,6 +4,8 @@
  * Page JSON references actions as compact strings:
  *   "workflow:<id>"
  *   "db:create:<collection>" | "db:update:<collection>" | "db:delete:<collection>"
+ *   "im:notify"
+ *   "native:<integration>:<action>"
  *   "page:<id>"
  *   "dialog:<id>"
  *
@@ -19,6 +21,8 @@
 export type ParsedEvent =
   | { kind: 'workflow'; workflowId: string }
   | { kind: 'db'; op: 'create' | 'update' | 'delete'; collection: string }
+  | { kind: 'im'; op: 'notify' }
+  | { kind: 'native'; integration: string; action: string }
   | { kind: 'page'; menuId: string }
   | { kind: 'dialog'; dialogId: string };
 
@@ -77,6 +81,26 @@ export function parseEventDsl(dsl: string): ParsedEvent {
       }
       return { kind: 'page', menuId: id };
     }
+    case 'im': {
+      if (parts.length !== 2 || parts[1] !== 'notify') {
+        throw new EventParseError(dsl, 'im event must be im:notify');
+      }
+      return { kind: 'im', op: 'notify' };
+    }
+    case 'native': {
+      if (parts.length !== 3) {
+        throw new EventParseError(dsl, 'native event must be native:<integration>:<action>');
+      }
+      const integration = parts[1];
+      const action = parts[2];
+      if (!ID_RE.test(integration)) {
+        throw new EventParseError(dsl, `invalid native integration '${integration}'`);
+      }
+      if (!ID_RE.test(action)) {
+        throw new EventParseError(dsl, `invalid native action '${action}'`);
+      }
+      return { kind: 'native', integration, action };
+    }
     case 'dialog': {
       if (parts.length !== 2) {
         throw new EventParseError(dsl, 'dialog event must be dialog:<id>');
@@ -90,7 +114,7 @@ export function parseEventDsl(dsl: string): ParsedEvent {
     default:
       throw new EventParseError(
         dsl,
-        `unknown event kind '${parts[0]}'; known: workflow / db / page / dialog`,
+        `unknown event kind '${parts[0]}'; known: workflow / db / im / native / page / dialog`,
       );
   }
 }
@@ -109,6 +133,12 @@ export interface EventHandlers {
     patch: Record<string, unknown>,
   ) => Promise<unknown>;
   onDbDelete: (collection: string, id: string) => Promise<boolean>;
+  onImNotify: (payload: Record<string, unknown>) => Promise<unknown>;
+  onNativeAction: (
+    integration: string,
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>;
   onPage: (menuId: string) => void;
   onDialog: (dialogId: string) => void;
 }
@@ -161,6 +191,20 @@ export async function dispatchEvent(
     case 'page':
       handlers.onPage(event.menuId);
       return undefined;
+
+    case 'im':
+      return handlers.onImNotify(payload.data ?? payload.inputs ?? {});
+
+    case 'native':
+      return handlers.onNativeAction(
+        event.integration,
+        event.action,
+        {
+          ...(payload.inputs ?? {}),
+          ...(payload.data ?? {}),
+          ...(payload.rowId ? { rowId: payload.rowId } : {}),
+        },
+      );
 
     case 'dialog':
       handlers.onDialog(event.dialogId);

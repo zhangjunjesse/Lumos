@@ -90,9 +90,10 @@ describe('derivePermissions', () => {
   it('emits system entries', () => {
     const perms = derivePermissions({
       ...baseManifest,
-      permissions: { system: ['notification', 'schedule'] },
+      permissions: { system: ['notification', 'schedule', 'im-notification'] },
     });
     expect(perms.map((p) => p.permission).sort()).toEqual([
+      'system:im-notification',
       'system:notification',
       'system:schedule',
     ]);

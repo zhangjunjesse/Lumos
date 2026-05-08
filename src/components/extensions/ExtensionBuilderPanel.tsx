@@ -9,7 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 
 const STORAGE_KEY = 'lumos:extension-builder-session';
 
-export function ExtensionBuilderPanel() {
+export function ExtensionBuilderPanel({ initialSessionId = '' }: { initialSessionId?: string }) {
   const { t } = useTranslation();
   const [sessionId, setSessionId] = useState('');
   const [sessionModel, setSessionModel] = useState('');
@@ -35,8 +35,24 @@ export function ExtensionBuilderPanel() {
       setError('');
 
       let id = '';
+      const requestedId = initialSessionId.trim();
       const cached = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
-      if (cached) {
+      if (requestedId) {
+        try {
+          const res = await fetch(`/api/chat/sessions/${requestedId}`);
+          if (res.ok) {
+            const data: { session: ChatSession } = await res.json();
+            id = data.session.id;
+            localStorage.setItem(STORAGE_KEY, id);
+            setSessionModel(data.session.model || '');
+            setSessionProviderId(data.session.provider_id || '');
+          }
+        } catch {
+          // Fall back to the cached or new builder session below.
+        }
+      }
+
+      if (!id && cached) {
         try {
           const res = await fetch(`/api/chat/sessions/${cached}`);
           if (res.ok) {
@@ -81,7 +97,7 @@ export function ExtensionBuilderPanel() {
 
     init();
     return () => { cancelled = true; };
-  }, [loadMessages]);
+  }, [initialSessionId, loadMessages]);
 
   useEffect(() => {
     if (!sessionId) return;

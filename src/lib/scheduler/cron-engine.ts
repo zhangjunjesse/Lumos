@@ -22,6 +22,7 @@ import type { WorkflowDSLV3 } from '@/lib/workflow/types';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { updateArchivedWeChatAutomationReportStatus } from '@/lib/wechat-assistant/report-archive';
 import { runDueTopicExtractions } from '@/lib/wechat-assistant/topic-extractor';
+import { runDueMemoryV2Sleep } from '@/lib/memory-v2/sleep';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -64,6 +65,11 @@ async function runTick(): Promise<void> {
   runDueTopicExtractions().catch((error: unknown) => {
     console.warn('[wechat-assistant] daily topic extraction tick failed:', error);
   });
+  try {
+    runDueMemoryV2Sleep();
+  } catch (error) {
+    console.warn('[memory-v2] daily sleep tick failed:', error);
+  }
 }
 
 async function runSchedule(

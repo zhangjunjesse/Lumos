@@ -15,6 +15,9 @@ export interface ChatSessionLite {
   item_id: string;
   item_title: string;
   item_main_pic: string;
+  // 该会话归属哪个 Lumos 账号(unb)。多账号 "全部" 视图必须靠它定位
+  // 选中 session 的拥有者,否则消息气泡 fromMe 判定会错。
+  account_unb: string;
 }
 
 export function ChatRow({ session, onClick }: { session: ChatSessionLite; onClick: () => void }) {

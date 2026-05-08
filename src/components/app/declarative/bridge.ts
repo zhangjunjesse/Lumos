@@ -55,6 +55,16 @@ export interface RendererBridge {
   /** Read a non-secret config value. Secrets are never returned to the renderer. */
   configGet(key: string): Promise<string | null>;
 
+  // ---- IM ----
+  sendImNotification(payload: Record<string, unknown>): Promise<unknown>;
+
+  // ---- native integrations ----
+  runNativeAction(
+    integration: string,
+    action: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown>;
+
   // ---- ui side-effects ----
   navigate(menuId: string): void;
   openDialog(dialogId: string, payload?: unknown): void;
@@ -166,6 +176,16 @@ export function createStubRendererBridge(): StubBridge {
     async configGet(key) {
       track('configGet', [key]);
       return null;
+    },
+
+    async sendImNotification(payload) {
+      track('sendImNotification', [payload]);
+      return { ok: true, status: 'sent' };
+    },
+
+    async runNativeAction(integration, action, payload) {
+      track('runNativeAction', [integration, action, payload]);
+      return { ok: true, integration, action };
     },
 
     navigate(menuId) {

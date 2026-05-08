@@ -6,7 +6,7 @@ export type AppCategory =
   | 'research' | 'developer' | 'lifestyle' | 'other';
 
 export type AppNeed =
-  | 'browser' | 'notification' | 'schedule' | 'clipboard'
+  | 'browser' | 'notification' | 'schedule' | 'clipboard' | 'im-notification'
   | `network:${string}` | `mcp:${string}` | `tool:${string}`
   | `llm:${string}` | `skill:${string}` | `team:${string}`
   | 'knowledge:required' | 'knowledge:optional';

@@ -30,6 +30,7 @@ const routeKeys: Record<string, string> = {
   "/knowledge": "topbar.knowledge",
   "/library-demo": "topbar.workspace",
   "/mind": "topbar.mind",
+  "/memory-v2": "topbar.actionMemory",
   "/settings": "topbar.settings",
   "/main-agent": "topbar.mainAgent",
   "/workflow": "topbar.workflow",

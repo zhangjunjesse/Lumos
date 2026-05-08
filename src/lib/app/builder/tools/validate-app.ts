@@ -5,6 +5,7 @@ import path from 'path';
 import { parseApp } from '../../manifest/parser';
 import type { ValidationIssue } from '../../manifest/types';
 import { validateApp as crossValidate } from '../../manifest/validator';
+import { validateNativeAppPackageDirectory } from '../../native-app-package-validation';
 
 import { type ToolDefinition, err, ok } from './types';
 
@@ -23,8 +24,8 @@ import { type ToolDefinition, err, ok } from './types';
  */
 
 export type ValidateAppInput =
-  | { files: Record<string, string> /* path → content (UTF-8) */ }
-  | { rootPath: string };
+  | { files: Record<string, string> /* path → content (UTF-8) */; nativeGrade?: boolean }
+  | { rootPath: string; nativeGrade?: boolean };
 
 export interface ValidateAppOutput {
   ok: boolean;
@@ -36,7 +37,7 @@ export interface ValidateAppOutput {
 export const validateAppTool: ToolDefinition<ValidateAppInput, ValidateAppOutput> = {
   name: 'validate_app',
   description:
-    'Run the parser + cross-file validator on a complete app package. Pass either an in-memory file map (path → content) or an existing rootPath. Returns every issue grouped by file with jsonPath so you can target specific fixes.',
+    'Run the parser + cross-file validator on a complete app package. For Lumos native-grade generated apps, pass nativeGrade:true to also enforce native-app-spec.json, common shell pages, run history, IM command, automation, and acceptance contracts.',
   inputSchema: {
     type: 'object',
     oneOf: [
@@ -48,12 +49,20 @@ export const validateAppTool: ToolDefinition<ValidateAppInput, ValidateAppOutput
             additionalProperties: { type: 'string' },
             description: 'Map of relative path → UTF-8 content. Must include app.json and routes.json.',
           },
+          nativeGrade: {
+            type: 'boolean',
+            description: 'When true, enforce Lumos native-grade app package requirements.',
+          },
         },
       },
       {
         required: ['rootPath'],
         properties: {
           rootPath: { type: 'string' },
+          nativeGrade: {
+            type: 'boolean',
+            description: 'When true, enforce Lumos native-grade app package requirements.',
+          },
         },
       },
     ],
@@ -87,6 +96,9 @@ export const validateAppTool: ToolDefinition<ValidateAppInput, ValidateAppOutput
       } else {
         issues.push(...parsed.issues);
         issues.push(...crossValidate(parsed.app));
+      }
+      if (input.nativeGrade === true) {
+        issues.push(...validateNativeAppPackageDirectory(rootPath).issues);
       }
       const errors = issues.filter((i) => i.level === 'error');
       const warnings = issues.filter((i) => i.level === 'warning');

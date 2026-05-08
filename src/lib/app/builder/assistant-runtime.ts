@@ -2,6 +2,8 @@ import {
   APP_BUILDER_SYSTEM_PROMPT_KEY,
   DEFAULT_APP_BUILDER_SYSTEM_PROMPT,
 } from '@/lib/app/builder/assistant-config';
+import { NATIVE_APP_SPEC_FILE } from '@/lib/app/builder/native-grade-spec';
+import { buildNativeSpecReviewPatch } from '@/lib/app/builder/native-spec-review';
 import {
   EXPECTED_TOOL_LOOP_RESPONSE_HINT,
   normalizeToolLoopResponse,
@@ -149,19 +151,33 @@ export async function runAppBuilderAssistantTurn(input: {
   const savedFiles: string[] = [];
   if (toolLoop.files.length > 0 && toolLoop.issues.length === 0) {
     input.events?.status?.('正在更新应用…');
+    let updatedNativeSpecVersion: number | undefined;
     for (const file of toolLoop.files) {
-      store.saveArtifact({
+      const artifact = store.saveArtifact({
         sessionId: input.sessionId,
         filePath: file.path,
         content: file.content,
       });
+      if (file.path === NATIVE_APP_SPEC_FILE) {
+        updatedNativeSpecVersion = artifact.version;
+      }
       savedFiles.push(file.path);
     }
     store.updateStatus(
       input.sessionId,
       toolLoop.nextStatus ?? defaultNextStatus(session),
     );
-    const nextSummary = buildNeedsSummary(session.needsSummary, toolLoop.files);
+    let nextSummary = buildNeedsSummary(session.needsSummary, toolLoop.files);
+    if (updatedNativeSpecVersion !== undefined) {
+      nextSummary = {
+        ...(nextSummary ?? session.needsSummary ?? {}),
+        ...buildNativeSpecReviewPatch({
+          status: 'pending',
+          artifactVersion: updatedNativeSpecVersion,
+          note: 'AI 已更新内置级规格，等待用户接受。',
+        }),
+      };
+    }
     if (nextSummary) {
       store.setNeedsSummary(input.sessionId, nextSummary);
     }
@@ -301,6 +317,7 @@ function describePhase(status: string): string {
       '- 列表页直接用 const 数组放 5-10 条 mock 数据让预览有内容。',
       '- 编译失败时下一轮 prompt 会带详细错误（含行号），**必须按错误精确修**，不要把同样错误的代码再发一遍。',
       '- finish 时 nextStatus="demo_review"。assistantMessage 必须提示用户去预览 tab 走一遍并点顶部「确认 Demo」。',
+      '- 如果本轮写入或修改了 native-app-spec.json，assistantMessage 还必须提示用户去「项目状态」检查并接受当前规格。',
       '- 用户在这阶段说「不对/再调整」时，用 write_file 改对应文件，不要切到 final。',
     ].join('\n');
   }
@@ -309,7 +326,7 @@ function describePhase(status: string): string {
       '- 现在在「Final 阶段」。按 SOP 6c 在已确认的 demo 文件基础上**增量补完**：write_file 加新 page tsx + 在 manifest 加 route，给表单加 Label + 本地校验/错误反馈，给列表加 Skeleton/空态/Alert 错误态。',
       '- 如果应用依赖 AI / Agent / Workflow / DeepSearch，必须补齐可见设置/管理页、权限声明、loading/error/retry 和运行状态；不能只在按钮里调用平台 API。',
       '- 不要重写 demo 已确认的核心页面骨架。',
-      '- finish 时 nextStatus="iterating"。',
+      '- finish 时 nextStatus="iterating"，并提示用户在「项目状态」接受当前内置级规格后再保存并安装。',
     ].join('\n');
   }
   if (status === 'iterating') {
@@ -719,6 +736,7 @@ function buildToolLoopSystemPrompt(baseSystem: string): string {
 - 使用 AI / Agent 必须有可见设置入口，至少能管理 system prompt、输出要求、temperature、maxTokens，并在调用 ai.complete 时读取这些配置。
 - 使用 workflow.run 必须在 manifest.permissions.workflow.run 声明 id，同时写入对应 workflows/<id>.json，并生成可见的工作流管理/状态入口；当前 workflow bridge 未完整接入时，要在 UI 里明确显示“运行能力未就绪 / 等待平台接入”，不要假装已经能完整执行。
 - 使用 deepsearch.* 必须声明 permissions.deepsearch 对应权限，并生成 DeepSearch 配置/状态/结果/错误/重试入口；不要用 AI 直接写报告冒充 DeepSearch 搜索。
+- 使用 im.notify 必须在 manifest.permissions.system 加入 "im-notification"，并生成可见的通知目标/发送状态/失败原因入口；普通外部微信只读命令可用 /app <应用名或ID> status|runs|acceptance|help；只能给用户自己的已绑定 IM 通道发通知，用户回复仍进入主 Agent，不要把应用伪装成可直接聊天对象，也不要让通用 /app 入口执行写操作或高风险动作。
 - **assistantMessage 里提到的每条 Story 都必须在同一轮 actions 里有对应的 upsert_story。** 说"我新增了 N 条"但调用次数对不上 = 欺骗用户。
 - **永远不要在 assistantMessage 里报 Story 数量**（例："现在一共 6 条"），除非数字 = prompt 当前 Story 列表长度 + 本轮 upsert_story 实际调用次数。
 - 用户描述新需求 → 第一动作是 upsert_story（每条一次，id 留空=新增）→ 如果在 demo/final 阶段则同轮 write_files → finish。

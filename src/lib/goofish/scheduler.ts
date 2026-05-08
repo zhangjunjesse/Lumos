@@ -15,7 +15,7 @@
  */
 
 import { runSyncAllAccounts, getLastSyncMs } from './sync';
-import { getSyncIntervalMs } from './db';
+import { getSyncIntervalMs, getSyncState, setSyncState } from './db';
 import { listAccounts } from './accounts';
 import { getGoofishMcpEnabled, setGoofishMcpEnabled } from './mcp-toggle';
 
@@ -65,11 +65,17 @@ async function tick(): Promise<void> {
 
   if (inFlight) return;
   const lastMs = getLastSyncMs();
+  const lastAttempt = Number(getSyncState('last_attempt_ms')) || 0;
   const intervalMs = getSyncIntervalMs();
   const now = Date.now();
+  // 成功后基于 lastMs 节流(原行为)。
   if (lastMs && now - lastMs < intervalMs) return;
+  // lastMs=0(从未成功 / 全账号失效)时也要按 lastAttempt 节流,否则 tick=15s
+  // 远小于 intervalMs,会每 15s spawn N 个 goofish auth status 子进程。
+  if (lastAttempt && now - lastAttempt < intervalMs) return;
 
   inFlight = true;
+  setSyncState('last_attempt_ms', String(now));
   try {
     const since = lastMs ? Math.max(0, lastMs - SINCE_LOOKBACK_MS) : 0;
     const results = await runSyncAllAccounts({ since });

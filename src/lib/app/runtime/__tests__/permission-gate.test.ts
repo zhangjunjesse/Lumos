@@ -95,10 +95,12 @@ describe('PermissionGate — tools and system', () => {
     const db = setup([
       { permission: 'system:notification', granted: 1 },
       { permission: 'system:browser', granted: 1 },
+      { permission: 'system:im-notification', granted: 1 },
     ]);
     const gate = createPermissionGate(db, 'app-one');
     expect(gate.canUseSystem('notification')).toBe(true);
     expect(gate.canUseSystem('browser')).toBe(true);
+    expect(gate.canUseSystem('im-notification')).toBe(true);
     expect(gate.canUseSystem('schedule')).toBe(false);
   });
 });

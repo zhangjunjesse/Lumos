@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import {
+  NATIVE_APP_SPEC_FILE,
+  validateNativeGradeAppSpec,
+} from '@/lib/app/builder/native-grade-spec';
+import { buildNativeSpecReviewPatch } from '@/lib/app/builder/native-spec-review';
 import { createSessionStore } from '@/lib/app/builder/session';
 import { getAppPlatformService } from '@/lib/app/service';
 
@@ -55,10 +60,23 @@ export async function POST(
     if (typeof body.content !== 'string') {
       return NextResponse.json({ error: 'content must be a string' }, { status: 400 });
     }
+    if (body.filePath === NATIVE_APP_SPEC_FILE) {
+      const issues = validateNativeGradeAppSpec(new Map([[NATIVE_APP_SPEC_FILE, body.content]]));
+      if (issues.length > 0) {
+        return NextResponse.json(
+          {
+            error: 'native-app-spec.json failed validation',
+            issues,
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     const { db } = getAppPlatformService();
     const store = createSessionStore(db);
-    if (!store.getSession(id)) {
+    const session = store.getSession(id);
+    if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
@@ -67,6 +85,16 @@ export async function POST(
       filePath: body.filePath,
       content: body.content,
     });
+    if (body.filePath === NATIVE_APP_SPEC_FILE) {
+      store.setNeedsSummary(id, {
+        ...(session.needsSummary ?? {}),
+        ...buildNativeSpecReviewPatch({
+          status: 'pending',
+          artifactVersion: artifact.version,
+          note: '规格已更新，等待用户接受。',
+        }),
+      });
+    }
     return NextResponse.json({ artifact }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

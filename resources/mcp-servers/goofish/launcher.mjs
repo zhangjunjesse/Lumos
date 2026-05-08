@@ -57,10 +57,11 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { pipeTransformedFrames } from './auth-transform.mjs';
 
 const HOME = os.homedir();
 const IS_WINDOWS = process.platform === 'win32';
@@ -188,7 +189,14 @@ function pickAccountCookiesPath() {
     for (const name of readdirSync(accountsRoot)) {
       if (!/^\d+$/.test(name)) continue;
       const cookiesPath = path.join(accountsRoot, name, '.goofish-cli', 'cookies.json');
-      if (existsSync(cookiesPath)) return cookiesPath;
+      if (!existsSync(cookiesPath)) continue;
+      // 校验 JSON 可解析:并发写入 / 中断写入 / 损坏 / 空文件都会让上游
+      // goofish-mcp 报"auth failed"而不是真实的"cookies 损坏",跳过这种账号
+      // 取下一个可用的。
+      try {
+        JSON.parse(readFileSync(cookiesPath, 'utf-8'));
+        return cookiesPath;
+      } catch { /* skip corrupted account */ }
     }
   } catch { /* ignore */ }
   return null;
@@ -204,8 +212,11 @@ function main() {
   const cookiesPath = pickAccountCookiesPath();
 
   const [exe, ...args] = invocation;
+  // stdio: ['pipe','pipe','inherit'] —— stdin/stdout 走 pipe 让我们能拦截 JSON-RPC 帧
+  // 改写 auth-expired 错误;stderr 透传保留诊断信息。MCP 官方 Python SDK 的 stdio
+  // transport 是 newline-delimited JSON-RPC,逐行解析安全。
   const child = spawn(exe, args, {
-    stdio: 'inherit',
+    stdio: ['pipe', 'pipe', 'inherit'],
     env: {
       ...process.env,
       // Token auto-refresh is on, in HEADLESS mode — goofish-cli pops up an
@@ -219,6 +230,11 @@ function main() {
       ...(cookiesPath ? { GOOFISH_COOKIES_PATH: cookiesPath } : {}),
     },
   });
+
+  process.stdin.pipe(child.stdin);
+  // 拦截 child → client 的 JSON-RPC 帧,把 mtop auth-expired 原始错误改写成
+  // 友好提示。详见 ./auth-transform.mjs。
+  pipeTransformedFrames(child.stdout, process.stdout);
 
   const forwardSignal = (sig) => {
     if (child && !child.killed) {

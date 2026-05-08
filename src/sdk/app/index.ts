@@ -87,6 +87,19 @@ export interface DeepSearchApi {
   cancel(runId: string): Promise<unknown>;
 }
 
+export interface ImNotifyOptions {
+  notificationId?: string;
+  title?: string;
+  text?: string;
+  message?: string;
+  reason?: string;
+  target_label?: string;
+}
+
+export interface ImApi {
+  notify(opts: ImNotifyOptions): Promise<unknown>;
+}
+
 export interface NotifyApi {
   toast(opts: { title: string; description?: string; level?: 'info' | 'success' | 'warning' | 'error' }): void;
   confirm(message: string, opts?: { title?: string; destructive?: boolean }): Promise<boolean>;
@@ -345,6 +358,10 @@ export const deepsearch: DeepSearchApi = {
   pause: (runId) => getBridge().send('deepsearch.pause', { runId }),
   resume: (runId) => getBridge().send('deepsearch.resume', { runId }),
   cancel: (runId) => getBridge().send('deepsearch.cancel', { runId }),
+};
+
+export const im: ImApi = {
+  notify: (opts) => getBridge().send('im.notify', opts ?? {}),
 };
 
 export const notify: NotifyApi = {

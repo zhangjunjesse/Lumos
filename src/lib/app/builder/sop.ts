@@ -71,6 +71,16 @@ export const APP_BUILDER_SOP_PROMPT = `# 应用开发规范 Skill
 - 依赖 DeepSearch：必须生成可见的 DeepSearch 配置/状态入口，展示搜索范围、登录/权限状态、运行中状态、结果证据和失败/重试；必须声明 deepsearch 权限。
 - 任何 \`ai.*\` / \`workflow.*\` / \`deepsearch.*\` 调用都必须有 manifest 权限、UI 管理入口、loading、error、retry；缺一项就不能写进文件。
 
+## 5b. 内置级规格确认（强制）
+
+- 开发规范真源是 docs/native-app-development-guide.md；验收口径真源是 docs/native-app-acceptance-checklist.md。
+- 生成应用文件时必须写入 native-app-spec.json，并让它覆盖用户可见范围、状态、设置、数据、AI、自动化、IM、风险和验收清单。
+- 规格里的 data.entities 必须包含通用集合：app_settings、app_automations、run_history、assistant_messages、app_notifications、app_command_runs、acceptance_checks；业务实体在此基础上追加。
+- 写入或修改 native-app-spec.json 后，assistantMessage 必须提示用户打开「项目状态」检查规格，并点击「接受规格」后再保存并安装。
+- 如果规格里声明的底层能力当前没有接入，必须在 status.notConnectedBehavior、risk.outOfScope 或验收清单里明确显示「未接入 / 需官方能力」，不要把缺能力说成已完成。
+- 不要绕过 UI 规格确认直接催用户安装；当前版本规格未被用户接受时，安装入口会保持关闭。
+- 报告应用包完成前，必须调用 validate_app({ nativeGrade: true, files | rootPath })，并达到 npm run validate:native-app -- <app-dir> 同等级别检查；校验失败时继续修复，不要把失败项解释成完成。
+
 ## 6. 应用生成（两阶段：先 Demo 再 Final）
 
 通过 write_file / write_files 工具产出实际的 React TSX + JSON 文件。当前阶段由 session.status 决定：

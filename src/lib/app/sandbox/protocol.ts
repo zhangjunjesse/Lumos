@@ -9,6 +9,7 @@ export type RpcMethod =
   | 'ai.complete' | 'ai.stream.start' | 'ai.stream.stop' | 'ai.structured'
   | 'workflow.run' | 'workflow.run.stream.start' | 'workflow.run.stream.stop'
   | 'deepsearch.start' | 'deepsearch.getResult' | 'deepsearch.pause' | 'deepsearch.resume' | 'deepsearch.cancel'
+  | 'im.notify'
   | 'notify.toast' | 'notify.confirm' | 'notify.dialog'
   | 'storage.get' | 'storage.set' | 'storage.remove' | 'storage.clear'
   | 'secrets.get'

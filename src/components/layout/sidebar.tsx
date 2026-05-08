@@ -47,6 +47,7 @@ const secondaryNavItems: Array<{ href: string; labelKey: "sidebar.starred"; icon
 
 const bottomNavItems = [
   { href: "/mind", labelKey: "sidebar.mind" as const, icon: Brain },
+  { href: "/memory-v2", labelKey: "sidebar.actionMemory" as const, icon: Brain },
   { href: "/extensions", labelKey: "sidebar.extensions" as const, icon: Star },
 ];
 

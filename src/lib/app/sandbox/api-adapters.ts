@@ -125,6 +125,18 @@ export function createApiAdapters(opts: ApiAdaptersOptions): DispatcherAdapters 
         return callDeepSearchTool(f, { action: 'cancel', runId });
       },
     },
+    im: {
+      async notify(input) {
+        const res = await f(`/api/apps/${encodeURIComponent(appId)}/im/notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input ?? {}),
+        });
+        const json = (await safeJson(res)) as { error?: string } | null;
+        if (!res.ok) throw new Error(json?.error ?? `im.notify ${res.status}`);
+        return json;
+      },
+    },
     notify: {
       toast(toastOpts) {
         const o = toastOpts as { title: string; description?: string; level?: string };

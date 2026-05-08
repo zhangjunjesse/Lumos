@@ -3,13 +3,16 @@ import type { AvailableCapabilities } from './capabilities';
 /**
  * Build the AppBuilder agent's system prompt.
  *
- * Composed of four sections (per ai-builder design doc §4.1):
+ * Composed of six sections (per ai-builder design doc §4.1 plus the
+ * native-grade app contract):
  *
  *   1. Role definition — who the agent is and how it should behave.
- *   2. Output contract — schema names, file layout, what the agent emits.
- *   3. Design patterns — four scaffolds (input-process-output, list-detail,
+ *   2. Native-grade app contract — quality bar, visible status, settings,
+ *      AI/automation/IM/acceptance expectations.
+ *   3. Output contract — schema names, file layout, what the agent emits.
+ *   4. Design patterns — four scaffolds (input-process-output, list-detail,
  *      dashboard, chat) and how to pick.
- *   4. Current capabilities — dynamically injected from probeCapabilities()
+ *   5. Current capabilities — dynamically injected from probeCapabilities()
  *      so the agent never proposes MCPs / agents / knowledge that the host
  *      doesn't actually have.
  *
@@ -31,6 +34,7 @@ export function buildAppBuilderSystemPrompt(
   const locale = opts.locale ?? 'zh-CN';
   const sections: string[] = [
     sectionRole(locale),
+    sectionNativeGradeContract(locale),
     sectionOutputContract(locale),
     sectionDesignPatterns(locale, opts.patternsOnly),
     sectionCapabilities(capabilities, locale),
@@ -68,7 +72,53 @@ function sectionRole(locale: string): string {
   ].join('\n');
 }
 
-// ───── §2. Output contract ─────
+// ───── §2. Native-grade app contract ─────
+
+function sectionNativeGradeContract(locale: string): string {
+  if (locale === 'en-US') {
+    return [
+      '# Native-grade app contract',
+      '',
+      'The target is not a throwaway demo. Build apps as Lumos native-grade apps: user-created apps that reuse the official app runtime, shell conventions, status patterns, settings, AI assistant patterns, automations, IM notifications/commands, and acceptance checks.',
+      '',
+      'Before writing files, keep a concise app spec in mind and reflect it in stories/files:',
+      '- User-facing scope: what the user can actually open, configure, run, and verify.',
+      '- Status contract: not configured, needs auth, ready, syncing/running, failed, and not connected when a backend capability is missing.',
+      '- Settings contract: visible configuration for accounts, model/AI prompt, notifications, risk boundaries, and app-specific rules when relevant.',
+      '- Data contract: business entities plus reusable settings, drafts, notifications, command runs, run history, AI assistant messages, acceptance progress, and user marks when relevant.',
+      '- AI contract: if the app uses AI, provide visible prompt/settings controls, loading/error/retry states, and draft-before-confirm flows for write actions.',
+      '- Automation contract: if the app has scheduled work, provide enable/pause/run-now/edit/delete, visible run results, and failure reasons.',
+      '- IM contract: if the app sends notifications, declare system permission im-notification, show notification target/status/errors, and make clear user replies go to Main Agent. Generic external WeChat read commands are available as /app <app name or id> status|runs|acceptance|help; command intake is not a direct app chat and cannot run write/high-risk actions.',
+      '- Acceptance checklist: include visible paths the user can verify; never call unsupported or mock-only behavior "done".',
+      '- Spec review gate: after writing or changing native-app-spec.json, tell the user to open Project Status, review the spec, and accept the current version before installing.',
+      '- Development protocol: follow docs/native-app-development-guide.md and docs/native-app-acceptance-checklist.md; before reporting done for a package, run `validate_app({ nativeGrade: true, files | rootPath })` and it must satisfy `npm run validate:native-app -- <app-dir>` level checks.',
+      '',
+      'Do not ask the user to edit Lumos source code. If the request needs a core capability that is not available in Current capabilities, mark that part as "not connected / needs official capability" and offer the closest working slice.',
+    ].join('\n');
+  }
+
+  return [
+    '# 内置级应用契约',
+    '',
+    '目标不是一次性 demo。你要把用户创建的应用按 Lumos 内置级应用来设计：复用官方应用运行时、页面壳约定、状态模式、设置、AI 助手模式、自动化、IM 通知/命令和验收检查。',
+    '',
+    '写文件前，必须先在需求和文件里体现一份简洁应用规格：',
+    '- 用户可见范围：用户今天能打开、配置、运行和验证什么。',
+    '- 状态合同：未配置、需授权、已就绪、同步中/运行中、失败，以及缺底层能力时的未接入。',
+    '- 设置合同：相关时提供账号、模型/AI 提示词、通知、风险边界和应用规则配置。',
+    '- 数据合同：业务实体，以及相关时复用设置、草稿、通知、命令记录、运行历史、AI 对话记录、验收进度和用户标记。',
+    '- AI 合同：使用 AI 时必须提供可见提示词/设置、加载/失败/重试状态，写操作先生成草稿再由用户确认。',
+    '- 自动化合同：有定时任务时必须提供启用、暂停、立即运行、编辑、删除、运行结果和失败原因。',
+    '- IM 合同：有通知时必须声明 system 权限 im-notification，展示通知目标、发送状态和失败原因，并说明用户回复进入主 Agent；普通外部微信只读命令可用 /app <应用名或ID> status|runs|acceptance|help；命令入口不是应用直接聊天，也不能执行写操作或高风险动作。',
+    '- 验收清单：列出用户能在 UI 里验证的路径；不支持或仅 mock 的行为不能说成已完成。',
+    '- 规格确认 gate：写入或修改 native-app-spec.json 后，必须提示用户打开「项目状态」检查规格，并接受当前版本后再安装。',
+    '- 开发协议：遵守 docs/native-app-development-guide.md 和 docs/native-app-acceptance-checklist.md；报告应用包完成前，必须运行 `validate_app({ nativeGrade: true, files | rootPath })`，并达到 `npm run validate:native-app -- <app-dir>` 同等级别检查。',
+    '',
+    '不要要求用户修改 Lumos 源码。如果需求依赖“当前能力”里没有的核心能力，必须把该部分标为“未接入 / 需官方能力”，并提供最接近的可运行切片。',
+  ].join('\n');
+}
+
+// ───── §3. Output contract ─────
 
 function sectionOutputContract(locale: string): string {
   if (locale === 'en-US') {
@@ -80,6 +130,7 @@ function sectionOutputContract(locale: string): string {
       '```',
       'my-app/',
       '├── app.json                # Manifest (id, version, requires, permissions, config, triggers)',
+      '├── native-app-spec.json    # Native-grade contract: status, settings, AI, automation, IM, risks, acceptance checks',
       '├── routes.json             # Menu and route table',
       '├── pages/<id>.json         # Declarative page definitions (one of 4 layouts)',
       '├── workflows/<id>.json     # Bundled workflow definitions',
@@ -106,7 +157,7 @@ function sectionOutputContract(locale: string): string {
       '  user.<key>                — current user info',
       '  steps.<id>.output         — workflow step output',
       '',
-      'Use the `read_schema` tool to see the full JSON Schema for any file before generating it.',
+      'Use the `read_schema` tool to see the full JSON Schema for any file before generating it. For native-grade apps, call `read_schema("native-app-spec")` before writing native-app-spec.json.',
     ].join('\n');
   }
   return [
@@ -117,6 +168,7 @@ function sectionOutputContract(locale: string): string {
     '```',
     'my-app/',
     '├── app.json                # 应用元信息（id / 版本 / requires / permissions / config / triggers）',
+    '├── native-app-spec.json    # 内置级规格：状态、设置、AI、自动化、IM、风险和验收清单',
     '├── routes.json             # 菜单与路由',
     '├── pages/<id>.json         # 声明式页面（4 种 layout 之一）',
     '├── workflows/<id>.json     # 应用内置工作流',
@@ -143,11 +195,11 @@ function sectionOutputContract(locale: string): string {
     '  user.<key>                — 当前用户信息',
     '  steps.<id>.output         — 工作流步骤输出',
     '',
-    '生成具体文件前，调 `read_schema` 工具读完整 JSON Schema。',
+    '生成具体文件前，调 `read_schema` 工具读完整 JSON Schema。内置级应用必须先调 `read_schema("native-app-spec")` 再写 native-app-spec.json。',
   ].join('\n');
 }
 
-// ───── §3. Design patterns ─────
+// ───── §4. Design patterns ─────
 
 const PATTERN_KEYS: Array<'tool' | 'list-detail' | 'dashboard' | 'chat'> = [
   'tool',
@@ -202,7 +254,7 @@ function sectionDesignPatterns(
   return lines.join('\n');
 }
 
-// ───── §4. Capabilities (dynamic) ─────
+// ───── §5. Capabilities (dynamic) ─────
 
 function sectionCapabilities(cap: AvailableCapabilities, locale: string): string {
   const header = locale === 'en-US' ? '# Current capabilities' : '# 当前能力';
@@ -255,6 +307,34 @@ function sectionCapabilities(cap: AvailableCapabilities, locale: string): string
   }
   lines.push('');
 
+  // Native integrations
+  lines.push(locale === 'en-US' ? '## Native integrations' : '## 原生集成能力');
+  if (cap.nativeIntegrations.length === 0) {
+    lines.push(locale === 'en-US' ? '_(none)_' : '_（无）_');
+  } else {
+    for (const integration of cap.nativeIntegrations) {
+      const status = integration.status === 'available'
+        ? locale === 'en-US' ? 'available' : '可用'
+        : integration.status === 'requires_setup'
+          ? locale === 'en-US' ? `requires user setup in ${integration.setupUi}` : `需用户先在「${integration.setupUi}」完成配置`
+          : locale === 'en-US' ? 'not connected' : '未接入';
+      lines.push(`- \`${integration.id}\` — ${integration.name}（${status}）`);
+      const read = integration.readActions.slice(0, 5).join('；');
+      const write = integration.writeActions.join('；') || (locale === 'en-US' ? 'none' : '无');
+      const unavailable = integration.unavailableActions.join('；');
+      lines.push(locale === 'en-US'
+        ? `  - Read: ${read}`
+        : `  - 可读：${read}`);
+      lines.push(locale === 'en-US'
+        ? `  - Controlled write: ${write}`
+        : `  - 受控写：${write}`);
+      lines.push(locale === 'en-US'
+        ? `  - Not available: ${unavailable}`
+        : `  - 不可用：${unavailable}`);
+    }
+  }
+  lines.push('');
+
   // LLM tiers + tools
   lines.push(
     locale === 'en-US'
@@ -288,7 +368,7 @@ function sectionCapabilities(cap: AvailableCapabilities, locale: string): string
   return lines.join('\n');
 }
 
-// ───── §5. Guardrails ─────
+// ───── §6. Guardrails ─────
 
 function sectionGuardrails(locale: string): string {
   if (locale === 'en-US') {

@@ -1,10 +1,12 @@
 import type { AvailableCapabilities } from '../capabilities';
+import { DEFAULT_APP_BUILDER_SYSTEM_PROMPT } from '../assistant-config';
 import { buildAppBuilderSystemPrompt } from '../system-prompt';
 
 const EMPTY_CAP: AvailableCapabilities = {
   mcps: [],
   agents: [],
   knowledge: [],
+  nativeIntegrations: [],
   llmTiers: ['chat', 'reasoning', 'fast'],
   tools: ['bash', 'python', 'file', 'web-fetch'],
   codeAppsEnabled: false,
@@ -19,11 +21,35 @@ describe('buildAppBuilderSystemPrompt', () => {
     expect(out).toContain('JSON Schema');
   });
 
-  it('includes the four section dividers', () => {
+  it('includes the expected section dividers', () => {
     const out = buildAppBuilderSystemPrompt(EMPTY_CAP);
     const dividers = (out.match(/\n---\n/g) ?? []).length;
-    // role | output | patterns | capabilities | guardrails → 4 separators
-    expect(dividers).toBeGreaterThanOrEqual(4);
+    // role | native-grade | output | patterns | capabilities | guardrails → 5 separators
+    expect(dividers).toBeGreaterThanOrEqual(5);
+  });
+
+  it('frames generated apps as native-grade user-created apps', () => {
+    const out = buildAppBuilderSystemPrompt(EMPTY_CAP);
+    expect(out).toContain('内置级应用契约');
+    expect(out).toContain('native-app-spec.json');
+    expect(out).toContain('不要要求用户修改 Lumos 源码');
+    expect(out).toContain('验收清单');
+    expect(out).toContain('未接入 / 需官方能力');
+    expect(out).toContain('接受当前版本后再安装');
+    expect(out).toContain('/app <应用名或ID> status|runs|acceptance|help');
+    expect(out).toContain('命令入口不是应用直接聊天');
+    expect(out).toContain('docs/native-app-development-guide.md');
+    expect(out).toContain('validate_app({ nativeGrade: true');
+    expect(out).toContain('npm run validate:native-app -- <app-dir>');
+  });
+
+  it('pins the same native-grade protocol into the default AppBuilder runtime prompt', () => {
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('内置级应用开发协议');
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('docs/native-app-development-guide.md');
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('docs/native-app-acceptance-checklist.md');
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('validate_app({ nativeGrade: true');
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('npm run validate:native-app -- <app-dir>');
+    expect(DEFAULT_APP_BUILDER_SYSTEM_PROMPT).toContain('规格未接受时不能催用户安装');
   });
 
   it('warns about workflow runtime not being ready when flag is false', () => {
@@ -112,6 +138,29 @@ describe('buildAppBuilderSystemPrompt', () => {
     });
     expect(out).toContain('`researcher`');
     expect(out).toContain('`coder`');
+  });
+
+  it('lists native integrations and their safety boundary', () => {
+    const out = buildAppBuilderSystemPrompt({
+      ...EMPTY_CAP,
+      nativeIntegrations: [
+        {
+          id: 'goofish',
+          name: '闲鱼 / Goofish',
+          status: 'requires_setup',
+          setupUi: '扩展 > 闲鱼',
+          readActions: ['读取会话', '搜索商品'],
+          writeActions: ['发送文本消息，但必须用户确认'],
+          highRiskActions: ['发送买家消息'],
+          unavailableActions: ['发布商品', '自动无确认回复买家'],
+          safetyRules: ['必须显示未接入'],
+        },
+      ],
+    });
+    expect(out).toContain('原生集成能力');
+    expect(out).toContain('`goofish`');
+    expect(out).toContain('需用户先在「扩展 > 闲鱼」完成配置');
+    expect(out).toContain('自动无确认回复买家');
   });
 
   it('mentions the four whitelisted tools', () => {

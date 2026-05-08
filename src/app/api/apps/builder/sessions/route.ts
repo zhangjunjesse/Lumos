@@ -5,6 +5,7 @@ import {
   BLANK_APP_BUILDER_TEMPLATE_ID,
   buildTemplateBlueprintFiles,
   getAppBuilderTemplate,
+  inferAppBuilderTemplateId,
 } from '@/lib/app/builder/templates';
 import { getAppPlatformService } from '@/lib/app/service';
 
@@ -57,9 +58,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 400 },
       );
     }
-    const templateId = normalizeTemplateId(body.templateId);
+    const requestedTemplateId = normalizeTemplateId(body.templateId);
+    const templateId = requestedTemplateId
+      || inferAppBuilderTemplateId(body.appName, description)
+      || '';
     const template = getAppBuilderTemplate(templateId);
-    if (templateId && !template) {
+    if (requestedTemplateId && !template) {
       return NextResponse.json(
         { error: 'Unknown app builder template' },
         { status: 400 },
@@ -91,7 +95,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       store.appendMessage({
         sessionId: session.id,
         role: 'assistant',
-        content: `我已经把「${template.name}」模板放到左侧预览里了。你可以直接说要改哪些字段、页面、按钮或流程。`,
+        content: `我已经把「${template.name}」模板放到左侧预览里了。请先打开「项目状态」检查内置级规格并点击「接受规格」；接受当前规格后才能保存并安装。你也可以直接说要改哪些字段、页面、按钮或流程。`,
       });
     }
     return NextResponse.json({ session }, { status: 201 });

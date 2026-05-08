@@ -3,8 +3,10 @@
 // imports are kept as bare specifiers and resolved by an importmap on the
 // iframe side (mapping to pre-bundled runtime modules served by the host).
 
-import { transform, type Loader } from 'esbuild';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Loader } from 'esbuild';
 
 import type {
   AppFile, CompileError, CompiledModule, RuntimeCompileResult,
@@ -36,6 +38,18 @@ const PATH_TO_LOADER: Record<string, Loader> = {
   '.js': 'js',
   '.css': 'css',
 };
+
+const PACKAGED_ESBUILD_BINARIES: Record<string, string> = {
+  'darwin:arm64': path.join('@esbuild', 'darwin-arm64', 'bin', 'esbuild'),
+  'darwin:x64': path.join('@esbuild', 'darwin-x64', 'bin', 'esbuild'),
+  'linux:arm64': path.join('@esbuild', 'linux-arm64', 'bin', 'esbuild'),
+  'linux:x64': path.join('@esbuild', 'linux-x64', 'bin', 'esbuild'),
+  'win32:arm64': path.join('@esbuild', 'win32-arm64', 'esbuild.exe'),
+  'win32:ia32': path.join('@esbuild', 'win32-ia32', 'esbuild.exe'),
+  'win32:x64': path.join('@esbuild', 'win32-x64', 'esbuild.exe'),
+};
+
+let esbuildModulePromise: Promise<typeof import('esbuild')> | null = null;
 
 interface CompileOptions {
   /** Stable id; used in cache keys / source map names. */
@@ -117,6 +131,7 @@ async function compileOne(file: AppFile, appId: string): Promise<OneOk | OneErr>
   }
 
   try {
+    const { transform } = await loadEsbuild();
     const result = await transform(file.content, {
       loader,
       format: 'esm',
@@ -163,6 +178,38 @@ async function compileOne(file: AppFile, appId: string): Promise<OneOk | OneErr>
   } finally {
     // appId currently unused but kept for cache namespacing.
     void appId;
+  }
+}
+
+async function loadEsbuild(): Promise<typeof import('esbuild')> {
+  configurePackagedEsbuildBinaryPath();
+  try {
+    esbuildModulePromise ??= import('esbuild');
+    return await esbuildModulePromise;
+  } catch (error) {
+    esbuildModulePromise = null;
+    throw error;
+  }
+}
+
+function configurePackagedEsbuildBinaryPath(): void {
+  if (process.env.ESBUILD_BINARY_PATH) return;
+  if (!process.versions.electron) return;
+
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) return;
+
+  const relativeBinary = PACKAGED_ESBUILD_BINARIES[`${process.platform}:${process.arch}`];
+  if (!relativeBinary) return;
+
+  const binaryPath = path.join(
+    resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    relativeBinary,
+  );
+  if (fs.existsSync(binaryPath)) {
+    process.env.ESBUILD_BINARY_PATH = binaryPath;
   }
 }
 

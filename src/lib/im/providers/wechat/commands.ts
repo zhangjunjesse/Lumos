@@ -1,30 +1,33 @@
 /**
  * WeChat Provider — Slash Commands
  *
- * 用户在微信「ClawBot」对话框里发命令操控 lumos session 路由。
+ * 用户在微信「ClawBot」对话框里发命令查看 Lumos 入口状态。
  *
- *   /list [page]         列出 lumos 普通 chat session（按最近活跃，每页 10）
- *   /switch <编号|名字>  切换当前路由目标
- *   /current             显示当前路由到哪个 session
- *   /new [名字]          新建 session 并设为路由目标
+ *   /list [page]         列出最近 lumos session（按最近活跃，每页 10）
+ *   /switch <编号|名字>  历史兼容提示：微信入口不再切换到普通会话
+ *   /current             显示微信入口固定进入的主 Agent 会话
+ *   /new [名字]          历史兼容提示：请让主 Agent 新建或管理会话
  *   /voice on|off|status 切换当前微信对话的 AI 回复模式
  *   /voice native on|off 切换是否优先尝试微信原生语音气泡
+ *   /app <应用名> status|runs|acceptance|help  查看已安装应用的通用只读状态
+ *   /goofish status      查看已安装闲鱼助手的低风险应用状态
+ *   /goofish draft <买家>  为指定买家会话生成本地回复草稿，不发送
+ *   /goofish confirm <草稿编号>  显式确认发送指定草稿
+ *   /goofish reject <草稿编号>   拒绝指定草稿，不发送
  *   /help                显示命令清单（含上面 + builtin /ping /whoami）
  *
  * 入站消息以 / 开头时由 command-router 拦截，进 handleWechatCommand。
  * 命令的回复**不加** session 名前缀（用户输入命令时不希望前缀干扰）。
  */
 
-import { getAllSessions, getSession, createSession } from '@/lib/db';
+import { getAllSessions } from '@/lib/db';
 import type { ChatSession } from '@/types';
 import type { IMCommandContext, IMCommandResult, InboundMessage } from '../../core/types';
 import { handleBuiltinCommand } from '../../core/built-in-commands';
+import { runInstalledNativeAppImCommand } from '@/lib/app/native-command-im-bridge';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { WECHAT_COMMANDS } from './command-defs';
-import {
-  getCurrentRoutedSessionId,
-  setCurrentRoutedSessionId,
-} from './route-pointer';
+import { resolveWechatMainAgentSession } from './main-agent-route';
 import {
   isWechatNativeVoiceReplyEnabled,
   isWechatVoiceModeEnabled,
@@ -56,12 +59,44 @@ export async function handleWechatCommand(
     case 'voice':
     case '语音':
       return handleVoice(ctx);
+    case 'app':
+    case '应用':
+      return handleApp(ctx);
+    case 'goofish':
+      return handleGoofish(ctx);
   }
 
   // 内置命令兜底
   const builtin = await handleBuiltinCommand(ctx, '微信', WECHAT_COMMANDS);
   if (builtin) return builtin;
   return { handled: false };
+}
+
+// ---- /app -----------------------------------------------------------------
+
+async function handleApp(ctx: IMCommandContext): Promise<IMCommandResult> {
+  const suffix = ctx.args.join(' ').trim();
+  const commandName = ctx.command.toLowerCase() === '应用' ? '/应用' : '/app';
+  const commandText = suffix ? `${commandName} ${suffix}` : commandName;
+  const result = await runInstalledNativeAppImCommand({
+    commandText,
+    confirmed: false,
+  });
+  if (!result.handled) return { handled: false };
+  return reply(ctx, result.message);
+}
+
+// ---- /goofish --------------------------------------------------------------
+
+async function handleGoofish(ctx: IMCommandContext): Promise<IMCommandResult> {
+  const suffix = ctx.args.join(' ').trim();
+  const commandText = suffix ? `/goofish ${suffix}` : '/goofish';
+  const result = await runInstalledNativeAppImCommand({
+    commandText,
+    confirmed: false,
+  });
+  if (!result.handled) return { handled: false };
+  return reply(ctx, result.message);
 }
 
 export function maybeHandleWechatVoiceModePhrase(message: InboundMessage): IMCommandResult | null {
@@ -186,7 +221,7 @@ function handleList(ctx: IMCommandContext): IMCommandResult {
 
   const start = (page - 1) * PAGE_SIZE;
   const slice = sessions.slice(start, start + PAGE_SIZE);
-  const currentId = getCurrentRoutedSessionId();
+  const currentId = resolveWechatMainAgentSession()?.id ?? '';
 
   if (slice.length === 0) {
     return reply(ctx, '📋 没有最近 30 天活跃过的会话。\n\n用 /new 新建一个。');
@@ -203,7 +238,7 @@ function handleList(ctx: IMCommandContext): IMCommandResult {
     lines.push(`   ${scope} · ${time}`.trimEnd());
   });
   lines.push('');
-  lines.push('回复 /switch <编号|名字> 切换；/new 新建');
+  lines.push('微信入口固定进入主 Agent。要查看、总结或继续某个会话，直接告诉主 Agent。');
 
   return reply(ctx, lines.join('\n'));
 }
@@ -213,34 +248,35 @@ function handleList(ctx: IMCommandContext): IMCommandResult {
 function handleSwitch(ctx: IMCommandContext): IMCommandResult {
   const arg = ctx.args.join(' ').trim();
   if (!arg) {
-    return reply(ctx, '用法：/switch <编号|名字|短ID>\n先用 /list 看列表');
+    return reply(ctx, [
+      '微信入口现在固定进入主 Agent，不再用 /switch 切换到普通会话。',
+      '你可以直接说：“帮我继续/总结某个会话”。',
+      '发送 /list 可查看最近会话。',
+    ].join('\n'));
   }
 
   const sessions = listChatSessions();
   if (sessions.length === 0) {
-    return reply(ctx, '没有可切换的会话。用 /new 新建一个。');
+    return reply(ctx, '微信入口固定进入主 Agent。当前没有最近会话可列出，你可以直接告诉主 Agent 要做什么。');
   }
 
   // 编号
   const idx = parseInt(arg, 10);
   if (Number.isFinite(idx) && idx >= 1 && idx <= sessions.length) {
     const s = sessions[idx - 1];
-    setCurrentRoutedSessionId(s.id);
-    return reply(ctx, `✓ 已切到 #${idx} ${displayTitle(s)}`);
+    return reply(ctx, deprecatedSwitchReply(displayTitle(s)));
   }
 
   // 短 ID 精确
   const byShortId = sessions.filter((s) => shortId(s) === arg.toLowerCase());
   if (byShortId.length === 1) {
-    setCurrentRoutedSessionId(byShortId[0].id);
-    return reply(ctx, `✓ 已切到 ${displayTitle(byShortId[0])}`);
+    return reply(ctx, deprecatedSwitchReply(displayTitle(byShortId[0])));
   }
 
   // 名字精确
   const byExact = sessions.filter((s) => displayTitle(s) === arg);
   if (byExact.length === 1) {
-    setCurrentRoutedSessionId(byExact[0].id);
-    return reply(ctx, `✓ 已切到 ${displayTitle(byExact[0])}`);
+    return reply(ctx, deprecatedSwitchReply(displayTitle(byExact[0])));
   }
 
   // 名字模糊
@@ -249,8 +285,7 @@ function handleSwitch(ctx: IMCommandContext): IMCommandResult {
     displayTitle(s).toLowerCase().includes(lower),
   );
   if (byFuzzy.length === 1) {
-    setCurrentRoutedSessionId(byFuzzy[0].id);
-    return reply(ctx, `✓ 已切到 ${displayTitle(byFuzzy[0])}`);
+    return reply(ctx, deprecatedSwitchReply(displayTitle(byFuzzy[0])));
   }
   if (byFuzzy.length > 1) {
     const lines = ['找到多个匹配，请用编号或短 ID：', ''];
@@ -266,25 +301,30 @@ function handleSwitch(ctx: IMCommandContext): IMCommandResult {
 // ---- /current --------------------------------------------------------------
 
 function handleCurrent(ctx: IMCommandContext): IMCommandResult {
-  const id = getCurrentRoutedSessionId();
-  if (!id) {
-    return reply(ctx, '当前没有路由目标。下条消息会自动建一个新会话。');
-  }
-  const s = getSession(id);
+  const s = resolveWechatMainAgentSession();
   if (!s) {
-    return reply(ctx, '当前路由目标已不存在。下条消息会自动建一个新会话。');
+    return reply(ctx, '微信入口固定进入主 Agent。当前还没有主 Agent 会话；下一条普通消息会自动创建。');
   }
-  return reply(ctx, `📂 当前: ${displayTitle(s)} (${shortId(s)})`);
+  return reply(ctx, `微信入口固定进入主 Agent：${displayTitle(s)} (${shortId(s)})`);
 }
 
 // ---- /new ------------------------------------------------------------------
 
 function handleNew(ctx: IMCommandContext): IMCommandResult {
   const titleArg = ctx.args.join(' ').trim();
-  const session = createSession(titleArg || undefined);
-  setCurrentRoutedSessionId(session.id);
-  const label = titleArg ? `📂 ${titleArg}` : `📂 新会话 (${shortId(session)})`;
-  return reply(ctx, `✓ 已新建并切到\n${label}`);
+  return reply(ctx, [
+    '微信入口现在固定进入主 Agent，不再通过 /new 直接新建并切换普通会话。',
+    titleArg
+      ? `你可以直接对主 Agent 说：“新建一个 ${titleArg} 会话”。`
+      : '你可以直接对主 Agent 说：“帮我新建一个会话”。',
+  ].join('\n'));
+}
+
+function deprecatedSwitchReply(title: string): string {
+  return [
+    `已找到「${title}」，但微信入口不再切换到普通会话。`,
+    '后续消息仍会进入主 Agent。你可以直接说：“帮我继续/总结这个会话”。',
+  ].join('\n');
 }
 
 // ---- /voice ----------------------------------------------------------------

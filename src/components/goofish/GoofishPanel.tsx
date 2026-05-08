@@ -32,6 +32,7 @@ export function GoofishPanel() {
     peer_user_id: string;
     peer_avatar: string;
     unread: number;
+    account_unb: string;
   } | null>(null);
 
   const accounts = status?.accounts ?? [];
@@ -158,19 +159,34 @@ export function GoofishPanel() {
                 <li key={acc.accountUnb} className="flex items-center gap-3 py-2">
                   {acc.valid
                     ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                    : <span className="h-4 w-4 rounded-full bg-amber-500 shrink-0" title="登录态过期，下次刷新会自动续命" />}
+                    : <span className="h-4 w-4 rounded-full bg-red-500 shrink-0" title="登录已过期，请重新扫码登录" />}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">
                       {acc.nick || acc.tracknick || `账号 #${acc.accountUnb}`}
-                      {!acc.valid && <span className="text-xs text-amber-600 ml-2">(token 刷新中)</span>}
+                      {!acc.valid && <span className="text-xs text-red-600 ml-2">登录已过期</span>}
                     </div>
                     <div className="text-xs text-muted-foreground">#{acc.accountUnb}</div>
                   </div>
+                  {!acc.valid && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        await logout(acc.accountUnb);
+                        setAddingAccount(true);
+                      }}
+                      disabled={busy !== null}
+                      title="退出并立即重新扫码登录"
+                    >
+                      重新登录
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => void logout(acc.accountUnb)}
                     disabled={busy !== null}
+                    title="退出账号"
                   >
                     <LogOut className="h-4 w-4" />
                   </Button>
@@ -224,13 +240,21 @@ export function GoofishPanel() {
           )}
 
           {selectedSession
-            ? <GoofishChatDetail key={selectedSession.session_id} session={selectedSession} myUserId={validAccounts.find(a => a.accountUnb === effectiveAccount)?.unb || validAccounts[0]?.unb || ''} onBack={() => setSelectedSession(null)} />
+            ? <GoofishChatDetail
+                key={selectedSession.session_id}
+                session={selectedSession}
+                // session.account_unb 是该会话归属的账号,'all' 视图下选第二个账号
+                // 的 session 时,这里能正确锁定到第二个账号的 unb,避免气泡方向错。
+                myUserId={validAccounts.find(a => a.accountUnb === selectedSession.account_unb)?.unb || ''}
+                onBack={() => setSelectedSession(null)}
+              />
             : <GoofishChatList key={effectiveAccount} account={effectiveAccount} onSelect={(s) => setSelectedSession({
                 session_id: s.session_id,
                 peer_nick: s.peer_nick,
                 peer_user_id: s.peer_user_id,
                 peer_avatar: s.peer_avatar,
                 unread: s.unread,
+                account_unb: s.account_unb,
               })} />}
         </>
       )}

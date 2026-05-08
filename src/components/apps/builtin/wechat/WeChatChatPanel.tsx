@@ -5,6 +5,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Loading } from '@hugeicons/core-free-icons';
 
 import { ChatView } from '@/components/chat/ChatView';
+import { useMessagesStore } from '@/stores/messages-store';
 import type { ChatSession, Message, MessagesResponse } from '@/types';
 
 const STORAGE_KEY = 'lumos:wechat-assistant-chat-session';
@@ -32,6 +33,7 @@ export function WeChatChatPanel({
   const [hasMore, setHasMore] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+  const updateMessagesSession = useMessagesStore((state) => state.updateSession);
 
   const loadMessages = React.useCallback(async (id: string) => {
     const res = await fetch(`/api/chat/sessions/${id}/messages?limit=100`, {
@@ -39,9 +41,17 @@ export function WeChatChatPanel({
     });
     if (!res.ok) return;
     const data = (await res.json()) as MessagesResponse;
-    setMessages(data.messages || []);
-    setHasMore(data.hasMore ?? false);
-  }, []);
+    const nextMessages = data.messages || [];
+    const nextHasMore = data.hasMore ?? false;
+    setMessages(nextMessages);
+    setHasMore(nextHasMore);
+    updateMessagesSession(id, {
+      messages: nextMessages,
+      hasMore: nextHasMore,
+      loading: false,
+      error: null,
+    });
+  }, [updateMessagesSession]);
 
   React.useEffect(() => {
     let cancelled = false;

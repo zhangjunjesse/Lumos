@@ -9,10 +9,16 @@ import {
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import {
+  createLumosButlerMcpServer,
+  LUMOS_BUTLER_MCP_SYSTEM_HINT,
+} from '@/lib/tools/lumos-butler-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
+import { buildLatestAppImNotificationHint } from '@/lib/app/im-bridge';
 import { getActiveUserId } from '@/lib/auth/user-service';
-import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
+import { isMainAgentSession } from '@/lib/chat/session-entry';
+import type { ClaudeStreamOptions, FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -59,6 +65,9 @@ Rules:
 - Prefer \`managed_page\` and \`best_effort\` by default.
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
+
+const MAIN_AGENT_IM_ENTRY_HINT = `This conversation is the Lumos Main Agent space and may receive messages from external IM channels like WeChat.
+Treat the user as talking to Lumos itself. If the user asks to inspect or continue another Lumos conversation, use the Lumos butler read-only tools to find or summarize it. Do not claim that you transferred execution into another conversation unless a dedicated transfer tool is available.`;
 
 function hasFeishuMcp(
   servers: Record<string, MCPServerConfig> | undefined,
@@ -182,8 +191,22 @@ export class ConversationEngine {
 
     // In-process image gen tool. userId lets image-gen-tool bill generation
     // against the active desktop user (Feishu bridge has no HTTP auth context).
-    const lumosMcpServer = createLumosMcpServer(sessionId, getActiveUserId());
+    const activeUserId = getActiveUserId();
+    const lumosMcpServer = createLumosMcpServer(sessionId, activeUserId);
+    const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> = {
+      [lumosMcpServer.name]: lumosMcpServer,
+    };
     hints.push(IMAGE_GEN_IN_PROCESS_HINT);
+    const mainAgentSession = isMainAgentSession(session);
+    if (mainAgentSession) {
+      const butlerMcpServer = createLumosButlerMcpServer({
+        sessionId,
+        userId: activeUserId,
+      });
+      inProcessMcpServers[butlerMcpServer.name] = butlerMcpServer;
+      hints.push(MAIN_AGENT_IM_ENTRY_HINT);
+      hints.push(LUMOS_BUTLER_MCP_SYSTEM_HINT);
+    }
     if (hasFeishuMcp(loadedMcpServers)) {
       hints.push(FEISHU_MCP_SYSTEM_HINT);
     }
@@ -194,6 +217,17 @@ export class ConversationEngine {
       hints.push(IM_TOOLS_SYSTEM_HINT);
       if (meta?.imContext) {
         hints.push(buildImContextHint(meta.imContext.providerId, meta.imContext.chatId));
+      }
+    }
+    if (mainAgentSession && meta?.imContext) {
+      try {
+        const appNotificationHint = buildLatestAppImNotificationHint(
+          meta.imContext.providerId,
+          meta.imContext.chatId,
+        );
+        if (appNotificationHint) hints.push(appNotificationHint);
+      } catch (err) {
+        console.warn('[conversation-engine] failed to load app IM context:', err);
       }
     }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
@@ -207,7 +241,7 @@ export class ConversationEngine {
       permissionMode: 'acceptEdits',
       files,
       mcpServers: loadedMcpServers,
-      inProcessMcpServers: { [lumosMcpServer.name]: lumosMcpServer },
+      inProcessMcpServers,
       systemPrompt,
       conversationHistory,
     });

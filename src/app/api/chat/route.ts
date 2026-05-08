@@ -24,9 +24,8 @@ import path from 'path';
 import os from 'os';
 import { loadToken } from '@/lib/feishu-auth';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
-import { captureExplicitMemoryWithConflictCheck } from '@/lib/memory/runtime';
-import { detectWeakMemorySignal, runMemoryIntelligenceForSession } from '@/lib/memory/intelligence';
-import { linkMessageMemory } from '@/lib/db/message-memories';
+import { captureExplicitMemoryV2FromUserInput } from '@/lib/memory-v2/runtime';
+import type { MemoryV2Entry } from '@/lib/memory-v2/types';
 import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
 import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
@@ -442,33 +441,21 @@ function withSseKeepAlive(
   })
 }
 
-function prependMemoryEvent(
+function prependActionMemoryEvent(
   stream: ReadableStream<string>,
-  memory: import('@/lib/db/memories').MemoryRecord,
-  eventType: 'captured' | 'conflict',
-  newContent?: string,
+  memory: MemoryV2Entry,
 ): ReadableStream<string> {
-  const eventData = eventType === 'captured'
-    ? {
-        id: memory.id,
-        scope: memory.scope,
-        category: memory.category,
-        content: memory.content,
-        action: memory.created_at === memory.updated_at ? 'created' : 'updated',
-      }
-    : {
-        conflictingMemory: {
-          id: memory.id,
-          scope: memory.scope,
-          category: memory.category,
-          content: memory.content,
-        },
-        newContent: newContent || '',
-      };
-
   const memoryEvent = `data: ${JSON.stringify({
-    type: eventType === 'captured' ? 'memory_captured' : 'memory_conflict',
-    data: JSON.stringify(eventData),
+    type: 'memory_v2_captured',
+    data: JSON.stringify({
+      id: memory.id,
+      kind: memory.kind,
+      scopeType: memory.scope_type,
+      scopeKey: memory.scope_key,
+      title: memory.title,
+      sensitivity: memory.sensitivity,
+      action: memory.created_at === memory.updated_at ? 'created' : 'updated',
+    }),
   })}\n\n`;
 
   return new ReadableStream({
@@ -702,42 +689,7 @@ export async function POST(request: NextRequest) {
     activeLockId = lockId;
     setSessionRuntimeStatus(session_id, 'running');
 
-    // Capture explicit user memory instructions with conflict detection
-    let capturedMemory: import('@/lib/db/memories').MemoryRecord | null = null;
-    let memoryConflict: import('@/lib/db/memories').MemoryRecord | null = null;
-    try {
-      const result = captureExplicitMemoryWithConflictCheck({
-        sessionId: session_id,
-        projectPath: session.sdk_cwd || session.working_directory || undefined,
-        userInput: content,
-      });
-      capturedMemory = result.memory;
-      memoryConflict = result.conflict;
-      if (capturedMemory) {
-        console.log('[memory] captured explicit memory:', {
-          id: capturedMemory.id,
-          scope: capturedMemory.scope,
-          category: capturedMemory.category,
-        });
-      }
-      if (memoryConflict) {
-        console.log('[memory] conflict detected:', {
-          id: memoryConflict.id,
-          content: memoryConflict.content,
-        });
-      }
-    } catch (error) {
-      console.warn('[memory] Failed to capture memory from user input:', error);
-    }
-
-    const weakSignal = detectWeakMemorySignal(content);
-    if (weakSignal.matched) {
-      console.log('[memory] weak signal detected:', {
-        sessionId: session_id,
-        score: weakSignal.score,
-        labels: weakSignal.labels,
-      });
-    }
+    let capturedActionMemory: MemoryV2Entry | null = null;
 
     if (typeof knowledge_enabled === 'boolean') {
       updateSessionKnowledgeOptions(session_id, {
@@ -791,13 +743,23 @@ export async function POST(request: NextRequest) {
     }
     const userMessageId = addMessage(session_id, 'user', savedContent).id;
 
-    // Link captured memory to user message
-    if (capturedMemory) {
-      try {
-        linkMessageMemory(userMessageId, capturedMemory.id, 'created');
-      } catch (error) {
-        console.warn('[memory] Failed to link memory to message:', error);
+    try {
+      capturedActionMemory = captureExplicitMemoryV2FromUserInput({
+        sessionId: session_id,
+        projectPath: session.sdk_cwd || session.working_directory || undefined,
+        messageId: userMessageId,
+        userInput: content,
+      });
+      if (capturedActionMemory) {
+        console.log('[memory-v2] captured action memory:', {
+          id: capturedActionMemory.id,
+          kind: capturedActionMemory.kind,
+          scope: `${capturedActionMemory.scope_type}:${capturedActionMemory.scope_key}`,
+          sensitivity: capturedActionMemory.sensitivity,
+        });
       }
+    } catch (error) {
+      console.warn('[memory-v2] Failed to capture action memory from user input:', error);
     }
 
     syncMessageToFeishu(session_id, 'user', content).catch(err =>
@@ -1091,11 +1053,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Prepend memory event if captured or conflict detected
-    const stream = capturedMemory
-      ? prependMemoryEvent(claudeStream, capturedMemory, 'captured')
-      : memoryConflict
-      ? prependMemoryEvent(claudeStream, memoryConflict, 'conflict', content)
+    const stream = capturedActionMemory
+      ? prependActionMemoryEvent(claudeStream, capturedActionMemory)
       : claudeStream;
 
     // Tee the stream: one for client, one for collecting the response
@@ -1105,7 +1064,6 @@ export async function POST(request: NextRequest) {
     collectStreamResponse(streamForCollect, {
       sessionId: session_id,
       sourceUserMessageId: userMessageId,
-      weakSignalDetected: weakSignal.matched,
       onComplete: () => {
         releaseSessionLock(session_id, lockId);
         setSessionRuntimeStatus(session_id, 'idle');
@@ -1141,7 +1099,6 @@ async function collectStreamResponse(
   options: {
     sessionId: string;
     sourceUserMessageId?: string;
-    weakSignalDetected?: boolean;
     onComplete?: () => void;
   },
 ) {
@@ -1151,24 +1108,6 @@ async function collectStreamResponse(
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
   let tokenUsage: TokenUsage | null = null;
-
-  const triggerWeakSignalMemory = async () => {
-    if (!options.weakSignalDetected) return;
-    try {
-      const result = await runMemoryIntelligenceForSession({
-        sessionId,
-        trigger: 'weak_signal',
-      });
-      console.log('[memory] weak-signal trigger result:', {
-        sessionId,
-        outcome: result.outcome,
-        savedCount: result.savedCount,
-        reason: result.reason,
-      });
-    } catch (error) {
-      console.warn('[memory] weak-signal trigger failed:', error);
-    }
-  };
 
   try {
     while (true) {
@@ -1297,8 +1236,6 @@ async function collectStreamResponse(
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),
         );
-        void triggerWeakSignalMemory();
-
       }
     }
   } catch {
@@ -1323,7 +1260,6 @@ async function collectStreamResponse(
         syncAssistantContentToFeishu(sessionId, content).catch(err =>
           console.error('[Sync] Assistant message sync failed:', err),
         );
-        void triggerWeakSignalMemory();
 
       }
     }

@@ -53,6 +53,31 @@ function hydrateOnnxruntimeWebDependency() {
   console.log('Hydrated onnxruntime-web nested onnxruntime-common dist');
 }
 
+function hydrateStandaloneEsbuildDependency() {
+  const standaloneModules = '.next/standalone/node_modules';
+  if (!fs.existsSync(standaloneModules)) return;
+
+  copyStandalonePackage('esbuild');
+
+  const rootEsbuildScope = path.join('node_modules', '@esbuild');
+  if (!fs.existsSync(rootEsbuildScope)) return;
+
+  for (const entry of fs.readdirSync(rootEsbuildScope)) {
+    copyStandalonePackage(path.join('@esbuild', entry));
+  }
+}
+
+function copyStandalonePackage(packageName) {
+  const source = path.join('node_modules', packageName);
+  if (!fs.existsSync(source)) return;
+
+  const destination = path.join('.next/standalone/node_modules', packageName);
+  fs.rmSync(destination, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.cpSync(source, destination, { recursive: true });
+  console.log(`Hydrated standalone package: ${packageName}`);
+}
+
 async function buildElectron() {
   const shared = {
     bundle: true,
@@ -60,7 +85,7 @@ async function buildElectron() {
     target: 'node18',
     // App preview compiles builder drafts at runtime. esbuild's JS API must
     // stay external because it locates its native binary relative to its own
-    // package files; bundling it into dist-electron/main.js breaks that path.
+    // package files; electron-builder must ship and unpack the package.
     external: ['electron', 'better-sqlite3', 'esbuild'],
     sourcemap: true,
     minify: false,
@@ -93,6 +118,7 @@ async function buildElectron() {
   // Fix standalone symlinks after next build
   resolveStandaloneSymlinks();
   hydrateOnnxruntimeWebDependency();
+  hydrateStandaloneEsbuildDependency();
 }
 
 buildElectron().catch((err) => {

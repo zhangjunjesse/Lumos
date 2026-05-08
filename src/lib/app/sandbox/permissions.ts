@@ -72,7 +72,7 @@ export function checkSecret(perms: ManifestPermissions, key: string): PermDecisi
   };
 }
 
-export function checkSystem(perms: ManifestPermissions, capability: 'notification' | 'schedule' | 'clipboard'): PermDecision {
+export function checkSystem(perms: ManifestPermissions, capability: 'notification' | 'schedule' | 'clipboard' | 'im-notification'): PermDecision {
   if (perms.system?.includes(capability)) return ALLOW;
   return {
     ok: false,

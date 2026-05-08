@@ -7,6 +7,7 @@ import type {
 import type { ManifestV2 } from '@/lib/app/compile/types';
 import {
   checkDbRead, checkDbWrite, checkAi, checkWorkflow, checkDeepSearch, checkSecret, checkFiles,
+  checkSystem,
 } from './permissions';
 
 // ---- Adapter interface (host wires this up) ------------------------------
@@ -42,6 +43,16 @@ export interface DispatcherAdapters {
     pause(runId: string): Promise<unknown>;
     resume(runId: string): Promise<unknown>;
     cancel(runId: string): Promise<unknown>;
+  };
+  im?: {
+    notify(input: {
+      notificationId?: string;
+      title?: string;
+      text?: string;
+      message?: string;
+      reason?: string;
+      target_label?: string;
+    }): Promise<unknown>;
   };
   notify?: {
     toast(opts: unknown): void;
@@ -189,6 +200,13 @@ async function runMethod(method: string, params: unknown, ctx: DispatcherContext
       enforce(checkDeepSearch(ctx.manifest.permissions, 'control'));
       if (!ctx.adapters.deepsearch) throw notSupported('deepsearch.cancel');
       return ctx.adapters.deepsearch.cancel(expectStr(p, 'runId'));
+    }
+
+    // --- im ---
+    case 'im.notify': {
+      enforce(checkSystem(ctx.manifest.permissions, 'im-notification'));
+      if (!ctx.adapters.im) throw notSupported('im.notify');
+      return ctx.adapters.im.notify(p);
     }
 
     // --- notify ---

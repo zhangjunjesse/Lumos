@@ -42,7 +42,7 @@ export type AppPermissions = {
   filesystem?: { read?: string[]; write?: string[] };
   network?: { mode: 'disabled' | 'whitelist'; domains?: string[] };
   data?: 'isolated' | 'shared';
-  system?: ('notification' | 'schedule' | 'clipboard')[];
+  system?: ('notification' | 'schedule' | 'clipboard' | 'im-notification')[];
 };
 
 export type ConfigItem = {

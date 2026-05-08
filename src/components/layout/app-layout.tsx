@@ -31,7 +31,12 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
-  const isChatRoute = pathname.startsWith("/chat") || pathname.startsWith("/main-agent");
+  // ContentPanel 渲染条件:除了 chat/main-agent 主场景, /extensions 也需要渲染
+  // (X / 闲鱼 等 builtin browser 登录通过 IPC 让 ContentPanel 接住 x.com 等
+  // 登录页 — 没渲染就接不住,登录就"没反应")。
+  const isChatRoute = pathname.startsWith("/chat")
+    || pathname.startsWith("/main-agent")
+    || pathname.startsWith("/extensions");
 
   const [assistantOpen, setAssistantOpen] = useState(false);
 

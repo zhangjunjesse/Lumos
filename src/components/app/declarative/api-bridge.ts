@@ -122,6 +122,23 @@ export function createApiRendererBridge(
       return entry?.isSecret ? null : entry?.value ?? null;
     },
 
+    async sendImNotification(payload) {
+      return fetchJson(`${base}/im/notify`, {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {}),
+      });
+    },
+
+    async runNativeAction(integration, action, payload) {
+      return fetchJson(
+        `${base}/native-actions/${encodeURIComponent(integration)}/${encodeURIComponent(action)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload ?? {}),
+        },
+      );
+    },
+
     navigate: ui.navigate,
     openDialog: ui.openDialog,
     toast: ui.toast,

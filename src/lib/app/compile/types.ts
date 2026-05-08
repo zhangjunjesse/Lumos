@@ -50,7 +50,7 @@ export interface ManifestPermissions {
   deepsearch?: { start?: boolean; read?: boolean; control?: boolean };
   network?: { mode: 'disabled' | 'whitelist'; domains?: string[] };
   secrets?: string[];
-  system?: ('notification' | 'schedule' | 'clipboard')[];
+  system?: ('notification' | 'schedule' | 'clipboard' | 'im-notification')[];
   files?: { pick?: boolean; save?: boolean };
 }
 

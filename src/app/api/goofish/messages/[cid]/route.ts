@@ -3,6 +3,7 @@ import { GoofishCliException } from '@/lib/goofish/cli';
 import { getMessageHistory } from '@/lib/goofish/messages';
 import { findAccountForCid } from '@/lib/goofish/db';
 import { cookiesPathFor } from '@/lib/goofish/accounts';
+import { goofishAuthExpiredResponse, isGoofishAuthExpiredError } from '@/lib/goofish/auth-error';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,9 @@ export async function GET(
     const messages = await getMessageHistory(cid, 50, cookiesPath);
     return NextResponse.json({ ok: true, messages, accountUnb });
   } catch (err) {
+    if (isGoofishAuthExpiredError(err)) {
+      return goofishAuthExpiredResponse({ accountUnb });
+    }
     if (err instanceof GoofishCliException) {
       const httpStatus = err.code === 'NOT_INSTALLED' ? 503 : 400;
       return NextResponse.json({

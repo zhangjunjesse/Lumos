@@ -68,6 +68,28 @@ export async function runEventDsl(
       if (ok) helpers.onDbMutation?.();
       return ok;
     },
+    async onImNotify(payload) {
+      const result = await bridge.sendImNotification(payload);
+      helpers.onDbMutation?.();
+      bridge.toast({
+        title: 'IM 通知已发送',
+        level: 'success',
+      });
+      return result;
+    },
+    async onNativeAction(integration, action, payload) {
+      const result = await bridge.runNativeAction(integration, action, payload);
+      helpers.onDbMutation?.();
+      if (isActionFailure(result)) {
+        throw new Error(result.message ?? result.error ?? `${integration}:${action} 执行失败`);
+      }
+      bridge.toast({
+        title: '原生能力已执行',
+        description: isActionMessage(result) ? result.message : undefined,
+        level: 'success',
+      });
+      return result;
+    },
     onPage(menuId) {
       if (helpers.onNavigate) helpers.onNavigate(menuId);
       else bridge.navigate(menuId);
@@ -84,4 +106,16 @@ export async function runEventDsl(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+}
+
+function isActionFailure(value: unknown): value is { ok: false; message?: string; error?: string } {
+  return typeof value === 'object'
+    && value !== null
+    && (value as { ok?: unknown }).ok === false;
+}
+
+function isActionMessage(value: unknown): value is { message?: string } {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as { message?: unknown }).message === 'string';
 }

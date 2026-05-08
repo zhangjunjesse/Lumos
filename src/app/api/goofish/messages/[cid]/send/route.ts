@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoofishCliException } from '@/lib/goofish/cli';
 import { sendMessage } from '@/lib/goofish/messages';
+import { goofishAuthExpiredResponse, isGoofishAuthExpiredError } from '@/lib/goofish/auth-error';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,9 @@ export async function POST(
     await sendMessage(cid, toid, text);
     return NextResponse.json({ ok: true });
   } catch (err) {
+    if (isGoofishAuthExpiredError(err)) {
+      return goofishAuthExpiredResponse();
+    }
     if (err instanceof GoofishCliException) {
       return NextResponse.json({ ok: false, code: err.code, message: err.message }, { status: 400 });
     }

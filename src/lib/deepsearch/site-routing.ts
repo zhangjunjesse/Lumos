@@ -65,6 +65,8 @@ export function resolveSiteSeedUrl(siteKey: string, baseUrl: string, queryText: 
       return `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(query)}`;
     case 'xiaohongshu':
       return `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(query)}&source=web_search_result_notes`;
+    case 'x':
+      return `https://x.com/search?q=${encodeURIComponent(query)}&src=typed_query`;
     default:
       return baseUrl.trim() || 'about:blank';
   }
@@ -80,6 +82,8 @@ export function resolveSiteSeedBindingRole(
     case 'zhihu':
       return hasQuery ? 'search' : 'seed';
     case 'xiaohongshu':
+      return hasQuery ? 'search' : 'seed';
+    case 'x':
       return hasQuery ? 'search' : 'seed';
     default:
       return 'seed';

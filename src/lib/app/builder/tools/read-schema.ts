@@ -20,6 +20,7 @@ const ALIAS_TO_FILE: Record<string, string> = {
   page: 'page.schema.json',
   'data-schema': 'data-schema.schema.json',
   'workflow-ref': 'workflow-ref.schema.json',
+  'native-app-spec': 'native-app-spec.schema.json',
 };
 
 const SCHEMA_DIR =
@@ -30,7 +31,7 @@ const SCHEMA_DIR =
 const cache = new Map<string, Record<string, unknown>>();
 
 export interface ReadSchemaInput {
-  schema: 'app' | 'routes' | 'page' | 'data-schema' | 'workflow-ref';
+  schema: 'app' | 'routes' | 'page' | 'data-schema' | 'workflow-ref' | 'native-app-spec';
 }
 
 export interface ReadSchemaOutput {

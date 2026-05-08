@@ -14,9 +14,11 @@ import { BUILTIN_COMMANDS } from '../../core/built-in-commands';
 
 export const WECHAT_COMMANDS: IMCommand[] = [
   ...BUILTIN_COMMANDS,
-  { name: 'list', description: '列出 lumos 会话（/list <页码>）' },
-  { name: 'switch', description: '切换当前会话（/switch <编号|名字>）' },
-  { name: 'current', description: '查看当前路由到哪个会话' },
-  { name: 'new', description: '新建会话并设为路由目标（/new <名字>）' },
+  { name: 'list', description: '列出最近 Lumos 会话（/list <页码>）' },
+  { name: 'switch', description: '已弃用：微信入口固定进入主 Agent，不再切换会话' },
+  { name: 'current', description: '查看微信入口当前进入的主 Agent 会话' },
+  { name: 'new', description: '已弃用：请直接让主 Agent 新建或管理会话' },
   { name: 'voice', description: '切换 AI 回复模式（/voice on|off|status；/voice native on|off）' },
+  { name: 'app', description: '通用应用命令（/app <应用名或ID> status|runs|acceptance|help）' },
+  { name: 'goofish', description: '闲鱼助手命令（/goofish status|unread|drafts|draft|confirm|reject|sync）' },
 ];

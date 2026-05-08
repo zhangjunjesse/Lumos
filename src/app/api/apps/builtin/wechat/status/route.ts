@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 
-import { getMcpServerByNameAndScope, getSession } from '@/lib/db';
+import { getMcpServerByNameAndScope } from '@/lib/db';
 import {
   getDefaultProviderId,
   isProviderConfigured,
   isProviderEnabled,
 } from '@/lib/im';
-import { getCurrentRoutedSessionId } from '@/lib/im/providers/wechat/route-pointer';
+import { resolveWechatMainAgentSession } from '@/lib/im/providers/wechat/main-agent-route';
 import { getConsent, getDisclaimerHash, hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { runEnvProbes } from '@/lib/wechat-export/env-check';
 import { getSetupStatus } from '@/lib/wechat-export/setup-state';
@@ -18,8 +18,8 @@ export async function GET() {
   const imConfigured = isProviderConfigured('wechat');
   const imEnabled = isProviderEnabled('wechat');
   const defaultProviderId = getDefaultProviderId();
-  const routedSessionId = getCurrentRoutedSessionId();
-  const routedSession = routedSessionId ? getSession(routedSessionId) : null;
+  const routedSession = resolveWechatMainAgentSession();
+  const routedSessionId = routedSession?.id ?? null;
 
   if (process.platform !== 'darwin') {
     return NextResponse.json({

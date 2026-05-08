@@ -10,6 +10,8 @@ import type { ConsentCallback, InstallContext } from '../../../installer';
 import { createSoftwareCryptor } from '../../../runtime/secret-cryptor';
 import { createSecretVault } from '../../../runtime/secret-vault';
 import { createTriggerManager } from '../../../runtime/trigger-manager';
+import type { BuilderSession } from '../../session';
+import { buildTemplateBlueprintFiles } from '../../templates';
 
 import {
   createGetAppStateTool,
@@ -26,6 +28,79 @@ import {
 
 const FIXTURES = path.join(__dirname, '../../../manifest/__tests__/fixtures');
 const VALID = path.join(FIXTURES, 'valid-form-tool');
+
+const NATIVE_SPEC = `${JSON.stringify({
+  version: 1,
+  summary: 'Weekly Summary：保存周报输入、生成结果和运行状态。',
+  userVisibleScope: [
+    '打开应用首页查看周报表单。',
+    '填写周报内容并保存。',
+    '查看运行结果和失败原因。',
+  ],
+  status: {
+    states: ['not_configured', 'ready', 'running', 'failed', 'not_connected'],
+    readyCriteria: ['应用页面可打开。'],
+    notConnectedBehavior: '缺少底层能力时显示未接入或失败原因。',
+  },
+  settings: [
+    {
+      id: 'general',
+      label: '基础设置',
+      fields: ['默认视图'],
+    },
+  ],
+  data: {
+    entities: [
+      'app_settings',
+      'app_automations',
+      'run_history',
+      'assistant_messages',
+      'app_notifications',
+      'app_command_runs',
+      'acceptance_checks',
+    ],
+    reusableStores: ['settings', 'run_history'],
+  },
+  ai: {
+    enabled: false,
+    promptSettings: false,
+    draftBeforeWrite: true,
+    visibleFailureHandling: true,
+  },
+  automations: {
+    enabled: false,
+    controls: ['run_now', 'edit', 'delete'],
+    visibleRunResults: true,
+  },
+  runResults: {
+    visible: true,
+    states: ['running', 'success', 'failed', 'cancelled'],
+    failureReasons: true,
+    retry: true,
+  },
+  im: {
+    enabled: false,
+    lowRiskCommands: [],
+    confirmationRequiredFor: ['所有写操作'],
+    visibleCommandResults: true,
+  },
+  risk: {
+    writeActionsRequireConfirmation: true,
+    highRiskActions: ['覆盖已有记录'],
+    outOfScope: ['未确认的外部发送'],
+  },
+  acceptance: [
+    {
+      id: 'installation-self-check',
+      label: '安装自检',
+      howToVerify: '安装后查看自检结果。',
+    },
+    { id: 'open-main', label: '打开首页', howToVerify: '进入应用后看到首页。' },
+    { id: 'submit-form', label: '提交表单', howToVerify: '填写并提交表单。' },
+    { id: 'review-result', label: '查看结果', howToVerify: '查看运行结果。' },
+    { id: 'review-failure', label: '查看失败原因', howToVerify: '失败时能看到原因。' },
+  ],
+}, null, 2)}\n`;
 
 function setupDb() {
   const db = new Database(':memory:');
@@ -44,6 +119,67 @@ function makeInstallCtx(db: Database.Database, appsRoot: string): InstallContext
   return { db, vault, triggers, appsRootPath: appsRoot, onConsent: grantAll };
 }
 
+function makeNativeFixture(rootPath: string): string {
+  const nativeRoot = path.join(rootPath, 'native-valid-form-tool');
+  fs.cpSync(VALID, nativeRoot, { recursive: true });
+  fs.writeFileSync(path.join(nativeRoot, 'native-app-spec.json'), NATIVE_SPEC);
+  fs.writeFileSync(path.join(nativeRoot, 'routes.json'), JSON.stringify({
+    menu: [
+      { id: 'main', label: '生成', icon: 'edit', page: 'pages/main.json' },
+      { id: 'status', label: '状态', icon: 'activity', page: 'pages/status.json' },
+      { id: 'settings', label: '设置', icon: 'settings', page: 'pages/settings.json' },
+      { id: 'automations', label: '自动化', icon: 'timer', page: 'pages/automations.json' },
+      { id: 'im', label: '通知命令', icon: 'message-circle', page: 'pages/im.json' },
+      { id: 'run-history', label: '运行结果', icon: 'list-checks', page: 'pages/run-history.json' },
+    ],
+    default: 'main',
+  }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'data-schema.json'), JSON.stringify({
+    collections: [
+      collection('app_settings', ['ai_system_prompt', 'risk_note']),
+      collection('app_automations', ['native_action', 'last_run_id', 'schedule_id', 'schedule_status', 'schedule_error', 'next_run_at']),
+      collection('run_history', ['status', 'summary', 'failure_reason']),
+      collection('assistant_messages', ['role', 'text']),
+      collection('app_notifications', ['channel', 'status', 'last_error', 'last_message_id']),
+      collection('app_command_runs', ['command', 'risk_level', 'confirmation_required', 'last_run_id']),
+      collection('acceptance_checks', ['acceptance_id', 'done', 'status', 'evidence', 'failure_reason', 'evidence_run_id']),
+    ],
+  }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'pages/status.json'), JSON.stringify({ title: '状态', layout: 'single', blocks: [{ type: 'button', label: '重新运行安装自检', run: 'native:app:run-self-check' }] }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'pages/settings.json'), JSON.stringify({ title: '设置', layout: 'single', blocks: [{ type: 'markdown', content: 'ai_system_prompt risk_note' }] }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'pages/automations.json'), JSON.stringify({ title: '自动化', layout: 'single', blocks: [{ type: 'button', label: '立即运行', run: 'native:app:run-automation' }, { type: 'button', label: '同步定时任务', run: 'native:app:sync-automation-schedule' }] }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'pages/im.json'), JSON.stringify({ title: '通知命令', layout: 'single', blocks: [{ type: 'button', label: '测试命令', run: 'native:app:run-command' }, { type: 'markdown', content: '/app <应用名或ID> status runs acceptance help' }] }, null, 2));
+  fs.writeFileSync(path.join(nativeRoot, 'pages/run-history.json'), JSON.stringify({ title: '运行结果', layout: 'single', blocks: [{ type: 'markdown', content: 'failure_reason' }] }, null, 2));
+  return nativeRoot;
+}
+
+function collection(name: string, fields: string[]) {
+  return {
+    name,
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      ...fields.map((field) => ({ name: field, type: field === 'done' ? 'boolean' : 'string' })),
+    ],
+  };
+}
+
+function makeGoofishNativeFiles(): Record<string, string> {
+  const session: BuilderSession = {
+    id: 'bs_goofish123456',
+    status: 'demo_review',
+    appName: '闲鱼助手',
+    appDescription: '帮用户回复闲鱼消息，管理商品，并通过微信 IM 通知。',
+    templateId: 'goofish-assistant',
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const files = buildTemplateBlueprintFiles(session, 'goofish-assistant', {
+    now: 1714470000000,
+  });
+  if (!files) throw new Error('expected goofish native files');
+  return files;
+}
+
 // ───── read_schema ─────
 
 describe('read_schema', () => {
@@ -55,6 +191,18 @@ describe('read_schema', () => {
     if (!r.ok) return;
     expect(r.data.alias).toBe('app');
     expect(r.data.schema).toMatchObject({ type: 'object' });
+  });
+
+  it('returns the native-grade app spec schema', async () => {
+    const r = await readSchemaTool.execute({ schema: 'native-app-spec' }, {});
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.alias).toBe('native-app-spec');
+    expect(r.data.filename).toBe('native-app-spec.schema.json');
+    expect(r.data.schema).toMatchObject({
+      title: 'Lumos Native-grade App Spec',
+      required: expect.arrayContaining(['status', 'acceptance']),
+    });
   });
 
   it('rejects unknown alias', async () => {
@@ -83,6 +231,7 @@ describe('list_capabilities', () => {
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.data.mcps).toEqual([]);
+      expect(r.data.nativeIntegrations.map((item) => item.id)).toContain('goofish');
       expect(r.data.tools).toEqual(['bash', 'python', 'file', 'web-fetch']);
       expect(r.data.workflowExecutionReady).toBe(false);
     } finally {
@@ -230,6 +379,51 @@ describe('validate_app', () => {
     expect(r.data.ok).toBe(true);
   });
 
+  it('passes native-grade package validation for the Goofish starter', async () => {
+    const r = await validateAppTool.execute(
+      { files: makeGoofishNativeFiles(), nativeGrade: true },
+      {},
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.ok).toBe(true);
+    expect(r.data.errorCount).toBe(0);
+  });
+
+  it('rejects ordinary packages when nativeGrade is required', async () => {
+    const r = await validateAppTool.execute(
+      {
+        nativeGrade: true,
+        files: {
+          'app.json': JSON.stringify({
+            id: 'ordinary-demo',
+            name: 'Ordinary',
+            version: '1.0.0',
+            icon: './icon.png',
+            entry: 'main',
+            permissions: { data: 'isolated' },
+          }),
+          'routes.json': JSON.stringify({
+            menu: [{ id: 'main', label: 'Main', page: 'pages/main.json' }],
+            default: 'main',
+          }),
+          'pages/main.json': JSON.stringify({
+            title: 'Main',
+            layout: 'single',
+            blocks: [{ type: 'markdown', content: 'hi' }],
+          }),
+        },
+      },
+      {},
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.ok).toBe(false);
+    const messages = r.data.issues.map((issue) => `${issue.file}: ${issue.message}`).join('\n');
+    expect(messages).toContain('native-app-spec.json');
+    expect(messages).toContain('缺少内置级通用菜单 status');
+  });
+
   it('rejects unsafe paths in files map', async () => {
     const r = await validateAppTool.execute(
       {
@@ -255,11 +449,13 @@ describe('install_app + get_app_state + update_app_file', () => {
   let tmp: string;
   let appsRoot: string;
   let db: Database.Database;
+  let nativeValid: string;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-tools-'));
     appsRoot = path.join(tmp, 'apps');
     db = setupDb();
+    nativeValid = makeNativeFixture(tmp);
   });
 
   afterEach(() => {
@@ -271,7 +467,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const tool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    const r = await tool.execute({ rootPath: VALID }, {});
+    const r = await tool.execute({ rootPath: nativeValid }, {});
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.data.installed.appId).toBe('weekly-summary');
@@ -282,26 +478,7 @@ describe('install_app + get_app_state + update_app_file', () => {
       installContext: () => makeInstallCtx(db, appsRoot),
     });
     const r = await tool.execute(
-      {
-        files: {
-          'app.json': JSON.stringify({
-            id: 'inmem-app',
-            name: 'Inmem',
-            version: '0.1.0',
-            icon: './icon.png',
-            entry: 'main',
-          }),
-          'routes.json': JSON.stringify({
-            menu: [{ id: 'main', label: 'Main', page: 'pages/main.json' }],
-            default: 'main',
-          }),
-          'pages/main.json': JSON.stringify({
-            title: 'Main',
-            layout: 'single',
-            blocks: [{ type: 'markdown', content: 'hello' }],
-          }),
-        },
-      },
+      { files: makeGoofishNativeFiles() },
       {},
     );
     expect(r.ok).toBe(true);
@@ -313,23 +490,58 @@ describe('install_app + get_app_state + update_app_file', () => {
     const tool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    const r = await tool.execute(
-      {
-        files: {
-          'app.json': JSON.stringify({
-            id: 'BadId',
-            name: 'X',
-            version: '1.0',
-            icon: './icon.png',
-            entry: 'home',
-          }),
-        },
-      },
-      {},
-    );
+    const brokenRoot = path.join(tmp, 'broken-native-valid-form-tool');
+    fs.cpSync(nativeValid, brokenRoot, { recursive: true });
+    const appJsonPath = path.join(brokenRoot, 'app.json');
+    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf-8')) as { id: string };
+    appJson.id = 'BadId';
+    fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2));
+
+    const r = await tool.execute({ rootPath: brokenRoot }, {});
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe('ManifestInvalid');
+  });
+
+  it('install_app rejects packages without a native-grade spec', async () => {
+    const tool = createInstallAppTool({
+      installContext: () => makeInstallCtx(db, appsRoot),
+    });
+    const r = await tool.execute({ rootPath: VALID }, {});
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('NativeSpecInvalid');
+    expect(r.issues?.map((issue) => issue.message).join('\n')).toContain('缺少内置级应用规格');
+  });
+
+  it('install_app rejects when the current native spec has not been accepted', async () => {
+    const tool = createInstallAppTool({
+      installContext: () => makeInstallCtx(db, appsRoot),
+      nativeSpecReview: () => ({
+        review: { status: 'pending' },
+        artifactVersion: 1,
+      }),
+    });
+    const r = await tool.execute({ rootPath: nativeValid }, { sessionId: 'bs_test' });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('NativeSpecReviewRequired');
+    expect(r.hint).toContain('接受当前内置级规格');
+    expect(fs.existsSync(path.join(appsRoot, 'weekly-summary'))).toBe(false);
+  });
+
+  it('install_app accepts a session-bound native spec review for the current artifact version', async () => {
+    const tool = createInstallAppTool({
+      installContext: () => makeInstallCtx(db, appsRoot),
+      nativeSpecReview: () => ({
+        review: { status: 'accepted', artifactVersion: 1 },
+        artifactVersion: 1,
+      }),
+    });
+    const r = await tool.execute({ rootPath: nativeValid }, { sessionId: 'bs_test' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.data.installed.appId).toBe('weekly-summary');
   });
 
   it('get_app_state returns installed=false for unknown app', async () => {
@@ -345,7 +557,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const stateTool = createGetAppStateTool(db);
     const r = await stateTool.execute({ appId: 'weekly-summary' }, {});
@@ -363,7 +575,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const updateTool = createUpdateAppFileTool(db);
     const before = fs
@@ -391,7 +603,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const updateTool = createUpdateAppFileTool(db);
     const newPage = JSON.stringify({
@@ -418,7 +630,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const updateTool = createUpdateAppFileTool(db);
     const before = fs.readFileSync(
@@ -455,7 +667,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const updateTool = createUpdateAppFileTool(db);
     const r = await updateTool.execute(
@@ -475,7 +687,7 @@ describe('install_app + get_app_state + update_app_file', () => {
     const installTool = createInstallAppTool({
       installContext: () => makeInstallCtx(db, appsRoot),
     });
-    await installTool.execute({ rootPath: VALID }, {});
+    await installTool.execute({ rootPath: nativeValid }, {});
 
     const updateTool = createUpdateAppFileTool(db);
     const r = await updateTool.execute(

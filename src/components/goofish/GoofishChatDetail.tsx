@@ -1,10 +1,10 @@
 'use client';
-/* eslint-disable @next/next/no-img-element -- 闲鱼远程 CDN 图片需要 referrerPolicy=no-referrer */
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Loader2, RefreshCw, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GoofishAvatar } from './GoofishAvatar';
+import { GoofishAuthExpiredHint } from './GoofishAuthExpiredHint';
+import { MessageBubble, formatBubbleTime, type GoofishChatMessage } from './GoofishMessageBubble';
 
 interface ChatSession {
   session_id: string;
@@ -12,23 +12,6 @@ interface ChatSession {
   peer_user_id?: string;
   peer_avatar?: string;
   unread: number;
-}
-
-type Content =
-  | { kind: 'text'; text: string }
-  | { kind: 'image'; url: string; width: number; height: number }
-  | { kind: 'item'; itemId: string; price: string; title: string; mainPic: string; tip?: string }
-  | { kind: 'system'; text: string }
-  | { kind: 'unknown'; raw: string };
-
-interface ChatMessage {
-  messageId: string;
-  fromUserId: string;
-  fromUserName: string;
-  createdAt: number;
-  readStatus: number;
-  summary?: string;
-  content: Content;
 }
 
 interface Props {
@@ -39,8 +22,9 @@ interface Props {
 
 /** 单条会话的消息历史 + 输入框，微信式气泡布局，自动滚到底。 */
 export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [messages, setMessages] = useState<GoofishChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [authExpired, setAuthExpired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -54,13 +38,20 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
       const res = await fetch(`/api/goofish/messages/${session.session_id}`, { cache: 'no-store', signal });
       const data = await res.json();
       if (signal?.aborted) return;
+      if (res.status === 401 && data?.code === 'GOOFISH_AUTH_EXPIRED') {
+        setAuthExpired(true);
+        setError(null);
+        return;
+      }
       if (!res.ok || !data?.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       setMessages(data.messages || []);
       setError(null);
+      setAuthExpired(false);
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       if (signal?.aborted) return;
       setError(err instanceof Error ? err.message : 'unknown error');
+      setAuthExpired(false);
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -72,7 +63,7 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
   const send = useCallback(async () => {
     const text = draft.trim();
     const toid = session.peer_user_id;
-    if (!text || !toid || sending) return;
+    if (!text || !toid || sending || authExpired) return;
     setSending(true);
     setSendError(null);
     try {
@@ -82,6 +73,11 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
         body: JSON.stringify({ toid, text }),
       });
       const data = await res.json();
+      if (res.status === 401 && data?.code === 'GOOFISH_AUTH_EXPIRED') {
+        setAuthExpired(true);
+        setSendError(null);
+        return;
+      }
       if (!res.ok || !data?.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       setDraft('');
       // Re-fetch so the sent message appears (it'll come back via the WS path).
@@ -91,7 +87,7 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
     } finally {
       setSending(false);
     }
-  }, [draft, session.peer_user_id, session.session_id, sending, fetchMessages]);
+  }, [draft, session.peer_user_id, session.session_id, sending, authExpired, fetchMessages]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -130,12 +126,15 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2 bg-muted/10">
-        {messages === null && !error && (
+        {messages === null && !error && !authExpired && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             <Loader2 className="h-4 w-4 animate-spin mr-2" /> 加载消息中…
           </div>
         )}
-        {error && (
+        {authExpired && (
+          <GoofishAuthExpiredHint />
+        )}
+        {error && !authExpired && (
           <div className="text-sm text-red-500">拉取失败：{error}</div>
         )}
         {messages && messages.length === 0 && !error && (
@@ -187,12 +186,12 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
                   void send();
                 }
               }}
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+              placeholder={authExpired ? '登录已过期,无法发送' : '输入消息，Enter 发送，Shift+Enter 换行'}
               rows={1}
-              disabled={sending}
+              disabled={sending || authExpired}
               className="flex-1 resize-none text-sm bg-muted/30 rounded-md px-3 py-2 max-h-32 focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
-            <Button size="sm" onClick={() => void send()} disabled={sending || !draft.trim()}>
+            <Button size="sm" onClick={() => void send()} disabled={sending || !draft.trim() || authExpired}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
@@ -206,95 +205,3 @@ export function GoofishChatDetail({ session, myUserId, onBack }: Props) {
   );
 }
 
-function MessageBubble({ message, fromMe }: { message: ChatMessage; fromMe: boolean }) {
-  const c = message.content;
-
-  // 系统提示居中，不显示头像、不显示时间
-  if (c.kind === 'system') {
-    return (
-      <div className="flex justify-center my-2">
-        <div className="text-[11px] text-muted-foreground bg-muted/40 px-3 py-1 rounded-full max-w-[80%] text-center">
-          {c.text}
-        </div>
-      </div>
-    );
-  }
-
-  const time = message.createdAt ? formatBubbleTime(message.createdAt) : '';
-  // readStatus: 1 = read by peer, 2 = sent but not yet read. Only render
-  // the ticks for messages I sent (peer's incoming readStatus is irrelevant).
-  const readMark = fromMe && message.readStatus === 1 ? '已读' : (fromMe && message.readStatus === 2 ? '未读' : '');
-
-  return (
-    <div className={`flex gap-2 items-end ${fromMe ? 'justify-end' : 'justify-start'}`}>
-      {!fromMe && <GoofishAvatar userId={message.fromUserId} name={message.fromUserName} size={32} />}
-      <div className={`flex flex-col gap-0.5 max-w-[70%] ${fromMe ? 'items-end' : 'items-start'}`}>
-        <BubbleContent content={c} fromMe={fromMe} />
-        {(time || readMark) && (
-          <div className="text-[10px] text-muted-foreground px-1 flex gap-1.5">
-            {time && <span>{time}</span>}
-            {readMark && <span className={readMark === '已读' ? 'text-blue-500' : ''}>{readMark}</span>}
-          </div>
-        )}
-      </div>
-      {fromMe && <GoofishAvatar userId={message.fromUserId} name={message.fromUserName} size={32} />}
-    </div>
-  );
-}
-
-function BubbleContent({ content: c, fromMe }: { content: Content; fromMe: boolean }) {
-  const bubble = fromMe ? 'bg-blue-500 text-white' : 'bg-card border border-border/60';
-  if (c.kind === 'text') {
-    return (
-      <div className={`${bubble} px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words`}>
-        {c.text}
-      </div>
-    );
-  }
-  if (c.kind === 'image') {
-    return (
-      <div className={`${bubble} p-1 rounded-xl overflow-hidden`}>
-        {c.url ? (
-          <img src={c.url} alt="" referrerPolicy="no-referrer" className="rounded-lg max-h-64 w-auto" />
-        ) : (
-          <div className="px-3 py-2 text-sm">[图片]</div>
-        )}
-      </div>
-    );
-  }
-  if (c.kind === 'item') {
-    return (
-      <div className={`${bubble} p-2 rounded-xl flex gap-2`}>
-        {c.mainPic && (
-          <img src={c.mainPic} alt="" referrerPolicy="no-referrer" className="h-16 w-16 rounded object-cover shrink-0" />
-        )}
-        <div className="min-w-0 flex flex-col justify-between">
-          {c.tip && <div className="text-xs opacity-80">{c.tip}</div>}
-          <div className="text-sm truncate">{c.title || '(商品)'}</div>
-          <div className="text-sm font-medium">{c.price}</div>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className={`${bubble} px-3 py-2 rounded-xl text-xs italic opacity-70`}>
-      [不支持的消息类型]
-    </div>
-  );
-}
-
-function formatBubbleTime(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (sameDay) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const yd = new Date(now); yd.setDate(now.getDate() - 1);
-  if (d.getFullYear() === yd.getFullYear() && d.getMonth() === yd.getMonth() && d.getDate() === yd.getDate()) {
-    return `昨天 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-  if (d.getFullYear() === now.getFullYear()) {
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}

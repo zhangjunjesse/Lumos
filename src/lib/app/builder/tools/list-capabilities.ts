@@ -27,7 +27,7 @@ export function createListCapabilitiesTool(
   return {
     name: 'list_capabilities',
     description:
-      'Return the current set of MCP servers, agents, knowledge collections, LLM tiers, and tools available on this Lumos host. Always refer to this list when proposing manifest.requires fields — never invent capabilities.',
+      'Return the current set of MCP servers, agents, knowledge collections, native integrations, LLM tiers, and tools available on this Lumos host. Always refer to this list when proposing manifest.requires fields — never invent capabilities.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     async execute() {
       return ok(probeCapabilities(db, opts));

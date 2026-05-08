@@ -126,6 +126,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --config electron-builder.yml --publish always
 
+      - name: Verify packaged esbuild runtime (Windows)
+        run: node scripts/verify-packaged-esbuild.mjs --platform=win32 --arch=x64 release/win-unpacked
+
       - name: Verify packaged embedding model (Windows)
         run: node scripts/verify-packaged-embedding-model.mjs release/win-unpacked
 
@@ -181,7 +184,8 @@ jobs:
         run: |
           npm install --no-save --ignore-scripts --force \
             @node-rs/jieba-darwin-arm64 \
-            @img/sharp-darwin-arm64
+            @img/sharp-darwin-arm64 \
+            @esbuild/darwin-arm64
 
       - name: Download Node.js runtime for both archs
         run: |
@@ -246,6 +250,11 @@ jobs:
         run: |
           node scripts/verify-packaged-embedding-model.mjs release/mac-arm64/Lumos.app
           node scripts/verify-packaged-embedding-model.mjs release/mac/Lumos.app
+
+      - name: Verify packaged esbuild runtime
+        run: |
+          node scripts/verify-packaged-esbuild.mjs --platform=darwin --arch=arm64 release/mac-arm64/Lumos.app
+          node scripts/verify-packaged-esbuild.mjs --platform=darwin --arch=x64 release/mac/Lumos.app
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

@@ -1,0 +1,11 @@
+{
+  "name": "x-platform",
+  "description": "X (Twitter) 工具:搜索推文、发推、读主页/用户时间线。需先在「服务 → X」登录。",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/x-platform/x_mcp.mjs"
+  ],
+  "env": {}
+}

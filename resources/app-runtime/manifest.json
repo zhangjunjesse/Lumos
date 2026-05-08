@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-05-03T02:20:12.488Z",
+  "builtAt": "2026-05-07T16:36:21.933Z",
   "bundles": [
     {
       "file": "react.mjs",
@@ -28,8 +28,8 @@
     },
     {
       "file": "lumos-app.mjs",
-      "bytes": 4881,
-      "hash": "279bef58ab0b"
+      "bytes": 4931,
+      "hash": "36e83b17aeb8"
     },
     {
       "file": "lumos-ui.mjs",
@@ -59,6 +59,6 @@
   ],
   "css": {
     "file": "tailwind.css",
-    "bytes": 257877
+    "bytes": 271786
   }
 }

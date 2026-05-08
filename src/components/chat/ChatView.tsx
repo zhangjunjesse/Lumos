@@ -67,11 +67,6 @@ interface ChatViewProps {
   onKnowledgeOptionsChange?: (options: ChatKnowledgeOptions) => void;
 }
 
-interface MemoryIdleTriggerConfig {
-  enabled: boolean;
-  timeoutMs: number;
-}
-
 interface BrowserContextConflictState extends BrowserContextConflictDetails {
   retryContent?: string;
   retryFiles?: FileAttachment[];
@@ -80,8 +75,6 @@ interface BrowserContextConflictState extends BrowserContextConflictDetails {
   retryKnowledgeOptions?: ChatKnowledgeOptions;
 }
 
-const DEFAULT_MEMORY_IDLE_TIMEOUT_MS = 120_000;
-const MIN_MEMORY_IDLE_TIMEOUT_MS = 10_000;
 const EMPTY_MESSAGES: Message[] = [];
 
 function getInitialKnowledgeOptions(
@@ -204,10 +197,6 @@ export function ChatView({
     () => cachedStreamingState?.permissionResolved || null
   );
   const [streamingToolOutput, setStreamingToolOutput] = useState(() => cachedStreamingState?.streamingToolOutput || '');
-  const [memoryIdleConfig, setMemoryIdleConfig] = useState<MemoryIdleTriggerConfig>({
-    enabled: true,
-    timeoutMs: DEFAULT_MEMORY_IDLE_TIMEOUT_MS,
-  });
   const [browserConflict, setBrowserConflict] = useState<BrowserContextConflictState | null>(null);
   const [browserConflictAction, setBrowserConflictAction] = useState<'release' | 'retry' | 'embedded' | null>(null);
   const mode = 'code';
@@ -282,22 +271,7 @@ export function ChatView({
 
   const scheduleIdleMemoryTrigger = useCallback(() => {
     clearIdleMemoryTimer();
-    if (!memoryIdleConfig.enabled) return;
-
-    const delay = Math.max(MIN_MEMORY_IDLE_TIMEOUT_MS, memoryIdleConfig.timeoutMs || DEFAULT_MEMORY_IDLE_TIMEOUT_MS);
-    idleMemoryTimerRef.current = window.setTimeout(() => {
-      fetch('/api/memory/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          trigger: 'idle',
-        }),
-      }).catch(() => {
-        // Best effort only.
-      });
-    }, delay);
-  }, [clearIdleMemoryTimer, memoryIdleConfig.enabled, memoryIdleConfig.timeoutMs, sessionId]);
+  }, [clearIdleMemoryTimer]);
 
   const resetStreamingUi = useCallback((controller?: AbortController | null) => {
     toolTimeoutRef.current = null;
@@ -482,27 +456,6 @@ export function ChatView({
       clearIdleMemoryTimer();
     };
   }, [clearIdleMemoryTimer]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/settings/app', { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data?.settings) return;
-        const settings = data.settings as Record<string, string>;
-        const enabled = settings.memory_intelligence_trigger_idle_enabled !== 'false';
-        const parsedTimeout = Number(settings.memory_intelligence_idle_timeout_ms || '');
-        const timeoutMs = Number.isFinite(parsedTimeout)
-          ? Math.max(MIN_MEMORY_IDLE_TIMEOUT_MS, Math.floor(parsedTimeout))
-          : DEFAULT_MEMORY_IDLE_TIMEOUT_MS;
-        setMemoryIdleConfig({ enabled, timeoutMs });
-      })
-      .catch(() => {
-        // Use defaults when settings are unavailable.
-      });
-
-    return () => controller.abort();
-  }, []);
 
   // Warn before closing window/tab while streaming to prevent accidental data loss
   useEffect(() => {

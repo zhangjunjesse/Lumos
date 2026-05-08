@@ -38,6 +38,25 @@ npm run lint           # 代码检查
 
 ---
 
+## 内置级应用开发规则（Claude 必须遵守）
+
+当任务涉及 `应用平台`、`AppBuilder`、`用户侧内置级应用生成器`、`闲鱼助手` 或任何“生成 / 开发新应用”能力时，Claude Code 不能按普通 demo / 普通可安装应用来开发。
+
+- 规范真源：`docs/native-app-development-guide.md`
+- 验收真源：`docs/native-app-acceptance-checklist.md`
+- 工具级校验：`validate_app({ nativeGrade: true, files | rootPath })`
+- 命令级校验：`npm run validate:native-app -- <app-dir>`
+
+强制规则：
+- 新应用必须是内置级应用包：`app.json`、`routes.json`、`data-schema.json`、`native-app-spec.json`、`pages/status.json`、`pages/settings.json`、`pages/automations.json`、`pages/im.json`、`pages/run-history.json`。
+- 必须提供状态、设置、运行结果、应用 AI 助手/提示词、自动化、IM 通知/命令、验收清单和失败原因的可见 UI；缺底层能力时显示 `未接入 / 需授权 / 失败原因`，不能用 mock 冒充完成。
+- 写操作必须先草稿后确认；高风险动作必须拒绝或进入应用内确认，不得默认自动执行。
+- `native-app-spec.json` 每次变更后，用户必须在「项目状态」接受当前版本；未接受时不能安装。
+- AppBuilder 的 `validate_app`、`install_app` 和服务端安装接口都必须执行内置级应用包门禁；缺通用页面壳、运行结果、命令页、验收项或权限声明时，即使 spec 合法也不能安装。
+- 汇报时必须使用严格口径：只完成规格、提示词、校验和门禁时是 `文档完整度=部分完成`、`主链状态=未打通`，不能说完整完成。
+
+---
+
 ## DeepSearch / 浏览器运行时规则
 
 - DeepSearch、Workflow code-only 浏览器步骤、站点探测、页面快照、截图、页面校验等自动化浏览器操作默认必须走后台模式，向 browser bridge 传 `background: true`。

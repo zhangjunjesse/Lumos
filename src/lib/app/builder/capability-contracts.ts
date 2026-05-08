@@ -1,4 +1,5 @@
 import type { ValidationIssue } from '@/lib/app/manifest/types';
+import { validateNativeGradeAppSpec } from './native-grade-spec';
 
 type ManifestCapabilityShape = {
   routes?: Array<{ id?: string; path?: string; page?: string; label?: string; hidden?: boolean }>;
@@ -6,6 +7,7 @@ type ManifestCapabilityShape = {
     ai?: { complete?: boolean; stream?: boolean; structured?: boolean };
     workflow?: { run?: string[] };
     deepsearch?: { start?: boolean; read?: boolean; control?: boolean };
+    system?: string[];
   };
 };
 
@@ -89,6 +91,27 @@ export function validateAppCapabilityContracts(fileMap: Map<string, string>): Va
   if (usesDeepSearch) {
     issues.push(...validateDeepSearchManagementUi(fileMap, manifest));
   }
+
+  const usesImNotify = /\bim\.notify\s*\(/.test(allCode);
+  if (usesImNotify && !manifest?.permissions?.system?.includes('im-notification')) {
+    issues.push({
+      level: 'error',
+      file: 'manifest.json',
+      jsonPath: '/permissions/system',
+      message: '应用代码调用了 im.notify()，但 manifest 没有声明 system:im-notification 权限。',
+      hint: '在 manifest.permissions.system 加入 "im-notification"，并提供可见的通知目标、发送状态和失败原因入口。',
+    });
+  }
+  if (usesImNotify) {
+    issues.push(...validateImManagementUi(fileMap, manifest));
+  }
+
+  issues.push(...validateNativeGradeAppSpec(fileMap, {
+    usesAi: usesAiComplete,
+    workflowIds,
+    usesDeepSearch,
+    usesIm: usesImNotify,
+  }));
 
   return issues;
 }
@@ -187,6 +210,25 @@ function validateDeepSearchManagementUi(
     jsonPath: '/routes',
     message: '应用调用了 deepsearch.*，但没有可见的 DeepSearch 配置/状态/结果入口。',
     hint: '新增 DeepSearch 配置或状态页，展示搜索范围、登录/权限状态、运行中状态、结果证据、失败原因和重试入口。',
+  }];
+}
+
+function validateImManagementUi(
+  fileMap: Map<string, string>,
+  manifest: ManifestCapabilityShape | null,
+): ValidationIssue[] {
+  const uiText = routeSourceFiles(fileMap, manifest)
+    .map((file) => file.content)
+    .join('\n');
+  const hasImText = /IM|微信|通知|notify|notification/i.test(uiText);
+  const hasStatusText = /发送状态|失败原因|未接入|绑定|主 Agent|Main Agent|status|error/i.test(uiText);
+  if (hasImText && hasStatusText) return [];
+  return [{
+    level: 'error',
+    file: 'manifest.json',
+    jsonPath: '/routes',
+    message: '应用调用了 im.notify()，但没有可见的 IM 通知管理入口。',
+    hint: '新增“通知/命令”页面或设置面板，展示通知目标、绑定要求、发送状态和失败原因，并说明用户回复进入主 Agent。',
   }];
 }
 

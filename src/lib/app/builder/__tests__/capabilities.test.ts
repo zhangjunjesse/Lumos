@@ -15,6 +15,24 @@ describe('probeCapabilities — empty database', () => {
       expect(cap.mcps).toEqual([]);
       expect(cap.agents).toEqual([]);
       expect(cap.knowledge).toEqual([]);
+      expect(cap.nativeIntegrations.map((item) => item.id)).toContain('goofish');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('declares the controlled Goofish integration boundary', () => {
+    const db = emptyDb();
+    try {
+      const goofish = probeCapabilities(db).nativeIntegrations.find((item) => item.id === 'goofish');
+      expect(goofish).toMatchObject({
+        status: 'requires_setup',
+        setupUi: '扩展 > 闲鱼',
+      });
+      expect(goofish?.readActions.join('\n')).toContain('消息详情');
+      expect(goofish?.writeActions.join('\n')).toContain('用户确认');
+      expect(goofish?.unavailableActions.join('\n')).toContain('发布商品');
+      expect(goofish?.unavailableActions.join('\n')).toContain('自动无确认回复');
     } finally {
       db.close();
     }

@@ -768,6 +768,126 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_mem_int_events_trigger ON memory_intelligence_events(trigger, created_at DESC);
   `);
 
+  // Memory v2: action memory for task / people / resource / capability / reflection.
+  // This is intentionally separate from the legacy `memories` table so the new
+  // runtime can be validated without migrating old records.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_v2_entries (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL
+        CHECK(kind IN ('task','people','resource','capability','reflection')),
+      scope_type TEXT NOT NULL
+        CHECK(scope_type IN ('user','main_agent','project','session','module','entity')),
+      scope_key TEXT NOT NULL DEFAULT '',
+      owner_module TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('candidate','active','archived','rejected')),
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      source_type TEXT NOT NULL DEFAULT 'manual',
+      source_id TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL DEFAULT '',
+      message_id TEXT NOT NULL DEFAULT '',
+      project_path TEXT NOT NULL DEFAULT '',
+      related_entity_type TEXT NOT NULL DEFAULT '',
+      related_entity_id TEXT NOT NULL DEFAULT '',
+      sensitivity TEXT NOT NULL DEFAULT 'normal'
+        CHECK(sensitivity IN ('normal','sensitive_ref','secret_ref_required')),
+      secret_ref TEXT NOT NULL DEFAULT '',
+      confidence REAL NOT NULL DEFAULT 1.0,
+      importance INTEGER NOT NULL DEFAULT 3,
+      evidence TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT DEFAULT NULL,
+      hit_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_scope ON memory_v2_entries(scope_type, scope_key, status);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_kind ON memory_v2_entries(kind, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_owner ON memory_v2_entries(owner_module, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_session ON memory_v2_entries(session_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_project ON memory_v2_entries(project_path, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_v2_usage_log (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL,
+      session_id TEXT NOT NULL DEFAULT '',
+      scope_key TEXT NOT NULL DEFAULT '',
+      prompt_preview TEXT NOT NULL DEFAULT '',
+      used_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_usage_memory ON memory_v2_usage_log(memory_id, used_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_usage_session ON memory_v2_usage_log(session_id, used_at DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_v2_secret_values (
+      secret_ref TEXT PRIMARY KEY,
+      label TEXT NOT NULL DEFAULT '',
+      value_type TEXT NOT NULL DEFAULT 'secret',
+      value_encrypted TEXT NOT NULL,
+      scope_type TEXT NOT NULL DEFAULT '',
+      scope_key TEXT NOT NULL DEFAULT '',
+      owner_module TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT '',
+      source_id TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL DEFAULT '',
+      message_id TEXT NOT NULL DEFAULT '',
+      project_path TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_secret_scope ON memory_v2_secret_values(scope_type, scope_key, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_secret_source ON memory_v2_secret_values(source_type, source_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_v2_sleep_runs (
+      id TEXT PRIMARY KEY,
+      trigger_type TEXT NOT NULL DEFAULT 'manual',
+      run_day TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'success'
+        CHECK(status IN ('success','skipped','error')),
+      memory_id TEXT NOT NULL DEFAULT '',
+      report_json TEXT NOT NULL DEFAULT '{}',
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_sleep_day ON memory_v2_sleep_runs(run_day DESC, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_sleep_status ON memory_v2_sleep_runs(status, completed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_v2_improvement_candidates (
+      id TEXT PRIMARY KEY,
+      candidate_type TEXT NOT NULL
+        CHECK(candidate_type IN ('skill','mcp','workflow','prompt','rule')),
+      status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK(status IN ('candidate','approved','building','built','rejected','failed')),
+      title TEXT NOT NULL,
+      problem TEXT NOT NULL DEFAULT '',
+      evidence TEXT NOT NULL DEFAULT '',
+      proposed_capability TEXT NOT NULL DEFAULT '',
+      source_memory_ids TEXT NOT NULL DEFAULT '[]',
+      risk_level TEXT NOT NULL DEFAULT 'medium'
+        CHECK(risk_level IN ('low','medium','high')),
+      builder_session_id TEXT NOT NULL DEFAULT '',
+      fingerprint TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_improve_status ON memory_v2_improvement_candidates(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_improve_type ON memory_v2_improvement_candidates(candidate_type, status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_v2_improve_fingerprint
+      ON memory_v2_improvement_candidates(fingerprint)
+      WHERE fingerprint != '';
+  `);
+
   // Auto-create or mark "Built-in" provider from the embedded default API key
   const builtinProvider = db.prepare('SELECT id FROM api_providers WHERE is_builtin = 1').get() as { id: string } | undefined;
 

@@ -2,14 +2,21 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { validateNativeGradeAppSpec } from '../native-grade-spec';
+import {
+  isNativeSpecReviewAcceptedForArtifact,
+  type NativeSpecReview,
+} from '../native-spec-review';
 import { installApp } from '../../installer';
+import { validateNativeAppPackageDirectory } from '../../native-app-package-validation';
+import { recordNativeInstallSelfCheck, type NativeInstallSelfCheckResult } from '../../native-install-self-check';
 import type {
   ConsentCallback,
   InstallContext,
   InstalledApp,
 } from '../../installer';
 
-import { type ToolDefinition, err, ok } from './types';
+import { type ToolContext, type ToolDefinition, err, ok } from './types';
 
 /**
  * Tool: install_app({ files | rootPath })
@@ -36,10 +43,15 @@ export interface InstallAppInput {
 
 export interface InstallAppOutput {
   installed: InstalledApp;
+  selfCheck?: NativeInstallSelfCheckResult;
 }
 
 export interface InstallAppToolDeps {
   installContext: () => InstallContext;
+  nativeSpecReview?: (ctx: ToolContext) => {
+    review: NativeSpecReview;
+    artifactVersion?: number | null;
+  } | undefined;
   /**
    * Optional consent override for tests. Production wires the renderer
    * dialog through the install-context's onConsent.
@@ -68,7 +80,7 @@ export function createInstallAppTool(
         rootPath: { type: 'string' },
       },
     },
-    async execute(input) {
+    async execute(input, toolCtx) {
       let cleanupDir: string | undefined;
       try {
         let rootPath: string;
@@ -85,6 +97,37 @@ export function createInstallAppTool(
           return err('BadInput', 'install_app requires either files or rootPath');
         }
 
+        const nativeSpecIssues = validateNativeGradeAppSpec(collectJsonFileMap(rootPath));
+        if (nativeSpecIssues.length > 0) {
+          return err('NativeSpecInvalid', 'install_app requires a valid native-app-spec.json before installation', {
+            issues: nativeSpecIssues,
+          });
+        }
+        const nativeSpecReview = deps.nativeSpecReview?.(toolCtx);
+        if (
+          nativeSpecReview
+          && !isNativeSpecReviewAcceptedForArtifact(
+            nativeSpecReview.review,
+            nativeSpecReview.artifactVersion,
+          )
+        ) {
+          return err(
+            'NativeSpecReviewRequired',
+            'install_app requires the user to accept the current native-app-spec.json in 项目状态 before installation',
+            {
+              hint: '提示用户打开「项目状态」检查并接受当前内置级规格；规格更新后必须重新接受。',
+            },
+          );
+        }
+        const nativePackageValidation = validateNativeAppPackageDirectory(rootPath);
+        if (!nativePackageValidation.ok) {
+          return err(
+            'NativeAppPackageInvalid',
+            'install_app requires the complete native-grade app package contract before installation',
+            { issues: nativePackageValidation.issues },
+          );
+        }
+
         const ctx = deps.installContext();
         if (deps.consentOverride) {
           ctx.onConsent = deps.consentOverride;
@@ -99,7 +142,11 @@ export function createInstallAppTool(
         if (!result.ok) {
           return err(result.error, result.message, { issues: result.issues });
         }
-        return ok({ installed: result.installed }, result.warnings);
+        const selfCheck = recordNativeInstallSelfCheck(ctx.db, {
+          appId: result.installed.appId,
+          installPath: result.installed.installPath,
+        });
+        return ok({ installed: result.installed, selfCheck }, result.warnings);
       } finally {
         if (cleanupDir) {
           try {
@@ -129,6 +176,27 @@ function materializeFiles(files: Record<string, string>, rootPath: string): void
   const iconPath = path.join(rootPath, 'icon.png');
   if (!fs.existsSync(iconPath)) {
     fs.writeFileSync(iconPath, 'PNG_PLACEHOLDER');
+  }
+}
+
+function collectJsonFileMap(rootPath: string): Map<string, string> {
+  const files = new Map<string, string>();
+  walk(rootPath, (filePath) => {
+    if (!filePath.endsWith('.json')) return;
+    const rel = path.relative(rootPath, filePath).split(path.sep).join(path.posix.sep);
+    files.set(rel, fs.readFileSync(filePath, 'utf-8'));
+  });
+  return files;
+}
+
+function walk(rootPath: string, visit: (filePath: string) => void): void {
+  for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
+    const fullPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      walk(fullPath, visit);
+    } else if (entry.isFile()) {
+      visit(fullPath);
+    }
   }
 }
 

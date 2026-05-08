@@ -765,6 +765,7 @@ export type SSEEventType =
   | 'mode_changed'       // SDK permission mode changed (e.g. plan → code)
   | 'memory_captured'    // explicit memory captured from user input
   | 'memory_conflict'    // memory conflict detected
+  | 'memory_v2_captured' // explicit action memory captured from user input
   | 'done';              // stream complete
 
 export interface SSEEvent {

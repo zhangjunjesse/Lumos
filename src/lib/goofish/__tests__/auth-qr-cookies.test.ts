@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { __goofishAuthTestInternals } from '../auth';
+import { __goofishAuthQrTestInternals as __goofishAuthTestInternals } from '../auth-qr';
 
 describe('goofish QR cookie capture helpers', () => {
   test('keeps valued cookies and prefers taobao-scoped mtop cookies', () => {

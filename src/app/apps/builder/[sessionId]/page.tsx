@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
+  AlertTriangle,
+  CheckCircle2,
   CircleGauge,
   Code2,
   ExternalLink,
@@ -39,6 +41,17 @@ import type {
   ConsentResponse,
   InstalledApp,
 } from '@/lib/app/installer';
+import {
+  NATIVE_APP_SPEC_FILE,
+  validateNativeGradeAppSpec,
+} from '@/lib/app/builder/native-grade-spec';
+import {
+  buildNativeSpecReviewPatch,
+  getNativeSpecReview,
+  isNativeSpecReviewAcceptedForArtifact,
+  nativeSpecReviewLabel,
+  type NativeSpecReview,
+} from '@/lib/app/builder/native-spec-review';
 import type {
   BuilderArtifact,
   BuilderMessage,
@@ -62,6 +75,7 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
 interface InstallResponse {
   ok?: boolean;
   installed?: InstalledApp;
+  selfCheck?: InstallSelfCheck;
   warnings?: unknown[];
   needsConsent?: boolean;
   request?: ConsentRequest;
@@ -70,11 +84,30 @@ interface InstallResponse {
   issues?: unknown[];
 }
 
+interface InstallSelfCheck {
+  runId: string;
+  status: 'success' | 'failed';
+  summary: string;
+  checked: string[];
+  failures: string[];
+}
+
 interface RequiredCheck {
   key: string;
   label: string;
   done: boolean;
   detail: string;
+}
+
+interface NativeSpecView {
+  artifactVersion: number;
+  rawContent: string;
+  summary: string;
+  userVisibleScope: string[];
+  statusStates: string[];
+  acceptance: Array<{ id: string; label: string; howToVerify: string }>;
+  outOfScope: string[];
+  parseError?: string;
 }
 
 export default function AppBuilderPage(): React.ReactElement {
@@ -92,6 +125,8 @@ export default function AppBuilderPage(): React.ReactElement {
   const [installing, setInstalling] = React.useState(false);
   const [savingInfo, setSavingInfo] = React.useState(false);
   const [savingNonGoals, setSavingNonGoals] = React.useState(false);
+  const [savingNativeSpec, setSavingNativeSpec] = React.useState(false);
+  const [updatingNativeSpecReview, setUpdatingNativeSpecReview] = React.useState(false);
   const [confirmingDemo, setConfirmingDemo] = React.useState(false);
   const [creatingStory, setCreatingStory] = React.useState(false);
   const [savingStoryId, setSavingStoryId] = React.useState<string>('');
@@ -105,6 +140,7 @@ export default function AppBuilderPage(): React.ReactElement {
   const [pendingInstallRequest, setPendingInstallRequest] =
     React.useState<ConsentRequest | null>(null);
   const [lastInstalled, setLastInstalled] = React.useState<InstalledApp | null>(null);
+  const [lastSelfCheck, setLastSelfCheck] = React.useState<InstallSelfCheck | null>(null);
 
   const refresh = React.useCallback(async () => {
     if (!sessionId) return;
@@ -161,7 +197,14 @@ export default function AppBuilderPage(): React.ReactElement {
   const description = session?.appDescription ?? '';
   const selectedArtifact =
     artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? artifacts[0];
-  const checks = React.useMemo(() => buildRequiredChecks(artifacts), [artifacts]);
+  const nativeSpecReview = React.useMemo(
+    () => getNativeSpecReview(session?.needsSummary),
+    [session?.needsSummary],
+  );
+  const checks = React.useMemo(
+    () => buildRequiredChecks(artifacts, nativeSpecReview),
+    [artifacts, nativeSpecReview],
+  );
   const installReady = checks.every((check) => check.done);
   const pageCount = artifacts.filter(
     (artifact) => artifact.filePath.startsWith('pages/') && artifact.filePath.endsWith('.json'),
@@ -263,6 +306,144 @@ export default function AppBuilderPage(): React.ReactElement {
   const handleChangeNonGoals = React.useCallback((next: string[]) => {
     void patchNeedsSummary({ nonGoals: next }, setSavingNonGoals);
   }, [patchNeedsSummary]);
+
+  const handleSaveNativeSpec = React.useCallback(async (content: string): Promise<boolean> => {
+    if (!sessionId || !session || savingNativeSpec) return false;
+    const issues = validateNativeGradeAppSpec(new Map([[NATIVE_APP_SPEC_FILE, content]]));
+    if (issues.length > 0) {
+      setError(formatNativeSpecIssues(issues));
+      return false;
+    }
+
+    setSavingNativeSpec(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/apps/builder/sessions/${sessionId}/artifacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filePath: NATIVE_APP_SPEC_FILE,
+          content: `${JSON.stringify(JSON.parse(content), null, 2)}\n`,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        artifact?: BuilderArtifact;
+        error?: string;
+        issues?: ReturnType<typeof validateNativeGradeAppSpec>;
+      };
+      if (!res.ok || !json.artifact) {
+        const detail = Array.isArray(json.issues) && json.issues.length > 0
+          ? `：${formatNativeSpecIssues(json.issues)}`
+          : '';
+        throw new Error(`${json.error ?? '保存规格失败'}${detail}`);
+      }
+
+      const patchRes = await fetch(`/api/apps/builder/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          needsSummary: {
+            ...(session.needsSummary ?? {}),
+            ...buildNativeSpecReviewPatch({
+              status: 'pending',
+              artifactVersion: json.artifact.version,
+              note: '规格已编辑，等待用户接受。',
+            }),
+          },
+        }),
+      });
+      if (!patchRes.ok) {
+        const patchJson = (await patchRes.json().catch(() => ({}))) as { error?: string };
+        throw new Error(patchJson.error ?? '保存规格确认状态失败');
+      }
+
+      await refresh();
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
+    } finally {
+      setSavingNativeSpec(false);
+    }
+  }, [refresh, savingNativeSpec, session, sessionId]);
+
+  const handleAcceptNativeSpec = React.useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !session || updatingNativeSpecReview) return false;
+    const artifact = artifacts.find((item) => item.filePath === NATIVE_APP_SPEC_FILE);
+    if (!artifact) {
+      setError('还没有生成 native-app-spec.json，无法接受规格。');
+      return false;
+    }
+    const issues = validateNativeGradeAppSpec(new Map([[NATIVE_APP_SPEC_FILE, artifact.content]]));
+    if (issues.length > 0) {
+      setError(formatNativeSpecIssues(issues));
+      return false;
+    }
+
+    setUpdatingNativeSpecReview(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/apps/builder/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          needsSummary: {
+            ...(session.needsSummary ?? {}),
+            ...buildNativeSpecReviewPatch({
+              status: 'accepted',
+              artifactVersion: artifact.version,
+              note: '用户已接受内置级应用规格。',
+            }),
+          },
+        }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? '接受规格失败');
+      }
+      await refresh();
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
+    } finally {
+      setUpdatingNativeSpecReview(false);
+    }
+  }, [artifacts, refresh, session, sessionId, updatingNativeSpecReview]);
+
+  const handleRequestNativeSpecChanges = React.useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !session || updatingNativeSpecReview) return false;
+    const artifact = artifacts.find((item) => item.filePath === NATIVE_APP_SPEC_FILE);
+    setUpdatingNativeSpecReview(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/apps/builder/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          needsSummary: {
+            ...(session.needsSummary ?? {}),
+            ...buildNativeSpecReviewPatch({
+              status: 'needs_changes',
+              artifactVersion: artifact?.version,
+              note: '用户标记规格需要修改。',
+            }),
+          },
+        }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? '标记规格需修改失败');
+      }
+      await refresh();
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
+    } finally {
+      setUpdatingNativeSpecReview(false);
+    }
+  }, [artifacts, refresh, session, sessionId, updatingNativeSpecReview]);
 
   const handleConfirmDemo = React.useCallback(async () => {
     if (!sessionId || confirmingDemo) return;
@@ -442,6 +623,7 @@ export default function AppBuilderPage(): React.ReactElement {
       }
       setPendingInstallRequest(null);
       setLastInstalled(json.installed);
+      setLastSelfCheck(json.selfCheck ?? null);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -522,6 +704,34 @@ export default function AppBuilderPage(): React.ReactElement {
         </Button>
       </header>
 
+      {lastSelfCheck ? (
+        <div
+          className={cn(
+            'border-b px-4 py-2 text-xs',
+            lastSelfCheck.status === 'success'
+              ? 'bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100'
+              : 'bg-destructive/10 text-destructive',
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {lastSelfCheck.status === 'success' ? (
+              <CheckCircle2 className="size-4 shrink-0" />
+            ) : (
+              <AlertTriangle className="size-4 shrink-0" />
+            )}
+            <span className="font-medium">
+              {lastSelfCheck.status === 'success' ? '安装自检通过' : '安装自检失败'}
+            </span>
+            <span className="min-w-0 flex-1">{lastSelfCheck.summary}</span>
+            {lastSelfCheck.status === 'failed' && lastSelfCheck.failures[0] ? (
+              <span className="basis-full pl-6">
+                失败项：{lastSelfCheck.failures[0]}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex min-h-0 flex-1 bg-muted/20">
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {session.status === 'demo_review' ? (
@@ -601,6 +811,12 @@ export default function AppBuilderPage(): React.ReactElement {
                 checks={checks}
                 pageCount={pageCount}
                 messageCount={messages.length}
+                nativeSpecReview={nativeSpecReview}
+                savingNativeSpec={savingNativeSpec}
+                updatingNativeSpecReview={updatingNativeSpecReview}
+                onSaveNativeSpec={handleSaveNativeSpec}
+                onAcceptNativeSpec={handleAcceptNativeSpec}
+                onRequestNativeSpecChanges={handleRequestNativeSpecChanges}
               />
             </TabsContent>
 
@@ -876,6 +1092,12 @@ function ProjectStatusPanel({
   checks,
   pageCount,
   messageCount,
+  nativeSpecReview,
+  savingNativeSpec,
+  updatingNativeSpecReview,
+  onSaveNativeSpec,
+  onAcceptNativeSpec,
+  onRequestNativeSpecChanges,
 }: {
   session: BuilderSession;
   statusLabel: string;
@@ -884,7 +1106,15 @@ function ProjectStatusPanel({
   checks: RequiredCheck[];
   pageCount: number;
   messageCount: number;
+  nativeSpecReview: NativeSpecReview;
+  savingNativeSpec: boolean;
+  updatingNativeSpecReview: boolean;
+  onSaveNativeSpec: (content: string) => Promise<boolean>;
+  onAcceptNativeSpec: () => Promise<boolean>;
+  onRequestNativeSpecChanges: () => Promise<boolean>;
 }): React.ReactElement {
+  const nativeSpec = parseNativeSpecArtifact(artifacts);
+
   return (
     <ScrollArea className="h-full bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 p-6">
@@ -917,6 +1147,16 @@ function ProjectStatusPanel({
           </div>
         </section>
 
+        <NativeSpecPanel
+          spec={nativeSpec}
+          review={nativeSpecReview}
+          saving={savingNativeSpec}
+          updatingReview={updatingNativeSpecReview}
+          onSave={onSaveNativeSpec}
+          onAccept={onAcceptNativeSpec}
+          onRequestChanges={onRequestNativeSpecChanges}
+        />
+
         <section className="grid gap-3 rounded-lg border bg-background p-4">
           <div className="text-sm font-semibold">文件概览</div>
           {artifacts.length > 0 ? (
@@ -944,6 +1184,261 @@ function ProjectStatusPanel({
         </section>
       </div>
     </ScrollArea>
+  );
+}
+
+function NativeSpecPanel({
+  spec,
+  review,
+  saving,
+  updatingReview,
+  onSave,
+  onAccept,
+  onRequestChanges,
+}: {
+  spec: NativeSpecView | null;
+  review: NativeSpecReview;
+  saving: boolean;
+  updatingReview: boolean;
+  onSave: (content: string) => Promise<boolean>;
+  onAccept: () => Promise<boolean>;
+  onRequestChanges: () => Promise<boolean>;
+}): React.ReactElement {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(spec?.rawContent ?? buildNativeSpecDraft());
+  const [localError, setLocalError] = React.useState('');
+  const acceptedForCurrentSpec = isNativeSpecAcceptedForCurrentArtifact(spec, review);
+  const reviewIsStale = review.status === 'accepted' && spec !== null && !acceptedForCurrentSpec;
+  const acceptedAtMs = review.acceptedAt ? Date.parse(review.acceptedAt) : NaN;
+  const reviewLabel = !spec
+    ? '缺少'
+    : spec.parseError
+      ? '需修复'
+      : reviewIsStale
+        ? '待重新确认'
+        : nativeSpecReviewLabel(review.status);
+  const canAccept = !!spec
+    && !spec.parseError
+    && !acceptedForCurrentSpec
+    && !saving
+    && !updatingReview;
+
+  React.useEffect(() => {
+    if (editing) return;
+    setDraft(spec?.rawContent ?? buildNativeSpecDraft());
+    setLocalError('');
+  }, [editing, spec?.rawContent]);
+
+  const handleStartEdit = React.useCallback(() => {
+    setDraft(spec?.rawContent ?? buildNativeSpecDraft());
+    setLocalError('');
+    setEditing(true);
+  }, [spec?.rawContent]);
+
+  const handleSave = React.useCallback(async () => {
+    const issues = validateNativeGradeAppSpec(new Map([[NATIVE_APP_SPEC_FILE, draft]]));
+    if (issues.length > 0) {
+      setLocalError(formatNativeSpecIssues(issues));
+      return;
+    }
+    const ok = await onSave(draft);
+    if (ok) {
+      setEditing(false);
+      setLocalError('');
+    }
+  }, [draft, onSave]);
+
+  const handleAccept = React.useCallback(async () => {
+    const ok = await onAccept();
+    if (ok) setLocalError('');
+  }, [onAccept]);
+
+  const handleRequestChanges = React.useCallback(async () => {
+    const ok = await onRequestChanges();
+    if (ok) setLocalError('');
+  }, [onRequestChanges]);
+
+  return (
+    <section className="grid gap-3 rounded-lg border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">内置级规格</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            这里确认生成应用的用户可验收范围、状态覆盖和验收清单。接受后才开放保存并安装。
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge variant={acceptedForCurrentSpec ? 'secondary' : 'outline'}>
+            {reviewLabel}
+          </Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleStartEdit}
+            disabled={saving || updatingReview}
+          >
+            <FileText data-icon="inline-start" />
+            {spec ? '编辑规格' : '新建规格'}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void handleAccept()}
+            disabled={!canAccept}
+          >
+            <CheckCircle2 data-icon="inline-start" />
+            接受规格
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:grid-cols-[120px_1fr]">
+        <div className="font-medium text-foreground">确认状态</div>
+        <div className="grid gap-1">
+          <div>
+            {acceptedForCurrentSpec
+              ? `用户已接受当前 v${spec?.artifactVersion ?? '-'} 规格。`
+              : reviewIsStale
+                ? `已接受的是 v${review.artifactVersion ?? '-'}，当前规格已更新，需要重新接受。`
+                : review.status === 'needs_changes'
+                  ? '用户已标记规格需要修改，安装前需要重新编辑并接受。'
+                  : '规格还没有被用户接受，安装入口会保持关闭。'}
+          </div>
+          {Number.isFinite(acceptedAtMs) ? <div>接受时间：{formatTime(acceptedAtMs)}</div> : null}
+          {review.note ? <div>备注：{review.note}</div> : null}
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="grid gap-3 rounded-md border p-3">
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            className="min-h-[360px] font-mono text-xs leading-5"
+            spellCheck={false}
+          />
+          {localError ? (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs leading-5 text-destructive">
+              {localError}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDraft(spec?.rawContent ?? buildNativeSpecDraft());
+                setLocalError('');
+              }}
+              disabled={saving}
+            >
+              <RotateCcw data-icon="inline-start" />
+              重置
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditing(false);
+                setLocalError('');
+              }}
+              disabled={saving}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={saving}
+            >
+              <Save data-icon="inline-start" />
+              {saving ? '保存中…' : '保存规格'}
+            </Button>
+          </div>
+        </div>
+      ) : !spec ? (
+        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+          还没有生成 native-app-spec.json。内置级应用需要先生成规格，明确状态、设置、运行结果、风险边界和验收清单。
+        </div>
+      ) : spec.parseError ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          {spec.parseError}
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          <div className="rounded-md border bg-muted/20 p-3">
+            <div className="text-sm font-medium">{spec.summary}</div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-2 rounded-md border p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                用户可验收范围
+              </div>
+              <ul className="grid gap-1.5 text-sm">
+                {spec.userVisibleScope.slice(0, 5).map((item, index) => (
+                  <li key={`${index}-${item}`} className="leading-6">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="grid gap-2 rounded-md border p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                状态覆盖
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {spec.statusStates.map((state) => (
+                  <Badge key={state} variant="outline" className="font-mono">
+                    {state}
+                  </Badge>
+                ))}
+              </div>
+              {spec.outOfScope.length > 0 ? (
+                <div className="pt-2 text-xs text-muted-foreground">
+                  不做：{spec.outOfScope.slice(0, 3).join('、')}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="grid gap-2 rounded-md border p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              验收清单
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {spec.acceptance.slice(0, 8).map((item) => (
+                <div key={item.id} className="rounded-md border bg-background px-3 py-2">
+                  <div className="text-sm font-medium">{item.label}</div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {item.howToVerify}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!editing && spec && !spec.parseError && !acceptedForCurrentSpec ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handleRequestChanges()}
+            disabled={updatingReview}
+          >
+            标记需修改
+          </Button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -995,10 +1490,18 @@ function InfoRow({
   );
 }
 
-function buildRequiredChecks(artifacts: BuilderArtifact[]): RequiredCheck[] {
+function buildRequiredChecks(
+  artifacts: BuilderArtifact[],
+  nativeSpecReview: NativeSpecReview,
+): RequiredCheck[] {
   const paths = new Set(artifacts.map((artifact) => artifact.filePath));
+  const nativeSpec = parseNativeSpecArtifact(artifacts);
   const hasPage = artifacts.some(
     (artifact) => artifact.filePath.startsWith('pages/') && artifact.filePath.endsWith('.json'),
+  );
+  const nativeSpecAccepted = isNativeSpecAcceptedForCurrentArtifact(
+    nativeSpec?.parseError ? null : nativeSpec,
+    nativeSpecReview,
   );
   return [
     {
@@ -1012,6 +1515,18 @@ function buildRequiredChecks(artifacts: BuilderArtifact[]): RequiredCheck[] {
       label: '页面路由',
       done: paths.has('routes.json'),
       detail: '定义左侧菜单和默认打开页面。',
+    },
+    {
+      key: 'native-spec',
+      label: '内置级规格',
+      done: paths.has(NATIVE_APP_SPEC_FILE),
+      detail: '说明状态、设置、运行结果、风险边界和验收清单。',
+    },
+    {
+      key: 'native-spec-review',
+      label: '规格确认',
+      done: nativeSpecAccepted,
+      detail: '用户已在项目状态页接受当前规格，才允许保存并安装。',
     },
     {
       key: 'pages',
@@ -1028,6 +1543,173 @@ function buildRequiredChecks(artifacts: BuilderArtifact[]): RequiredCheck[] {
   ];
 }
 
+function parseNativeSpecArtifact(artifacts: BuilderArtifact[]): NativeSpecView | null {
+  const artifact = artifacts.find((item) => item.filePath === NATIVE_APP_SPEC_FILE);
+  if (!artifact) return null;
+  try {
+    const parsed = JSON.parse(artifact.content) as {
+      summary?: unknown;
+      userVisibleScope?: unknown;
+      status?: { states?: unknown };
+      acceptance?: unknown;
+      risk?: { outOfScope?: unknown };
+    };
+    return {
+      artifactVersion: artifact.version,
+      rawContent: formatArtifactContent(artifact.content),
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '未填写摘要',
+      userVisibleScope: stringArray(parsed.userVisibleScope),
+      statusStates: stringArray(parsed.status?.states),
+      acceptance: Array.isArray(parsed.acceptance)
+        ? parsed.acceptance
+          .map((item) => normalizeAcceptanceItem(item))
+          .filter((item): item is { id: string; label: string; howToVerify: string } => item !== null)
+        : [],
+      outOfScope: stringArray(parsed.risk?.outOfScope),
+    };
+  } catch (error) {
+    return {
+      artifactVersion: artifact.version,
+      rawContent: artifact.content,
+      summary: '',
+      userVisibleScope: [],
+      statusStates: [],
+      acceptance: [],
+      outOfScope: [],
+      parseError: `native-app-spec.json 解析失败：${(error as Error).message}`,
+    };
+  }
+}
+
+function isNativeSpecAcceptedForCurrentArtifact(
+  spec: NativeSpecView | null,
+  review: NativeSpecReview,
+): boolean {
+  return !!spec
+    && !spec.parseError
+    && isNativeSpecReviewAcceptedForArtifact(review, spec.artifactVersion);
+}
+
+function buildNativeSpecDraft(): string {
+  return stringifyJson({
+    version: 1,
+    summary: '这个应用用于完成一个可配置、可运行、可验收的用户任务。',
+    userVisibleScope: [
+      '用户可以打开应用首页并看到当前配置状态。',
+      '用户可以在设置里填写账号、通知和 AI 规则。',
+      '用户可以手动运行一次任务并查看结果。',
+    ],
+    status: {
+      states: ['not_configured', 'ready', 'running', 'success', 'failed', 'not_connected'],
+      readyCriteria: ['必要设置已填写，底层能力可用。'],
+      notConnectedBehavior: '缺少底层能力或账号未连接时，界面明确显示未接入 / 需官方能力，不伪装成功。',
+    },
+    settings: [
+      {
+        id: 'general',
+        label: '基础设置',
+        fields: ['账号选择', '通知方式', 'AI 提示词'],
+      },
+    ],
+    data: {
+      entities: [
+        'app_settings',
+        'app_automations',
+        'run_history',
+        'assistant_messages',
+        'app_notifications',
+        'app_command_runs',
+        'acceptance_checks',
+      ],
+      reusableStores: ['settings', 'run_history'],
+    },
+    ai: {
+      enabled: true,
+      promptSettings: true,
+      draftBeforeWrite: true,
+      visibleFailureHandling: true,
+    },
+    automations: {
+      enabled: true,
+      controls: ['run_now', 'edit', 'delete'],
+      visibleRunResults: true,
+    },
+    runResults: {
+      visible: true,
+      states: ['running', 'success', 'failed', 'cancelled'],
+      failureReasons: true,
+      retry: true,
+    },
+    im: {
+      enabled: false,
+      lowRiskCommands: [],
+      confirmationRequiredFor: ['send_message', 'write_data'],
+      visibleCommandResults: true,
+    },
+    risk: {
+      writeActionsRequireConfirmation: true,
+      highRiskActions: ['删除数据', '批量修改', '自动发送外部消息'],
+      outOfScope: ['无确认自动写操作', '绕过官方账号授权'],
+    },
+    acceptance: [
+      {
+        id: 'open-app',
+        label: '打开应用',
+        howToVerify: '从应用列表进入应用，首页能展示状态和主要入口。',
+      },
+      {
+        id: 'configure',
+        label: '配置设置',
+        howToVerify: '进入设置页，填写必要配置后能看到已就绪状态。',
+      },
+      {
+        id: 'run-task',
+        label: '手动运行',
+        howToVerify: '点击运行按钮，界面展示运行中和最终结果。',
+      },
+      {
+        id: 'failure-state',
+        label: '失败可见',
+        howToVerify: '缺账号或底层能力时，界面展示明确失败原因。',
+      },
+      {
+        id: 'retry',
+        label: '重试结果',
+        howToVerify: '失败或取消后可以重新运行，并生成新的运行记录。',
+      },
+    ],
+  });
+}
+
+function normalizeAcceptanceItem(
+  item: unknown,
+): { id: string; label: string; howToVerify: string } | null {
+  if (!item || typeof item !== 'object') return null;
+  const candidate = item as {
+    id?: unknown;
+    label?: unknown;
+    howToVerify?: unknown;
+  };
+  if (
+    typeof candidate.id !== 'string'
+    || typeof candidate.label !== 'string'
+    || typeof candidate.howToVerify !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: candidate.id,
+    label: candidate.label,
+    howToVerify: candidate.howToVerify,
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
 function stringifyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -1038,6 +1720,17 @@ function formatArtifactContent(content: string): string {
   } catch {
     return content;
   }
+}
+
+function formatNativeSpecIssues(
+  issues: ReturnType<typeof validateNativeGradeAppSpec>,
+): string {
+  const details = issues
+    .slice(0, 5)
+    .map((issue) => `${issue.jsonPath}: ${issue.message}`)
+    .join('；');
+  const suffix = issues.length > 5 ? `；另有 ${issues.length - 5} 项` : '';
+  return `规格未通过校验：${details}${suffix}`;
 }
 
 function formatInstallError(json: InstallResponse): string {

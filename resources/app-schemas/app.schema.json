@@ -139,7 +139,7 @@
         },
         "system": {
           "type": "array",
-          "items": { "type": "string", "enum": ["notification", "schedule", "clipboard"] },
+          "items": { "type": "string", "enum": ["notification", "schedule", "clipboard", "im-notification"] },
           "uniqueItems": true
         }
       }

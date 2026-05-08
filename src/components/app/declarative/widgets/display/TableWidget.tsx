@@ -236,7 +236,7 @@ export function TableWidget({
                                 }
                                 await onAction(a.run ? 'run' : 'open', dsl, {
                                   rowId: id,
-                                  data: row,
+                                  data: { ...row, ...(a.input ?? {}) },
                                 });
                               }}
                             >

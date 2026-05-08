@@ -1,5 +1,8 @@
 import type Database from 'better-sqlite3';
 
+import { NATIVE_APP_SPEC_FILE } from '../native-grade-spec';
+import { getNativeSpecReview } from '../native-spec-review';
+import { createSessionStore } from '../session';
 import type { ConsentCallback, InstallContext } from '../../installer';
 
 import { createGetAppStateTool } from './get-app-state';
@@ -21,6 +24,7 @@ export interface ToolRegistryDeps {
   db: Database.Database;
   installContext: () => InstallContext;
   consentOverride?: ConsentCallback;
+  builderSessionId?: string;
   capabilityFlags?: { workflowExecutionReady?: boolean; codeAppsEnabled?: boolean };
 }
 
@@ -50,6 +54,20 @@ export function buildToolRegistry(
     createInstallAppTool({
       installContext: deps.installContext,
       consentOverride: deps.consentOverride,
+      nativeSpecReview: (toolCtx) => {
+        const sessionId = deps.builderSessionId ?? toolCtx.sessionId;
+        if (!sessionId) return undefined;
+        const store = createSessionStore(deps.db);
+        const session = store.getSession(sessionId);
+        if (!session) return undefined;
+        const artifact = store
+          .getCurrentArtifacts(sessionId)
+          .find((item) => item.filePath === NATIVE_APP_SPEC_FILE);
+        return {
+          review: getNativeSpecReview(session.needsSummary),
+          artifactVersion: artifact?.version,
+        };
+      },
     }),
     createUpdateAppFileTool(deps.db),
     createGetAppStateTool(deps.db),

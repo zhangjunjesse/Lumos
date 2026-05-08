@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runSync, runSyncAllAccounts, getLastSyncMs } from '@/lib/goofish/sync';
 import { getSyncIntervalMs, setSyncIntervalMs } from '@/lib/goofish/db';
+import {
+  goofishAuthExpiredResponse,
+  isGoofishAuthExpiredError,
+  isGoofishAuthExpiredMessage,
+} from '@/lib/goofish/auth-error';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,11 +38,30 @@ export async function POST(req: NextRequest) {
     since: typeof body.since === 'number' ? body.since : undefined,
   };
   if (accountUnb) {
-    const result = await runSync({ ...opts, accountUnb });
-    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    try {
+      const result = await runSync({ ...opts, accountUnb });
+      if (!result.ok && isGoofishAuthExpiredMessage(result.error)) {
+        return goofishAuthExpiredResponse({ accountUnb });
+      }
+      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    } catch (err) {
+      // runSync 内部 fetchFatChats 抛 mtop 错时会跑到这里(单账号路径无 try/catch)
+      if (isGoofishAuthExpiredError(err)) {
+        return goofishAuthExpiredResponse({ accountUnb });
+      }
+      return NextResponse.json({
+        ok: false, accountUnb,
+        error: err instanceof Error ? err.message : String(err),
+      }, { status: 500 });
+    }
   }
   const results = await runSyncAllAccounts(opts);
   const ok = results.every((r) => r.ok);
+  // 全部账号都因登录过期失败 → 返回统一 401，让 UI 拦截
+  if (!ok && results.length > 0
+      && results.every((r) => !r.ok && isGoofishAuthExpiredMessage(r.error))) {
+    return goofishAuthExpiredResponse();
+  }
   return NextResponse.json({ ok, results }, { status: ok ? 200 : 207 });
 }
 

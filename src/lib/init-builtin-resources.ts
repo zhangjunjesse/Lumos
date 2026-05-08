@@ -231,7 +231,10 @@ function importMcpServers(): number {
         // goofish-search reads from the local SQLite archive — works without
         // a live login (returns empty for cold-start users) and is the
         // primary tool the AI uses to inspect goofish state. Always on.
-        || config.name === 'goofish-search';
+        || config.name === 'goofish-search'
+        // x-platform MCP 默认启用:工具在用户未登录时返回 X_AUTH_EXPIRED
+        // 友好提示,让 AI 能引导用户去「服务 → X」登录,而不是工具不存在。
+        || config.name === 'x-platform';
       // goofish stays disabled by default — its tools call live mtop, which
       // fails with "session expired" until the user logs in via the panel.
       // The auth/login route flips it on automatically on success.

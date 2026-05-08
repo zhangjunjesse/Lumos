@@ -294,6 +294,7 @@ export function buildMindRuntimePack(params: {
   prompt: string;
   maxMemoryItems?: number;
   trackMemoryUsage?: boolean;
+  includeLegacyMemory?: boolean;
 }): MindRuntimePackResult {
   const sourceOrder = [
     'platform_safety',
@@ -307,20 +308,22 @@ export function buildMindRuntimePack(params: {
   const userSection = buildUserSection(params.prompt);
   const personaSection = buildPersonaSection(params.prompt);
   const rulesSection = buildRulesSection();
-  const memorySection = buildMemoryContextForPrompt({
-    sessionId: params.sessionId,
-    projectPath: params.projectPath,
-    prompt: params.prompt,
-    maxItems: params.maxMemoryItems,
-    trackUsage: params.trackMemoryUsage !== false,
-  });
+  const memorySection = params.includeLegacyMemory === false
+    ? ''
+    : buildMemoryContextForPrompt({
+        sessionId: params.sessionId,
+        projectPath: params.projectPath,
+        prompt: params.prompt,
+        maxItems: params.maxMemoryItems,
+        trackUsage: params.trackMemoryUsage !== false,
+      });
 
   const additionalContext = [userSection, personaSection, rulesSection, memorySection]
     .filter(Boolean)
     .join('\n\n')
     .trim();
 
-  const memoryEnabled = getSetting('memory_system_enabled') !== 'false';
+  const memoryEnabled = params.includeLegacyMemory !== false && getSetting('memory_system_enabled') !== 'false';
 
   const sections: MindRuntimePackSection[] = [
     {

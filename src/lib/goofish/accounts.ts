@@ -38,7 +38,19 @@ export function accountsRoot(): string {
   return ACCOUNTS_ROOT;
 }
 
+/**
+ * goofish 账号 unb 一定是 mtop 返回的纯数字 ID。校验防止 ?account=../../path
+ * 这类用户控制输入越出 ACCOUNTS_ROOT 读到任意 cookies.json(虽然桌面 app 在
+ * localhost,但 AI 工具调用是攻击面)。
+ */
+function assertValidUnb(unb: string): void {
+  if (!unb || !/^\d+$/.test(unb)) {
+    throw new Error(`Invalid goofish account unb: ${JSON.stringify(unb)}`);
+  }
+}
+
 export function homeForAccount(unb: string): string {
+  assertValidUnb(unb);
   return path.join(ACCOUNTS_ROOT, unb);
 }
 
