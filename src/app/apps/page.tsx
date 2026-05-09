@@ -300,17 +300,26 @@ export default function AppsListPage(): React.ReactElement {
         <p className="text-sm text-destructive">{error}</p>
       ) : (
         <div className="flex flex-col gap-8">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {visibleBuiltinIds === null || visibleBuiltinIds.has('wechat-assistant') ? (
-              <BuiltinWeChatCard status={wechatStatus} />
-            ) : null}
-            {visibleBuiltinIds === null || visibleBuiltinIds.has('goofish-assistant') ? (
-              <BuiltinGoofishCard status={goofishStatus} />
-            ) : null}
-            {visibleBuiltinIds === null || visibleBuiltinIds.has('ecommerce-assistant') ? (
-              <BuiltinEcommerceCard status={ecommerceStatus} />
-            ) : null}
-          </div>
+          {/*
+            Builtin cards: only render once visibility has loaded so we don't
+            flash all 3 then collapse to 0/1/2 (which the user noticed as bad
+            UX). While visibility is null, show a low-key skeleton row.
+          */}
+          {visibleBuiltinIds === null ? (
+            <BuiltinSkeletonRow />
+          ) : visibleBuiltinIds.size > 0 ? (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {visibleBuiltinIds.has('wechat-assistant') ? (
+                <BuiltinWeChatCard status={wechatStatus} />
+              ) : null}
+              {visibleBuiltinIds.has('goofish-assistant') ? (
+                <BuiltinGoofishCard status={goofishStatus} />
+              ) : null}
+              {visibleBuiltinIds.has('ecommerce-assistant') ? (
+                <BuiltinEcommerceCard status={ecommerceStatus} />
+              ) : null}
+            </div>
+          ) : null}
 
           {drafts.length > 0 ? (
             <Section title="草稿" count={drafts.length}>
@@ -326,6 +335,17 @@ export default function AppsListPage(): React.ReactElement {
                 <InstalledAppCard key={a.id} app={a} onUninstall={handleUninstall} />
               ))}
             </Section>
+          ) : null}
+
+          {/*
+            Empty state: nothing visible at all (admin granted no built-in,
+            no drafts, no installed). Beats showing an empty page.
+          */}
+          {visibleBuiltinIds !== null
+            && visibleBuiltinIds.size === 0
+            && drafts.length === 0
+            && apps.length === 0 ? (
+            <EmptyAppsHint onCreate={openCreate} />
           ) : null}
         </div>
       )}
@@ -352,6 +372,50 @@ export default function AppsListPage(): React.ReactElement {
         onConfirm={install.handleConsent}
         onCancel={install.cancelConsent}
       />
+    </div>
+  );
+}
+
+function BuiltinSkeletonRow() {
+  // Two pulsing placeholder cards while we wait for the visibility lookup
+  // (cached read returns within ~50ms; first-time server fetch can take ~500ms).
+  // Two columns matches the lg:grid-cols-2 layout below so the layout doesn't
+  // jump when the real cards land.
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          className="h-[140px] rounded-2xl bg-card ring-1 ring-border/50 p-6 animate-pulse"
+        >
+          <div className="flex items-start gap-4">
+            <div className="size-12 shrink-0 rounded-xl bg-muted" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-32 rounded bg-muted" />
+              <div className="h-3 w-20 rounded bg-muted/60" />
+            </div>
+          </div>
+          <div className="mt-4 h-3 w-3/4 rounded bg-muted/60" />
+          <div className="mt-2 h-3 w-1/2 rounded bg-muted/40" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyAppsHint({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/30 px-6 py-16 text-center">
+      <p className="text-base font-medium">暂时没有可用应用</p>
+      <p className="max-w-md text-sm text-muted-foreground">
+        管理员还没有为你开通任何内置应用。如有需要，请联系管理员开通；你也可以自己新建一个应用，或导入 .lumos-app 安装包。
+      </p>
+      <div className="mt-2 flex gap-2">
+        <Button onClick={onCreate} size="sm">
+          <Plus />
+          新建应用
+        </Button>
+      </div>
     </div>
   );
 }
