@@ -1,18 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
-import { Plus, Upload } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import { InstallDialog } from '@/components/app/install-flow/InstallDialog';
 import {
   BuiltinEcommerceCard,
   BuiltinGoofishCard,
   BuiltinWeChatCard,
 } from '@/components/apps/list/BuiltinAppCard';
-import { NewAppDialog, type BuilderTemplate } from '@/components/apps/list/NewAppDialog';
-import { useAppInstall } from '@/components/apps/list/use-app-install';
 
 interface BuiltinWeChatStatus {
   app?: { id: string; name: string; version: string; source: string; status: string };
@@ -38,49 +32,10 @@ interface BuiltinEcommerceStatus {
 }
 
 export default function AppsListPage(): React.ReactElement {
-  const router = useRouter();
-
   const [wechatStatus, setWechatStatus] = React.useState<BuiltinWeChatStatus | null>(null);
   const [goofishStatus, setGoofishStatus] = React.useState<BuiltinGoofishStatus | null>(null);
   const [ecommerceStatus, setEcommerceStatus] = React.useState<BuiltinEcommerceStatus | null>(null);
   const [visibleBuiltinIds, setVisibleBuiltinIds] = React.useState<Set<string> | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [newName, setNewName] = React.useState('');
-  const [newDescription, setNewDescription] = React.useState('');
-  const [selectedTemplateId, setSelectedTemplateId] = React.useState('blank');
-  const [templates, setTemplates] = React.useState<BuilderTemplate[]>([]);
-  const [creating, setCreating] = React.useState(false);
-  const [createError, setCreateError] = React.useState<string | null>(null);
-  const nameInputRef = React.useRef<HTMLInputElement>(null);
-
-  const load = React.useCallback(async () => {
-    // The page intentionally no longer renders drafts / installed third-party
-    // apps — visibility is fully admin-controlled. Keep a lightweight fetch
-    // to gate the loading spinner so cards aren't rendered against an
-    // unfetched session.
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/apps');
-      if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(json.error ?? 'Request failed');
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const install = useAppInstall(load);
-
-  React.useEffect(() => {
-    void load();
-  }, [load]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -153,65 +108,6 @@ export default function AppsListPage(): React.ReactElement {
     };
   }, []);
 
-  React.useEffect(() => {
-    if (!createOpen || templates.length > 0) return;
-    let cancelled = false;
-    async function loadTemplates() {
-      try {
-        const res = await fetch('/api/apps/builder/templates');
-        const json = (await res.json()) as { templates?: BuilderTemplate[] };
-        if (!cancelled) setTemplates(json.templates ?? []);
-      } catch {
-        if (!cancelled) setTemplates([]);
-      }
-    }
-    void loadTemplates();
-    return () => {
-      cancelled = true;
-    };
-  }, [createOpen, templates.length]);
-
-  const openCreate = () => {
-    setNewName('');
-    setNewDescription('');
-    setSelectedTemplateId('blank');
-    setCreateError(null);
-    setCreateOpen(true);
-    setTimeout(() => nameInputRef.current?.focus(), 50);
-  };
-
-  const handleCreate = async () => {
-    const name = newName.trim();
-    if (!name) {
-      setCreateError('请填写应用名');
-      return;
-    }
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const res = await fetch('/api/apps/builder/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appName: name,
-          appDescription: newDescription.trim() || undefined,
-          templateId: selectedTemplateId,
-        }),
-      });
-      const json = (await res.json()) as { session?: { id: string }; error?: string };
-      if (!res.ok || !json.session?.id) {
-        setCreateError(json.error ?? '创建失败');
-        return;
-      }
-      setCreateOpen(false);
-      router.push(`/apps/builder/${json.session.id}`);
-    } catch (err) {
-      setCreateError((err as Error).message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-8 p-8">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-6">
@@ -222,84 +118,32 @@ export default function AppsListPage(): React.ReactElement {
             <span className="text-foreground tabular-nums">{visibleBuiltinIds?.size ?? 3}</span> 内置
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={openCreate} size="sm">
-            <Plus />
-            新建
-          </Button>
-          <Button variant="outline" size="sm" disabled={install.installing} asChild>
-            <label className="cursor-pointer">
-              <Upload />
-              {install.installing ? '处理中…' : '导入'}
-              <input
-                type="file"
-                accept=".lumos-app,application/zip"
-                hidden
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  await install.handleFile(file);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </label>
-          </Button>
-        </div>
       </header>
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">加载中…</p>
-      ) : error ? (
-        <p className="text-sm text-destructive">{error}</p>
-      ) : (
-        <div className="flex flex-col gap-8">
-          {/*
-            Builtin cards: only render once visibility has loaded so we don't
-            flash all 3 then collapse to 0/1/2 (which the user noticed as bad
-            UX). While visibility is null, show a low-key skeleton row.
-          */}
-          {visibleBuiltinIds === null ? (
-            <BuiltinSkeletonRow />
-          ) : visibleBuiltinIds.size > 0 ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {visibleBuiltinIds.has('wechat-assistant') ? (
-                <BuiltinWeChatCard status={wechatStatus} />
-              ) : null}
-              {visibleBuiltinIds.has('goofish-assistant') ? (
-                <BuiltinGoofishCard status={goofishStatus} />
-              ) : null}
-              {visibleBuiltinIds.has('ecommerce-assistant') ? (
-                <BuiltinEcommerceCard status={ecommerceStatus} />
-              ) : null}
-            </div>
-          ) : (
-            <EmptyAppsHint />
-          )}
-        </div>
-      )}
-
-      <NewAppDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        templates={templates}
-        newName={newName}
-        newDescription={newDescription}
-        selectedTemplateId={selectedTemplateId}
-        creating={creating}
-        createError={createError}
-        onNameChange={setNewName}
-        onDescriptionChange={setNewDescription}
-        onSelectTemplate={setSelectedTemplateId}
-        onSubmit={handleCreate}
-        inputRef={nameInputRef}
-      />
-
-      <InstallDialog
-        open={install.pendingRequest !== null}
-        request={install.pendingRequest}
-        onConfirm={install.handleConsent}
-        onCancel={install.cancelConsent}
-      />
+      <div className="flex flex-col gap-8">
+        {/*
+          Builtin cards: only render once visibility has loaded so we don't
+          flash all 3 then collapse to 0/1/2. While visibility is null, show
+          a low-key skeleton row.
+        */}
+        {visibleBuiltinIds === null ? (
+          <BuiltinSkeletonRow />
+        ) : visibleBuiltinIds.size > 0 ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {visibleBuiltinIds.has('wechat-assistant') ? (
+              <BuiltinWeChatCard status={wechatStatus} />
+            ) : null}
+            {visibleBuiltinIds.has('goofish-assistant') ? (
+              <BuiltinGoofishCard status={goofishStatus} />
+            ) : null}
+            {visibleBuiltinIds.has('ecommerce-assistant') ? (
+              <BuiltinEcommerceCard status={ecommerceStatus} />
+            ) : null}
+          </div>
+        ) : (
+          <EmptyAppsHint />
+        )}
+      </div>
     </div>
   );
 }
