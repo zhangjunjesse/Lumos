@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -86,6 +86,9 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
     settings,
   });
   const reportPath = path.join(ctx.outputDir, 'wechat-daily-summary.md');
+  // The workflow runtime sets up outputDir, but on first run / cross-device
+  // moves the parent may not exist yet. mkdir is cheap and idempotent.
+  await mkdir(ctx.outputDir, { recursive: true });
   await writeFile(reportPath, report.markdown, 'utf8');
   await archiveDailySummary(ctx, {
     automationId,

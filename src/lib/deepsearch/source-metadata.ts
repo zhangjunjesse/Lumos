@@ -166,8 +166,8 @@ export const DEEPSEARCH_SOURCE_REGISTRY: DeepSearchSourceMetadata[] = [
     liveVerified: false,
     liveVerifiedScope: 'none',
     officialUrl: 'https://x.com/',
-    notes: '需先在「服务 → X」登录,基于 web GraphQL 搜索 + oembed 取详情。适合时事/短文,不适合长文知识库。',
-    validationNotes: 'X web GraphQL query_id 不公开承诺稳定,失效时改 src/lib/x-platform/graphql-queries.ts。',
+    notes: '需先在「服务 → X」登录,基于 @the-convocation/twitter-scraper 搜索 + 用户/推文详情。适合时事/短文,不适合长文知识库。',
+    validationNotes: '失效时排查 src/lib/x-platform/scraper.ts (Scraper 单例 + cookie 注入)；scraper 包内部维护 transaction-id / x-csrf-token,不再依赖手维护 GraphQL queryId。',
   },
   {
     id: 'project_gutenberg',

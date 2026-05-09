@@ -1,13 +1,9 @@
 /**
- * X (Twitter) 登录: 通过 Lumos 内置浏览器让用户在 x.com 完成登录,bridge 抓
- * cookie 写到 ./cookies-store。和 goofish 内置浏览器扫码登录同源,但 X 没扫码
- * 登录, 需要用户输入用户名/密码或 SSO。
+ * X 登录态:
+ *   1. 内置浏览器手动登录 — X 反爬常常挡 Electron Chromium,实战不可靠,留入口
+ *   2. 粘贴 Cookie 字符串(从已登录的系统浏览器 DevTools 复制)— 主路径
  *
- * 流程:
- *   1. 在内置浏览器打开 x.com/login (前台,让用户能交互)
- *   2. 每 2s 轮询 bridge 的 /v1/cookies, 一旦收齐 auth_token+ct0+twid 就成功
- *   3. 调 viewer GraphQL 查 screen_name / name 写入 status 缓存
- *   4. 关闭登录页(用户已登录到内置浏览器 partition,cookie 持久)
+ * 真正的 read 操作走 ./scraper.ts 单例(@the-convocation/twitter-scraper)。
  */
 
 import {
@@ -27,39 +23,23 @@ import {
   writeCookies,
 } from './cookies-store';
 import { XAuthExpiredError } from './auth-error';
-import { gqlGet } from './graphql-client';
-import { VIEWER } from './graphql-queries';
+import { ensureScraper, resetScraperCache } from './scraper';
 import type { XAuthStatus } from './types';
 
 const BRIDGE_CONTEXT_ID = 'embedded:default';
 const BRIDGE_OWNER_ID = 'x-platform-login';
 const X_LOGIN_URL = 'https://x.com/i/flow/login';
 const X_HOME_URL = 'https://x.com/home';
-const X_COOKIE_CAPTURE_URLS = [
-  'https://x.com/',
-  'https://twitter.com/',
-] as const;
+const X_COOKIE_CAPTURE_URLS = ['https://x.com/', 'https://twitter.com/'] as const;
 
-// 仅保留 X 鉴权用得上的 cookie 名,避免把无关的 personalization / consent cookie
-// 也写到本地。auth_token + ct0 + twid 是必需,其余是可选的助力字段。
 const X_COOKIE_NAMES = new Set([
   'auth_token', 'ct0', 'twid', 'guest_id', 'kdt', 'auth_multi',
   'guest_id_marketing', 'guest_id_ads', 'personalization_id',
 ]);
 
-interface BridgeCookieWithValue {
-  name?: string;
-  value?: string;
-  domain?: string;
-}
-
-interface BridgeCookiesResponse extends BrowserBridgeResponse {
-  cookies?: BridgeCookieWithValue[];
-}
-
-interface BridgeNewPageResponse extends BrowserBridgeResponse {
-  pageId?: string;
-}
+interface BridgeCookieWithValue { name?: string; value?: string; domain?: string; }
+interface BridgeCookiesResponse extends BrowserBridgeResponse { cookies?: BridgeCookieWithValue[]; }
+interface BridgeNewPageResponse extends BrowserBridgeResponse { pageId?: string; }
 
 export class XBrowserUnavailableError extends Error {}
 
@@ -74,56 +54,51 @@ export function isBuiltinBrowserAvailable(): boolean {
   return resolveBridgeConfig() !== null;
 }
 
-export interface StartLoginOptions {
-  /** 等待用户登录的最大秒数。默认 5 分钟。 */
-  timeoutSecs?: number;
-}
+export interface StartLoginOptions { timeoutSecs?: number; }
 
 export async function loginViaBuiltinBrowser(opts: StartLoginOptions = {}): Promise<XAuthStatus> {
   const config = resolveBridgeConfig();
-  if (!config) {
-    throw new XBrowserUnavailableError('Lumos 内置浏览器不可用,无法登录 X');
-  }
+  if (!config) throw new XBrowserUnavailableError('Lumos 内置浏览器不可用,无法登录 X');
   const timeoutSecs = Math.max(60, Math.min(900, opts.timeoutSecs ?? 300));
 
   const health = await checkBrowserBridgeReady(config);
-  if (!health.ready) {
-    console.warn('[x-auth] browser bridge not ready, continuing:', health.status);
-  }
+  if (!health.ready) console.warn('[x-auth] browser bridge not ready:', health.status);
 
   let pageId = '';
   try {
     const created = await postToBrowserBridge<BridgeNewPageResponse>(
-      config,
-      '/v1/pages/new',
-      { url: X_LOGIN_URL, background: false },
-      { timeoutMs: 60_000 },
+      config, '/v1/pages/new', { url: X_LOGIN_URL, background: false }, { timeoutMs: 60_000 },
     );
     pageId = typeof created.pageId === 'string' ? created.pageId : '';
 
     const cookies = await waitForLoginCookies(config, timeoutSecs);
     writeCookies(cookies);
+    resetScraperCache();
+    // Mirror the cookie-string login path: push the new cookie set to
+    // DeepSearch right away. The lazy reconcile-on-next-getAuthStatus path
+    // bails when `deepSearchReconciled` is already true (e.g. a previous
+    // account was logged in this process), which would leave DeepSearch
+    // stuck on the old account's cookies. Direct sync here avoids that.
+    const raw = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+    if (raw) {
+      await syncToDeepSearch(raw);
+    }
   } finally {
     if (pageId) {
       await postToBrowserBridge(config, '/v1/pages/close', { pageId }, { timeoutMs: 15_000 }).catch(() => undefined);
     }
   }
-
-  // 写完 cookie 后用 viewer 查询验证 + 拿用户信息。
   return await getAuthStatus({ refreshFromGraphQL: true });
 }
 
 async function waitForLoginCookies(
-  config: BrowserBridgeRuntimeConfig,
-  timeoutSecs: number,
+  config: BrowserBridgeRuntimeConfig, timeoutSecs: number,
 ): Promise<Record<string, string>> {
   const deadline = Date.now() + timeoutSecs * 1000;
   while (Date.now() < deadline) {
     await sleep(2000);
     const cookies = await collectCookiesFromBridge(config);
     if (hasRequiredCookies(cookies)) {
-      // 等 2s 让 ct0/auth_token 在浏览器 IDB / cookie store 完整提交,避免抓
-      // 到一半的 cookie。
       await sleep(2000);
       const finalCookies = await collectCookiesFromBridge(config);
       if (hasRequiredCookies(finalCookies)) return finalCookies;
@@ -138,18 +113,13 @@ async function collectCookiesFromBridge(
   const out: Record<string, string> = {};
   for (const url of X_COOKIE_CAPTURE_URLS) {
     const response = await getFromBrowserBridge<BridgeCookiesResponse>(
-      config,
-      `/v1/cookies?url=${encodeURIComponent(url)}&includeValues=1`,
-      { timeoutMs: 15_000 },
+      config, `/v1/cookies?url=${encodeURIComponent(url)}&includeValues=1`, { timeoutMs: 15_000 },
     );
     for (const cookie of response.cookies ?? []) {
       if (!cookie?.name || typeof cookie.value !== 'string' || !cookie.value) continue;
       if (!X_COOKIE_NAMES.has(cookie.name)) continue;
-      // 先来后到,但 .x.com 域优先级高于 .twitter.com (旧域)。
       const isXDomain = (cookie.domain || '').replace(/^\./, '').toLowerCase().endsWith('x.com');
-      if (!(cookie.name in out) || isXDomain) {
-        out[cookie.name] = cookie.value;
-      }
+      if (!(cookie.name in out) || isXDomain) out[cookie.name] = cookie.value;
     }
   }
   return out;
@@ -159,55 +129,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface ViewerData {
-  viewer?: {
-    user_results?: {
-      result?: {
-        legacy?: { screen_name?: string; name?: string };
-      };
-    };
-  };
-}
-
-export async function getAuthStatus(
-  opts: { refreshFromGraphQL?: boolean } = {},
-): Promise<XAuthStatus> {
-  const stored = readCookies();
-  if (!stored || !hasRequiredCookies(stored.cookies)) {
-    return { loggedIn: false, userId: '', screenName: '', name: '' };
-  }
-  const userId = userIdFromCookies(stored.cookies);
-  const base: XAuthStatus = { loggedIn: true, userId, screenName: '', name: '' };
-
-  if (!opts.refreshFromGraphQL) return base;
-
-  try {
-    const data = await gqlGet<ViewerData>(VIEWER);
-    const legacy = data?.viewer?.user_results?.result?.legacy;
-    return {
-      ...base,
-      screenName: legacy?.screen_name || '',
-      name: legacy?.name || '',
-    };
-  } catch (err) {
-    if (err instanceof XAuthExpiredError) {
-      // cookie 看似齐, 但服务器认为过期 → 当作未登录
-      return { loggedIn: false, userId: '', screenName: '', name: '' };
-    }
-    // viewer 查询失败但本地有 cookie, 仍认为登录中(避免误显示已退出)
-    return base;
-  }
-}
-
-export function logout(): void {
-  clearCookies();
-}
-
-/**
- * 把用户粘贴的 Cookie 字符串(`a=1; b=2; ...` 或一行一对)解析成 record。
- * 用户从 x.com DevTools → Application → Cookies 复制,或从 Network 任意请求
- * 的 `Cookie:` 头复制都可以。
- */
 function parseCookieHeader(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const segment of raw.split(/[;\n]/)) {
@@ -222,7 +143,10 @@ function parseCookieHeader(raw: string): Record<string, string> {
   return out;
 }
 
-export async function loginViaCookieString(raw: string): Promise<XAuthStatus> {
+export async function loginViaCookieString(
+  raw: string,
+  meta?: { screenName?: string; name?: string },
+): Promise<XAuthStatus> {
   const cookies = parseCookieHeader(raw || '');
   if (!hasRequiredCookies(cookies)) {
     throw new XAuthExpiredError(
@@ -230,17 +154,140 @@ export async function loginViaCookieString(raw: string): Promise<XAuthStatus> {
       '请在 x.com 已登录页面 → DevTools → Application → Cookies → x.com,把这几条复制成 a=...; b=...; 格式',
     );
   }
-  writeCookies(cookies);
+  writeCookies(cookies, meta);
+  resetScraperCache();
+  // 同步给 DeepSearch:saveDeepSearchSite 把原始 cookie 字符串写到
+  // deepsearch_sites.cookie_value, 然后 probe 时会 import 到 BrowserManager
+  // 再扫 → 标记 connected。
+  await syncToDeepSearch(raw);
   return await getAuthStatus({ refreshFromGraphQL: true });
+}
+
+async function syncToDeepSearch(rawCookieString: string): Promise<void> {
+  console.log('[x-auth] syncToDeepSearch start, cookie length:', rawCookieString.length);
+  try {
+    const mod = await import('@/lib/deepsearch/service');
+    const site = await mod.saveDeepSearchSite({
+      siteKey: 'x',
+      displayName: 'X / Twitter',
+      baseUrl: 'https://x.com',
+      cookieValue: rawCookieString,
+    });
+    console.log('[x-auth] saveDeepSearchSite returned:', {
+      siteKey: site.siteKey,
+      hasCookie: site.hasCookie,
+      cookieStatus: site.cookieStatus,
+      liveState: site.liveState ? {
+        loginState: site.liveState.loginState,
+        blockingReason: site.liveState.blockingReason?.slice(0, 200),
+        lastError: site.liveState.lastError?.slice(0, 200),
+      } : null,
+    });
+  } catch (err) {
+    console.error('[x-auth] syncToDeepSearch FAILED:', err);
+  }
+}
+
+// 进程启动后只做一次 DeepSearch reconcile,避免每次 status 都跑 probe。
+let deepSearchReconciled = false;
+
+async function reconcileDeepSearchIfNeeded(rawForReconcile: () => string): Promise<void> {
+  if (deepSearchReconciled) return;
+  deepSearchReconciled = true;
+  try {
+    const mod = await import('@/lib/deepsearch/service');
+    const { getDeepSearchSiteCookieValue } = await import('@/lib/db/deepsearch');
+    const existing = getDeepSearchSiteCookieValue('x');
+    if (existing && existing.length > 0) {
+      console.log('[x-auth] deepsearch X already has cookie_value, skip reconcile');
+      return;
+    }
+    const raw = rawForReconcile();
+    if (!raw) return;
+    console.log('[x-auth] reconcile: deepsearch X cookie_value empty but local has cookies, syncing now (length=' + raw.length + ')');
+    const site = await mod.saveDeepSearchSite({
+      siteKey: 'x',
+      displayName: 'X / Twitter',
+      baseUrl: 'https://x.com',
+      cookieValue: raw,
+    });
+    console.log('[x-auth] reconcile complete:', {
+      hasCookie: site.hasCookie,
+      cookieStatus: site.cookieStatus,
+      liveState: site.liveState ? {
+        loginState: site.liveState.loginState,
+        blockingReason: site.liveState.blockingReason?.slice(0, 200),
+        lastError: site.liveState.lastError?.slice(0, 200),
+      } : null,
+    });
+  } catch (err) {
+    console.error('[x-auth] reconcile FAILED:', err);
+  }
+}
+
+export async function getAuthStatus(
+  opts: { refreshFromGraphQL?: boolean } = {},
+): Promise<XAuthStatus> {
+  const stored = readCookies();
+  if (!stored || !hasRequiredCookies(stored.cookies)) {
+    return { loggedIn: false, userId: '', screenName: '', name: '' };
+  }
+  const userId = userIdFromCookies(stored.cookies);
+  // 用户在 paste cookie 时可选填写的 @username / 显示名,优先用,留空则 fallback。
+  const base: XAuthStatus = {
+    loggedIn: true,
+    userId,
+    screenName: stored.meta?.screenName || '',
+    name: stored.meta?.name || '',
+  };
+
+  // 进程启动后(或之前 paste 时同步代码还没写)首次 status,补一次 DeepSearch
+  // sync。本机有 cookies 但 deepsearch_sites.cookie_value 空 → 自动写入并 probe。
+  void reconcileDeepSearchIfNeeded(() => Object.entries(stored.cookies)
+    .map(([k, v]) => `${k}=${v}`).join('; '));
+
+  if (!opts.refreshFromGraphQL) return base;
+
+  try {
+    const scraper = await ensureScraper();
+    const ok = await scraper.isLoggedIn();
+    if (!ok) return { loggedIn: false, userId: '', screenName: '', name: '' };
+    return base;
+  } catch (err) {
+    if (err instanceof XAuthExpiredError) {
+      return { loggedIn: false, userId: '', screenName: '', name: '' };
+    }
+    return base;
+  }
+}
+
+export async function logout(): Promise<void> {
+  clearCookies();
+  resetScraperCache();
+  // Reset the once-per-process gate so a subsequent login (especially via
+  // the builtin browser path) re-runs reconcile and re-populates DeepSearch
+  // with the new account's cookies. Without this, the gate stays true from
+  // the previous session and DeepSearch lags one account behind.
+  deepSearchReconciled = false;
+  // 同步清掉 DeepSearch DB 里 X 站点的 cookieValue:写空字符串就行,
+  // 内部会标记 hasCookie=false,下次 probe 就回 missing 状态。
+  try {
+    const mod = await import('@/lib/deepsearch/service');
+    await mod.saveDeepSearchSite({
+      siteKey: 'x',
+      displayName: 'X / Twitter',
+      baseUrl: 'https://x.com',
+      cookieValue: '',
+    });
+  } catch (err) {
+    console.warn('[x-auth] failed to clear deepsearch X cookie:', err);
+  }
 }
 
 export async function openHomeInBuiltinBrowser(): Promise<void> {
   const config = resolveBridgeConfig();
   if (!config) throw new XBrowserUnavailableError('Lumos 内置浏览器不可用');
   await postToBrowserBridge<BridgeNewPageResponse>(
-    config,
-    '/v1/pages/new',
-    { url: X_HOME_URL, background: false },
-    { timeoutMs: 60_000 },
+    config, '/v1/pages/new', { url: X_HOME_URL, background: false }, { timeoutMs: 60_000 },
   );
 }
