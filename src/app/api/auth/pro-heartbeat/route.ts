@@ -9,6 +9,7 @@ import {
 } from '@/lib/auth/user-service';
 import { getCustomProviderFlags } from '@/lib/edition-runtime';
 import { composeAuthPayload } from '@/lib/auth/payload';
+import { refreshServerHiddenAppIds } from '@/lib/builtin-apps-visibility-sync';
 
 const LUMOS_WEB_URL = process.env.LUMOS_WEB_URL || 'https://lumos.miki.zj.cn';
 const HEARTBEAT_TIMEOUT_MS = 5_000;
@@ -87,6 +88,14 @@ export async function GET(req: NextRequest) {
           } catch (e) {
             console.warn('[heartbeat] provision sync failed:', e);
           }
+        }
+        // Refresh admin-controlled built-in app visibility. Best-effort: an
+        // outage here keeps the previous cached hide list — admin can never
+        // accidentally reveal a previously-hidden app via lumos-web downtime.
+        try {
+          await refreshServerHiddenAppIds(user.id);
+        } catch (e) {
+          console.warn('[heartbeat] app-visibility sync failed:', e);
         }
         // Always return the fresh user payload so the client can refresh
         // balance / membership / flags without a manual reload. Balance

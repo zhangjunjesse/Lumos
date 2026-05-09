@@ -225,7 +225,7 @@ describe('app builder templates', () => {
       },
       risk: {
         writeActionsRequireConfirmation: true,
-        outOfScope: expect.arrayContaining(['自动无确认回复买家', '发布商品', '改价']),
+        outOfScope: expect.arrayContaining(['白名单外的自动回复', '发布商品', '改价']),
       },
       acceptance: expect.arrayContaining([
         expect.objectContaining({ id: 'installation-self-check' }),

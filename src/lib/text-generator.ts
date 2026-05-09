@@ -1,6 +1,8 @@
 import { generateObject, generateText, streamText } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { SharedV3ProviderOptions } from '@ai-sdk/provider';
 import { getProvider } from '@/lib/db';
 import { providerSupportsCapability } from '@/lib/provider-config';
@@ -42,12 +44,27 @@ export interface StreamTextParams {
   requestMetadata?: LumosLlmRequestMetadata;
 }
 
+export interface GenerateObjectImageRef {
+  /** Local absolute path to an image file (jpg/png/webp). */
+  path?: string;
+  /** Alternatively pass an http(s) URL or data: URL the model can fetch. */
+  url?: string;
+  /** Display label so prompts can reference "Image 1, Image 2, ..." consistently. */
+  label?: string;
+}
+
 export interface GenerateObjectParams<T> {
   providerId: string;
   model: string;
   system: string;
   prompt: string;
   schema: ZodType<T>;
+  /**
+   * Optional vision attachments. When provided the request is sent as a
+   * single user message containing the prompt text plus each image part.
+   * The provider must be vision-capable; otherwise images are ignored.
+   */
+  images?: GenerateObjectImageRef[];
   maxTokens?: number;
   temperature?: number;
   abortSignal?: AbortSignal;
@@ -267,6 +284,38 @@ export async function generateTextFromProvider(params: StreamTextParams): Promis
   }
 }
 
+function buildImageContentParts(
+  refs: GenerateObjectImageRef[],
+): Array<{ type: 'image'; image: Buffer | URL }> {
+  const parts: Array<{ type: 'image'; image: Buffer | URL }> = [];
+  for (const ref of refs) {
+    if (ref.url) {
+      try {
+        parts.push({ type: 'image', image: new URL(ref.url) });
+        continue;
+      } catch {
+        // fall through to filesystem path
+      }
+    }
+    if (ref.path) {
+      const resolved = path.resolve(ref.path);
+      try {
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile()) {
+          throw new Error(`image path is not a regular file: ${resolved}`);
+        }
+        const buffer = fs.readFileSync(resolved);
+        parts.push({ type: 'image', image: buffer });
+      } catch (err) {
+        throw new Error(
+          `read image failed: ${resolved} — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+  return parts;
+}
+
 export async function generateObjectFromProvider<T>(params: GenerateObjectParams<T>): Promise<T> {
   const provider = resolveProvider(params.providerId);
   const resolvedModel = resolveProviderModelForRequest(provider, params.model) || params.model;
@@ -281,17 +330,34 @@ export async function generateObjectFromProvider<T>(params: GenerateObjectParams
   try {
     assertLlmProviderCircuitClosed(provider.id, provider.name);
     const model = createLanguageModel(provider, params.model, params.requestMetadata);
-    const result = await generateObject({
+    const imageParts = params.images?.length ? buildImageContentParts(params.images) : [];
+    const baseArgs = {
       model,
-      output: 'object',
+      output: 'object' as const,
       system: params.system,
-      prompt: params.prompt,
       schema: params.schema,
       maxOutputTokens: params.maxTokens || 4096,
       ...(typeof params.temperature === 'number' ? { temperature: params.temperature } : {}),
       providerOptions: getObjectGenerationProviderOptions(provider),
       abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
-    });
+    };
+    const result = imageParts.length > 0
+      ? await generateObject({
+          ...baseArgs,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: params.prompt },
+                ...imageParts,
+              ],
+            },
+          ],
+        })
+      : await generateObject({
+          ...baseArgs,
+          prompt: params.prompt,
+        });
 
     requestLog.finish({ status: 'succeeded' });
     return result.object;

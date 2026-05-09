@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import matter from 'gray-matter';
@@ -20,6 +21,21 @@ import {
 import { getDb } from './db';
 import { seedBuiltinWorkflowAgentPresets } from './db/workflow-agent-presets';
 import { resolveProviderPersistenceFields } from './provider-config';
+import { buildTemplateBlueprintFiles } from './app/builder/templates';
+import type { BuilderSession } from './app/builder/session';
+import { ensureGoofishDefaultAutomations } from './app/goofish-default-automations';
+import { installApp } from './app/installer/install';
+import { createAppDataStore } from './app/runtime/data-store';
+import { buildInstallContext, getAppPlatformService } from './app/service';
+
+const BUILTIN_GOOFISH_APP_ID = 'goofish-assistant';
+const BUILTIN_GOOFISH_VERSION = '0.1.0';
+
+const BUILTIN_ECOMMERCE_APP_ID = 'ecommerce-assistant';
+const BUILTIN_ECOMMERCE_VERSION = '0.1.0';
+
+const PLACEHOLDER_ICON_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
 // ==========================================
 // Types
@@ -327,6 +343,167 @@ function importProviders(): void {
 }
 
 // ==========================================
+// Built-in Apps
+// ==========================================
+
+async function ensureEcommerceAssistantInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_ECOMMERCE_APP_ID) as { id: string; version: string } | undefined;
+
+  if (existing && existing.version === BUILTIN_ECOMMERCE_VERSION) {
+    seedBuiltinPresets();
+    return;
+  }
+
+  const now = Date.now();
+  const session: BuilderSession = {
+    id: 'bs_builtin_ecommerce',
+    status: 'installed',
+    appId: BUILTIN_ECOMMERCE_APP_ID,
+    appName: '电商商品助手',
+    appDescription:
+      '一键生成电商商品图、识别商品资料、批量出图、风格预设和场景方向调整的内置应用。',
+    templateId: 'ecommerce-assistant',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const files = buildTemplateBlueprintFiles(session, 'ecommerce-assistant', { now });
+  if (!files) {
+    console.warn('[init-builtin-resources] ecommerce-assistant template returned null');
+    return;
+  }
+
+  const appJson = JSON.parse(files['app.json']);
+  appJson.id = BUILTIN_ECOMMERCE_APP_ID;
+  appJson.version = BUILTIN_ECOMMERCE_VERSION;
+  files['app.json'] = `${JSON.stringify(appJson, null, 2)}\n`;
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-ecommerce-builtin-'));
+  try {
+    for (const [relPath, content] of Object.entries(files)) {
+      const fullPath = path.join(stagingDir, relPath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    fs.writeFileSync(
+      path.join(stagingDir, 'icon.png'),
+      Buffer.from(PLACEHOLDER_ICON_PNG_BASE64, 'base64'),
+    );
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_ECOMMERCE_VERSION}`
+        : `首次安装 ${BUILTIN_ECOMMERCE_VERSION}`;
+      seedBuiltinPresets();
+      console.log(`[init-builtin-resources] ecommerce-assistant ${tag}`);
+    } else {
+      console.warn(
+        `[init-builtin-resources] ecommerce-assistant install failed: ${result.message}`,
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
+function seedBuiltinPresets(): void {
+  try {
+    const svc = getAppPlatformService();
+    const store = createAppDataStore(svc.db, BUILTIN_ECOMMERCE_APP_ID);
+    // Lazy import to avoid circular deps; ensures builtin presets exist post-install.
+    void import('./ecommerce-assistant/storage').then(({ ensureBuiltinStylePresets }) => {
+      ensureBuiltinStylePresets(store);
+    });
+  } catch (err) {
+    console.warn('[init-builtin-resources] ecommerce-assistant preset seeding failed:', err);
+  }
+}
+
+async function ensureGoofishAssistantInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_GOOFISH_APP_ID) as { id: string; version: string } | undefined;
+
+  if (existing && existing.version === BUILTIN_GOOFISH_VERSION) {
+    ensureGoofishDefaultAutomations(createAppDataStore(svc.db, BUILTIN_GOOFISH_APP_ID));
+    return;
+  }
+
+  const now = Date.now();
+  const session: BuilderSession = {
+    id: 'bs_builtin_goofish',
+    status: 'installed',
+    appId: BUILTIN_GOOFISH_APP_ID,
+    appName: '闲鱼助手',
+    appDescription:
+      '管理闲鱼买家会话、AI 回复草稿、白名单分级自动回复、多渠道提醒、四范围搜索的内置应用。',
+    templateId: 'goofish-assistant',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const files = buildTemplateBlueprintFiles(session, 'goofish-assistant', { now });
+  if (!files) {
+    console.warn('[init-builtin-resources] goofish-assistant template returned null');
+    return;
+  }
+
+  const appJson = JSON.parse(files['app.json']);
+  appJson.id = BUILTIN_GOOFISH_APP_ID;
+  appJson.version = BUILTIN_GOOFISH_VERSION;
+  files['app.json'] = `${JSON.stringify(appJson, null, 2)}\n`;
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-goofish-builtin-'));
+  try {
+    for (const [relPath, content] of Object.entries(files)) {
+      const fullPath = path.join(stagingDir, relPath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    fs.writeFileSync(
+      path.join(stagingDir, 'icon.png'),
+      Buffer.from(PLACEHOLDER_ICON_PNG_BASE64, 'base64'),
+    );
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing ? `升级 ${existing.version} → ${BUILTIN_GOOFISH_VERSION}` : `首次安装 ${BUILTIN_GOOFISH_VERSION}`;
+      ensureGoofishDefaultAutomations(createAppDataStore(svc.db, BUILTIN_GOOFISH_APP_ID));
+      console.log(`[init-builtin-resources] goofish-assistant ${tag}`);
+    } else {
+      console.warn(
+        `[init-builtin-resources] goofish-assistant install failed: ${result.message}`,
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
+// ==========================================
 // Main Initialization
 // ==========================================
 
@@ -341,6 +518,28 @@ export async function initBuiltinResources(): Promise<void> {
     importProviders();
 
     seedBuiltinWorkflowAgentPresets();
+
+    // goofish-assistant 是混合架构：UI 走 D 路径专属 React 应用（src/components/apps/builtin/goofish），
+    // 数据层仍用应用平台的 AppDataStore（lumos_app_data），所以这里需要把骨架包安装好让
+    // createAppDataStore('goofish-assistant') 能拿到 store。
+    try {
+      await ensureGoofishAssistantInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] goofish-assistant install error:', err);
+    }
+
+    try {
+      await ensureEcommerceAssistantInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] ecommerce-assistant install error:', err);
+    }
+
+    try {
+      const { resumeRunningJobs } = await import('./ecommerce-assistant/job-runner');
+      await resumeRunningJobs();
+    } catch (err) {
+      console.error('[init-builtin-resources] ecommerce-assistant resume error:', err);
+    }
 
     setSetting('builtin_resources_imported', 'true');
     console.log('[init-builtin-resources] Done');

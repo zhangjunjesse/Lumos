@@ -6,7 +6,11 @@ import { Plus, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { InstallDialog } from '@/components/app/install-flow/InstallDialog';
-import { BuiltinWeChatCard } from '@/components/apps/list/BuiltinAppCard';
+import {
+  BuiltinEcommerceCard,
+  BuiltinGoofishCard,
+  BuiltinWeChatCard,
+} from '@/components/apps/list/BuiltinAppCard';
 import { DraftCard } from '@/components/apps/list/DraftCard';
 import { InstalledAppCard } from '@/components/apps/list/InstalledAppCard';
 import { NewAppDialog, type BuilderTemplate } from '@/components/apps/list/NewAppDialog';
@@ -37,12 +41,32 @@ interface BuiltinWeChatStatus {
   im?: { enabled: boolean; configured: boolean; isDefault: boolean };
 }
 
+interface BuiltinGoofishStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  auth?: { ready: boolean; accountCount: number; loggedInCount: number };
+  ready?: boolean;
+  phase?: string;
+}
+
+interface BuiltinEcommerceStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  providers?: { analysis: { ok: boolean }; image: { ok: boolean } };
+  inventory?: { runningJobs: number; inputCount: number };
+  ready?: boolean;
+  phase?: string;
+}
+
 export default function AppsListPage(): React.ReactElement {
   const router = useRouter();
 
   const [apps, setApps] = React.useState<ListedApp[]>([]);
   const [drafts, setDrafts] = React.useState<ListedDraft[]>([]);
   const [wechatStatus, setWechatStatus] = React.useState<BuiltinWeChatStatus | null>(null);
+  const [goofishStatus, setGoofishStatus] = React.useState<BuiltinGoofishStatus | null>(null);
+  const [ecommerceStatus, setEcommerceStatus] = React.useState<BuiltinEcommerceStatus | null>(null);
+  const [visibleBuiltinIds, setVisibleBuiltinIds] = React.useState<Set<string> | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -92,7 +116,45 @@ export default function AppsListPage(): React.ReactElement {
         if (!cancelled) setWechatStatus(null);
       }
     }
+    async function loadBuiltinGoofish() {
+      try {
+        const res = await fetch('/api/apps/builtin/goofish/status', { cache: 'no-store' });
+        const json = (await res.json()) as BuiltinGoofishStatus;
+        if (!cancelled && res.ok) setGoofishStatus(json);
+      } catch {
+        if (!cancelled) setGoofishStatus(null);
+      }
+    }
+    async function loadBuiltinEcommerce() {
+      try {
+        const res = await fetch('/api/apps/builtin/ecommerce/status', { cache: 'no-store' });
+        const json = (await res.json()) as BuiltinEcommerceStatus;
+        if (!cancelled && res.ok) setEcommerceStatus(json);
+      } catch {
+        if (!cancelled) setEcommerceStatus(null);
+      }
+    }
+    async function loadVisibility() {
+      try {
+        const res = await fetch('/api/apps/builtin/visibility', { cache: 'no-store' });
+        const json = (await res.json()) as { apps?: Array<{ id: string; visible: boolean }> };
+        if (!cancelled && res.ok && Array.isArray(json.apps)) {
+          setVisibleBuiltinIds(
+            new Set(json.apps.filter((a) => a.visible).map((a) => a.id)),
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          // Fail open: if visibility lookup fails, default to showing all so the
+          // user is never stuck with an empty page because of a transient error.
+          setVisibleBuiltinIds(new Set(['wechat-assistant', 'goofish-assistant', 'ecommerce-assistant']));
+        }
+      }
+    }
     void loadBuiltinWeChat();
+    void loadBuiltinGoofish();
+    void loadBuiltinEcommerce();
+    void loadVisibility();
     return () => {
       cancelled = true;
     };
@@ -186,7 +248,7 @@ export default function AppsListPage(): React.ReactElement {
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Lumos</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">应用</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            <span className="text-foreground tabular-nums">1</span> 内置
+            <span className="text-foreground tabular-nums">{visibleBuiltinIds?.size ?? 3}</span> 内置
             {drafts.length > 0 ? <> · <span className="text-foreground tabular-nums">{drafts.length}</span> 草稿</> : null}
             {apps.length > 0 ? <> · <span className="text-foreground tabular-nums">{apps.length}</span> 已安装</> : null}
           </p>
@@ -222,7 +284,17 @@ export default function AppsListPage(): React.ReactElement {
         <p className="text-sm text-destructive">{error}</p>
       ) : (
         <div className="flex flex-col gap-8">
-          <BuiltinWeChatCard status={wechatStatus} />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {visibleBuiltinIds === null || visibleBuiltinIds.has('wechat-assistant') ? (
+              <BuiltinWeChatCard status={wechatStatus} />
+            ) : null}
+            {visibleBuiltinIds === null || visibleBuiltinIds.has('goofish-assistant') ? (
+              <BuiltinGoofishCard status={goofishStatus} />
+            ) : null}
+            {visibleBuiltinIds === null || visibleBuiltinIds.has('ecommerce-assistant') ? (
+              <BuiltinEcommerceCard status={ecommerceStatus} />
+            ) : null}
+          </div>
 
           {drafts.length > 0 ? (
             <Section title="草稿" count={drafts.length}>

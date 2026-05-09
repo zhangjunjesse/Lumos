@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { BuiltinAppsSection } from "./BuiltinAppsSection";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -250,6 +251,9 @@ export function GeneralSection() {
           </Select>
         </div>
       </div>
+
+      {/* Builtin apps visibility */}
+      <BuiltinAppsSection />
 
       {/* Skip-permissions warning dialog */}
       <AlertDialog open={showSkipPermWarning} onOpenChange={setShowSkipPermWarning}>
