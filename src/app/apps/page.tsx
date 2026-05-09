@@ -11,29 +11,8 @@ import {
   BuiltinGoofishCard,
   BuiltinWeChatCard,
 } from '@/components/apps/list/BuiltinAppCard';
-import { DraftCard } from '@/components/apps/list/DraftCard';
-import { InstalledAppCard } from '@/components/apps/list/InstalledAppCard';
 import { NewAppDialog, type BuilderTemplate } from '@/components/apps/list/NewAppDialog';
 import { useAppInstall } from '@/components/apps/list/use-app-install';
-
-interface ListedApp {
-  id: string;
-  name: string;
-  version: string;
-  source: string;
-  enabled: boolean;
-  installedAt: number;
-  lastUsedAt: number | null;
-  sizeBytes: number | null;
-}
-
-interface ListedDraft {
-  sessionId: string;
-  name: string;
-  description: string;
-  status: string;
-  updatedAt: number;
-}
 
 interface BuiltinWeChatStatus {
   app?: { id: string; name: string; version: string; source: string; status: string };
@@ -61,8 +40,6 @@ interface BuiltinEcommerceStatus {
 export default function AppsListPage(): React.ReactElement {
   const router = useRouter();
 
-  const [apps, setApps] = React.useState<ListedApp[]>([]);
-  const [drafts, setDrafts] = React.useState<ListedDraft[]>([]);
   const [wechatStatus, setWechatStatus] = React.useState<BuiltinWeChatStatus | null>(null);
   const [goofishStatus, setGoofishStatus] = React.useState<BuiltinGoofishStatus | null>(null);
   const [ecommerceStatus, setEcommerceStatus] = React.useState<BuiltinEcommerceStatus | null>(null);
@@ -80,18 +57,18 @@ export default function AppsListPage(): React.ReactElement {
   const nameInputRef = React.useRef<HTMLInputElement>(null);
 
   const load = React.useCallback(async () => {
+    // The page intentionally no longer renders drafts / installed third-party
+    // apps — visibility is fully admin-controlled. Keep a lightweight fetch
+    // to gate the loading spinner so cards aren't rendered against an
+    // unfetched session.
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/apps');
-      const json = (await res.json()) as {
-        apps?: ListedApp[];
-        drafts?: ListedDraft[];
-        error?: string;
-      };
-      if (!res.ok) throw new Error(json.error ?? 'Request failed');
-      setApps(json.apps ?? []);
-      setDrafts(json.drafts ?? []);
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? 'Request failed');
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -235,28 +212,6 @@ export default function AppsListPage(): React.ReactElement {
     }
   };
 
-  const handleUninstall = async (id: string) => {
-    if (typeof window !== 'undefined' && !window.confirm(`卸载 ${id}？用户数据保留。`)) return;
-    const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const json = (await res.json()) as { error?: string };
-      window.alert(`卸载失败：${json.error ?? '未知错误'}`);
-      return;
-    }
-    await load();
-  };
-
-  const handleDeleteDraft = async (sessionId: string) => {
-    if (typeof window !== 'undefined' && !window.confirm('删除草稿？')) return;
-    const res = await fetch(`/api/apps/builder/sessions/${sessionId}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const json = (await res.json()) as { error?: string };
-      window.alert(`删除失败：${json.error ?? '未知错误'}`);
-      return;
-    }
-    await load();
-  };
-
   return (
     <div className="flex flex-col gap-8 p-8">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-6">
@@ -265,8 +220,6 @@ export default function AppsListPage(): React.ReactElement {
           <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">应用</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             <span className="text-foreground tabular-nums">{visibleBuiltinIds?.size ?? 3}</span> 内置
-            {drafts.length > 0 ? <> · <span className="text-foreground tabular-nums">{drafts.length}</span> 草稿</> : null}
-            {apps.length > 0 ? <> · <span className="text-foreground tabular-nums">{apps.length}</span> 已安装</> : null}
           </p>
         </div>
         <div className="flex gap-2">
@@ -319,34 +272,9 @@ export default function AppsListPage(): React.ReactElement {
                 <BuiltinEcommerceCard status={ecommerceStatus} />
               ) : null}
             </div>
-          ) : null}
-
-          {drafts.length > 0 ? (
-            <Section title="草稿" count={drafts.length}>
-              {drafts.map((d) => (
-                <DraftCard key={d.sessionId} draft={d} onDelete={handleDeleteDraft} />
-              ))}
-            </Section>
-          ) : null}
-
-          {apps.length > 0 ? (
-            <Section title="已安装" count={apps.length}>
-              {apps.map((a) => (
-                <InstalledAppCard key={a.id} app={a} onUninstall={handleUninstall} />
-              ))}
-            </Section>
-          ) : null}
-
-          {/*
-            Empty state: nothing visible at all (admin granted no built-in,
-            no drafts, no installed). Beats showing an empty page.
-          */}
-          {visibleBuiltinIds !== null
-            && visibleBuiltinIds.size === 0
-            && drafts.length === 0
-            && apps.length === 0 ? (
-            <EmptyAppsHint onCreate={openCreate} />
-          ) : null}
+          ) : (
+            <EmptyAppsHint />
+          )}
         </div>
       )}
 
@@ -403,45 +331,14 @@ function BuiltinSkeletonRow() {
   );
 }
 
-function EmptyAppsHint({ onCreate }: { onCreate: () => void }) {
+function EmptyAppsHint() {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/30 px-6 py-16 text-center">
       <p className="text-base font-medium">暂时没有可用应用</p>
       <p className="max-w-md text-sm text-muted-foreground">
-        管理员还没有为你开通任何内置应用。如有需要，请联系管理员开通；你也可以自己新建一个应用，或导入 .lumos-app 安装包。
+        管理员还没有为你开通任何内置应用。如需使用，请联系管理员开通。
       </p>
-      <div className="mt-2 flex gap-2">
-        <Button onClick={onCreate} size="sm">
-          <Plus />
-          新建应用
-        </Button>
-      </div>
     </div>
   );
 }
 
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-baseline gap-2 px-0.5">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {title}
-        </h2>
-        {count !== undefined ? (
-          <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
-        ) : null}
-      </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {children}
-      </div>
-    </section>
-  );
-}
