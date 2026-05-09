@@ -38,7 +38,6 @@ function nowISO(): string {
 }
 
 function stripPasswordHash(row: LumosUser & { password_hash?: string }): LumosUser {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password_hash: _, ...user } = row;
   return user;
 }
@@ -186,6 +185,16 @@ export async function loginUser(
 
   const session = createSession(remoteUser.id);
   const user = getUserById(remoteUser.id)!;
+  // Pull admin-controlled built-in app visibility for this user immediately
+  // after login. Best-effort: a sync failure here keeps the previously
+  // cached list (or hidden-by-default for opt-in apps if never synced) so
+  // we never reveal an app the admin would have hidden.
+  try {
+    const { refreshServerHiddenAppIds } = await import('@/lib/builtin-apps-visibility-sync');
+    await refreshServerHiddenAppIds(user.id);
+  } catch (e) {
+    console.warn('[login] app-visibility sync failed:', e);
+  }
   return { user, token: session.token };
 }
 

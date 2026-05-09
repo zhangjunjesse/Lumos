@@ -23,6 +23,10 @@ import {
 
 beforeEach(() => {
   settingsStore.clear();
+  // Default per-test baseline = "server has been synced with empty hide list"
+  // (i.e. admin granted everything). Tests that exercise the unsynced /
+  // opt-in default behaviour explicitly clear this marker.
+  setServerHiddenAppIds([]);
 });
 
 describe('builtin-apps-visibility', () => {
@@ -95,11 +99,33 @@ describe('builtin-apps-visibility', () => {
     expect(goofish).toHaveProperty('defaultVisible');
   });
 
-  it('clearing hidden ids restores all to visible', () => {
+  it('clearing hidden ids restores all to visible (after server sync)', () => {
     setHiddenBuiltinAppIds(['wechat-assistant', 'ecommerce-assistant']);
     expect(getBuiltinAppVisibility().filter((v) => v.visible)).toHaveLength(1);
     setHiddenBuiltinAppIds([]);
     expect(getBuiltinAppVisibility().every((v) => v.visible)).toBe(true);
+  });
+
+  describe('opt-in default before server sync', () => {
+    it('without sync: every app is hiddenByDefaultPendingSync and not visible', () => {
+      // Reset the sync marker to simulate a fresh install / never-synced state.
+      settingsStore.delete('builtin_apps_hidden_server_synced');
+      const v = getBuiltinAppVisibility();
+      expect(v.every((e) => e.hiddenByDefaultPendingSync)).toBe(true);
+      expect(v.every((e) => e.visible === false)).toBe(true);
+      expect(getEffectiveHiddenAppIds().sort()).toEqual([
+        'ecommerce-assistant',
+        'goofish-assistant',
+        'wechat-assistant',
+      ]);
+    });
+
+    it('after server sync with empty hide list: all visible by default', () => {
+      // beforeEach already calls setServerHiddenAppIds([]) which marks synced.
+      const v = getBuiltinAppVisibility();
+      expect(v.every((e) => e.hiddenByDefaultPendingSync)).toBe(false);
+      expect(v.every((e) => e.visible)).toBe(true);
+    });
   });
 
   describe('server-override merge', () => {

@@ -145,11 +145,27 @@ export default function AppsListPage(): React.ReactElement {
         }
       } catch {
         if (!cancelled) {
-          // Fail open: if visibility lookup fails, default to showing all so the
-          // user is never stuck with an empty page because of a transient error.
-          setVisibleBuiltinIds(new Set(['wechat-assistant', 'goofish-assistant', 'ecommerce-assistant']));
+          // Opt-in safe default: if the visibility lookup fails entirely, show
+          // nothing rather than leak apps the admin would have hidden.
+          setVisibleBuiltinIds(new Set());
         }
       }
+      // Quietly pull the latest admin-configured visibility in the background.
+      // Don't await — page renders immediately with cached state, then re-renders
+      // when the refresh completes.
+      void (async () => {
+        try {
+          const r = await fetch('/api/apps/builtin/visibility/refresh', { method: 'POST' });
+          if (!r.ok) return;
+          const j = (await r.json()) as { apps?: Array<{ id: string; visible: boolean }> };
+          if (cancelled || !Array.isArray(j.apps)) return;
+          setVisibleBuiltinIds(
+            new Set(j.apps.filter((a) => a.visible).map((a) => a.id)),
+          );
+        } catch {
+          // ignore — keep cached state
+        }
+      })();
     }
     void loadBuiltinWeChat();
     void loadBuiltinGoofish();

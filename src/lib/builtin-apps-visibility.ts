@@ -31,27 +31,28 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     id: 'wechat-assistant',
     name: '微信助手',
     description: '本机读取微信消息，提炼今日重点、画像、待办与定时任务',
-    defaultVisible: true,
+    defaultVisible: false,
     icon: 'message-circle-heart',
   },
   {
     id: 'goofish-assistant',
     name: '闲鱼助手',
     description: '管理闲鱼买家会话、AI 草稿、白名单自动回复、多渠道提醒和市场搜索',
-    defaultVisible: true,
+    defaultVisible: false,
     icon: 'shopping-bag',
   },
   {
     id: 'ecommerce-assistant',
     name: '电商商品助手',
     description: '一键生成电商商品图、识别商品资料，含 SOP 流程、3 方向评分、终版精修',
-    defaultVisible: true,
+    defaultVisible: false,
     icon: 'sparkles',
   },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';
 const SERVER_SETTING_KEY = 'builtin_apps_hidden_server';
+const SERVER_SYNCED_KEY = 'builtin_apps_hidden_server_synced';
 const KNOWN_IDS = new Set(BUILTIN_APP_REGISTRY.map((app) => app.id));
 
 function readJsonStringArray(key: string): string[] {
@@ -97,12 +98,36 @@ export function setServerHiddenAppIds(ids: string[]): string[] {
     new Set(ids.filter((v) => typeof v === 'string' && KNOWN_IDS.has(v))),
   ).sort();
   setSetting(SERVER_SETTING_KEY, JSON.stringify(normalized));
+  // Mark that we've successfully synced so the visibility helpers know to
+  // trust the cached server list rather than fall back to opt-in defaults.
+  setSetting(SERVER_SYNCED_KEY, '1');
   return normalized;
+}
+
+/**
+ * True once the desktop has successfully pulled at least one server-side
+ * visibility list. Until this is true, opt-in (defaultVisible=false) apps
+ * stay hidden so a fresh install / cold start cannot accidentally reveal an
+ * app the admin would have restricted.
+ */
+export function hasServerVisibilitySync(): boolean {
+  return getSetting(SERVER_SYNCED_KEY) === '1';
 }
 
 /** Effective hidden = local user's opt-out ∪ admin's server-side hide. */
 export function getEffectiveHiddenAppIds(): string[] {
-  const merged = new Set<string>([...getHiddenBuiltinAppIds(), ...getServerHiddenAppIds()]);
+  const synced = hasServerVisibilitySync();
+  const localHidden = getHiddenBuiltinAppIds();
+  const serverHidden = getServerHiddenAppIds();
+  const merged = new Set<string>([...localHidden, ...serverHidden]);
+  // Before the first server sync, opt-in apps (defaultVisible=false) stay
+  // hidden by default so the user can't see something the admin would have
+  // restricted just because the heartbeat hasn't fired yet.
+  if (!synced) {
+    for (const app of BUILTIN_APP_REGISTRY) {
+      if (!app.defaultVisible) merged.add(app.id);
+    }
+  }
   return Array.from(merged).sort();
 }
 
@@ -117,19 +142,28 @@ export interface BuiltinAppVisibilityEntry extends BuiltinAppDescriptor {
   hiddenByUser: boolean;
   /** Hidden by the lumos-web admin (synced from server). */
   hiddenByServer: boolean;
+  /**
+   * True when the app would be hidden by the opt-in default because the
+   * desktop has not yet successfully synced with the server. UI uses this
+   * to explain "loading admin settings…" rather than show a stale state.
+   */
+  hiddenByDefaultPendingSync: boolean;
 }
 
 export function getBuiltinAppVisibility(): BuiltinAppVisibilityEntry[] {
+  const synced = hasServerVisibilitySync();
   const localHidden = new Set(getHiddenBuiltinAppIds());
   const serverHidden = new Set(getServerHiddenAppIds());
   return BUILTIN_APP_REGISTRY.map((app) => {
     const hiddenByUser = localHidden.has(app.id);
     const hiddenByServer = serverHidden.has(app.id);
+    const hiddenByDefaultPendingSync = !synced && !app.defaultVisible;
     return {
       ...app,
-      visible: !hiddenByUser && !hiddenByServer,
+      visible: !hiddenByUser && !hiddenByServer && !hiddenByDefaultPendingSync,
       hiddenByUser,
       hiddenByServer,
+      hiddenByDefaultPendingSync,
     };
   });
 }

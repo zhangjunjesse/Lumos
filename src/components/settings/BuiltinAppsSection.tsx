@@ -1,7 +1,9 @@
 'use client';
 
 import * as React from 'react';
+import { RefreshCw } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 
 interface VisibilityEntry {
@@ -12,11 +14,14 @@ interface VisibilityEntry {
   defaultVisible: boolean;
   hiddenByUser: boolean;
   hiddenByServer: boolean;
+  hiddenByDefaultPendingSync?: boolean;
 }
 
 export function BuiltinAppsSection(): React.ReactElement {
   const [entries, setEntries] = React.useState<VisibilityEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [refreshHint, setRefreshHint] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState<string | null>(null);
 
@@ -38,9 +43,39 @@ export function BuiltinAppsSection(): React.ReactElement {
     }
   }, []);
 
+  const refresh = React.useCallback(async () => {
+    setRefreshing(true);
+    setRefreshHint(null);
+    setError(null);
+    try {
+      const res = await fetch('/api/apps/builtin/visibility/refresh', { method: 'POST' });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        reason?: string;
+        apps?: VisibilityEntry[];
+      };
+      if (json.apps) setEntries(json.apps);
+      if (json.ok === false) {
+        setRefreshHint(`同步失败：${json.reason ?? '未知原因'}（沿用上次缓存）`);
+      } else {
+        setRefreshHint('已同步');
+      }
+    } catch (err) {
+      setRefreshHint(`同步失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
   React.useEffect(() => {
-    void load();
-  }, [load]);
+    // First time the section opens: load local cache fast, then quietly
+    // pull the latest admin-configured list in the background so the user
+    // sees fresh state without a manual refresh.
+    void (async () => {
+      await load();
+      await refresh();
+    })();
+  }, [load, refresh]);
 
   const toggle = async (id: string, nextVisible: boolean) => {
     setSaving(id);
@@ -77,14 +112,21 @@ export function BuiltinAppsSection(): React.ReactElement {
 
   return (
     <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between gap-3">
         <div>
           <h2 className="text-sm font-medium">内置应用显示</h2>
           <p className="text-xs text-muted-foreground">
-            控制「应用」首页显示哪些内置卡片。关闭后只是隐藏入口，IM 通知、MCP、自动化、底层数据都不受影响。
+            控制「应用」首页显示哪些内置卡片。关闭后只是隐藏入口，IM 通知、MCP、自动化、底层数据都不受影响。管理员可在后台为每个用户配置默认可见集合。
           </p>
         </div>
+        <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={refreshing}>
+          <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? '同步中…' : '同步'}
+        </Button>
       </div>
+      {refreshHint ? (
+        <p className="mt-2 text-[10px] text-muted-foreground">{refreshHint}</p>
+      ) : null}
       {loading ? (
         <p className="mt-3 text-xs text-muted-foreground">加载中…</p>
       ) : error ? (
