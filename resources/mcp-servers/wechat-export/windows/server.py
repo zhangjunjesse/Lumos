@@ -61,7 +61,7 @@ def wechat_list_chats(limit: int = 100) -> str:
 
 
 @mcp.tool()
-def wechat_read_chat(contact: str, limit: int = 50, days: int = 30, before_ts: int = 0) -> str:
+def wechat_read_chat(contact: str, limit: int = 50, days: int = 0, before_ts: int = 0) -> str:
     """读取与指定联系人/群聊的微信聊天记录。支持 before_ts 继续读取更早一页。"""
     matched = _find_contact(contact)
     if not matched:

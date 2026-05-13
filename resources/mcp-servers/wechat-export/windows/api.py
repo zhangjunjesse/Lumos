@@ -810,7 +810,16 @@ def _self_wxids() -> set[str]:
         account.get("account"),
         os.path.basename(str(account.get("wx_dir") or "")),
     ]
-    _self_wxids_cache = {str(item).strip().lower() for item in candidates if str(item or "").strip()}
+    normalized: set[str] = set()
+    for item in candidates:
+        value = str(item or "").strip().lower()
+        if not value:
+            continue
+        normalized.add(value)
+        # Windows WeChat 4.x account folders may be named
+        # `<wxid>_<4-hex-suffix>`, while Name2Id stores the plain wxid.
+        normalized.add(re.sub(r"_[0-9a-f]{4}$", "", value))
+    _self_wxids_cache = normalized
     return _self_wxids_cache
 
 
