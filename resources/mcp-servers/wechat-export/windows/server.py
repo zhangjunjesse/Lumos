@@ -61,8 +61,8 @@ def wechat_list_chats(limit: int = 100) -> str:
 
 
 @mcp.tool()
-def wechat_read_chat(contact: str, limit: int = 50, days: int = 7) -> str:
-    """读取与指定联系人/群聊的微信聊天记录。"""
+def wechat_read_chat(contact: str, limit: int = 50, days: int = 30, before_ts: int = 0) -> str:
+    """读取与指定联系人/群聊的微信聊天记录。支持 before_ts 继续读取更早一页。"""
     matched = _find_contact(contact)
     if not matched:
         return f"未找到匹配 '{contact}' 的联系人。请先用 wechat_list_chats 查看会话。"
@@ -72,20 +72,28 @@ def wechat_read_chat(contact: str, limit: int = 50, days: int = 7) -> str:
             lines.append(f"  {item.get('display')} (wxid: {item.get('wxid')})")
         return "\n".join(lines)
 
-    since = int(time.time()) - days * 86400
+    limit = max(1, min(int(limit or 50), 200))
+    days = max(0, int(days or 0))
+    before_ts = max(0, int(before_ts or 0))
+    since = int(time.time()) - days * 86400 if days > 0 else 0
     sections = []
     for item in matched:
         wxid = item.get("wxid")
         display = item.get("display") or wxid
-        data = api.read_chat({"wxid": wxid, "limit": limit})
+        data = api.read_chat({"wxid": wxid, "limit": limit, "before_ts": before_ts})
         messages = [msg for msg in data.get("messages", []) if int(msg.get("ts") or 0) >= since]
+        has_more = bool(data.get("has_more"))
         sections.append(f"\n=== 与 {display} 的对话 (wxid: {wxid}) ===")
         if not messages:
-            sections.append(f"最近 {days} 天没有读到消息")
+            sections.append(f"{'最近 ' + str(days) + ' 天' if days > 0 else '当前页'}没有读到消息")
             continue
         for msg in messages[-limit:]:
             direction = "[我]" if msg.get("sender") == "me" else "[对方]"
-            sections.append(f"  [{_fmt_time(msg.get('ts') or 0)}] {direction} {msg.get('content') or ''}")
+            speaker = msg.get("sender_display") or direction
+            sections.append(f"  [{_fmt_time(msg.get('ts') or 0)}] {speaker} {msg.get('content') or ''}")
+        if has_more and messages:
+            next_before = min(int(msg.get("ts") or 0) for msg in messages)
+            sections.append(f"还有更早消息，可继续调用 before_ts={next_before} 读取上一页。")
     return "\n".join(sections)
 
 
@@ -110,7 +118,8 @@ def wechat_recent_messages(days: int = 3, limit: int = 100) -> str:
             if count >= limit:
                 break
             direction = "[我]" if msg.get("sender") == "me" else "[对方]"
-            lines.append(f"  [{_fmt_time(msg.get('ts') or 0)}] {direction} {msg.get('content') or ''}")
+            speaker = msg.get("sender_display") or direction
+            lines.append(f"  [{_fmt_time(msg.get('ts') or 0)}] {speaker} {msg.get('content') or ''}")
             count += 1
     return "\n".join(lines) if count else f"最近 {days} 天没有读到消息"
 
@@ -127,7 +136,8 @@ def wechat_search_messages(keyword: str, days: int = 30, limit: int = 50) -> str
     for row in rows:
         display = names.get(row.get("wxid"), row.get("wxid"))
         direction = "[我]" if row.get("sender") == "me" else "[对方]"
-        lines.append(f"  [{_fmt_time(row.get('ts') or 0)}] {display} {direction}: {row.get('content') or ''}")
+        speaker = row.get("sender_display") or direction
+        lines.append(f"  [{_fmt_time(row.get('ts') or 0)}] {display} {speaker}: {row.get('content') or ''}")
     return "\n".join(lines)
 
 

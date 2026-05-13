@@ -1,10 +1,11 @@
 import { addMessage } from '@/lib/db';
+import { resolveMainAgentSession } from '@/lib/chat/main-agent-session';
 import {
   sendToProvider,
   getDefaultProviderId,
   hasProvider,
 } from '@/lib/im';
-import { BindingService } from '@/lib/bridge/core/binding-service';
+import { resolveOutboundImTarget } from '@/lib/im/core/outbound-target';
 import type { NotificationStepInput, StepResult } from '../types';
 
 function buildAssistantMessage(text: string): string {
@@ -24,7 +25,7 @@ export async function notificationStep(input: NotificationStepInput): Promise<St
   }
 
   const channel = (input.channel || 'system').trim() || 'system';
-  const sessionId = input.sessionId?.trim();
+  const sessionId = resolveTargetSessionId(input);
   const imMatch = IM_CHANNEL_PATTERN.exec(channel);
 
   if (imMatch) {
@@ -60,6 +61,15 @@ export async function notificationStep(input: NotificationStepInput): Promise<St
   };
 }
 
+function resolveTargetSessionId(input: NotificationStepInput): string | undefined {
+  if (input.targetSessionRef === 'main-agent') {
+    const session = resolveMainAgentSession({ createIfMissing: true });
+    if (session?.id) return session.id;
+  }
+  const sid = input.sessionId?.trim();
+  return sid || undefined;
+}
+
 interface ImDeliveryArgs {
   message: string;
   level?: 'info' | 'warning' | 'error';
@@ -69,13 +79,26 @@ interface ImDeliveryArgs {
 }
 
 /**
- * 解析 channel='im' 或 'im:<provider>' 路由：
- * - providerHint 指定具体 provider，否则用 default
- * - 通过 sessionId 在 session_bindings 找到对应 chat 进行投递
+ * Dual delivery for `channel='im'` or `'im:<provider>'`:
+ * - When `sessionId` is set, always append an assistant message to that
+ *   session so the chat UI shows the notification regardless of IM binding.
+ * - Then, if the session has an active IM binding for the resolved provider,
+ *   push the same text out through the IM provider.
+ *
+ * Missing binding ≠ failure: we still report success with metadata so the
+ * caller can tell the message landed in the session but did not go external.
  */
 async function deliverViaIm(args: ImDeliveryArgs): Promise<StepResult> {
   const providerId = args.providerHint || getDefaultProviderId();
   if (!providerId) {
+    if (args.sessionId) {
+      addMessage(args.sessionId, 'assistant', buildAssistantMessage(args.message));
+      return {
+        success: true,
+        output: { message: args.message, channel: args.channel, level: args.level || 'info', sessionId: args.sessionId },
+        metadata: { deliveryMode: 'session-message', imDelivery: 'no-provider' },
+      };
+    }
     return {
       success: false,
       output: null,
@@ -89,30 +112,52 @@ async function deliverViaIm(args: ImDeliveryArgs): Promise<StepResult> {
     return {
       success: false,
       output: null,
-      error: 'IM delivery requires sessionId so we can resolve the bound chat',
+      error: 'IM delivery requires sessionId (or targetSessionRef) so we can resolve the bound chat',
     };
   }
 
-  const bindingService = new BindingService();
-  const binding = bindingService.getActiveBinding(args.sessionId, providerId);
-  if (!binding) {
+  addMessage(args.sessionId, 'assistant', buildAssistantMessage(args.message));
+
+  const target = resolveOutboundImTarget(args.sessionId, providerId);
+  if (!target) {
     return {
-      success: false,
-      output: null,
-      error: `No active ${providerId} binding for session ${args.sessionId}`,
+      success: true,
+      output: {
+        message: args.message,
+        channel: args.channel,
+        level: args.level || 'info',
+        sessionId: args.sessionId,
+        providerId,
+      },
+      metadata: {
+        deliveryMode: 'session-message',
+        imDelivery: 'no-binding',
+      },
     };
   }
 
   const result = await sendToProvider(providerId, {
-    address: { providerId, chatId: binding.channelId },
+    address: { providerId, chatId: target.chatId },
     text: args.message,
   });
 
   if (!result.ok) {
     return {
-      success: false,
-      output: null,
-      error: result.error || 'IM send failed',
+      success: true,
+      output: {
+        message: args.message,
+        channel: args.channel,
+        level: args.level || 'info',
+        sessionId: args.sessionId,
+        providerId,
+        chatId: target.chatId,
+      },
+      metadata: {
+        deliveryMode: 'session-message',
+        imDelivery: 'failed',
+        imError: result.error || 'IM send failed',
+        targetSource: target.source,
+      },
     };
   }
 
@@ -124,11 +169,12 @@ async function deliverViaIm(args: ImDeliveryArgs): Promise<StepResult> {
       level: args.level || 'info',
       sessionId: args.sessionId,
       providerId,
-      chatId: binding.channelId,
+      chatId: target.chatId,
       messageId: result.messageId,
     },
     metadata: {
-      deliveryMode: 'im',
+      deliveryMode: 'session+im',
+      targetSource: target.source,
     },
   };
 }

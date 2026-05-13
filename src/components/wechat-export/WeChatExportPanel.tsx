@@ -111,7 +111,7 @@ function MainAgentReadAccessNote({ enabled }: { enabled: boolean }) {
         <div className="font-medium text-foreground">主 Agent / 统一 AI 对话读取微信消息</div>
         <p className="text-muted-foreground">
           这里启用的是本机微信读取 MCP，不是 Skill。{enabled ? '主 Agent 和统一 AI 对话现在可以' : '完成授权并启用后，主 Agent 和统一 AI 对话可以'}
-          直接按你的问题搜索本机微信 mirror，例如查最近消息、按关键词找聊天记录或汇总某个群的上下文。
+          直接按你的问题搜索本机微信 mirror；AI 读取前会先尝试同步最新消息，例如查最近消息、按关键词找聊天记录或汇总某个群的上下文。
         </p>
         <p className="text-xs text-muted-foreground">
           当前这些对话只获得只读搜索能力；发微信、修改自动化和跟进任务仍在微信助手专用界面处理。
@@ -652,6 +652,9 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const runningResign = panel.busy === 'resign';
   const runningExtract = panel.busy === 'extract';
   const mustRelaxWeChat = panel.status?.platform === 'darwin' && (signed === 'tencent' || signed === 'unknown');
+  const hasReadableMessageDbs = readable > 0;
+  const cardTone = hasReadableMessageDbs ? 'soft' : 'highlight';
+  const title = hasReadableMessageDbs ? '部分消息库未解密' : '修复消息读取不完整';
   const runRepair = async () => {
     if (isWindows && !windowsWechatRunning) {
       setError('请先打开 Windows 微信并停留在主界面，然后重新检测。');
@@ -670,15 +673,17 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   if (!loading && !error && unreadable <= 0) return null;
 
   return (
-    <Card tone="highlight">
+    <Card tone={cardTone}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <CircleAlert className="h-4 w-4 text-amber-500" />
-            <h3 className="text-sm font-semibold">修复消息读取不完整</h3>
+            <h3 className="text-sm font-semibold">{title}</h3>
           </div>
           <p className="text-sm text-foreground/85 leading-relaxed">
-            左侧会话列表读取的是摘要库，详情读取的是消息库。消息库密钥不完整时，会出现左侧最新、点进去旧消息或空白。
+            {hasReadableMessageDbs
+              ? '微信助手已经可以使用当前可读的消息库。未解密的库只会让部分会话详情或更早历史不完整，可以继续补全密钥。'
+              : '左侧会话列表读取的是摘要库，详情读取的是消息库。消息库密钥不完整时，会出现左侧最新、点进去旧消息或空白。'}
           </p>
         </div>
         <Button variant="ghost" size="sm" disabled={loading} onClick={() => void refreshDiagnostics()}>
@@ -698,7 +703,9 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
         </div>
       ) : (
         <div className="mt-3 space-y-3">
-          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-foreground/85">
+          <div className={`rounded-md border p-3 text-xs leading-relaxed text-foreground/85 ${
+            hasReadableMessageDbs ? 'border-border/50 bg-muted/20' : 'border-amber-500/30 bg-amber-500/5'
+          }`}>
             当前消息库可读 <span className="font-mono tabular-nums">{readable}/{total}</span>
             {unreadable > 0 ? <>，还有 <span className="font-mono tabular-nums">{unreadable}</span> 个未解密。</> : null}
             {skipped ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">未解密：{skipped}</div> : null}
@@ -726,7 +733,7 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
               onClick={() => void runRepair()}
             >
               {runningResign || runningExtract ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-              {mustRelaxWeChat ? '开始修复' : '重新提取消息库密钥'}
+              {mustRelaxWeChat ? '开始修复' : hasReadableMessageDbs ? '继续补全消息库密钥' : '重新提取消息库密钥'}
             </Button>
             {isWindows && !windowsWechatRunning ? (
               <span className="text-xs text-muted-foreground">

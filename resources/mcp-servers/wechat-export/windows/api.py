@@ -24,6 +24,8 @@ import struct
 import sys
 import tempfile
 import time
+import unicodedata
+from pathlib import Path
 from typing import Any
 
 SQLITE_FILE_HEADER = b"SQLite format 3\x00"
@@ -291,7 +293,16 @@ def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
                     continue
                 out.write(AES.new(decrypt_key, AES.MODE_CBC, page[-reserved:-reserved + 16]).decrypt(page[:-reserved]))
                 out.write(page[-reserved:])
-        os.replace(tmp_path, out_path)
+        try:
+            os.replace(tmp_path, out_path)
+        except OSError:
+            # Windows refuses to replace a SQLite file while another Lumos
+            # reader still has it open. If another process already produced
+            # the same versioned cache file, reuse it instead of failing the
+            # whole AI read with "database is locked / file is occupied".
+            if os.path.exists(out_path):
+                return out_path
+            raise
     finally:
         if os.path.exists(tmp_path):
             try:
@@ -305,6 +316,12 @@ def _cache_path(db_path: str) -> str:
     account = _account()
     rel = os.path.relpath(db_path, account["wx_dir"])
     safe_rel = rel.replace(":", "").replace("\\", "/")
+    try:
+        stat = os.stat(db_path)
+        base, ext = os.path.splitext(safe_rel)
+        safe_rel = f"{base}.{int(stat.st_mtime)}-{stat.st_size}{ext or '.db'}"
+    except OSError:
+        pass
     return os.path.join(DECRYPT_DIR, account["wxid"], safe_rel)
 
 
@@ -313,7 +330,9 @@ def _decrypted(db_path: str) -> str:
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(_decrypted(db_path))
+    decrypted = _decrypted(db_path)
+    uri = Path(decrypted).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=5.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -341,6 +360,7 @@ def _rows(db_path: str, sql: str, params: tuple = ()) -> list[dict]:
 
 
 _contacts_cache: dict[str, dict] | None = None
+_self_wxids_cache: set[str] | None = None
 
 
 def _load_contacts() -> dict[str, dict]:
@@ -564,12 +584,35 @@ def _session_snapshot(wxid: str) -> dict:
     }
 
 
+def _looks_binary_text(text: str) -> bool:
+    if not text:
+        return False
+    replacement_count = text.count("\ufffd")
+    control_count = 0
+    visible_count = 0
+    for ch in text:
+        if ch in ("\n", "\r", "\t"):
+            continue
+        if unicodedata.category(ch).startswith("C"):
+            control_count += 1
+        else:
+            visible_count += 1
+    length = max(len(text), 1)
+    if replacement_count >= 3 or replacement_count / length > 0.03:
+        return True
+    if control_count >= 3 and control_count > visible_count * 0.15:
+        return True
+    return False
+
+
 def _render_message(msg_type: int, sub_type: int, content: object) -> str:
     if isinstance(content, (bytes, bytearray)):
         text = bytes(content).decode("utf-8", errors="replace")
     else:
         text = str(content or "")
     text = text.replace("\x00", "").strip()
+    if _looks_binary_text(text):
+        return MSG_TYPE_PLACEHOLDERS.get(msg_type, "[暂不支持的消息]")
     if msg_type == 1:
         return text
     if msg_type in (10000, 10002):
@@ -619,6 +662,7 @@ def read_chat(args: dict) -> dict:
                             "has_image": False,
                         })
                 elif _table_exists(conn, msg_table):
+                    _wxid_by_table, id_to_wxid = _name2id_maps(conn)
                     where = "create_time < ?" if before_ts > 0 else "1=1"
                     params = [before_ts] if before_ts > 0 else []
                     params.append(limit + 1)
@@ -631,9 +675,12 @@ def read_chat(args: dict) -> dict:
                         raw_type = _safe_int(row["local_type"])
                         msg_type = raw_type & 0xFFFF
                         ts = _norm_ts(row["create_time"])
+                        sender_info = _sender_info_from_real_id(row["real_sender_id"], wxid, id_to_wxid, contacts)
                         messages.append({
                             "ts": ts,
-                            "sender": "me" if _safe_int(row["real_sender_id"]) == 0 else "them",
+                            "sender": sender_info["sender"],
+                            "sender_wxid": sender_info["sender_wxid"],
+                            "sender_display": sender_info["sender_display"],
                             "type": msg_type,
                             "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
                             "content": _render_message(msg_type, 0, row["message_content"]),
@@ -671,6 +718,7 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
     since = int(time.time()) - days * 86400
     since_ms, since_sec = _raw_ts_bounds(since)
     result = []
+    contacts = _load_contacts()
     like = f"%{keyword}%"
     for db_path in _encrypted_message_dbs():
         try:
@@ -695,13 +743,10 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
                     table_rows = conn.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
                     ).fetchall()
-                    wxid_by_table = {}
-                    if _table_exists(conn, "Name2Id"):
-                        for row in conn.execute("SELECT user_name FROM Name2Id WHERE user_name!=''"):
-                            username = str(row["user_name"] or "")
-                            wxid_by_table[f"Msg_{hashlib.md5(username.encode()).hexdigest()}"] = username
+                    wxid_by_table, id_to_wxid = _name2id_maps(conn)
                     for table_row in table_rows:
                         table = str(table_row["name"] or "")
+                        wxid = wxid_by_table.get(table, table)
                         rows = conn.execute(
                             f"SELECT create_time, local_type, real_sender_id, message_content "
                             f"FROM {table} WHERE create_time>? AND message_content LIKE ? "
@@ -711,10 +756,13 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
                         for row in rows:
                             raw_type = _safe_int(row["local_type"])
                             msg_type = raw_type & 0xFFFF
+                            sender_info = _sender_info_from_real_id(row["real_sender_id"], wxid, id_to_wxid, contacts)
                             result.append({
                                 "ts": _norm_ts(row["create_time"]),
-                                "wxid": wxid_by_table.get(table, table),
-                                "sender": "me" if _safe_int(row["real_sender_id"]) == 0 else "them",
+                                "wxid": wxid,
+                                "sender": sender_info["sender"],
+                                "sender_wxid": sender_info["sender_wxid"],
+                                "sender_display": sender_info["sender_display"],
                                 "content": _render_message(msg_type, 0, row["message_content"]),
                             })
         except Exception:
@@ -728,17 +776,65 @@ def _emit_jsonl(obj: dict) -> None:
 
 
 def _msg_table_wxids(conn: sqlite3.Connection) -> dict[str, str]:
+    return _name2id_maps(conn)[0]
+
+
+def _name2id_maps(conn: sqlite3.Connection) -> tuple[dict[str, str], dict[int, str]]:
     wxid_by_table: dict[str, str] = {}
+    id_to_wxid: dict[int, str] = {}
     if not _table_exists(conn, "Name2Id"):
-        return wxid_by_table
+        return wxid_by_table, id_to_wxid
     try:
-        for row in conn.execute("SELECT user_name FROM Name2Id WHERE user_name!=''"):
+        for row in conn.execute("SELECT rowid, user_name FROM Name2Id WHERE user_name!=''"):
             username = str(row["user_name"] or "").strip()
             if username:
                 wxid_by_table[f"Msg_{hashlib.md5(username.encode()).hexdigest()}"] = username
+                id_to_wxid[_safe_int(row["rowid"])] = username
     except Exception:
-        return {}
-    return wxid_by_table
+        return {}, {}
+    return wxid_by_table, id_to_wxid
+
+
+def _self_wxids() -> set[str]:
+    global _self_wxids_cache
+    if _self_wxids_cache is not None:
+        return _self_wxids_cache
+    try:
+        account = _account()
+    except Exception:
+        return set()
+    candidates = [
+        account.get("wxid"),
+        account.get("username"),
+        account.get("user_name"),
+        account.get("account"),
+        os.path.basename(str(account.get("wx_dir") or "")),
+    ]
+    _self_wxids_cache = {str(item).strip().lower() for item in candidates if str(item or "").strip()}
+    return _self_wxids_cache
+
+
+def _sender_info_from_real_id(
+    real_sender_id: object,
+    chat_wxid: str,
+    id_to_wxid: dict[int, str],
+    contacts: dict[str, dict],
+) -> dict:
+    sender_id = _safe_int(real_sender_id)
+    sender_wxid = str(id_to_wxid.get(sender_id) or "").strip()
+    sender_key = sender_wxid.lower()
+    chat_key = str(chat_wxid or "").strip().lower()
+    self_wxids = _self_wxids()
+    if sender_wxid:
+        is_me = sender_key in self_wxids
+    else:
+        is_me = sender_id == 0
+    if sender_wxid and sender_key == chat_key:
+        is_me = False
+    if is_me:
+        return {"sender": "me", "sender_wxid": sender_wxid, "sender_display": "我"}
+    display = _display_name(sender_wxid, contacts.get(sender_wxid, {})) if sender_wxid else ""
+    return {"sender": "them", "sender_wxid": sender_wxid, "sender_display": display}
 
 
 def _msg_tables(conn: sqlite3.Connection) -> list[str]:
@@ -805,7 +901,7 @@ def _iter_db_messages(
             return messages
 
         table_names = _msg_tables(conn)
-        wxid_by_table = _msg_table_wxids(conn)
+        wxid_by_table, id_to_wxid = _name2id_maps(conn)
         for table in table_names:
             wxid = wxid_by_table.get(table, table)
             if allowed_wxids and wxid not in allowed_wxids:
@@ -834,15 +930,15 @@ def _iter_db_messages(
                 content = _render_message(msg_type, 0, row["message_content"]).strip()
                 if not content:
                     continue
-                is_me = _safe_int(row["real_sender_id"]) == 0
+                sender_info = _sender_info_from_real_id(row["real_sender_id"], wxid, id_to_wxid, contacts)
                 messages.append({
                     "wxid": wxid,
                     "display": display,
                     "is_group": wxid.endswith("@chatroom"),
                     "ts": _norm_ts(row["create_time"]),
-                    "sender": "me" if is_me else "them",
-                    "sender_wxid": "",
-                    "sender_display": "我" if is_me else "",
+                    "sender": sender_info["sender"],
+                    "sender_wxid": sender_info["sender_wxid"],
+                    "sender_display": sender_info["sender_display"],
                     "type": msg_type,
                     "content": content,
                 })

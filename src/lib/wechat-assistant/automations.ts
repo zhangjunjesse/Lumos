@@ -20,6 +20,7 @@ import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
 import { listWeChatAssistantTasks } from './tasks';
 
 const SETTINGS_KEY = 'apps.wechat-assistant.automations.v1';
+const DSL_MIGRATION_KEY = 'apps.wechat-assistant.automations.dsl-main-agent-migrated';
 
 export type AutomationDraft = Omit<Automation, 'id' | 'createdAt'>;
 
@@ -30,6 +31,7 @@ export function listWeChatAutomations(): Automation[] {
 }
 
 export async function ensureLegacyDailySummaryAutomation(): Promise<void> {
+  await migrateAutomationDslsToMainAgent();
   const current = readAutomations();
   if (current.some(isWeChatSummaryAutomation)) return;
 
@@ -323,9 +325,9 @@ export function buildAutomationWorkflowDsl(automation: Automation): WorkflowDSLV
       id: 'notify',
       type: 'notification',
       input: {
-        channel: 'system',
+        channel: 'im:wechat',
         level: 'info',
-        sessionId: '{{ input.__lumosRuntime.sessionId }}',
+        targetSessionRef: 'main-agent',
         message: buildNotificationMessage(automation),
       },
       policy: { timeoutMs: 30_000 },
@@ -372,9 +374,9 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
         id: 'notify',
         type: 'notification',
         input: {
-          channel: 'system',
+          channel: 'im:wechat',
           level: 'info',
-          sessionId: '{{ input.__lumosRuntime.sessionId }}',
+          targetSessionRef: 'main-agent',
           message: '{{ steps.generate_report.output.notification }}',
         },
         policy: { timeoutMs: 30_000 },
@@ -438,4 +440,31 @@ function padHour(value: number): string {
 
 function padMinute(value: number): string {
   return String(Math.min(59, Math.max(0, value))).padStart(2, '0');
+}
+
+/**
+ * One-shot migration: rebuilds the workflow DSL of every existing WeChat
+ * automation so the `notify` step routes to the Main Agent session + IM
+ * binding instead of the workflow's own transient session id.
+ *
+ * Idempotent — guarded by a settings flag so repeat boots are cheap.
+ */
+export async function migrateAutomationDslsToMainAgent(): Promise<void> {
+  if (getSetting(DSL_MIGRATION_KEY) === '1') return;
+  const current = readAutomations();
+  if (!current.length) {
+    setSetting(DSL_MIGRATION_KEY, '1');
+    return;
+  }
+  const migrated: Automation[] = [];
+  for (const automation of current) {
+    try {
+      migrated.push(await syncSchedule(automation));
+    } catch (error) {
+      console.warn('[wechat-assistant] DSL migration failed for automation', automation.id, error);
+      migrated.push(automation);
+    }
+  }
+  writeAutomations(migrated);
+  setSetting(DSL_MIGRATION_KEY, '1');
 }

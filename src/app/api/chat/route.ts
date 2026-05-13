@@ -7,6 +7,7 @@ import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import {
   createWeChatAssistantMcpServer,
   WECHAT_ASSISTANT_MCP_SYSTEM_HINT,
+  WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT,
 } from '@/lib/tools/wechat-assistant-mcp-server';
 import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
@@ -901,9 +902,17 @@ export async function POST(request: NextRequest) {
       requestHeaderContextId: browserBridgeOverride.browserContextId,
       sessionContextId: sessionBrowserContextId,
     });
+    const isDedicatedWeChatAssistantSession = isWeChatAssistantChatSession(session);
+    const shouldExposeWeChatAssistantMcp = permissionMode !== 'default' && !browserAutomationIntent;
     const skippedMcpNames = new Set<string>();
     if (browserAutomationIntent) {
       skippedMcpNames.add('deepsearch');
+    }
+    if (!browserAutomationIntent) {
+      // Agent Chat should read WeChat through the Lumos mirror-backed tool.
+      // The raw wechat-export MCP reads decrypted DB files directly, has a
+      // narrower paging contract, and can surface transient SQLite locks.
+      skippedMcpNames.add('wechat-export');
     }
     let loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedSessionWorkingDirectory,
@@ -945,8 +954,12 @@ export async function POST(request: NextRequest) {
     if (permissionMode !== 'default' && hasImToolsMcp(loadedMcpServers)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IM_TOOLS_SYSTEM_HINT;
     }
-    if (permissionMode !== 'default' && isWeChatAssistantChatSession(session)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + WECHAT_ASSISTANT_MCP_SYSTEM_HINT;
+    if (shouldExposeWeChatAssistantMcp) {
+      finalSystemPrompt = (finalSystemPrompt || '')
+        + '\n\n'
+        + (isDedicatedWeChatAssistantSession
+          ? WECHAT_ASSISTANT_MCP_SYSTEM_HINT
+          : WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT);
     }
     if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
@@ -1021,8 +1034,10 @@ export async function POST(request: NextRequest) {
       const workflowMcp = createWorkflowMcpServer();
       inProcessMcpServers[workflowMcp.name] = workflowMcp;
     }
-    if (isWeChatAssistantChatSession(session) && !browserAutomationIntent) {
-      const wechatAssistantMcp = createWeChatAssistantMcpServer();
+    if (shouldExposeWeChatAssistantMcp) {
+      const wechatAssistantMcp = createWeChatAssistantMcpServer({
+        readOnly: !isDedicatedWeChatAssistantSession,
+      });
       inProcessMcpServers[wechatAssistantMcp.name] = wechatAssistantMcp;
     }
     if (isEcommerceAssistantChatSession(session) && !browserAutomationIntent) {

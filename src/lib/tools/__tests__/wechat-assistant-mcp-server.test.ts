@@ -127,6 +127,8 @@ describe('wechat assistant MCP server', () => {
     );
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('read-only');
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('instead of saying you do not have this capability');
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('wechat_read_chat');
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('200-message limit is one page only');
   });
 
   it('keeps WeChat IM delivery separate from automation content in the full hint', () => {
@@ -203,6 +205,64 @@ describe('wechat assistant MCP server', () => {
     expect(text).toContain('"total_messages": 43');
   });
 
+  it('syncs before reading a chat even when the previous mirror sync is fresh', async () => {
+    createWeChatAssistantMcpServer({ readOnly: true });
+    const readTool = findTool('read_wechat_chat');
+    mockGetSyncState
+      .mockReturnValueOnce({
+        cursorTs: 1,
+        firstStartedAt: 1,
+        lastFinishedAt: Date.now(),
+        lastError: null,
+        totalMessages: 42,
+      })
+      .mockReturnValueOnce({
+        cursorTs: 3,
+        firstStartedAt: 1,
+        lastFinishedAt: Date.now(),
+        lastError: null,
+        totalMessages: 44,
+      });
+    mockRunSync.mockResolvedValue({
+      status: 'completed',
+      inserted: 2,
+      seen: 3,
+      cursorTs: 3,
+      durationMs: 20,
+    });
+    mockReadChatMessages.mockReturnValue({
+      status: 'ok',
+      query: '客户群',
+      chat: {
+        wxid: 'group_x@chatroom',
+        display: '客户群',
+        isGroup: true,
+        lastTs: 1_777_000_100,
+        messageCount: 300,
+        unreadCount: 0,
+        summary: '',
+      },
+      candidates: [],
+      messages: [],
+      limit: 200,
+      offset: 0,
+      hasMore: true,
+      nextOffset: 200,
+    });
+
+    const result = await readTool.handler({ chat: '客户群', limit: 200 });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(mockRunSync).toHaveBeenCalledTimes(1);
+    expect(mockReadChatMessages).toHaveBeenCalledWith(expect.objectContaining({
+      chat: '客户群',
+      limit: 200,
+      offset: 0,
+    }));
+    expect(text).toContain('"attempted": true');
+    expect(text).toContain('"next_offset": 200');
+  });
+
   it('read_wechat_chat reads a visible chat directly without keyword matching', async () => {
     createWeChatAssistantMcpServer({ readOnly: true });
     const readTool = findTool('read_wechat_chat');
@@ -222,6 +282,7 @@ describe('wechat assistant MCP server', () => {
       messages: [
         { ts: 1_777_000_000, sender: 'them', senderDisplay: null, msgType: 1, content: '今天的对话内容' },
         { ts: 1_777_000_010, sender: 'me', senderDisplay: null, msgType: 3, content: '' },
+        { ts: 1_777_000_020, sender: 'them', senderDisplay: null, msgType: 1, content: '\u0001\u0002\u0003���' },
       ],
       limit: 50,
       offset: 0,
@@ -241,6 +302,7 @@ describe('wechat assistant MCP server', () => {
     expect(text).toContain('陈啟伟');
     expect(text).toContain('今天的对话内容');
     expect(text).toContain('[图片]');
+    expect(text).toContain('[暂不支持的消息]');
     expect(text).toContain('"next_offset": 50');
     expect(text).not.toContain('wxid_xxx');
   });

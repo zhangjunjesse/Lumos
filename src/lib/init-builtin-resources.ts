@@ -746,6 +746,13 @@ export async function initBuiltinResources(): Promise<void> {
       console.error('[init-builtin-resources] deep-research install error:', err);
     }
 
+    try {
+      const { migrateAutomationDslsToMainAgent } = await import('./wechat-assistant/automations');
+      await migrateAutomationDslsToMainAgent();
+    } catch (err) {
+      console.error('[init-builtin-resources] wechat-assistant DSL migration error:', err);
+    }
+
     setSetting('builtin_resources_imported', 'true');
     console.log('[init-builtin-resources] Done');
   } catch (error) {

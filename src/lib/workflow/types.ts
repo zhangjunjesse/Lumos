@@ -100,6 +100,15 @@ export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {
   level?: 'info' | 'warning' | 'error';
   channel?: string;
   sessionId?: string;
+  /**
+   * Logical session target that the runtime resolves into a concrete sessionId
+   * before delivery. Used by built-in apps (WeChat Assistant, etc.) so the DSL
+   * doesn't have to know the live session id when it's generated.
+   *
+   * 'main-agent' resolves to the Lumos Main Agent session (creates one if it
+   * does not exist yet). When set, it takes precedence over `sessionId`.
+   */
+  targetSessionRef?: 'main-agent';
 }
 
 export interface CapabilityStepInput extends WorkflowStepRuntimeCarrier {
