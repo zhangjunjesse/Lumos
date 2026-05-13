@@ -17,7 +17,11 @@ function withBuildNodeOptions(existing) {
   if (parts.some((part) => part.startsWith('--max-old-space-size='))) {
     return existing || '';
   }
-  const heapMb = process.env.LUMOS_NEXT_BUILD_HEAP_MB || '6144';
+  // 6144 OOMs since native-app platform + memory-v2 (~32k LOC, May 2026).
+  // Both local pre-push hook and GitHub Actions ubuntu-latest verify-source
+  // need ≥8192. Ubuntu-latest has 16GB RAM so 8GB heap is safe; override via
+  // LUMOS_NEXT_BUILD_HEAP_MB for tight environments.
+  const heapMb = process.env.LUMOS_NEXT_BUILD_HEAP_MB || '8192';
   return [...parts, `--max-old-space-size=${heapMb}`].join(' ');
 }
 
