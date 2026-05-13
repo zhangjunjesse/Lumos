@@ -4,7 +4,7 @@ import { isVenvReady, getVenvDir, listPackages } from '@/lib/python-venv';
 
 export async function GET() {
   try {
-    const pythonPath = resolvePythonBinary();
+    const pythonPath = resolvePythonBinary({ minimumVersion: { major: 3, minor: 10 } });
     const version = pythonPath ? getPythonVersion(pythonPath) : null;
     const venvReady = isVenvReady();
     const packages = venvReady ? await listPackages() : [];

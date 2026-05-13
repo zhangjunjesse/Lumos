@@ -102,7 +102,7 @@ interface EmbeddedBrowserPanelProps {
   fitWidth?: boolean;
   onUrlChange: (url: string) => void | Promise<void>;
   onReload?: () => void | Promise<void>;
-  onOpenInNewTab?: (url: string) => void | Promise<void>;
+  onAddToChat?: (url: string) => void | Promise<void>;
   onFitWidthChange?: (fitWidth: boolean) => void;
   onAddToLibrary?: (url: string) => void;
   nativeHost?: boolean;
@@ -114,7 +114,7 @@ export function EmbeddedBrowserPanel({
   fitWidth,
   onUrlChange,
   onReload,
-  onOpenInNewTab,
+  onAddToChat,
   onFitWidthChange,
   onAddToLibrary,
   nativeHost = false,
@@ -212,14 +212,14 @@ export function EmbeddedBrowserPanel({
     handleNavigateCurrent();
   }, [handleNavigateCurrent]);
 
-  const handleOpenInNewTab = useCallback(() => {
+  const handleAddToChat = useCallback(() => {
     const normalized = normalizeBrowserInput(inputValue);
     if (!normalized) return;
-    if (!onOpenInNewTab) return;
-    runBrowserAction(onOpenInNewTab(normalized), (error) => {
-      console.error("[EmbeddedBrowserPanel] Failed to open browser tab:", error);
+    if (!onAddToChat) return;
+    runBrowserAction(onAddToChat(normalized), (error) => {
+      console.error("[EmbeddedBrowserPanel] Failed to add browser URL to chat:", error);
     });
-  }, [inputValue, onOpenInNewTab]);
+  }, [inputValue, onAddToChat]);
 
   const handleReload = useCallback(() => {
     setPendingLoading(true);
@@ -302,11 +302,11 @@ export function EmbeddedBrowserPanel({
             variant="ghost"
             size="icon-sm"
             className="h-8 w-8 shrink-0"
-            onClick={handleOpenInNewTab}
-            title={t("browser.openInNewTab")}
+            onClick={handleAddToChat}
+            title={t("common.addToChat")}
           >
             <HugeiconsIcon icon={Add} className="h-3.5 w-3.5" />
-            <span className="sr-only">{t("browser.openInNewTab")}</span>
+            <span className="sr-only">{t("common.addToChat")}</span>
           </Button>
 
           <Button

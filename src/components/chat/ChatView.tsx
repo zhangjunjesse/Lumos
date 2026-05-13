@@ -13,11 +13,13 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { usePanel } from '@/hooks/usePanel';
+import { useContentPanelStore } from '@/stores/content-panel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { Button } from '@/components/ui/button';
+import type { BrowserPanelTabData } from '@/types/browser';
 import {
   parseBrowserContextConflict,
   type BrowserContextConflictDetails,
@@ -75,7 +77,192 @@ interface BrowserContextConflictState extends BrowserContextConflictDetails {
   retryKnowledgeOptions?: ChatKnowledgeOptions;
 }
 
+interface ChatBrowserPageContext {
+  pageId?: string;
+  url?: string;
+  title?: string;
+  selectedText?: string;
+  text?: string;
+  textLength?: number;
+  readyState?: string;
+  capturedAt: string;
+  captureError?: string;
+}
+
 const EMPTY_MESSAGES: Message[] = [];
+const BROWSER_PAGE_TEXT_LIMIT = 12_000;
+const BROWSER_SELECTED_TEXT_LIMIT = 2_000;
+const BROWSER_PAGE_CAPTURE_TIMEOUT_MS = 3_000;
+
+function getBrowserPanelTabData(data: unknown): BrowserPanelTabData {
+  return (data as BrowserPanelTabData | undefined) || {};
+}
+
+function normalizeBrowserPageText(value: unknown, limit: number): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/\u0000/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
+    .slice(0, limit);
+}
+
+function buildBrowserPageCaptureScript(): string {
+  return `(() => {
+    const maxText = ${BROWSER_PAGE_TEXT_LIMIT};
+    const maxSelection = ${BROWSER_SELECTED_TEXT_LIMIT};
+    const clean = (value) => String(value || '')
+      .replace(/\\u0000/g, '')
+      .replace(/[ \\t]+\\n/g, '\\n')
+      .replace(/\\n{4,}/g, '\\n\\n\\n')
+      .trim();
+    const selected = clean(window.getSelection ? window.getSelection().toString() : '');
+    const bodyText = clean(document.body ? document.body.innerText : '');
+    return {
+      url: window.location.href,
+      title: document.title || '',
+      selectedText: selected.slice(0, maxSelection),
+      text: bodyText.slice(0, maxText),
+      textLength: bodyText.length,
+      readyState: document.readyState || ''
+    };
+  })()`;
+}
+
+function coerceBrowserPageContextValue(
+  value: unknown,
+  fallback: Pick<ChatBrowserPageContext, 'pageId' | 'url' | 'title' | 'capturedAt'>,
+): ChatBrowserPageContext {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const url = normalizeBrowserPageText(record.url, 2_000) || fallback.url;
+  const title = normalizeBrowserPageText(record.title, 500) || fallback.title;
+  const selectedText = normalizeBrowserPageText(record.selectedText, BROWSER_SELECTED_TEXT_LIMIT);
+  const text = normalizeBrowserPageText(record.text, BROWSER_PAGE_TEXT_LIMIT);
+  const textLength = typeof record.textLength === 'number' && Number.isFinite(record.textLength)
+    ? Math.max(0, Math.floor(record.textLength))
+    : text.length;
+  const readyState = normalizeBrowserPageText(record.readyState, 50);
+
+  return {
+    ...fallback,
+    ...(url ? { url } : {}),
+    ...(title ? { title } : {}),
+    ...(selectedText ? { selectedText } : {}),
+    ...(text ? { text } : {}),
+    textLength,
+    ...(readyState ? { readyState } : {}),
+  };
+}
+
+async function captureActiveBrowserPageContext(): Promise<ChatBrowserPageContext | null> {
+  if (typeof window === 'undefined') return null;
+
+  const { tabs, activeTabId } = useContentPanelStore.getState();
+  const activeBrowserTab = tabs.find((tab) => tab.id === activeTabId && tab.type === 'browser');
+  if (!activeBrowserTab) return null;
+
+  const data = getBrowserPanelTabData(activeBrowserTab.data);
+  const capturedAt = new Date().toISOString();
+  let pageId = typeof data.pageId === 'string' ? data.pageId.trim() : '';
+  let url = typeof data.url === 'string' ? data.url.trim() : '';
+  let title = activeBrowserTab.title || '';
+  const api = window.electronAPI?.browser;
+
+  if (api?.getTabs) {
+    try {
+      const tabsResult = await api.getTabs();
+      if (tabsResult.success && Array.isArray(tabsResult.tabs)) {
+        const nativeTab = tabsResult.tabs.find((tab) => tab.id === pageId)
+          || tabsResult.tabs.find((tab) => tab.id === tabsResult.activeTabId);
+        if (nativeTab) {
+          pageId = nativeTab.id || pageId;
+          url = nativeTab.url || url;
+          title = nativeTab.title || title;
+        }
+      }
+    } catch (error) {
+      console.warn('[ChatView] Failed to refresh browser tab metadata:', error);
+    }
+  }
+
+  if (!pageId && !url) return null;
+  if (url === 'about:blank') return null;
+
+  const fallback = {
+    pageId: pageId || undefined,
+    url: url || undefined,
+    title: title || undefined,
+    capturedAt,
+  };
+
+  if (!pageId || !api?.sendCDPCommand) {
+    return {
+      ...fallback,
+      captureError: 'Browser page text capture is unavailable.',
+    };
+  }
+
+  try {
+    if (api.isCDPConnected && api.connectCDP) {
+      const status = await api.isCDPConnected(pageId);
+      if (!status.success || !status.connected) {
+        const connected = await api.connectCDP(pageId);
+        if (!connected.success) {
+          throw new Error(connected.error || 'Failed to connect browser page');
+        }
+      }
+    } else if (api.connectCDP) {
+      const connected = await api.connectCDP(pageId);
+      if (!connected.success) {
+        throw new Error(connected.error || 'Failed to connect browser page');
+      }
+    }
+
+    const evaluated = await api.sendCDPCommand(pageId, 'Runtime.evaluate', {
+      expression: buildBrowserPageCaptureScript(),
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (!evaluated.success) {
+      throw new Error(evaluated.error || 'Failed to evaluate browser page');
+    }
+
+    const value = (evaluated.result as { result?: { value?: unknown } } | undefined)?.result?.value;
+    return coerceBrowserPageContextValue(value, fallback);
+  } catch (error) {
+    return {
+      ...fallback,
+      captureError: error instanceof Error ? error.message : 'Failed to capture browser page text.',
+    };
+  }
+}
+
+function captureActiveBrowserPageContextWithTimeout(): Promise<ChatBrowserPageContext | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(null);
+    }, BROWSER_PAGE_CAPTURE_TIMEOUT_MS);
+
+    captureActiveBrowserPageContext()
+      .then((context) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(context);
+      })
+      .catch((error) => {
+        console.warn('[ChatView] Failed to capture active browser page context:', error);
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(null);
+      });
+  });
+}
 
 function getInitialKnowledgeOptions(
   initialKnowledgeOptions: ChatKnowledgeOptions | undefined,
@@ -149,7 +336,7 @@ export function ChatView({
 }: ChatViewProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
-  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, contentPanelOpen } = usePanel();
   const effectiveWorkingDirectory = useMemo(
     () => workingDirectoryOverride || workingDirectory,
     [workingDirectoryOverride, workingDirectory]
@@ -206,6 +393,7 @@ export function ChatView({
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
   const idleMemoryTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const sendInFlightRef = useRef(false);
   const accumulatedRef = useRef(cachedStreamingState?.content || '');
   const reasoningSummariesRef = useRef<string[]>(initialReasoningSummaries);
   const toolUsesRef = useRef<ToolUseInfo[]>(cachedStreamingState?.toolUses || []);
@@ -729,7 +917,8 @@ export function ChatView({
       displayOverride?: string,
       knowledgeOptions?: ChatKnowledgeOptions,
     ) => {
-      if (isStreaming) return;
+      if (isStreaming || sendInFlightRef.current) return;
+      sendInFlightRef.current = true;
       clearIdleMemoryTimer();
       setBrowserConflict(null);
 
@@ -744,7 +933,16 @@ export function ChatView({
 
       let displayContent = displayUserContent;
       if (files && files.length > 0) {
-        const fileMeta = files.map((f) => ({ id: f.id, name: f.name, type: f.type, size: f.size, data: f.data }));
+        const fileMeta = files.map((f) => ({
+          id: f.id,
+          name: f.name,
+          type: f.type,
+          size: f.size,
+          ...(f.filePath ? { filePath: f.filePath } : {}),
+          ...(f.data && f.size <= 10 * 1024 * 1024 && !f.type.startsWith('audio/')
+            ? { data: f.data }
+            : {}),
+        }));
         displayContent = `<!--files:${JSON.stringify(fileMeta)}-->${displayUserContent}`;
       }
 
@@ -808,6 +1006,9 @@ export function ChatView({
 
       try {
         const bridgeHeaders = await getBrowserBridgeHeaders(browserContextId);
+        const browserPageContext = contentPanelOpen
+          ? await captureActiveBrowserPageContextWithTimeout()
+          : null;
         const apiEndpoint = chatEndpoint || (sessionId === 'capability-authoring' ? '/api/capabilities/chat' : '/api/chat');
 
         // 为 capability-authoring 构建消息历史
@@ -824,6 +1025,7 @@ export function ChatView({
             : {}),
           ...(files && files.length > 0 ? { files } : {}),
           ...(systemPromptAppend ? { systemPromptAppend } : {}),
+          ...(browserPageContext ? { browser_page_context: browserPageContext } : {}),
         };
 
         if (sessionId === 'capability-authoring') {
@@ -1103,6 +1305,7 @@ export function ChatView({
         }
       } finally {
         clearInterval(idleCheckTimer);
+        sendInFlightRef.current = false;
         resetStreamingUi(controller);
 
         if (shouldMarkStreamError) {
@@ -1149,6 +1352,7 @@ export function ChatView({
       clearIdleMemoryTimer,
       chatEndpoint,
       completeStreamingSession,
+      contentPanelOpen,
       currentModel,
       currentProviderId,
       errorStreamingSession,

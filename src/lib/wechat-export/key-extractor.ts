@@ -51,7 +51,7 @@ function findSystemPython3(): string | null {
 
 function findManagedPython(): string | null {
   if (isVenvReady()) return getVenvPythonPath();
-  return resolvePythonBinary();
+  return resolvePythonBinary({ minimumVersion: { major: 3, minor: 10 } });
 }
 
 export interface KeyExtractionProgress {

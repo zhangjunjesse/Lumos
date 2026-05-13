@@ -19,6 +19,7 @@ import {
   markSyncFinished,
   markSyncStarted,
   querySnapshot,
+  readChatMessages,
   resetMirror,
   saveTopicDailySummary,
   searchMessages,
@@ -172,6 +173,18 @@ describe('searchMessages', () => {
     expect(searchMessages({ query: 'A_B', limit: 10 }).map((item) => item.content)).toEqual(['A_B']);
   });
 
+  it('supports offset pagination and larger search pages', () => {
+    upsertSessions([session('alice', { display: 'Alice' })]);
+    insertMessages(Array.from({ length: 205 }, (_, index) => (
+      msg('alice', 1_700_000_000 + index, 'me', `合同第 ${index} 条`)
+    )));
+
+    expect(searchMessages({ query: '合同', limit: 1, offset: 1 }).map((item) => item.content)).toEqual([
+      '合同第 203 条',
+    ]);
+    expect(searchMessages({ query: '合同', limit: 500 })).toHaveLength(200);
+  });
+
   it('returns readable chat and speaker names instead of WeChat internal ids', () => {
     upsertSessions([
       session('45434442516@chatroom', { display: '45434442516@chatroom', isGroup: true }),
@@ -193,6 +206,71 @@ describe('searchMessages', () => {
       display: '微信群聊',
       senderDisplay: '群成员',
     });
+  });
+});
+
+describe('readChatMessages', () => {
+  it('reads recent messages by visible chat name without requiring keyword matches', () => {
+    upsertSessions([session('alice', {
+      display: '陈啟伟',
+      lastTs: 30,
+      messageCount: 3,
+    })]);
+    insertMessages([
+      msg('alice', 10, 'them', '第一条没有联系人名字'),
+      msg('alice', 20, 'me', '', 3),
+      msg('alice', 30, 'them', '今天新消息'),
+    ]);
+
+    const firstPage = readChatMessages({ chat: '陈啟伟', limit: 2 });
+
+    expect(firstPage.status).toBe('ok');
+    expect(firstPage.chat?.display).toBe('陈啟伟');
+    expect(firstPage.messages.map((item) => ({ ts: item.ts, msgType: item.msgType, content: item.content }))).toEqual([
+      { ts: 30, msgType: 1, content: '今天新消息' },
+      { ts: 20, msgType: 3, content: '' },
+    ]);
+    expect(firstPage.hasMore).toBe(true);
+    expect(firstPage.nextOffset).toBe(2);
+
+    const secondPage = readChatMessages({ chat: '陈啟伟', limit: 2, offset: 2 });
+    expect(secondPage.messages.map((item) => item.content)).toEqual(['第一条没有联系人名字']);
+    expect(secondPage.hasMore).toBe(false);
+  });
+
+  it('returns candidates instead of guessing when a chat lookup is ambiguous', () => {
+    upsertSessions([
+      session('group-1@chatroom', { display: '项目群', isGroup: true, lastTs: 20 }),
+      session('group-2@chatroom', { display: '项目复盘群', isGroup: true, lastTs: 10 }),
+    ]);
+    insertMessages([
+      msg('group-1@chatroom', 20, 'them', '上线安排'),
+      msg('group-2@chatroom', 10, 'them', '复盘安排'),
+    ]);
+
+    const result = readChatMessages({ chat: '项目' });
+
+    expect(result.status).toBe('ambiguous');
+    expect(result.messages).toEqual([]);
+    expect(result.candidates.map((item) => item.display)).toEqual(['项目群', '项目复盘群']);
+  });
+
+  it('supports time-window and before timestamp filters for a selected chat', () => {
+    upsertSessions([session('alice', { display: 'Alice', lastTs: 30 })]);
+    insertMessages([
+      msg('alice', 10, 'them', '旧消息'),
+      msg('alice', 20, 'them', '窗口内较早'),
+      msg('alice', 30, 'them', '窗口内较新'),
+    ]);
+
+    expect(readChatMessages({ chat: 'Alice', sinceTs: 15 }).messages.map((item) => item.content)).toEqual([
+      '窗口内较新',
+      '窗口内较早',
+    ]);
+    expect(readChatMessages({ chat: 'Alice', beforeTs: 30 }).messages.map((item) => item.content)).toEqual([
+      '窗口内较早',
+      '旧消息',
+    ]);
   });
 });
 

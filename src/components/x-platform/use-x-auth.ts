@@ -45,7 +45,9 @@ export function useXAuth() {
   }, [refresh]);
 
   const login = useCallback(async (
-    input: { mode: 'browser'; timeoutSecs?: number } | { mode: 'paste'; cookieString: string }
+    input:
+      | { mode: 'browser'; timeoutSecs?: number }
+      | { mode: 'paste'; cookieString: string; screenName?: string; name?: string }
       = { mode: 'browser', timeoutSecs: 300 },
   ) => {
     setBusy('login');

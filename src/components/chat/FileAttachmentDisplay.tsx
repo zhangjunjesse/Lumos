@@ -18,7 +18,7 @@ interface FileAttachmentDisplayProps {
  */
 function fileUrl(f: FileAttachment): string {
   if (f.data) return `data:${f.type};base64,${f.data}`;
-  if (f.filePath) return `/api/uploads?path=${encodeURIComponent(f.filePath)}`;
+  if (f.filePath) return `/api/files/raw?path=${encodeURIComponent(f.filePath)}`;
   return '';
 }
 

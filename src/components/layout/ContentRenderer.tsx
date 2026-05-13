@@ -246,26 +246,20 @@ export function ContentRenderer() {
     }
   }, []);
 
-  const handleCreateBrowserTab = useCallback(async (fromTabId: string, url: string) => {
-    const fromTab = tabs.find((tab) => tab.id === fromTabId);
-    const fromData = getBrowserTabData(fromTab?.data);
+  const handleAddBrowserUrlToChat = useCallback((tabId: string, url: string) => {
+    const normalizedUrl = url.trim();
+    if (!normalizedUrl || normalizedUrl === 'about:blank') return;
 
-    try {
-      const pageId = await createNativeBrowserTab(url);
-      addTab({
-        type: 'browser',
-        title: getBrowserTabTitle(url, t('tab.browser')),
-        closable: true,
-        data: {
-          pageId,
-          url,
-          fitWidth: fromData.fitWidth ?? false,
-        },
-      });
-    } catch (error) {
-      console.error('[ContentRenderer] Failed to open browser tab:', error);
-    }
-  }, [addTab, createNativeBrowserTab, t, tabs]);
+    const sourceTab = tabs.find((tab) => tab.id === tabId);
+    const data = getBrowserTabData(sourceTab?.data);
+    window.dispatchEvent(new CustomEvent('attach-url-to-chat', {
+      detail: {
+        url: normalizedUrl,
+        title: sourceTab?.title || getBrowserTabTitle(normalizedUrl, t('tab.browser')),
+        pageId: typeof data.pageId === 'string' ? data.pageId : undefined,
+      },
+    }));
+  }, [t, tabs]);
 
   const handleOpenFavoriteUrl = useCallback(async (url: string) => {
     const normalized = url.trim();
@@ -527,7 +521,7 @@ export function ContentRenderer() {
             isLoading={getBrowserTabData(tab.data).isLoading}
             onUrlChange={(url) => void handleBrowserUrlChange(tab.id, url)}
             onReload={() => void handleBrowserReload(tab.id)}
-            onOpenInNewTab={(url) => void handleCreateBrowserTab(tab.id, url)}
+            onAddToChat={(url) => handleAddBrowserUrlToChat(tab.id, url)}
             onFitWidthChange={(fitWidth) => handleBrowserFitWidthChange(tab.id, fitWidth)}
             onAddToLibrary={handleAddBrowserUrlToLibrary}
             nativeHost

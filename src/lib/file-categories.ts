@@ -15,7 +15,7 @@ export type FileCategory =
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico']);
 const VIDEO_EXTS = new Set(['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv']);
-const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']);
+const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.amr', '.silk', '.opus', '.weba']);
 const PDF_EXTS = new Set(['.pdf']);
 const WORD_EXTS = new Set(['.docx', '.doc']);
 const EXCEL_EXTS = new Set(['.xlsx', '.xls', '.csv']);
@@ -89,6 +89,10 @@ export function getMimeType(ext: string): string {
     '.m4a': 'audio/mp4',
     '.flac': 'audio/flac',
     '.aac': 'audio/aac',
+    '.amr': 'audio/amr',
+    '.silk': 'audio/silk',
+    '.opus': 'audio/opus',
+    '.weba': 'audio/webm',
     // Documents
     '.pdf': 'application/pdf',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

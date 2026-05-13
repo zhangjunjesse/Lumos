@@ -69,7 +69,58 @@ function parseCellAddress(addr: unknown, context: string): { row: number; col: n
   return { row: parseInt(match[2], 10), col };
 }
 
+function describeValue(value: unknown): string {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+}
+
+function validateWriteExcelOptions(options: WriteExcelOptions): void {
+  const sheets = options.sheets as unknown;
+  if (!Array.isArray(sheets)) {
+    throw new Error(
+      'write_spreadsheet.sheets must be an array, not a JSON string. '
+      + 'Pass sheets as an actual array in the tool input, for example '
+      + '{"sheets":[{"name":"Sheet1","rows":[["A"]]}]}. '
+      + 'If cell text contains quotes, keep it as a normal cell string and escape embedded quotes.',
+    );
+  }
+
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i] as Partial<WriteSheetData> | null;
+    const ctx = `sheets[${i}]`;
+    if (!sheet || typeof sheet !== 'object' || Array.isArray(sheet)) {
+      throw new Error(`${ctx} must be an object with name and rows.`);
+    }
+    if (typeof sheet.name !== 'string' || sheet.name.trim().length === 0) {
+      throw new Error(`${ctx}.name must be a non-empty string.`);
+    }
+    if (!Array.isArray(sheet.rows)) {
+      throw new Error(`${ctx}.rows must be an array of row arrays, got ${describeValue(sheet.rows)}.`);
+    }
+    for (let r = 0; r < sheet.rows.length; r++) {
+      if (!Array.isArray(sheet.rows[r])) {
+        throw new Error(`${ctx}.rows[${r}] must be an array of cell values.`);
+      }
+    }
+    if (sheet.headers !== undefined && !Array.isArray(sheet.headers)) {
+      throw new Error(`${ctx}.headers must be an array of strings when provided.`);
+    }
+    if (sheet.formulas !== undefined && !Array.isArray(sheet.formulas)) {
+      throw new Error(`${ctx}.formulas must be an array when provided.`);
+    }
+    if (sheet.styles !== undefined && !Array.isArray(sheet.styles)) {
+      throw new Error(`${ctx}.styles must be an array when provided.`);
+    }
+    if (sheet.columnWidths !== undefined && !Array.isArray(sheet.columnWidths)) {
+      throw new Error(`${ctx}.columnWidths must be an array of numbers when provided.`);
+    }
+  }
+}
+
 export async function writeExcel(options: WriteExcelOptions): Promise<string> {
+  validateWriteExcelOptions(options);
+
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Lumos';
   workbook.created = new Date();

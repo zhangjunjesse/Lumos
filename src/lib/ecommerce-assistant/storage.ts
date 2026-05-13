@@ -3,10 +3,14 @@ import { getAppPlatformService } from '@/lib/app/service';
 import { createAppDataStore } from '@/lib/app/runtime/data-store';
 import { ECOMMERCE_ASSISTANT_APP_ID } from './constants';
 import type {
+  DiscoverCandidateRecord,
+  DiscoverCandidateStatus,
   ImageJobRecord,
   ImageJobStatus,
   ImageOutputKind,
   ImageOutputRecord,
+  ListingDraftRecord,
+  ListingDraftStatus,
   ProductBriefRecord,
   ProductInputRecord,
   StylePresetRecord,
@@ -17,6 +21,8 @@ export type ImageJobRow = AppRow<ImageJobRecord>;
 export type ImageOutputRow = AppRow<ImageOutputRecord>;
 export type ProductBriefRow = AppRow<ProductBriefRecord>;
 export type StylePresetRow = AppRow<StylePresetRecord>;
+export type DiscoverCandidateRow = AppRow<DiscoverCandidateRecord>;
+export type ListingDraftRow = AppRow<ListingDraftRecord>;
 
 export function getEcommerceStore(): AppDataStore {
   const svc = getAppPlatformService();
@@ -235,4 +241,99 @@ export function listOutputs(
     orderBy: { field: 'updated_at', direction: 'desc' },
     limit: 200,
   });
+}
+
+export function listCandidates(
+  store: AppDataStore,
+  filter?: Partial<DiscoverCandidateRecord>,
+): DiscoverCandidateRow[] {
+  return store.query<DiscoverCandidateRecord>('discover_candidates', {
+    filter: filter as Record<string, unknown> | undefined,
+    orderBy: { field: 'score_total', direction: 'desc' },
+    limit: 200,
+  });
+}
+
+export function getCandidate(
+  store: AppDataStore,
+  id: string,
+): DiscoverCandidateRow | null {
+  return store.get<DiscoverCandidateRecord>('discover_candidates', id);
+}
+
+export function createCandidate(
+  store: AppDataStore,
+  input: Omit<DiscoverCandidateRecord, 'id' | 'created_at' | 'updated_at'>,
+): DiscoverCandidateRow {
+  const now = new Date().toISOString();
+  return store.create<DiscoverCandidateRecord>(
+    'discover_candidates',
+    // TS spread narrowing on Omit<X, K> + filling K can lose track of X's
+    // remaining required keys; cast back to the full record after spread.
+    { ...input, created_at: now, updated_at: now } as DiscoverCandidateRecord,
+  );
+}
+
+export function patchCandidate(
+  store: AppDataStore,
+  id: string,
+  patch: Partial<DiscoverCandidateRecord>,
+): DiscoverCandidateRow | null {
+  return store.update<DiscoverCandidateRecord>('discover_candidates', id, patch);
+}
+
+export function setCandidateStatus(
+  store: AppDataStore,
+  id: string,
+  status: DiscoverCandidateStatus,
+  patch: Partial<DiscoverCandidateRecord> = {},
+): void {
+  store.update<DiscoverCandidateRecord>('discover_candidates', id, { ...patch, status });
+}
+
+export function listListingDrafts(
+  store: AppDataStore,
+  filter?: Partial<ListingDraftRecord>,
+): ListingDraftRow[] {
+  return store.query<ListingDraftRecord>('listing_drafts', {
+    filter: filter as Record<string, unknown> | undefined,
+    orderBy: { field: 'updated_at', direction: 'desc' },
+    limit: 200,
+  });
+}
+
+export function getListingDraft(
+  store: AppDataStore,
+  id: string,
+): ListingDraftRow | null {
+  return store.get<ListingDraftRecord>('listing_drafts', id);
+}
+
+export function createListingDraft(
+  store: AppDataStore,
+  input: Omit<ListingDraftRecord, 'id' | 'created_at' | 'updated_at'>,
+): ListingDraftRow {
+  const now = new Date().toISOString();
+  return store.create<ListingDraftRecord>('listing_drafts', {
+    ...input,
+    created_at: now,
+    updated_at: now,
+  } as ListingDraftRecord);
+}
+
+export function patchListingDraft(
+  store: AppDataStore,
+  id: string,
+  patch: Partial<ListingDraftRecord>,
+): ListingDraftRow | null {
+  return store.update<ListingDraftRecord>('listing_drafts', id, patch);
+}
+
+export function setListingDraftStatus(
+  store: AppDataStore,
+  id: string,
+  status: ListingDraftStatus,
+  patch: Partial<ListingDraftRecord> = {},
+): void {
+  store.update<ListingDraftRecord>('listing_drafts', id, { ...patch, status });
 }

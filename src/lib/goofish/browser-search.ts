@@ -16,14 +16,12 @@
  *      so subsequent searches are fast.
  */
 
-import { readFileSync } from 'node:fs';
-
 import { resolveBrowserBridgeRuntimeConfig, postToBrowserBridge, type BrowserBridgeResponse } from '@/lib/browser-runtime/bridge-client';
 import { cookiesPathFor } from './accounts';
+import { cookieDomainForName, readCookieItems } from './cookie-store';
 
 const BRIDGE_CONTEXT_ID = 'embedded:default';
 const GOOFISH_DOMAIN = 'goofish.com';
-const TAOBAO_COOKIE_NAMES = new Set(['_m_h5_tk', '_m_h5_tk_enc', 'x5sec', 'sgcookie', 'cookie2', '_tb_token_']);
 
 export interface GoofishSearchItem {
   itemId: string;
@@ -114,9 +112,9 @@ async function injectAccountCookies(
   accountUnb: string,
 ): Promise<void> {
   const cookiesPath = cookiesPathFor(accountUnb);
-  let raw: unknown;
+  let items: ReturnType<typeof readCookieItems>;
   try {
-    raw = JSON.parse(readFileSync(cookiesPath, 'utf-8'));
+    items = readCookieItems(cookiesPath);
   } catch (err) {
     throw new Error(`failed to read cookies for account ${accountUnb}: ${(err as Error).message}`);
   }
@@ -124,40 +122,19 @@ async function injectAccountCookies(
   const bridgeCookies: BridgeCookie[] = [];
   const expires = Math.floor(Date.now() / 1000) + 7 * 86400;
 
-  if (Array.isArray(raw)) {
-    // chrome-export format: [{ name, value, domain, path, ... }, ...]
-    for (const c of raw) {
-      const r = c as Record<string, unknown>;
-      const name = String(r.name || '');
-      const value = String(r.value || '');
-      if (!name) continue;
-      const domain = String(r.domain || guessDomain(name));
-      bridgeCookies.push({
-        url: domainToUrl(domain),
-        name,
-        value,
-        domain,
-        path: String(r.path || '/'),
-        secure: r.secure === true,
-        httpOnly: r.httpOnly === true,
-        expirationDate: typeof r.expires === 'number' ? r.expires : expires,
-      });
-    }
-  } else if (raw && typeof raw === 'object') {
-    // plain dict { name: value }
-    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (!name || typeof value !== 'string') continue;
-      const domain = guessDomain(name);
-      bridgeCookies.push({
-        url: domainToUrl(domain),
-        name,
-        value,
-        domain,
-        path: '/',
-        secure: true,
-        expirationDate: expires,
-      });
-    }
+  for (const item of items) {
+    if (!item.name || !item.value) continue;
+    const domain = cookieDomainForName(item.name);
+    bridgeCookies.push({
+      url: domainToUrl(domain),
+      name: item.name,
+      value: item.value,
+      domain,
+      path: item.path || '/',
+      secure: item.secure !== false,
+      httpOnly: item.httpOnly === true,
+      expirationDate: typeof item.expires === 'number' ? item.expires : expires,
+    });
   }
 
   if (bridgeCookies.length === 0) return;
@@ -182,10 +159,6 @@ async function injectAccountCookies(
     }
   }
   console.log(`[goofish-browser-search] imported ${imported}/${bridgeCookies.length} cookies for ${accountUnb}`);
-}
-
-function guessDomain(cookieName: string): string {
-  return TAOBAO_COOKIE_NAMES.has(cookieName) ? '.taobao.com' : '.goofish.com';
 }
 
 function domainToUrl(domain: string): string {

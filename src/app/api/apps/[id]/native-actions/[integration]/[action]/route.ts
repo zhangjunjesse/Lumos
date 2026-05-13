@@ -1,8 +1,14 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { sendGoofishDraftFromApp, syncGoofishIntoApp } from '@/lib/app/goofish-app-sync';
+import {
+  isGoofishNativeApp,
+  sendGoofishDraftFromApp,
+  syncGoofishIntoApp,
+} from '@/lib/app/goofish-app-sync';
 import { rejectGoofishDraftFromApp } from '@/lib/app/goofish-draft-control';
 import { generateGoofishReplyDraft } from '@/lib/app/goofish-reply-draft-generator';
+import { scanAndNotify } from '@/lib/app/goofish-reminder-engine';
+import { aggregateSearch, type SearchScope } from '@/lib/app/goofish-search-aggregator';
 import type { AppManifest } from '@/lib/app/manifest/types';
 import { runNativeAppAutomation } from '@/lib/app/native-automation-runner';
 import { syncNativeAppAutomationSchedule } from '@/lib/app/native-automation-scheduler';
@@ -42,6 +48,37 @@ export async function POST(
         },
       });
       return NextResponse.json(result);
+    }
+    if (integration === 'goofish' && action === 'check-reminders') {
+      if (body.confirmed !== true) {
+        return NextResponse.json(
+          { ok: false, message: '立即扫描提醒前必须由用户在界面明确确认。' },
+          { status: 400 },
+        );
+      }
+      if (!isGoofishNativeApp(manifest)) {
+        return NextResponse.json(
+          { ok: false, message: '当前应用不是闲鱼类应用，不能运行提醒扫描。' },
+          { status: 400 },
+        );
+      }
+      const svc = getAppPlatformService();
+      const result = await scanAndNotify({
+        manifest,
+        store: createAppDataStore(svc.db, id),
+        db: svc.db,
+        appId: id,
+      });
+      const summary = `提醒扫描：触发 ${result.triggered.length}，跳过 ${result.skipped}${result.errors.length ? `，错误 ${result.errors.length}` : ''}。`;
+      const allFailed = result.triggered.length === 0 && result.errors.length > 0;
+      return NextResponse.json({
+        ok: !allFailed,
+        message: summary,
+        runId: result.runId,
+        triggered: result.triggered,
+        skipped: result.skipped,
+        errors: result.errors,
+      });
     }
     if (integration === 'goofish' && action === 'send-draft') {
       const svc = getAppPlatformService();
@@ -107,8 +144,43 @@ export async function POST(
         store: createAppDataStore(svc.db, id),
         rowId,
         confirmed: body.confirmed === true,
+        db: svc.db,
+        appId: id,
       });
       return NextResponse.json(result);
+    }
+    if (integration === 'goofish' && action === 'search') {
+      const svc = getAppPlatformService();
+      const scope = body.scope;
+      const query = typeof body.query === 'string' ? body.query : '';
+      if (scope !== 'market' && scope !== 'shop' && scope !== 'history' && scope !== 'buyer') {
+        return NextResponse.json(
+          { ok: false, message: 'scope 必须是 market/shop/history/buyer 之一。' },
+          { status: 400 },
+        );
+      }
+      if (!query) {
+        return NextResponse.json(
+          { ok: false, message: '缺少搜索词 query。' },
+          { status: 400 },
+        );
+      }
+      const result = await aggregateSearch({
+        manifest,
+        store: createAppDataStore(svc.db, id),
+        scope: scope as SearchScope,
+        query,
+        accountId: typeof body.accountId === 'string' ? body.accountId : undefined,
+        limit: numberOption(body.limit),
+      });
+      if (!result.reachable) {
+        return NextResponse.json({
+          ok: false,
+          message: result.notReachableReason ?? `${scope} 范围当前不可达。`,
+          ...result,
+        });
+      }
+      return NextResponse.json({ ok: true, ...result });
     }
     if (integration === 'app' && action === 'run-self-check') {
       const svc = getAppPlatformService();

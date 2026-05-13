@@ -25,7 +25,7 @@ const originalPlatform = process.platform;
 Object.defineProperty(process, 'platform', { value: 'darwin' });
 
 import { closeMirrorDb } from '../mirror-db';
-import { getSyncState, querySnapshot, resetMirror } from '../mirror-store';
+import { getSyncState, insertMessages, querySnapshot, resetMirror, setCursor } from '../mirror-store';
 import { runSync, type SyncProgressEvent } from '../sync-engine';
 
 afterAll(() => {
@@ -104,6 +104,37 @@ describe('runSync', () => {
     expect(r2.inserted).toBe(0); // already in mirror
 
     expect(getSyncState().totalMessages).toBe(1);
+  });
+
+  it('does not let a session-summary cursor skip unsynced detail messages', async () => {
+    insertMessages([
+      {
+        wxid: 'alice',
+        ts: 1000,
+        sender: 'them',
+        senderWxid: null,
+        senderDisplay: null,
+        msgType: 1,
+        content: '旧消息',
+      },
+    ]);
+    setCursor(2000);
+    mockStreamWeChatApi.mockImplementation(async (_op, args, opts) => {
+      expect(args).toEqual({ since_timestamp: 940 });
+      opts.onLine({ type: 'meta', sessions: [{ wxid: 'alice', display: 'A', is_group: false, last_timestamp: 3000 }] });
+      opts.onLine({ type: 'db_start', db: 'm.db', tables: 1 });
+      opts.onLine({ type: 'msg', wxid: 'alice', ts: 1500, sender: 'them', msg_type: 1, content: '补回来的消息' });
+      opts.onLine({ type: 'db_done', db: 'm.db', messages: 1 });
+      opts.onLine({ type: 'done', cursor: 3000, messages: 1 });
+      return { ok: true, data: { messagesSeen: 1 } };
+    });
+
+    const result = await runSync({});
+
+    expect(result.status).toBe('completed');
+    expect(result.cursorTs).toBe(1500);
+    expect(getSyncState().cursorTs).toBe(1500);
+    expect(querySnapshot(60, 1600).messages.map((item) => item.content)).toContain('补回来的消息');
   });
 
   it('records lastError and returns failed status when stream errors out', async () => {

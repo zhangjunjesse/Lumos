@@ -23,11 +23,18 @@ export function SettingsExcludedDialog({
   selectedIds,
   onOpenChange,
   onConfirm,
+  title = '选择不分析的对话',
+  description = '勾中的人 / 群消息不会进入 AI 分析、不会出现在概况报表里。',
+  confirmLabel = '保存（已选 {count}）',
 }: {
   open: boolean;
   selectedIds: string[];
   onOpenChange: (open: boolean) => void;
   onConfirm: (ids: string[]) => void;
+  title?: string;
+  description?: string;
+  /** 占位符 {count} 会被替换成已选数量。 */
+  confirmLabel?: string;
 }): React.ReactElement {
   const { contacts, ready, reason, loading, error, load } = useWeChatContacts();
   const [draft, setDraft] = React.useState<Set<string>>(new Set(selectedIds));
@@ -57,16 +64,28 @@ export function SettingsExcludedDialog({
       }));
   }, [contacts, selectedIds]);
 
+  const [showOfficial, setShowOfficial] = React.useState(false);
+
   const all = React.useMemo(() => [...stickyRows, ...contacts], [stickyRows, contacts]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((c) => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
-  }, [all, query]);
+    let rows = all;
+    // 默认过滤掉公众号 (gh_*) 和系统帐号 (notifymessage/filehelper),它们不属于
+    // "私聊" 范畴。用户勾"显示公众号"才纳入(还想拉黑公众号订阅时用)。
+    if (!showOfficial) {
+      rows = rows.filter((c) => c.kind !== 'official_account' && c.kind !== 'system');
+    }
+    if (!q) return rows;
+    return rows.filter((c) => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
+  }, [all, query, showOfficial]);
 
   const persons = filtered.filter((c) => !c.isGroup);
   const groups = filtered.filter((c) => c.isGroup);
+  const officialCount = React.useMemo(
+    () => all.filter((c) => c.kind === 'official_account' || c.kind === 'system').length,
+    [all],
+  );
 
   const toggle = (id: string) => {
     setDraft((prev) => {
@@ -82,7 +101,7 @@ export function SettingsExcludedDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="text-base font-medium tracking-tight">
-            选择不分析的对话
+            {title}
           </DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-3">
@@ -97,8 +116,17 @@ export function SettingsExcludedDialog({
             />
           </div>
           <p className="text-[11px] text-muted-foreground">
-            勾中的人 / 群消息不会进入 AI 分析、不会出现在概况报表里。
+            {description}
           </p>
+          {officialCount > 0 && (
+            <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Checkbox
+                checked={showOfficial}
+                onCheckedChange={(v) => setShowOfficial(Boolean(v))}
+              />
+              显示公众号 / 系统订阅 ({officialCount} 项,默认隐藏)
+            </label>
+          )}
 
           <Body
             loading={loading}
@@ -116,7 +144,7 @@ export function SettingsExcludedDialog({
             取消
           </Button>
           <Button onClick={() => onConfirm(Array.from(draft))}>
-            保存（已选 {draft.size}）
+            {confirmLabel.replace('{count}', String(draft.size))}
           </Button>
         </DialogFooter>
       </DialogContent>

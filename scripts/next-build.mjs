@@ -7,6 +7,13 @@ import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const PROJECT_ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const HIDDEN_RUNTIME_PREFIX = '.lumos-next-runtime-';
+const HIDDEN_RUNTIME_OWNER_FILE = '.owner.json';
+const DESKTOP_RUNTIME_REL_PATHS = [
+  path.join('resources', 'git-bash'),
+  path.join('resources', 'node-runtime'),
+  path.join('resources', 'python-runtime'),
+];
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -25,32 +32,117 @@ function withBuildNodeOptions(existing) {
   return [...parts, `--max-old-space-size=${heapMb}`].join(' ');
 }
 
+function runtimeHiddenBase() {
+  return process.env.LUMOS_NEXT_RUNTIME_HIDE_DIR || path.dirname(PROJECT_ROOT);
+}
+
+function moveDir(source, target) {
+  try {
+    fs.renameSync(source, target);
+  } catch (err) {
+    if (err?.code !== 'EXDEV') throw err;
+    fs.cpSync(source, target, { recursive: true });
+    fs.rmSync(source, { recursive: true, force: true });
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+function readHiddenRuntimeOwner(hiddenRoot) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(hiddenRoot, HIDDEN_RUNTIME_OWNER_FILE), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function hiddenRuntimeOwnedByActiveBuild(hiddenRoot) {
+  const owner = readHiddenRuntimeOwner(hiddenRoot);
+  if (!owner) return false;
+  if (owner.projectRoot && path.resolve(owner.projectRoot) !== PROJECT_ROOT) return true;
+  return isProcessAlive(Number(owner.pid));
+}
+
+function hiddenRuntimeRelPaths(hiddenRoot) {
+  return DESKTOP_RUNTIME_REL_PATHS.filter((relPath) => (
+    fs.existsSync(path.join(hiddenRoot, relPath))
+  ));
+}
+
+function restoreStaleHiddenRuntimeResources() {
+  const hiddenBase = runtimeHiddenBase();
+  if (!fs.existsSync(hiddenBase)) return;
+
+  const entries = fs.readdirSync(hiddenBase, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(HIDDEN_RUNTIME_PREFIX)) continue;
+
+    const hiddenRoot = path.join(hiddenBase, entry.name);
+    const hiddenRelPaths = hiddenRuntimeRelPaths(hiddenRoot);
+    if (hiddenRelPaths.length === 0) {
+      try { fs.rmSync(hiddenRoot, { recursive: true, force: true }); } catch {}
+      continue;
+    }
+
+    if (hiddenRuntimeOwnedByActiveBuild(hiddenRoot)) {
+      console.warn(`[next-build] Found runtime resources hidden by an active build, skipping restore: ${hiddenRoot}`);
+      continue;
+    }
+
+    const restored = [];
+    for (const relPath of hiddenRelPaths) {
+      const source = path.join(PROJECT_ROOT, relPath);
+      const target = path.join(hiddenRoot, relPath);
+      if (fs.existsSync(source)) {
+        console.warn(`[next-build] Stale hidden runtime resource not restored because source already exists: ${relPath}`);
+        continue;
+      }
+
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      moveDir(target, source);
+      restored.push(relPath);
+    }
+
+    if (restored.length > 0) {
+      console.log(`[next-build] Restored stale hidden runtime resources: ${restored.join(', ')}`);
+    }
+
+    try { fs.rmSync(hiddenRoot, { recursive: true, force: true }); } catch {}
+  }
+}
+
+function writeHiddenRuntimeOwner(hiddenRoot) {
+  const owner = {
+    pid: process.pid,
+    projectRoot: PROJECT_ROOT,
+    createdAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(
+    path.join(hiddenRoot, HIDDEN_RUNTIME_OWNER_FILE),
+    `${JSON.stringify(owner, null, 2)}\n`,
+  );
+}
+
 function hideDesktopRuntimeResources() {
   if (process.env.LUMOS_NEXT_HIDE_RUNTIME_RESOURCES === '0') {
     return () => {};
   }
 
-  const relPaths = [
-    path.join('resources', 'git-bash'),
-    path.join('resources', 'node-runtime'),
-    path.join('resources', 'python-runtime'),
-  ];
-  const hiddenBase = process.env.LUMOS_NEXT_RUNTIME_HIDE_DIR || path.dirname(PROJECT_ROOT);
-  const hiddenRoot = fs.mkdtempSync(path.join(hiddenBase, '.lumos-next-runtime-'));
+  const hiddenBase = runtimeHiddenBase();
+  const hiddenRoot = fs.mkdtempSync(path.join(hiddenBase, HIDDEN_RUNTIME_PREFIX));
   const moved = [];
-
-  const moveDir = (source, target) => {
-    try {
-      fs.renameSync(source, target);
-    } catch (err) {
-      if (err?.code !== 'EXDEV') throw err;
-      fs.cpSync(source, target, { recursive: true });
-      fs.rmSync(source, { recursive: true, force: true });
-    }
-  };
+  writeHiddenRuntimeOwner(hiddenRoot);
 
   try {
-    for (const relPath of relPaths) {
+    for (const relPath of DESKTOP_RUNTIME_REL_PATHS) {
       const source = path.join(PROJECT_ROOT, relPath);
       if (!fs.existsSync(source)) continue;
       const target = path.join(hiddenRoot, relPath);
@@ -139,6 +231,7 @@ configureWindowsBuildHome(env);
 
 const nextBin = require.resolve('next/dist/bin/next', { paths: [PROJECT_ROOT] });
 const nextArgs = process.argv.slice(2);
+restoreStaleHiddenRuntimeResources();
 const restoreRuntimeResources = hideDesktopRuntimeResources();
 let restored = false;
 function restoreOnce() {

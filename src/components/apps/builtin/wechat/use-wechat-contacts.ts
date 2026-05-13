@@ -2,10 +2,14 @@
 
 import * as React from 'react';
 
+export type ContactKind = 'contact' | 'group' | 'official_account' | 'system';
+
 export interface ContactRow {
   id: string;
   name: string;
   isGroup: boolean;
+  /** contact / group / official_account / system, 由后端按 wxid 前缀判定。 */
+  kind?: ContactKind;
 }
 
 export interface UseContactsResult {
@@ -67,4 +71,5 @@ function isContactRow(value: unknown): value is ContactRow {
   if (!value || typeof value !== 'object') return false;
   const row = value as Partial<ContactRow>;
   return typeof row.id === 'string' && typeof row.name === 'string' && typeof row.isGroup === 'boolean';
+  // kind 字段 optional,老 server 没返回也能向下兼容
 }

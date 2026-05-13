@@ -3,10 +3,15 @@
 import * as React from 'react';
 
 import type {
+  DashboardSnapshot,
+  DiscoverCandidate,
   EcommerceAssistantStatus,
   ImageJob,
   ImageOutput,
+  ListingDraft,
+  PipelineEntry,
   ProductInput,
+  ResearchReport,
   StylePreset,
 } from './types';
 
@@ -17,6 +22,11 @@ interface AppData {
   jobs: ImageJob[];
   outputs: ImageOutput[];
   presets: StylePreset[];
+  candidates: DiscoverCandidate[];
+  drafts: ListingDraft[];
+  pipeline: PipelineEntry[];
+  dashboard: DashboardSnapshot | null;
+  reports: ResearchReport[];
   loading: boolean;
   refreshing: boolean;
   refresh: () => Promise<void>;
@@ -29,6 +39,11 @@ export function useEcommerceAppData(): AppData {
   const [jobs, setJobs] = React.useState<ImageJob[]>([]);
   const [outputs, setOutputs] = React.useState<ImageOutput[]>([]);
   const [presets, setPresets] = React.useState<StylePreset[]>([]);
+  const [candidates, setCandidates] = React.useState<DiscoverCandidate[]>([]);
+  const [drafts, setDrafts] = React.useState<ListingDraft[]>([]);
+  const [pipeline, setPipeline] = React.useState<PipelineEntry[]>([]);
+  const [dashboard, setDashboard] = React.useState<DashboardSnapshot | null>(null);
+  const [reports, setReports] = React.useState<ResearchReport[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const inFlightRef = React.useRef<AbortController | null>(null);
@@ -40,14 +55,47 @@ export function useEcommerceAppData(): AppData {
     inFlightRef.current = ctrl;
     if (hasLoadedRef.current) setRefreshing(true);
     try {
-      const [statusRes, inputsRes, jobsRes, presetsRes] = await Promise.all([
+      const [
+        statusRes,
+        inputsRes,
+        jobsRes,
+        presetsRes,
+        candidatesRes,
+        draftsRes,
+        pipelineRes,
+        dashboardRes,
+        reportsRes,
+      ] = await Promise.all([
         fetchJson<EcommerceAssistantStatus>('/api/apps/builtin/ecommerce/status', ctrl.signal),
         fetchJson<{ items: ProductInput[] }>('/api/apps/builtin/ecommerce/inputs', ctrl.signal),
         fetchJson<{ jobs: ImageJob[]; outputs?: ImageOutput[] }>(
           '/api/apps/builtin/ecommerce/jobs?outputs=1',
           ctrl.signal,
         ),
-        fetchJson<{ presets: StylePreset[] }>('/api/apps/builtin/ecommerce/presets', ctrl.signal),
+        fetchJson<{ presets: StylePreset[] }>(
+          '/api/apps/builtin/ecommerce/presets',
+          ctrl.signal,
+        ),
+        fetchJson<{ candidates: DiscoverCandidate[] }>(
+          '/api/apps/builtin/ecommerce/discover',
+          ctrl.signal,
+        ),
+        fetchJson<{ drafts: ListingDraft[] }>(
+          '/api/apps/builtin/ecommerce/listings',
+          ctrl.signal,
+        ),
+        fetchJson<{ entries: PipelineEntry[] }>(
+          '/api/apps/builtin/ecommerce/pipeline',
+          ctrl.signal,
+        ),
+        fetchJson<DashboardSnapshot>(
+          '/api/apps/builtin/ecommerce/dashboard',
+          ctrl.signal,
+        ),
+        fetchJson<{ reports: ResearchReport[] }>(
+          '/api/apps/builtin/ecommerce/research?limit=100',
+          ctrl.signal,
+        ),
       ]);
       if (ctrl.signal.aborted) return;
       if ('error' in statusRes) {
@@ -66,7 +114,20 @@ export function useEcommerceAppData(): AppData {
         setOutputs(jobsRes.value.outputs ?? []);
       }
       setPresets('error' in presetsRes ? [] : presetsRes.value.presets ?? []);
+      setCandidates(
+        'error' in candidatesRes ? [] : candidatesRes.value.candidates ?? [],
+      );
+      setDrafts('error' in draftsRes ? [] : draftsRes.value.drafts ?? []);
+      setPipeline('error' in pipelineRes ? [] : pipelineRes.value.entries ?? []);
+      setDashboard('error' in dashboardRes ? null : dashboardRes.value);
+      setReports('error' in reportsRes ? [] : reportsRes.value.reports ?? []);
       hasLoadedRef.current = true;
+    } catch (err) {
+      if (ctrl.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        return;
+      }
+      setStatus(null);
+      setStatusError(err instanceof Error ? err.message : String(err));
     } finally {
       if (!ctrl.signal.aborted) {
         setLoading(false);
@@ -80,7 +141,22 @@ export function useEcommerceAppData(): AppData {
     return () => inFlightRef.current?.abort();
   }, [fetchAll]);
 
-  return { status, statusError, inputs, jobs, outputs, presets, loading, refreshing, refresh: fetchAll };
+  return {
+    status,
+    statusError,
+    inputs,
+    jobs,
+    outputs,
+    presets,
+    candidates,
+    drafts,
+    pipeline,
+    dashboard,
+    reports,
+    loading,
+    refreshing,
+    refresh: fetchAll,
+  };
 }
 
 type FetchResult<T> = { value: T } | { error: string };

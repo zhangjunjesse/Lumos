@@ -8,6 +8,7 @@ import {
   createWeChatAssistantMcpServer,
   WECHAT_ASSISTANT_MCP_SYSTEM_HINT,
 } from '@/lib/tools/wechat-assistant-mcp-server';
+import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
 import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
@@ -30,6 +31,7 @@ import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/sess
 import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
 import { isWeChatAssistantChatSession } from '@/lib/chat/wechat-assistant-session';
+import { isEcommerceAssistantChatSession } from '@/lib/chat/ecommerce-assistant-session';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import {
   isBrowserAutomationRequest,
@@ -1022,6 +1024,10 @@ export async function POST(request: NextRequest) {
     if (isWeChatAssistantChatSession(session) && !browserAutomationIntent) {
       const wechatAssistantMcp = createWeChatAssistantMcpServer();
       inProcessMcpServers[wechatAssistantMcp.name] = wechatAssistantMcp;
+    }
+    if (isEcommerceAssistantChatSession(session) && !browserAutomationIntent) {
+      const ecommerceAssistantMcp = createEcommerceAssistantMcpServer();
+      inProcessMcpServers[ecommerceAssistantMcp.name] = ecommerceAssistantMcp;
     }
 
     const claudeStream = streamClaude({

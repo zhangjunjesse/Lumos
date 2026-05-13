@@ -6,7 +6,11 @@
  * 因此不需要任何 `any`。
  */
 import { fetchCloudAvailableModels } from '@/lib/lumos-cloud-models';
-import type { CloudChatProviderConfig, CloudImageProviderConfig } from './types';
+import type {
+  CloudChatProviderConfig,
+  CloudImageProviderConfig,
+  CloudSpeechProviderConfig,
+} from './types';
 
 const CLOUD_API_BASE = process.env.LUMOS_API_URL || 'https://api.miki.zj.cn';
 const CLOUD_PROVIDER_NAME = 'Lumos Cloud';
@@ -517,6 +521,190 @@ export async function provisionChatProviders(
  */
 export function getRemoteChatProviderId(db: DbLike, localProviderId: string): string | null {
   const map = readChatProvidersMap(db);
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (localId === localProviderId) return remoteId;
+  }
+  return null;
+}
+
+// ── 语音服务商 provision (多条) ───────────────────────────────────────────
+
+const CLOUD_SPEECH_PROVIDERS_MAP_SETTING = 'lumos_cloud_speech_providers_map';
+const PROVIDER_OVERRIDE_SPEECH_KEY = 'provider_override:speech';
+
+interface SpeechProviderUpsertFields {
+  name: string;
+  provider_type: string;
+  api_protocol: 'openai-compatible';
+  capabilities: string;
+  provider_origin: 'system';
+  auth_mode: 'api_key';
+  base_url: string;
+  /** Always empty — desktop never speaks volcengine HTTP directly. The
+   *  cloud proxy holds the real key. We keep the column non-null with
+   *  a sentinel so downstream UI can show "通过 Lumos 云端代理调用". */
+  api_key: string;
+  /** JSON {price_per_second, resource_id, default_model} for UI display. */
+  extra_env: string;
+  notes: string;
+}
+
+function buildSpeechProviderExtraEnv(config: CloudSpeechProviderConfig): string {
+  const env: Record<string, string> = {};
+  if (typeof config.price_per_second === 'number' && Number.isFinite(config.price_per_second)) {
+    env.LUMOS_SPEECH_PRICE_PER_SECOND = String(config.price_per_second);
+  }
+  if (config.resource_id) env.LUMOS_SPEECH_RESOURCE_ID = config.resource_id;
+  if (config.default_model) env.LUMOS_DEFAULT_MODEL = config.default_model;
+  return Object.keys(env).length > 0 ? JSON.stringify(env) : '{}';
+}
+
+function buildSpeechProviderFields(config: CloudSpeechProviderConfig): SpeechProviderUpsertFields {
+  const priceMin = config.price_per_second != null
+    ? `${(config.price_per_second * 60).toFixed(4)} 元/分钟`
+    : '价格待 lumos-web 下发';
+  return {
+    name: config.name,
+    provider_type: config.provider_type,
+    api_protocol: 'openai-compatible',
+    capabilities: JSON.stringify(['speech']),
+    provider_origin: 'system',
+    auth_mode: 'api_key',
+    base_url: 'https://api.miki.zj.cn/api/cloud/speech',
+    api_key: '__lumos_cloud_proxy__',
+    extra_env: buildSpeechProviderExtraEnv(config),
+    notes: `Lumos Cloud 内置语音服务商 (remote_id=${config.id})。${priceMin}。所有调用通过 lumos-web /api/cloud/speech 代理，密钥不下发桌面端。`,
+  };
+}
+
+function readSpeechProvidersMap(db: DbLike): ProviderMap {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(CLOUD_SPEECH_PROVIDERS_MAP_SETTING) as { value: string } | undefined;
+  if (!row?.value) return {};
+  try {
+    const parsed = JSON.parse(row.value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ProviderMap;
+    }
+  } catch { /* fall through */ }
+  return {};
+}
+
+function writeSpeechProvidersMap(db: DbLike, map: ProviderMap): void {
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(CLOUD_SPEECH_PROVIDERS_MAP_SETTING, JSON.stringify(map));
+}
+
+async function upsertOneSpeechProvider(
+  db: DbLike,
+  config: CloudSpeechProviderConfig,
+  existingLocalId: string | undefined,
+): Promise<string> {
+  const { createProvider, updateProvider } = await import('@/lib/db/providers');
+  const fields = buildSpeechProviderFields(config);
+  if (existingLocalId) {
+    const exists = db.prepare('SELECT id FROM api_providers WHERE id = ?').get(existingLocalId);
+    if (exists) {
+      updateProvider(existingLocalId, fields);
+      return existingLocalId;
+    }
+  }
+  const created = createProvider({ ...fields, model_catalog: '[]', model_catalog_source: 'default' });
+  return created.id;
+}
+
+async function removeOrphanSystemSpeechProviders(
+  db: DbLike,
+  managedLocalIds: Set<string>,
+): Promise<void> {
+  const rows = db.prepare(
+    "SELECT id, capabilities FROM api_providers WHERE provider_origin = 'system'",
+  ).all() as Array<{ id: string; capabilities: string }>;
+  const orphans: string[] = [];
+  for (const row of rows) {
+    if (managedLocalIds.has(row.id)) continue;
+    try {
+      const caps = JSON.parse(row.capabilities);
+      if (Array.isArray(caps) && caps.includes('speech')) orphans.push(row.id);
+    } catch { /* malformed capabilities — skip */ }
+  }
+  if (orphans.length === 0) return;
+  const { deleteProvider } = await import('@/lib/db/providers');
+  for (const id of orphans) {
+    try { deleteProvider(id); } catch (e) {
+      console.warn('[cloud-provisioner] failed to delete orphan speech provider:', e);
+    }
+  }
+}
+
+/**
+ * 全量同步 Lumos Cloud 下发的语音服务商列表到本地。
+ *
+ * 镜像 provisionImageProviders 行为：
+ * - 入参空数组 → 删除所有已 provision 的云语音 provider, 清掉 map 和 override。
+ * - 入参非空 → 按 `remote_id` 一对一 upsert; 旧 map 中但新列表里没有的 → 删除。
+ * - `provider_override:speech` 维护：用户手动选择优先, `is_default` 兜底。
+ */
+export async function provisionSpeechProviders(
+  configs: CloudSpeechProviderConfig[],
+): Promise<string[]> {
+  const { getDb } = await import('@/lib/db/connection');
+  const db = getDb();
+
+  const map = readSpeechProvidersMap(db);
+
+  if (configs.length === 0) {
+    await removeStaleProviders(db, Object.values(map));
+    await removeOrphanSystemSpeechProviders(db, new Set());
+    writeSpeechProvidersMap(db, {});
+    db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_SPEECH_KEY);
+    return [];
+  }
+
+  const incomingRemoteIds = new Set(configs.map((c) => c.id));
+  const staleLocalIds: string[] = [];
+  for (const [remoteId, localId] of Object.entries(map)) {
+    if (!incomingRemoteIds.has(remoteId)) staleLocalIds.push(localId);
+  }
+  await removeStaleProviders(db, staleLocalIds);
+
+  const nextMap: ProviderMap = {};
+  let defaultLocalId: string | undefined;
+  for (const config of configs) {
+    const existingLocalId = map[config.id];
+    const localId = await upsertOneSpeechProvider(db, config, existingLocalId);
+    nextMap[config.id] = localId;
+    if (config.is_default) defaultLocalId = localId;
+  }
+  writeSpeechProvidersMap(db, nextMap);
+  await removeOrphanSystemSpeechProviders(db, new Set(Object.values(nextMap)));
+
+  const currentOverrideRow = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(PROVIDER_OVERRIDE_SPEECH_KEY) as { value: string } | undefined;
+  const currentOverride = currentOverrideRow?.value?.trim() ?? '';
+  const overrideStillValid = currentOverride
+    && Object.values(nextMap).includes(currentOverride);
+
+  if (overrideStillValid) {
+    // 用户已经选了一个仍然合法的 provider, 不要被周期同步覆盖。
+  } else if (defaultLocalId) {
+    db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    ).run(PROVIDER_OVERRIDE_SPEECH_KEY, defaultLocalId);
+  } else {
+    db.prepare('DELETE FROM settings WHERE key = ?').run(PROVIDER_OVERRIDE_SPEECH_KEY);
+  }
+
+  return Object.values(nextMap);
+}
+
+/**
+ * Resolve the remote provider id for a local speech api_provider id.
+ * Used by cloud-speech adapter when calling /api/cloud/speech/transcribe.
+ */
+export function getRemoteSpeechProviderId(db: DbLike, localProviderId: string): string | null {
+  const map = readSpeechProvidersMap(db);
   for (const [remoteId, localId] of Object.entries(map)) {
     if (localId === localProviderId) return remoteId;
   }

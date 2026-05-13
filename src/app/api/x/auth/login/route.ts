@@ -17,6 +17,8 @@ interface BrowserLoginBody {
 interface PasteLoginBody {
   mode: 'paste';
   cookieString: string;
+  screenName?: string;
+  name?: string;
 }
 type LoginBody = BrowserLoginBody | PasteLoginBody;
 
@@ -26,14 +28,18 @@ export async function POST(req: NextRequest) {
 
   try {
     if (body && (body as PasteLoginBody).mode === 'paste') {
-      const cookieString = (body as PasteLoginBody).cookieString || '';
+      const paste = body as PasteLoginBody;
+      const cookieString = paste.cookieString || '';
       if (!cookieString.trim()) {
         return NextResponse.json({ ok: false, message: 'cookieString 不能为空' }, { status: 400 });
       }
       if (cookieString.length > 64_000) {
         return NextResponse.json({ ok: false, message: 'cookieString 过长,请只粘贴必要 cookie' }, { status: 400 });
       }
-      const status = await loginViaCookieString(cookieString);
+      const status = await loginViaCookieString(cookieString, {
+        screenName: typeof paste.screenName === 'string' ? paste.screenName : undefined,
+        name: typeof paste.name === 'string' ? paste.name : undefined,
+      });
       return NextResponse.json({ ok: true, ...status });
     }
 

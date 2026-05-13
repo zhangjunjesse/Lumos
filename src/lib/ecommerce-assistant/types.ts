@@ -18,7 +18,13 @@ export type ImageOutputKind =
   | 'lifestyle'
   | 'campaign'
   | 'final'
-  | 'fallback';
+  | 'fallback'
+  // Detail-page set, generated after the main image is finalized. Each slot
+  // serves a distinct purpose in the storefront detail carousel.
+  | 'detail-hero'
+  | 'detail-feature'
+  | 'detail-lifestyle'
+  | 'detail-scale';
 
 /*
  * Records below describe the field set we persist into AppDataStore. The store
@@ -94,6 +100,138 @@ export interface ImageOutputRecord extends Record<string, unknown> {
   qc_fail_reason?: string | null;
   prompt?: string | null;
   is_winner?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type ListingDraftStatus =
+  | 'drafting'
+  | 'ready'
+  | 'failed'
+  | 'archived'
+  | 'submitted'
+  | 'live'
+  | 'rejected';
+
+export type ListingPlatform =
+  | 'amazon-us'
+  | 'amazon-uk'
+  | 'amazon-jp'
+  | 'amazon-de'
+  | 'tiktok-shop-us'
+  | 'etsy'
+  | 'shopify-dtc'
+  | 'shopee-sg'
+  | 'lazada-sg'
+  | 'walmart';
+
+export interface ListingDraftRecord extends Record<string, unknown> {
+  id?: string;
+  input_id: string;
+  platform: ListingPlatform;
+  language: string;
+  title?: string | null;
+  bullets?: string | null;
+  description?: string | null;
+  search_keywords?: string | null;
+  warnings?: string | null;
+  status: ListingDraftStatus;
+  failure_reason?: string | null;
+  submitted_at?: string | null;
+  live_at?: string | null;
+  live_url?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  user_notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type DiscoverCandidateStatus = 'researching' | 'ready' | 'failed' | 'promoted';
+
+export type ListingFollowupStatus = 'pending' | 'done' | 'skipped';
+
+export type ListingFollowupTemplateId =
+  | 'check-first-order'
+  | 'check-search-rank'
+  | 'check-first-review'
+  | 'set-ad-budget'
+  | 'check-bsr-week'
+  | 'review-week-summary'
+  | 'check-conversion-rate';
+
+export interface ListingFollowupRecord extends Record<string, unknown> {
+  id?: string;
+  draft_id: string;
+  input_id: string;
+  template_id: ListingFollowupTemplateId;
+  title: string;
+  description?: string | null;
+  due_at: string;
+  status: ListingFollowupStatus;
+  done_at?: string | null;
+  note?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type AuditEventKind =
+  | 'candidate-promoted'
+  | 'main-image-uploaded'
+  | 'main-image-set-from-concept'
+  | 'brief-identified'
+  | 'brief-edited'
+  | 'listing-drafted'
+  | 'listing-edited'
+  | 'listing-regenerated'
+  | 'listing-status-changed';
+
+export interface AuditEventRecord extends Record<string, unknown> {
+  id?: string;
+  kind: AuditEventKind;
+  /** primary subject id this event is about (input_id / draft_id / candidate_id) */
+  target_id: string;
+  target_type: 'input' | 'listing' | 'candidate';
+  /** the input_id this event ultimately rolls up to (for product-detail filtering); same as target_id when target is an input */
+  input_id?: string | null;
+  /** small structured detail about the change, JSON-stringified */
+  payload?: string | null;
+  /** human-readable one-line summary for activity feeds */
+  summary?: string | null;
+  occurred_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface DiscoverCandidateRecord extends Record<string, unknown> {
+  id?: string;
+  research_id: string;
+  keyword: string;
+  market: string;
+  price_band?: string | null;
+  product_name: string;
+  category: string;
+  estimated_price_usd?: number | null;
+  score_demand?: number | null;
+  score_competition?: number | null;
+  score_profit?: number | null;
+  score_compliance?: number | null;
+  score_logistics?: number | null;
+  score_total?: number | null;
+  summary?: string | null;
+  selling_points?: string | null;
+  risks?: string | null;
+  differentiation?: string | null;
+  reference_urls?: string | null;
+  source_search_urls?: string | null;
+  concept_image_path?: string | null;
+  concept_image_failed?: string | null;
+  platform_focus?: string | null;
+  strategy?: string | null;
+  sources?: string | null;
+  status: DiscoverCandidateStatus;
+  promoted_input_id?: string | null;
+  failure_reason?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -216,3 +354,33 @@ export interface FinalQc {
   failReason: string | null;
   retryStage: 'scene_generation' | 'final_refine' | 'none';
 }
+
+
+export type ResearchReportStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface ResearchReportRecord extends Record<string, unknown> {
+  id?: string;
+  platform: string;
+  query: string;
+  instruction?: string | null;
+  status: ResearchReportStatus;
+  stage?: string | null;
+  progress?: number | null;
+  sources?: string | null;
+  source_results?: string | null;
+  summary?: string | null;
+  report_path?: string | null;
+  word_count?: number | null;
+  error?: string | null;
+  failure_stage?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string | null;
+}
+

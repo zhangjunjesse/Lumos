@@ -295,8 +295,22 @@ export function getEnabledMcpServersAsConfig(): Record<string, MCPServerConfig> 
   const config: Record<string, MCPServerConfig> = {};
 
   for (const server of servers) {
+    if (!shouldExposeMcpServerToRuntime(server)) continue;
     config[server.name] = mcpServerRecordToConfig(server);
   }
 
   return config;
+}
+
+function shouldExposeMcpServerToRuntime(server: McpServerRecord): boolean {
+  if (server.name !== 'goofish') return true;
+  if (server.health_status !== 'failed') return true;
+  const error = server.health_error || server.health_message || '';
+  return !isGoofishCliMissingError(error);
+}
+
+function isGoofishCliMissingError(error: string): boolean {
+  return /No module named ['"]goofish_cli['"]/.test(error)
+    || /goofish-cli is not installed/i.test(error)
+    || /goofish_cli\.mcp_server/.test(error);
 }

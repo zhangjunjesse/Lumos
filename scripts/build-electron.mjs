@@ -83,10 +83,17 @@ async function buildElectron() {
     bundle: true,
     platform: 'node',
     target: 'node18',
-    // App preview compiles builder drafts at runtime. esbuild's JS API must
-    // stay external because it locates its native binary relative to its own
-    // package files; electron-builder must ship and unpack the package.
-    external: ['electron', 'better-sqlite3', 'esbuild'],
+    // Native modules with .node bindings must stay external — esbuild has no
+    // loader for .node and they locate their platform-specific binary from
+    // their own package files at runtime. electron-builder ships them
+    // unpacked.
+    external: [
+      'electron',
+      'better-sqlite3',
+      'esbuild',
+      '@node-rs/jieba',
+      'onnxruntime-node',
+    ],
     sourcemap: true,
     minify: false,
   };

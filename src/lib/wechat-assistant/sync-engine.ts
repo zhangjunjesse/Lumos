@@ -17,6 +17,7 @@ import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { hasRecoveredKey } from '@/lib/wechat-export/setup-state';
 
 import {
+  getLatestMessageTs,
   getSyncState,
   insertMessages,
   markSyncFinished,
@@ -103,7 +104,12 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
 
   const state = getSyncState();
   const isFirstSync = state.cursorTs === 0;
-  const since = options.fullResync ? 0 : Math.max(state.cursorTs - OVERLAP_SECONDS, 0);
+  const latestStoredMessageTs = getLatestMessageTs();
+  const effectiveCursor = !options.fullResync && state.cursorTs > 0 && latestStoredMessageTs > 0
+    ? Math.min(state.cursorTs, latestStoredMessageTs)
+    : state.cursorTs;
+  const cursorWasClamped = effectiveCursor !== state.cursorTs;
+  const since = options.fullResync ? 0 : Math.max(effectiveCursor - OVERLAP_SECONDS, 0);
 
   emit({ type: 'start', cursorTs: state.cursorTs, firstSync: isFirstSync });
   markSyncStarted();
@@ -111,7 +117,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
   let messageBuffer: MirrorMessage[] = [];
   let totalInserted = 0;
   let totalSeen = 0;
-  let maxTsSeen = since;
+  let maxTsSeen = effectiveCursor;
   let currentDb: string | null = null;
   const flush = () => {
     if (messageBuffer.length === 0) return;
@@ -174,8 +180,9 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
     }
 
     if (recType === 'done') {
-      const cursor = typeof r.cursor === 'number' ? r.cursor : maxTsSeen;
-      if (cursor > maxTsSeen) maxTsSeen = cursor;
+      // Do not trust the Python cursor blindly. Older api.py versions derived
+      // it from session summaries, which can be newer than detail rows actually
+      // mirrored and would skip unsynced messages on the next incremental run.
       return;
     }
 
@@ -219,7 +226,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
     };
   }
 
-  if (maxTsSeen > state.cursorTs) setCursor(maxTsSeen);
+  if (maxTsSeen > state.cursorTs || cursorWasClamped) setCursor(maxTsSeen);
   markSyncFinished(totalInserted);
 
   const durationMs = Date.now() - t0;

@@ -23,8 +23,8 @@ const inputSchema = z
         providerId: z.string().nullable().default(null),
         model: z.string().nullable().default(null),
         windowDays: z
-          .union([z.literal(7), z.literal(14), z.literal(30), z.literal(60)])
-          .default(14),
+          .union([z.literal(1), z.literal(7), z.literal(14), z.literal(30), z.literal(60)])
+          .default(1),
         schedule: z.enum(['manual', 'daily', 'every_4h']).default('manual'),
         sensitivity: z.enum(['strict', 'balanced', 'loose']).default('balanced'),
         prompts: promptsPartial.default({}),
@@ -48,6 +48,7 @@ const inputSchema = z
       })
       .partial()
       .default({}),
+    includedPersonIds: z.array(z.string()).default([]),
     excludedPersonIds: z.array(z.string()).default([]),
     topicAnalysis: z
       .object({
@@ -137,6 +138,7 @@ function cloneDefaults(): AppSettings {
       ...DEFAULT_SETTINGS.notifications,
       channels: [...DEFAULT_SETTINGS.notifications.channels],
     },
+    includedPersonIds: [...DEFAULT_SETTINGS.includedPersonIds],
     excludedPersonIds: [...DEFAULT_SETTINGS.excludedPersonIds],
     topicAnalysis: {
       ...DEFAULT_SETTINGS.topicAnalysis,

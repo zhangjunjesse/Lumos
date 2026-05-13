@@ -35,7 +35,7 @@ import {
 } from './app-settings';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const WINDOWS: AnalysisWindow[] = [7, 14, 30, 60];
+const WINDOWS: AnalysisWindow[] = [1, 7, 14, 30, 60];
 const SENSITIVITIES: AISensitivity[] = ['strict', 'balanced', 'loose'];
 
 const FOLLOW_GLOBAL = '__follow_global__';
@@ -57,6 +57,7 @@ export function SettingsTab({
   onRetrySave: () => Promise<void> | void;
 }): React.ReactElement {
   const [excludedOpen, setExcludedOpen] = React.useState(false);
+  const [includedOpen, setIncludedOpen] = React.useState(false);
   const [topicPersonalOpen, setTopicPersonalOpen] = React.useState(false);
   const [topicGroupOpen, setTopicGroupOpen] = React.useState(false);
 
@@ -344,8 +345,24 @@ export function SettingsTab({
       </Section>
 
       <Section
-        title="不分析的对话"
-        description="勾中的人和群消息不会进入 AI 分析、不会出现在概况报表里。"
+        title="只分析这些对话(白名单)"
+        description="勾中后,只有这里列出的人 / 群会进入 AI 分析。留空 = 不限,默认全分析。优先级高于黑名单。"
+      >
+        <ExcludedSection
+          excludedIds={settings.includedPersonIds}
+          onOpen={() => setIncludedOpen(true)}
+          onRemove={(id) =>
+            onChange((prev) => ({
+              ...prev,
+              includedPersonIds: prev.includedPersonIds.filter((x) => x !== id),
+            }))
+          }
+        />
+      </Section>
+
+      <Section
+        title="不分析的对话(黑名单)"
+        description="勾中的人和群消息不会进入 AI 分析、不会出现在概况报表里。白名单为空时此项才会生效。"
       >
         <ExcludedSection
           excludedIds={settings.excludedPersonIds}
@@ -384,6 +401,18 @@ export function SettingsTab({
         </Field>
       </Section>
 
+      <SettingsExcludedDialog
+        open={includedOpen}
+        selectedIds={settings.includedPersonIds}
+        onOpenChange={setIncludedOpen}
+        title="选择只分析的对话(白名单)"
+        description="勾中的人 / 群是 AI 分析的唯一范围;留空 = 不限,默认全分析。"
+        confirmLabel="保存白名单（已选 {count}）"
+        onConfirm={(ids) => {
+          onChange((prev) => ({ ...prev, includedPersonIds: ids }));
+          setIncludedOpen(false);
+        }}
+      />
       <SettingsExcludedDialog
         open={excludedOpen}
         selectedIds={settings.excludedPersonIds}

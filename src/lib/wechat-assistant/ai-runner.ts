@@ -88,10 +88,20 @@ export async function runAIAnalysis(
 }
 
 function applySettingsToSnapshot(snapshot: WeChatSnapshot, settings: AppSettings): WeChatSnapshot {
-  if (settings.excludedPersonIds.length === 0) return snapshot;
+  const includedRaw = settings.includedPersonIds ?? [];
   const excluded = new Set(settings.excludedPersonIds);
-  const messages = snapshot.messages.filter((message) => !excluded.has(message.wxid));
-  const sessions = snapshot.sessions.filter((session) => !excluded.has(session.wxid));
+  const hasIncluded = includedRaw.length > 0;
+  const included = hasIncluded ? new Set(includedRaw) : null;
+  if (!hasIncluded && excluded.size === 0) return snapshot;
+
+  const passes = (wxid: string): boolean => {
+    if (included && !included.has(wxid)) return false;
+    if (excluded.has(wxid)) return false;
+    return true;
+  };
+
+  const messages = snapshot.messages.filter((message) => passes(message.wxid));
+  const sessions = snapshot.sessions.filter((session) => passes(session.wxid));
   return {
     ...snapshot,
     sessions,

@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -21,6 +21,7 @@ import {
 import { GoofishCliException } from './cli';
 import { listAccounts } from './accounts';
 import { findGoofishPython, buildGoofishEnv } from './env';
+import { cookieDomainForName, writeCookieRecord } from './cookie-store';
 
 const BRIDGE_CONTEXT_ID = 'embedded:default';
 const BRIDGE_OWNER_ID = 'goofish-qr-login';
@@ -32,7 +33,6 @@ const QR_COOKIE_CAPTURE_URLS = [
   'https://h5api.m.taobao.com/',
   'https://login.taobao.com/',
 ] as const;
-const TAOBAO_COOKIE_NAMES = new Set(['_m_h5_tk', '_m_h5_tk_enc', 'x5sec', 'sgcookie', 'cookie2', '_tb_token_']);
 
 export class BuiltinBrowserQrUnavailableError extends Error {}
 
@@ -80,13 +80,41 @@ export async function runBuiltinBrowserQrLogin(timeoutSecs: number, cookiesOut: 
       console.warn('[goofish-auth] browser bridge health check returned non-ready status, continuing with QR flow:', health.status, health.error || '');
     }
 
+    // Step 1: open empty tab as foreground (background:false). The QR login
+    // is a user-explicit action (CLAUDE.md exception for "user manually
+    // requested open login page"), not an automation task. background:false
+    // makes the tab active so its view tracks the BrowserManager panelBounds
+    // we set from GoofishLoginBrowserModal's setDisplayTarget('panel', rect).
+    // Empty url avoids the ERR_ABORTED death path where createTab+navigate
+    // are atomic.
     const created = await postToBrowserBridge<BridgeNewPageResponse>(
       config,
       '/v1/pages/new',
-      { url: GOOFISH_HOME_URL, background: false },
+      { background: false },
       { timeoutMs: 60_000 },
     );
     pageId = typeof created.pageId === 'string' ? created.pageId : '';
+    if (!pageId) {
+      throw new Error('Lumos 内置浏览器未返回 pageId');
+    }
+
+    // Step 2: navigate. If loadURL gets superseded by a redirect, Electron
+    // rejects with ERR_ABORTED (-3). The page actually loads — we tolerate
+    // the rejection and proceed to cookie polling.
+    try {
+      await postToBrowserBridge(
+        config,
+        '/v1/pages/navigate',
+        { pageId, url: GOOFISH_HOME_URL },
+        { timeoutMs: 60_000 },
+      );
+    } catch (navErr) {
+      const msg = navErr instanceof Error ? navErr.message : String(navErr);
+      if (!/ERR_ABORTED|-3\b/i.test(msg)) {
+        throw navErr;
+      }
+      console.warn('[goofish-auth] navigate ERR_ABORTED tolerated; page likely redirected:', msg);
+    }
 
     const cookies = await waitForBuiltinBrowserQrCookies(config, timeoutSecs, ignoredUnbs);
     writeGoofishCookiesJson(cookiesOut, cookies);
@@ -179,7 +207,7 @@ function bridgeCookieMapToRecord(selected: Map<string, BridgeCookieWithValue>): 
 }
 
 function shouldPreferCookie(name: string, previous: BridgeCookieWithValue, next: BridgeCookieWithValue): boolean {
-  if (TAOBAO_COOKIE_NAMES.has(name)) {
+  if (cookieDomainForName(name) === '.taobao.com') {
     const previousTaobao = cookieDomainMatches(previous, 'taobao.com');
     const nextTaobao = cookieDomainMatches(next, 'taobao.com');
     if (nextTaobao !== previousTaobao) {
@@ -204,10 +232,7 @@ function cookieDomainMatches(cookie: BridgeCookieWithValue, suffix: string): boo
 }
 
 function writeGoofishCookiesJson(cookiesOut: string, cookies: Record<string, string>): void {
-  const payload = Object.entries(cookies)
-    .filter(([name, value]) => Boolean(name) && Boolean(value))
-    .map(([name, value]) => ({ name, value }));
-  writeFileSync(cookiesOut, JSON.stringify(payload, null, 2), { mode: 0o600 });
+  writeCookieRecord(cookiesOut, cookies);
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import type { Stats } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -67,8 +68,16 @@ const MIME_TYPES: Record<string, string> = {
   '.zip': 'application/zip',
   '.tar': 'application/x-tar',
   '.gz': 'application/gzip',
+  '.aac': 'audio/aac',
+  '.amr': 'audio/amr',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
   '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/opus',
+  '.silk': 'audio/silk',
   '.wav': 'audio/wav',
+  '.weba': 'audio/webm',
   '.mp4': 'video/mp4',
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
@@ -78,19 +87,18 @@ const MIME_TYPES: Record<string, string> = {
   '.otf': 'font/otf',
 };
 
-/**
- * Serve raw file content from the user's home directory.
- * Security: only allows reading files within the user's home directory.
- */
-export async function GET(request: NextRequest) {
+async function resolveFile(request: NextRequest): Promise<
+  | { ok: true; resolved: string; stat: Stats; contentType: string; encodedFileName: string }
+  | { ok: false; response: Response }
+> {
   const filePath = request.nextUrl.searchParams.get('path');
   const baseDir = request.nextUrl.searchParams.get('baseDir');
 
   if (!filePath) {
-    return new Response(JSON.stringify({ error: 'path parameter is required' }), {
+    return { ok: false, response: new Response(JSON.stringify({ error: 'path parameter is required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
-    });
+    }) };
   }
 
   // Resolve path: if baseDir is provided and path is relative, join them
@@ -104,21 +112,20 @@ export async function GET(request: NextRequest) {
   try {
     await fs.access(resolved);
   } catch {
-    return new Response(JSON.stringify({ error: 'File not found' }), {
+    return { ok: false, response: new Response(JSON.stringify({ error: 'File not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
-    });
+    }) };
   }
 
   const stat = await fs.stat(resolved);
   if (!stat.isFile()) {
-    return new Response(JSON.stringify({ error: 'Not a file' }), {
+    return { ok: false, response: new Response(JSON.stringify({ error: 'Not a file' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
-    });
+    }) };
   }
 
-  const buffer = await fs.readFile(resolved);
   const ext = path.extname(resolved).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   const fileName = path.basename(resolved);
@@ -126,11 +133,37 @@ export async function GET(request: NextRequest) {
   // Encode filename for Content-Disposition header (RFC 5987)
   // This handles non-ASCII characters (e.g., Chinese) properly
   const encodedFileName = encodeURIComponent(fileName);
+  return { ok: true, resolved, stat, contentType, encodedFileName };
+}
+
+/**
+ * Serve raw file content from the user's home directory.
+ * Security: only allows reading files within the user's home directory.
+ */
+export async function GET(request: NextRequest) {
+  const resolved = await resolveFile(request);
+  if (!resolved.ok) return resolved.response;
+
+  const buffer = await fs.readFile(resolved.resolved);
 
   return new Response(buffer, {
     headers: {
-      'Content-Type': contentType,
-      'Content-Disposition': `inline; filename*=UTF-8''${encodedFileName}`,
+      'Content-Type': resolved.contentType,
+      'Content-Length': String(resolved.stat.size),
+      'Content-Disposition': `inline; filename*=UTF-8''${resolved.encodedFileName}`,
+    },
+  });
+}
+
+export async function HEAD(request: NextRequest) {
+  const resolved = await resolveFile(request);
+  if (!resolved.ok) return resolved.response;
+
+  return new Response(null, {
+    headers: {
+      'Content-Type': resolved.contentType,
+      'Content-Length': String(resolved.stat.size),
+      'Content-Disposition': `inline; filename*=UTF-8''${resolved.encodedFileName}`,
     },
   });
 }

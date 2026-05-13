@@ -79,6 +79,7 @@ export interface AdapterExtractResult {
   contentState: DeepSearchRecordContentState;
   snippet: string;
   evidenceCount: number;
+  errorMessage?: string;
   screenshotPath?: string | null;
   structuredData?: Record<string, unknown> | null;
 }

@@ -6,9 +6,24 @@ import path from 'node:path';
 import type { IMFileAttachment } from './types';
 
 const MAX_TTS_CHARS = 1800;
-const MAX_ASR_BYTES = 25 * 1024 * 1024;
-const DEFAULT_ASR_MODEL = 'whisper-1';
-const ASR_NATIVE_AUDIO_EXTS = new Set(['wav', 'mp3', 'm4a', 'ogg']);
+const LARGE_AUDIO_PREPROCESS_BYTES = 8 * 1024 * 1024;
+const LONG_AUDIO_PREPROCESS_SECONDS = 10 * 60;
+const ASR_SEGMENT_SECONDS = 5 * 60;
+const ASR_FFMPEG_TIMEOUT_MS = 15 * 60 * 1000;
+const ASR_BITRATES = ['24k', '16k', '12k'];
+
+/** Thrown by transcribeAudioAttachment when no cloud speech provider is configured. */
+export class SpeechProviderNotConfiguredError extends Error {
+  readonly code = 'SPEECH_PROVIDER_NOT_CONFIGURED';
+  constructor(message?: string) {
+    super(message ?? '未配置语音服务商，请到设置 → 服务商 → 语音 配置火山引擎');
+    this.name = 'SpeechProviderNotConfiguredError';
+  }
+}
+
+// ============================================================================
+// TTS (synthesize text → audio attachment) — unchanged from previous version.
+// ============================================================================
 
 export interface SpeechAttachmentResult {
   ok: boolean;
@@ -68,228 +83,95 @@ export async function synthesizeSpeechAttachment(text: string): Promise<SpeechAt
   }
 }
 
+// ============================================================================
+// ASR (transcribe audio attachment → text) — cloud-only path.
+// ============================================================================
+
 export interface AudioFormat {
   mime: string;
   ext: string;
 }
 
-export interface OpenAICompatibleAsrTarget {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  headers?: Record<string, string>;
-}
-
 export function detectAudioFormat(bytes: Buffer): AudioFormat {
-  if (bytes.subarray(0, 4).toString('ascii') === 'RIFF') {
-    return { mime: 'audio/wav', ext: 'wav' };
-  }
+  if (bytes.subarray(0, 4).toString('ascii') === 'RIFF') return { mime: 'audio/wav', ext: 'wav' };
+  if (bytes.subarray(0, 4).toString('ascii') === 'fLaC') return { mime: 'audio/flac', ext: 'flac' };
+  if (looksLikeAacFrame(bytes)) return { mime: 'audio/aac', ext: 'aac' };
   if (bytes.subarray(0, 3).toString('ascii') === 'ID3' || looksLikeMp3Frame(bytes)) {
     return { mime: 'audio/mpeg', ext: 'mp3' };
   }
-  if (bytes.subarray(0, 4).toString('ascii') === 'OggS') {
-    return { mime: 'audio/ogg', ext: 'ogg' };
-  }
-  if (bytes.subarray(4, 8).toString('ascii') === 'ftyp') {
-    return { mime: 'audio/mp4', ext: 'm4a' };
-  }
-  if (bytes.subarray(0, 5).toString('ascii') === '#!AMR') {
-    return { mime: 'audio/amr', ext: 'amr' };
-  }
+  if (bytes.subarray(0, 4).toString('ascii') === 'OggS') return { mime: 'audio/ogg', ext: 'ogg' };
+  if (bytes.subarray(4, 8).toString('ascii') === 'ftyp') return { mime: 'audio/mp4', ext: 'm4a' };
+  if (bytes.subarray(0, 5).toString('ascii') === '#!AMR') return { mime: 'audio/amr', ext: 'amr' };
   return { mime: 'audio/silk', ext: 'silk' };
 }
 
-export async function transcribeAudioAttachment(attachment: IMFileAttachment): Promise<string> {
-  const bytes = readAttachmentBytes(attachment);
-  if (!bytes || bytes.length === 0 || bytes.length > MAX_ASR_BYTES) return '';
-  const prepared = await prepareAudioForAsr(attachment, bytes);
+export interface TranscribeResult {
+  text: string;
+  empty: boolean;
+  duration_seconds?: number;
+  charged_amount?: number;
+  request_id?: string;
+  provider: string;
+}
 
+/**
+ * Transcribe audio via cloud speech provider (volcengine ASR by default).
+ * Throws SpeechProviderNotConfiguredError when no cloud provider is set up
+ * — callers should catch and present a settings link instead of swallowing.
+ */
+export async function transcribeAudioAttachment(
+  attachment: IMFileAttachment,
+): Promise<TranscribeResult> {
+  const bytes = await readAttachmentBytes(attachment);
+  if (!bytes || bytes.length === 0) {
+    return { text: '', empty: true, provider: 'none' };
+  }
+  // Lazy import keeps TTS-only call sites cheap and avoids circular deps.
+  const { resolveCloudSpeechProvider, transcribeViaCloudProxy } = await import(
+    './asr-adapters/cloud-speech'
+  );
+  const provider = await resolveCloudSpeechProvider();
+  if (!provider) {
+    throw new SpeechProviderNotConfiguredError();
+  }
+  const prepared = await prepareAudioForCloud(attachment, bytes);
   try {
-    const explicitAsrTarget = resolveExplicitAsrProviderTarget();
-    if (explicitAsrTarget) {
-      const explicitTranscript = await transcribeWithOpenAICompatibleProvider(
-        prepared.attachment,
-        prepared.bytes,
-        explicitAsrTarget,
-      );
-      if (explicitTranscript) return explicitTranscript;
+    if (prepared.inputs.length === 1) {
+      const input = prepared.inputs[0];
+      return transcribeViaCloudProxy(input.attachment, input.bytes, provider);
     }
 
-    const localTranscript = await transcribeWithLocalWhisper(prepared.attachment, prepared.bytes);
-    if (localTranscript) return localTranscript;
-
-    return '';
+    const results: TranscribeResult[] = [];
+    for (let i = 0; i < prepared.inputs.length; i++) {
+      const input = prepared.inputs[i];
+      try {
+        results.push(await transcribeViaCloudProxy(input.attachment, input.bytes, provider));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`第 ${i + 1}/${prepared.inputs.length} 段语音转写失败：${message}`);
+      }
+    }
+    return combineTranscribeResults(results, provider.providerType);
   } finally {
-    await prepared.cleanup();
+    await prepared.cleanup?.();
   }
 }
 
-export async function transcribeAudioAttachmentWithTarget(
-  attachment: IMFileAttachment,
-  target: OpenAICompatibleAsrTarget,
-): Promise<string> {
-  const bytes = readAttachmentBytes(attachment);
-  if (!bytes || bytes.length === 0 || bytes.length > MAX_ASR_BYTES) return '';
-  const prepared = await prepareAudioForAsr(attachment, bytes);
-  try {
-    return transcribeWithOpenAICompatibleProvider(prepared.attachment, prepared.bytes, target);
-  } finally {
-    await prepared.cleanup();
-  }
-}
+// ============================================================================
+// Helpers
+// ============================================================================
 
-interface PreparedAudio {
+interface PreparedCloudAudioInput {
   attachment: IMFileAttachment;
   bytes: Buffer;
-  cleanup: () => Promise<void>;
 }
 
-async function prepareAudioForAsr(attachment: IMFileAttachment, bytes: Buffer): Promise<PreparedAudio> {
-  const format = detectAudioFormat(bytes);
-  if (ASR_NATIVE_AUDIO_EXTS.has(format.ext)) {
-    return { attachment, bytes, cleanup: async () => undefined };
-  }
-
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lumos-im-audio-'));
-  const inputPath = path.join(tmpDir, `input.${format.ext}`);
-  const outputPath = path.join(tmpDir, 'voice.wav');
-  try {
-    await fs.writeFile(inputPath, bytes);
-    await execFileAsync(
-      'ffmpeg',
-      ['-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath, '-ac', '1', '-ar', '16000', outputPath],
-      60_000,
-    );
-    const wavBytes = await fs.readFile(outputPath);
-    if (wavBytes.length === 0) throw new Error('empty converted audio');
-    const baseName = path.basename(attachment.name || 'voice').replace(/\.[^.]+$/, '') || 'voice';
-    return {
-      attachment: {
-        ...attachment,
-        name: `${baseName}.wav`,
-        type: 'audio/wav',
-        size: wavBytes.length,
-        data: wavBytes.toString('base64'),
-      },
-      bytes: wavBytes,
-      cleanup: async () => {
-        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-      },
-    };
-  } catch {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-    return { attachment, bytes, cleanup: async () => undefined };
-  }
+interface PreparedCloudAudioBatch {
+  inputs: PreparedCloudAudioInput[];
+  cleanup?: () => Promise<void>;
 }
 
-async function transcribeWithLocalWhisper(attachment: IMFileAttachment, bytes: Buffer): Promise<string> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lumos-im-asr-'));
-  try {
-    const ext = path.extname(attachment.name).toLowerCase() || `.${detectAudioFormat(bytes).ext}`;
-    const audioPath = path.join(tmpDir, `voice${ext}`);
-    await fs.writeFile(audioPath, bytes);
-    const model = process.env.IM_VOICE_WHISPER_MODEL?.trim() || 'tiny';
-    await execFileAsync(
-      'whisper',
-      [
-        audioPath,
-        '--model',
-        model,
-        '--task',
-        'transcribe',
-        '--output_format',
-        'txt',
-        '--output_dir',
-        tmpDir,
-        '--fp16',
-        'False',
-        '--verbose',
-        'False',
-      ],
-      2 * 60 * 1000,
-    );
-    const files = await fs.readdir(tmpDir);
-    const transcriptFile = files.find((file) => file.toLowerCase().endsWith('.txt'));
-    if (!transcriptFile) return '';
-    const transcript = await fs.readFile(path.join(tmpDir, transcriptFile), 'utf8');
-    return transcript.replace(/\s+/g, ' ').trim();
-  } catch {
-    return '';
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-  }
-}
-
-async function transcribeWithOpenAICompatibleProvider(
-  attachment: IMFileAttachment,
-  bytes: Buffer,
-  explicitTarget: OpenAICompatibleAsrTarget,
-): Promise<string> {
-  const target = normalizeAsrTarget(explicitTarget);
-  if (!target) return '';
-
-  const form = new FormData();
-  const fileName = attachment.name || `voice.${detectAudioFormat(bytes).ext}`;
-  const fileBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  form.set('file', new Blob([fileBytes], { type: attachment.type || 'application/octet-stream' }), fileName);
-  form.set('model', target.model);
-  form.set('response_format', 'json');
-
-  try {
-    const res = await fetch(`${target.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${target.apiKey}`,
-        ...target.headers,
-      },
-      body: form,
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!res.ok) return '';
-    const data = await res.json().catch(() => null) as { text?: unknown } | null;
-    return typeof data?.text === 'string' ? data.text.replace(/\s+/g, ' ').trim() : '';
-  } catch {
-    return '';
-  }
-}
-
-export function resolveExplicitAsrProviderTarget(): OpenAICompatibleAsrTarget | null {
-  const envBaseUrl = process.env.IM_VOICE_ASR_BASE_URL?.trim();
-  const envApiKey = process.env.IM_VOICE_ASR_API_KEY?.trim();
-  const envModel = process.env.IM_VOICE_ASR_MODEL?.trim();
-  if (!envBaseUrl || !envApiKey) return null;
-  const baseUrl = normalizeOpenAIBaseUrl(envBaseUrl);
-  if (!baseUrl) return null;
-  return {
-    baseUrl,
-    apiKey: envApiKey,
-    model: envModel || DEFAULT_ASR_MODEL,
-  };
-}
-
-export function normalizeOpenAIBaseUrl(value: string): string {
-  const trimmed = (value || '').trim().replace(/\/+$/, '');
-  if (!trimmed) return '';
-  if (trimmed.endsWith('/audio/transcriptions')) {
-    return trimmed.slice(0, -'/audio/transcriptions'.length);
-  }
-  return trimmed;
-}
-
-function normalizeAsrTarget(target: OpenAICompatibleAsrTarget): OpenAICompatibleAsrTarget | null {
-  const baseUrl = normalizeOpenAIBaseUrl(target.baseUrl);
-  const apiKey = target.apiKey.trim();
-  const model = target.model.trim() || DEFAULT_ASR_MODEL;
-  if (!baseUrl || !apiKey) return null;
-  return {
-    baseUrl,
-    apiKey,
-    model,
-    headers: target.headers,
-  };
-}
-
-function readAttachmentBytes(attachment: IMFileAttachment): Buffer | null {
+async function readAttachmentBytes(attachment: IMFileAttachment): Promise<Buffer | null> {
   if (attachment.data) {
     try {
       return Buffer.from(attachment.data, 'base64');
@@ -297,6 +179,197 @@ function readAttachmentBytes(attachment: IMFileAttachment): Buffer | null {
       return null;
     }
   }
+  if (attachment.filePath) {
+    try {
+      return await fs.readFile(attachment.filePath);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function prepareAudioForCloud(
+  attachment: IMFileAttachment,
+  bytes: Buffer,
+): Promise<PreparedCloudAudioBatch> {
+  const original: PreparedCloudAudioInput = {
+    attachment: { ...attachment, size: bytes.length },
+    bytes,
+  };
+
+  let tmpDir: string | null = null;
+  let sourcePath = attachment.filePath || '';
+  if (!sourcePath) {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lumos-asr-input-'));
+    sourcePath = path.join(tmpDir, `input.${inferAudioExtension(attachment, bytes)}`);
+    await fs.writeFile(sourcePath, bytes);
+  }
+
+  const cleanup = async () => {
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+  };
+
+  const durationSeconds = await probeAudioDurationSeconds(sourcePath);
+  const shouldPreprocess =
+    bytes.length >= LARGE_AUDIO_PREPROCESS_BYTES
+    || (typeof durationSeconds === 'number' && durationSeconds >= LONG_AUDIO_PREPROCESS_SECONDS);
+
+  if (!shouldPreprocess) {
+    return tmpDir ? { inputs: [original], cleanup } : { inputs: [original] };
+  }
+
+  const ffmpegPath = await findMediaBinary('ffmpeg');
+  if (!ffmpegPath) {
+    return tmpDir ? { inputs: [original], cleanup } : { inputs: [original] };
+  }
+
+  if (!tmpDir) {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lumos-asr-preprocess-'));
+  }
+
+  for (const bitrate of ASR_BITRATES) {
+    await removeGeneratedSegments(tmpDir);
+    const pattern = path.join(tmpDir, 'segment-%03d.mp3');
+    try {
+      await execFileAsync(
+        ffmpegPath,
+        [
+          '-y',
+          '-i',
+          sourcePath,
+          '-vn',
+          '-ac',
+          '1',
+          '-ar',
+          '16000',
+          '-b:a',
+          bitrate,
+          '-f',
+          'segment',
+          '-segment_time',
+          String(ASR_SEGMENT_SECONDS),
+          '-reset_timestamps',
+          '1',
+          pattern,
+        ],
+        ASR_FFMPEG_TIMEOUT_MS,
+      );
+      const segmentFiles = await listGeneratedSegments(tmpDir);
+      if (segmentFiles.length === 0) continue;
+      const inputs: PreparedCloudAudioInput[] = [];
+      const baseName = path.basename(attachment.name || 'voice', path.extname(attachment.name || 'voice'));
+      for (let i = 0; i < segmentFiles.length; i++) {
+        const filePath = segmentFiles[i];
+        const segmentBytes = await fs.readFile(filePath);
+        if (segmentBytes.length === 0) {
+          inputs.length = 0;
+          break;
+        }
+        inputs.push({
+          attachment: {
+            id: `${attachment.id || 'voice'}-segment-${i + 1}`,
+            name: `${baseName || 'voice'}-part-${String(i + 1).padStart(2, '0')}.mp3`,
+            type: 'audio/mpeg',
+            size: segmentBytes.length,
+            data: '',
+            filePath,
+          },
+          bytes: segmentBytes,
+        });
+      }
+      if (inputs.length > 0) {
+        return { inputs, cleanup };
+      }
+    } catch {
+      // Try the next bitrate, then fall back to original bytes below.
+    }
+  }
+
+  return { inputs: [original], cleanup };
+}
+
+function combineTranscribeResults(results: TranscribeResult[], fallbackProvider: string): TranscribeResult {
+  const text = results.map((result) => result.text.trim()).filter(Boolean).join('\n\n');
+  const duration = sumOptional(results.map((result) => result.duration_seconds));
+  const charged = sumOptional(results.map((result) => result.charged_amount));
+  const requestIds = results.map((result) => result.request_id).filter(Boolean).join(',');
+  const provider = results.find((result) => result.provider)?.provider || fallbackProvider;
+  return {
+    text,
+    empty: text.trim().length === 0,
+    duration_seconds: duration,
+    charged_amount: charged,
+    request_id: requestIds || undefined,
+    provider,
+  };
+}
+
+function sumOptional(values: Array<number | undefined>): number | undefined {
+  const numbers = values.filter((value): value is number => typeof value === 'number');
+  if (numbers.length === 0) return undefined;
+  return numbers.reduce((sum, value) => sum + value, 0);
+}
+
+function inferAudioExtension(attachment: IMFileAttachment, bytes: Buffer): string {
+  const nameExt = path.extname(attachment.name || '').replace(/^\./, '').toLowerCase();
+  if (nameExt) return nameExt;
+  const detected = detectAudioFormat(bytes);
+  return detected.ext || 'bin';
+}
+
+async function probeAudioDurationSeconds(filePath: string): Promise<number | null> {
+  const ffprobePath = await findMediaBinary('ffprobe');
+  if (!ffprobePath) return null;
+  try {
+    const stdout = await execFileCaptureAsync(
+      ffprobePath,
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nokey=1:noprint_wrappers=1', filePath],
+      10_000,
+    );
+    const parsed = Number.parseFloat(stdout.trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listGeneratedSegments(tmpDir: string): Promise<string[]> {
+  const entries = await fs.readdir(tmpDir).catch(() => []);
+  return entries
+    .filter((entry) => /^segment-\d+\.mp3$/i.test(entry))
+    .sort()
+    .map((entry) => path.join(tmpDir, entry));
+}
+
+async function removeGeneratedSegments(tmpDir: string): Promise<void> {
+  const segmentFiles = await listGeneratedSegments(tmpDir);
+  await Promise.all(segmentFiles.map((file) => fs.unlink(file).catch(() => undefined)));
+}
+
+const mediaBinaryCache = new Map<string, string | null>();
+
+async function findMediaBinary(binary: 'ffmpeg' | 'ffprobe'): Promise<string | null> {
+  if (mediaBinaryCache.has(binary)) return mediaBinaryCache.get(binary) || null;
+  const candidates = [
+    binary,
+    `/opt/homebrew/bin/${binary}`,
+    `/usr/local/bin/${binary}`,
+    `/usr/bin/${binary}`,
+    `${process.env.HOME ?? ''}/anaconda3/bin/${binary}`,
+    `${process.env.HOME ?? ''}/miniconda3/bin/${binary}`,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      await execFileAsync(candidate, ['-version'], 3_000);
+      mediaBinaryCache.set(binary, candidate);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  mediaBinaryCache.set(binary, null);
   return null;
 }
 
@@ -365,7 +438,25 @@ function execFileAsync(command: string, args: string[], timeoutMs: number): Prom
   });
 }
 
+function execFileCaptureAsync(command: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: timeoutMs, encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        const detail = typeof stderr === 'string' ? stderr.trim() : '';
+        reject(new Error(detail ? `${error.message}: ${detail}` : error.message));
+        return;
+      }
+      resolve(typeof stdout === 'string' ? stdout : String(stdout ?? ''));
+    });
+  });
+}
+
 function looksLikeMp3Frame(bytes: Buffer): boolean {
   if (bytes.length < 2) return false;
   return bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;
+}
+
+function looksLikeAacFrame(bytes: Buffer): boolean {
+  if (bytes.length < 2) return false;
+  return bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0;
 }

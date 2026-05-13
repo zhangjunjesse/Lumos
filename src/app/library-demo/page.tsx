@@ -2262,9 +2262,9 @@ export default function LibraryDemoPage() {
                   )}
                   {shouldShowKnowledgeEnhancementHint(selectedItem) ? (
                     <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
-                      <div className="text-xs text-sky-700">AI 增强未启用</div>
+                      <div className="text-xs text-sky-700">缺少索引概述</div>
                       <div className="mt-1 text-sm text-sky-700">
-                        当前已完成本地索引与检索，但未生成概述、要点和自动标签。请在“设置 &gt; 服务商”里为知识库选择一个支持文本处理的 API Key 服务。
+                        当前已完成本地索引与检索，但还没有生成「索引概述 / 关键要点 / 自动标签」。可点击右上角「重建索引」补生成；如果仍停留在这里，再检查“设置 &gt; 服务商”的知识库文本处理配置。
                       </div>
                     </div>
                   ) : null}

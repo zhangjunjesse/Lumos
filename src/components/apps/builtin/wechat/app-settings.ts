@@ -21,11 +21,12 @@ export const NOTIFICATION_CHANNEL_LABEL: Record<NotificationChannel, string> = {
   email: '邮箱',
 };
 
-export type AnalysisWindow = 7 | 14 | 30 | 60;
+export type AnalysisWindow = 1 | 7 | 14 | 30 | 60;
 export type AnalysisSchedule = 'manual' | 'daily' | 'every_4h';
 export type AISensitivity = 'strict' | 'balanced' | 'loose';
 
 export const ANALYSIS_WINDOW_LABEL: Record<AnalysisWindow, string> = {
+  1: '最近 1 天',
   7: '最近 7 天',
   14: '最近 14 天',
   30: '最近 30 天',
@@ -76,7 +77,12 @@ export interface AppSettings {
     proactiveEnabled: boolean;
     channels: NotificationChannel[];
   };
-  /** wxid list whose messages are excluded from analysis */
+  /**
+   * 白名单。非空时,只分析名单内的会话/人(优先级高于黑名单)。
+   * 默认空数组 = 不限,所有可读会话都进分析。
+   */
+  includedPersonIds: string[];
+  /** wxid list whose messages are excluded from analysis(白名单为空时全分析,这一项过滤掉黑名单内的) */
   excludedPersonIds: string[];
   /**
    * Topic analysis is opt-in: only chats explicitly added to one of these
@@ -115,7 +121,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ai: {
     providerId: null,
     model: null,
-    windowDays: 14,
+    windowDays: 1,
     schedule: 'manual',
     sensitivity: 'balanced',
     prompts: { ...DEFAULT_PROMPTS },
@@ -129,6 +135,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     proactiveEnabled: false,
     channels: ['desktop'],
   },
+  includedPersonIds: [],
   excludedPersonIds: [],
   topicAnalysis: {
     whitelistPersonal: [],

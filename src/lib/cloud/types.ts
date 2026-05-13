@@ -22,6 +22,12 @@ export interface CloudUserInfo {
    * 桌面端按 `id` (remote) 做一对一 upsert 本地 provider。
    */
   chat_providers?: CloudChatProviderConfig[];
+  /**
+   * Admin 下发的语音 ASR 服务商（如火山引擎录音文件识别 2.0）。`api_key` 由
+   * lumos-web 在 /api/cloud/speech/transcribe 内部使用，桌面端拿到的是脱敏后
+   * 的元数据。桌面端按 `id` (remote) 一对一 upsert 本地 provider。
+   */
+  speech_providers?: CloudSpeechProviderConfig[];
   /** Per-capability admin toggles. Absent fields are treated as false. */
   allow_custom_providers?: Partial<CustomProviderFlags>;
 }
@@ -79,4 +85,27 @@ export interface CloudChatProviderConfig {
   newapi_channel_id: number | null;
   default_model: string;
   model_catalog: CloudChatProviderModel[];
+}
+
+export interface CloudSpeechProviderConfig {
+  /** Remote provider id from lumos-web (stable identity across renames). */
+  id: string;
+  is_default: boolean;
+  name: string;
+  /** e.g. 'volcengine-asr-v2'. Drives adapter dispatch. */
+  provider_type: string;
+  /**
+   * Display-only price hint in 元/秒. Real billing happens server-side in
+   * /api/cloud/speech/transcribe; the desktop just shows this so the
+   * settings page can render "X 元/分钟" (× 60 from this).
+   */
+  price_per_second: number;
+  /**
+   * Resource id forwarded by lumos-web to volcengine
+   * (volc.bigasr.auc / volc.seedasr.auc). Carried here only for diagnostics
+   * — the desktop never speaks volcengine HTTP directly.
+   */
+  resource_id?: string;
+  /** Default model name reported by lumos-web (e.g. 'bigmodel'). */
+  default_model?: string;
 }

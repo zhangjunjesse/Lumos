@@ -128,6 +128,9 @@ function buildCandidates() {
 
 function probe(cmd) {
   const exe = cmd[0];
+  if (isPythonModuleInvocation(cmd, 'goofish_cli.mcp_server')) {
+    return probePythonModule(cmd, 'goofish_cli.mcp_server') ? cmd : null;
+  }
 
   // For absolute paths: just check existence + executable bit.
   if (path.isAbsolute(exe)) {
@@ -142,6 +145,21 @@ function probe(cmd) {
     { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 },
   );
   return probeRes.status === 0 ? cmd : null;
+}
+
+function isPythonModuleInvocation(cmd, moduleName) {
+  return cmd.length >= 3 && cmd[1] === '-m' && cmd[2] === moduleName;
+}
+
+function probePythonModule(cmd, moduleName) {
+  const exe = cmd[0];
+  if (path.isAbsolute(exe) && !existsSync(exe)) return false;
+  const probeRes = spawnSync(
+    exe,
+    ['-c', `import ${moduleName}`],
+    { stdio: ['ignore', 'ignore', 'ignore'], timeout: 2000 },
+  );
+  return probeRes.status === 0;
 }
 
 function pickInvocation() {

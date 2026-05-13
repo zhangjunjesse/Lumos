@@ -18,7 +18,7 @@ import type { BrowserBridgeRuntimeConfig } from '@/lib/browser-runtime/bridge-cl
 import type { DeepSearchRunRecord } from '@/types';
 import { createAdapterContext } from './adapter-context';
 import { getAdapter } from './adapter-registry';
-import type { AdapterExtractResult } from './adapter-types';
+import type { AdapterExtractResult, AdapterSearchItem, AdapterSearchResult } from './adapter-types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,6 +35,41 @@ function nowTimestamp(): string {
 
 function buildStructuredJson(entry: { siteKey: string | null; url: string; title: string; structuredData?: Record<string, unknown> | null }): string {
   return JSON.stringify({ siteKey: entry.siteKey, url: entry.url, title: entry.title, structuredData: entry.structuredData ?? null }, null, 2);
+}
+
+function buildSearchItemStructuredData(item: AdapterSearchItem, index: number): Record<string, unknown> {
+  return {
+    rank: index + 1,
+    url: item.url,
+    title: item.title,
+    snippet: item.snippet,
+    voteCount: item.voteCount ?? null,
+    extra: item.extra ?? null,
+  };
+}
+
+function buildSearchResultStructuredData(searchResult: AdapterSearchResult): Record<string, unknown> {
+  const base = searchResult.structuredData && typeof searchResult.structuredData === 'object'
+    ? { ...searchResult.structuredData }
+    : {};
+
+  if (!Array.isArray(base.items)) {
+    base.items = searchResult.items.map(buildSearchItemStructuredData);
+  }
+
+  return {
+    ...base,
+    sourceUrl: searchResult.sourceUrl,
+    resultCount: typeof base.resultCount === 'number' ? base.resultCount : searchResult.items.length,
+  };
+}
+
+function getExtractErrorMessage(result: AdapterExtractResult): string {
+  if (result.errorMessage?.trim()) {
+    return result.errorMessage.trim();
+  }
+  const structuredError = result.structuredData?.error;
+  return typeof structuredError === 'string' ? structuredError : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +118,9 @@ async function persistResult(
     id: crypto.randomUUID(), recordId, kind: 'structured_json',
     title: `${result.title || result.url} snapshot`,
     storagePath: jsonPath, mimeType: 'application/json',
-    sizeBytes: jsonStat.size, metadata: { siteKey, url: result.url }, createdAt: ts,
+    sizeBytes: jsonStat.size,
+    metadata: { siteKey, url: result.url, title: result.title, structuredData: result.structuredData ?? null },
+    createdAt: ts,
   });
 
   // Screenshot artifact (if adapter provided one)
@@ -106,7 +143,8 @@ async function persistResult(
       id: recordId, runPageId: null, siteKey, url: result.url, title: result.title,
       contentState: result.contentState, snippet: result.snippet.slice(0, 600),
       evidenceCount: result.evidenceCount, contentArtifactId, screenshotArtifactId,
-      errorMessage: '', fetchedAt: ts,
+      errorMessage: result.contentState === 'failed' ? getExtractErrorMessage(result) : '',
+      fetchedAt: ts,
     },
     artifacts,
   });
@@ -157,6 +195,7 @@ export async function executeAdapterRun(params: ExecutionParams): Promise<DeepSe
   for (const siteKey of eligibleSiteKeys) {
     const adapter = getAdapter(siteKey);
     const maxResults = siteMinFetchMap.get(siteKey) ?? 3;
+    let siteSuccessCount = 0;
 
     // --- Search phase ---
     await updateDeepSearchRunExecution({
@@ -189,9 +228,10 @@ export async function executeAdapterRun(params: ExecutionParams): Promise<DeepSe
       contentState: 'list_only',
       snippet: searchResult.items[0]?.snippet || '',
       evidenceCount: searchResult.items.length,
-      structuredData: searchResult.structuredData,
+      structuredData: buildSearchResultStructuredData(searchResult),
     });
     successCount += 1;
+    siteSuccessCount += 1;
 
     // --- Detail extraction phase (parallel) ---
     const detailUrls = searchResult.items.slice(0, maxResults).map((item) => item.url).filter(Boolean);
@@ -213,8 +253,12 @@ export async function executeAdapterRun(params: ExecutionParams): Promise<DeepSe
       try {
         const result = await adapter.extract(ctx, url);
         await persistResult(run.id, artifactDir, siteKey, result);
-        successCount += 1;
-        coveredSiteKeys.add(siteKey);
+        if (result.contentState === 'failed') {
+          failureCount += 1;
+        } else {
+          successCount += 1;
+          siteSuccessCount += 1;
+        }
         // Update progress after each completion
         await updateDeepSearchRunExecution({
           id: run.id, status: 'running', startedAt,
@@ -228,7 +272,7 @@ export async function executeAdapterRun(params: ExecutionParams): Promise<DeepSe
     });
 
     await Promise.all(extractionPromises);
-    if (coveredSiteKeys.has(siteKey) || successCount > 0) {
+    if (siteSuccessCount > 0) {
       coveredSiteKeys.add(siteKey);
     }
   }

@@ -104,6 +104,23 @@ function Hero({ enabled }: { enabled: boolean }) {
   );
 }
 
+function MainAgentReadAccessNote({ enabled }: { enabled: boolean }) {
+  return (
+    <Card tone="soft">
+      <div className="space-y-2 text-sm leading-relaxed">
+        <div className="font-medium text-foreground">主 Agent / 统一 AI 对话读取微信消息</div>
+        <p className="text-muted-foreground">
+          这里启用的是本机微信读取 MCP，不是 Skill。{enabled ? '主 Agent 和统一 AI 对话现在可以' : '完成授权并启用后，主 Agent 和统一 AI 对话可以'}
+          直接按你的问题搜索本机微信 mirror，例如查最近消息、按关键词找聊天记录或汇总某个群的上下文。
+        </p>
+        <p className="text-xs text-muted-foreground">
+          当前这些对话只获得只读搜索能力；发微信、修改自动化和跟进任务仍在微信助手专用界面处理。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 1: introduce + accept terms
 // ─────────────────────────────────────────────────────────────────────────
@@ -915,6 +932,7 @@ export function WeChatExportPanel() {
   return (
     <div className="flex flex-col gap-4 max-w-2xl">
       <Hero enabled={enabled && phase === 'ready'} />
+      <MainAgentReadAccessNote enabled={enabled && phase === 'ready'} />
 
       {actionMessage ? (
         <Alert variant={actionMessage.kind === 'error' ? 'destructive' : 'default'}>

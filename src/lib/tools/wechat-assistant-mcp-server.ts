@@ -15,7 +15,13 @@ import {
   listTodos,
   setTodoStatus,
 } from '@/lib/wechat-assistant/db';
-import { getSyncState, searchMessages } from '@/lib/wechat-assistant/mirror-store';
+import {
+  getSyncState,
+  readChatMessages,
+  searchMessages,
+  type ChatReadCandidate,
+} from '@/lib/wechat-assistant/mirror-store';
+import { FRESH_WINDOW_MS, runSync } from '@/lib/wechat-assistant/sync-engine';
 import type { TodoStatus, WeChatTodo } from '@/lib/wechat-assistant/ai-types';
 
 export const WECHAT_ASSISTANT_MCP_SERVER_NAME = 'lumos-wechat-assistant';
@@ -25,7 +31,8 @@ You have access to built-in WeChat Assistant tools (server name: \`lumos-wechat-
 
 Available tools:
 - \`mcp__lumos-wechat-assistant__get_wechat_assistant_status()\`: read sync/message, follow-up, and automation status.
-- \`mcp__lumos-wechat-assistant__search_wechat_messages(query, scope?, days?, limit?)\`: search the locally mirrored WeChat messages.
+- \`mcp__lumos-wechat-assistant__search_wechat_messages(query, scope?, days?, limit?, offset?)\`: search the locally mirrored WeChat messages by keyword.
+- \`mcp__lumos-wechat-assistant__read_wechat_chat(chat, scope?, days?, limit?, offset?, before_ts?)\`: read recent messages from one visible chat/contact/group without requiring keyword matches.
 - \`mcp__lumos-wechat-assistant__resolve_wechat_followup(query, status?, limit?)\`: resolve a visible follow-up title to candidate ids.
 - \`mcp__lumos-wechat-assistant__list_wechat_followups(status?, limit?)\`: list WeChat follow-up tasks.
 - \`mcp__lumos-wechat-assistant__create_wechat_followup(text, summary?, next_step?, due_at?)\`: create a manual follow-up.
@@ -44,35 +51,64 @@ Available tools:
 Rules:
 - Use these tools when the user asks about WeChat messages, daily summaries, reminders, automations, or follow-ups.
 - If the user names a follow-up or automation by title, resolve or list it first. If a name is ambiguous, list matching items and ask the user to choose; do not guess an id.
+- Automation \`message_template\` is the report/reminder content, not a delivery channel. If the user asks to "send it to me via WeChat/IM", explain the current boundary instead of putting that delivery request into \`message_template\` or claiming WeChat IM delivery is configured.
 - Do not expose raw wxid/openim/chatroom ids unless the user explicitly asks for technical details.
 - After a mutation tool succeeds, summarize the visible result and tell the user which tab can verify it.`;
+
+export const WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT = `
+You have read-only access to local WeChat message history through the built-in WeChat Assistant tools (server name: \`lumos-wechat-assistant\`).
+
+Available read-only tools:
+- \`mcp__lumos-wechat-assistant__get_wechat_assistant_status()\`: check whether the local WeChat mirror has synced messages and read basic status.
+- \`mcp__lumos-wechat-assistant__search_wechat_messages(query, scope?, days?, limit?, offset?)\`: search the locally mirrored WeChat messages by keyword and return visible chat names, speakers, timestamps, and snippets.
+- \`mcp__lumos-wechat-assistant__read_wechat_chat(chat, scope?, days?, limit?, offset?, before_ts?)\`: read recent messages from one visible chat/contact/group without requiring keyword matches.
+
+Rules:
+- When the user asks to search by keyword, use \`search_wechat_messages\`; when the user names a contact/group and asks for recent/all messages, use \`read_wechat_chat\` instead of keyword-searching the contact name.
+- If the user asks to read WeChat history, use these tools instead of saying you do not have this capability.
+- \`search_wechat_messages\` refreshes the local WeChat mirror before searching when the mirror is stale. If the tool reports sync failure, explain that result instead of treating older search results as complete.
+- If you are unsure whether WeChat data is available, call \`get_wechat_assistant_status\` first and explain the sync state in product-facing terms.
+- Do not expose raw wxid/openim/chatroom ids unless the user explicitly asks for technical details.
+- This Agent Chat access is read-only. If the user asks to send WeChat messages, create/edit automations, or change follow-ups, explain that this chat can read WeChat history but those write actions must be handled in the dedicated WeChat Assistant UI or a future confirmed write-capability path.`;
+
+interface CreateWeChatAssistantMcpServerOptions {
+  readOnly?: boolean;
+}
 
 interface CallToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
 }
 
-export function createWeChatAssistantMcpServer() {
+export function createWeChatAssistantMcpServer(options: CreateWeChatAssistantMcpServerOptions = {}) {
+  const readOnlyTools = [
+    createGetWeChatAssistantStatusTool(),
+    createSearchWeChatMessagesTool(),
+    createReadWeChatChatTool(),
+  ];
+  const tools = options.readOnly
+    ? readOnlyTools
+    : [
+        ...readOnlyTools,
+        createResolveWeChatFollowupTool(),
+        createListWeChatFollowupsTool(),
+        createCreateWeChatFollowupTool(),
+        createCompleteWeChatFollowupTool(),
+        createDeleteWeChatFollowupTool(),
+        createResolveWeChatAutomationTool(),
+        createListWeChatAutomationsTool(),
+        createCreateWeChatAutomationTool(),
+        createTriggerWeChatAutomationTool(),
+        createUpdateWeChatAutomationTool(),
+        createSetWeChatAutomationEnabledTool(),
+        createBatchSetWeChatAutomationsEnabledTool(),
+        createDeleteWeChatAutomationTool(),
+        createDiagnoseWeChatAutomationTool(),
+      ];
+
   return createSdkMcpServer({
     name: WECHAT_ASSISTANT_MCP_SERVER_NAME,
-    tools: [
-      createGetWeChatAssistantStatusTool(),
-      createSearchWeChatMessagesTool(),
-      createResolveWeChatFollowupTool(),
-      createListWeChatFollowupsTool(),
-      createCreateWeChatFollowupTool(),
-      createCompleteWeChatFollowupTool(),
-      createDeleteWeChatFollowupTool(),
-      createResolveWeChatAutomationTool(),
-      createListWeChatAutomationsTool(),
-      createCreateWeChatAutomationTool(),
-      createTriggerWeChatAutomationTool(),
-      createUpdateWeChatAutomationTool(),
-      createSetWeChatAutomationEnabledTool(),
-      createBatchSetWeChatAutomationsEnabledTool(),
-      createDeleteWeChatAutomationTool(),
-      createDiagnoseWeChatAutomationTool(),
-    ],
+    tools,
   });
 }
 
@@ -120,23 +156,33 @@ function createSearchWeChatMessagesTool() {
       query: z.string().min(1).describe('Keyword to search in message text, chat name, or source id.'),
       scope: z.enum(['all', 'personal', 'group']).optional().describe('Search scope. Defaults to all.'),
       days: z.number().int().min(1).max(3650).optional().describe('Optional recent-day window. Omit for all history.'),
-      limit: z.number().int().min(1).max(20).optional().describe('Max results. Defaults to 5, max 20.'),
+      limit: z.number().int().min(1).max(200).optional().describe('Max results. Defaults to 20, max 200.'),
+      offset: z.number().int().min(0).max(10000).optional().describe('Pagination offset. Defaults to 0.'),
     },
     async (args): Promise<CallToolResult> => {
       try {
+        const sync = await syncMirrorBeforeSearch();
         const sinceTs = typeof args.days === 'number'
           ? Math.floor(Date.now() / 1000) - args.days * 86400
           : null;
+        const limit = normalizePageLimit(args.limit, 20);
+        const offset = normalizeOffset(args.offset);
         const results = searchMessages({
           query: args.query,
           scope: args.scope ?? 'all',
           sinceTs,
-          limit: args.limit ?? 5,
+          limit,
+          offset,
         });
         return jsonResult({
           schema: 'wechat-assistant-message-search/v1',
           query: args.query,
           count: results.length,
+          limit,
+          offset,
+          has_more: results.length >= limit,
+          next_offset: results.length >= limit ? offset + limit : null,
+          sync,
           results: results.map((item) => ({
             chat: item.display,
             kind: item.isGroup ? '群聊' : '私聊',
@@ -150,6 +196,88 @@ function createSearchWeChatMessagesTool() {
       }
     },
   );
+}
+
+function createReadWeChatChatTool() {
+  return tool(
+    'read_wechat_chat',
+    'Read recent local WeChat messages from one visible chat/contact/group without keyword matching message text.',
+    {
+      chat: z.string().min(1).describe('Visible contact/group/chat name, or wxid only if the user explicitly provided it.'),
+      scope: z.enum(['all', 'personal', 'group']).optional().describe('Restrict matching to personal chats or groups. Defaults to all.'),
+      days: z.number().int().min(1).max(3650).optional().describe('Optional recent-day window. Omit for all history.'),
+      limit: z.number().int().min(1).max(200).optional().describe('Max messages. Defaults to 50, max 200.'),
+      offset: z.number().int().min(0).max(10000).optional().describe('Pagination offset for older messages. Defaults to 0.'),
+      before_ts: z.number().int().positive().optional().describe('Optional unix-seconds cursor; read messages older than this timestamp.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        const sync = await syncMirrorBeforeSearch();
+        const sinceTs = typeof args.days === 'number'
+          ? Math.floor(Date.now() / 1000) - args.days * 86400
+          : null;
+        const limit = normalizePageLimit(args.limit, 50);
+        const offset = normalizeOffset(args.offset);
+        const result = readChatMessages({
+          chat: args.chat,
+          scope: args.scope ?? 'all',
+          sinceTs,
+          beforeTs: args.before_ts ?? null,
+          limit,
+          offset,
+        });
+        return jsonResult({
+          schema: 'wechat-assistant-chat-read/v1',
+          query: args.chat,
+          status: result.status,
+          chat: result.chat ? chatCandidateSummary(result.chat) : null,
+          candidates: result.status === 'ok'
+            ? []
+            : result.candidates.map((candidate, index) => chatCandidateSummary(candidate, index + 1)),
+          count: result.messages.length,
+          limit: result.limit,
+          offset: result.offset,
+          has_more: result.hasMore,
+          next_offset: result.nextOffset,
+          sync,
+          guidance: chatReadGuidance(result.status),
+          messages: result.messages.map((message) => ({
+            speaker: message.sender === 'me' ? '我' : message.senderDisplay || '对方',
+            time: new Date(message.ts * 1000).toLocaleString('zh-CN'),
+            message_type: wechatMessageTypeLabel(message.msgType),
+            content: wechatMessageContentPreview(message.content, message.msgType),
+          })),
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+async function syncMirrorBeforeSearch() {
+  const before = getSyncState();
+  const lastFinishedAt = before.lastFinishedAt || 0;
+  const fresh = lastFinishedAt > 0 && Date.now() - lastFinishedAt < FRESH_WINDOW_MS;
+  if (fresh) {
+    return {
+      status: 'fresh',
+      last_finished_at: new Date(lastFinishedAt).toLocaleString('zh-CN'),
+      total_messages: before.totalMessages,
+    };
+  }
+
+  const result = await runSync();
+  const after = getSyncState();
+  return {
+    status: result.status,
+    reason: result.reason ?? null,
+    inserted: result.inserted,
+    seen: result.seen,
+    error: result.error ?? null,
+    last_finished_at: after.lastFinishedAt ? new Date(after.lastFinishedAt).toLocaleString('zh-CN') : null,
+    total_messages: after.totalMessages,
+  };
 }
 
 function createResolveWeChatFollowupTool() {
@@ -619,6 +747,55 @@ function createDiagnoseWeChatAutomationTool() {
 }
 
 type AutomationLite = ReturnType<typeof listWeChatAutomations>[number];
+
+function normalizePageLimit(value: number | undefined, fallback: number): number {
+  return Math.max(1, Math.min(200, Math.floor(value ?? fallback)));
+}
+
+function normalizeOffset(value: number | undefined): number {
+  return Math.max(0, Math.min(10000, Math.floor(value ?? 0)));
+}
+
+function chatCandidateSummary(candidate: ChatReadCandidate, index?: number) {
+  return {
+    ...(typeof index === 'number' ? { index } : {}),
+    name: candidate.display,
+    kind: candidate.isGroup ? '群聊' : '私聊',
+    last_message_at: candidate.lastTs ? new Date(candidate.lastTs * 1000).toLocaleString('zh-CN') : null,
+    message_count: candidate.messageCount,
+    unread_count: candidate.unreadCount,
+    summary: candidate.summary || null,
+  };
+}
+
+function chatReadGuidance(status: 'ok' | 'not_found' | 'ambiguous'): string {
+  if (status === 'ok') return '已按聊天对象读取消息；如还需要更早记录，可继续使用 next_offset 或 before_ts。';
+  if (status === 'not_found') return '没有匹配到这个可见联系人或群名。可以先到微信助手的会话列表确认名称，或放宽 scope。';
+  return '匹配到多个候选，请让用户按可见名称、群聊/私聊和最近消息时间选择，不要猜。';
+}
+
+function wechatMessageTypeLabel(msgType: number): string {
+  switch (msgType) {
+    case 1: return '文本';
+    case 3: return '图片';
+    case 34: return '语音';
+    case 43: return '视频';
+    case 47: return '表情';
+    case 49: return '链接/卡片';
+    case 10000:
+    case 10002:
+      return '系统';
+    default:
+      return msgType > 0 ? `非文本消息 type=${msgType}` : '未知';
+  }
+}
+
+function wechatMessageContentPreview(content: string, msgType: number): string {
+  const text = content.trim();
+  if (msgType === 1) return text;
+  if (text && text.length <= 200 && !text.startsWith('<')) return text;
+  return `[${wechatMessageTypeLabel(msgType)}]`;
+}
 
 function followupSummary(item: WeChatTodo, score?: number) {
   return {

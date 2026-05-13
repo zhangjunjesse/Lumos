@@ -32,6 +32,16 @@ import { getClaudeProviderRoutingSnapshot, isClaudeLocalAuthProvider } from './c
 import { ensureClaudeLocalAuthReady } from './claude/local-auth';
 import { buildClaudeSdkInvocationContext } from './claude/sdk-runtime';
 import { buildRuntimeResourceCandidates, resolveRuntimeResourcePath } from './runtime-resources';
+import {
+  buildAudioTranscriptionInstruction,
+  isAudioFileLike,
+  type AudioTranscriptionReference,
+} from '@/lib/chat/audio-attachments';
+import { startLlmRequestLog } from '@/lib/llm-request-log';
+import {
+  assertLlmProviderCircuitClosed,
+  recordLlmProviderFailure,
+} from '@/lib/llm-circuit-breaker';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -245,6 +255,34 @@ function writeProviderRoutingDebug(params: {
 // Unique per server process. Ensures MCP signatures never match across restarts,
 // so dead MCP processes from a previous run are never silently reused.
 const SERVER_EPOCH = Date.now().toString(36);
+const DEFAULT_CHAT_DISALLOWED_TOOLS = [
+  'Task',
+  // Goofish write/privacy-sensitive MCP tools must go through product-owned
+  // confirmation flows instead of direct chat tool calls.
+  'mcp__goofish__message_send',
+  'mcp__goofish__item_publish',
+  'mcp__goofish__item_delete',
+  'mcp__goofish__media_upload',
+  'mcp__goofish__auth_login',
+  'mcp__goofish__auth_reset_guard',
+  'mcp__goofish__location_default',
+  'mcp__goofish__search_items',
+];
+const STABLE_CLAUDE_CODE_ENV: Record<string, string> = {
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'false',
+  // Avoid Claude Code's deferred-tool token-count fanout for large MCP toolsets.
+  CLAUDE_CODE_TST_NAMES_IN_MESSAGES: '1',
+};
+const MODEL_FIRST_RESPONSE_TIMEOUT_MS = 180_000;
+const MODEL_FIRST_RESPONSE_TIMEOUT_ERROR = 'LUMOS_MODEL_FIRST_RESPONSE_TIMEOUT';
+const FALLBACK_HISTORY_MAX_CHARS = 80_000;
+const FALLBACK_HISTORY_MESSAGE_MAX_CHARS = 12_000;
+const FALLBACK_HISTORY_TOOL_RESULT_MAX_CHARS = 500;
+
+function mergeDisallowedTools(tools?: string[]): string[] {
+  return Array.from(new Set([...DEFAULT_CHAT_DISALLOWED_TOOLS, ...(tools || [])]));
+}
 
 function stableSerialize(value: unknown): string {
   if (value === null || value === undefined) return JSON.stringify(value);
@@ -327,6 +365,44 @@ function extractTokenUsage(msg: SDKResultMessage): TokenUsage | null {
   };
 }
 
+function truncateHistoryText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const omitted = text.length - maxChars;
+  return `${text.slice(0, maxChars)}\n\n[... truncated ${omitted} chars ...]`;
+}
+
+function normalizeHistoryMessageForFallback(msg: { role: 'user' | 'assistant'; content: string }): string {
+  const raw = msg.content || '';
+  if (msg.role === 'assistant' && raw.startsWith('[')) {
+    try {
+      const blocks = JSON.parse(raw);
+      if (Array.isArray(blocks)) {
+        const parts: string[] = [];
+        for (const block of blocks) {
+          if (!block || typeof block !== 'object') continue;
+          const b = block as Record<string, unknown>;
+          if (b.type === 'text' && typeof b.text === 'string') {
+            parts.push(truncateHistoryText(b.text, FALLBACK_HISTORY_MESSAGE_MAX_CHARS));
+          } else if (b.type === 'tool_use') {
+            const name = typeof b.name === 'string' ? b.name : 'unknown';
+            parts.push(`[Used tool: ${name}]`);
+          } else if (b.type === 'tool_result') {
+            const resultStr = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
+            parts.push(`[Tool result: ${truncateHistoryText(resultStr, FALLBACK_HISTORY_TOOL_RESULT_MAX_CHARS)}]`);
+          } else if (b.type === 'reasoning' && typeof b.summary === 'string') {
+            parts.push(`[Reasoning summary: ${truncateHistoryText(b.summary, 1_500)}]`);
+          }
+        }
+        return truncateHistoryText(parts.join('\n'), FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
+      }
+    } catch {
+      // Not structured JSON; fall through to plain text truncation.
+    }
+  }
+
+  return truncateHistoryText(raw, FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
+}
+
 /**
  * Stream Claude responses using the Agent SDK.
  * Returns a ReadableStream of SSE-formatted strings.
@@ -371,29 +447,38 @@ function buildPromptWithHistory(
   if (!history || history.length === 0) return prompt;
 
   const lines: string[] = ['<conversation_history>'];
-  for (const msg of history) {
-    // For assistant messages with tool blocks (JSON arrays), summarize
-    let content = msg.content;
-    if (msg.role === 'assistant' && content.startsWith('[')) {
-      try {
-        const blocks = JSON.parse(content);
-        const parts: string[] = [];
-        for (const b of blocks) {
-          if (b.type === 'text' && b.text) parts.push(b.text);
-          else if (b.type === 'tool_use') parts.push(`[Used tool: ${b.name}]`);
-          else if (b.type === 'tool_result') {
-            const resultStr = typeof b.content === 'string' ? b.content : JSON.stringify(b.content);
-            // Truncate long tool results
-            parts.push(`[Tool result: ${resultStr.slice(0, 500)}${resultStr.length > 500 ? '...' : ''}]`);
-          }
-        }
-        content = parts.join('\n');
-      } catch {
-        // Not JSON, use as-is
-      }
+  const selected: string[] = [];
+  let usedChars = 0;
+  let omittedMessages = 0;
+
+  for (let index = history.length - 1; index >= 0; index--) {
+    const msg = history[index];
+    const label = msg.role === 'user' ? 'Human' : 'Assistant';
+    const content = normalizeHistoryMessageForFallback(msg).trim();
+    if (!content) continue;
+
+    const line = `${label}: ${content}`;
+    const remainingChars = FALLBACK_HISTORY_MAX_CHARS - usedChars;
+    if (remainingChars <= 1_000) {
+      omittedMessages = index + 1;
+      break;
     }
-    lines.push(`${msg.role === 'user' ? 'Human' : 'Assistant'}: ${content}`);
+
+    if (line.length > remainingChars) {
+      const contentBudget = Math.max(500, remainingChars - label.length - 4);
+      selected.push(`${label}: ${truncateHistoryText(content, contentBudget)}`);
+      omittedMessages = index;
+      break;
+    }
+
+    selected.push(line);
+    usedChars += line.length + 1;
   }
+
+  if (omittedMessages > 0) {
+    lines.push(`[Earlier ${omittedMessages} messages omitted because fallback history is capped.]`);
+  }
+  lines.push(...selected.reverse());
   lines.push('</conversation_history>');
   lines.push('');
   lines.push(prompt);
@@ -441,14 +526,65 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       });
       const activeProvider: ApiProvider | undefined = runtimeContext.activeProvider;
       console.log('[claude-client] activeProvider:', activeProvider ? `${activeProvider.name} (${activeProvider.base_url})` : 'undefined');
+      const requestMetadata = {
+        module: 'chat',
+        operation: 'stream',
+        sessionId,
+        requestId: sdkSessionId,
+      };
+      const requestLog = startLlmRequestLog({
+        provider: activeProvider,
+        model: runtimeContext.resolvedModel || model,
+        requestMetadata,
+        prompt,
+        transport: 'claude-agent-sdk',
+      });
+      let requestLogFinished = false;
+      const finishRequestLog = (params: { status: 'succeeded' | 'failed' | 'blocked'; error?: unknown }) => {
+        if (requestLogFinished) return;
+        requestLogFinished = true;
+        requestLog.finish(params);
+      };
 
       // Hoist execPath override vars so they're accessible in the finally block
       const originalExecPath = process.execPath;
       let systemNode: string | undefined;
+      let tokenUsage: TokenUsage | null = null;
+      let firstMessageReceived = false;
+      let modelActivityReceived = false;
+      let visibleContentEmitted = false;
+      let resultHadError = false;
+      let modelFirstResponseTimedOut = false;
+      let modelFirstResponseTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const clearModelFirstResponseTimer = () => {
+        if (modelFirstResponseTimer) {
+          clearTimeout(modelFirstResponseTimer);
+          modelFirstResponseTimer = undefined;
+        }
+      };
+
+      const markModelActivity = () => {
+        if (modelActivityReceived) return;
+        modelActivityReceived = true;
+        clearModelFirstResponseTimer();
+      };
+
+      const startModelFirstResponseTimer = () => {
+        clearModelFirstResponseTimer();
+        modelActivityReceived = false;
+        modelFirstResponseTimedOut = false;
+        modelFirstResponseTimer = setTimeout(() => {
+          if (modelActivityReceived) return;
+          modelFirstResponseTimedOut = true;
+          abortController?.abort();
+        }, MODEL_FIRST_RESPONSE_TIMEOUT_MS);
+      };
 
       try {
         const sdkEnv: Record<string, string> = {
           ...runtimeContext.env,
+          ...STABLE_CLAUDE_CODE_ENV,
         };
         writeProviderRoutingDebug({
           sessionId,
@@ -472,6 +608,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         } else if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN) {
           console.warn('[claude-client] No API key found: no provider configured and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in environment');
         }
+        assertLlmProviderCircuitClosed(activeProvider?.id, activeProvider?.name);
 
         const skipPermissions = getSetting('dangerously_skip_permissions') === 'true';
 
@@ -486,8 +623,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           settingSources: runtimeContext.settingSources,
         };
 
-        if (disallowedTools && disallowedTools.length > 0) {
-          queryOptions.disallowedTools = disallowedTools;
+        const effectiveDisallowedTools = mergeDisallowedTools(disallowedTools);
+        if (effectiveDisallowedTools.length > 0) {
+          queryOptions.disallowedTools = effectiveDisallowedTools;
         }
         if (sdkBuiltinTools !== undefined) {
           queryOptions.tools = sdkBuiltinTools;
@@ -861,16 +999,28 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (!files || files.length === 0) return basePrompt;
 
           const imageFiles = files.filter(f => isImageFile(f.type));
-          const nonImageFiles = files.filter(f => !isImageFile(f.type));
+          const audioFiles = files.filter(f => !isImageFile(f.type) && isAudioFileLike({ name: f.name, type: f.type }));
+          const nonImageFiles = files.filter(f => !isImageFile(f.type) && !isAudioFileLike({ name: f.name, type: f.type }));
 
           let textPrompt = basePrompt;
+          if (audioFiles.length > 0) {
+            const workDir = workingDirectory || os.homedir();
+            const savedPaths = getUploadedFilePaths(audioFiles, workDir);
+            const audioRefs: AudioTranscriptionReference[] = savedPaths.map((p, i) => ({
+              filePath: p,
+              name: audioFiles[i].name,
+              type: audioFiles[i].type,
+              size: audioFiles[i].size,
+            }));
+            textPrompt = `${buildAudioTranscriptionInstruction(audioRefs)}\n\nUser message:\n\n${textPrompt}`;
+          }
           if (nonImageFiles.length > 0) {
             const workDir = workingDirectory || os.homedir();
             const savedPaths = getUploadedFilePaths(nonImageFiles, workDir);
             const fileReferences = savedPaths
               .map((p, i) => `[User attached file: ${p} (${nonImageFiles[i].name})]`)
               .join('\n');
-            textPrompt = `${fileReferences}\n\nPlease read the attached file(s) above using your Read tool, then respond to the user's message:\n\n${basePrompt}`;
+            textPrompt = `${fileReferences}\n\nPlease read the attached file(s) above using your Read tool, then respond to the user's message:\n\n${textPrompt}`;
           }
 
           if (imageFiles.length > 0) {
@@ -965,12 +1115,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             options: queryOptions,
           });
           emitStatus(controller, 'Waiting for model response...', { phase: 'model' });
+          startModelFirstResponseTimer();
           registerConversation(sessionId, nextConversation);
           return nextConversation;
         };
 
-        let tokenUsage: TokenUsage | null = null;
-        let firstMessageReceived = false;
         const consumeConversation = async (conversation: ReturnType<typeof query>) => {
           for await (const message of conversation) {
             if (!firstMessageReceived) {
@@ -985,14 +1134,19 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
             switch (message.type) {
               case 'assistant': {
+                markModelActivity();
                 const assistantMsg = message as SDKAssistantMessage;
                 // Text deltas are handled by stream_event for real-time streaming.
                 const text = extractTextFromMessage(assistantMsg);
-                if (text) { /* noop: text already streamed via stream_event */ }
+                if (text) {
+                  visibleContentEmitted = true;
+                  /* noop: text already streamed via stream_event */
+                }
 
                 // Check for tool use blocks
                 for (const block of assistantMsg.message.content) {
                   if (block.type === 'tool_use') {
+                    visibleContentEmitted = true;
                     controller.enqueue(formatSSE({
                       type: 'tool_use',
                       data: JSON.stringify({
@@ -1007,12 +1161,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               }
 
               case 'user': {
+                markModelActivity();
                 // Tool execution results come back as user messages with tool_result blocks
                 const userMsg = message as SDKUserMessage;
                 const content = userMsg.message.content;
                 if (Array.isArray(content)) {
                   for (const block of content) {
                     if (block.type === 'tool_result') {
+                      visibleContentEmitted = true;
                       const resultContent = typeof block.content === 'string'
                         ? block.content
                         : Array.isArray(block.content)
@@ -1041,6 +1197,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                 if (evt.type === 'content_block_delta' && 'delta' in evt) {
                   const delta = evt.delta;
                   if ('text' in delta && delta.text) {
+                    markModelActivity();
+                    visibleContentEmitted = true;
                     controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
                   }
                 }
@@ -1074,6 +1232,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               }
 
               case 'tool_progress': {
+                markModelActivity();
                 const progressMsg = message as SDKToolProgressMessage;
                 controller.enqueue(formatSSE({
                   type: 'tool_output',
@@ -1099,6 +1258,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               }
 
               case 'tool_use_summary': {
+                markModelActivity();
+                visibleContentEmitted = true;
                 const summaryMsg = message as SDKToolUseSummaryMessage;
                 controller.enqueue(formatSSE({
                   type: 'tool_use_summary',
@@ -1111,8 +1272,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               }
 
               case 'result': {
+                clearModelFirstResponseTimer();
                 const resultMsg = message as SDKResultMessage;
                 tokenUsage = extractTokenUsage(resultMsg);
+                resultHadError = resultHadError || Boolean(resultMsg.is_error);
+
+                if (resultMsg.is_error && !visibleContentEmitted && !modelFirstResponseTimedOut) {
+                  const subtype = resultMsg.subtype ? ` (${resultMsg.subtype})` : '';
+                  controller.enqueue(formatSSE({
+                    type: 'error',
+                    data: `Claude Code returned an error before producing a response${subtype}. This is usually caused by provider throttling, an expired session, or a model gateway failure. Please retry or switch to another model/provider.`,
+                  }));
+                }
 
                 // Save SDK session ID to database for future resume
                 if (resultMsg.session_id && sessionId) {
@@ -1139,13 +1310,17 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               }
             }
           }
+
+          if (modelFirstResponseTimedOut) {
+            throw new Error(MODEL_FIRST_RESPONSE_TIMEOUT_ERROR);
+          }
         };
 
         let conversation = startConversation(shouldResume);
         try {
           await consumeConversation(conversation);
         } catch (resumeError) {
-          if (!shouldResume || firstMessageReceived) {
+          if (modelFirstResponseTimedOut || !shouldResume || firstMessageReceived) {
             throw resumeError;
           }
 
@@ -1162,9 +1337,31 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           await consumeConversation(conversation);
         }
 
+        if (resultHadError) {
+          const resultError = new Error('Claude Code returned an error result before stream completed');
+          recordLlmProviderFailure({
+            providerId: activeProvider?.id,
+            providerName: activeProvider?.name,
+            error: resultError,
+          });
+          finishRequestLog({ status: 'failed', error: resultError });
+        } else {
+          finishRequestLog({ status: 'succeeded' });
+        }
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
         controller.close();
       } catch (error) {
+        recordLlmProviderFailure({
+          providerId: activeProvider?.id,
+          providerName: activeProvider?.name,
+          error,
+        });
+        finishRequestLog({
+          status: error && typeof error === 'object' && (error as { code?: unknown }).code === 'llm_provider_circuit_open'
+            ? 'blocked'
+            : 'failed',
+          error,
+        });
         const rawMessage = error instanceof Error ? error.message : 'Unknown error';
         // Log full error details for debugging (visible in terminal / dev tools)
         console.error('[claude-client] Stream error:', {
@@ -1183,7 +1380,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         let errorMessage = rawMessage;
 
         // Provide more specific error messages based on error type
-        if (error instanceof Error) {
+        if (modelFirstResponseTimedOut || rawMessage === MODEL_FIRST_RESPONSE_TIMEOUT_ERROR) {
+          const timeoutSeconds = Math.round(MODEL_FIRST_RESPONSE_TIMEOUT_MS / 1000);
+          const providerHint = activeProvider?.name ? `（${activeProvider.name}）` : '';
+          const modelHint = model ? ` / ${model}` : '';
+          errorMessage = `模型${providerHint}${modelHint} 在 ${timeoutSeconds} 秒内没有返回首个内容。通常是上游排队、限流、网络超时，或会话续接上下文过大导致。请重试，或切换到更快/额度更充足的模型。`;
+        } else if (error instanceof Error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code === 'ENOENT' || rawMessage.includes('ENOENT') || rawMessage.includes('spawn')) {
             errorMessage = `Claude Code CLI not found. Please ensure Claude Code is installed and available in your PATH.\n\nOriginal error: ${rawMessage}`;
@@ -1232,10 +1434,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               ? `Claude 本地登录账号当前没有权限执行该操作，或登录状态已经失效。\n\nOriginal error: ${rawMessage}`
               : `Access denied. Your API Key may not have permission for this operation.\n\nOriginal error: ${rawMessage}`;
           } else if (rawMessage.includes('429') || rawMessage.includes('rate limit') || rawMessage.includes('Rate limit')) {
-            errorMessage = `Rate limit exceeded. Please wait a moment before retrying.\n\nOriginal error: ${rawMessage}`;
+            errorMessage = `服务商返回 429。对 Lumos 服务站或上游模型通道来说，这通常表示当前通道被限流、排队或不可用；不等于你刚刚发了太多请求。请稍后重试，或切换到其它服务商/模型。\n\nOriginal error: ${rawMessage}`;
           }
         }
 
+        clearModelFirstResponseTimer();
         controller.enqueue(formatSSE({ type: 'error', data: errorMessage }));
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
 
@@ -1253,6 +1456,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         controller.close();
       } finally {
+        clearModelFirstResponseTimer();
         // Restore original execPath after SDK conversation ends
         if (systemNode) {
           process.execPath = originalExecPath;

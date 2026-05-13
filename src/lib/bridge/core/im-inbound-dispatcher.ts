@@ -20,10 +20,7 @@ import {
   parseSlashCommand,
 } from '@/lib/im';
 import type { InboundMessage, OutboundMessage, PreviewHandle } from '@/lib/im';
-import { getDefaultProvider } from '@/lib/db/providers';
 import { getSession } from '@/lib/db';
-import { parseProviderExtraEnv, resolveProviderRequestApiKey } from '@/lib/provider-model-discovery';
-import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import { setCurrentRoutedSessionId } from '@/lib/im/providers/wechat/route-pointer';
 import { resolveWechatMainAgentSession } from '@/lib/im/providers/wechat/main-agent-route';
 import { handleWechatCommand, maybeHandleWechatVoiceModePhrase } from '@/lib/im/providers/wechat/commands';
@@ -33,11 +30,9 @@ import {
   isWechatVoiceModeEnabled,
 } from '@/lib/im/providers/wechat/voice-mode';
 import {
-  normalizeOpenAIBaseUrl,
-  resolveExplicitAsrProviderTarget,
+  SpeechProviderNotConfiguredError,
   synthesizeSpeechAttachment,
-  transcribeAudioAttachmentWithTarget,
-  type OpenAICompatibleAsrTarget,
+  transcribeAudioAttachment,
 } from '@/lib/im/core/speech';
 
 export interface DispatchResult {
@@ -382,13 +377,27 @@ async function normalizeWechatInboundMessage(message: InboundMessage): Promise<I
   const hasRealText = Boolean(message.text?.trim()) && !isWechatVoicePlaceholderText(message.text);
   if (hasRealText) return message;
 
-  const asrTarget = resolveWechatVoiceAsrTarget();
-  if (!asrTarget) return withVoicePlaceholderIfEmpty(message);
-
   const transcripts: string[] = [];
+  let providerMissing = false;
   for (const attachment of voiceAttachments) {
-    const transcript = await transcribeAudioAttachmentWithTarget(attachment, asrTarget);
-    if (transcript) transcripts.push(transcript);
+    try {
+      const result = await transcribeAudioAttachment(attachment);
+      if (result.text) transcripts.push(result.text);
+    } catch (err) {
+      if (err instanceof SpeechProviderNotConfiguredError) {
+        providerMissing = true;
+        break;
+      }
+      // Other transcribe errors fall through to the generic placeholder below.
+    }
+  }
+
+  if (providerMissing) {
+    return {
+      ...message,
+      text: '[语音消息·未配置语音服务商]',
+      attachments: undefined,
+    };
   }
 
   const text = transcripts.join('\n').trim();
@@ -405,37 +414,6 @@ async function normalizeWechatInboundMessage(message: InboundMessage): Promise<I
 function withVoicePlaceholderIfEmpty(message: InboundMessage): InboundMessage {
   if (message.text?.trim()) return message;
   return { ...message, text: '[语音消息，未收到转写文本]' };
-}
-
-function resolveWechatVoiceAsrTarget(): OpenAICompatibleAsrTarget | null {
-  const explicit = resolveExplicitAsrProviderTarget();
-  if (explicit) return explicit;
-
-  const provider = getDefaultProvider();
-  if (!provider || provider.api_protocol !== 'openai-compatible' || provider.auth_mode === 'local_auth') {
-    return null;
-  }
-
-  const apiKey = resolveProviderRequestApiKey(provider);
-  if (!apiKey) return null;
-
-  const extraEnv = parseProviderExtraEnv(provider.extra_env);
-  const baseUrl = normalizeOpenAIBaseUrl(
-    extraEnv.OPENAI_TRANSCRIPTION_BASE_URL?.trim()
-      || extraEnv.OPENAI_ASR_BASE_URL?.trim()
-      || extraEnv.OPENAI_BASE_URL?.trim()
-      || extraEnv.OPENAI_API_BASE?.trim()
-      || provider.base_url,
-  );
-  if (!baseUrl) return null;
-
-  const model = process.env.IM_VOICE_ASR_MODEL?.trim()
-    || extraEnv.OPENAI_TRANSCRIPTION_MODEL?.trim()
-    || extraEnv.OPENAI_ASR_MODEL?.trim()
-    || resolveProviderModelForRequest(provider, undefined)
-    || 'whisper-1';
-
-  return { baseUrl, apiKey, model };
 }
 
 export function __resetDispatcherForTesting(): void {

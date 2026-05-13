@@ -23,12 +23,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const body = (await req.json()) as Partial<ProductInputRecord>;
     const store = getEcommerceStore();
-    const updated = store.update<ProductInputRecord>('product_inputs', id, {
-      title: body.title,
-      category_hint: body.category_hint ?? null,
-      note: body.note ?? null,
-      status: body.status ?? undefined,
-    });
+    const patch: Partial<ProductInputRecord> = {};
+    if (body.title !== undefined) patch.title = body.title;
+    if (body.category_hint !== undefined) patch.category_hint = body.category_hint;
+    if (body.note !== undefined) patch.note = body.note;
+    if (body.status !== undefined) patch.status = body.status;
+    if (body.main_image_path !== undefined) patch.main_image_path = body.main_image_path;
+    const updated = store.update<ProductInputRecord>('product_inputs', id, patch);
     if (!updated) return NextResponse.json({ error: '商品输入不存在。' }, { status: 404 });
     return NextResponse.json({ input: updated });
   } catch (err) {
