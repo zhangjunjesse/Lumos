@@ -394,6 +394,11 @@ export function ChatView({
   const idleMemoryTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sendInFlightRef = useRef(false);
+  const isStreamingRef = useRef(false);
+  // Wall-clock guard: covers the hairline window between sendInFlightRef going
+  // false and isStreamingRef catching up to React state. SSE callbacks within
+  // SEND_QUIESCE_MS of the last local send start are skipped.
+  const lastLocalSendAtRef = useRef(0);
   const accumulatedRef = useRef(cachedStreamingState?.content || '');
   const reasoningSummariesRef = useRef<string[]>(initialReasoningSummaries);
   const toolUsesRef = useRef<ToolUseInfo[]>(cachedStreamingState?.toolUses || []);
@@ -437,6 +442,10 @@ export function ChatView({
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
+
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   const appendMessage = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -837,6 +846,85 @@ export function ChatView({
     }
   }, [hasMore, messages, sessionId, updateMessagesSession]);
 
+  // External writers (IM 入站 / scheduler / workflow assistant) call db.addMessage
+  // which emits `task:updated` on the server task-event-bus. We subscribe to the
+  // per-session SSE feed and tail-reconcile against the server's authoritative
+  // message list. Local streaming turns own their own surface and are skipped.
+  //
+  // Reconciliation rule (handles optimistic-local-tail case):
+  //   maxRowId = max _rowid among existing messages that HAVE a _rowid
+  //   keepIdx  = index of the last existing message that has a _rowid
+  //   server-side messages with _rowid > maxRowId REPLACE everything after keepIdx
+  //
+  // This makes the post-local-turn case (optimistic messages with no _rowid at
+  // the tail, since they were appended client-side) reconcile correctly: the
+  // optimistic tail is replaced by the DB-persisted versions, after which
+  // ordinary tail-append works.
+  const SEND_QUIESCE_MS = 3000;
+  const refreshLatestMessages = useCallback(async () => {
+    if (isStreamingRef.current || sendInFlightRef.current) return;
+    if (loadingMoreRef.current) return;
+    if (Date.now() - lastLocalSendAtRef.current < SEND_QUIESCE_MS) return;
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`);
+      if (!res.ok) return;
+      const data: MessagesResponse = await res.json();
+      const existing = messagesRef.current;
+      let maxRowId = 0;
+      let keepIdx = -1;
+      for (let i = 0; i < existing.length; i++) {
+        const r = (existing[i] as Message & { _rowid?: number })._rowid;
+        if (typeof r === 'number') {
+          if (r > maxRowId) maxRowId = r;
+          keepIdx = i;
+        }
+      }
+      const serverTail = data.messages.filter((m) => {
+        const r = (m as Message & { _rowid?: number })._rowid ?? 0;
+        return r > maxRowId;
+      });
+      // Nothing new on the server AND no optimistic tail to reconcile → no-op.
+      if (serverTail.length === 0 && keepIdx === existing.length - 1) return;
+      const next = [...existing.slice(0, keepIdx + 1), ...serverTail];
+      messagesRef.current = next;
+      setMessages(next);
+      updateMessagesSession(sessionId, {
+        messages: next,
+        hasMore: hasMoreRef.current,
+        loading: false,
+        error: null,
+      });
+    } catch {
+      // Browser will auto-reconnect SSE; next event triggers another refresh.
+    }
+  }, [sessionId, updateMessagesSession]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(`/api/sessions/${sessionId}/events`);
+    } catch {
+      return;
+    }
+    const onTaskUpdated = () => {
+      void refreshLatestMessages();
+    };
+    // Server pushes a `hello` on connect — use it to align with any writes that
+    // landed between SSR/initial-load and SSE connect.
+    const onHello = () => {
+      void refreshLatestMessages();
+    };
+    es.addEventListener('task:updated', onTaskUpdated);
+    es.addEventListener('hello', onHello);
+    return () => {
+      es?.removeEventListener('task:updated', onTaskUpdated);
+      es?.removeEventListener('hello', onHello);
+      es?.close();
+    };
+  }, [sessionId, refreshLatestMessages]);
+
   const stopStreaming = useCallback(() => {
     const aborted = abortChatStream(sessionId);
     if (!aborted) {
@@ -919,6 +1007,7 @@ export function ChatView({
     ) => {
       if (isStreaming || sendInFlightRef.current) return;
       sendInFlightRef.current = true;
+      lastLocalSendAtRef.current = Date.now();
       clearIdleMemoryTimer();
       setBrowserConflict(null);
 
