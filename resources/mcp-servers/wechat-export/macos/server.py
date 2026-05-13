@@ -299,7 +299,7 @@ def _query(db_path: str, sql: str) -> list[dict]:
     cmd = _preamble(key) + ".headers on\n.mode csv\n" + sql
     result = subprocess.run(
         [SQLCIPHER_PATH, db_path],
-        input=cmd.encode(), capture_output=True, timeout=30,
+        input=cmd.encode(), capture_output=True, timeout=180,
     )
     text = result.stdout.decode("utf-8", errors="replace").strip()
     if not text:
@@ -318,7 +318,7 @@ def _query_raw(db_path: str, sql: str) -> list[str]:
     cmd = _preamble(key) + sql
     result = subprocess.run(
         [SQLCIPHER_PATH, db_path],
-        input=cmd.encode(), capture_output=True, timeout=30,
+        input=cmd.encode(), capture_output=True, timeout=180,
     )
     text = result.stdout.decode("utf-8", errors="replace").strip()
     return [l for l in text.split("\n") if l.strip() and l.strip() != "ok"]

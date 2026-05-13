@@ -20,7 +20,10 @@ import { createMcpServer, getMcpServerByNameAndScope } from './db/mcp-servers';
 const LUMOS_DATA_DIR = path.join(os.homedir(), '.lumos');
 const CLAUDE_CONFIG_DIR = path.join(LUMOS_DATA_DIR, '.claude');
 const USER_SKILLS_DIR = path.join(CLAUDE_CONFIG_DIR, 'skills');
-const GLOBAL_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+// NOTE: ~/.claude/skills/ scanning intentionally REMOVED — violates Lumos
+// sandbox isolation (CLAUDE.md isolation rule #5). Only Lumos-owned dirs are
+// scanned now: ~/.lumos/.claude/skills/ (legacy flat) + public/skills/ via
+// init-builtin-resources.
 const BACKUP_DIR = path.join(LUMOS_DATA_DIR, 'backup');
 const SKILLS_V2_MIGRATION_KEY = 'resources_migrated_skills_v2';
 
@@ -66,14 +69,16 @@ function backupFile(filePath: string, backupName: string) {
 
 /**
  * 收集可迁移的 skill 文件
- * 支持两种历史布局：
- * 1) ~/.lumos/.claude/skills/*.md
- * 2) ~/.claude/skills/<skill>/SKILL.md
+ *
+ * 仅扫描 Lumos 自有目录:
+ *   ~/.lumos/.claude/skills/*.md  (legacy flat layout, before db-managed era)
+ *
+ * 旧版本曾扫描 ~/.claude/skills/<name>/SKILL.md 把用户全局 Claude CLI skills
+ * 一锅端导入，违反沙箱隔离（CLAUDE.md isolation rule #5）。已移除。
  */
 function collectSkillFiles(): SkillFileEntry[] {
   const entries: SkillFileEntry[] = [];
 
-  // Legacy flat markdown files
   if (fs.existsSync(USER_SKILLS_DIR)) {
     const files = fs.readdirSync(USER_SKILLS_DIR).filter(f => f.endsWith('.md'));
     for (const file of files) {
@@ -84,28 +89,6 @@ function collectSkillFiles(): SkillFileEntry[] {
     }
   }
 
-  // Claude desktop style: ~/.claude/skills/<name>/SKILL.md
-  if (fs.existsSync(GLOBAL_SKILLS_DIR)) {
-    const children = fs.readdirSync(GLOBAL_SKILLS_DIR, { withFileTypes: true });
-    for (const child of children) {
-      if (child.isDirectory()) {
-        const skillPath = path.join(GLOBAL_SKILLS_DIR, child.name, 'SKILL.md');
-        if (fs.existsSync(skillPath)) {
-          entries.push({
-            filePath: skillPath,
-            fallbackName: child.name,
-          });
-        }
-      } else if (child.isFile() && child.name.endsWith('.md')) {
-        entries.push({
-          filePath: path.join(GLOBAL_SKILLS_DIR, child.name),
-          fallbackName: path.basename(child.name, '.md'),
-        });
-      }
-    }
-  }
-
-  // Deduplicate by absolute file path
   const unique = new Map<string, SkillFileEntry>();
   for (const entry of entries) {
     unique.set(path.resolve(entry.filePath), entry);
@@ -202,11 +185,13 @@ async function migrateSkillsV2IfNeeded(db: ReturnType<typeof getDb>): Promise<vo
 async function migrateMcpServers(): Promise<number> {
   let migratedCount = 0;
 
-  // 尝试从多个可能的配置文件位置读取
+  // 仅扫描 Lumos 自有目录 (~/.lumos/.claude/)。曾经也扫
+  // ~/.claude/settings.json 把用户全局 Claude CLI MCP 配置一锅端导入，
+  // 与 skills 漏洞同构，违反沙箱隔离原则（CLAUDE.md isolation rule #6）。
+  // 已移除。
   const configPaths = [
     path.join(CLAUDE_CONFIG_DIR, 'settings.json'),
     path.join(CLAUDE_CONFIG_DIR, '.claude.json'),
-    path.join(os.homedir(), '.claude', 'settings.json'),
   ];
 
   let mcpServers: Record<string, LegacyMcpServerConfig> = {};
@@ -279,9 +264,11 @@ async function migrateMcpServers(): Promise<number> {
 export async function migrateExistingResources(): Promise<void> {
   const db = getDb();
 
-  // Run incremental skill migration first.
-  // This allows existing users (already resources_migrated=1) to import
-  // global ~/.claude/skills entries added before DB-based management.
+  // Run skills v2 step. For users where the v2 flag is set this only refreshes
+  // the plugin dir via syncSkillsToPlugin(); for first-time installs it scans
+  // ~/.lumos/.claude/skills/ (Lumos-owned legacy flat layout) and writes any
+  // discovered skills into db.scope='user'. We no longer scan ~/.claude/skills/
+  // (sandbox isolation rule #6).
   await migrateSkillsV2IfNeeded(db);
 
   // 检查是否已经迁移过

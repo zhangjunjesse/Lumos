@@ -406,6 +406,21 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [refreshLatestMessages]);
 
+  // Subscribe to per-session SSE so 入站 IM 消息(微信/飞书)、bridge 写的 assistant 回复
+  // 都能在 ChatView 上即时刷新。task:updated 是 db.addMessage 触发的统一事件。
+  useEffect(() => {
+    if (!id || typeof window === 'undefined') return;
+    const es = new EventSource(`/api/sessions/${id}/events`);
+    const onTaskUpdated = () => {
+      refreshLatestMessages().catch(() => {});
+    };
+    es.addEventListener('task:updated', onTaskUpdated);
+    return () => {
+      es.removeEventListener('task:updated', onTaskUpdated);
+      es.close();
+    };
+  }, [id, refreshLatestMessages]);
+
   useEffect(() => {
     const handleBridgeEvent = (eventName: string, payload: unknown) => {
       const detail = payload as BridgeInboundEventPayload | null;

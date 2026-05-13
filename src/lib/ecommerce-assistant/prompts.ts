@@ -206,6 +206,96 @@ function describeWeakAreas(report: ScoreReport): string {
     : `重点改进：${weak.join(', ')}。`;
 }
 
+/**
+ * Per-slot detail-image prompt builder. Each detail image references the
+ * approved final master so the product stays identical across the carousel.
+ * `slotIndex` is 1-based and only matters when a slot has count > 1 (we use
+ * it to coax different angles for "feature closeup" and "lifestyle context").
+ */
+export function buildDetailImagePrompt(args: {
+  brief: ProductBrief;
+  slot: 'detail-hero' | 'detail-feature' | 'detail-lifestyle' | 'detail-scale';
+  slotIndex: number;
+}): string {
+  const { brief, slot, slotIndex } = args;
+  const sellingPoint =
+    brief.coreSellingPoints[(slotIndex - 1) % Math.max(brief.coreSellingPoints.length, 1)]
+    ?? '商品的关键工艺细节';
+  const usageScene =
+    brief.recommendedUsageScenes[(slotIndex - 1) % Math.max(brief.recommendedUsageScenes.length, 1)]
+    ?? brief.recommendedPlacement[0]
+    ?? 'a believable real-world usage context';
+
+  const HEADER = [
+    'Use Image 1 as the approved final product (do NOT redesign it; this is the canonical product master).',
+    'Images 2 to N are product fidelity references.',
+    '',
+    'Strict requirements:',
+    '- Keep the product identical in shape, proportions, silhouette, material texture, color, edges, and construction.',
+    '- The product must be the focal subject; do not crop critical features out of frame unless explicitly instructed.',
+    '- No logos, no text, no watermark, no added branding.',
+    '- No collage, no split frames, no multiple repeated copies of the product.',
+    '- Photorealistic commercial photography, not illustration.',
+  ].join('\n');
+
+  switch (slot) {
+    case 'detail-hero':
+      return [
+        HEADER,
+        '',
+        'Task: produce a premium clean white-background hero variant for the detail-page carousel.',
+        '- Pure neutral seamless white or near-white background.',
+        '- Subtle soft natural shadow under the product to ground it.',
+        '- Slightly different camera framing from the main image (e.g. tighter or 3/4 angle) so the carousel reads as a different shot.',
+        `- Aspect ratio: ${brief.recommendedAspectRatio}.`,
+        'Generate exactly one image.',
+      ].join('\n');
+
+    case 'detail-feature':
+      return [
+        HEADER,
+        '',
+        `Task: macro / close-up shot that highlights this selling point: "${sellingPoint}".`,
+        '- Tight crop on the relevant part of the product (texture, mechanism, material seam, control surface, etc.).',
+        '- Background: clean and unobtrusive; subtle bokeh acceptable.',
+        '- Lighting: emphasize material qualities (specular highlights for glossy, soft wraparound for matte).',
+        '- Do NOT zoom out to a full product shot; this is a feature close-up.',
+        `- Aspect ratio: ${brief.recommendedAspectRatio}.`,
+        'Generate exactly one image.',
+      ].join('\n');
+
+    case 'detail-lifestyle':
+      return [
+        HEADER,
+        '',
+        `Task: lifestyle scene showing the product in use within: ${usageScene}.`,
+        '- Believable everyday environment that matches the product audience.',
+        '- Product remains the visual hero (≥ 40% frame area, sharp focus).',
+        `- Human / pet presence policy: ${brief.humanPresencePolicy} / ${brief.petPresencePolicy} (respect strictly).`,
+        '- Natural ambient lighting consistent with the scene time-of-day.',
+        '- No exaggerated styling, no surreal lighting.',
+        `- Aspect ratio: ${brief.recommendedAspectRatio}.`,
+        'Generate exactly one image.',
+      ].join('\n');
+
+    case 'detail-scale':
+      return [
+        HEADER,
+        '',
+        `Task: scale-reference image so a buyer instantly understands the product's real size (size class: ${brief.sizeClass}).`,
+        brief.sizeClass === 'small'
+          ? '- Show the product held in a human hand OR placed next to a familiar everyday object (coffee mug, smartphone, paperback book).'
+          : brief.sizeClass === 'medium'
+            ? '- Place the product on a surface next to a familiar reference (laptop, dinner plate, throw pillow) to convey scale.'
+            : '- Show the product in a room context with a person or door visible at the edge of frame for scale, without blocking the product.',
+        '- Lighting: clean, neutral, accurate color.',
+        '- Composition must make the size relationship immediately readable in 1 second.',
+        `- Aspect ratio: ${brief.recommendedAspectRatio}.`,
+        'Generate exactly one image.',
+      ].join('\n');
+  }
+}
+
 export const FALLBACK_PROMPT = [
   'Use Image 1 as the cutout master product.',
   '',

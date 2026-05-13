@@ -449,12 +449,12 @@ export function probeWindowsWeChat(): ProbeResult & { signed: 'not_required'; pi
 }
 
 function probeWindowsPythonRuntime(): ProbeResult {
-  const python = resolvePythonBinary();
+  const python = resolvePythonBinary({ minimumVersion: { major: 3, minor: 10 } });
   if (!python) {
     return {
       ok: false,
       detail: '未找到内置 Python 运行时',
-      hint: '请重新安装新版 Lumos；Windows 安装包必须包含 python-runtime/win32/x64。',
+      hint: '请重新安装新版 Lumos；Windows 安装包必须包含 python-runtime/win32/x64，或在 PATH 中提供 Python 3.10+。',
     };
   }
   const version = getPythonVersion(python);

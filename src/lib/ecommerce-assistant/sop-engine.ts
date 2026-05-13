@@ -25,12 +25,13 @@ import {
   FALLBACK_PROMPT,
   FINAL_QC_PROMPT,
   SYSTEM_PROMPT,
+  buildDetailImagePrompt,
   buildFinalRefinePrompt,
   buildPlanDirectionsPrompt,
   buildSceneGenerationPrompt,
   buildScoringPrompt,
 } from './prompts';
-import { SOP_LIMITS } from './constants';
+import { DEFAULT_DETAIL_SLOTS, SOP_LIMITS, type DetailSlotSpec } from './constants';
 import type {
   DirectionPlan,
   ImageJobRecord,
@@ -216,11 +217,25 @@ export async function runSop(opts: SopRunOptions): Promise<ImageJobRecord> {
 
       if (finalResult.kind === 'pass') {
         patchJob(store, jobId, {
+          final_image_path: finalResult.imagePath,
+          summary: `选中方向 ${winner.direction}，终版精修通过质检；正在生成详情图。`,
+        });
+        reporter({ jobId, status: 'generating', stage: 'detail-set', progress: 92 });
+        const detailSummary = await generateDetailSet({
+          jobId,
+          input,
+          masterImagePath: finalResult.imagePath,
+          referencePaths: [cutoutResult.imagePath, ...referencePaths],
+          brief,
+          store,
+          abortSignal,
+          reporter,
+        });
+        patchJob(store, jobId, {
           status: 'completed',
           stage: 'completed',
           progress: 100,
-          final_image_path: finalResult.imagePath,
-          summary: `选中方向 ${winner.direction}，终版精修通过质检。`,
+          summary: `选中方向 ${winner.direction}，终版精修通过质检；详情图 ${detailSummary.succeeded}/${detailSummary.total}。`,
         });
         reporter({ jobId, status: 'completed', stage: 'completed', progress: 100 });
         return getJobOrThrow(store, jobId);
@@ -251,14 +266,30 @@ export async function runSop(opts: SopRunOptions): Promise<ImageJobRecord> {
     if (fallbackPath) {
       fallbackUsed = true;
       patchJob(store, jobId, {
-        status: 'completed',
-        stage: 'fallback',
-        progress: 100,
         final_image_path: fallbackPath,
         fallback_used: true,
         summary: lastScore
-          ? `场景或精修阶段未通过质检（winner=${lastScore.winnerId}），已降级到白底兜底图。`
-          : '场景或精修阶段失败，已降级到白底兜底图。',
+          ? `场景或精修阶段未通过质检（winner=${lastScore.winnerId}），已降级到白底兜底图；正在尝试生成详情图。`
+          : '场景或精修阶段失败，已降级到白底兜底图；正在尝试生成详情图。',
+      });
+      reporter({ jobId, status: 'generating', stage: 'detail-set', progress: 92 });
+      const detailSummary = await generateDetailSet({
+        jobId,
+        input,
+        masterImagePath: fallbackPath,
+        referencePaths: [cutoutResult.imagePath, ...referencePaths],
+        brief,
+        store,
+        abortSignal,
+        reporter,
+      });
+      patchJob(store, jobId, {
+        status: 'completed',
+        stage: 'fallback',
+        progress: 100,
+        summary: lastScore
+          ? `场景或精修未通过质检（winner=${lastScore.winnerId}），已降级到白底兜底图；详情图 ${detailSummary.succeeded}/${detailSummary.total}。`
+          : `场景或精修失败，已降级到白底兜底图；详情图 ${detailSummary.succeeded}/${detailSummary.total}。`,
       });
       reporter({ jobId, status: 'completed', stage: 'fallback', progress: 100 });
     } else {
@@ -559,6 +590,86 @@ async function generateOneImage(args: {
     });
   }
   return imagePath;
+}
+
+interface DetailSetSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+}
+
+async function generateDetailSet(args: {
+  jobId: string;
+  input: ProductInputRow;
+  masterImagePath: string;
+  referencePaths: string[];
+  brief: ProductBrief;
+  store: AppDataStore;
+  abortSignal?: AbortSignal;
+  reporter: StageReporter;
+  slots?: DetailSlotSpec[];
+}): Promise<DetailSetSummary> {
+  const slots = args.slots ?? DEFAULT_DETAIL_SLOTS;
+  const total = slots.reduce((acc, s) => acc + s.count, 0);
+  let succeeded = 0;
+  let progress = 92;
+
+  for (const slot of slots) {
+    for (let i = 1; i <= slot.count; i += 1) {
+      if (args.abortSignal?.aborted) throw new SopAbortError();
+      progress = Math.min(99, progress + Math.max(1, Math.floor(7 / Math.max(total, 1))));
+      args.reporter({
+        jobId: args.jobId,
+        status: 'generating',
+        stage: `${slot.id}#${i}`,
+        progress,
+      });
+
+      const prompt = buildDetailImagePrompt({
+        brief: args.brief,
+        slot: slot.id,
+        slotIndex: i,
+      });
+
+      let attempt = 0;
+      let imagePath: string | null = null;
+      let lastError: string | null = null;
+      while (attempt <= SOP_LIMITS.detailSetMaxRetryPerSlot && !imagePath) {
+        attempt += 1;
+        try {
+          imagePath = await generateOneImage({
+            jobId: args.jobId,
+            input: args.input,
+            kind: slot.id as ImageOutputKind,
+            iteration: i,
+            prompt,
+            // The approved master goes first so the model treats it as the
+            // canonical product; cutout + reference photos guard fidelity.
+            referencePaths: [args.masterImagePath, ...args.referencePaths],
+            aspect: slot.aspectRatio ?? args.brief.recommendedAspectRatio,
+            store: args.store,
+            abortSignal: args.abortSignal,
+          });
+        } catch (err) {
+          if (err instanceof SopAbortError) throw err;
+          lastError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      if (imagePath) {
+        succeeded += 1;
+      } else {
+        args.reporter({
+          jobId: args.jobId,
+          status: 'generating',
+          stage: `${slot.id}#${i}-failed`,
+          progress,
+          message: lastError ?? '详情图返回空结果。',
+        });
+      }
+    }
+  }
+  return { total, succeeded, failed: total - succeeded };
 }
 
 function markWinnerOutput(store: AppDataStore, jobId: string, imagePath: string): void {

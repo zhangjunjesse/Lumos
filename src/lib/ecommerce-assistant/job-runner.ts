@@ -7,7 +7,7 @@ import {
   getJob,
   patchJob,
 } from './storage';
-import type { ImageJobRecord, SopStageEvent } from './types';
+import type { DiscoverCandidateRecord, ImageJobRecord, ProductInputRecord, SopStageEvent } from './types';
 
 const REGISTRY_KEY = '__lumos_ecommerce_job_registry';
 
@@ -76,6 +76,7 @@ export async function startJob(args: StartJobArgs): Promise<ImageJobRecord> {
   if (!input.main_image_path) {
     throw new Error('商品输入缺少主图路径，请先补充后再启动任务。');
   }
+  assertMainImageIsRealProductPhoto(store, input);
   const job = createJobRecord(store, {
     input_id: args.inputId,
     preset_id: args.presetId,
@@ -83,6 +84,24 @@ export async function startJob(args: StartJobArgs): Promise<ImageJobRecord> {
   });
   void runJobInBackground(job.id);
   return job;
+}
+
+function assertMainImageIsRealProductPhoto(
+  store: ReturnType<typeof getEcommerceStore>,
+  input: ProductInputRecord,
+): void {
+  const mainImagePath = input.main_image_path?.trim();
+  if (!mainImagePath) return;
+  const promoted = store
+    .query<DiscoverCandidateRecord>('discover_candidates', {
+      filter: { promoted_input_id: input.id },
+      limit: 1,
+    })
+    .at(0);
+  const conceptImagePath = promoted?.concept_image_path?.trim();
+  if (conceptImagePath && conceptImagePath === mainImagePath) {
+    throw new Error('当前主图是 AI 概念图占位。出图 SOP 必须基于真实样品图，请先上传真实商品主图。');
+  }
 }
 
 async function runJobInBackground(jobId: string): Promise<void> {

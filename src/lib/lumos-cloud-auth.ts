@@ -18,6 +18,7 @@ export type {
   CloudImageProviderModel,
   CloudChatProviderConfig,
   CloudChatProviderModel,
+  CloudSpeechProviderConfig,
   CloudUserInfo,
 } from './cloud/types';
 export {
@@ -25,8 +26,10 @@ export {
   provisionCloudProvider,
   provisionImageProviders,
   provisionChatProviders,
+  provisionSpeechProviders,
   getRemoteImageProviderId,
   getRemoteChatProviderId,
+  getRemoteSpeechProviderId,
 } from './cloud/provisioner';
 
 /**

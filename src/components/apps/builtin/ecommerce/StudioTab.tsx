@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { Image as ImageIcon, Plus, Upload } from 'lucide-react';
+import { Image as ImageIcon, Link2, Plus, Sparkles, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -17,47 +18,74 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-import type { EcommerceAssistantStatus, ProductInput } from './types';
+import { ProductPipelineSection } from './ProductPipelineSection';
+import { buildOnboardingAskAiPrompt, dispatchAskAi } from './ecommerce-ask-ai';
+
+import type {
+  EcommerceAssistantStatus,
+  EcommerceTab,
+  PipelineEntry,
+  ProductInput,
+} from './types';
 
 interface StudioTabProps {
   status: EcommerceAssistantStatus | null;
   inputs: ProductInput[];
+  pipeline: PipelineEntry[];
   loading: boolean;
   refreshing: boolean;
   onChanged: () => void;
+  onJump: (target: EcommerceTab) => void;
+  onOpenDetail?: (entry: PipelineEntry) => void;
 }
 
 export function StudioTab({
   status,
   inputs,
+  pipeline,
   loading,
   refreshing,
   onChanged,
+  onJump,
+  onOpenDetail,
 }: StudioTabProps): React.ReactElement {
   const [open, setOpen] = React.useState(false);
+  const [urlOpen, setUrlOpen] = React.useState(false);
   const ready = !!status?.providers.image.ok && !!status?.providers.analysis.ok;
 
   return (
     <div className="flex flex-col gap-6">
+      <ProductPipelineSection
+        entries={pipeline}
+        loading={loading}
+        onJump={onJump}
+        onChanged={onChanged}
+        onOpenDetail={onOpenDetail}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">出图流程</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4 text-sm">
           <ul className="ml-5 list-disc text-muted-foreground">
-            <li>上传 1 张主图，最多 4 张参考图（商品保真用）。</li>
-            <li>AI 自动筛参考图、识别商品 brief、抠图、生成 3 个方向第一轮图、自动评分选最优、终版精修、终版质检。</li>
-            <li>抠图最多重试 2 次，场景最多 3 轮，精修最多 2 次；失败时自动降级到白底兜底。</li>
-            <li>生成的图片保存在应用内集合，可重跑、下载、对比。</li>
+            <li>两种入口：① 上传商品图 ② 粘贴商品 URL（走「设置 → 浏览器」里默认的 AdsPower / 内置浏览器抓取）。</li>
+            <li>AI 自动识别 brief → 抠图 → 3 方向场景 → 评分选最优 → 终版精修 → 终版质检 → 生成 6 张详情图（白底主图 / 卖点特写 ×2 / 使用场景 ×2 / 尺寸参照）。</li>
+            <li>抠图最多 2 次，场景最多 3 轮，精修最多 2 次；失败时自动降级到白底兜底，仍会生成详情图。</li>
+            <li>所有图片按 kind 存档（main / cutout / catalog / lifestyle / campaign / detail-*），可重跑、下载、对比。</li>
           </ul>
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => setOpen(true)} disabled={!ready}>
               <Plus className="size-4" />
-              新建商品输入
+              上传图片
+            </Button>
+            <Button onClick={() => setUrlOpen(true)} disabled={!ready} variant="secondary">
+              <Link2 className="size-4" />
+              从商品 URL 导入
             </Button>
             {!ready ? (
               <span className="text-xs text-amber-700 dark:text-amber-400">
-                需要先在「设置 → 服务商」配置图像和分析 provider 后才能上传。
+                需要先在「设置 → 服务商」配置图像和分析 provider 后才能使用。
               </span>
             ) : null}
           </div>
@@ -94,6 +122,15 @@ export function StudioTab({
           onChanged();
         }}
       />
+
+      <CreateFromUrlDialog
+        open={urlOpen}
+        onOpenChange={setUrlOpen}
+        onCreated={() => {
+          setUrlOpen(false);
+          onChanged();
+        }}
+      />
     </div>
   );
 }
@@ -114,10 +151,19 @@ function EmptyState({
           上传一张商品主图和参考图，开始你的第一次商品图生成。
         </p>
       </div>
-      <Button onClick={onCreate} disabled={!ready}>
-        <Plus className="size-4" />
-        新建商品输入
-      </Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button onClick={onCreate} disabled={!ready}>
+          <Plus className="size-4" />
+          新建商品输入
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => dispatchAskAi(buildOnboardingAskAiPrompt())}
+        >
+          <Sparkles className="size-4" />
+          问 AI 怎么开始
+        </Button>
+      </div>
     </div>
   );
 }
@@ -337,6 +383,157 @@ function CreateInputDialog({
             <Upload className="size-4" />
             {busy ? '上传中…' : '保存输入'}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface CreateFromUrlResult {
+  input_id?: string;
+  adapter?: string;
+  llm_fallback_used?: boolean;
+  gallery_count?: number;
+  warnings?: string[];
+  parsed?: {
+    title?: string | null;
+    price?: string | null;
+    bullet_count?: number;
+  };
+  job?: { id?: string };
+  job_start_error?: string;
+  error?: string;
+  stage?: string;
+}
+
+function CreateFromUrlDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}): React.ReactElement {
+  const [url, setUrl] = React.useState('');
+  const [autoStart, setAutoStart] = React.useState(true);
+  const [titleOverride, setTitleOverride] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<CreateFromUrlResult | null>(null);
+
+  React.useEffect(() => {
+    if (!open) {
+      setUrl('');
+      setAutoStart(true);
+      setTitleOverride('');
+      setError(null);
+      setResult(null);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      setError('请输入完整的 http(s) 商品 URL。');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch('/api/apps/builtin/ecommerce/inputs/from-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: trimmed,
+          auto_start: autoStart,
+          title_override: titleOverride.trim() || undefined,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as CreateFromUrlResult;
+      if (!res.ok) {
+        throw new Error(json.error ?? '导入失败');
+      }
+      setResult(json);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导入失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>从商品 URL 导入</DialogTitle>
+          <DialogDescription>
+            粘贴 Amazon / Tmall / Etsy / Shopify 等商品详情页 URL，AI 会通过「设置 → 浏览器」里默认的 AdsPower（或内置浏览器）抓取主图、标题、卖点，并按标准 SOP 出图 + 6 张详情图。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="url">商品 URL</Label>
+            <Input
+              id="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://www.amazon.com/dp/..."
+              autoFocus
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="title-override">商品标题覆盖（可选）</Label>
+            <Input
+              id="title-override"
+              value={titleOverride}
+              onChange={(e) => setTitleOverride(e.target.value)}
+              placeholder="留空则使用页面标题"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              id="auto-start"
+              checked={autoStart}
+              onCheckedChange={(checked) => setAutoStart(checked === true)}
+            />
+            <span>导入成功后立即启动出图任务</span>
+          </label>
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          {result ? (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              <p>
+                导入成功 · adapter: <code>{result.adapter}</code>
+                {result.llm_fallback_used ? '（LLM 兜底）' : ''} · 主图 1 张
+                {result.gallery_count ? ` + ${result.gallery_count} 张参考` : ''}
+              </p>
+              {result.parsed?.title ? <p className="mt-1 truncate">标题：{result.parsed.title}</p> : null}
+              {result.parsed?.price ? <p>价格：{result.parsed.price}</p> : null}
+              {result.parsed?.bullet_count ? <p>卖点：{result.parsed.bullet_count} 条</p> : null}
+              {result.job?.id ? <p className="mt-1 text-emerald-700 dark:text-emerald-400">已启动出图任务 {result.job.id}</p> : null}
+              {result.job_start_error ? (
+                <p className="mt-1 text-amber-700 dark:text-amber-400">任务未启动：{result.job_start_error}</p>
+              ) : null}
+              {result.warnings && result.warnings.length > 0 ? (
+                <ul className="ml-4 mt-1 list-disc text-amber-700 dark:text-amber-400">
+                  {result.warnings.map((w) => (<li key={w}>{w}</li>))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+            {result ? '关闭' : '取消'}
+          </Button>
+          {!result ? (
+            <Button onClick={submit} disabled={busy}>
+              <Link2 className="size-4" />
+              {busy ? '抓取中…' : '导入商品'}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

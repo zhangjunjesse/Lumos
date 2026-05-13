@@ -22,10 +22,15 @@ export interface ProviderOption {
 export type ModelOverrideKey =
   | 'model_override:knowledge'
   | 'model_override:agent'
-  | 'model_override:image';
+  | 'model_override:image'
+  | 'model_override:speech';
 
 export interface ModuleConfig {
-  key: 'provider_override:knowledge' | 'provider_override:agent' | 'provider_override:image';
+  key:
+    | 'provider_override:knowledge'
+    | 'provider_override:agent'
+    | 'provider_override:image'
+    | 'provider_override:speech';
   modelKey: ModelOverrideKey;
   moduleKey: ProviderPresetModule;
   label: string;
@@ -82,6 +87,23 @@ export const IMAGE_MODULE_CONFIG: ModuleConfig = {
   createTitle: '添加图片生成服务',
 };
 
+/**
+ * Speech (ASR) module. Cloud-only — desktop never holds the api_key, all
+ * transcription requests proxy through lumos-web. Used by MCP transcribe_audio
+ * tool, microphone recordings, and IM voice messages from WeChat / Goofish.
+ */
+export const SPEECH_MODULE_CONFIG: ModuleConfig = {
+  key: 'provider_override:speech',
+  modelKey: 'model_override:speech',
+  moduleKey: 'image', // reuse 'image' preset module slot — no preset prompt for speech
+  label: '语音识别',
+  description: '微信/闲鱼语音消息、AI 对话里的 transcribe_audio 工具，都走这个服务商。',
+  capability: 'speech',
+  emptyValueLabel: '未配置',
+  emptyHint: '未配置时，语音消息将显示为「[语音消息·未配置语音服务商]」。',
+  createTitle: '添加语音识别服务',
+};
+
 export const PLACEHOLDER_VALUE = '__default__';
 
 export function getCapabilityBadgeLabel(capability: ProviderCapability): string {
@@ -90,6 +112,7 @@ export function getCapabilityBadgeLabel(capability: ProviderCapability): string 
     case 'text-gen': return '文本';
     case 'image-gen': return '图片';
     case 'embedding': return '嵌入';
+    case 'speech': return '语音';
     default: return capability;
   }
 }

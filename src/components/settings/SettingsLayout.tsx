@@ -18,6 +18,7 @@ import { GeneralSection } from "./GeneralSection";
 import { ChatProvidersCard } from "./ChatProvidersCard";
 import { ModuleOverrideSection } from "./ModuleOverrideSection";
 import { ImageProviderSection } from "./ImageProviderSection";
+import { SpeechProviderSection } from "./SpeechProviderSection";
 import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
@@ -194,6 +195,7 @@ function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
     cards.push({ key: 'text-modules', node: <ModuleOverrideSection /> });
   }
   cards.push({ key: 'image', node: <ImageProviderSection readOnly={!allowMedia} /> });
+  cards.push({ key: 'speech', node: <SpeechProviderSection /> });
 
   return (
     <div className="flex flex-col gap-10">

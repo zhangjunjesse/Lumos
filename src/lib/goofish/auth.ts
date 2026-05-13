@@ -7,7 +7,7 @@
  * 收集逻辑量大,拆到 ./auth-qr.ts。
  */
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,6 +18,14 @@ import {
   type GoofishAuthStatus,
 } from './cli';
 import { ensureAccountDir, deleteAccount, listAccounts, cookiesPathFor, migrateLegacyAccount } from './accounts';
+import {
+  cookieValue,
+  copyCookieFile,
+  copyLoginResultCookiesToTarget,
+  parseCookieHeader,
+  readUnbFromCookies,
+  writeCookieItems,
+} from './cookie-store';
 import { isQrReady } from './install-state';
 import {
   BuiltinBrowserQrUnavailableError,
@@ -39,8 +47,8 @@ export async function resolveQrLoginMode(): Promise<QrLoginMode> {
 
 /**
  * Status for a SPECIFIC account. Pass `accountUnb` to scope the goofish-cli
- * call (HOME=~/.lumos/goofish-accounts/<unb>/). Without it, falls back to
- * the legacy single-account location (~/.goofish-cli/cookies.json).
+ * call to that account's Lumos-managed cookies file. Without it, falls back
+ * to the legacy single-account location (~/.goofish-cli/cookies.json).
  */
 export async function getAuthStatus(opts: { allowAutoRefresh?: boolean; accountUnb?: string } = {}): Promise<GoofishAuthStatus | null> {
   const cookiesFile = opts.accountUnb ? cookiesPathFor(opts.accountUnb) : COOKIES_FILE;
@@ -101,7 +109,8 @@ export type GoofishLoginInput =
 
 /**
  * Multi-account login. Writes the resulting cookies into a tmp file, reads
- * the unb out, and moves it into ~/.lumos/goofish-accounts/<unb>/cookies.json.
+ * the unb out, and moves it into
+ * ~/.lumos/goofish-accounts/<unb>/.goofish-cli/cookies.json.
  *
  * We use GOOFISH_COOKIES_PATH (goofish-cli's own override knob) rather than
  * a HOME override — the latter breaks browser_cookie3 (can't find system
@@ -121,7 +130,7 @@ export async function login(input: GoofishLoginInput): Promise<AccountStatusEntr
     // Move into permanent per-account location.
     const accountDir = ensureAccountDir(unb);
     const finalCookies = path.join(accountDir, '.goofish-cli', 'cookies.json');
-    writeFileSync(finalCookies, readFileSync(tempCookies), { mode: 0o600 });
+    copyCookieFile(tempCookies, finalCookies);
     // Validate via goofish auth status, scoped to the new cookies file.
     const status = await getAuthStatus({ accountUnb: unb, allowAutoRefresh: true });
     if (!status?.valid) {
@@ -158,39 +167,26 @@ async function runLoginToCookiesFile(input: GoofishLoginInput, cookiesPath: stri
     }
   }
   if (input.mode === 'paste') {
-    const items = parseCookieString(input.cookieString);
+    const items = parseCookieHeader(input.cookieString);
     if (items.length === 0) {
       throw new GoofishCliException({ code: 'AUTH_FAILED', message: '解析 cookie 失败 — 请粘贴完整的 Cookie 头' });
     }
-    const sourceFile = `${cookiesPath}.import`;
-    writeFileSync(sourceFile, JSON.stringify(items, null, 2), { mode: 0o600 });
-    try {
-      await runJsonCommand(['auth', 'login', '--source', sourceFile], { timeoutMs: 30_000, allowAutoRefresh: true, cookiesPath });
-    } finally {
-      try { rmSync(sourceFile, { force: true }); } catch { /* ignore */ }
+    if (!cookieValue(items, 'unb') || !cookieValue(items, '_m_h5_tk')) {
+      throw new GoofishCliException({
+        code: 'AUTH_FAILED',
+        message: 'cookie 缺少关键字段 unb / _m_h5_tk，请从已登录的闲鱼页面复制完整 Cookie',
+      });
     }
+    writeCookieItems(cookiesPath, items);
     return;
   }
-  // browser mode — DO NOT override cookies path: goofish-cli's
-  // _pull_from_browser uses real HOME to find Chrome, and writes the
-  // cookies.json to GOOFISH_COOKIES_PATH (when set).
+  // browser mode — keep real HOME so goofish-cli can find Chrome/browser
+  // profiles. Some goofish-cli versions still write DEFAULT_COOKIE_PATH and
+  // only return that path, so copy the reported file back into our target.
   const args = ['auth', 'login'];
   if (input.browser && input.browser !== 'auto') args.push('--browser', input.browser);
-  await runJsonCommand(args, { timeoutMs: 90_000, allowAutoRefresh: true, cookiesPath });
-}
-
-function readUnbFromCookies(cookiesPath: string): string {
-  try {
-    const raw = readFileSync(cookiesPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const found = parsed.find((c) => c?.name === 'unb' && c?.value);
-      return found?.value ?? '';
-    }
-    return parsed?.unb ?? '';
-  } catch {
-    return '';
-  }
+  const result = await runJsonCommand(args, { timeoutMs: 90_000, allowAutoRefresh: true, cookiesPath });
+  copyLoginResultCookiesToTarget(result, cookiesPath);
 }
 
 /**
@@ -205,33 +201,4 @@ export function logout(unb?: string): void {
   if (existsSync(COOKIES_FILE)) {
     rmSync(COOKIES_FILE, { force: true });
   }
-}
-
-/**
- * Convert a raw `Cookie:` header string into the chrome-export JSON array
- * format goofish-cli's `auth login --source` expects. Single cookie file
- * lives at `~/.goofish-cli/cookies.json` after import.
- */
-function parseCookieString(raw: string): Array<Record<string, unknown>> {
-  const expires = Math.floor(Date.now() / 1000) + 30 * 86400;
-  const out: Array<Record<string, unknown>> = [];
-  for (const kv of raw.split(';')) {
-    const trimmed = kv.trim();
-    if (!trimmed || !trimmed.includes('=')) continue;
-    const eq = trimmed.indexOf('=');
-    const name = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim();
-    if (!name) continue;
-    out.push({
-      name,
-      value,
-      domain: '.goofish.com',
-      path: '/',
-      expires,
-      httpOnly: false,
-      secure: true,
-      sameSite: 'no_restriction',
-    });
-  }
-  return out;
 }

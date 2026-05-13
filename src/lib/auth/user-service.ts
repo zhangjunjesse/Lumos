@@ -12,9 +12,11 @@ import {
   provisionCloudProvider,
   provisionImageProviders,
   provisionChatProviders,
+  provisionSpeechProviders,
   persistCustomProviderFlags,
   type CloudImageProviderConfig,
   type CloudChatProviderConfig,
+  type CloudSpeechProviderConfig,
 } from '@/lib/lumos-cloud-auth';
 import type { CustomProviderFlags } from './custom-provider-capabilities';
 import type { LumosUser } from './types';
@@ -105,6 +107,11 @@ export interface RemoteUser {
    * 旧的单一 Lumos Cloud provisioner，保证老服务器兼容。
    */
   chat_providers?: CloudChatProviderConfig[];
+  /**
+   * 新版 lumos-web 下发 speech_providers（火山引擎 ASR 等）。字段缺失或空数组 →
+   * 桌面端会清空已 provision 的语音 provider，UI 显示需配置。
+   */
+  speech_providers?: CloudSpeechProviderConfig[];
   allow_custom_providers?: Partial<CustomProviderFlags>;
 }
 
@@ -165,6 +172,11 @@ export async function provisionUserServices(remoteUser: RemoteUser): Promise<voi
     await provisionImageProviders(remoteUser.image_providers ?? []);
   } catch (e) {
     console.warn('[login] Failed to provision image providers:', e);
+  }
+  try {
+    await provisionSpeechProviders(remoteUser.speech_providers ?? []);
+  } catch (e) {
+    console.warn('[login] Failed to provision speech providers:', e);
   }
   await persistCustomProviderFlags(remoteUser.allow_custom_providers ?? {});
 }
@@ -265,6 +277,8 @@ export function seedAdminUser(): void {
  * to the logged-in user (otherwise image-gen-tool skips consumeRemoteQuota
  * and lumos_image_usage on the website never increments).
  */
+const WEB_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
+
 export function getActiveUserId(): string | undefined {
   try {
     const db = getDb();
@@ -280,7 +294,26 @@ export function getActiveUserId(): string | undefined {
   }
 }
 
-const WEB_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
+/**
+ * Lumos-web session cookie for the currently active local user. Returns null
+ * when not logged into the cloud — callers (e.g. cloud-speech adapter) must
+ * surface a sign-in prompt instead of silently retrying.
+ */
+export function getActiveWebSessionToken(): string | null {
+  const userId = getActiveUserId();
+  if (!userId) return null;
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT web_session_token FROM lumos_users WHERE id = ?',
+    ).get(userId) as { web_session_token?: string } | undefined;
+    const token = row?.web_session_token?.trim() || '';
+    return token && WEB_TOKEN_PATTERN.test(token) ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 const BALANCE_TIMEOUT_MS = 5_000;
 
 /**

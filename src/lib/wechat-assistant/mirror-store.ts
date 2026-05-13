@@ -54,6 +54,46 @@ export interface MessageSearchOptions {
   scope?: MessageSearchScope;
   sinceTs?: number | null;
   limit?: number;
+  offset?: number;
+}
+
+export interface ChatReadCandidate {
+  wxid: string;
+  display: string;
+  isGroup: boolean;
+  lastTs: number;
+  messageCount: number;
+  unreadCount: number;
+  summary: string;
+}
+
+export interface ChatReadMessage {
+  ts: number;
+  sender: 'me' | 'them';
+  senderDisplay: string | null;
+  msgType: number;
+  content: string;
+}
+
+export interface ChatReadResult {
+  status: 'ok' | 'not_found' | 'ambiguous';
+  query: string;
+  chat: ChatReadCandidate | null;
+  candidates: ChatReadCandidate[];
+  messages: ChatReadMessage[];
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export interface ChatReadOptions {
+  chat: string;
+  scope?: MessageSearchScope;
+  sinceTs?: number | null;
+  beforeTs?: number | null;
+  limit?: number;
+  offset?: number;
 }
 
 export interface MessageContextResult {
@@ -181,6 +221,14 @@ export function getSyncState(): MirrorSyncState {
     totalMessages: Number(getStateRaw(conn, SYNC_STATE_KEYS.totalMessages) ?? '0'),
     firstStartedAt: Number(getStateRaw(conn, SYNC_STATE_KEYS.firstStartedAt) ?? '0'),
   };
+}
+
+export function getLatestMessageTs(): number {
+  const row = getMirrorDb()
+    .prepare<[], { latest_ts: number | null }>('SELECT MAX(ts) AS latest_ts FROM messages')
+    .get();
+  const latest = Number(row?.latest_ts ?? 0);
+  return Number.isFinite(latest) && latest > 0 ? Math.floor(latest) : 0;
 }
 
 export function setCursor(cursorTs: number): void {
@@ -834,7 +882,8 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
   if (!query) return [];
 
   const scope = options.scope ?? 'all';
-  const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
+  const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const where: string[] = [
     'm.msg_type = 1',
     "m.content != ''",
@@ -857,7 +906,7 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
     where.push("COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) = 1");
   }
 
-  params.push(limit);
+  params.push(limit, offset);
 
   const rows = getMirrorDb()
     .prepare<Array<string | number>, {
@@ -881,7 +930,7 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
       LEFT JOIN sessions s ON s.wxid = m.wxid
       WHERE ${where.join(' AND ')}
       ORDER BY m.ts DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `)
     .all(...params);
 
@@ -894,6 +943,140 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
     senderDisplay: displayGroupMember(row.sender_display),
     content: row.content,
   }));
+}
+
+export function findChatCandidates(
+  query: string,
+  scope: MessageSearchScope = 'all',
+  limit = 10,
+): ChatReadCandidate[] {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return [];
+
+  const cappedLimit = Math.max(1, Math.min(20, Math.floor(limit)));
+  const where: string[] = [
+    "(display LIKE ? ESCAPE '\\' OR wxid LIKE ? ESCAPE '\\')",
+  ];
+  const contains = `%${escapeLikePattern(cleanQuery)}%`;
+  const prefix = `${escapeLikePattern(cleanQuery)}%`;
+  const params: Array<string | number> = [contains, contains];
+
+  if (scope === 'personal') {
+    where.push('is_group = 0');
+  } else if (scope === 'group') {
+    where.push('is_group = 1');
+  }
+
+  params.push(cleanQuery, cleanQuery, prefix, cappedLimit);
+
+  const rows = getMirrorDb()
+    .prepare<Array<string | number>, {
+      wxid: string;
+      display: string;
+      is_group: number;
+      last_ts: number;
+      message_count: number;
+      unread_count: number;
+      summary: string;
+    }>(`
+      SELECT wxid, display, is_group, last_ts, message_count, unread_count, summary
+      FROM sessions
+      WHERE ${where.join(' AND ')}
+      ORDER BY
+        CASE
+          WHEN display = ? OR wxid = ? THEN 0
+          WHEN display LIKE ? ESCAPE '\\' THEN 1
+          ELSE 2
+        END,
+        last_ts DESC
+      LIMIT ?
+    `)
+    .all(...params);
+
+  return rows.map((row) => ({
+    wxid: row.wxid,
+    display: displayChatName(row.display, row.wxid),
+    isGroup: !!row.is_group,
+    lastTs: row.last_ts,
+    messageCount: row.message_count,
+    unreadCount: row.unread_count,
+    summary: row.summary,
+  }));
+}
+
+export function readChatMessages(options: ChatReadOptions): ChatReadResult {
+  const query = options.chat.trim();
+  const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const candidates = findChatCandidates(query, options.scope ?? 'all', 10);
+  const exactCandidates = candidates.filter((item) => item.wxid === query || item.display === query);
+  const selected = exactCandidates.length === 1
+    ? exactCandidates[0]
+    : candidates.length === 1
+      ? candidates[0]
+      : null;
+
+  if (!selected) {
+    return {
+      status: candidates.length > 0 ? 'ambiguous' : 'not_found',
+      query,
+      chat: null,
+      candidates,
+      messages: [],
+      limit,
+      offset,
+      hasMore: false,
+      nextOffset: null,
+    };
+  }
+
+  const where = ['wxid = ?'];
+  const params: Array<string | number> = [selected.wxid];
+  if (typeof options.sinceTs === 'number' && Number.isFinite(options.sinceTs) && options.sinceTs > 0) {
+    where.push('ts >= ?');
+    params.push(Math.floor(options.sinceTs));
+  }
+  if (typeof options.beforeTs === 'number' && Number.isFinite(options.beforeTs) && options.beforeTs > 0) {
+    where.push('ts < ?');
+    params.push(Math.floor(options.beforeTs));
+  }
+  params.push(limit + 1, offset);
+
+  const rows = getMirrorDb()
+    .prepare<Array<string | number>, {
+      ts: number;
+      fingerprint: string;
+      sender: string;
+      sender_display: string | null;
+      msg_type: number;
+      content: string;
+    }>(`
+      SELECT ts, fingerprint, sender, sender_display, msg_type, content
+      FROM messages
+      WHERE ${where.join(' AND ')}
+      ORDER BY ts DESC, fingerprint DESC
+      LIMIT ? OFFSET ?
+    `)
+    .all(...params);
+  const pageRows = rows.slice(0, limit);
+
+  return {
+    status: 'ok',
+    query,
+    chat: selected,
+    candidates: [selected],
+    messages: pageRows.map((row) => ({
+      ts: row.ts,
+      sender: row.sender === 'me' ? 'me' : 'them',
+      senderDisplay: displayGroupMember(row.sender_display),
+      msgType: row.msg_type,
+      content: row.content,
+    })),
+    limit,
+    offset,
+    hasMore: rows.length > limit,
+    nextOffset: rows.length > limit ? offset + limit : null,
+  };
 }
 
 export function getMessageContext(

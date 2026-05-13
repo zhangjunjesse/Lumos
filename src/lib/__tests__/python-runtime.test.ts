@@ -29,6 +29,28 @@ describe('resolvePythonBinary', () => {
     expect(resolvePythonBinary()).toBeNull();
     spy.mockRestore();
   });
+
+  it('uses PATH python candidates when bundled python is missing', () => {
+    const spy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+    mockExecFileSync.mockImplementation((bin: string) => {
+      if (bin === 'python3.11') return Buffer.from('Python 3.11.5');
+      throw new Error('not found');
+    });
+
+    expect(resolvePythonBinary({ minimumVersion: { major: 3, minor: 10 } })).toBe('python3.11');
+    spy.mockRestore();
+  });
+
+  it('rejects python candidates below the requested minimum version', () => {
+    const spy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+    mockExecFileSync.mockImplementation((bin: string) => {
+      if (bin === 'python3' || bin === '/usr/bin/python3') return Buffer.from('Python 3.9.6');
+      throw new Error('not found');
+    });
+
+    expect(resolvePythonBinary({ minimumVersion: { major: 3, minor: 10 } })).toBeNull();
+    spy.mockRestore();
+  });
 });
 
 describe('getPythonVersion', () => {

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import { dataDir } from './db/connection';
 import { resolvePythonBinary } from './python-runtime';
@@ -47,19 +47,64 @@ export function getVenvDir(): string {
  * 确保 venv 存在。首次调用时自动创建。
  * 返回 venv 内的 python 路径。
  */
+// mcp / wechat-export 等关键依赖要求 Python ≥ 3.10。早期老 venv 是用系统
+// Python 3.9 创建的,会被 mcp[cli] 拒绝(没有兼容 wheel)。低于这个最低版本
+// 直接删了重建。
+const MIN_PYTHON_MAJOR = 3;
+const MIN_PYTHON_MINOR = 10;
+const MIN_PYTHON_VERSION = { major: MIN_PYTHON_MAJOR, minor: MIN_PYTHON_MINOR } as const;
+
+function venvPythonMeetsMinVersion(venvPython: string): boolean {
+  try {
+    const out = execFileSyncSafe(venvPython, ['--version']);
+    if (!out) return false;
+    const m = out.match(/Python\s+(\d+)\.(\d+)/);
+    if (!m) return false;
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    if (major > MIN_PYTHON_MAJOR) return true;
+    if (major === MIN_PYTHON_MAJOR && minor >= MIN_PYTHON_MINOR) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function execFileSyncSafe(bin: string, args: string[]): string | null {
+  try {
+    return execFileSync(bin, args, { stdio: 'pipe', timeout: 3_000 }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+function bundledPythonHintPath(): string {
+  const pythonRelPath = isWindows ? 'python/python.exe' : 'python/bin/python3';
+  return `resources/python-runtime/${process.platform}/${process.arch}/${pythonRelPath}`;
+}
+
 export async function ensureVenv(): Promise<string> {
   const venvPython = getVenvPythonPath();
+  // 已存在的 venv:Python 版本足够就直接复用,不够就删了重建
+  // (老用户可能停留在 3.9,导致 mcp 等新包装不上)。
   if (fs.existsSync(venvPython)) {
-    return venvPython;
+    if (venvPythonMeetsMinVersion(venvPython)) {
+      return venvPython;
+    }
+    console.warn(`[python-venv] existing venv Python < ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}, rebuilding at ${VENV_DIR}`);
   }
 
   if (fs.existsSync(VENV_DIR)) {
     fs.rmSync(VENV_DIR, { recursive: true, force: true });
   }
 
-  const python = resolvePythonBinary();
+  const python = resolvePythonBinary({ minimumVersion: MIN_PYTHON_VERSION });
   if (!python) {
-    throw new Error('Python runtime not available. Cannot create virtual environment.');
+    throw new Error(
+      `Python runtime >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} not available. ` +
+      `Install the bundled runtime or put Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} on PATH. ` +
+      `Expected bundled runtime at ${bundledPythonHintPath()}.`,
+    );
   }
 
   fs.mkdirSync(VENV_DIR, { recursive: true });
@@ -69,7 +114,16 @@ export async function ensureVenv(): Promise<string> {
     throw new Error(`Failed to create venv at ${VENV_DIR}`);
   }
 
-  // 升级 pip（静默）
+  // 创建后再校验一次:bundled python ≥ 3.12,但万一回退到系统 3.9 也得拒掉
+  // 避免装 mcp 时再次失败。
+  if (!venvPythonMeetsMinVersion(venvPython)) {
+    fs.rmSync(VENV_DIR, { recursive: true, force: true });
+    throw new Error(
+      `Created venv with unsupported Python version (need >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}). ` +
+      `Check ${bundledPythonHintPath()} exists, or put Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} on PATH.`,
+    );
+  }
+
   try {
     await execFileAsync(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '--quiet'], {
       timeout: EXEC_TIMEOUT,

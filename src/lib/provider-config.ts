@@ -15,6 +15,7 @@ const VALID_PROVIDER_CAPABILITIES = new Set<ProviderCapability>([
   'text-gen',
   'image-gen',
   'embedding',
+  'speech',
 ]);
 
 const VALID_PROVIDER_ORIGINS = new Set<ProviderOrigin>([
@@ -53,6 +54,8 @@ export function getDefaultCapabilitiesForProviderType(providerType?: string | nu
     case 'volcengine':
     case 'dashscope':
       return ['image-gen'];
+    case 'volcengine-asr-v2':
+      return ['speech'];
     default:
       return ['text-gen'];
   }

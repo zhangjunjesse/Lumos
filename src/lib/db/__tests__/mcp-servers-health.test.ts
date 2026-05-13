@@ -113,4 +113,36 @@ describe('mcp server health persistence', () => {
     expect(mcpServerRecordToConfig(legacyRecord).args).toEqual(['legacy-server.mjs']);
     expect(mcpServerRecordToConfig(legacyRecord).env).toBeUndefined();
   });
+
+  it('does not expose missing goofish-cli MCP to chat runtime config', () => {
+    const {
+      createMcpServer,
+      getEnabledMcpServersAsConfig,
+      updateMcpServerHealth,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- see afterEach above
+    } = require('../mcp-servers') as typeof import('../mcp-servers');
+
+    createMcpServer({
+      name: 'goofish-search',
+      command: 'node',
+      args: ['search_mcp.mjs'],
+      scope: 'builtin',
+      is_enabled: true,
+    });
+    const goofish = createMcpServer({
+      name: 'goofish',
+      command: 'node',
+      args: ['launcher.mjs'],
+      scope: 'builtin',
+      is_enabled: true,
+    });
+    updateMcpServerHealth(goofish.id, {
+      status: 'failed',
+      error: "ModuleNotFoundError: No module named 'goofish_cli'",
+    });
+
+    const config = getEnabledMcpServersAsConfig();
+    expect(config['goofish-search']).toBeDefined();
+    expect(config.goofish).toBeUndefined();
+  });
 });

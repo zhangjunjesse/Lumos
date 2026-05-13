@@ -7,6 +7,7 @@ const mockTool = jest.fn((name: string, description: string, schema: unknown, ha
 }));
 const mockGetSyncState = jest.fn();
 const mockSearchMessages = jest.fn();
+const mockReadChatMessages = jest.fn();
 const mockListTodos = jest.fn();
 const mockAddManualTodo = jest.fn();
 const mockSetTodoStatus = jest.fn();
@@ -16,6 +17,7 @@ const mockCreateWeChatAutomation = jest.fn();
 const mockTriggerWeChatAutomation = jest.fn();
 const mockUpdateWeChatAutomation = jest.fn();
 const mockDeleteWeChatAutomation = jest.fn();
+const mockRunSync = jest.fn();
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (...args: unknown[]) => mockCreateSdkMcpServer(...args),
@@ -24,6 +26,7 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 jest.mock('@/lib/wechat-assistant/mirror-store', () => ({
   getSyncState: (...args: unknown[]) => mockGetSyncState(...args),
+  readChatMessages: (...args: unknown[]) => mockReadChatMessages(...args),
   searchMessages: (...args: unknown[]) => mockSearchMessages(...args),
 }));
 
@@ -42,14 +45,35 @@ jest.mock('@/lib/wechat-assistant/automations', () => ({
   updateWeChatAutomation: (...args: unknown[]) => mockUpdateWeChatAutomation(...args),
 }));
 
+jest.mock('@/lib/wechat-assistant/sync-engine', () => ({
+  FRESH_WINDOW_MS: 5 * 60 * 1000,
+  runSync: (...args: unknown[]) => mockRunSync(...args),
+}));
+
 import {
   createWeChatAssistantMcpServer,
+  WECHAT_ASSISTANT_MCP_SYSTEM_HINT,
+  WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT,
   WECHAT_ASSISTANT_MCP_SERVER_NAME,
 } from '../wechat-assistant-mcp-server';
 
 describe('wechat assistant MCP server', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetSyncState.mockReturnValue({
+      cursorTs: 1,
+      firstStartedAt: 1,
+      lastFinishedAt: Date.now(),
+      lastError: null,
+      totalMessages: 42,
+    });
+    mockRunSync.mockResolvedValue({
+      status: 'completed',
+      inserted: 0,
+      seen: 0,
+      cursorTs: 1,
+      durationMs: 0,
+    });
   });
 
   it('registers the expected in-process tools for the unified ChatView panel', () => {
@@ -67,6 +91,7 @@ describe('wechat assistant MCP server', () => {
       'get_wechat_assistant_status',
       'list_wechat_automations',
       'list_wechat_followups',
+      'read_wechat_chat',
       'resolve_wechat_automation',
       'resolve_wechat_followup',
       'search_wechat_messages',
@@ -74,6 +99,39 @@ describe('wechat assistant MCP server', () => {
       'trigger_wechat_automation',
       'update_wechat_automation',
     ]);
+  });
+
+  it('registers only read-only message tools for standard Agent Chat access', () => {
+    const server = createWeChatAssistantMcpServer({ readOnly: true }) as {
+      name: string;
+      tools: Array<{ name: string }>;
+    };
+
+    expect(server.name).toBe(WECHAT_ASSISTANT_MCP_SERVER_NAME);
+    expect(server.tools.map((item) => item.name).sort()).toEqual([
+      'get_wechat_assistant_status',
+      'read_wechat_chat',
+      'search_wechat_messages',
+    ]);
+    expect(server.tools.map((item) => item.name)).not.toContain('create_wechat_automation');
+    expect(server.tools.map((item) => item.name)).not.toContain('update_wechat_automation');
+    expect(server.tools.map((item) => item.name)).not.toContain('delete_wechat_followup');
+  });
+
+  it('documents the Agent Chat read-only WeChat search path in the system hint', () => {
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain(
+      'mcp__lumos-wechat-assistant__search_wechat_messages',
+    );
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain(
+      'mcp__lumos-wechat-assistant__read_wechat_chat',
+    );
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('read-only');
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('instead of saying you do not have this capability');
+  });
+
+  it('keeps WeChat IM delivery separate from automation content in the full hint', () => {
+    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('not a delivery channel');
+    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('WeChat IM delivery');
   });
 
   it('search_wechat_messages returns product-facing fields', async () => {
@@ -91,17 +149,144 @@ describe('wechat assistant MCP server', () => {
       content: '请整理节前遗留问题清单',
     }]);
 
-    const result = await searchTool?.handler({ query: '节前', limit: 5 });
+    const result = await searchTool?.handler({ query: '节前', limit: 120, offset: 40 });
     const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
 
     expect(mockSearchMessages).toHaveBeenCalledWith(expect.objectContaining({
       query: '节前',
       scope: 'all',
-      limit: 5,
+      limit: 120,
+      offset: 40,
     }));
     expect(text).toContain('客户群');
     expect(text).toContain('张三');
     expect(text).toContain('请整理节前遗留问题清单');
+    expect(text).toContain('"offset": 40');
+  });
+
+  it('refreshes a stale WeChat mirror before searching messages', async () => {
+    createWeChatAssistantMcpServer();
+    const searchTool = findTool('search_wechat_messages');
+    mockGetSyncState
+      .mockReturnValueOnce({
+        cursorTs: 1,
+        firstStartedAt: 1,
+        lastFinishedAt: Date.now() - 10 * 60 * 1000,
+        lastError: null,
+        totalMessages: 42,
+      })
+      .mockReturnValueOnce({
+        cursorTs: 2,
+        firstStartedAt: 1,
+        lastFinishedAt: Date.now(),
+        lastError: null,
+        totalMessages: 43,
+      });
+    mockRunSync.mockResolvedValue({
+      status: 'completed',
+      inserted: 1,
+      seen: 8,
+      cursorTs: 2,
+      durationMs: 12,
+    });
+    mockSearchMessages.mockReturnValue([]);
+
+    const result = await searchTool.handler({ query: '陈啟伟', limit: 5 });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(mockRunSync).toHaveBeenCalledTimes(1);
+    expect(mockSearchMessages).toHaveBeenCalledWith(expect.objectContaining({
+      query: '陈啟伟',
+      limit: 5,
+    }));
+    expect(text).toContain('"inserted": 1');
+    expect(text).toContain('"total_messages": 43');
+  });
+
+  it('read_wechat_chat reads a visible chat directly without keyword matching', async () => {
+    createWeChatAssistantMcpServer({ readOnly: true });
+    const readTool = findTool('read_wechat_chat');
+    mockReadChatMessages.mockReturnValue({
+      status: 'ok',
+      query: '陈啟伟',
+      chat: {
+        wxid: 'wxid_xxx',
+        display: '陈啟伟',
+        isGroup: false,
+        lastTs: 1_777_000_100,
+        messageCount: 88,
+        unreadCount: 0,
+        summary: '',
+      },
+      candidates: [],
+      messages: [
+        { ts: 1_777_000_000, sender: 'them', senderDisplay: null, msgType: 1, content: '今天的对话内容' },
+        { ts: 1_777_000_010, sender: 'me', senderDisplay: null, msgType: 3, content: '' },
+      ],
+      limit: 50,
+      offset: 0,
+      hasMore: true,
+      nextOffset: 50,
+    });
+
+    const result = await readTool.handler({ chat: '陈啟伟', limit: 50 });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(mockReadChatMessages).toHaveBeenCalledWith(expect.objectContaining({
+      chat: '陈啟伟',
+      scope: 'all',
+      limit: 50,
+      offset: 0,
+    }));
+    expect(text).toContain('陈啟伟');
+    expect(text).toContain('今天的对话内容');
+    expect(text).toContain('[图片]');
+    expect(text).toContain('"next_offset": 50');
+    expect(text).not.toContain('wxid_xxx');
+  });
+
+  it('read_wechat_chat returns visible candidates when a chat name is ambiguous', async () => {
+    createWeChatAssistantMcpServer({ readOnly: true });
+    const readTool = findTool('read_wechat_chat');
+    mockReadChatMessages.mockReturnValue({
+      status: 'ambiguous',
+      query: '项目',
+      chat: null,
+      candidates: [
+        {
+          wxid: 'group_1@chatroom',
+          display: '项目群',
+          isGroup: true,
+          lastTs: 1_777_000_000,
+          messageCount: 12,
+          unreadCount: 0,
+          summary: '讨论上线',
+        },
+        {
+          wxid: 'group_2@chatroom',
+          display: '项目复盘群',
+          isGroup: true,
+          lastTs: 1_776_000_000,
+          messageCount: 5,
+          unreadCount: 0,
+          summary: '',
+        },
+      ],
+      messages: [],
+      limit: 50,
+      offset: 0,
+      hasMore: false,
+      nextOffset: null,
+    });
+
+    const result = await readTool.handler({ chat: '项目' });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(text).toContain('"status": "ambiguous"');
+    expect(text).toContain('项目群');
+    expect(text).toContain('项目复盘群');
+    expect(text).toContain('不要猜');
+    expect(text).not.toContain('group_1@chatroom');
   });
 
   it('update_wechat_automation updates schedule and message content', async () => {

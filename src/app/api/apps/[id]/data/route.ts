@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { ensureGoofishDefaultAutomations } from '@/lib/app/goofish-default-automations';
 import { createAppDataStore } from '@/lib/app/runtime/data-store';
 import { getAppPlatformService } from '@/lib/app/service';
 
@@ -17,6 +18,11 @@ import { getAppPlatformService } from '@/lib/app/service';
 function getStore(appId: string) {
   const svc = getAppPlatformService();
   return createAppDataStore(svc.db, appId);
+}
+
+function repairBuiltinCollection(appId: string, collection: string): void {
+  if (appId !== 'goofish-assistant' || collection !== 'app_automations') return;
+  ensureGoofishDefaultAutomations(getStore(appId));
 }
 
 function readCollection(req: NextRequest): { collection: string } | { error: NextResponse } {
@@ -37,6 +43,7 @@ export async function GET(
     const { id } = await context.params;
     const c = readCollection(req);
     if ('error' in c) return c.error;
+    repairBuiltinCollection(id, c.collection);
     const url = new URL(req.url);
     const rowId = url.searchParams.get('id');
     const store = getStore(id);

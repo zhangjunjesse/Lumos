@@ -635,6 +635,14 @@ export class BrowserBridgeServer {
     return this.contextLeases.get(normalized) ?? null;
   }
 
+  private forgetSiteTab(pageId: string): void {
+    for (const [cacheKey, cachedPageId] of this.siteTabs.entries()) {
+      if (cachedPageId === pageId) {
+        this.siteTabs.delete(cacheKey);
+      }
+    }
+  }
+
   private async ensureSiteTab(
     manager: BrowserAutomationSession,
     contextId: string,
@@ -1020,6 +1028,7 @@ export class BrowserBridgeServer {
       }
       const exists = manager.getTabs().some((tab) => tab.id === body.pageId);
       if (!exists) {
+        this.forgetSiteTab(body.pageId);
         sendJson(res, 200, { ok: true, browserContextId, closed: false, pageId: body.pageId });
         return;
       }
@@ -1034,6 +1043,7 @@ export class BrowserBridgeServer {
           await manager.closeTab(body.pageId!);
         },
       );
+      this.forgetSiteTab(body.pageId);
       sendJson(res, 200, { ok: true, browserContextId, closed: true, pageId: body.pageId });
       return;
     }

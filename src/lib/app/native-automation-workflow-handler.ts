@@ -57,6 +57,8 @@ async function runNativeAppAutomationHandler(ctx: CodeHandlerContext): Promise<S
     store: createAppDataStore(svc.db, appId),
     rowId: automationId,
     confirmed: true,
+    db: svc.db,
+    appId,
   });
 
   const output = {

@@ -2,18 +2,16 @@
  * Multi-account management for goofish.
  *
  * Each goofish account lives in its own directory under
- * `~/.lumos/goofish-accounts/<unb>/`. We pass that directory as HOME when
- * spawning goofish-cli, so every state file goofish-cli reads or writes
- * (cookies.json, device.json, im_token.json, limiter.json, profiles/) is
- * naturally isolated per account.
+ * `~/.lumos/goofish-accounts/<unb>/`. Lumos owns the account cookie file and
+ * passes it to goofish-cli via GOOFISH_COOKIES_PATH. We intentionally avoid
+ * changing HOME for browser-cookie imports because that breaks user-site
+ * Python package resolution and browser profile discovery.
  *
  * Layout:
  *   ~/.lumos/goofish-accounts/
- *   ├── 2231807063/                         (acts as $HOME for this account)
+ *   ├── 2231807063/                         (Lumos account state dir)
  *   │   └── .goofish-cli/
- *   │       ├── cookies.json
- *   │       ├── device.json
- *   │       └── im_token.json
+ *   │       └── cookies.json
  *   └── ...
  */
 
@@ -28,6 +26,7 @@ const ACCOUNTS_ROOT = path.join(
 
 export interface GoofishAccountInfo {
   unb: string;
+  /** Lumos-managed account state directory. This is not passed as process HOME. */
   homeDir: string;
   cookiesPath: string;
   /** True if cookies.json exists; doesn't necessarily mean the cookies are valid. */
@@ -98,7 +97,7 @@ export function deleteAccount(unb: string): boolean {
  * the multi-account layout, preserving the user's existing session.
  *
  * We read cookies.json (which has `unb` inside), figure out the account,
- * and copy the entire ~/.goofish-cli/ tree under
+ * and copy its cookies.json under
  * ~/.lumos/goofish-accounts/<unb>/.goofish-cli/. The legacy directory is
  * left in place so single-account fallback callers still work.
  *
@@ -129,13 +128,8 @@ export function migrateLegacyAccount(): string | null {
 
   const destDir = path.join(dest, '.goofish-cli');
   mkdirSync(destDir, { recursive: true });
-  // Copy each known state file if present.
-  for (const f of ['cookies.json', 'device.json', 'im_token.json', 'limiter.json']) {
-    const src = path.join(legacyHome, '.goofish-cli', f);
-    if (!existsSync(src)) continue;
-    try {
-      writeFileSync(path.join(destDir, f), readFileSync(src), { mode: 0o600 });
-    } catch { /* best effort */ }
-  }
+  try {
+    writeFileSync(path.join(destDir, 'cookies.json'), readFileSync(legacyCookies), { mode: 0o600 });
+  } catch { /* best effort */ }
   return unb;
 }

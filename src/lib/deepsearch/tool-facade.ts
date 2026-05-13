@@ -5,6 +5,7 @@ import { resolveBrowserBridgeRuntimeConfig } from '@/lib/browser-runtime/bridge-
 import type {
   CreateDeepSearchRunInput,
   DeepSearchArtifactKind,
+  DeepSearchArtifactRecord,
   DeepSearchRecordContentState,
   DeepSearchRunAction,
   DeepSearchRunRecord,
@@ -28,7 +29,7 @@ const SITE_ALIASES: Record<string, string[]> = {
   xiaohongshu: ['xiaohongshu', 'xhs', '小红书'],
   juejin: ['juejin', '掘金'],
   wechat: ['wechat', 'weixin', '微信公众号', '公众号', '微信文章', '微信'],
-  x: ['twitter', 'x/twitter', '推特', 'twitter/x'],
+  x: ['x', 'twitter', 'x.com', 'twitter.com', 'x/twitter', '推特', 'twitter/x'],
   wikisource_zh: ['wikisource', 'zh-wikisource', 'wikisource zh', '维基文库', '中文维基文库'],
   ctext: ['ctext', 'chinese text project', '中國哲學書電子化計劃', '中国哲学书电子化计划'],
   project_gutenberg: ['gutenberg', 'project gutenberg', '古腾堡', '古登堡'],
@@ -76,6 +77,31 @@ function normalizeSiteToken(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function isAsciiWordChar(value: string | undefined): boolean {
+  return Boolean(value && /^[a-z0-9_]$/i.test(value));
+}
+
+function containsStandaloneToken(text: string, token: string): boolean {
+  if (!text || !token) {
+    return false;
+  }
+
+  let offset = text.indexOf(token);
+  while (offset >= 0) {
+    const before = offset > 0 ? text[offset - 1] : undefined;
+    const after = text[offset + token.length];
+    if (!isAsciiWordChar(before) && !isAsciiWordChar(after)) {
+      return true;
+    }
+    offset = text.indexOf(token, offset + token.length);
+  }
+  return false;
+}
+
+function canUseFuzzySiteTokenMatch(token: string): boolean {
+  return token.length > 1;
+}
+
 function getSiteHosts(site: DeepSearchSiteRecord): string[] {
   if (!site.baseUrl.trim()) {
     return [];
@@ -103,7 +129,11 @@ function matchesSiteToken(site: DeepSearchSiteRecord, token: string): boolean {
     return true;
   }
 
-  if (displayName.includes(normalizedToken) || normalizedToken.includes(displayName)) {
+  if (
+    canUseFuzzySiteTokenMatch(normalizedToken)
+    && canUseFuzzySiteTokenMatch(displayName)
+    && (displayName.includes(normalizedToken) || normalizedToken.includes(displayName))
+  ) {
     return true;
   }
 
@@ -113,7 +143,14 @@ function matchesSiteToken(site: DeepSearchSiteRecord, token: string): boolean {
   }
 
   const hosts = getSiteHosts(site);
-  return hosts.some((host) => host === normalizedToken || host.includes(normalizedToken) || normalizedToken.includes(host));
+  return hosts.some((host) => {
+    if (host === normalizedToken) {
+      return true;
+    }
+    return canUseFuzzySiteTokenMatch(normalizedToken)
+      && canUseFuzzySiteTokenMatch(host)
+      && (host.includes(normalizedToken) || normalizedToken.includes(host));
+  });
 }
 
 function inferSiteKeysFromQuery(query: string, sites: DeepSearchSiteRecord[]): string[] {
@@ -135,12 +172,8 @@ function inferSiteKeysFromQuery(query: string, sites: DeepSearchSiteRecord[]): s
         if (!normalizedAlias) {
           return false;
         }
-        if (normalizedAlias.length === 1) {
-          return normalizedQuery === normalizedAlias
-            || normalizedQuery.includes(` ${normalizedAlias} `)
-            || normalizedQuery.includes(`/${normalizedAlias}`)
-            || normalizedQuery.includes(`${normalizedAlias}/`)
-            || normalizedQuery.includes(`(${normalizedAlias})`);
+        if (normalizedAlias.length === 1 && /^[a-z0-9_]$/i.test(normalizedAlias)) {
+          return containsStandaloneToken(normalizedQuery, normalizedAlias);
         }
         return normalizedQuery.includes(normalizedAlias);
       });
@@ -162,7 +195,7 @@ function getAvailableSiteNames(sites: DeepSearchSiteRecord[]): string {
   return sites.map((site) => `${site.displayName} (${site.siteKey})`).join(', ');
 }
 
-function resolveRequestedSiteKeys(
+export function resolveRequestedSiteKeys(
   requestedSites: string[] | undefined,
   query: string,
   sites: DeepSearchSiteRecord[],
@@ -301,6 +334,55 @@ function buildContentStateStats(run: DeepSearchRunRecord): Record<DeepSearchReco
   return stats;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function getStructuredArtifact(record: DeepSearchRunRecord['records'][number]): DeepSearchArtifactRecord | null {
+  return record.artifacts.find((artifact) => artifact.kind === 'structured_json') ?? null;
+}
+
+function getRecordStructuredData(record: DeepSearchRunRecord['records'][number]): Record<string, unknown> | null {
+  const artifact = getStructuredArtifact(record);
+  const metadata = asRecord(artifact?.metadata);
+  return asRecord(metadata?.structuredData);
+}
+
+function getRecordMetrics(structuredData: Record<string, unknown> | null): unknown {
+  if (!structuredData) {
+    return null;
+  }
+
+  const metrics = asRecord(structuredData.metrics);
+  if (metrics) {
+    return metrics;
+  }
+
+  if (!Array.isArray(structuredData.items)) {
+    return null;
+  }
+
+  return structuredData.items
+    .map((item) => {
+      const itemRecord = asRecord(item);
+      const itemMetrics = asRecord(itemRecord?.metrics) ?? asRecord(asRecord(itemRecord?.extra)?.metrics);
+      if (!itemRecord || !itemMetrics) {
+        return null;
+      }
+      return {
+        tweetId: itemRecord.tweetId ?? asRecord(itemRecord.extra)?.tweetId ?? null,
+        url: itemRecord.url ?? null,
+        title: itemRecord.title ?? null,
+        authorScreenName: itemRecord.authorScreenName ?? asRecord(itemRecord.extra)?.authorScreenName ?? null,
+        metrics: itemMetrics,
+      };
+    })
+    .filter(Boolean);
+}
+
 function buildRunView(
   run: DeepSearchRunRecord,
   sites: DeepSearchSiteRecord[],
@@ -353,20 +435,26 @@ function buildRunView(
       totalArtifacts: run.artifacts.length,
       byKind: artifactStats,
     },
-    sampleRecords: run.records.slice(0, 20).map((record) => ({
-      recordId: record.id,
-      siteKey: record.siteKey,
-      title: record.title,
-      url: record.url,
-      contentState: record.contentState,
-      snippet: record.snippet,
-      errorMessage: record.errorMessage,
-      fetchedAt: record.fetchedAt,
-      contentArtifactId: record.contentArtifactId,
-      contentArtifactUrl: record.contentArtifactId ? buildArtifactUrl(record.contentArtifactId) : null,
-      screenshotArtifactId: record.screenshotArtifactId,
-      screenshotArtifactUrl: record.screenshotArtifactId ? buildArtifactUrl(record.screenshotArtifactId) : null,
-    })),
+    sampleRecords: run.records.slice(0, 20).map((record) => {
+      const structuredData = getRecordStructuredData(record);
+      const metrics = getRecordMetrics(structuredData);
+      return {
+        recordId: record.id,
+        siteKey: record.siteKey,
+        title: record.title,
+        url: record.url,
+        contentState: record.contentState,
+        snippet: record.snippet,
+        errorMessage: record.errorMessage,
+        fetchedAt: record.fetchedAt,
+        contentArtifactId: record.contentArtifactId,
+        contentArtifactUrl: record.contentArtifactId ? buildArtifactUrl(record.contentArtifactId) : null,
+        screenshotArtifactId: record.screenshotArtifactId,
+        screenshotArtifactUrl: record.screenshotArtifactId ? buildArtifactUrl(record.screenshotArtifactId) : null,
+        ...(structuredData ? { structuredData } : {}),
+        ...(metrics ? { metrics } : {}),
+      };
+    }),
     ...(options?.selectionNote ? { siteSelectionNote: options.selectionNote } : {}),
     ...(options?.ignoredOptions && options.ignoredOptions.length > 0 ? { ignoredOptions: options.ignoredOptions } : {}),
   };

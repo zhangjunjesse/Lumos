@@ -1,12 +1,9 @@
 /**
  * Shared spawn-environment builder for goofish-cli and our Python sidecars.
  *
- * Why this exists: we override HOME per-account so each account's
- * ~/.goofish-cli/ state stays isolated. But HOME also drives Python's
- * user-site resolution, so a child process started with HOME=<tmp> can't
- * find the real user-site where goofish_cli is installed. We pass the
- * real user-site back via PYTHONPATH (Python startup) and LUMOS_USER_SITE
- * (our sidecars sys.path.insert it before any imports).
+ * Why this exists: goofish-cli runs in Lumos's real HOME so it can still find
+ * system browser profiles and Python user-site packages. Per-account cookies
+ * are isolated by passing GOOFISH_COOKIES_PATH instead of rewriting HOME.
  */
 
 import { execFileSync } from 'node:child_process';

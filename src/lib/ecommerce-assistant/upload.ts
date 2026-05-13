@@ -45,17 +45,30 @@ export interface PersistedUpload {
 
 export async function persistUploadedImage(file: File): Promise<PersistedUpload> {
   const buf = Buffer.from(await file.arrayBuffer());
+  return persistImageBuffer({
+    buffer: buf,
+    filename: file.name,
+    mimeType: file.type,
+  });
+}
+
+export function persistImageBuffer(input: {
+  buffer: Buffer;
+  filename?: string | null;
+  mimeType?: string | null;
+}): PersistedUpload {
+  const buf = input.buffer;
   if (buf.length === 0) throw new Error('上传文件为空。');
   if (buf.length > MAX_BYTES) {
-    throw new Error(`文件超出上限（${(MAX_BYTES / 1024 / 1024).toFixed(0)}MB）：${file.name}`);
+    throw new Error(`文件超出上限（${(MAX_BYTES / 1024 / 1024).toFixed(0)}MB）：${input.filename ?? 'remote-image'}`);
   }
-  const ext = path.extname(file.name || '').toLowerCase() || '.png';
+  const ext = path.extname(input.filename || '').toLowerCase() || extFromMime(input.mimeType) || '.png';
   if (!ALLOWED_EXT.has(ext)) {
     throw new Error(`不支持的图片格式：${ext}。仅支持 png / jpg / jpeg / webp / gif。`);
   }
   if (!isLikelyImage(buf)) {
     throw new Error(
-      `文件 ${file.name} 不是合法的 png / jpg / webp / gif 图像（魔术字节不匹配），可能被恶意改名。`,
+      `文件 ${input.filename ?? 'remote-image'} 不是合法的 png / jpg / webp / gif 图像（魔术字节不匹配），可能被恶意改名。`,
     );
   }
   const dir = getEcommerceUploadDir();
@@ -66,8 +79,24 @@ export async function persistUploadedImage(file: File): Promise<PersistedUpload>
     absolutePath,
     relativePath: filename,
     size: buf.length,
-    mimeType: file.type || guessMime(ext),
+    mimeType: input.mimeType || guessMime(ext),
   };
+}
+
+function extFromMime(mime?: string | null): string {
+  const normalized = mime?.split(';')[0]?.trim().toLowerCase();
+  switch (normalized) {
+    case 'image/jpeg':
+      return '.jpg';
+    case 'image/webp':
+      return '.webp';
+    case 'image/gif':
+      return '.gif';
+    case 'image/png':
+      return '.png';
+    default:
+      return '';
+  }
 }
 
 function guessMime(ext: string): string {

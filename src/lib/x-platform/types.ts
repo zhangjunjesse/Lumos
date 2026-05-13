@@ -23,6 +23,18 @@ export interface XSearchHit {
   likeCount: number;
   retweetCount: number;
   replyCount: number;
+  /** Impressions / views — 老接口没有,有则填,没有 0。 */
+  viewCount: number;
+  /** Bookmark/收藏 数。X 偶尔通过不同字段返回,无值 = 0。 */
+  bookmarkCount: number;
+  /** 引用转发数(quote tweet)。 */
+  quoteCount: number;
+  /** Same thread 的根推 ID(thread head)。和 id 相同表示自己是头条。 */
+  conversationId: string;
+  /** 媒体 URL 列表(图片直链)。 */
+  photoUrls: string[];
+  /** 视频 preview 缩略图 URL 列表(实际视频流 X 走 m3u8,这里只存预览图)。 */
+  videoPreviewUrls: string[];
   url: string;
 }
 

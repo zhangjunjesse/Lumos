@@ -1,6 +1,6 @@
 {
   "name": "goofish-search",
-  "description": "闲鱼会话本地存档搜索工具：按关键词找买家/消息，毫秒级。配合 goofish_sync 使用。",
+  "description": "闲鱼受控工具：账号、收件箱、会话、消息、本地存档搜索、同步，以及后台浏览器商品搜索；不包含本店商品管理、发布、改价、下架或删除。",
   "command": "node",
   "runtime": "node",
   "runMode": "on_demand",

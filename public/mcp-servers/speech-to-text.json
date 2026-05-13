@@ -1,0 +1,11 @@
+{
+  "name": "speech-to-text",
+  "description": "Transcribe audio (wav/mp3/m4a/ogg/aac/amr/silk/flac/webm/opus) to text using Lumos cloud ASR via the configured Speech provider. Same engine that auto-transcribes WeChat voice messages.",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/speech-to-text/speech_to_text_mcp.mjs"
+  ],
+  "env": {}
+}

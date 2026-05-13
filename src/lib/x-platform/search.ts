@@ -1,25 +1,27 @@
-import { gqlGet } from './graphql-client';
-import { buildSearchTimeline } from './graphql-queries';
-import { extractHits, type TimelineResponse } from './timeline-extract';
-import type { XSearchResult } from './types';
+import { SearchMode } from '@the-convocation/twitter-scraper';
+import { ensureScraper } from './scraper';
+import { mapTweetToHit, type RawTweetLike } from './tweet-mapper';
+import type { XSearchHit, XSearchResult } from './types';
 
-interface SearchTimelineData {
-  search_by_raw_query?: {
-    search_timeline?: {
-      timeline?: TimelineResponse;
-    };
-  };
-}
-
+/**
+ * 搜索推文。mode 默认 Top(相关性),要按时间倒序传 'Latest'。
+ */
 export async function searchTweets(
   query: string,
-  opts: { count?: number; cursor?: string } = {},
+  opts: { count?: number; mode?: 'Top' | 'Latest' | 'Photos' | 'Videos' | 'Users' } = {},
 ): Promise<XSearchResult> {
   const trimmed = query.trim();
   if (!trimmed) return { query: trimmed, hits: [] };
   const count = Math.max(1, Math.min(50, opts.count ?? 20));
-  const data = await gqlGet<SearchTimelineData>(buildSearchTimeline(trimmed, count, opts.cursor));
-  const timeline = data?.search_by_raw_query?.search_timeline?.timeline;
-  const { hits, cursor } = timeline ? extractHits(timeline) : { hits: [], cursor: undefined };
-  return { query: trimmed, hits, cursor };
+  const modeName = opts.mode ?? 'Top';
+  const mode = SearchMode[modeName as keyof typeof SearchMode] ?? SearchMode.Top;
+
+  const scraper = await ensureScraper();
+  const hits: XSearchHit[] = [];
+  for await (const t of scraper.searchTweets(trimmed, count, mode)) {
+    const hit = mapTweetToHit(t as RawTweetLike);
+    if (hit) hits.push(hit);
+    if (hits.length >= count) break;
+  }
+  return { query: trimmed, hits };
 }

@@ -1,8 +1,12 @@
+import type Database from 'better-sqlite3';
+
 import {
   isGoofishNativeApp,
   syncGoofishIntoApp,
   type GoofishAppSyncDeps,
 } from './goofish-app-sync';
+import { scanAndReply } from './goofish-auto-reply-matcher';
+import { scanAndNotify } from './goofish-reminder-engine';
 import type { AppManifest } from './manifest/types';
 import type { AppDataStore } from './runtime/data-store';
 
@@ -32,13 +36,21 @@ interface AppAutomationRow extends Record<string, unknown> {
   updated_at?: string;
 }
 
-export const SUPPORTED_NATIVE_AUTOMATION_ACTIONS = new Set(['goofish:sync']);
+export const SUPPORTED_NATIVE_AUTOMATION_ACTIONS = new Set([
+  'goofish:sync',
+  'goofish:auto-reply-scan',
+  'goofish:check-reminders',
+  'douyin-collector:patrol-creators',
+  'douyin-collector:patrol-keywords',
+]);
 
 export async function runNativeAppAutomation(input: {
   manifest: AppManifest;
   store: AppDataStore;
   rowId: string;
   confirmed: boolean;
+  db?: Database.Database;
+  appId?: string;
   deps?: NativeAppAutomationRunnerDeps;
 }): Promise<NativeAppAutomationRunResult> {
   const now = input.deps?.now?.() ?? Date.now();
@@ -121,6 +133,111 @@ export async function runNativeAppAutomation(input: {
       message: result.message,
       nativeAction,
       error: result.error,
+    };
+  }
+
+  if (nativeAction === 'goofish:auto-reply-scan') {
+    if (!isGoofishNativeApp(input.manifest)) {
+      return fail('当前应用不是闲鱼类应用，不能运行 goofish:auto-reply-scan。', { nativeAction });
+    }
+    const result = await scanAndReply({
+      manifest: input.manifest,
+      store: input.store,
+      now,
+    });
+    const summary = `白名单扫描：命中 ${result.matched}，发送 ${result.sent}，草稿 ${result.drafted}，频控降级 ${result.throttled}${result.errors.length ? `，错误 ${result.errors.length}` : ''}。`;
+    const status = result.ok ? 'success' : 'failed';
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: summary,
+      last_run_id: result.runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: result.ok,
+      automationId: automation.id,
+      runId: result.runId,
+      message: summary,
+      nativeAction,
+      error: result.errors.map((e) => `${e.conversationId}: ${e.reason}`).join('; ') || undefined,
+    };
+  }
+
+  if (nativeAction === 'goofish:check-reminders') {
+    if (!isGoofishNativeApp(input.manifest)) {
+      return fail('当前应用不是闲鱼类应用，不能运行 goofish:check-reminders。', { nativeAction });
+    }
+    const result = await scanAndNotify({
+      manifest: input.manifest,
+      store: input.store,
+      now,
+      db: input.db,
+      appId: input.appId,
+    });
+    const summary = `提醒扫描：触发 ${result.triggered.length}，跳过 ${result.skipped}${result.errors.length ? `，错误 ${result.errors.length}` : ''}。`;
+    const allFailed = result.triggered.length === 0 && result.errors.length > 0;
+    const status = allFailed ? 'failed' : 'success';
+    const runId = result.runId ?? createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary,
+      failure_reason: result.errors.map((e) => `${e.ruleId}: ${e.reason}`).join('; ') || undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: summary,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: !allFailed,
+      automationId: automation.id,
+      runId,
+      message: summary,
+      nativeAction,
+      error: result.errors.map((e) => `${e.ruleId}: ${e.reason}`).join('; ') || undefined,
+    };
+  }
+
+  if (
+    nativeAction === 'douyin-collector:patrol-creators' ||
+    nativeAction === 'douyin-collector:patrol-keywords'
+  ) {
+    if (input.manifest.id !== 'douyin-collector') {
+      return fail(
+        '当前应用不是抖音采集器，不能运行 douyin-collector 自动化。',
+        { nativeAction },
+      );
+    }
+    const { patrolEnabledCreators, patrolEnabledKeywords } = await import(
+      '@/lib/douyin-collector/patrol'
+    );
+    const report =
+      nativeAction === 'douyin-collector:patrol-creators'
+        ? await patrolEnabledCreators()
+        : await patrolEnabledKeywords();
+    const status = report.ok ? 'success' : 'failed';
+    const runId = createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary: report.message,
+      failure_reason: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: report.message,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: report.ok,
+      automationId: automation.id,
+      runId,
+      message: report.message,
+      nativeAction,
+      error: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
     };
   }
 

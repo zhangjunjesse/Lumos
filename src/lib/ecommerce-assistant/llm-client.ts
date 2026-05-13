@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { generateObjectFromProvider } from '@/lib/text-generator';
+import { generateObjectWithFallback } from '@/lib/text-generator';
 import { resolveProviderForCapability, ProviderResolutionError } from '@/lib/provider-resolver';
 import { providerSupportsCapability } from '@/lib/provider-config';
 import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
@@ -71,10 +71,10 @@ interface AnalyzeArgs<T> {
   maxTokens?: number;
 }
 
-async function generateStructured<T>(args: AnalyzeArgs<T>): Promise<T> {
+export async function generateStructured<T>(args: AnalyzeArgs<T>): Promise<T> {
   const provider = resolveAnalysisProvider();
   const model = resolveAnalysisModel(provider);
-  return generateObjectFromProvider({
+  return generateObjectWithFallback({
     providerId: provider.id,
     model,
     system: args.system,

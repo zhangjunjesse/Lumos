@@ -116,10 +116,19 @@ const synthesizeSpeechAttachment = jest.fn(async () => ({
 }));
 const mockResolveExplicitAsrProviderTarget = jest.fn(() => null);
 const mockTranscribeAudioAttachmentWithTarget = jest.fn(async () => '');
+const mockTranscribeAudioAttachment = jest.fn(async () => ({
+  text: '',
+  empty: true,
+  provider: 'mock',
+}));
+class MockSpeechProviderNotConfiguredError extends Error {}
 jest.mock('@/lib/im/core/speech', () => ({
+  SpeechProviderNotConfiguredError: MockSpeechProviderNotConfiguredError,
   normalizeOpenAIBaseUrl: (value: string) => value.trim().replace(/\/+$/, ''),
   resolveExplicitAsrProviderTarget: () => mockResolveExplicitAsrProviderTarget(),
   synthesizeSpeechAttachment: (text: string) => synthesizeSpeechAttachment(text),
+  transcribeAudioAttachment: (attachment: unknown) =>
+    mockTranscribeAudioAttachment(attachment),
   transcribeAudioAttachmentWithTarget: (attachment: unknown, target: unknown) =>
     mockTranscribeAudioAttachmentWithTarget(attachment, target),
 }));
@@ -244,6 +253,12 @@ beforeEach(() => {
   mockResolveExplicitAsrProviderTarget.mockReturnValue(null);
   mockTranscribeAudioAttachmentWithTarget.mockReset();
   mockTranscribeAudioAttachmentWithTarget.mockResolvedValue('');
+  mockTranscribeAudioAttachment.mockReset();
+  mockTranscribeAudioAttachment.mockResolvedValue({
+    text: '',
+    empty: true,
+    provider: 'mock',
+  });
 });
 
 describe('im-inbound-dispatcher', () => {
@@ -444,7 +459,7 @@ describe('im-inbound-dispatcher', () => {
       ]);
     });
 
-    test('uses server default ASR fallback for voice placeholder before AI dispatch', async () => {
+    test('uses Lumos speech provider fallback for voice placeholder before AI dispatch', async () => {
       mockGetDefaultProvider.mockReturnValue({
         id: 'provider-openai',
         name: 'OpenAI Compatible',
@@ -456,7 +471,11 @@ describe('im-inbound-dispatcher', () => {
       });
       mockParseProviderExtraEnv.mockReturnValue({ OPENAI_ASR_MODEL: 'whisper-test' });
       mockResolveProviderRequestApiKey.mockReturnValue('asr-key');
-      mockTranscribeAudioAttachmentWithTarget.mockResolvedValueOnce('帮我总结一下今天的安排');
+      mockTranscribeAudioAttachment.mockResolvedValueOnce({
+        text: '帮我总结一下今天的安排',
+        empty: false,
+        provider: 'volcengine-asr-v2',
+      });
 
       fakeSessions.set('preset_3', { id: 'preset_3', title: 'voice chat' });
       routePointer = 'preset_3';
@@ -474,13 +493,8 @@ describe('im-inbound-dispatcher', () => {
         ],
       });
 
-      expect(mockTranscribeAudioAttachmentWithTarget).toHaveBeenCalledWith(
+      expect(mockTranscribeAudioAttachment).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'wechat-voice-100-0.wav' }),
-        expect.objectContaining({
-          baseUrl: 'https://asr.example/v1',
-          apiKey: 'asr-key',
-          model: 'whisper-test',
-        }),
       );
       expect(conversationCalls).toHaveLength(1);
       expect(conversationCalls[0].text).toBe('帮我总结一下今天的安排');

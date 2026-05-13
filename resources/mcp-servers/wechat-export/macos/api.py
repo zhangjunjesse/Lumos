@@ -968,11 +968,10 @@ def sync_stream(args: dict) -> None:
     sys.stderr.flush()
 
     db_paths = server._get_message_dbs()
+    # Cursor must reflect message detail rows emitted to the mirror, not
+    # session summary timestamps. Summary can be newer than the readable detail
+    # rows and would make incremental sync skip unsynced messages.
     max_ts_seen = since_timestamp
-    for s in sessions_data:
-        ts = int(s.get("last_timestamp") or 0)
-        if ts > max_ts_seen:
-            max_ts_seen = ts
 
     def process_db(db_path: str) -> int:
         db_basename = os.path.basename(db_path)

@@ -66,6 +66,18 @@ Rules:
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
 
+const SPEECH_TO_TEXT_MCP_SYSTEM_HINT = `You have access to Lumos speech-to-text tools (server name: \`speech-to-text\`) for audio transcription.
+
+Available tool:
+- \`transcribe_audio\` — transcribe wav/mp3/m4a/ogg/aac/amr/silk/flac/webm/opus audio. Prefer the \`file_path\` parameter for attached local files.
+
+Rules:
+- When the user attaches or references an audio file and asks what it says, call \`transcribe_audio\` before summarizing.
+- Use only \`transcribe_audio\` for ASR. Do not use Bash, ffmpeg, local whisper, or external skills as the transcription path.
+- If \`transcribe_audio\` reports a timeout or large-file error, report that exact error; do not manually split or convert the file in the agent. The MCP/runtime owns audio preprocessing.
+- If the tool reports \`SPEECH_PROVIDER_NOT_CONFIGURED\`, tell the user to open Settings → Providers → Speech.
+- If the tool returns a charge amount or duration, report it transparently.`;
+
 const MAIN_AGENT_IM_ENTRY_HINT = `This conversation is the Lumos Main Agent space and may receive messages from external IM channels like WeChat.
 Treat the user as talking to Lumos itself. If the user asks to inspect or continue another Lumos conversation, use the Lumos butler read-only tools to find or summarize it. Do not claim that you transferred execution into another conversation unless a dedicated transfer tool is available.`;
 
@@ -109,6 +121,13 @@ function hasDeepSearchMcp(
 ): boolean {
   if (!servers) return false;
   return Boolean(servers.deepsearch);
+}
+
+function hasSpeechToTextMcp(
+  servers: Record<string, MCPServerConfig> | undefined,
+): boolean {
+  if (!servers) return false;
+  return Boolean(servers['speech-to-text']);
 }
 
 interface ConversationResponse {
@@ -212,6 +231,9 @@ export class ConversationEngine {
     }
     if (hasDeepSearchMcp(loadedMcpServers)) {
       hints.push(DEEPSEARCH_MCP_SYSTEM_HINT);
+    }
+    if (hasSpeechToTextMcp(loadedMcpServers)) {
+      hints.push(SPEECH_TO_TEXT_MCP_SYSTEM_HINT);
     }
     if (hasImToolsMcp(loadedMcpServers)) {
       hints.push(IM_TOOLS_SYSTEM_HINT);

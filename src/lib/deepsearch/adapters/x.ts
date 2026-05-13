@@ -1,17 +1,20 @@
 /**
  * X (Twitter) DeepSearch adapter.
  *
- * 和其他 adapter 不同, X 必须登录才能搜索 — 直接调 src/lib/x-platform/search.ts
- * (走我们自己持有的 cookies + GraphQL bearer), 不用 ctx.fetch (那是 Electron
- * session, 我们的 X cookies 在独立文件里)。
+ * search:走 lib/x-platform/search → @the-convocation/twitter-scraper,返回搜
+ * 索结果。每个 item 的 snippet 后面追加 ❤/🔁/💬 指标,extra 带完整 metric
+ * + media,AI 看到的搜索列表自带数据指标不用再 extract 才知道。
  *
- * extract 走 X 官方 oembed: 不要登录, 返回 HTML 含完整推文。比 GraphQL
- * TweetResultByRestId 更稳定 (query_id 不会变)。
+ * extract:走 lib/x-platform/thread → 拿单条推文 + 同 thread 下评论列表,拼
+ * 成 markdown。AI 抽到的"完整推文"含原文 / 媒体 / 指标 / 评论,而不是 oembed
+ * 那种只有 280 字摘要。
  */
 
 import { searchTweets } from '@/lib/x-platform/search';
+import { getTweetById, getTweetReplies } from '@/lib/x-platform/thread';
 import { getAuthStatus } from '@/lib/x-platform/auth';
 import { isXAuthExpiredError } from '@/lib/x-platform/auth-error';
+import { formatTweetMetrics } from '@/lib/x-platform/tweet-mapper';
 import type {
   AdapterContext,
   AdapterExtractResult,
@@ -19,10 +22,7 @@ import type {
   AdapterSearchResult,
   SiteAdapter,
 } from '../adapter-types';
-
-function strip(html: string): string {
-  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-}
+import type { XSearchHit } from '@/lib/x-platform/types';
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
@@ -31,6 +31,46 @@ function truncate(text: string, max: number): string {
 function extractTweetId(url: string): string {
   const m = url.match(/(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/);
   return m ? m[1] : '';
+}
+
+function formatTimestamp(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function buildMetrics(hit: XSearchHit) {
+  return {
+    likeCount: hit.likeCount,
+    retweetCount: hit.retweetCount,
+    replyCount: hit.replyCount,
+    bookmarkCount: hit.bookmarkCount,
+    quoteCount: hit.quoteCount,
+    viewCount: hit.viewCount,
+  };
+}
+
+function buildTweetStructuredData(hit: XSearchHit) {
+  return {
+    tweetId: hit.id,
+    url: hit.url,
+    text: hit.text,
+    authorId: hit.authorId,
+    authorScreenName: hit.authorScreenName,
+    authorName: hit.authorName,
+    conversationId: hit.conversationId,
+    createdAt: hit.createdAt,
+    metrics: buildMetrics(hit),
+    likeCount: hit.likeCount,
+    retweetCount: hit.retweetCount,
+    replyCount: hit.replyCount,
+    bookmarkCount: hit.bookmarkCount,
+    quoteCount: hit.quoteCount,
+    viewCount: hit.viewCount,
+    photoUrls: hit.photoUrls,
+    videoPreviewUrls: hit.videoPreviewUrls,
+  };
 }
 
 async function probeLogin(): Promise<AdapterLoginProbe> {
@@ -52,71 +92,134 @@ async function probeLogin(): Promise<AdapterLoginProbe> {
 }
 
 async function search(_ctx: AdapterContext, query: string, maxResults: number): Promise<AdapterSearchResult> {
-  void _ctx; // ctx 用不上, X cookie 自己持有
+  void _ctx;
   const limit = Math.max(1, Math.min(50, maxResults));
   const result = await searchTweets(query, { count: limit });
-  const items = result.hits.map((hit) => ({
-    url: hit.url,
-    title: hit.authorName
-      ? `${hit.authorName} (@${hit.authorScreenName})`
-      : `@${hit.authorScreenName || hit.authorId}`,
-    snippet: truncate(hit.text, 280),
-    extra: {
-      authorScreenName: hit.authorScreenName,
-      authorName: hit.authorName,
-      tweetId: hit.id,
-      createdAt: hit.createdAt,
-      likeCount: hit.likeCount,
-      retweetCount: hit.retweetCount,
-      replyCount: hit.replyCount,
-    },
-  }));
+  const structuredItems = result.hits.map(buildTweetStructuredData);
+  const items = result.hits.map((hit) => {
+    const metrics = formatTweetMetrics(hit);
+    const snippet = metrics
+      ? `${truncate(hit.text, 240)}\n— ${metrics}`
+      : truncate(hit.text, 280);
+    return {
+      url: hit.url,
+      title: hit.authorName
+        ? `${hit.authorName} (@${hit.authorScreenName})`
+        : `@${hit.authorScreenName || hit.authorId}`,
+      snippet,
+      voteCount: hit.likeCount,
+      extra: {
+        authorScreenName: hit.authorScreenName,
+        authorName: hit.authorName,
+        tweetId: hit.id,
+        conversationId: hit.conversationId,
+        createdAt: hit.createdAt,
+        likeCount: hit.likeCount,
+        retweetCount: hit.retweetCount,
+        replyCount: hit.replyCount,
+        viewCount: hit.viewCount,
+        bookmarkCount: hit.bookmarkCount,
+        quoteCount: hit.quoteCount,
+        photoUrls: hit.photoUrls,
+        videoPreviewUrls: hit.videoPreviewUrls,
+        metrics: buildMetrics(hit),
+      },
+    };
+  });
   return {
     items,
     sourceUrl: `https://x.com/search?q=${encodeURIComponent(query)}`,
-    structuredData: { adapter: 'x', pageType: 'search', resultCount: items.length },
+    structuredData: {
+      adapter: 'x',
+      pageType: 'search',
+      resultCount: items.length,
+      items: structuredItems,
+    },
   };
 }
 
-async function extract(ctx: AdapterContext, url: string): Promise<AdapterExtractResult> {
-  const tweetId = extractTweetId(url);
-  const oembedUrl = `https://publish.x.com/oembed?url=${encodeURIComponent(url)}&omit_script=1&dnt=true`;
+function buildTweetMarkdown(hit: XSearchHit): string {
+  const metrics = formatTweetMetrics(hit);
+  const head = `**${hit.authorName || hit.authorScreenName}** (@${hit.authorScreenName})`;
+  const meta = [formatTimestamp(hit.createdAt), metrics].filter(Boolean).join(' · ');
+  const lines: string[] = [head];
+  if (meta) lines.push(`*${meta}*`);
+  lines.push('');
+  lines.push(hit.text);
+  if (hit.photoUrls.length > 0) {
+    lines.push('');
+    for (const url of hit.photoUrls) lines.push(`📷 ${url}`);
+  }
+  if (hit.videoPreviewUrls.length > 0) {
+    lines.push('');
+    for (const url of hit.videoPreviewUrls) lines.push(`🎬 ${url}`);
+  }
+  return lines.join('\n');
+}
 
+async function extract(ctx: AdapterContext, url: string): Promise<AdapterExtractResult> {
+  void ctx;
+  const tweetId = extractTweetId(url);
+  if (!tweetId) return failedExtract(url, '', 'URL 不含 tweet id');
+
+  let main: XSearchHit | null = null;
   try {
-    const resp = await ctx.fetch(oembedUrl, {
-      headers: { 'Accept': 'application/json' },
-    });
-    if (resp.status >= 200 && resp.status < 300) {
-      const data = JSON.parse(resp.html) as {
-        author_name?: string;
-        author_url?: string;
-        html?: string;
-      };
-      const html = data?.html || '';
-      const tweetText = strip(html);
-      const author = data?.author_name || '';
-      const title = author ? `${author} - X` : `推文 ${tweetId}`;
-      return {
-        url,
-        title,
-        contentText: tweetText,
-        contentState: tweetText.length > 0 ? 'full' : 'failed',
-        snippet: truncate(tweetText, 280),
-        evidenceCount: tweetText ? 1 : 0,
-        screenshotPath: null,
-        structuredData: {
-          adapter: 'x',
-          pageType: 'tweet_detail',
-          tweetId,
-          authorUrl: data?.author_url,
-          authorName: author,
-        },
-      };
-    }
-    return failedExtract(url, tweetId, `oembed HTTP ${resp.status}`);
+    main = await getTweetById(tweetId);
   } catch (err) {
     return failedExtract(url, tweetId, err instanceof Error ? err.message : String(err));
   }
+  if (!main) return failedExtract(url, tweetId, 'getTweet 返回空');
+
+  let replies: XSearchHit[] = [];
+  try {
+    replies = await getTweetReplies(main.conversationId || tweetId, {
+      count: 20,
+      excludeId: tweetId,
+    });
+  } catch {
+    // 评论拿不到不影响主推抽取(可能 thread 锁定 / 反爬偶发)
+    replies = [];
+  }
+
+  const sections: string[] = [buildTweetMarkdown(main)];
+  if (replies.length > 0) {
+    sections.push('\n---\n');
+    sections.push(`## 评论 / Thread (${replies.length} 条)\n`);
+    for (const r of replies) sections.push(buildTweetMarkdown(r));
+  }
+  const contentText = sections.join('\n\n');
+  const title = main.authorName
+    ? `${main.authorName} (@${main.authorScreenName})`
+    : `@${main.authorScreenName || tweetId}`;
+
+  return {
+    url,
+    title,
+    contentText,
+    contentState: 'full',
+    snippet: truncate(main.text, 600),
+    evidenceCount: 1 + replies.length,
+    screenshotPath: null,
+    structuredData: {
+      adapter: 'x',
+      pageType: 'tweet_detail',
+      tweetId,
+      conversationId: main.conversationId,
+      authorScreenName: main.authorScreenName,
+      authorName: main.authorName,
+      createdAt: main.createdAt,
+      metrics: buildMetrics(main),
+      likeCount: main.likeCount,
+      retweetCount: main.retweetCount,
+      replyCount: main.replyCount,
+      viewCount: main.viewCount,
+      bookmarkCount: main.bookmarkCount,
+      quoteCount: main.quoteCount,
+      photoUrls: main.photoUrls,
+      videoPreviewUrls: main.videoPreviewUrls,
+      replyCountFetched: replies.length,
+    },
+  };
 }
 
 function failedExtract(url: string, tweetId: string, reason: string): AdapterExtractResult {

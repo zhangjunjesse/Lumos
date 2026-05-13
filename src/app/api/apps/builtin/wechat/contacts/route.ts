@@ -40,13 +40,28 @@ export async function GET(req: NextRequest) {
     .filter((row) => row.wxid)
     .map((row) => {
       const id = String(row.wxid);
+      const isOfficial = id.startsWith('gh_');
+      const isGroup = Boolean(row.is_group);
+      // 联系人元数据(_load_contacts)没加载到时, _display_name 把 display
+      // 回退成 wxid 字符串(像 wxid_abc123),前端 sanitizeWechatText 又会清掉
+      // → 100 行都显示同一个 "微信联系人",用户无法区分。fallback 至少展示
+      // wxid 段落让用户能挑。
+      const friendly = displayWechatName(row.display, id, {
+        groupFallback: isGroup ? `群 #${id.split('@')[0].slice(-8)}` : '微信群聊',
+        contactFallback: isOfficial
+          ? `公众号 ${id.slice(3, 16)}`
+          : id.startsWith('wxid_') ? id : `用户 ${id.slice(0, 16)}`,
+      });
       return {
         id,
-        name: displayWechatName(row.display, id, {
-          groupFallback: '微信群聊',
-          contactFallback: '微信联系人',
-        }),
-        isGroup: Boolean(row.is_group),
+        name: friendly,
+        isGroup,
+        // contact / group / official_account / system 分类。前端 dialog
+        // 用它做过滤(白名单/黑名单默认只看真实人和群,不展示公众号订阅)。
+        kind: isGroup ? 'group'
+          : isOfficial ? 'official_account'
+          : id === 'notifymessage' || id === 'filehelper' ? 'system'
+          : 'contact',
       };
     });
   return NextResponse.json({ ready: true, contacts });

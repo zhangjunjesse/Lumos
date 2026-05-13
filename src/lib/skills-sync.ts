@@ -1,13 +1,17 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { getEnabledSkills, type SkillRecord } from './db/skills';
 import { dataDir } from './db/connection';
 import { getVenvPythonPath } from './python-venv';
 import { resolvePythonBinary } from './python-runtime';
 import { resolveRuntimeResourceRootFor } from './runtime-resources';
 
-const SKILLS_PLUGIN_DIR = path.join(os.homedir(), '.lumos', 'skills-plugin');
+// MUST follow LUMOS_DATA_DIR (via dataDir from ./db/connection) to stay
+// consistent with claude-client.ts which reads the plugin from the same
+// resolved location. Hardcoding ~/.lumos diverges from the reader in
+// non-default LUMOS_DATA_DIR environments (test/CI) and silently breaks
+// AI skill availability.
+const SKILLS_PLUGIN_DIR = path.join(dataDir, 'skills-plugin');
 const SKILLS_DIR = path.join(SKILLS_PLUGIN_DIR, 'skills');
 
 /**

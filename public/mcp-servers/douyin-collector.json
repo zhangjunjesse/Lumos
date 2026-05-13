@@ -1,0 +1,11 @@
+{
+  "name": "douyin-collector",
+  "description": "抖音采集器 MCP：给所有 AI 复用的抖音能力面，可按视频 / 博主 / 关键词 / 批量目标采集公开视频，抓字幕、生成总结，并按默认知识库设置自动入库。Cookie 失效、风控或未配置知识库时返回结构化错误，不冒充成功。",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/douyin-collector/collector_mcp.mjs"
+  ],
+  "env": {}
+}

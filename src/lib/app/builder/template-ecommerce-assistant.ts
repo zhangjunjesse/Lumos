@@ -17,8 +17,10 @@ export function buildEcommerceAssistantFiles(
   const routes = withNativeShellRoutes({
     default: 'studio',
     menu: [
+      { id: 'discover', label: '选品', icon: 'compass', page: 'pages/discover.json' },
       { id: 'studio', label: '工坊', icon: 'wand-sparkles', page: 'pages/studio.json' },
       { id: 'jobs', label: '任务', icon: 'list-checks', page: 'pages/jobs.json' },
+      { id: 'listings', label: '上架', icon: 'list-tree', page: 'pages/listings.json' },
       { id: 'library', label: '资料库', icon: 'package-search', page: 'pages/library.json' },
       { id: 'presets', label: '风格预设', icon: 'palette', page: 'pages/presets.json' },
     ],
@@ -68,7 +70,200 @@ function buildEcommerceCollections(): unknown[] {
     buildImageJobsCollection(),
     buildImageOutputsCollection(),
     buildStylePresetsCollection(),
+    buildDiscoverCandidatesCollection(),
+    buildListingDraftsCollection(),
+    buildAuditEventsCollection(),
+    buildListingFollowupsCollection(),
   ];
+}
+
+function buildListingFollowupsCollection() {
+  return {
+    name: 'listing_followups',
+    label: 'Listing 售后清单',
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      { name: 'draft_id', type: 'string', label: '关联 listing draft', required: true, indexed: true },
+      { name: 'input_id', type: 'string', label: '关联 product_input', required: true, indexed: true },
+      {
+        name: 'template_id',
+        type: 'enum',
+        label: '模板',
+        options: [
+          'check-first-order',
+          'check-search-rank',
+          'check-first-review',
+          'set-ad-budget',
+          'check-bsr-week',
+          'review-week-summary',
+          'check-conversion-rate',
+        ],
+        required: true,
+        indexed: true,
+      },
+      { name: 'title', type: 'string', label: '标题', required: true },
+      { name: 'description', type: 'text', label: '描述' },
+      { name: 'due_at', type: 'datetime', label: '到期时间', required: true, indexed: true },
+      {
+        name: 'status',
+        type: 'enum',
+        label: '状态',
+        options: ['pending', 'done', 'skipped'],
+        default: 'pending',
+        indexed: true,
+      },
+      { name: 'done_at', type: 'datetime', label: '完成时间' },
+      { name: 'note', type: 'text', label: '用户备注' },
+      { name: 'created_at', type: 'datetime', label: '创建时间' },
+      { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
+    ],
+    indexes: [['draft_id'], ['input_id'], ['status'], ['due_at']],
+  };
+}
+
+function buildAuditEventsCollection() {
+  return {
+    name: 'audit_events',
+    label: '操作日志',
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      {
+        name: 'kind',
+        type: 'enum',
+        label: '事件类型',
+        options: [
+          'candidate-promoted',
+          'main-image-uploaded',
+          'main-image-set-from-concept',
+          'brief-identified',
+          'brief-edited',
+          'listing-drafted',
+          'listing-edited',
+          'listing-regenerated',
+          'listing-status-changed',
+        ],
+        required: true,
+        indexed: true,
+      },
+      { name: 'target_id', type: 'string', label: '目标 id', required: true, indexed: true },
+      {
+        name: 'target_type',
+        type: 'enum',
+        label: '目标类型',
+        options: ['input', 'listing', 'candidate'],
+        required: true,
+        indexed: true,
+      },
+      { name: 'input_id', type: 'string', label: '关联 product_input', indexed: true },
+      { name: 'payload', type: 'text', label: '事件详情（JSON）' },
+      { name: 'summary', type: 'text', label: '人读摘要' },
+      { name: 'occurred_at', type: 'datetime', label: '发生时间', indexed: true },
+      { name: 'created_at', type: 'datetime', label: '创建时间' },
+      { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
+    ],
+    indexes: [['target_id'], ['input_id'], ['kind'], ['occurred_at']],
+  };
+}
+
+function buildListingDraftsCollection() {
+  return {
+    name: 'listing_drafts',
+    label: 'Listing 草稿',
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      { name: 'input_id', type: 'string', label: '关联输入', required: true, indexed: true },
+      {
+        name: 'platform',
+        type: 'enum',
+        label: '平台',
+        options: [
+          'amazon-us',
+          'amazon-uk',
+          'amazon-jp',
+          'amazon-de',
+          'tiktok-shop-us',
+          'etsy',
+          'shopify-dtc',
+          'shopee-sg',
+          'lazada-sg',
+          'walmart',
+        ],
+        required: true,
+        indexed: true,
+      },
+      { name: 'language', type: 'string', label: '语言', required: true, default: 'en' },
+      { name: 'title', type: 'text', label: '标题' },
+      { name: 'bullets', type: 'text', label: '卖点（JSON 数组）' },
+      { name: 'description', type: 'text', label: '描述' },
+      { name: 'search_keywords', type: 'text', label: '后台关键词（JSON 数组）' },
+      { name: 'warnings', type: 'text', label: '合规警示（JSON 数组）' },
+      {
+        name: 'status',
+        type: 'enum',
+        label: '状态',
+        options: ['drafting', 'ready', 'failed', 'archived', 'submitted', 'live', 'rejected'],
+        default: 'drafting',
+        indexed: true,
+      },
+      { name: 'failure_reason', type: 'text', label: '失败原因' },
+      { name: 'submitted_at', type: 'datetime', label: '已复制到平台时间' },
+      { name: 'live_at', type: 'datetime', label: '上线时间' },
+      { name: 'live_url', type: 'string', label: '上线后平台 URL' },
+      { name: 'rejected_at', type: 'datetime', label: '被拒时间' },
+      { name: 'rejection_reason', type: 'text', label: '平台拒绝原因' },
+      { name: 'user_notes', type: 'text', label: '用户备注' },
+      { name: 'created_at', type: 'datetime', label: '创建时间' },
+      { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
+    ],
+    indexes: [['input_id'], ['platform'], ['status'], ['updated_at']],
+  };
+}
+
+function buildDiscoverCandidatesCollection() {
+  return {
+    name: 'discover_candidates',
+    label: '选品候选',
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      { name: 'research_id', type: 'string', label: '研究批次', required: true, indexed: true },
+      { name: 'keyword', type: 'string', label: '关键词', required: true, indexed: true },
+      { name: 'market', type: 'string', label: '目标市场', required: true, indexed: true },
+      { name: 'price_band', type: 'string', label: '价格带' },
+      { name: 'product_name', type: 'string', label: '候选产品', required: true },
+      { name: 'category', type: 'string', label: '类目', indexed: true },
+      { name: 'estimated_price_usd', type: 'integer', label: '预估价 (USD)' },
+      { name: 'score_demand', type: 'integer', label: '需求分' },
+      { name: 'score_competition', type: 'integer', label: '蓝海分' },
+      { name: 'score_profit', type: 'integer', label: '利润分' },
+      { name: 'score_compliance', type: 'integer', label: '合规分' },
+      { name: 'score_logistics', type: 'integer', label: '物流分' },
+      { name: 'score_total', type: 'integer', label: '综合分', indexed: true },
+      { name: 'summary', type: 'text', label: 'AI 摘要' },
+      { name: 'selling_points', type: 'text', label: '卖点（JSON 数组）' },
+      { name: 'risks', type: 'text', label: '风险（JSON 数组）' },
+      { name: 'differentiation', type: 'text', label: '差异化建议' },
+      { name: 'reference_urls', type: 'text', label: '参考竞品搜索链接（JSON 数组）' },
+      { name: 'source_search_urls', type: 'text', label: '货源搜索链接（JSON 数组）' },
+      { name: 'concept_image_path', type: 'string', label: 'AI 概念封面图绝对路径' },
+      { name: 'concept_image_failed', type: 'text', label: '概念图生成失败原因' },
+      { name: 'platform_focus', type: 'text', label: '目标平台（JSON 数组）' },
+      { name: 'strategy', type: 'string', label: '选品策略' },
+      { name: 'sources', type: 'text', label: '数据来源（JSON 数组）' },
+      {
+        name: 'status',
+        type: 'enum',
+        label: '状态',
+        options: ['researching', 'ready', 'failed', 'promoted'],
+        default: 'researching',
+        indexed: true,
+      },
+      { name: 'promoted_input_id', type: 'string', label: '已转入的输入 id' },
+      { name: 'failure_reason', type: 'text', label: '失败原因' },
+      { name: 'created_at', type: 'datetime', label: '创建时间' },
+      { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
+    ],
+    indexes: [['research_id'], ['status'], ['score_total'], ['updated_at']],
+  };
 }
 
 function buildProductInputsCollection() {
@@ -234,10 +429,117 @@ function buildStylePresetsCollection() {
 
 function buildEcommercePages(): Record<string, unknown> {
   return {
+    'pages/discover.json': buildDiscoverPage(),
     'pages/studio.json': buildStudioPage(),
     'pages/jobs.json': buildJobsPage(),
+    'pages/listings.json': buildListingsPage(),
     'pages/library.json': buildLibraryPage(),
     'pages/presets.json': buildPresetsPage(),
+  };
+}
+
+function buildListingsPage() {
+  return {
+    title: '上架草稿',
+    description:
+      '基于一条 product_input + 已识别 brief（如有），AI 起草各平台 listing：标题 / bullets / 描述 / 后台关键词 / 合规警示。可复制到平台后台手工提交。',
+    layout: 'single',
+    blocks: [
+      {
+        type: 'card',
+        title: '起草流程',
+        children: [
+          {
+            type: 'markdown',
+            content: [
+              '- 选一条工坊里的 product_input（建议出图任务跑过、brief 已识别），选目标平台与语言，AI 起草 listing。',
+              '- 平台模板：Amazon (US/UK/JP/DE) / TikTok Shop / Etsy / Shopify / Shopee / Lazada / Walmart。各平台标题与描述长度限制不同。',
+              '- 起草输出：标题 / 5-10 卖点 bullets / 描述 / 后台搜索关键词 / 合规警示（必读）。',
+              '- AI 不会自行发布，仅生成草稿；用户复制到平台后台手工提交。涉及虚假认证 / 医疗声称 / 竞品品牌名时，warnings 必有提示。',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        type: 'table',
+        data: '{{ db.listing_drafts }}',
+        columns: [
+          { field: 'platform', label: '平台', render: 'tag' },
+          { field: 'language', label: '语言', render: 'tag' },
+          { field: 'title', label: '标题', search: true },
+          { field: 'status', label: '状态', render: 'tag' },
+          { field: 'updated_at', label: '更新', render: 'date', sortable: true },
+        ],
+        search: { fields: ['title', 'description'] },
+        filter: [
+          {
+            field: 'platform',
+            options: [
+              'amazon-us',
+              'amazon-uk',
+              'amazon-jp',
+              'amazon-de',
+              'tiktok-shop-us',
+              'etsy',
+              'shopify-dtc',
+              'shopee-sg',
+              'lazada-sg',
+              'walmart',
+            ],
+          },
+          {
+            field: 'status',
+            options: ['drafting', 'ready', 'submitted', 'live', 'rejected', 'failed', 'archived'],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function buildDiscoverPage() {
+  return {
+    title: '选品工作台',
+    description:
+      '输入品类关键词与目标市场，AI 出 5-10 条候选产品并按需求 / 蓝海 / 利润 / 合规 / 物流 5 维评分；满意的候选可一键转入工坊作为新的商品输入。',
+    layout: 'single',
+    blocks: [
+      {
+        type: 'card',
+        title: '选品流程',
+        children: [
+          {
+            type: 'markdown',
+            content: [
+              '- 输入品类关键词、目标市场、目标平台（多选）、价格带、选品策略（蓝海 / 跟风 / 季节）。',
+              '- AI 出 8 条候选，每条含五维评分、差异化点、参考竞品搜索链接、货源搜索链接。',
+              '- AI 基于训练知识给出候选；不联网，分数仅供参考。**参考链接 / 货源链接**用户可点开实地核实。',
+              '- 满意的候选点「转入工坊」自动生成 AI 概念封面图作为 main_image，立刻可进入出图主链。',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        type: 'table',
+        data: '{{ db.discover_candidates }}',
+        columns: [
+          { field: 'product_name', label: '候选', search: true },
+          { field: 'category', label: '类目', search: true, render: 'tag' },
+          { field: 'keyword', label: '关键词', search: true },
+          { field: 'market', label: '市场', render: 'tag' },
+          { field: 'score_total', label: '综合分', sortable: true },
+          { field: 'score_demand', label: '需求', sortable: true },
+          { field: 'score_competition', label: '蓝海', sortable: true },
+          { field: 'score_profit', label: '利润', sortable: true },
+          { field: 'status', label: '状态', render: 'tag' },
+          { field: 'updated_at', label: '更新', render: 'date', sortable: true },
+        ],
+        search: { fields: ['product_name', 'category', 'keyword', 'summary'] },
+        filter: [
+          { field: 'status', options: ['researching', 'ready', 'failed', 'promoted'] },
+        ],
+      },
+    ],
   };
 }
 
@@ -621,6 +923,28 @@ function buildEcommerceCommandPresets() {
         result_summary: '查看最近识别的商品 brief 摘要（productType、推荐比例、置信度）。',
       },
     },
+    {
+      label: '添加选品候选命令',
+      input: {
+        command: '/ecommerce discover',
+        risk_level: 'read',
+        confirmation_required: false,
+        status: 'draft',
+        result_summary:
+          '查看最近一次选品研究的 top 候选与综合分。新研究目前需要在应用内发起。',
+      },
+    },
+    {
+      label: '添加 listing 草稿命令',
+      input: {
+        command: '/ecommerce listings',
+        risk_level: 'read',
+        confirmation_required: false,
+        status: 'draft',
+        result_summary:
+          '查看最近 listing 草稿（按平台分组）。新草稿请回应用内点击「起草」按钮（涉及 LLM 配额，需在应用内确认）。',
+      },
+    },
   ];
 }
 
@@ -638,6 +962,10 @@ function buildEcommerceNativeAppSpec(appName: string) {
         'image_jobs',
         'image_outputs',
         'style_presets',
+        'discover_candidates',
+        'listing_drafts',
+        'audit_events',
+        'listing_followups',
         'app_settings',
         'app_automations',
         'run_history',
@@ -751,6 +1079,48 @@ function buildEcommerceAcceptance() {
       label: '安装自检',
       howToVerify:
         '安装完成后查看安装自检结果，或在状态页点击重新运行安装自检；通过或失败会自动写入本验收项。',
+    },
+    {
+      id: 'open-discover',
+      label: '打开选品工作台',
+      howToVerify:
+        '打开选品页，能看到 5-10 条候选清单（如未跑过研究则为空态引导）；候选含五维评分与综合分。',
+    },
+    {
+      id: 'run-discover-research',
+      label: '跑一次选品研究',
+      howToVerify:
+        '在选品页输入关键词与市场，AI 返回候选并写入 discover_candidates；LLM 不可用时显示具体失败原因，不展示假候选。',
+    },
+    {
+      id: 'promote-candidate',
+      label: '候选转入工坊',
+      howToVerify:
+        '对一条 ready 状态的候选点「转入工坊」：自动调 image:generate 生成概念封面图，写入候选的 concept_image_path，并把它作为新建 product_input 的 main_image_path；候选状态变为 promoted。图像服务商不可达时主图为空但 product_input 仍创建，failure_reason 可见。',
+    },
+    {
+      id: 'discover-reference-urls',
+      label: '候选附参考竞品/货源链接',
+      howToVerify:
+        '每条 ready 候选必须含 reference_urls（Amazon/TikTok/Etsy 等真实平台搜索链接）和 source_search_urls（1688/Alibaba 等货源搜索链接），用户可点开实地核实。',
+    },
+    {
+      id: 'draft-listing',
+      label: '起草 listing 草稿',
+      howToVerify:
+        '在上架页选一条 product_input + 平台 + 语言，AI 起草后写入 listing_drafts；草稿含 title / bullets / description / search_keywords / warnings；LLM 失败时显示具体原因，不展示假草稿。',
+    },
+    {
+      id: 'listing-multi-platform',
+      label: '一个商品多平台多语言起草',
+      howToVerify:
+        '同一 input 可分别起草 Amazon / TikTok Shop / Etsy 等多平台草稿；标题长度等约束按平台 cap 不同；UI 可切换查看。',
+    },
+    {
+      id: 'listing-warnings-visible',
+      label: '合规警示可见',
+      howToVerify:
+        '若起草涉及医疗 / 认证 / 竞品名风险，warnings 数组必有提示，UI 用警示色块展示而非隐藏。',
     },
     {
       id: 'open-studio',

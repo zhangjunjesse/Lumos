@@ -311,7 +311,7 @@ export interface ApiProvider {
 }
 
 export type ProviderApiProtocol = 'anthropic-messages' | 'openai-compatible';
-export type ProviderCapability = 'agent-chat' | 'text-gen' | 'image-gen' | 'embedding';
+export type ProviderCapability = 'agent-chat' | 'text-gen' | 'image-gen' | 'embedding' | 'speech';
 export type ProviderOrigin = 'system' | 'preset' | 'custom';
 export type ProviderAuthMode = 'api_key' | 'local_auth';
 

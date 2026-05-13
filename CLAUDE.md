@@ -213,6 +213,7 @@ Lumos 内嵌 Claude CLI，通过五层隔离防止污染用户本地环境：
 3. **`settingSources: []`**：阻止 SDK 读取用户全局 settings.json 和 MCP 配置
 4. **MCP 服务器隔离**：只加载 Lumos UI 中配置的 MCP 服务器（`mcp-resolver.ts`）
 5. **Skills/Hooks 隔离**：`settingSources: []` 确保不加载用户 Skills/Hooks
+6. **禁止扫描 / 导入 `~/.claude/` 内容到 Lumos 数据空间**：包括 skills / settings / projects / config / mcp-servers 等。Lumos 自有数据空间是 `~/.lumos/`（含 `~/.lumos/.claude/`、`~/.lumos/lumos.db`、`~/.lumos/skills-plugin/` 等）。曾经 `migrate-existing-resources.ts` 扫 `~/.claude/skills/` 把用户全局 70+ skill 一锅端进 db.skills scope='user'，再 sync 到 plugin 目录污染 AI 上下文（让 AI 选了 `audio-transcribe` 而不是 Lumos 自己的 `voice-transcribe` MCP），事后排查代价巨大；同样 `migrateMcpServers` 也曾扫 `~/.claude/settings.json`——两处都已删。**所有 Claude config 访问必须通过 `getClaudeConfigDir()`** —— 它会返回 `~/.lumos/.claude/`（受 `LUMOS_CLAUDE_CONFIG_DIR` 控制），从而隔离用户全局环境。仅当用户**显式选择导入路径**且**不写回 Lumos 数据空间**时，才允许只读访问 `~/.claude/`。
 
 实现入口：`src/lib/claude-client.ts`、`src/lib/claude/sdk-runtime.ts`
 

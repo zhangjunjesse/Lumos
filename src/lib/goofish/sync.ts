@@ -47,8 +47,8 @@ export interface SyncResult {
 
 /**
  * Sync ONE account. If accountUnb is given, scopes goofish-cli to that
- * account's HOME directory. Otherwise reads from the legacy single-account
- * location (back-compat).
+ * account's Lumos-managed cookies file. Otherwise reads from the legacy
+ * single-account location (back-compat).
  */
 export async function runSync(opts: SyncOptions = {}): Promise<SyncResult> {
   const start = Date.now();

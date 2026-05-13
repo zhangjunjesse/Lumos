@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ChevronUp } from 'lucide-react';
+
+export const CHAT_PANEL_EXPAND_EVENT = 'lumos:chat-expand';
 
 export interface BottomChatRenderProps {
   collapsed: boolean;
@@ -23,6 +25,13 @@ export function BottomChatPanel({
 }: BottomChatPanelProps) {
   const [collapsed, setCollapsed] = useState(true);
   const expand = useCallback(() => setCollapsed(false), []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handler = () => setCollapsed(false);
+    window.addEventListener(CHAT_PANEL_EXPAND_EVENT, handler);
+    return () => window.removeEventListener(CHAT_PANEL_EXPAND_EVENT, handler);
+  }, []);
 
   return (
     <div className="border-t border-border/50 bg-background/95 backdrop-blur">

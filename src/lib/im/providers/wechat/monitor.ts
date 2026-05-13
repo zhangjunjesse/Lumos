@@ -17,7 +17,26 @@ import { detectImageMime } from './cdn';
 import { bodyFromItemList, extractInboundFiles, extractInboundImages, extractInboundVoices } from './parse';
 import { mimeFromFileName } from './mime';
 import { ContextTokenStore, readSyncBuf, writeSyncBuf } from './state';
-import { detectAudioFormat, transcribeAudioAttachment } from '../../core/speech';
+import { detectAudioFormat, transcribeAudioAttachment, SpeechProviderNotConfiguredError } from '../../core/speech';
+
+const SPEECH_PROVIDER_MISSING_NOTICE_KEY = 'lumos.speech_provider_missing_notice_at';
+
+/**
+ * First time the wechat monitor sees a voice message and our cloud ASR
+ * provider isn't configured, drop a single setting marker + warn line so
+ * the user has an audit trail. Subsequent occurrences are silent (the
+ * SpeechProviderSection already shows the missing-config state in UI).
+ */
+async function notifySpeechProviderMissingOnce(): Promise<void> {
+  try {
+    const { getSetting, setSetting } = await import('@/lib/db');
+    if (getSetting(SPEECH_PROVIDER_MISSING_NOTICE_KEY)) return;
+    setSetting(SPEECH_PROVIDER_MISSING_NOTICE_KEY, String(Date.now()));
+    console.warn('[wechat/monitor] speech provider not configured — voice messages will be left as raw audio. Configure at /settings#speech.');
+  } catch (err) {
+    console.warn('[wechat/monitor] failed to record speech-provider-missing notice:', err);
+  }
+}
 
 // File-backed debug log so we can diagnose without watching electron stdout.
 const DEBUG_LOG_PATH = path.join(
@@ -234,10 +253,23 @@ export class WechatMonitor {
     const voiceAttachments = text ? [] : await this.downloadInboundVoices(messageId, m.item_list);
 
     if (!text && voiceAttachments.length > 0) {
-      const transcript = await transcribeAudioAttachment(voiceAttachments[0]);
-      if (transcript) {
-        text = transcript;
-        logMonitor(`[wechat/monitor] voice transcribed msgId=${messageId} chars=${transcript.length}`, { verbose: true });
+      try {
+        const result = await transcribeAudioAttachment(voiceAttachments[0]);
+        if (result.text) {
+          text = result.text;
+          logMonitor(
+            `[wechat/monitor] voice transcribed msgId=${messageId} chars=${result.text.length} duration=${result.duration_seconds ?? '?'}s charged=${result.charged_amount ?? 0}`,
+            { verbose: true },
+          );
+        }
+      } catch (err) {
+        if (err instanceof SpeechProviderNotConfiguredError) {
+          text = '[语音消息·未配置语音服务商]';
+          logMonitor(`[wechat/monitor] voice not transcribed msgId=${messageId} reason=no-speech-provider`, { verbose: true });
+          void notifySpeechProviderMissingOnce();
+        } else {
+          logMonitor(`[wechat/monitor] voice transcribe failed msgId=${messageId}: ${err instanceof Error ? err.message : String(err)}`, { verbose: true });
+        }
       }
     }
 

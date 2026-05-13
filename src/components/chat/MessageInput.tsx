@@ -53,24 +53,33 @@ import {
   PromptInputButton,
   PromptInputSubmit,
   usePromptInputAttachments,
+  type PromptFileItem,
 } from '@/components/ai-elements/prompt-input';
 import type { ChatStatus } from 'ai';
 import type { ChatKnowledgeOptions, FileAttachment, KnowledgeOverrides, ProviderModelGroup } from '@/types';
 import { KnowledgeMenuPanel } from './KnowledgeMenuPanel';
 import { nanoid } from 'nanoid';
+import {
+  inferAudioMimeFromFilename,
+  isAudioFileLike,
+} from '@/lib/chat/audio-attachments';
 
 // Accepted file types for upload
 const ACCEPTED_FILE_TYPES = [
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
   'application/pdf',
   'text/*',
+  // Audio: prefer native file paths in Electron; fall back to upload metadata
+  // when the browser cannot expose a path. The backend injects the real
+  // transcribe_audio instruction after files are persisted.
+  'audio/*',
   '.md', '.json', '.csv', '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs',
+  '.m4a', '.mp3', '.wav', '.ogg', '.aac', '.amr', '.silk', '.flac', '.webm',
 ].join(',');
 
 // Max file sizes
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;  // 5MB
 const MAX_DOC_SIZE = 10 * 1024 * 1024;   // 10MB
-const MAX_FILE_SIZE = MAX_DOC_SIZE;       // Use larger limit; we validate per-type in conversion
 
 interface MessageInputProps {
   onSend: (
@@ -151,6 +160,37 @@ const IMAGE_REQUEST_HINT_REGEX = /(生成图片|生成一张图|做图|改图|�
 interface ChatDraftPayload {
   text: string;
   mode?: 'replace' | 'append';
+}
+
+interface ChatUrlReferencePayload {
+  url?: string;
+  title?: string;
+  pageId?: string;
+}
+
+interface UrlReferenceChip {
+  id: string;
+  url: string;
+  title: string;
+  pageId?: string;
+}
+
+/**
+ * Build a structured "[参考网页]" section appended to the outgoing message
+ * body. Keeps URLs out of the visible input (chips render above the textarea
+ * via UrlReferenceCapsules) while still giving the AI structured context.
+ */
+function buildUrlReferenceHint(refs: UrlReferenceChip[]): string {
+  if (refs.length === 0) return '';
+  const lines = ['', '[参考网页]'];
+  for (const r of refs) {
+    if (r.title && r.title !== r.url) {
+      lines.push(`- ${r.title}: ${r.url}`);
+    } else {
+      lines.push(`- ${r.url}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 function readStorageValue(key: string): string {
@@ -297,8 +337,10 @@ function mimeFromFilename(name: string): string {
     jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
     gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
   };
+  const audioMime = inferAudioMimeFromFilename(name, '');
   if (TEXT_EXTS[ext]) return TEXT_EXTS[ext];
   if (IMAGE_EXTS[ext]) return IMAGE_EXTS[ext];
+  if (audioMime) return audioMime;
   if (ext === 'pdf') return 'application/pdf';
   // Default to text/plain so unknown extensions still pass text/* validation
   return 'text/plain';
@@ -416,6 +458,12 @@ export function MessageInput({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [badge, setBadge] = useState<CommandBadge | null>(null);
+  // URL reference chips. The browser-panel "+" button (or any other source
+  // dispatching `attach-url-to-chat`) appends here as a chip rather than
+  // pasting raw text into the input. Chips render above the textarea, can be
+  // removed by user, and are appended as a structured "[参考网页]" section in
+  // the outgoing message body so the AI sees them but the input stays clean.
+  const [urlReferences, setUrlReferences] = useState<UrlReferenceChip[]>([]);
   const [providerGroups, setProviderGroups] = useState<ProviderModelGroup[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
@@ -760,6 +808,31 @@ export function MessageInput({
     return () => window.removeEventListener(CHAT_DRAFT_EVENT, handleDraft);
   }, [closePopover]);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const payload = (event as CustomEvent<ChatUrlReferencePayload>).detail;
+      const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
+      if (!url) return;
+
+      const title = typeof payload?.title === 'string' ? payload.title.trim() : '';
+      const pageId = typeof payload?.pageId === 'string' ? payload.pageId : undefined;
+
+      setBadge(null);
+      closePopover();
+      // Append as a removable chip instead of polluting the input text. The
+      // chip renders above the textarea (UrlReferenceCapsules); the URL is
+      // attached to the outgoing message via buildUrlHint() at send time.
+      setUrlReferences((current) => {
+        if (current.some((r) => r.url === url)) return current;
+        return [...current, { id: nanoid(), url, title: title || url, pageId }];
+      });
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+
+    window.addEventListener('attach-url-to-chat', handler);
+    return () => window.removeEventListener('attach-url-to-chat', handler);
+  }, [closePopover]);
+
   // Insert selected item
   const insertItem = useCallback((item: PopoverItem) => {
     if (triggerPos === null) return;
@@ -897,18 +970,48 @@ export function MessageInput({
     imageResolution,
   ]);
 
-  const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ id?: string; type: string; url: string; filename?: string; mediaType?: string; filePath?: string }> }, e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = useCallback(async (msg: { text: string; files: PromptFileItem[] }, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const content = inputValue.trim();
 
     closePopover();
 
-    // Convert PromptInput FileUIParts (with data URLs) to FileAttachment[]
+    const getReferencedFileSize = async (filePath: string): Promise<number> => {
+      const head = await fetch(`/api/files/raw?path=${encodeURIComponent(filePath)}`, { method: 'HEAD' });
+      if (!head.ok) return 0;
+      const sizeHeader = head.headers.get('content-length');
+      const size = sizeHeader ? Number.parseInt(sizeHeader, 10) : 0;
+      return Number.isFinite(size) ? size : 0;
+    };
+
     const convertFiles = async (): Promise<FileAttachment[]> => {
       if (!msg.files || msg.files.length === 0) return [];
 
       const attachments: FileAttachment[] = [];
       for (const file of msg.files) {
+        const filename = file.filename || 'file';
+        const mediaType = file.mediaType || inferAudioMimeFromFilename(filename);
+        const isAudio = isAudioFileLike({ filename, mediaType });
+
+        if (isAudio && file.filePath) {
+          try {
+            const size = typeof file.size === 'number' && file.size > 0
+              ? file.size
+              : await getReferencedFileSize(file.filePath);
+            attachments.push({
+              id: file.id || nanoid(),
+              name: filename,
+              type: mediaType,
+              size,
+              data: '',
+              filePath: file.filePath,
+            });
+          } catch (err) {
+            console.warn('[convertFiles] audio path probe failed:', file.filePath, err);
+          }
+          continue;
+        }
+
         // Check if this is a file path reference (has filePath but no url)
         if ('filePath' in file && file.filePath && !file.url) {
           try {
@@ -932,8 +1035,8 @@ export function MessageInput({
 
             const attachment: FileAttachment = {
               id: file.id || nanoid(),
-              name: file.filename || 'file',
-              type: file.mediaType || 'application/octet-stream',
+              name: filename,
+              type: mediaType,
               size: blob.size,
               data: base64,
               filePath: file.filePath,
@@ -949,16 +1052,19 @@ export function MessageInput({
             console.error('[convertFiles] Error reading file reference:', file.filePath, err);
           }
         } else if (file.url) {
-          // Existing logic: user-uploaded files with blob URLs
+          if (!file.url.startsWith('data:')) {
+            console.warn(`[convertFiles] file URL was not converted to data URL, skipping ${filename}`);
+            continue;
+          }
           try {
             const attachment = await dataUrlToFileAttachment(
               file.url,
-              file.filename || 'file',
-              file.mediaType || 'application/octet-stream',
+              filename,
+              mediaType,
             );
             // Enforce per-type size limits
             const isImage = attachment.type.startsWith('image/');
-            const sizeLimit = isImage ? MAX_IMAGE_SIZE : MAX_DOC_SIZE;
+            const sizeLimit = isImage ? MAX_IMAGE_SIZE : isAudio ? Number.POSITIVE_INFINITY : MAX_DOC_SIZE;
             if (attachment.size <= sizeLimit) {
               attachments.push(attachment);
             }
@@ -966,9 +1072,9 @@ export function MessageInput({
             // Skip files that fail conversion
           }
         }
-      }
-      return attachments;
-    };
+	      }
+	      return attachments;
+	    };
 
     // If Image Agent toggle is on and no badge, send via normal LLM with systemPromptAppend
     // If badge is active, expand the command/skill and send
@@ -1015,16 +1121,29 @@ export function MessageInput({
         setImageOptionsError(error instanceof Error ? error.message : '图片高级参数格式错误');
         return;
       }
+      const urlHint = buildUrlReferenceHint(urlReferences);
+      const finalPromptWithRefs = urlHint ? `${finalPrompt}${urlHint}` : finalPrompt;
       setBadge(null);
       setInputValue('');
-      onSend(finalPrompt, files.length > 0 ? files : undefined, imageOverridePrompt, undefined, knowledgeOptions);
+      setUrlReferences([]);
+      // displayOverride keeps the user bubble clean of the [参考网页] hint —
+      // AI gets the full text via `content`, but user only sees their input.
+      onSend(
+        finalPromptWithRefs,
+        files.length > 0 ? files : undefined,
+        imageOverridePrompt,
+        urlHint ? finalPrompt : undefined,
+        knowledgeOptions,
+      );
       return;
     }
 
     const files = await convertFiles();
     const hasFiles = files.length > 0;
 
-    if ((!content && !hasFiles) || disabled || isStreaming || !hasProviders) return;
+    const hasContent = content.length > 0;
+    const hasUrlRefsForGuard = urlReferences.length > 0;
+    if ((!hasContent && !hasFiles && !hasUrlRefsForGuard) || disabled || isStreaming || !hasProviders) return;
 
     // Check if it's a direct slash command typed in the input
     if (content.startsWith('/') && !hasFiles) {
@@ -1069,11 +1188,24 @@ export function MessageInput({
       return;
     }
 
+    const hasAudioFiles = files.some((file) => isAudioFileLike({ name: file.name, type: file.type }));
+    const hasUrlRefs = urlReferences.length > 0;
+    const fallback = hasAudioFiles
+      ? '帮我转写并总结下面的音频。'
+      : hasUrlRefs
+        ? '帮我看看下面的网页。'
+        : 'Please review the attached file(s).';
+    const baseContent = content || fallback;
+    const urlHint = buildUrlReferenceHint(urlReferences);
+    const finalContent = urlHint ? `${baseContent}${urlHint}` : baseContent;
+
     onSend(
-      content || 'Please review the attached file(s).',
-      hasFiles ? files : undefined,
+      finalContent,
+      files.length > 0 ? files : undefined,
       imageOverridePrompt,
-      undefined,
+      // displayOverride keeps the user bubble clean of the [参考网页] hint —
+      // AI gets the full text via `content`, but user only sees what they typed.
+      urlHint ? baseContent : undefined,
       {
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
@@ -1081,6 +1213,7 @@ export function MessageInput({
       },
     );
     setInputValue('');
+    setUrlReferences([]);
   }, [
     badge,
     buildImageOverridePrompt,
@@ -1094,6 +1227,7 @@ export function MessageInput({
     onCommand,
     onSend,
     selectedKnowledgeTagIds,
+    urlReferences,
     workingDirectory,
   ]);
 
@@ -1496,7 +1630,6 @@ export function MessageInput({
             onSubmit={handleSubmit}
             accept={ACCEPTED_FILE_TYPES}
             multiple
-            maxFileSize={MAX_FILE_SIZE}
           >
             {/* Bridge: listens for file tree "+" button events */}
             <FileTreeAttachmentBridge />
@@ -1522,6 +1655,28 @@ export function MessageInput({
             )}
             {/* File attachment capsules */}
             <FileAttachmentsCapsules />
+            {/* URL reference capsules (browser panel "+" button etc.) */}
+            {urlReferences.length > 0 && (
+              <div className="flex w-full flex-wrap items-center gap-1.5 px-3 pt-2 pb-0 order-first">
+                {urlReferences.map((ref) => (
+                  <span
+                    key={ref.id}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 pl-2 pr-1 py-0.5 text-xs font-medium border border-sky-500/20"
+                    title={ref.url}
+                  >
+                    <HugeiconsIcon icon={Globe} className="h-3 w-3" />
+                    <span className="max-w-[180px] truncate text-[11px]">{ref.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => setUrlReferences((current) => current.filter((r) => r.id !== ref.id))}
+                      className="ml-0.5 rounded-full p-0.5 hover:bg-sky-500/20 transition-colors"
+                    >
+                      <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             {imageOptionsOpen && imageProviderConfig && (
               <div className="px-3 pt-2 pb-0 order-first">
                 <div className="rounded-xl border border-border/60 bg-muted/20 p-3 space-y-3">
