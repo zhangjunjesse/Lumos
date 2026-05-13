@@ -2,7 +2,14 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowUpRight, MessageCircleHeart, ShoppingBag, Sparkles } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Compass,
+  MessageCircleHeart,
+  ShoppingBag,
+  Sparkles,
+  Video,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
@@ -242,6 +249,180 @@ function ecommercePhaseLabel(phase?: string): string {
       return '需要分析 provider';
     case 'failed':
       return '应用数据层失败';
+    default:
+      return '检测中';
+  }
+}
+
+interface BuiltinDouyinCollectorStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  auth?: { ready: boolean; cookieValid: boolean; lastCheckedAt: string | null };
+  sources?: { creators: number; keywords: number };
+  queue?: { runningJobs: number; pendingJobs: number; lastRunFailure: string | null };
+  library?: { videos: number; drafts: number; published: number };
+  ready?: boolean;
+  phase?: string;
+}
+
+export function BuiltinDouyinCollectorCard({
+  status,
+}: {
+  status: BuiltinDouyinCollectorStatus | null;
+}): React.ReactElement {
+  const ready = !!status?.ready;
+  const phase = status?.phase;
+  const creators = status?.sources?.creators ?? 0;
+  const keywords = status?.sources?.keywords ?? 0;
+  const videos = status?.library?.videos ?? 0;
+  return (
+    <Link
+      href="/apps/douyin-collector"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-rose-500 text-white shadow-sm">
+          <Video className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              抖音采集器
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · 知识采集
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        按博主或关键词采集抖音视频，抓字幕、做摘要、入知识库；长视频自动分段转写
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone={ready ? 'ok' : 'warn'} />
+          <span className="text-muted-foreground">
+            {ready ? '已就绪' : douyinPhaseLabel(phase)}
+          </span>
+        </span>
+        {creators + keywords > 0 ? (
+          <span className="text-muted-foreground tabular-nums">
+            · {creators} 博主 / {keywords} 关键词
+          </span>
+        ) : null}
+        {videos > 0 ? (
+          <span className="text-muted-foreground tabular-nums">· {videos} 条已采集</span>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+function douyinPhaseLabel(phase?: string): string {
+  switch (phase) {
+    case 'ready':
+      return '准备就绪';
+    case 'not_configured':
+      return '尚未配置';
+    case 'needs-install':
+      return '应用未安装';
+    case 'needs_auth':
+      return '需要登录抖音 Cookie';
+    case 'syncing':
+      return '采集进行中';
+    case 'failed':
+      return '上次运行失败';
+    default:
+      return '检测中';
+  }
+}
+
+interface BuiltinDeepResearchStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  tasks?: { total: number; active: number; paused: number; delivered: number; failed: number };
+  library?: { evidence: number; reports: number };
+  ready?: boolean;
+  phase?: string;
+}
+
+export function BuiltinDeepResearchCard({
+  status,
+}: {
+  status: BuiltinDeepResearchStatus | null;
+}): React.ReactElement {
+  const ready = !!status?.ready;
+  const phase = status?.phase;
+  const total = status?.tasks?.total ?? 0;
+  const active = status?.tasks?.active ?? 0;
+  const delivered = status?.tasks?.delivered ?? 0;
+  return (
+    <Link
+      href="/apps/deep-research"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm">
+          <Compass className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              深度调研
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · 知识采集
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        对话驱动的端到端调研工作台：澄清 → 目标 → 拆解 → 风险 → 采集 → 综合 → 报告 → 自检
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone={ready ? 'ok' : 'warn'} />
+          <span className="text-muted-foreground">
+            {ready ? '已就绪' : deepResearchPhaseLabel(phase)}
+          </span>
+        </span>
+        {total > 0 ? (
+          <span className="text-muted-foreground tabular-nums">
+            · {active}/{total} 进行中
+          </span>
+        ) : null}
+        {delivered > 0 ? (
+          <span className="text-muted-foreground tabular-nums">· {delivered} 已交付</span>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+function deepResearchPhaseLabel(phase?: string): string {
+  switch (phase) {
+    case 'ready':
+      return '准备就绪';
+    case 'not_configured':
+      return '尚未创建任务';
+    case 'needs-install':
+      return '应用未安装';
+    case 'syncing':
+      return '调研进行中';
+    case 'failed':
+      return '有任务失败';
     default:
       return '检测中';
   }

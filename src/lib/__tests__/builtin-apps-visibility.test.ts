@@ -30,9 +30,15 @@ beforeEach(() => {
 });
 
 describe('builtin-apps-visibility', () => {
-  it('registry exposes the three expected ids', () => {
+  it('registry exposes the expected builtin app ids', () => {
     const ids = BUILTIN_APP_REGISTRY.map((app) => app.id).sort();
-    expect(ids).toEqual(['ecommerce-assistant', 'goofish-assistant', 'wechat-assistant']);
+    expect(ids).toEqual([
+      'deep-research',
+      'douyin-collector',
+      'ecommerce-assistant',
+      'goofish-assistant',
+      'wechat-assistant',
+    ]);
   });
 
   it('listBuiltinAppDescriptors returns shallow copies (no mutation leaks)', () => {
@@ -89,7 +95,7 @@ describe('builtin-apps-visibility', () => {
   it('getBuiltinAppVisibility returns descriptors with current visibility', () => {
     setHiddenBuiltinAppIds(['goofish-assistant']);
     const visibility = getBuiltinAppVisibility();
-    expect(visibility).toHaveLength(3);
+    expect(visibility).toHaveLength(BUILTIN_APP_REGISTRY.length);
     const goofish = visibility.find((v) => v.id === 'goofish-assistant')!;
     const wechat = visibility.find((v) => v.id === 'wechat-assistant')!;
     expect(goofish.visible).toBe(false);
@@ -101,7 +107,9 @@ describe('builtin-apps-visibility', () => {
 
   it('clearing hidden ids restores all to visible (after server sync)', () => {
     setHiddenBuiltinAppIds(['wechat-assistant', 'ecommerce-assistant']);
-    expect(getBuiltinAppVisibility().filter((v) => v.visible)).toHaveLength(1);
+    expect(getBuiltinAppVisibility().filter((v) => v.visible)).toHaveLength(
+      BUILTIN_APP_REGISTRY.length - 2,
+    );
     setHiddenBuiltinAppIds([]);
     expect(getBuiltinAppVisibility().every((v) => v.visible)).toBe(true);
   });
@@ -113,11 +121,11 @@ describe('builtin-apps-visibility', () => {
       const v = getBuiltinAppVisibility();
       expect(v.every((e) => e.hiddenByDefaultPendingSync)).toBe(true);
       expect(v.every((e) => e.visible === false)).toBe(true);
-      expect(getEffectiveHiddenAppIds().sort()).toEqual([
-        'ecommerce-assistant',
-        'goofish-assistant',
-        'wechat-assistant',
-      ]);
+      expect(getEffectiveHiddenAppIds().sort()).toEqual(
+        BUILTIN_APP_REGISTRY.filter((a) => !a.defaultVisible)
+          .map((a) => a.id)
+          .sort(),
+      );
     });
 
     it('after server sync with empty hide list: all visible by default', () => {

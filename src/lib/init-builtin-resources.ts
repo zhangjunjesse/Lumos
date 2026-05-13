@@ -24,6 +24,8 @@ import { resolveProviderPersistenceFields } from './provider-config';
 import { buildTemplateBlueprintFiles } from './app/builder/templates';
 import type { BuilderSession } from './app/builder/session';
 import { ensureGoofishDefaultAutomations } from './app/goofish-default-automations';
+import { ensureDouyinDefaultAutomations } from './app/douyin-default-automations';
+import { ensureDeepResearchDefaultAutomations } from './app/deep-research-default-automations';
 import { installApp } from './app/installer/install';
 import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
@@ -33,6 +35,12 @@ const BUILTIN_GOOFISH_VERSION = '0.1.0';
 
 const BUILTIN_ECOMMERCE_APP_ID = 'ecommerce-assistant';
 const BUILTIN_ECOMMERCE_VERSION = '0.1.0';
+
+const BUILTIN_DOUYIN_COLLECTOR_APP_ID = 'douyin-collector';
+const BUILTIN_DOUYIN_COLLECTOR_VERSION = '0.0.5';
+
+const BUILTIN_DEEP_RESEARCH_APP_ID = 'deep-research';
+const BUILTIN_DEEP_RESEARCH_VERSION = '0.0.1';
 
 const PLACEHOLDER_ICON_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
@@ -241,6 +249,7 @@ function importMcpServers(): number {
       const isEnabled = config.name === 'workflow'
         || config.name === 'deepsearch'
         || config.name === 'office-docs'
+        || config.name === 'speech-to-text'
         || config.name === 'chrome-devtools'
         || config.name === 'image-reader'
         || config.name === 'im-tools'
@@ -250,7 +259,11 @@ function importMcpServers(): number {
         || config.name === 'goofish-search'
         // x-platform MCP 默认启用:工具在用户未登录时返回 X_AUTH_EXPIRED
         // 友好提示,让 AI 能引导用户去「服务 → X」登录,而不是工具不存在。
-        || config.name === 'x-platform';
+        || config.name === 'x-platform'
+        // douyin-collector MCP 默认启用:工具在底层未实现时返回 ok:false +
+        // 结构化原因,让 AI 能诚实地告知用户「下一轮迭代实现」而不是
+        // 假装工具不存在或瞎编结果。
+        || config.name === 'douyin-collector';
       // goofish stays disabled by default — its tools call live mtop, which
       // fails with "session expired" until the user logs in via the panel.
       // The auth/login route flips it on automatically on success.
@@ -503,6 +516,186 @@ async function ensureGoofishAssistantInstalled(): Promise<void> {
   }
 }
 
+async function ensureDouyinCollectorInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_DOUYIN_COLLECTOR_APP_ID) as
+    | { id: string; version: string }
+    | undefined;
+
+  if (existing && existing.version === BUILTIN_DOUYIN_COLLECTOR_VERSION) {
+    ensureDouyinDefaultAutomations(
+      createAppDataStore(svc.db, BUILTIN_DOUYIN_COLLECTOR_APP_ID),
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const session: BuilderSession = {
+    id: 'bs_builtin_douyin_collector',
+    status: 'installed',
+    appId: BUILTIN_DOUYIN_COLLECTOR_APP_ID,
+    appName: '抖音采集器',
+    appDescription:
+      '按博主 / 关键词 / 链接采集抖音公开视频，抓字幕（必要时本地转写兜底），AI 摘要后入知识库；纯只读社交。',
+    templateId: 'douyin-collector',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const files = buildTemplateBlueprintFiles(session, 'douyin-collector', { now });
+  if (!files) {
+    console.warn('[init-builtin-resources] douyin-collector template returned null');
+    return;
+  }
+
+  const appJson = JSON.parse(files['app.json']);
+  appJson.id = BUILTIN_DOUYIN_COLLECTOR_APP_ID;
+  appJson.version = BUILTIN_DOUYIN_COLLECTOR_VERSION;
+  files['app.json'] = `${JSON.stringify(appJson, null, 2)}\n`;
+
+  const stagingDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lumos-douyin-collector-builtin-'),
+  );
+  try {
+    for (const [relPath, content] of Object.entries(files)) {
+      const fullPath = path.join(stagingDir, relPath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    fs.writeFileSync(
+      path.join(stagingDir, 'icon.png'),
+      Buffer.from(PLACEHOLDER_ICON_PNG_BASE64, 'base64'),
+    );
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_DOUYIN_COLLECTOR_VERSION}`
+        : `首次安装 ${BUILTIN_DOUYIN_COLLECTOR_VERSION}`;
+      ensureDouyinDefaultAutomations(
+        createAppDataStore(svc.db, BUILTIN_DOUYIN_COLLECTOR_APP_ID),
+      );
+      console.log(`[init-builtin-resources] douyin-collector ${tag}`);
+    } else {
+      // Surface validation issues so silent install failures don't leave
+      // users with a half-functional app (Settings tab crashing, etc).
+      const issuesSummary = (result.issues ?? [])
+        .slice(0, 8)
+        .map((i) => {
+          const r = i as { level?: string; file?: string; jsonPath?: string; message?: string };
+          return `[${r.level ?? '?'}] ${r.file ?? '?'}${r.jsonPath ?? ''}: ${r.message ?? ''}`;
+        })
+        .join('\n  ');
+      console.warn(
+        `[init-builtin-resources] douyin-collector install failed: ${result.message}` +
+          (issuesSummary ? `\n  ${issuesSummary}` : ''),
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
+async function ensureDeepResearchInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_DEEP_RESEARCH_APP_ID) as
+    | { id: string; version: string }
+    | undefined;
+
+  if (existing && existing.version === BUILTIN_DEEP_RESEARCH_VERSION) {
+    ensureDeepResearchDefaultAutomations(
+      createAppDataStore(svc.db, BUILTIN_DEEP_RESEARCH_APP_ID),
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const session: BuilderSession = {
+    id: 'bs_builtin_deep_research',
+    status: 'installed',
+    appId: BUILTIN_DEEP_RESEARCH_APP_ID,
+    appName: '深度调研',
+    appDescription:
+      '对话驱动的端到端深度调研工作台：澄清 → 目标 → 拆解 → 风险 → 采集 → 综合 → 报告 → 自检。',
+    templateId: 'deep-research',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const files = buildTemplateBlueprintFiles(session, 'deep-research', { now });
+  if (!files) {
+    console.warn('[init-builtin-resources] deep-research template returned null');
+    return;
+  }
+
+  const appJson = JSON.parse(files['app.json']);
+  appJson.id = BUILTIN_DEEP_RESEARCH_APP_ID;
+  appJson.version = BUILTIN_DEEP_RESEARCH_VERSION;
+  files['app.json'] = `${JSON.stringify(appJson, null, 2)}\n`;
+
+  const stagingDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lumos-deep-research-builtin-'),
+  );
+  try {
+    for (const [relPath, content] of Object.entries(files)) {
+      const fullPath = path.join(stagingDir, relPath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    fs.writeFileSync(
+      path.join(stagingDir, 'icon.png'),
+      Buffer.from(PLACEHOLDER_ICON_PNG_BASE64, 'base64'),
+    );
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_DEEP_RESEARCH_VERSION}`
+        : `首次安装 ${BUILTIN_DEEP_RESEARCH_VERSION}`;
+      ensureDeepResearchDefaultAutomations(
+        createAppDataStore(svc.db, BUILTIN_DEEP_RESEARCH_APP_ID),
+      );
+      console.log(`[init-builtin-resources] deep-research ${tag}`);
+    } else {
+      const issuesSummary = (result.issues ?? [])
+        .slice(0, 8)
+        .map((i) => {
+          const r = i as { level?: string; file?: string; jsonPath?: string; message?: string };
+          return `[${r.level ?? '?'}] ${r.file ?? '?'}${r.jsonPath ?? ''}: ${r.message ?? ''}`;
+        })
+        .join('\n  ');
+      console.warn(
+        `[init-builtin-resources] deep-research install failed: ${result.message}` +
+          (issuesSummary ? `\n  ${issuesSummary}` : ''),
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
 // ==========================================
 // Main Initialization
 // ==========================================
@@ -539,6 +732,18 @@ export async function initBuiltinResources(): Promise<void> {
       await resumeRunningJobs();
     } catch (err) {
       console.error('[init-builtin-resources] ecommerce-assistant resume error:', err);
+    }
+
+    try {
+      await ensureDouyinCollectorInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] douyin-collector install error:', err);
+    }
+
+    try {
+      await ensureDeepResearchInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] deep-research install error:', err);
     }
 
     setSetting('builtin_resources_imported', 'true');

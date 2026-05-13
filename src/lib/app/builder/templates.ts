@@ -5,6 +5,8 @@ import {
   withNativeShellRoutes,
 } from './native-shell-blueprint';
 import { buildEcommerceAssistantFiles } from './template-ecommerce-assistant';
+import { buildDouyinCollectorFiles } from './template-douyin-collector';
+import { buildDeepResearchFiles } from './template-deep-research';
 
 export interface AppBuilderTemplate {
   id: string;
@@ -35,6 +37,25 @@ export const APP_BUILDER_TEMPLATES: AppBuilderTemplate[] = [
     prompt:
       '用户选择了「电商商品助手」模板。必须按 SOP 流程设计：参考图筛选 → brief 识别 → 抠图（含质检回路）→ 场景策划 → 3 方向生成 → AI 评分 → 终版精修（含质检回路）→ 失败回路和白底兜底。所有写操作（启动任务、批量、重跑）必须用户确认，图像服务商缺失或失败必须显示 not_connected / failed 和原因，禁止 mock 冒充。',
     highlights: ['一键出图', 'AI 识别 brief', '风格预设'],
+  },
+  {
+    id: 'douyin-collector',
+    name: '抖音采集器',
+    description: '按博主或关键词采集抖音视频，抓字幕、做摘要、入知识库；长视频自动分段转写。',
+    category: '知识采集',
+    prompt:
+      '用户选择了「抖音采集器」模板。仅采集公开视频元数据 / 字幕 / 封面，绝不下载视频原文件用于分发；字幕优先级原生 → 抖音 ASR → Lumos speech-to-text MCP；写社交动作（评论 / 点赞 / 私信 / 关注）必须标为不可用；入库到 knowledge collection 必须先草稿后用户确认。Cookie 失效或风控触发时立即停止后续 job 并显示原因。',
+    highlights: ['博主巡更', '关键词跑批', '长视频转写'],
+  },
+  {
+    id: 'deep-research',
+    name: '深度调研',
+    description:
+      '对话驱动的深度调研工作台：需求澄清 → 目标确认 → 任务拆解 → 风险分析 → 多源采集 → 综合分析 → 报告生成 → 自检验收。',
+    category: '知识采集',
+    prompt:
+      '用户选择了「深度调研」模板。必须按八阶段 SOP 推进，绝不跳阶段：clarifying → goal_review → planning → risk_review → collecting → synthesizing → outline_review → drafting → qa → delivered。需求澄清未完成不进入目标书；用户未接受目标书不进入任务拆解；大纲未接受不进入终稿。多源采集复用 deepsearch / 抖音采集器 / bilibili / 知识库，证据必须带 URL / 摘要 / 置信度；触发风控 / 配额耗尽 / 站点失效时立即停止后续并写入风险登记册。任何阶段都不能用 mock 数据冒充完成。',
+    highlights: ['八阶段 SOP', '多源采集', '证据链终稿'],
   },
   {
     id: 'customer-tracker',
@@ -79,6 +100,12 @@ export function inferAppBuilderTemplateId(
   if (/(电商|商品图|出图|淘宝|拼多多|京东|亚马逊|ecommerce|product[- ]?image)/i.test(text)) {
     return 'ecommerce-assistant';
   }
+  if (/(抖音|douyin|tiktok|短视频采集|视频转写|视频字幕)/i.test(text)) {
+    return 'douyin-collector';
+  }
+  if (/(深度调研|深度研究|研究报告|deep[- ]?research|多源调研)/i.test(text)) {
+    return 'deep-research';
+  }
   return null;
 }
 
@@ -95,6 +122,10 @@ export function buildTemplateBlueprintFiles(
       return buildGoofishAssistantFiles(session, opts);
     case 'ecommerce-assistant':
       return buildEcommerceAssistantFiles(session, opts);
+    case 'douyin-collector':
+      return buildDouyinCollectorFiles(session, opts);
+    case 'deep-research':
+      return buildDeepResearchFiles(session, opts);
     case 'customer-tracker':
       return buildCustomerTrackerFiles(session, opts);
     case 'weekly-report':

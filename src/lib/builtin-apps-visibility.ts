@@ -48,6 +48,21 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     defaultVisible: false,
     icon: 'sparkles',
   },
+  {
+    id: 'douyin-collector',
+    name: '抖音采集器',
+    description: '按博主或关键词采集抖音视频，抓字幕、做摘要、入知识库，长视频也能转写',
+    defaultVisible: false,
+    icon: 'video',
+  },
+  {
+    id: 'deep-research',
+    name: '深度调研',
+    description:
+      '对话驱动的端到端深度调研工作台：澄清 → 目标 → 拆解 → 风险 → 采集 → 综合 → 报告 → 自检',
+    defaultVisible: false,
+    icon: 'compass',
+  },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';

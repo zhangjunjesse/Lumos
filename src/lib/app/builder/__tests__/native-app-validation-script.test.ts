@@ -55,6 +55,29 @@ describe('validate-native-app script', () => {
     expect(json).toMatchObject({ ok: true, errorCount: 0 });
   });
 
+  it('accepts the Deep Research native-grade starter package', () => {
+    const session: BuilderSession = {
+      id: 'bs_deepresearch12',
+      status: 'demo_review',
+      appName: '深度调研',
+      appDescription:
+        '对话驱动的深度调研工作台：澄清 → 目标 → 拆解 → 风险 → 采集 → 综合 → 报告 → 自检。',
+      templateId: 'deep-research',
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const files = buildTemplateBlueprintFiles(session, 'deep-research', {
+      now: 1714470000000,
+    });
+    expect(files).toBeTruthy();
+    materialize(files ?? {}, tmp);
+
+    const result = runValidator(tmp);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { ok: boolean; errorCount: number };
+    expect(json).toMatchObject({ ok: true, errorCount: 0 });
+  });
+
   it('rejects ordinary packages without the native-grade contract', () => {
     fs.writeFileSync(path.join(tmp, 'manifest.json'), JSON.stringify({
       id: 'ordinary-demo',

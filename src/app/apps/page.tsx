@@ -3,6 +3,8 @@
 import * as React from 'react';
 
 import {
+  BuiltinDeepResearchCard,
+  BuiltinDouyinCollectorCard,
   BuiltinEcommerceCard,
   BuiltinGoofishCard,
   BuiltinWeChatCard,
@@ -31,10 +33,34 @@ interface BuiltinEcommerceStatus {
   phase?: string;
 }
 
+interface BuiltinDouyinCollectorStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  auth?: { ready: boolean; cookieValid: boolean; lastCheckedAt: string | null };
+  sources?: { creators: number; keywords: number };
+  queue?: { runningJobs: number; pendingJobs: number; lastRunFailure: string | null };
+  library?: { videos: number; drafts: number; published: number };
+  ready?: boolean;
+  phase?: string;
+}
+
+interface BuiltinDeepResearchStatus {
+  app?: { id: string; name: string; version: string; source: string; status: string };
+  install?: { installed: boolean; version: string | null };
+  tasks?: { total: number; active: number; paused: number; delivered: number; failed: number };
+  library?: { evidence: number; reports: number };
+  ready?: boolean;
+  phase?: string;
+}
+
 export default function AppsListPage(): React.ReactElement {
   const [wechatStatus, setWechatStatus] = React.useState<BuiltinWeChatStatus | null>(null);
   const [goofishStatus, setGoofishStatus] = React.useState<BuiltinGoofishStatus | null>(null);
   const [ecommerceStatus, setEcommerceStatus] = React.useState<BuiltinEcommerceStatus | null>(null);
+  const [douyinCollectorStatus, setDouyinCollectorStatus] =
+    React.useState<BuiltinDouyinCollectorStatus | null>(null);
+  const [deepResearchStatus, setDeepResearchStatus] =
+    React.useState<BuiltinDeepResearchStatus | null>(null);
   const [visibleBuiltinIds, setVisibleBuiltinIds] = React.useState<Set<string> | null>(null);
 
   React.useEffect(() => {
@@ -64,6 +90,28 @@ export default function AppsListPage(): React.ReactElement {
         if (!cancelled && res.ok) setEcommerceStatus(json);
       } catch {
         if (!cancelled) setEcommerceStatus(null);
+      }
+    }
+    async function loadBuiltinDouyinCollector() {
+      try {
+        const res = await fetch('/api/apps/builtin/douyin-collector/status', {
+          cache: 'no-store',
+        });
+        const json = (await res.json()) as BuiltinDouyinCollectorStatus;
+        if (!cancelled && res.ok) setDouyinCollectorStatus(json);
+      } catch {
+        if (!cancelled) setDouyinCollectorStatus(null);
+      }
+    }
+    async function loadBuiltinDeepResearch() {
+      try {
+        const res = await fetch('/api/apps/builtin/deep-research/status', {
+          cache: 'no-store',
+        });
+        const json = (await res.json()) as BuiltinDeepResearchStatus;
+        if (!cancelled && res.ok) setDeepResearchStatus(json);
+      } catch {
+        if (!cancelled) setDeepResearchStatus(null);
       }
     }
     async function loadVisibility() {
@@ -102,6 +150,8 @@ export default function AppsListPage(): React.ReactElement {
     void loadBuiltinWeChat();
     void loadBuiltinGoofish();
     void loadBuiltinEcommerce();
+    void loadBuiltinDouyinCollector();
+    void loadBuiltinDeepResearch();
     void loadVisibility();
     return () => {
       cancelled = true;
@@ -115,7 +165,7 @@ export default function AppsListPage(): React.ReactElement {
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Lumos</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">应用</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            <span className="text-foreground tabular-nums">{visibleBuiltinIds?.size ?? 3}</span> 内置
+            <span className="text-foreground tabular-nums">{visibleBuiltinIds?.size ?? 5}</span> 内置
           </p>
         </div>
       </header>
@@ -138,6 +188,12 @@ export default function AppsListPage(): React.ReactElement {
             ) : null}
             {visibleBuiltinIds.has('ecommerce-assistant') ? (
               <BuiltinEcommerceCard status={ecommerceStatus} />
+            ) : null}
+            {visibleBuiltinIds.has('douyin-collector') ? (
+              <BuiltinDouyinCollectorCard status={douyinCollectorStatus} />
+            ) : null}
+            {visibleBuiltinIds.has('deep-research') ? (
+              <BuiltinDeepResearchCard status={deepResearchStatus} />
             ) : null}
           </div>
         ) : (
