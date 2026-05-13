@@ -13,7 +13,7 @@ import { getWeChatAssistantSettings } from './settings-store';
 import type { OverviewResponse } from './overview-types';
 
 export async function loadWeChatOverview(): Promise<OverviewResponse> {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
     return { ready: false, reason: 'unsupported_platform' };
   }
   if (!hasValidConsent()) return { ready: false, reason: 'consent_required' };

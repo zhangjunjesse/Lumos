@@ -9,7 +9,7 @@ import {
 import { resolveWechatMainAgentSession } from '@/lib/im/providers/wechat/main-agent-route';
 import { getConsent, getDisclaimerHash, hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { runEnvProbes } from '@/lib/wechat-export/env-check';
-import { getSetupStatus } from '@/lib/wechat-export/setup-state';
+import { getSetupStatus, getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,7 +21,8 @@ export async function GET() {
   const routedSession = resolveWechatMainAgentSession();
   const routedSessionId = routedSession?.id ?? null;
 
-  if (process.platform !== 'darwin') {
+  const platform = getWeChatExportPlatform();
+  if (!platform) {
     return NextResponse.json({
       app: builtinAppMeta('unsupported'),
       export: {
@@ -29,7 +30,7 @@ export async function GET() {
         platform: process.platform,
         ready: false,
         phase: 'unsupported',
-        message: '当前版本先支持 macOS 本机微信消息读取，Windows 支持后续补齐。',
+        message: '微信助手本机消息读取目前支持 macOS 和 Windows。',
       },
       im: {
         configured: imConfigured,
@@ -41,8 +42,8 @@ export async function GET() {
     });
   }
 
-  const env = runEnvProbes();
-  const status = getSetupStatus(env.allOk, env.signed);
+  const env = runEnvProbes(platform);
+  const status = getSetupStatus(env.allOk, env.signed, platform);
   const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
   const ready = status.phase === 'ready' && !!mcp && mcp.is_enabled === 1;
 
@@ -50,7 +51,7 @@ export async function GET() {
     app: builtinAppMeta(ready ? 'ready' : status.phase),
     export: {
       supported: true,
-      platform: 'darwin',
+      platform,
       ready,
       phase: status.phase,
       hasConsent: hasValidConsent(),

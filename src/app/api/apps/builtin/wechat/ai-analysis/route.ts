@@ -17,7 +17,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
     return NextResponse.json({ error: 'unsupported_platform' }, { status: 400 });
   }
   if (!hasValidConsent()) {
@@ -72,4 +72,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'unexpected', message }, { status: 500 });
   }
 }
-

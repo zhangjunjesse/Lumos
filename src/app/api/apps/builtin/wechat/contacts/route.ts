@@ -15,7 +15,7 @@ interface SessionRow {
 }
 
 export async function GET(req: NextRequest) {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
     return NextResponse.json({ ready: false, reason: 'unsupported_platform', contacts: [] });
   }
   if (!hasValidConsent()) {

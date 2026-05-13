@@ -723,6 +723,274 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
     return result[:limit]
 
 
+def _emit_jsonl(obj: dict) -> None:
+    safe_stream_write(sys.stdout, json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def _msg_table_wxids(conn: sqlite3.Connection) -> dict[str, str]:
+    wxid_by_table: dict[str, str] = {}
+    if not _table_exists(conn, "Name2Id"):
+        return wxid_by_table
+    try:
+        for row in conn.execute("SELECT user_name FROM Name2Id WHERE user_name!=''"):
+            username = str(row["user_name"] or "").strip()
+            if username:
+                wxid_by_table[f"Msg_{hashlib.md5(username.encode()).hexdigest()}"] = username
+    except Exception:
+        return {}
+    return wxid_by_table
+
+
+def _msg_tables(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+    ).fetchall()
+    tables = []
+    for row in rows:
+        table = str(row["name"] or "")
+        if re.fullmatch(r"Msg_[0-9a-fA-F]{32}", table):
+            tables.append(table)
+    return tables
+
+
+def _iter_db_messages(
+    db_path: str,
+    since_timestamp: int = 0,
+    limit: int = 0,
+    allowed_wxids: set[str] | None = None,
+) -> list[dict]:
+    messages: list[dict] = []
+    contacts = _load_contacts()
+    since_ms, since_sec = _raw_ts_bounds(since_timestamp)
+    with _connect(db_path) as conn:
+        if _table_exists(conn, "MSG"):
+            where = "StrTalker!=''"
+            params: list[Any] = []
+            if since_timestamp > 0:
+                where += " AND CASE WHEN CreateTime>10000000000 THEN CreateTime>=? ELSE CreateTime>=? END"
+                params.extend([since_ms, since_sec])
+            if allowed_wxids:
+                placeholders = ",".join("?" for _ in allowed_wxids)
+                where += f" AND StrTalker IN ({placeholders})"
+                params.extend(sorted(allowed_wxids))
+            sql = (
+                "SELECT CreateTime, Type, SubType, IsSender, StrContent, StrTalker "
+                f"FROM MSG WHERE {where} ORDER BY CreateTime DESC"
+            )
+            if limit > 0:
+                sql += " LIMIT ?"
+                params.append(limit)
+            rows = conn.execute(sql, tuple(params)).fetchall()
+            for row in rows:
+                wxid = str(row["StrTalker"] or "").strip()
+                if not wxid:
+                    continue
+                msg_type = _safe_int(row["Type"])
+                sub_type = _safe_int(row["SubType"])
+                content = _render_message(msg_type, sub_type, row["StrContent"]).strip()
+                if not content:
+                    continue
+                info = contacts.get(wxid, {})
+                messages.append({
+                    "wxid": wxid,
+                    "display": _display_name(wxid, info),
+                    "is_group": wxid.endswith("@chatroom"),
+                    "ts": _norm_ts(row["CreateTime"]),
+                    "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
+                    "sender_wxid": "",
+                    "sender_display": "",
+                    "type": msg_type,
+                    "content": content,
+                })
+            return messages
+
+        table_names = _msg_tables(conn)
+        wxid_by_table = _msg_table_wxids(conn)
+        for table in table_names:
+            wxid = wxid_by_table.get(table, table)
+            if allowed_wxids and wxid not in allowed_wxids:
+                continue
+            where = "message_content IS NOT NULL AND message_content != ''"
+            params = []
+            if since_timestamp > 0:
+                where += " AND create_time >= ?"
+                params.append(since_timestamp)
+            sql = (
+                f"SELECT create_time, local_type, real_sender_id, message_content "
+                f"FROM {table} WHERE {where} ORDER BY create_time DESC"
+            )
+            if limit > 0:
+                sql += " LIMIT ?"
+                params.append(limit)
+            try:
+                rows = conn.execute(sql, tuple(params)).fetchall()
+            except Exception:
+                continue
+            info = contacts.get(wxid, {})
+            display = _display_name(wxid, info)
+            for row in rows:
+                raw_type = _safe_int(row["local_type"])
+                msg_type = raw_type & 0xFFFF
+                content = _render_message(msg_type, 0, row["message_content"]).strip()
+                if not content:
+                    continue
+                is_me = _safe_int(row["real_sender_id"]) == 0
+                messages.append({
+                    "wxid": wxid,
+                    "display": display,
+                    "is_group": wxid.endswith("@chatroom"),
+                    "ts": _norm_ts(row["create_time"]),
+                    "sender": "me" if is_me else "them",
+                    "sender_wxid": "",
+                    "sender_display": "我" if is_me else "",
+                    "type": msg_type,
+                    "content": content,
+                })
+    return messages
+
+
+def analyze_snapshot(args: dict) -> dict:
+    session_limit_raw = args.get("session_limit")
+    session_limit = int(session_limit_raw) if session_limit_raw not in (None, "", 0) else 0
+    if session_limit > 0:
+        session_limit = min(max(session_limit, 1), 1000)
+    per_session_limit = min(max(int(args.get("per_session_limit") or 0), 0), 2000)
+    max_messages = min(max(int(args.get("max_messages") or 50000), 100), 200000)
+    since_raw = args.get("since_timestamp")
+    try:
+        since_timestamp = int(since_raw) if since_raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        since_timestamp = 0
+    if since_timestamp < 0:
+        since_timestamp = 0
+
+    sessions = list_sessions({"limit": max(session_limit, 10000)}).get("items") or []
+    if session_limit > 0:
+        sessions = sessions[:session_limit]
+    allowed_wxids = {
+        str(item.get("wxid") or "").strip()
+        for item in sessions
+        if str(item.get("wxid") or "").strip()
+    } if session_limit > 0 else None
+    session_meta = {
+        str(item.get("wxid") or "").strip(): item
+        for item in sessions
+        if str(item.get("wxid") or "").strip()
+    }
+
+    messages: list[dict] = []
+    total_readable = 0
+    for db_path in _encrypted_message_dbs():
+        if len(messages) >= max_messages:
+            break
+        try:
+            rows = _iter_db_messages(
+                db_path,
+                since_timestamp=since_timestamp,
+                limit=0,
+                allowed_wxids=allowed_wxids,
+            )
+        except Exception:
+            continue
+        total_readable += len(rows)
+        if per_session_limit > 0:
+            per_wxid: dict[str, int] = {}
+            limited = []
+            for row in rows:
+                wxid = row["wxid"]
+                count = per_wxid.get(wxid, 0)
+                if count >= per_session_limit:
+                    continue
+                per_wxid[wxid] = count + 1
+                limited.append(row)
+            rows = limited
+        remaining = max_messages - len(messages)
+        messages.extend(rows[:remaining])
+
+    messages.sort(key=lambda item: int(item.get("ts") or 0), reverse=True)
+    messages = messages[:max_messages]
+    for message in messages:
+        meta = session_meta.get(message["wxid"])
+        if meta:
+            message["display"] = meta.get("display") or message.get("display") or message["wxid"]
+            message["is_group"] = bool(meta.get("is_group")) or bool(message.get("is_group"))
+
+    normalized_sessions = []
+    for item in sessions:
+        wxid = str(item.get("wxid") or "").strip()
+        if not wxid:
+            continue
+        normalized_sessions.append({
+            "wxid": wxid,
+            "display": item.get("display") or wxid,
+            "summary": item.get("summary") or "",
+            "last_timestamp": _safe_int(item.get("last_timestamp")),
+            "unread_count": _safe_int(item.get("unread_count")),
+            "is_group": bool(item.get("is_group")) or wxid.endswith("@chatroom"),
+        })
+
+    return {
+        "sessions": normalized_sessions,
+        "messages": messages,
+        "sessions_scanned": len(normalized_sessions),
+        "messages_scanned": len(messages),
+        "total_readable_messages": total_readable,
+        "selected_readable_messages": total_readable,
+        "messages_truncated": total_readable > len(messages),
+        "scan_scope": "all_readable_wechat_messages" if session_limit <= 0 else "limited_recent_sessions",
+        "safety_limit": max_messages,
+    }
+
+
+def sync_stream(args: dict) -> None:
+    since_raw = args.get("since_timestamp")
+    try:
+        since_timestamp = int(since_raw) if since_raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        since_timestamp = 0
+    if since_timestamp < 0:
+        since_timestamp = 0
+
+    sessions = list_sessions({"limit": 10000}).get("items") or []
+    _emit_jsonl({"type": "meta", "sessions": sessions})
+
+    max_ts_seen = since_timestamp
+    grand_total = 0
+    for db_path in _encrypted_message_dbs():
+        db_name = os.path.basename(db_path)
+        try:
+            with _connect(db_path) as conn:
+                tables = 1 if _table_exists(conn, "MSG") else len(_msg_tables(conn))
+        except Exception as err:  # noqa: BLE001
+            safe_stream_write(sys.stderr, f"[sync_stream] {db_name} open failed: {err}\n")
+            continue
+        _emit_jsonl({"type": "db_start", "db": db_name, "tables": tables})
+        emitted = 0
+        try:
+            for row in _iter_db_messages(db_path, since_timestamp=since_timestamp):
+                ts = _safe_int(row.get("ts"))
+                if ts <= 0:
+                    continue
+                max_ts_seen = max(max_ts_seen, ts)
+                _emit_jsonl({
+                    "type": "msg",
+                    "wxid": row.get("wxid") or "",
+                    "ts": ts,
+                    "sender": "me" if row.get("sender") == "me" else "them",
+                    "sender_wxid": row.get("sender_wxid") or "",
+                    "sender_display": row.get("sender_display") or "",
+                    "msg_type": _safe_int(row.get("type")),
+                    "content": row.get("content") or "",
+                })
+                emitted += 1
+        except Exception as err:  # noqa: BLE001
+            safe_stream_write(sys.stderr, f"[sync_stream] {db_name} failed: {err}\n")
+        grand_total += emitted
+        _emit_jsonl({"type": "db_done", "db": db_name, "messages": emitted})
+
+    _emit_jsonl({"type": "done", "cursor": max_ts_seen, "messages": grand_total})
+
+
 def avatar(args: dict) -> dict:
     return {"error": "no_avatar"}
 
@@ -735,10 +1003,14 @@ OPS = {
     "list_contacts": list_contacts,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
+    "analyze_snapshot": analyze_snapshot,
     "diagnostics": diagnostics,
     "resolve_image": resolve_image,
     "avatar": avatar,
+    "sync_stream": sync_stream,
 }
+
+STREAMING_OPS = {"sync_stream"}
 
 
 def main() -> int:
@@ -752,6 +1024,9 @@ def main() -> int:
         safe_stream_write(sys.stderr, f"unknown op: {op!r}\n")
         return 1
     try:
+        if op in STREAMING_OPS:
+            OPS[op](payload.get("args") or {})
+            return 0
         safe_stream_write(sys.stdout, json.dumps(OPS[op](payload.get("args") or {}), ensure_ascii=True))
         return 0
     except Exception as err:  # noqa: BLE001

@@ -85,7 +85,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
   const t0 = Date.now();
   const emit = options.onEvent ?? (() => undefined);
 
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
     emit({ type: 'skipped', reason: 'unsupported_platform' });
     return failSkip('unsupported_platform', t0);
   }

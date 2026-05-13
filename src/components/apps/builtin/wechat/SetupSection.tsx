@@ -79,7 +79,11 @@ export function SetupSection({
       </summary>
       <div className="grid gap-4 border-t bg-background/40 p-5 xl:grid-cols-[0.6fr_1.4fr]">
         <div className="flex flex-col gap-3">
-          <StatusRow ok={!!status?.export.supported} value={status?.export.supported ? 'macOS' : '不支持'} label="平台" />
+          <StatusRow
+            ok={!!status?.export.supported}
+            value={platformLabel(status?.export.platform, status?.export.supported)}
+            label="平台"
+          />
           <StatusRow ok={!!status?.export.keyCount} value={`${status?.export.keyCount ?? 0}`} label="密钥" />
           <StatusRow ok={!!status?.export.mcp?.enabled} value={status?.export.mcp?.enabled ? '已启用' : '未启用'} label="读取服务" />
           <StatusRow ok={status?.im.enabled ?? false} value={status?.im.enabled ? '已启用' : '未启用'} label="IM 入口" />
@@ -107,6 +111,13 @@ export function SetupSection({
       </div>
     </details>
   );
+}
+
+function platformLabel(platform: string | undefined, supported: boolean | undefined): string {
+  if (!supported) return '不支持';
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  return platform || '已支持';
 }
 
 function StatusRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {

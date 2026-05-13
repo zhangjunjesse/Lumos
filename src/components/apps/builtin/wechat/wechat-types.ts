@@ -9,6 +9,7 @@ export interface WeChatAssistantStatus {
   app: { id: string; name: string; version: string; source: string; status: string };
   export: {
     supported: boolean;
+    platform?: string;
     ready: boolean;
     phase: string;
     message?: string;
