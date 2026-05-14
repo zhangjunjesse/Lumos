@@ -74,6 +74,9 @@ extraResources:
   - from: resources/mcp-servers/
     to: mcp-servers/
     filter: ["**/*"]
+  - from: resources/app-schemas/
+    to: standalone/resources/app-schemas/
+    filter: ["**/*"]
   - from: resources/models/
     to: models/
     filter: ["**/*"]
