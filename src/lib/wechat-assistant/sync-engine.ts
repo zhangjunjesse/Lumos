@@ -28,6 +28,7 @@ import {
   upsertSessions,
   type MirrorMessage,
   type MirrorSession,
+  type WeChatMirrorAttachment,
 } from './mirror-store';
 
 const FLUSH_THRESHOLD = 500;
@@ -172,6 +173,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
         senderDisplay: typeof r.sender_display === 'string' ? r.sender_display : null,
         msgType: typeof r.msg_type === 'number' ? r.msg_type : 0,
         content: typeof r.content === 'string' ? r.content : '',
+        attachment: normalizeAttachment(r.attachment),
       });
       totalSeen += 1;
       if (ts > maxTsSeen) maxTsSeen = ts;
@@ -244,6 +246,30 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
     seen: totalSeen,
     cursorTs: maxTsSeen,
     durationMs,
+  };
+}
+
+function normalizeAttachment(input: unknown): WeChatMirrorAttachment | null {
+  if (!input || typeof input !== 'object') return null;
+  const value = input as Record<string, unknown>;
+  if (value.kind !== 'file') return null;
+  const title = typeof value.title === 'string' && value.title.trim() ? value.title.trim() : '微信文件';
+  return {
+    kind: 'file',
+    title,
+    size: typeof value.size === 'number' && Number.isFinite(value.size) ? value.size : undefined,
+    sizeLabel: typeof value.size_label === 'string'
+      ? value.size_label
+      : typeof value.sizeLabel === 'string'
+        ? value.sizeLabel
+        : undefined,
+    ext: typeof value.ext === 'string' ? value.ext : undefined,
+    localPath: typeof value.local_path === 'string'
+      ? value.local_path
+      : typeof value.localPath === 'string'
+        ? value.localPath
+        : undefined,
+    exists: typeof value.exists === 'boolean' ? value.exists : undefined,
   };
 }
 

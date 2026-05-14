@@ -75,6 +75,8 @@ export interface WeChatMessageDbDiagnostics {
   message_db_names?: string[];
   readable_message_db_names?: string[];
   skipped_message_db_names?: string[];
+  media_db_total?: number;
+  media_db_names?: string[];
   latest_message_db_mtime?: number;
   session_last_timestamp?: number;
   latest_message_timestamp?: number;

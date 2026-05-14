@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AlertCircle, Loader2, Search, MessageSquare, ImageOff } from 'lucide-react';
+import { AlertCircle, Loader2, Search, MessageSquare, ImageOff, FileText, ExternalLink } from 'lucide-react';
 import type { WeChatMessageDbDiagnostics } from './types';
 
 interface SessionItem {
@@ -24,6 +24,15 @@ interface ChatMessage {
   type_label: string;
   content: string;
   has_image?: boolean;
+  attachment?: {
+    kind: 'file';
+    title: string;
+    size?: number;
+    size_label?: string;
+    ext?: string;
+    local_path?: string;
+    exists?: boolean;
+  } | null;
 }
 
 interface ListResponse {
@@ -52,6 +61,14 @@ async function postQuery<T>(op: string, args: Record<string, unknown>): Promise<
     throw new Error(msg);
   }
   return json as T;
+}
+
+async function openLocalFile(filePath: string): Promise<void> {
+  await fetch('/api/files/open', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: filePath, scope: 'wechat-export' }),
+  });
 }
 
 // ─── time / display helpers ──────────────────────────────────────────────
@@ -365,6 +382,7 @@ function ChatDataWarning({ diagnostics }: { diagnostics?: WeChatMessageDbDiagnos
   const total = diagnostics.message_db_total ?? 0;
   const readable = diagnostics.message_db_readable ?? 0;
   const skipped = diagnostics.message_db_unreadable ?? 0;
+  const mediaTotal = diagnostics.media_db_total ?? 0;
   const skippedNames = diagnostics.skipped_message_db_names?.length
     ? diagnostics.skipped_message_db_names.join('、')
     : '';
@@ -377,6 +395,9 @@ function ChatDataWarning({ diagnostics }: { diagnostics?: WeChatMessageDbDiagnos
           详情消息可能不完整。左侧会话列表来自摘要库，右侧详情来自消息库；当前消息库可读 {readable}/{total}
           {skipped > 0 ? `，还有 ${skipped} 个消息库未解密` : ''}。
         </div>
+        {mediaTotal > 0 ? (
+          <div>另发现 {mediaTotal} 个媒体/业务库；它们不计入普通聊天文本完整度。</div>
+        ) : null}
         {diagnostics.is_detail_stale ? (
           <div>所以这里可能看不到左侧列表里的最新一条消息。</div>
         ) : null}
@@ -569,6 +590,38 @@ function MessageBubble({ msg, contact }: { msg: ChatMessage; contact: SessionIte
 function BubbleBody({ msg, contact, isMe }: { msg: ChatMessage; contact: SessionItem; isMe: boolean }) {
   const meTone = 'bg-primary/15 text-foreground border-primary/15';
   const themTone = 'bg-background border-border/40 text-foreground';
+
+  if (msg.attachment?.kind === 'file') {
+    const file = msg.attachment;
+    const filePath = file.local_path || '';
+    return (
+      <div className={`max-w-full rounded-xl border px-3 py-2 ${isMe ? meTone : themTone}`}>
+        <div className="flex items-start gap-2">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted/40">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{file.title || '微信文件'}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              {file.ext ? <span>{file.ext.toUpperCase()}</span> : null}
+              {file.size_label ? <span>{file.size_label}</span> : null}
+              <span>{file.exists ? '本地可打开' : '本地文件未定位'}</span>
+            </div>
+          </div>
+          {file.exists && filePath ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-md border border-border/50 bg-background/70 px-2 py-1 text-[11px] text-foreground hover:bg-muted/60"
+              onClick={() => void openLocalFile(filePath)}
+            >
+              <ExternalLink className="mr-1 inline h-3 w-3" />
+              打开
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   if (msg.type === 3) {
     if (msg.has_image) {

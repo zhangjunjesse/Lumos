@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,11 @@ SALT_SIZE = 16
 V3_RESERVED = 48
 V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
+CHAT_MESSAGE_DB_RE = re.compile(r"^(?:MSG|message)(?:_?\d+)?\.db$", re.I)
+FILE_STORAGE_ROOT_NAMES = ("FileStorage", "file_storage")
+FILE_STORAGE_NESTED_NAMES = ("File", "Files", "filestorage")
+FILE_MESSAGE_TYPE = 49
+APPMSG_FILE_TYPES = {"6", "74"}
 
 
 def configure_stdio() -> None:
@@ -198,6 +204,14 @@ def _encrypted_message_dbs() -> list[str]:
     return sorted(dbs)
 
 
+def _encrypted_chat_message_dbs() -> list[str]:
+    return [
+        db_path
+        for db_path in _encrypted_message_dbs()
+        if CHAT_MESSAGE_DB_RE.fullmatch(os.path.basename(db_path))
+    ]
+
+
 def _db_salt(db_path: str) -> str | None:
     try:
         with open(db_path, "rb") as fh:
@@ -270,7 +284,10 @@ def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
         raise RuntimeError("Windows 微信读取缺少 pycryptodomex。请在微信页面重新点击“启用”。") from err
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    if os.path.exists(out_path) and os.path.getmtime(out_path) >= os.path.getmtime(db_path):
+    # Cache paths are versioned by source mtime + size. Treat them as
+    # immutable: Windows denies replacing a SQLite file while any reader still
+    # holds a handle, even when the connection is read-only.
+    if os.path.exists(out_path):
         return out_path
 
     key = bytes.fromhex(key_hex)
@@ -294,15 +311,13 @@ def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
                 out.write(AES.new(decrypt_key, AES.MODE_CBC, page[-reserved:-reserved + 16]).decrypt(page[:-reserved]))
                 out.write(page[-reserved:])
         try:
-            os.replace(tmp_path, out_path)
-        except OSError:
-            # Windows refuses to replace a SQLite file while another Lumos
-            # reader still has it open. If another process already produced
-            # the same versioned cache file, reuse it instead of failing the
-            # whole AI read with "database is locked / file is occupied".
+            os.rename(tmp_path, out_path)
+        except FileExistsError:
+            return out_path
+        except OSError as err:
             if os.path.exists(out_path):
                 return out_path
-            raise
+            raise RuntimeError(f"写入解密缓存失败: {os.path.basename(out_path)}: {err}") from err
     finally:
         if os.path.exists(tmp_path):
             try:
@@ -361,6 +376,8 @@ def _rows(db_path: str, sql: str, params: tuple = ()) -> list[dict]:
 
 _contacts_cache: dict[str, dict] | None = None
 _self_wxids_cache: set[str] | None = None
+_local_file_index: dict[str, str] | None = None
+_local_file_misses: set[str] = set()
 
 
 def _load_contacts() -> dict[str, dict]:
@@ -517,32 +534,39 @@ def list_sessions(args: dict) -> dict:
 def _message_db_status() -> list[dict]:
     items = []
     for db_path in _encrypted_message_dbs():
+        name = os.path.basename(db_path)
+        role = "chat" if CHAT_MESSAGE_DB_RE.fullmatch(name) else "media"
         readable = False
         error = ""
-        try:
-            with _connect(db_path) as conn:
-                readable = _table_exists(conn, "MSG") or _has_table_like(conn, "Msg_%")
-        except Exception as err:  # noqa: BLE001
-            error = str(err)
+        if role == "chat":
+            try:
+                with _connect(db_path) as conn:
+                    readable = _table_exists(conn, "MSG") or _has_table_like(conn, "Msg_%")
+            except Exception as err:  # noqa: BLE001
+                error = str(err)
         try:
             mtime = int(os.path.getmtime(db_path))
         except OSError:
             mtime = 0
-        items.append({"name": os.path.basename(db_path), "path": db_path, "readable": readable, "mtime": mtime, "error": error})
+        items.append({"name": name, "path": db_path, "role": role, "readable": readable, "mtime": mtime, "error": error})
     return items
 
 
 def _message_db_diagnostics() -> dict:
     items = _message_db_status()
-    readable = [item for item in items if item["readable"]]
-    skipped = [item for item in items if not item["readable"]]
+    chat_items = [item for item in items if item["role"] == "chat"]
+    media_items = [item for item in items if item["role"] != "chat"]
+    readable = [item for item in chat_items if item["readable"]]
+    skipped = [item for item in chat_items if not item["readable"]]
     return {
-        "message_db_total": len(items),
+        "message_db_total": len(chat_items),
         "message_db_readable": len(readable),
         "message_db_unreadable": len(skipped),
-        "message_db_names": [item["name"] for item in items],
+        "message_db_names": [item["name"] for item in chat_items],
         "readable_message_db_names": [item["name"] for item in readable],
         "skipped_message_db_names": [item["name"] for item in skipped],
+        "media_db_total": len(media_items),
+        "media_db_names": [item["name"] for item in media_items],
         "latest_message_db_mtime": max((item["mtime"] for item in items), default=0),
     }
 
@@ -605,12 +629,174 @@ def _looks_binary_text(text: str) -> bool:
     return False
 
 
-def _render_message(msg_type: int, sub_type: int, content: object) -> str:
+def _message_text(content: object) -> str:
     if isinstance(content, (bytes, bytearray)):
         text = bytes(content).decode("utf-8", errors="replace")
     else:
         text = str(content or "")
-    text = text.replace("\x00", "").strip()
+    return text.replace("\x00", "").strip()
+
+
+def _parse_xml_fragment(text: str) -> ET.Element | None:
+    if not text or "<" not in text:
+        return None
+    start = text.find("<")
+    fragment = text[start:].strip()
+    try:
+        return ET.fromstring(fragment)
+    except ET.ParseError:
+        return None
+
+
+def _find_text(root: ET.Element, path: str) -> str:
+    value = root.findtext(path) or ""
+    return value.strip()
+
+
+def _safe_rel_parts(value: str) -> list[str]:
+    parts: list[str] = []
+    normalized = value.replace("\\", "/")
+    for part in normalized.split("/"):
+        clean = part.strip()
+        if not clean or clean in {".", ".."}:
+            continue
+        parts.append(clean)
+    return parts
+
+
+def _safe_filename(value: str) -> str:
+    name = os.path.basename(value.replace("\\", "/")).strip()
+    if name in {"", ".", ".."}:
+        return ""
+    return name
+
+
+def _format_bytes(size: int) -> str:
+    if size <= 0:
+        return ""
+    units = ["B", "KB", "MB", "GB"]
+    value = float(size)
+    unit = units[0]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            break
+        value /= 1024
+    if unit == "B":
+        return f"{int(value)}B"
+    return f"{value:.1f}{unit}"
+
+
+def _file_storage_roots() -> list[str]:
+    account = _account()
+    roots: list[str] = []
+    seen: set[str] = set()
+    wx_dir = str(account.get("wx_dir") or "").strip()
+    msg_dir = str(account.get("msg_dir") or "").strip()
+    candidates: list[str] = []
+    for base in [
+        wx_dir,
+        os.path.dirname(wx_dir) if wx_dir else "",
+        msg_dir,
+        os.path.dirname(msg_dir) if msg_dir else "",
+    ]:
+        if not base:
+            continue
+        for root_name in FILE_STORAGE_ROOT_NAMES:
+            candidates.append(os.path.join(base, root_name))
+        for nested_name in FILE_STORAGE_NESTED_NAMES:
+            candidates.append(os.path.join(base, nested_name))
+    for base_raw in candidates:
+        base = str(base_raw or "").strip()
+        if not base or not os.path.isdir(base):
+            continue
+        normalized = os.path.normcase(os.path.abspath(base))
+        if normalized not in seen:
+            seen.add(normalized)
+            roots.append(base)
+    return roots
+
+
+def _find_local_file_by_names(names: list[str]) -> str | None:
+    global _local_file_index, _local_file_misses
+    if _local_file_index is not None:
+        for name in names:
+            cached = _local_file_index.get(name)
+            if cached:
+                return cached
+    else:
+        _local_file_index = {}
+
+    target_names = {name for name in names if name not in _local_file_misses}
+    if not target_names:
+        return None
+
+    for root in _file_storage_roots():
+        for walk_root, _, files in os.walk(root):
+            for name in files:
+                if name in target_names:
+                    path_value = os.path.join(walk_root, name)
+                    _local_file_index[name] = path_value
+                    return path_value
+
+    _local_file_misses.update(target_names)
+    return None
+
+
+def _find_local_file(title: str, attach_id: str = "") -> str | None:
+    names = [_safe_filename(title), *[_safe_filename(part) for part in _safe_rel_parts(attach_id) if "." in part]]
+    names = [name for name in dict.fromkeys(names) if name]
+    if not names:
+        return None
+    return _find_local_file_by_names(names)
+
+
+def _extract_attachment(msg_type: int, content: object) -> dict | None:
+    if msg_type != FILE_MESSAGE_TYPE:
+        return None
+    text = _message_text(content)
+    root = _parse_xml_fragment(text)
+    if root is None:
+        return None
+    appmsg = root.find(".//appmsg")
+    if appmsg is None:
+        return None
+    app_type = (_find_text(appmsg, "type") or "").strip()
+    title = _find_text(appmsg, "title")
+    attach_id = _find_text(appmsg, "attachid")
+    file_ext = _find_text(appmsg, "fileext")
+    size = _safe_int(_find_text(appmsg, "totallen"))
+    is_file = app_type in APPMSG_FILE_TYPES or bool(file_ext) or size > 0
+    if not is_file:
+        return None
+    local_path = _find_local_file(title, attach_id)
+    title = os.path.basename(title) if title else "微信文件"
+    return {
+        "kind": "file",
+        "title": title,
+        "size": size,
+        "size_label": _format_bytes(size),
+        "ext": file_ext,
+        "attach_id": attach_id,
+        "local_path": local_path or "",
+        "exists": bool(local_path and os.path.exists(local_path)),
+    }
+
+
+def _attachment_summary(attachment: dict | None) -> str:
+    if not attachment:
+        return ""
+    title = str(attachment.get("title") or "微信文件").strip()
+    size = str(attachment.get("size_label") or "").strip()
+    suffix = f" · {size}" if size else ""
+    status = " · 本地可打开" if attachment.get("exists") else " · 本地文件未定位"
+    return f"[文件] {title}{suffix}{status}"
+
+
+def _render_message(msg_type: int, sub_type: int, content: object) -> str:
+    attachment = _extract_attachment(msg_type, content)
+    if attachment:
+        return _attachment_summary(attachment)
+    text = _message_text(content)
     if _looks_binary_text(text):
         return MSG_TYPE_PLACEHOLDERS.get(msg_type, "[暂不支持的消息]")
     if msg_type == 1:
@@ -633,7 +819,7 @@ def read_chat(args: dict) -> dict:
     info = contacts.get(wxid, {})
     messages = []
     msg_table = f"Msg_{hashlib.md5(wxid.encode()).hexdigest()}"
-    for db_path in _encrypted_message_dbs():
+    for db_path in _encrypted_chat_message_dbs():
         try:
             with _connect(db_path) as conn:
                 if _table_exists(conn, "MSG"):
@@ -653,12 +839,14 @@ def read_chat(args: dict) -> dict:
                         msg_type = _safe_int(row["Type"])
                         sub_type = _safe_int(row["SubType"])
                         ts = _norm_ts(row["CreateTime"])
+                        attachment = _extract_attachment(msg_type, row["StrContent"])
                         messages.append({
                             "ts": ts,
                             "sender": "me" if _safe_int(row["IsSender"]) == 1 else "them",
                             "type": msg_type,
                             "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
                             "content": _render_message(msg_type, sub_type, row["StrContent"]),
+                            "attachment": attachment,
                             "has_image": False,
                         })
                 elif _table_exists(conn, msg_table):
@@ -676,6 +864,7 @@ def read_chat(args: dict) -> dict:
                         msg_type = raw_type & 0xFFFF
                         ts = _norm_ts(row["create_time"])
                         sender_info = _sender_info_from_real_id(row["real_sender_id"], wxid, id_to_wxid, contacts)
+                        attachment = _extract_attachment(msg_type, row["message_content"])
                         messages.append({
                             "ts": ts,
                             "sender": sender_info["sender"],
@@ -684,6 +873,7 @@ def read_chat(args: dict) -> dict:
                             "type": msg_type,
                             "type_label": MSG_TYPE_PLACEHOLDERS.get(msg_type, ""),
                             "content": _render_message(msg_type, 0, row["message_content"]),
+                            "attachment": attachment,
                             "has_image": False,
                         })
         except Exception:
@@ -720,7 +910,7 @@ def search_messages(keyword: str, days: int = 30, limit: int = 50) -> list[dict]
     result = []
     contacts = _load_contacts()
     like = f"%{keyword}%"
-    for db_path in _encrypted_message_dbs():
+    for db_path in _encrypted_chat_message_dbs():
         try:
             with _connect(db_path) as conn:
                 if _table_exists(conn, "MSG"):
@@ -895,6 +1085,7 @@ def _iter_db_messages(
                 content = _render_message(msg_type, sub_type, row["StrContent"]).strip()
                 if not content:
                     continue
+                attachment = _extract_attachment(msg_type, row["StrContent"])
                 info = contacts.get(wxid, {})
                 messages.append({
                     "wxid": wxid,
@@ -906,6 +1097,7 @@ def _iter_db_messages(
                     "sender_display": "",
                     "type": msg_type,
                     "content": content,
+                    "attachment": attachment,
                 })
             return messages
 
@@ -939,6 +1131,7 @@ def _iter_db_messages(
                 content = _render_message(msg_type, 0, row["message_content"]).strip()
                 if not content:
                     continue
+                attachment = _extract_attachment(msg_type, row["message_content"])
                 sender_info = _sender_info_from_real_id(row["real_sender_id"], wxid, id_to_wxid, contacts)
                 messages.append({
                     "wxid": wxid,
@@ -950,6 +1143,7 @@ def _iter_db_messages(
                     "sender_display": sender_info["sender_display"],
                     "type": msg_type,
                     "content": content,
+                    "attachment": attachment,
                 })
     return messages
 
@@ -985,7 +1179,7 @@ def analyze_snapshot(args: dict) -> dict:
 
     messages: list[dict] = []
     total_readable = 0
-    for db_path in _encrypted_message_dbs():
+    for db_path in _encrypted_chat_message_dbs():
         if len(messages) >= max_messages:
             break
         try:
@@ -1061,7 +1255,7 @@ def sync_stream(args: dict) -> None:
 
     max_ts_seen = since_timestamp
     grand_total = 0
-    for db_path in _encrypted_message_dbs():
+    for db_path in _encrypted_chat_message_dbs():
         db_name = os.path.basename(db_path)
         try:
             with _connect(db_path) as conn:
@@ -1086,6 +1280,7 @@ def sync_stream(args: dict) -> None:
                     "sender_display": row.get("sender_display") or "",
                     "msg_type": _safe_int(row.get("type")),
                     "content": row.get("content") or "",
+                    "attachment": row.get("attachment") or None,
                 })
                 emitted += 1
         except Exception as err:  # noqa: BLE001

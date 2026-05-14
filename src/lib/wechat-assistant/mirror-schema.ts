@@ -11,7 +11,7 @@
  * the WeChat source DBs).
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_display TEXT,
   msg_type     INTEGER NOT NULL DEFAULT 0,
   content      TEXT NOT NULL DEFAULT '',
+  attachment_json TEXT,
   PRIMARY KEY (wxid, ts, fingerprint)
 );
 

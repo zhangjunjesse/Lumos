@@ -645,6 +645,7 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const unreadable = diagnostics?.message_db_unreadable ?? 0;
   const total = diagnostics?.message_db_total ?? 0;
   const readable = diagnostics?.message_db_readable ?? 0;
+  const mediaTotal = diagnostics?.media_db_total ?? 0;
   const skipped = diagnostics?.skipped_message_db_names?.join('、') || '';
   const signed = panel.status?.env?.signed;
   const isWindows = panel.status?.platform === 'win32';
@@ -708,6 +709,11 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
           }`}>
             当前消息库可读 <span className="font-mono tabular-nums">{readable}/{total}</span>
             {unreadable > 0 ? <>，还有 <span className="font-mono tabular-nums">{unreadable}</span> 个未解密。</> : null}
+            {mediaTotal > 0 ? (
+              <div className="mt-1 text-muted-foreground">
+                另发现 <span className="font-mono tabular-nums">{mediaTotal}</span> 个媒体/业务库；它们不计入普通聊天文本完整度。
+              </div>
+            ) : null}
             {skipped ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">未解密：{skipped}</div> : null}
           </div>
 

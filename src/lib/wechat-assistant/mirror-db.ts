@@ -56,6 +56,9 @@ function bootstrap(conn: Database.Database): void {
       DROP TABLE IF EXISTS messages;
       DROP TABLE IF EXISTS sessions;
       DROP TABLE IF EXISTS sync_state;
+      DROP TABLE IF EXISTS topic_summaries;
+      DROP TABLE IF EXISTS topic_daily_summaries;
+      DROP TABLE IF EXISTS topic_daily_sources;
     `);
     conn.exec(SCHEMA_DDL);
     ensureAdditiveColumns(conn);
@@ -69,6 +72,7 @@ function ensureAdditiveColumns(conn: Database.Database): void {
   for (const [table, column, type] of [
     ['messages', 'sender_wxid', 'TEXT'],
     ['messages', 'sender_display', 'TEXT'],
+    ['messages', 'attachment_json', 'TEXT'],
   ] as const) {
     if (!columnExists(conn, table, column)) {
       conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);

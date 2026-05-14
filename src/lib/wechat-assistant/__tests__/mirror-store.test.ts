@@ -160,6 +160,22 @@ describe('searchMessages', () => {
     expect(searchMessages({ query: '图片', limit: 10 })).toHaveLength(0);
   });
 
+  it('searches file message summaries without indexing every non-text card', () => {
+    upsertSessions([session('alice', { display: 'Alice' })]);
+    insertMessages([
+      msg('alice', 1, 'them', '[文件] 报价单.xlsx · 12.0KB · 本地可打开', 49),
+      msg('alice', 2, 'them', '普通链接标题', 49),
+    ]);
+
+    expect(searchMessages({ query: '报价单', limit: 10 }).map((item) => ({
+      content: item.content,
+      msgType: item.msgType,
+    }))).toEqual([
+      { content: '[文件] 报价单.xlsx · 12.0KB · 本地可打开', msgType: 49 },
+    ]);
+    expect(searchMessages({ query: '普通链接', limit: 10 })).toHaveLength(0);
+  });
+
   it('escapes sqlite LIKE wildcards in user input', () => {
     upsertSessions([session('alice')]);
     insertMessages([
@@ -236,6 +252,38 @@ describe('readChatMessages', () => {
     const secondPage = readChatMessages({ chat: '陈啟伟', limit: 2, offset: 2 });
     expect(secondPage.messages.map((item) => item.content)).toEqual(['第一条没有联系人名字']);
     expect(secondPage.hasMore).toBe(false);
+  });
+
+  it('returns file attachment metadata when reading a chat', () => {
+    upsertSessions([session('alice', { display: '陈啟伟', lastTs: 30 })]);
+    insertMessages([
+      {
+        ...msg('alice', 30, 'them', '[文件] 报价单.xlsx · 12.0KB · 本地可打开', 49),
+        attachment: {
+          kind: 'file',
+          title: '报价单.xlsx',
+          size: 12288,
+          sizeLabel: '12.0KB',
+          ext: 'xlsx',
+          localPath: 'C:\\Users\\me\\Documents\\WeChat Files\\wxid\\FileStorage\\File\\报价单.xlsx',
+          exists: true,
+        },
+      },
+    ]);
+
+    const result = readChatMessages({ chat: '陈啟伟', limit: 5 });
+
+    expect(result.messages[0]).toMatchObject({
+      msgType: 49,
+      content: '[文件] 报价单.xlsx · 12.0KB · 本地可打开',
+      attachment: {
+        kind: 'file',
+        title: '报价单.xlsx',
+        sizeLabel: '12.0KB',
+        ext: 'xlsx',
+        exists: true,
+      },
+    });
   });
 
   it('returns candidates instead of guessing when a chat lookup is ambiguous', () => {

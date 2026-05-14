@@ -35,6 +35,17 @@ export interface MirrorMessage {
   senderDisplay?: string | null;
   msgType: number;
   content: string;
+  attachment?: WeChatMirrorAttachment | null;
+}
+
+export interface WeChatMirrorAttachment {
+  kind: 'file';
+  title: string;
+  size?: number;
+  sizeLabel?: string;
+  ext?: string;
+  localPath?: string;
+  exists?: boolean;
 }
 
 export type MessageSearchScope = 'all' | 'personal' | 'group';
@@ -46,6 +57,7 @@ export interface MessageSearchResult {
   ts: number; // unix seconds
   sender: 'me' | 'them';
   senderDisplay: string | null;
+  msgType: number;
   content: string;
 }
 
@@ -73,6 +85,7 @@ export interface ChatReadMessage {
   senderDisplay: string | null;
   msgType: number;
   content: string;
+  attachment: WeChatMirrorAttachment | null;
 }
 
 export interface ChatReadResult {
@@ -157,14 +170,47 @@ export function fingerprintFor(sender: string, content: string, senderWxid?: str
     .slice(0, 16);
 }
 
+function serializeAttachment(attachment: WeChatMirrorAttachment | null | undefined): string | null {
+  if (!attachment || attachment.kind !== 'file') return null;
+  return JSON.stringify({
+    kind: 'file',
+    title: attachment.title,
+    size: attachment.size ?? undefined,
+    sizeLabel: attachment.sizeLabel ?? undefined,
+    ext: attachment.ext ?? undefined,
+    localPath: attachment.localPath ?? undefined,
+    exists: attachment.exists ?? undefined,
+  });
+}
+
+function parseAttachment(json: string | null | undefined): WeChatMirrorAttachment | null {
+  if (!json) return null;
+  try {
+    const value = JSON.parse(json) as Record<string, unknown>;
+    if (value.kind !== 'file') return null;
+    const title = typeof value.title === 'string' && value.title.trim() ? value.title.trim() : '微信文件';
+    return {
+      kind: 'file',
+      title,
+      size: typeof value.size === 'number' && Number.isFinite(value.size) ? value.size : undefined,
+      sizeLabel: typeof value.sizeLabel === 'string' ? value.sizeLabel : undefined,
+      ext: typeof value.ext === 'string' ? value.ext : undefined,
+      localPath: typeof value.localPath === 'string' ? value.localPath : undefined,
+      exists: typeof value.exists === 'boolean' ? value.exists : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function insertMessages(rows: MirrorMessage[]): number {
   if (rows.length === 0) return 0;
   const conn = getMirrorDb();
   const stmt = conn.prepare(`
     INSERT OR IGNORE INTO messages
-      (wxid, ts, fingerprint, sender, sender_wxid, sender_display, msg_type, content)
+      (wxid, ts, fingerprint, sender, sender_wxid, sender_display, msg_type, content, attachment_json)
     VALUES
-      (@wxid, @ts, @fingerprint, @sender, @senderWxid, @senderDisplay, @msgType, @content)
+      (@wxid, @ts, @fingerprint, @sender, @senderWxid, @senderDisplay, @msgType, @content, @attachmentJson)
   `);
   return conn.transaction((items: MirrorMessage[]) => {
     let inserted = 0;
@@ -178,6 +224,7 @@ export function insertMessages(rows: MirrorMessage[]): number {
         senderDisplay: r.senderDisplay ?? null,
         msgType: r.msgType,
         content: r.content,
+        attachmentJson: serializeAttachment(r.attachment),
       });
       inserted += result.changes;
     }
@@ -282,6 +329,7 @@ interface MessageRow {
   sender_display: string | null;
   msg_type: number;
   content: string;
+  attachment_json: string | null;
 }
 
 /**
@@ -298,7 +346,7 @@ export function querySnapshot(windowDays: number, nowSec: number): MirrorSnapsho
     .all();
   const messageRows = conn
     .prepare<[number], MessageRow>(`
-      SELECT wxid, ts, sender, sender_wxid, sender_display, msg_type, content
+      SELECT wxid, ts, sender, sender_wxid, sender_display, msg_type, content, attachment_json
       FROM messages
       WHERE ts >= ?
       ORDER BY ts DESC
@@ -885,11 +933,11 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
   const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const where: string[] = [
-    'm.msg_type = 1',
     "m.content != ''",
-    "(m.content LIKE ? ESCAPE '\\' OR COALESCE(NULLIF(s.display, ''), m.wxid) LIKE ? ESCAPE '\\' OR m.wxid LIKE ? ESCAPE '\\')",
+    "((m.msg_type = 1 AND m.content LIKE ? ESCAPE '\\') OR (m.msg_type = 49 AND m.content LIKE '[文件]%' AND m.content LIKE ? ESCAPE '\\') OR COALESCE(NULLIF(s.display, ''), m.wxid) LIKE ? ESCAPE '\\' OR m.wxid LIKE ? ESCAPE '\\')",
   ];
   const params: Array<string | number> = [
+    `%${escapeLikePattern(query)}%`,
     `%${escapeLikePattern(query)}%`,
     `%${escapeLikePattern(query)}%`,
     `%${escapeLikePattern(query)}%`,
@@ -916,6 +964,7 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
       ts: number;
       sender: string;
       sender_display: string | null;
+      msg_type: number;
       content: string;
     }>(`
       SELECT
@@ -925,6 +974,7 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
         m.ts,
         m.sender,
         m.sender_display,
+        m.msg_type,
         m.content
       FROM messages m
       LEFT JOIN sessions s ON s.wxid = m.wxid
@@ -941,6 +991,7 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
     ts: row.ts,
     sender: row.sender === 'me' ? 'me' : 'them',
     senderDisplay: displayGroupMember(row.sender_display),
+    msgType: row.msg_type,
     content: row.content,
   }));
 }
@@ -1050,8 +1101,9 @@ export function readChatMessages(options: ChatReadOptions): ChatReadResult {
       sender_display: string | null;
       msg_type: number;
       content: string;
+      attachment_json: string | null;
     }>(`
-      SELECT ts, fingerprint, sender, sender_display, msg_type, content
+      SELECT ts, fingerprint, sender, sender_display, msg_type, content, attachment_json
       FROM messages
       WHERE ${where.join(' AND ')}
       ORDER BY ts DESC, fingerprint DESC
@@ -1071,6 +1123,7 @@ export function readChatMessages(options: ChatReadOptions): ChatReadResult {
       senderDisplay: displayGroupMember(row.sender_display),
       msgType: row.msg_type,
       content: row.content,
+      attachment: parseAttachment(row.attachment_json),
     })),
     limit,
     offset,

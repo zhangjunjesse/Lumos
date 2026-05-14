@@ -148,6 +148,7 @@ describe('wechat assistant MCP server', () => {
       sender: 'them',
       senderDisplay: '张三',
       ts: 1_777_000_000,
+      msgType: 1,
       content: '请整理节前遗留问题清单',
     }]);
 
@@ -283,6 +284,21 @@ describe('wechat assistant MCP server', () => {
         { ts: 1_777_000_000, sender: 'them', senderDisplay: null, msgType: 1, content: '今天的对话内容' },
         { ts: 1_777_000_010, sender: 'me', senderDisplay: null, msgType: 3, content: '' },
         { ts: 1_777_000_020, sender: 'them', senderDisplay: null, msgType: 1, content: '\u0001\u0002\u0003���' },
+        {
+          ts: 1_777_000_030,
+          sender: 'them',
+          senderDisplay: null,
+          msgType: 49,
+          content: '[文件] 报价单.xlsx · 12.0KB · 本地可打开',
+          attachment: {
+            kind: 'file',
+            title: '报价单.xlsx',
+            size: 12288,
+            sizeLabel: '12.0KB',
+            ext: 'xlsx',
+            exists: true,
+          },
+        },
       ],
       limit: 50,
       offset: 0,
@@ -303,6 +319,8 @@ describe('wechat assistant MCP server', () => {
     expect(text).toContain('今天的对话内容');
     expect(text).toContain('[图片]');
     expect(text).toContain('[暂不支持的消息]');
+    expect(text).toContain('报价单.xlsx');
+    expect(text).toContain('"kind": "file"');
     expect(text).toContain('"next_offset": 50');
     expect(text).not.toContain('wxid_xxx');
   });

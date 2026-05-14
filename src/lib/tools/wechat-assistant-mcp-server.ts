@@ -191,7 +191,8 @@ function createSearchWeChatMessagesTool() {
             kind: item.isGroup ? '群聊' : '私聊',
             speaker: item.sender === 'me' ? '我' : item.senderDisplay || '对方',
             time: new Date(item.ts * 1000).toLocaleString('zh-CN'),
-            content: wechatMessageContentPreview(item.content, 1),
+            message_type: wechatMessageTypeLabel(item.msgType),
+            content: wechatMessageContentPreview(item.content, item.msgType),
           })),
         });
       } catch (error) {
@@ -249,6 +250,16 @@ function createReadWeChatChatTool() {
             time: new Date(message.ts * 1000).toLocaleString('zh-CN'),
             message_type: wechatMessageTypeLabel(message.msgType),
             content: wechatMessageContentPreview(message.content, message.msgType),
+            attachment: message.attachment
+              ? {
+                  kind: message.attachment.kind,
+                  title: message.attachment.title,
+                  size: message.attachment.size ?? null,
+                  size_label: message.attachment.sizeLabel ?? null,
+                  ext: message.attachment.ext ?? null,
+                  exists: message.attachment.exists ?? null,
+                }
+              : null,
           })),
         });
       } catch (error) {
