@@ -42,7 +42,8 @@ SALT_SIZE = 16
 V3_RESERVED = 48
 V4_RESERVED = 80
 MESSAGE_DB_RE = re.compile(r"^(?:MSG|message|media|biz_message)(?:_?\d+)?\.db$", re.I)
-HEX_PATTERN = re.compile(rb"x'([0-9a-fA-F]{64,192})'")
+HEX_PATTERN = re.compile(rb"[xX]['\"]([0-9a-fA-F]{64,192})")
+UTF16_HEX_PATTERN = re.compile(rb"[xX]\x00['\"]\x00((?:[0-9a-fA-F]\x00){64,192})")
 KEY_HEX_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 PREFERRED_KEY_MODULE_NAMES = (
     "wechatwin.dll",
@@ -576,6 +577,10 @@ def db_salt(db_path: str) -> str | None:
     return page[:SALT_SIZE].hex() if page else None
 
 
+def _record_label(record: dict) -> str:
+    return os.path.basename(str(record.get("path") or "unknown.db"))
+
+
 def verify_db_key(key: bytes, db_path: str, mode: str) -> bool:
     if mode == "v4":
         return _verify_key_v4(key, db_path)
@@ -584,8 +589,74 @@ def verify_db_key(key: bytes, db_path: str, mode: str) -> bool:
     return verify_key(key, db_path)
 
 
+def _hex_from_utf16_match(raw: bytes) -> str:
+    return raw.replace(b"\x00", b"").decode("ascii")
+
+
+def _candidate_pairs_from_hex(hex_str: str) -> list[tuple[str, str | None]]:
+    """Return possible (key_hex, salt_hex) pairs from a WCDB-looking hex blob.
+
+    Current Windows WeChat 4.x commonly caches raw SQLCipher keys as
+    `x'<64hex_key><32hex_salt>'`, but field order and surrounding bytes have
+    varied across builds. Keep the extraction broad and let HMAC verification
+    reject false positives.
+    """
+    pairs: list[tuple[str, str | None]] = []
+    normalized = hex_str.lower()
+
+    if len(normalized) >= 96:
+        for start in range(0, len(normalized) - 96 + 1):
+            chunk = normalized[start:start + 96]
+            # key + salt
+            pairs.append((chunk[:64], chunk[64:96]))
+            # salt + key
+            pairs.append((chunk[32:96], chunk[:32]))
+
+    if len(normalized) >= 64:
+        pairs.append((normalized[:64], None))
+        pairs.append((normalized[-64:], None))
+
+    deduped: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
+    for key_hex, salt_hex in pairs:
+        pair = (key_hex, salt_hex)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        deduped.append(pair)
+    return deduped
+
+
+def _ascii_hex_windows_around(block: bytes, center: int, radius: int = 160) -> list[str]:
+    start = max(0, center - radius)
+    end = min(len(block), center + 32 + radius)
+    window = block[start:end]
+    chunks = []
+    for match in re.finditer(rb"[0-9a-fA-F]{64,128}", window):
+        chunks.append(match.group(0).decode("ascii"))
+    return chunks
+
+
+def _raw_key_candidates_around(block: bytes, center: int, radius: int = 96) -> list[bytes]:
+    start = max(0, center - radius)
+    end = min(len(block), center + SALT_SIZE + radius)
+    candidates: list[bytes] = []
+    for pos in range(start, max(start, end - KEY_SIZE + 1)):
+        candidate = block[pos:pos + KEY_SIZE]
+        if len(candidate) != KEY_SIZE:
+            continue
+        # Skip obviously empty / padded regions; HMAC verification handles the
+        # rest but these filters keep the candidate count manageable.
+        if candidate == b"\x00" * KEY_SIZE or candidate == b"\xff" * KEY_SIZE:
+            continue
+        if len(set(candidate)) <= 2:
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
 def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
-    """Scan readable process memory for SQLCipher4 `x'<key><salt>'` strings."""
+    """Scan readable process memory for SQLCipher4 cached key material."""
     salt_to_records: dict[str, list[dict]] = {}
     for account in accounts:
         for rec in account.get("_db_records") or []:
@@ -597,11 +668,45 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
 
     found = 0
     seen_strings: set[str] = set()
-    seen_keys: set[bytes] = set()
+    seen_pairs: set[tuple[str, str | None]] = set()
+    seen_raw_keys: set[tuple[str, bytes]] = set()
     regions = iter_readable_regions(handle)
     log(f"[+] scanning memory regions={len(regions)} for SQLCipher4 key strings")
     chunk_size = 4 * 1024 * 1024
-    overlap = 256
+    overlap = 512
+
+    def try_key_for_records(key: bytes, records: list[dict]) -> int:
+        added = 0
+        key_hex = key.hex()
+        for record in records:
+            if verify_db_key(key, record["path"], record["mode"]):
+                if mark_key(record["account"], record, key_hex):
+                    added += 1
+        return added
+
+    def try_hex_blob(hex_str: str) -> int:
+        if hex_str in seen_strings:
+            return 0
+        seen_strings.add(hex_str)
+        added = 0
+        for key_hex, salt_hex in _candidate_pairs_from_hex(hex_str):
+            if not KEY_HEX_PATTERN.match(key_hex):
+                continue
+            pair = (key_hex, salt_hex)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            key = bytes.fromhex(key_hex)
+            if salt_hex and salt_hex in salt_to_records:
+                records = salt_to_records.get(salt_hex, [])
+            elif salt_hex is None:
+                records = [record for grouped in salt_to_records.values() for record in grouped]
+            else:
+                records = []
+            if records:
+                added += try_key_for_records(key, records)
+        return added
+
     for base, size in regions:
         tail = b""
         offset = 0
@@ -614,35 +719,44 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
                 continue
             block = tail + data
             for match in HEX_PATTERN.finditer(block):
-                hex_str = match.group(1).decode("ascii")
-                if hex_str in seen_strings:
-                    continue
-                seen_strings.add(hex_str)
-                pairs: list[tuple[str, str | None]] = []
-                if len(hex_str) >= 96:
-                    pairs.append((hex_str[:64], hex_str[64:96]))
-                    pairs.append((hex_str[-96:-32], hex_str[-32:]))
-                pairs.append((hex_str[:64], None))
-                for key_hex, salt_hex in pairs:
-                    if not KEY_HEX_PATTERN.match(key_hex):
-                        continue
-                    key = bytes.fromhex(key_hex)
-                    if salt_hex and salt_hex in salt_to_records:
-                        records = salt_to_records.get(salt_hex, [])
-                    elif salt_hex is None and key not in seen_keys:
-                        records = [record for grouped in salt_to_records.values() for record in grouped]
-                    else:
-                        records = []
-                    if not records:
-                        continue
-                    seen_keys.add(key)
-                    for record in records:
-                        if verify_db_key(key, record["path"], record["mode"]):
-                            if mark_key(record["account"], record, key_hex):
-                                found += 1
+                found += try_hex_blob(match.group(1).decode("ascii"))
+            for match in UTF16_HEX_PATTERN.finditer(block):
+                found += try_hex_blob(_hex_from_utf16_match(match.group(1)))
+
+            # Some builds keep raw key bytes close to the database salt instead
+            # of, or in addition to, the SQL text literal. Search only around
+            # exact known salts to avoid brute-forcing arbitrary memory.
+            for salt_hex, records in salt_to_records.items():
+                salt_bytes = bytes.fromhex(salt_hex)
+                start = 0
+                while True:
+                    idx = block.find(salt_bytes, start)
+                    if idx == -1:
+                        break
+                    for raw_key in _raw_key_candidates_around(block, idx):
+                        raw_pair = (salt_hex, raw_key)
+                        if raw_pair in seen_raw_keys:
+                            continue
+                        seen_raw_keys.add(raw_pair)
+                        found += try_key_for_records(raw_key, records)
+                    start = idx + 1
+
+                salt_ascii = salt_hex.encode("ascii")
+                start = 0
+                while True:
+                    idx = block.find(salt_ascii, start)
+                    if idx == -1:
+                        break
+                    for hex_blob in _ascii_hex_windows_around(block, idx):
+                        found += try_hex_blob(hex_blob)
+                    start = idx + 1
             tail = block[-overlap:]
             offset += to_read
-    log(f"[+] SQLCipher4 string scan found={found} unique_strings={len(seen_strings)}")
+    log(
+        "[+] SQLCipher4 memory scan "
+        f"found={found} unique_strings={len(seen_strings)} "
+        f"unique_pairs={len(seen_pairs)} raw_candidates={len(seen_raw_keys)}"
+    )
     return found
 
 
@@ -721,6 +835,14 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                 })
         account["_db_records"] = db_records
         log(f"[+] account wxid={account['wxid']} dbs={len(db_records)} mode={account.get('mode')}")
+        for record in db_records:
+            log(
+                "[DB] "
+                f"wxid={account['wxid']} "
+                f"db={_record_label(record)} "
+                f"salt={record['salt'][:8]}… "
+                f"mode={record['mode']}"
+            )
 
     recovered_by_wxid: dict[str, dict] = {}
     recovered_salts: set[str] = set()
@@ -747,10 +869,11 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         recovered_salts.add(salt)
         if not item["key"]:
             item["key"] = key_hex
+        label = _record_label(record)
         if len(item["keys"]) == 1:
-            log(f"[FOUND] wxid={wxid} salt={salt} key=<redacted>")
+            log(f"[FOUND] wxid={wxid} db={label} salt={salt[:8]}… key=<redacted>")
         else:
-            log(f"[FOUND] wxid={wxid} salt={salt} key=<redacted> (extra db)")
+            log(f"[FOUND] wxid={wxid} db={label} salt={salt[:8]}… key=<redacted> (extra db)")
         return True
 
     try:
@@ -787,6 +910,25 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     recovered = sorted(recovered_by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
     if not recovered:
         raise RuntimeError("未找到可验证的数据库密钥。请确认 Windows 微信已登录到主界面后重试。")
+
+    for account in accounts:
+        missing = [
+            record
+            for record in account.get("_db_records") or []
+            if record.get("salt") not in recovered_salts
+        ]
+        recovered_count = len(account.get("_db_records") or []) - len(missing)
+        log(
+            "[SUMMARY] "
+            f"wxid={account['wxid']} recovered={recovered_count}/{len(account.get('_db_records') or [])}"
+        )
+        for record in missing:
+            log(
+                "[MISSING] "
+                f"wxid={account['wxid']} "
+                f"db={_record_label(record)} "
+                f"salt={record['salt'][:8]}…"
+            )
 
     os.makedirs(os.path.dirname(accounts_out), exist_ok=True)
     merged = merge_accounts(load_existing_accounts(accounts_out), recovered)

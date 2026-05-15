@@ -129,15 +129,39 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseCookieHeader(raw: string): Record<string, string> {
+/**
+ * Normalize a single pasted cookie value.
+ *
+ * Cross-device pastes (DevTools → Application → Cookies, browser cookie
+ * exporters, "copy cell" from other tools) frequently wrap the value in
+ * quotes or leave a trailing separator: `ct0="abc..."`, `twid='u=...'`,
+ * `auth_token=...;`. Stored verbatim, the quotes/comma end up inside the
+ * Cookie/x-csrf-token header and X rejects the request with 403 even though
+ * the value "looks present" — so hasRequiredCookies passes and the failure
+ * mis-surfaces as "login expired".
+ */
+export function normalizeCookieValue(raw: string): string {
+  let v = raw.trim().replace(/[;,]+$/, '').trim();
+  if (v.length >= 2) {
+    const q = v[0];
+    if ((q === '"' || q === "'") && v[v.length - 1] === q) {
+      v = v.slice(1, -1).trim();
+    }
+  }
+  return v;
+}
+
+export function parseCookieHeader(raw: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const segment of raw.split(/[;\n]/)) {
     const trimmed = segment.trim();
     if (!trimmed || !trimmed.includes('=')) continue;
     const eq = trimmed.indexOf('=');
     const name = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim();
-    if (!name) continue;
+    const value = normalizeCookieValue(trimmed.slice(eq + 1));
+    // Skip empty values so an `ct0=""` paste fails the required-field check
+    // (reported as a missing field) instead of poisoning the auth request.
+    if (!name || !value) continue;
     out[name] = value;
   }
   return out;

@@ -21,6 +21,10 @@ import {
   searchMessages,
   type ChatReadCandidate,
 } from '@/lib/wechat-assistant/mirror-store';
+import {
+  getArchivedWeChatAutomationReport,
+  getLatestArchivedReportForAutomation,
+} from '@/lib/wechat-assistant/report-archive';
 import { runSync } from '@/lib/wechat-assistant/sync-engine';
 import type { TodoStatus, WeChatTodo } from '@/lib/wechat-assistant/ai-types';
 
@@ -47,12 +51,14 @@ Available tools:
 - \`mcp__lumos-wechat-assistant__batch_set_wechat_automations_enabled(ids, enabled)\`: enable or pause multiple automations.
 - \`mcp__lumos-wechat-assistant__delete_wechat_automation(id)\`: delete one automation and cancel running work where possible.
 - \`mcp__lumos-wechat-assistant__diagnose_wechat_automation(id)\`: explain schedule/run status and latest error.
+- \`mcp__lumos-wechat-assistant__read_wechat_automation_report(automation_id, report_id?)\`: read the full archived report text an automation already generated. Use this to forward the exact same report instead of re-summarizing.
 
 Rules:
 - Use these tools when the user asks about WeChat messages, daily summaries, reminders, automations, or follow-ups.
 - Do not call raw \`wechat-export\` tools such as \`wechat_read_chat\` from Agent Chat. Use the \`lumos-wechat-assistant\` tools above because they synchronize the mirror and expose paging.
 - If the user names a follow-up or automation by title, resolve or list it first. If a name is ambiguous, list matching items and ask the user to choose; do not guess an id.
-- Automation \`message_template\` is the report/reminder content, not a delivery channel. If the user asks to "send it to me via WeChat/IM", explain the current boundary instead of putting that delivery request into \`message_template\` or claiming WeChat IM delivery is configured.
+- Automation \`message_template\` is the report/reminder content, not a delivery channel. Do not put a delivery request into \`message_template\`.
+- When the user asks to send/forward "that report" (the one an automation produced) to WeChat/IM, call \`read_wechat_automation_report\` first and reuse its \`report_markdown\` verbatim so the delivered content matches the in-app report exactly. Never re-run a message search to regenerate a different, lighter summary for forwarding. If \`found\` is false or \`has_full_report\` is false, tell the user the report is not ready instead of fabricating or re-summarizing one.
 - Do not expose raw wxid/openim/chatroom ids unless the user explicitly asks for technical details.
 - After a mutation tool succeeds, summarize the visible result and tell the user which tab can verify it.`;
 
@@ -107,6 +113,7 @@ export function createWeChatAssistantMcpServer(options: CreateWeChatAssistantMcp
         createBatchSetWeChatAutomationsEnabledTool(),
         createDeleteWeChatAutomationTool(),
         createDiagnoseWeChatAutomationTool(),
+        createReadWeChatAutomationReportTool(),
       ];
 
   return createSdkMcpServer({
@@ -744,6 +751,59 @@ function createDiagnoseWeChatAutomationTool() {
               ? '可在自动化卡片里点“最新结果”或“记录”查看完整执行详情。'
               : '可在自动化页查看这条规则的当前状态。',
           },
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+function createReadWeChatAutomationReportTool() {
+  return tool(
+    'read_wechat_automation_report',
+    'Read the full archived report text a WeChat Assistant automation already generated, so the exact same report can be forwarded (e.g. to WeChat/IM) without regenerating a different summary.',
+    {
+      automation_id: z.string().min(1)
+        .describe('Automation id from list_wechat_automations or resolve_wechat_automation.'),
+      report_id: z.string().min(1).optional()
+        .describe('Specific archived report/run id. Defaults to the latest successful report for this automation.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        const automation = listWeChatAutomations().find((item) => item.id === args.automation_id) ?? null;
+        if (!automation) throw new Error('未找到这条自动化');
+        const report = args.report_id
+          ? getArchivedWeChatAutomationReport(args.report_id)
+          : getLatestArchivedReportForAutomation(args.automation_id, { status: 'success' })
+            ?? getLatestArchivedReportForAutomation(args.automation_id);
+        if (!report) {
+          return jsonResult({
+            schema: 'wechat-assistant-automation-report/v1',
+            found: false,
+            automation: { id: automation.id, name: automation.name },
+            guidance: '这条自动化还没有已归档的报告，可先触发执行或检查运行状态；不要用临时重新汇总的内容冒充这份报告。',
+          });
+        }
+        if (args.report_id && report.automationId && report.automationId !== args.automation_id) {
+          throw new Error('指定的报告不属于这条自动化');
+        }
+        const hasBody = report.reportMarkdown.trim().length > 0;
+        return jsonResult({
+          schema: 'wechat-assistant-automation-report/v1',
+          found: true,
+          automation: { id: automation.id, name: automation.name },
+          report: {
+            id: report.id,
+            status: report.status,
+            completed_at: report.completedAt,
+            summary: report.summary,
+            report_markdown: report.reportMarkdown,
+            has_full_report: hasBody,
+          },
+          guidance: hasBody
+            ? '转发到微信/IM 时请直接使用 report_markdown 原文，不要重新汇总或改写，保证与应用内报告一致。'
+            : '这条报告没有正文（可能执行失败），请按 status/summary 说明情况，不要伪造报告正文。',
         });
       } catch (error) {
         return errorResult(error);

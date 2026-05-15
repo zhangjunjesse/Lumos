@@ -47,6 +47,25 @@ function normalizeMcpArgsForRuntime(args: unknown): string[] {
   return [];
 }
 
+/**
+ * Internal Lumos API origin for stdio MCP servers that call back into the
+ * Next.js server (douyin-collector, x-platform, goofish-search, …).
+ *
+ * This runs inside the Next.js server process. Electron forks that process
+ * with PORT set to the packaged port (43127 by default, overridable via
+ * LUMOS_SERVER_PORT). Without injecting this, those MCPs fall back to :3000
+ * and fail with "fetch failed" in packaged builds where nothing listens on
+ * 3000. 127.0.0.1 (not localhost) avoids Node's localhost→::1 resolution
+ * hitting an IPv4-only listener.
+ */
+function resolveLumosInternalUrl(): string {
+  const port =
+    process.env.PORT?.trim() ||
+    process.env.LUMOS_SERVER_PORT?.trim() ||
+    '3000';
+  return `http://127.0.0.1:${port}`;
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline: load → resolve paths → enrich env → filter → return
 // ---------------------------------------------------------------------------
@@ -116,6 +135,16 @@ export function resolveEnabledMcpServers(
         resolved[key] = resolveMcpConfigPlaceholders(value, placeholderContext);
       }
       config.env = resolved;
+    }
+
+    // Step 2c: Inject the internal Lumos API origin for stdio MCPs that call
+    // back into the Next.js server. Skip if the config already pins it so an
+    // explicit override always wins.
+    if (config.command) {
+      const env = config.env || {};
+      if (!env.LUMOS_INTERNAL_URL?.trim()) {
+        config.env = { ...env, LUMOS_INTERNAL_URL: resolveLumosInternalUrl() };
+      }
     }
 
     // Step 3: Apply enricher (per-MCP runtime env injection)

@@ -145,4 +145,35 @@ describe('mcp server health persistence', () => {
     expect(config['goofish-search']).toBeDefined();
     expect(config.goofish).toBeUndefined();
   });
+
+  it('records MCP lifecycle and health events for memory v2 sleep analysis', () => {
+    const {
+      createMcpServer,
+      updateMcpServer,
+      updateMcpServerHealth,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- see afterEach above
+    } = require('../mcp-servers') as typeof import('../mcp-servers');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- see afterEach above
+    const { listMemoryV2CapabilityEvents } = require('@/lib/memory-v2/capability-events') as typeof import('@/lib/memory-v2/capability-events');
+
+    const server = createMcpServer({
+      name: 'capability-event-test',
+      command: 'node',
+      args: ['server.mjs'],
+      scope: 'user',
+      is_enabled: true,
+    });
+    updateMcpServer(server.id, { command: 'node2' });
+    updateMcpServerHealth(server.id, {
+      status: 'failed',
+      error: 'tools/list timeout',
+      tools: [],
+      transport: 'stdio',
+    });
+
+    const events = listMemoryV2CapabilityEvents();
+    expect(events.some((event) => event.capability_name === 'capability-event-test' && event.action === 'created')).toBe(true);
+    expect(events.some((event) => event.capability_name === 'capability-event-test' && event.action === 'updated')).toBe(true);
+    expect(events.some((event) => event.capability_name === 'capability-event-test' && event.action === 'health_checked' && event.status === 'failed')).toBe(true);
+  });
 });

@@ -159,6 +159,27 @@ export function getArchivedWeChatAutomationReport(id: string): WeChatArchivedRep
   return row ? mapReportRow(row) : null;
 }
 
+export function getLatestArchivedReportForAutomation(
+  automationId: string,
+  options: { status?: WeChatArchivedReportStatus } = {},
+): WeChatArchivedReport | null {
+  const cleanId = clean(automationId);
+  if (!cleanId) return null;
+  const params: unknown[] = [cleanId];
+  let statusClause = '';
+  if (options.status) {
+    statusClause = ' AND status = ?';
+    params.push(options.status);
+  }
+  const row = getDb().prepare(`
+    SELECT * FROM wechat_assistant_reports
+     WHERE automation_id = ? AND deleted_at IS NULL${statusClause}
+     ORDER BY started_at DESC, created_at DESC
+     LIMIT 1
+  `).get(...params) as ReportRow | undefined;
+  return row ? mapReportRow(row) : null;
+}
+
 export function deleteArchivedWeChatAutomationReport(
   id: string,
   options: { tombstoneMissing?: boolean } = {},

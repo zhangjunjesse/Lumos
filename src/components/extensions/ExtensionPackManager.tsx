@@ -44,6 +44,7 @@ interface ImportPreviewData {
   conflictMcpServers: string[];
   invalidSkills: string[];
   invalidMcpServers: string[];
+  precheck?: ImportPrecheckData;
 }
 
 interface ImportResultData {
@@ -62,6 +63,26 @@ interface ImportResultData {
     failed: number;
   };
   messages: string[];
+  backupId?: string;
+  rollbackMessages?: string[];
+  precheck?: ImportPrecheckData;
+}
+
+interface ImportPrecheckData {
+  installAllowed: boolean;
+  blockedReasons: string[];
+  missingAcceptance: string[];
+  requiredReview: string[];
+  rollbackPlan?: string;
+  versionPlan?: string;
+  items?: Array<{
+    capabilityName: string;
+    scan: {
+      verdict: string;
+      riskLevel: string;
+      findings?: unknown[];
+    };
+  }>;
 }
 
 interface ExtensionPackManagerProps {
@@ -642,6 +663,28 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
               </div>
             )}
 
+            {preview?.precheck && (
+              <div className={cn(
+                "rounded-lg border p-3 text-xs leading-5",
+                preview.precheck.installAllowed
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  : "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200"
+              )}>
+                <div className="font-medium">
+                  安装前预检：{preview.precheck.installAllowed ? "可进入导入确认" : "已阻止导入"}
+                </div>
+                <div className="mt-1">
+                  扫描 {preview.precheck.items?.length || 0} 个能力产物；导入前会创建版本快照，失败时回滚。
+                </div>
+                {preview.precheck.blockedReasons.length > 0 && (
+                  <div className="mt-1">阻断：{preview.precheck.blockedReasons.slice(0, 3).join("；")}</div>
+                )}
+                {preview.precheck.requiredReview.length > 0 && (
+                  <div className="mt-1">需审：{preview.precheck.requiredReview.slice(0, 3).join("；")}</div>
+                )}
+              </div>
+            )}
+
             {preview && (conflictCount > 0 || invalidCount > 0) && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
                 <div className="mb-2 flex flex-wrap items-center gap-2 font-medium">
@@ -729,6 +772,14 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
                     {t("extensions.packSummaryFailed")}: {importResult.skills.failed + importResult.mcpServers.failed}
                   </p>
                 )}
+                {importResult.backupId && (
+                  <p className="mt-1">治理快照：{importResult.backupId}</p>
+                )}
+                {importResult.rollbackMessages && importResult.rollbackMessages.length > 0 && (
+                  <p className="mt-1 text-amber-700 dark:text-amber-200">
+                    已回滚：{importResult.rollbackMessages.slice(0, 3).join("；")}
+                  </p>
+                )}
                 {importResult.messages.length > 0 && (
                   <div className="mt-2">
                     <button
@@ -769,7 +820,7 @@ export function ExtensionPackManager({ onImported }: ExtensionPackManagerProps) 
             </Button>
             <Button
               onClick={handleApplyImport}
-              disabled={importing || previewLoading || !rawPack}
+              disabled={importing || previewLoading || !rawPack || preview?.precheck?.installAllowed === false}
             >
               {importing && <HugeiconsIcon icon={Loading} className="mr-2 h-4 w-4 animate-spin" />}
               <HugeiconsIcon icon={ArrowUp01} className="mr-1.5 h-4 w-4" />

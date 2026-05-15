@@ -7,6 +7,8 @@ import {
 } from './reflection';
 import { generateMemoryV2ImprovementCandidates } from './self-improvement';
 import { summarizeNewMemoryV2FromMessages } from './auto-summary';
+import { summarizeNewMemoryV2CapabilityEvents } from './capability-events';
+import { runMemoryV2CapabilityDiscovery } from './capability-discovery';
 
 const ENABLED_KEY = 'memory_v2_sleep_enabled';
 const TIME_KEY = 'memory_v2_sleep_time';
@@ -275,8 +277,15 @@ export function runMemoryV2Sleep(params: {
 
   try {
     const autoMemory = summarizeNewMemoryV2FromMessages();
+    const capabilityDiscovery = runMemoryV2CapabilityDiscovery();
+    const capabilityEvents = summarizeNewMemoryV2CapabilityEvents();
     const report = buildMemoryV2ReflectionReport();
-    if (report.stats.total === 0 && autoMemory.created.length === 0) {
+    if (
+      report.stats.total === 0
+      && autoMemory.created.length === 0
+      && capabilityDiscovery.created.length === 0
+      && capabilityEvents.created.length === 0
+    ) {
       return finish({ status: 'skipped', report, error: 'no_memory_entries' });
     }
     const improvements = generateMemoryV2ImprovementCandidates();
@@ -303,6 +312,18 @@ export function runMemoryV2Sleep(params: {
           consideredMessages: autoMemory.considered,
           created: autoMemory.created.length,
           maxRowId: autoMemory.maxRowId,
+        },
+        capabilityEvents: {
+          scanned: capabilityEvents.scanned,
+          created: capabilityEvents.created.length,
+          maxRowId: capabilityEvents.maxRowId,
+        },
+        capabilityDiscovery: {
+          scanned: capabilityDiscovery.scanned,
+          created: capabilityDiscovery.created.length,
+          skipped: capabilityDiscovery.skipped,
+          sourceCounts: capabilityDiscovery.sourceCounts,
+          mode: 'sleep-local',
         },
       },
     });

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type { SkillDefinition } from '@/types';
 import { getDb } from './connection';
+import { recordMemoryV2CapabilityEvent } from '@/lib/memory-v2/capability-events';
 
 // ==========================================
 // Skill Database Types
@@ -82,7 +82,23 @@ export function createSkill(data: CreateSkillData): SkillRecord {
     now,
   );
 
-  return getSkill(id)!;
+  const record = getSkill(id)!;
+  recordMemoryV2CapabilityEvent({
+    capabilityType: 'skill',
+    capabilityName: record.name,
+    scope: record.scope,
+    action: 'created',
+    status: 'success',
+    source: record.scope === 'builtin' ? 'builtin-resource-sync' : 'skill-manager',
+    summary: record.description,
+    relatedId: record.id,
+    version: record.content_hash,
+    metadata: {
+      enabled: record.is_enabled === 1,
+      contentHash: record.content_hash,
+    },
+  });
+  return record;
 }
 
 export function updateSkill(id: string, data: UpdateSkillData): SkillRecord | undefined {
@@ -100,12 +116,45 @@ export function updateSkill(id: string, data: UpdateSkillData): SkillRecord | un
     'UPDATE skills SET description = ?, file_path = ?, content_hash = ?, is_enabled = ?, updated_at = ? WHERE id = ?'
   ).run(description, filePath, contentHash, isEnabled, now, id);
 
-  return getSkill(id);
+  const updated = getSkill(id);
+  if (updated) {
+    const changed = existing.content_hash !== updated.content_hash || existing.description !== updated.description;
+    recordMemoryV2CapabilityEvent({
+      capabilityType: 'skill',
+      capabilityName: updated.name,
+      scope: updated.scope,
+      action: changed ? 'updated' : (updated.is_enabled === 1 ? 'enabled' : 'disabled'),
+      status: 'success',
+      source: updated.scope === 'builtin' ? 'builtin-resource-sync' : 'skill-manager',
+      summary: updated.description,
+      relatedId: updated.id,
+      version: updated.content_hash,
+      metadata: {
+        enabled: updated.is_enabled === 1,
+        contentHashChanged: existing.content_hash !== updated.content_hash,
+      },
+    });
+  }
+  return updated;
 }
 
 export function deleteSkill(id: string): boolean {
   const db = getDb();
+  const existing = getSkill(id);
   const result = db.prepare('DELETE FROM skills WHERE id = ?').run(id);
+  if (result.changes > 0 && existing) {
+    recordMemoryV2CapabilityEvent({
+      capabilityType: 'skill',
+      capabilityName: existing.name,
+      scope: existing.scope,
+      action: 'deleted',
+      status: 'success',
+      source: existing.scope === 'builtin' ? 'builtin-resource-sync' : 'skill-manager',
+      summary: existing.description,
+      relatedId: existing.id,
+      version: existing.content_hash,
+    });
+  }
   return result.changes > 0;
 }
 
@@ -113,6 +162,21 @@ export function toggleSkillEnabled(id: string, enabled: boolean): boolean {
   const db = getDb();
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const result = db.prepare('UPDATE skills SET is_enabled = ?, updated_at = ? WHERE id = ?').run(enabled ? 1 : 0, now, id);
+  if (result.changes > 0) {
+    const updated = getSkill(id);
+    if (updated) {
+      recordMemoryV2CapabilityEvent({
+        capabilityType: 'skill',
+        capabilityName: updated.name,
+        scope: updated.scope,
+        action: enabled ? 'enabled' : 'disabled',
+        status: 'success',
+        source: 'skill-manager',
+        summary: updated.description,
+        relatedId: updated.id,
+        version: updated.content_hash,
+      });
+    }
+  }
   return result.changes > 0;
 }
-

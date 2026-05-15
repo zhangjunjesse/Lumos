@@ -20,6 +20,12 @@ import {
   updateSkill,
 } from "@/lib/db";
 import { dataDir } from "@/lib/db/connection";
+import {
+  createExtensionInstallBackup,
+  rollbackExtensionInstallBackup,
+  runExtensionInstallPrecheck,
+  type ExtensionRollbackMutation,
+} from "@/lib/extensions/install-governance";
 
 export const runtime = "nodejs";
 
@@ -92,6 +98,7 @@ interface ImportPreview {
   conflictMcpServers: string[];
   invalidSkills: string[];
   invalidMcpServers: string[];
+  precheck?: ReturnType<typeof serializePrecheck>;
 }
 
 interface ImportResult {
@@ -110,6 +117,9 @@ interface ImportResult {
     failed: number;
   };
   messages: string[];
+  backupId?: string;
+  rollbackMessages?: string[];
+  precheck?: ReturnType<typeof serializePrecheck>;
 }
 
 interface SanitizedMap {
@@ -326,6 +336,53 @@ function validatePackMetadata(raw: Partial<ExtensionPack>): string | null {
   return null;
 }
 
+function serializePrecheck(precheck: ReturnType<typeof runExtensionInstallPrecheck>) {
+  return {
+    governanceId: precheck.governanceId,
+    source: precheck.source,
+    installAllowed: precheck.installAllowed,
+    userApprovalRequired: precheck.userApprovalRequired,
+    rewriteRequired: precheck.rewriteRequired,
+    blockedReasons: precheck.blockedReasons,
+    missingAcceptance: precheck.missingAcceptance,
+    requiredReview: precheck.requiredReview,
+    rollbackPlan: precheck.rollbackPlan,
+    versionPlan: precheck.versionPlan,
+    items: precheck.items.map((item) => ({
+      capabilityType: item.capabilityType,
+      capabilityName: item.capabilityName,
+      importId: item.importId,
+      rootPath: item.rootPath,
+      versionHash: item.versionHash,
+      scan: {
+        verdict: item.scan.verdict,
+        riskLevel: item.scan.riskLevel,
+        filesScanned: item.scan.filesScanned,
+        bytesScanned: item.scan.bytesScanned,
+        policy: item.scan.policy,
+        findings: item.scan.findings.slice(0, 20),
+        patterns: item.scan.patterns,
+        rewriteTarget: item.scan.rewriteTarget,
+      },
+    })),
+  };
+}
+
+function packToGovernanceInput(pack: ExtensionPack) {
+  return {
+    skills: pack.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      content: skill.content || "",
+    })),
+    mcpServers: pack.mcpServers.map((server) => ({
+      name: server.name,
+      description: server.description,
+      config: server.config,
+    })),
+  };
+}
+
 async function handleExport(body: ExportActionRequest): Promise<NextResponse> {
   const mode = body.options?.mode === "selected" ? "selected" : "all";
   const includeSkills = body.options?.includeSkills !== false;
@@ -484,6 +541,14 @@ async function handlePreviewImport(body: PreviewImportActionRequest): Promise<Ne
     }
   }
 
+  if (pack.skills.length + pack.mcpServers.length > 0) {
+    const precheck = runExtensionInstallPrecheck({
+      source: "extension-pack-preview",
+      ...packToGovernanceInput(pack),
+    });
+    preview.precheck = serializePrecheck(precheck);
+  }
+
   return NextResponse.json({
     success: true,
     preview,
@@ -498,6 +563,21 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
 
   const pack = normalizePack(body.pack);
   const strategy: ConflictStrategy = body.conflictStrategy || "replace";
+  const governanceInput = packToGovernanceInput(pack);
+  const precheck = pack.skills.length + pack.mcpServers.length > 0
+    ? runExtensionInstallPrecheck({
+        source: "extension-pack-apply",
+        ...governanceInput,
+      })
+    : null;
+  const serializedPrecheck = precheck ? serializePrecheck(precheck) : undefined;
+
+  if (precheck && !precheck.installAllowed) {
+    return NextResponse.json({
+      error: "安装前预检未通过，已阻止导入。请先处理阻断项或让能力生成器二开重写。",
+      precheck: serializedPrecheck,
+    }, { status: 422 });
+  }
 
   const result: ImportResult = {
     skills: {
@@ -515,9 +595,19 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
       failed: 0,
     },
     messages: [],
+    precheck: serializedPrecheck,
   };
 
   ensureDir(getUserSkillsDir());
+  const backup = createExtensionInstallBackup({
+    source: "extension-pack-apply",
+    ...governanceInput,
+  });
+  result.backupId = backup.id;
+  const mutation: ExtensionRollbackMutation = {
+    createdSkills: [],
+    createdMcpServers: [],
+  };
 
   for (const skill of pack.skills) {
     try {
@@ -565,6 +655,7 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
         content_hash: contentHash,
         is_enabled: enabled,
       });
+      mutation.createdSkills?.push(targetName);
 
       if (existing && strategy === "rename") {
         result.skills.renamed += 1;
@@ -613,6 +704,17 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
       const url = portableConfig.url || "";
       const description = server.description || server.config.description || `MCP server: ${targetName}`;
       const enabled = server.isEnabled !== false;
+      const contentHash = calculateHash(JSON.stringify({
+        command,
+        args,
+        env,
+        type,
+        runMode,
+        runtimeKind,
+        url,
+        headers,
+        description,
+      }));
 
       if (existing && strategy === "replace") {
         updateMcpServer(existing.id, {
@@ -626,6 +728,8 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
           headers,
           description,
           is_enabled: enabled,
+          source: "extension-pack-import",
+          content_hash: contentHash,
         });
         result.mcpServers.replaced += 1;
         continue;
@@ -644,8 +748,10 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
         headers,
         description,
         is_enabled: enabled,
-        source: "manual",
+        source: "extension-pack-import",
+        content_hash: contentHash,
       });
+      mutation.createdMcpServers?.push(targetName);
 
       if (existing && strategy === "rename") {
         result.mcpServers.renamed += 1;
@@ -663,9 +769,22 @@ async function handleApplyImport(body: ApplyImportActionRequest): Promise<NextRe
     }
   }
 
+  if (result.skills.failed > 0 || result.mcpServers.failed > 0) {
+    const rollbackMessages = rollbackExtensionInstallBackup(backup, mutation);
+    result.rollbackMessages = rollbackMessages;
+    result.messages.push("导入过程中出现失败，已按安装前快照回滚本次写入。");
+    result.messages.push(...rollbackMessages);
+    return NextResponse.json({
+      error: "导入失败，已回滚本次写入。",
+      result,
+      precheck: serializedPrecheck,
+    }, { status: 500 });
+  }
+
   return NextResponse.json({
     success: true,
     result,
+    precheck: serializedPrecheck,
   });
 }
 

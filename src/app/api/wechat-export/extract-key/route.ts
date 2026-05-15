@@ -115,11 +115,14 @@ export async function POST(): Promise<Response> {
           keysFound: result.keysFound,
           keysJsonPath: result.keysJsonPath,
           keyTxtPath: result.keyTxtPath,
+          logPath: result.logPath,
+          logTail: result.log.slice(-2000),
         });
       } else {
         send('error', {
           message: result.error || '提取失败,请查看日志。',
           log: result.log.slice(-2000),
+          logPath: result.logPath,
         });
       }
       controller.close();

@@ -625,14 +625,18 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const [diagnostics, setDiagnostics] = useState<WeChatMessageDbDiagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [repairNotice, setRepairNotice] = useState<string | null>(null);
 
-  const refreshDiagnostics = async () => {
+  const refreshDiagnostics = async (): Promise<WeChatMessageDbDiagnostics | null> => {
     setLoading(true);
     setError(null);
     try {
-      setDiagnostics(await fetchMessageDbDiagnostics());
+      const next = await fetchMessageDbDiagnostics();
+      setDiagnostics(next);
+      return next;
     } catch (err) {
       setError(err instanceof Error ? err.message : '诊断失败');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -647,6 +651,13 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const readable = diagnostics?.message_db_readable ?? 0;
   const mediaTotal = diagnostics?.media_db_total ?? 0;
   const skipped = diagnostics?.skipped_message_db_names?.join('、') || '';
+  const readableNames = diagnostics?.readable_message_db_names?.join('、') || '';
+  const unreadableStatuses = diagnostics?.message_db_statuses
+    ?.filter((item) => item.role === 'chat' && !item.readable)
+    .slice(0, 3) || [];
+  const latestReadableTs = diagnostics?.latest_readable_message_timestamp ?? 0;
+  const latestSessionTs = diagnostics?.latest_session_timestamp ?? 0;
+  const coverageStale = latestSessionTs > latestReadableTs;
   const signed = panel.status?.env?.signed;
   const isWindows = panel.status?.platform === 'win32';
   const windowsWechatRunning = panel.status?.env?.wechat.running !== false;
@@ -657,6 +668,9 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   const cardTone = hasReadableMessageDbs ? 'soft' : 'highlight';
   const title = hasReadableMessageDbs ? '部分消息库未解密' : '修复消息读取不完整';
   const runRepair = async () => {
+    setRepairNotice(null);
+    const beforeReadableNames = diagnostics?.readable_message_db_names?.join('|') || '';
+    const beforeReadable = readable;
     if (isWindows && !windowsWechatRunning) {
       setError('请先打开 Windows 微信并停留在主界面，然后重新检测。');
       return;
@@ -667,8 +681,16 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
       if (!relaxed) return;
       await sleep(8000);
     }
-    await panel.startExtract();
-    await refreshDiagnostics();
+    const ok = await panel.startExtract();
+    const after = await refreshDiagnostics();
+    if (!ok) return;
+    const afterReadable = after?.message_db_readable ?? 0;
+    const afterReadableNames = after?.readable_message_db_names?.join('|') || '';
+    if (afterReadable <= beforeReadable && afterReadableNames === beforeReadableNames) {
+      setRepairNotice('本次没有新增可读消息库。当前 AI 仍可读取已解密分片里的最新消息；剩余分片需要微信进程里能暴露对应密钥后才会补齐。');
+    } else if (afterReadable > beforeReadable) {
+      setRepairNotice(`已新增 ${afterReadable - beforeReadable} 个可读消息库。`);
+    }
   };
 
   if (!loading && !error && unreadable <= 0) return null;
@@ -683,7 +705,7 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
           </div>
           <p className="text-sm text-foreground/85 leading-relaxed">
             {hasReadableMessageDbs
-              ? '微信助手已经可以使用当前可读的消息库。未解密的库只会让部分会话详情或更早历史不完整，可以继续补全密钥。'
+              ? '微信助手和 AI 对话会优先使用当前可读的聊天分片；未解密分片只影响部分会话或更早历史的完整度，不代表今天消息一定不可读。'
               : '左侧会话列表读取的是摘要库，详情读取的是消息库。消息库密钥不完整时，会出现左侧最新、点进去旧消息或空白。'}
           </p>
         </div>
@@ -715,7 +737,29 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
               </div>
             ) : null}
             {skipped ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">未解密：{skipped}</div> : null}
+            {readableNames ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">可读：{readableNames}</div> : null}
+            {latestReadableTs > 0 ? (
+              <div className="mt-1 text-muted-foreground">
+                可读消息最新到 {formatWechatTimestamp(latestReadableTs)}
+                {coverageStale && latestSessionTs > 0 ? `；会话摘要最新到 ${formatWechatTimestamp(latestSessionTs)}，部分详情可能仍不完整。` : '。'}
+              </div>
+            ) : null}
+            {unreadableStatuses.length > 0 ? (
+              <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                {unreadableStatuses.map((item) => (
+                  <div key={item.name} className="break-all">
+                    {item.name}: {summarizeMessageDbError(item.error)}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
+
+          {repairNotice ? (
+            <div className="rounded-md border border-border/40 bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
+              {repairNotice}
+            </div>
+          ) : null}
 
           {runningExtract ? (
             <div className="rounded-md border border-border/40 bg-muted/20 p-3">
@@ -758,7 +802,7 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
 
           <div className="text-xs text-muted-foreground leading-relaxed">
             {isWindows
-              ? '修复过程会在本机完成。点击后，Lumos 会重新读取 WeChat.exe 里的数据库密钥，并合并保存到本地。'
+              ? '修复过程会在本机完成。点击后，Lumos 会重新读取 WeChat.exe 里的数据库密钥，并合并保存到本地；如果本次没有取到新分片密钥，当前可读消息不受影响。'
               : '修复过程会在本机完成。点击开始后，Lumos 会先处理微信读取保护，再自动重新提取消息库密钥；提取完成后，页面会继续提示你把微信恢复成原版。'}
           </div>
         </div>
@@ -897,6 +941,28 @@ function formatRelativeTime(epoch: number): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days} 天前`;
   return new Date(epoch).toLocaleDateString('zh-CN');
+}
+
+function formatWechatTimestamp(ts: number): string {
+  if (!Number.isFinite(ts) || ts <= 0) return '未知';
+  const date = new Date(ts * 1000);
+  if (Number.isNaN(date.getTime())) return '未知';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function summarizeMessageDbError(error?: string): string {
+  const text = (error || '').trim();
+  if (!text) return '暂未取到可用密钥或无法识别消息表';
+  if (text.includes('数据库密钥不匹配')) return '已找到库文件，但保存的密钥不匹配';
+  if (text.includes('未找到可用于')) return '缺少这个分片对应的密钥';
+  if (text.includes('database is locked')) return '数据库暂时被占用';
+  if (text.includes('no such table')) return '数据库已打开，但没有识别到普通聊天消息表';
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -886,6 +886,29 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_v2_improve_fingerprint
       ON memory_v2_improvement_candidates(fingerprint)
       WHERE fingerprint != '';
+
+    CREATE TABLE IF NOT EXISTS memory_v2_capability_events (
+      id TEXT PRIMARY KEY,
+      capability_type TEXT NOT NULL
+        CHECK(capability_type IN ('skill','mcp')),
+      capability_name TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'success'
+        CHECK(status IN ('success','failed','skipped','unknown')),
+      source TEXT NOT NULL DEFAULT 'system',
+      summary TEXT NOT NULL DEFAULT '',
+      detail TEXT NOT NULL DEFAULT '',
+      related_id TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_cap_event_name
+      ON memory_v2_capability_events(capability_type, capability_name, occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_cap_event_status
+      ON memory_v2_capability_events(status, occurred_at DESC);
   `);
 
   // Auto-create or mark "Built-in" provider from the embedded default API key

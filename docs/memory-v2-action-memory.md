@@ -59,9 +59,19 @@ Implemented:
 - Daily sleep mode: enabled by default, configurable with auto-save, and creates a main-agent `reflection` memory plus sleep history.
 - Daily sleep scans newly added user chat messages since the previous scan and automatically extracts high-confidence action memories.
 - Daily sleep also scans capability/reflection memory and creates self-improvement candidates for the Capability Builder.
+- Skill/MCP lifecycle, health events, and AI-side MCP tool call outcomes are recorded into a lightweight capability event log; daily sleep turns those events into capability/reflection memories, so failed health checks, failed tool calls, repeated updates, or newly installed capabilities can feed the same self-improvement loop.
+- Third-party Skill/MCP references can be recorded as isolated research events: discovered, quarantined, safety scanned, pattern learned, and rewrite planned. These records feed action memory and improvement candidates without installing or enabling the third-party code.
+- Capability Lab first slice: `/api/memory-v2/capability-lab` and the advanced Memory v2 UI can stage pasted third-party references under `<LUMOS_DATA_DIR>/capability-lab/imports/` and run static checks for secrets, dangerous execution, network/file access, env usage, dependency installs, and basic Skill/MCP structure.
+- Capability Lab downloader first slice: the same API/UI can download allowlisted HTTPS GitHub/raw/codeload/gist/zip references into the quarantine directory before scanning. Downloads still do not install, enable, or execute third-party code.
+- Capability Lab policy gate: scan results now include `policy.installAllowed / rewriteRequired / missingAcceptance / blockedReasons`, covering supply-chain scripts, high-risk dependencies, dangerous tool permissions, missing smoke tests, missing rollback notes, and missing permission boundaries.
+- Capability research intake: `/api/memory-v2/capability-lab/research` records candidates found by future GitHub, DeepSearch, Douyin, or manual research jobs, optionally using the allowlisted downloader.
+- Sleep-local capability discovery: daily sleep now scans existing action memories and capability failure records for repeated gaps, then records `github / deepsearch / douyin` research candidates with `discoveryMode=sleep-local` and `externalTaskState=not_started`. This is a conservative autonomous discovery path; it does not yet launch external DeepSearch, GitHub API, or Douyin crawler jobs.
+- Capability install governance first slice: Capability Builder Apply and extension-pack import now run a static install precheck before writing Skill/MCP records; rejected plans do not install. Passing installs create a version snapshot first, then write the capability, run MCP smoke tests when applicable, and try to roll back changed Skill/MCP/script/Python-package state if installation or self-test fails.
 
 Not implemented yet:
 
 - LLM-based semantic consolidation across long multi-turn conversations.
 - Entity-specific integrations for every module, such as `workflow:<id>` or `goofish-item:<id>`.
-- Automatic installation of evolved skills/capabilities without Capability Builder review.
+- Real external DeepSearch/GitHub/Douyin jobs that actively browse/search remote sources on a schedule; current autonomous discovery is local-memory only.
+- Deeper static analysis beyond the current policy/rule scanner, a full version-history UI, manual rollback UI, approval workflow, and runtime permission governance.
+- Fully automatic installation of evolved skills/capabilities without Capability Builder review.

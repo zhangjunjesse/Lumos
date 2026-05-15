@@ -42,6 +42,7 @@ import {
   assertLlmProviderCircuitClosed,
   recordLlmProviderFailure,
 } from '@/lib/llm-circuit-breaker';
+import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-events';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -403,6 +404,21 @@ function normalizeHistoryMessageForFallback(msg: { role: 'user' | 'assistant'; c
   return truncateHistoryText(raw, FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
 }
 
+interface PendingToolUseForMemory {
+  name: string;
+  startedAt: number;
+}
+
+function summarizeToolResultForMemory(content: string, isError: boolean): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (!normalized) return isError ? 'Tool returned an error without text.' : 'Tool returned an empty result.';
+  const redacted = normalized
+    .replace(/(password|passwd|pwd|token|api[_\s-]?key|secret|cookie|authorization|密钥|密码|令牌|登录态)\s*[:：=]\s*([^\s，,；;]+)/ig, '$1: [已隐藏]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, '[已隐藏敏感值]')
+    .replace(/\b(Bearer\s+[A-Za-z0-9._-]{12,})\b/ig, '[已隐藏敏感值]');
+  return redacted.length <= 420 ? redacted : `${redacted.slice(0, 417)}...`;
+}
+
 /**
  * Stream Claude responses using the Agent SDK.
  * Returns a ReadableStream of SSE-formatted strings.
@@ -556,6 +572,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       let resultHadError = false;
       let modelFirstResponseTimedOut = false;
       let modelFirstResponseTimer: ReturnType<typeof setTimeout> | undefined;
+      const pendingToolUsesForMemory = new Map<string, PendingToolUseForMemory>();
 
       const clearModelFirstResponseTimer = () => {
         if (modelFirstResponseTimer) {
@@ -1147,6 +1164,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                 for (const block of assistantMsg.message.content) {
                   if (block.type === 'tool_use') {
                     visibleContentEmitted = true;
+                    if (typeof block.name === 'string' && block.name.startsWith('mcp__')) {
+                      pendingToolUsesForMemory.set(block.id, {
+                        name: block.name,
+                        startedAt: Date.now(),
+                      });
+                    }
                     controller.enqueue(formatSSE({
                       type: 'tool_use',
                       data: JSON.stringify({
@@ -1177,6 +1200,21 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                               .map((c: { text: string }) => c.text)
                               .join('\n')
                           : String(block.content ?? '');
+                      const pendingTool = pendingToolUsesForMemory.get(block.tool_use_id);
+                      if (pendingTool) {
+                        recordMemoryV2McpToolCallEvent({
+                          toolName: pendingTool.name,
+                          status: block.is_error ? 'failed' : 'success',
+                          sessionId,
+                          source: 'claude-agent-sdk',
+                          summary: summarizeToolResultForMemory(resultContent, Boolean(block.is_error)),
+                          durationMs: Date.now() - pendingTool.startedAt,
+                          metadata: {
+                            resultChars: resultContent.length,
+                          },
+                        });
+                        pendingToolUsesForMemory.delete(block.tool_use_id);
+                      }
                       controller.enqueue(formatSSE({
                         type: 'tool_result',
                         data: JSON.stringify({

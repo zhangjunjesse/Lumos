@@ -373,6 +373,9 @@ function hasGapSignal(entry: MemoryV2Entry): boolean {
 
 function inferImprovementType(entry: MemoryV2Entry): MemoryV2ImprovementType {
   const text = textForEntry(entry);
+  const tags = parseMemoryV2Tags(entry.tags);
+  if (tags.includes('mcp') && !tags.includes('skill')) return 'mcp';
+  if (tags.includes('skill') && !tags.includes('mcp')) return 'skill';
   const wantsMcp = MCP_PATTERNS.some((pattern) => pattern.test(text));
   const wantsSkill = SKILL_PATTERNS.some((pattern) => pattern.test(text));
   if (wantsMcp) return 'mcp';

@@ -18,6 +18,8 @@ const mockTriggerWeChatAutomation = jest.fn();
 const mockUpdateWeChatAutomation = jest.fn();
 const mockDeleteWeChatAutomation = jest.fn();
 const mockRunSync = jest.fn();
+const mockGetArchivedReport = jest.fn();
+const mockGetLatestArchivedReportForAutomation = jest.fn();
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (...args: unknown[]) => mockCreateSdkMcpServer(...args),
@@ -48,6 +50,12 @@ jest.mock('@/lib/wechat-assistant/automations', () => ({
 jest.mock('@/lib/wechat-assistant/sync-engine', () => ({
   FRESH_WINDOW_MS: 5 * 60 * 1000,
   runSync: (...args: unknown[]) => mockRunSync(...args),
+}));
+
+jest.mock('@/lib/wechat-assistant/report-archive', () => ({
+  getArchivedWeChatAutomationReport: (...args: unknown[]) => mockGetArchivedReport(...args),
+  getLatestArchivedReportForAutomation: (...args: unknown[]) =>
+    mockGetLatestArchivedReportForAutomation(...args),
 }));
 
 import {
@@ -91,6 +99,7 @@ describe('wechat assistant MCP server', () => {
       'get_wechat_assistant_status',
       'list_wechat_automations',
       'list_wechat_followups',
+      'read_wechat_automation_report',
       'read_wechat_chat',
       'resolve_wechat_automation',
       'resolve_wechat_followup',
@@ -131,9 +140,13 @@ describe('wechat assistant MCP server', () => {
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('200-message limit is one page only');
   });
 
-  it('keeps WeChat IM delivery separate from automation content in the full hint', () => {
+  it('routes report forwarding through the archived report instead of re-summarizing', () => {
     expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('not a delivery channel');
-    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('WeChat IM delivery');
+    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('read_wechat_automation_report');
+    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain('reuse its `report_markdown` verbatim');
+    expect(WECHAT_ASSISTANT_MCP_SYSTEM_HINT).toContain(
+      'Never re-run a message search to regenerate a different, lighter summary',
+    );
   });
 
   it('search_wechat_messages returns product-facing fields', async () => {
@@ -449,6 +462,51 @@ describe('wechat assistant MCP server', () => {
     expect(text).toContain('每日微信总结');
     expect(text).toContain('a1');
     expect(text).toContain('match_score');
+  });
+
+  it('read_wechat_automation_report returns the archived report verbatim for forwarding', async () => {
+    createWeChatAssistantMcpServer();
+    const reportTool = findTool('read_wechat_automation_report');
+    mockListWeChatAutomations.mockReturnValue([automation({ id: 'a1', name: '每日微信总结' })]);
+    mockGetLatestArchivedReportForAutomation.mockReturnValue({
+      id: 'run-1',
+      automationId: 'a1',
+      automationName: '每日微信总结',
+      scheduleId: 's1',
+      runId: 'run-1',
+      status: 'success',
+      startedAt: '2026-05-15T01:00:00.000Z',
+      completedAt: '2026-05-15T01:02:00.000Z',
+      summary: '今日 3 个待办，2 个重点会话',
+      error: '',
+      reportMarkdown: '# 每日微信总结\n\n## 要点\n- 客户A确认下单\n\n## 待跟进\n- 回复客户B报价',
+      reportFileName: 'wechat-daily-summary.md',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const result = await reportTool.handler({ automation_id: 'a1' });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(mockGetLatestArchivedReportForAutomation).toHaveBeenCalledWith('a1', { status: 'success' });
+    expect(text).toContain('"found": true');
+    expect(text).toContain('客户A确认下单');
+    expect(text).toContain('回复客户B报价');
+    expect(text).toContain('"has_full_report": true');
+    expect(text).toContain('report_markdown 原文');
+  });
+
+  it('read_wechat_automation_report does not fabricate a report when none is archived', async () => {
+    createWeChatAssistantMcpServer();
+    const reportTool = findTool('read_wechat_automation_report');
+    mockListWeChatAutomations.mockReturnValue([automation({ id: 'a1', name: '每日微信总结' })]);
+    mockGetLatestArchivedReportForAutomation.mockReturnValue(null);
+
+    const result = await reportTool.handler({ automation_id: 'a1' });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(text).toContain('"found": false');
+    expect(text).toContain('不要用临时重新汇总的内容冒充');
   });
 
   it('delete_wechat_followup deletes the requested follow-up', async () => {

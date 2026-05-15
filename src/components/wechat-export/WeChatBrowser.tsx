@@ -395,6 +395,11 @@ function ChatDataWarning({ diagnostics }: { diagnostics?: WeChatMessageDbDiagnos
           详情消息可能不完整。左侧会话列表来自摘要库，右侧详情来自消息库；当前消息库可读 {readable}/{total}
           {skipped > 0 ? `，还有 ${skipped} 个消息库未解密` : ''}。
         </div>
+        {diagnostics.latest_readable_message_timestamp ? (
+          <div>
+            当前可读消息最新到 {formatSessionTime(diagnostics.latest_readable_message_timestamp)}；AI 对话可读取这些已解密分片里的最新消息。
+          </div>
+        ) : null}
         {mediaTotal > 0 ? (
           <div>另发现 {mediaTotal} 个媒体/业务库；它们不计入普通聊天文本完整度。</div>
         ) : null}

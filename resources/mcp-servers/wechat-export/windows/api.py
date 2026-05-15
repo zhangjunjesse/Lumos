@@ -538,18 +538,65 @@ def _message_db_status() -> list[dict]:
         role = "chat" if CHAT_MESSAGE_DB_RE.fullmatch(name) else "media"
         readable = False
         error = ""
+        latest_ts = 0
         if role == "chat":
             try:
                 with _connect(db_path) as conn:
                     readable = _table_exists(conn, "MSG") or _has_table_like(conn, "Msg_%")
+                    if readable:
+                        latest_ts = _latest_message_timestamp(conn)
+                    else:
+                        error = "数据库已打开，但未识别到普通聊天消息表"
             except Exception as err:  # noqa: BLE001
                 error = str(err)
         try:
             mtime = int(os.path.getmtime(db_path))
         except OSError:
             mtime = 0
-        items.append({"name": name, "path": db_path, "role": role, "readable": readable, "mtime": mtime, "error": error})
+        items.append({
+            "name": name,
+            "path": db_path,
+            "role": role,
+            "readable": readable,
+            "mtime": mtime,
+            "latest_message_timestamp": latest_ts,
+            "error": error,
+        })
     return items
+
+
+def _latest_message_timestamp(conn: sqlite3.Connection) -> int:
+    latest = 0
+    if _table_exists(conn, "MSG"):
+        try:
+            row = conn.execute("SELECT MAX(CreateTime) AS ts FROM MSG").fetchone()
+            latest = max(latest, _norm_ts(row["ts"] if row else 0))
+        except Exception:
+            pass
+        return latest
+
+    for table in _msg_tables(conn):
+        try:
+            row = conn.execute(f"SELECT MAX(create_time) AS ts FROM {table}").fetchone()
+            latest = max(latest, _norm_ts(row["ts"] if row else 0))
+        except Exception:
+            continue
+    return latest
+
+
+def _latest_session_timestamp() -> int:
+    try:
+        db_path = _encrypted_session_db()
+        with _connect(db_path) as conn:
+            if _table_exists(conn, "SessionTable"):
+                row = conn.execute("SELECT MAX(sort_timestamp) AS ts FROM SessionTable").fetchone()
+                return _norm_ts(row["ts"] if row else 0)
+            if _table_exists(conn, "Session"):
+                row = conn.execute("SELECT MAX(nTime) AS ts FROM Session").fetchone()
+                return _norm_ts(row["ts"] if row else 0)
+    except Exception:
+        return 0
+    return 0
 
 
 def _message_db_diagnostics() -> dict:
@@ -558,6 +605,7 @@ def _message_db_diagnostics() -> dict:
     media_items = [item for item in items if item["role"] != "chat"]
     readable = [item for item in chat_items if item["readable"]]
     skipped = [item for item in chat_items if not item["readable"]]
+    latest_readable_ts = max((item.get("latest_message_timestamp", 0) for item in readable), default=0)
     return {
         "message_db_total": len(chat_items),
         "message_db_readable": len(readable),
@@ -568,6 +616,19 @@ def _message_db_diagnostics() -> dict:
         "media_db_total": len(media_items),
         "media_db_names": [item["name"] for item in media_items],
         "latest_message_db_mtime": max((item["mtime"] for item in items), default=0),
+        "latest_readable_message_timestamp": latest_readable_ts,
+        "latest_session_timestamp": _latest_session_timestamp(),
+        "message_db_statuses": [
+            {
+                "name": item["name"],
+                "role": item["role"],
+                "readable": item["readable"],
+                "mtime": item["mtime"],
+                "latest_message_timestamp": item.get("latest_message_timestamp", 0),
+                "error": item.get("error", ""),
+            }
+            for item in items
+        ],
     }
 
 

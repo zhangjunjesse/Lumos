@@ -78,10 +78,20 @@ export interface WeChatMessageDbDiagnostics {
   media_db_total?: number;
   media_db_names?: string[];
   latest_message_db_mtime?: number;
+  latest_readable_message_timestamp?: number;
+  latest_session_timestamp?: number;
   session_last_timestamp?: number;
   latest_message_timestamp?: number;
   is_detail_incomplete?: boolean;
   is_detail_stale?: boolean;
   needs_reextract?: boolean;
+  message_db_statuses?: Array<{
+    name: string;
+    role: 'chat' | 'media' | string;
+    readable: boolean;
+    mtime?: number;
+    latest_message_timestamp?: number;
+    error?: string;
+  }>;
   error?: string;
 }

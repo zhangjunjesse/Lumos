@@ -17,6 +17,7 @@ import {
   KEY_FILE,
   KEYS_JSON_FILE,
   readWindowsPathConfig,
+  SETUP_LOG_FILE,
   WINDOWS_ACCOUNTS_FILE,
   type WeChatExportPlatform,
 } from './setup-state';
@@ -74,6 +75,8 @@ export interface KeyExtractionResult {
   error?: string;
   /** Full extraction log. */
   log: string;
+  /** Path to the persisted redacted extraction log, when available. */
+  logPath?: string;
 }
 
 function redactKeyMaterial(line: string): string {
@@ -88,6 +91,20 @@ function extractPythonError(log: string): string | null {
     if (/^(RuntimeError|FileNotFoundError|PermissionError):/.test(line)) return line;
   }
   return null;
+}
+
+function persistExtractionLog(log: string): string | undefined {
+  try {
+    ensureFeatureDir();
+    const header = [
+      '',
+      `===== ${new Date().toISOString()} wechat-export extract-key =====`,
+    ].join('\n');
+    fs.appendFileSync(SETUP_LOG_FILE, `${header}\n${log.trim()}\n`, { encoding: 'utf8', mode: 0o600 });
+    return SETUP_LOG_FILE;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -224,6 +241,7 @@ export async function extractKeys(
 
     child.on('close', (code) => {
       const log = extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf);
+      const logPath = persistExtractionLog(log);
       if (code !== 0) {
         const message = extractPythonError(log) || `extract_key.py 退出 code ${code}`;
         onProgress?.({
@@ -235,6 +253,7 @@ export async function extractKeys(
           keysFound: 0,
           error: message,
           log,
+          logPath,
         });
         return;
       }
@@ -263,6 +282,7 @@ export async function extractKeys(
         keysJsonPath: KEYS_JSON_FILE,
         keyTxtPath: KEY_FILE,
         log,
+        logPath,
       });
     });
   });

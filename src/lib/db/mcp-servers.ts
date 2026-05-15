@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { MCPServerConfig } from '@/types';
 import { getDb } from './connection';
+import { recordMemoryV2CapabilityEvent } from '@/lib/memory-v2/capability-events';
 
 // ==========================================
 // MCP Server Database Types
@@ -204,7 +205,25 @@ export function createMcpServer(data: CreateMcpServerData): McpServerRecord {
     now,
   );
 
-  return getMcpServer(id)!;
+  const record = getMcpServer(id)!;
+  recordMemoryV2CapabilityEvent({
+    capabilityType: 'mcp',
+    capabilityName: record.name,
+    scope: record.scope,
+    action: 'created',
+    status: 'success',
+    source: record.source || (record.scope === 'builtin' ? 'builtin-resource-sync' : 'mcp-manager'),
+    summary: record.description,
+    relatedId: record.id,
+    version: record.content_hash,
+    metadata: {
+      enabled: record.is_enabled === 1,
+      type: record.type,
+      runMode: record.run_mode,
+      runtime: record.runtime_kind,
+    },
+  });
+  return record;
 }
 
 export function updateMcpServer(id: string, data: UpdateMcpServerData): McpServerRecord | undefined {
@@ -243,7 +262,31 @@ export function updateMcpServer(id: string, data: UpdateMcpServerData): McpServe
     ).run(command, args, env, type, url, headers, runMode, runtimeKind, isEnabled, description, source, contentHash, now, id);
   }
 
-  return getMcpServer(id);
+  const updated = getMcpServer(id);
+  if (updated) {
+    const configChanged = shouldResetHealth(data);
+    const enabledChanged = existing.is_enabled !== updated.is_enabled;
+    recordMemoryV2CapabilityEvent({
+      capabilityType: 'mcp',
+      capabilityName: updated.name,
+      scope: updated.scope,
+      action: configChanged ? 'updated' : enabledChanged ? (updated.is_enabled === 1 ? 'enabled' : 'disabled') : 'updated',
+      status: 'success',
+      source: updated.source || (updated.scope === 'builtin' ? 'builtin-resource-sync' : 'mcp-manager'),
+      summary: updated.description,
+      relatedId: updated.id,
+      version: updated.content_hash,
+      metadata: {
+        enabled: updated.is_enabled === 1,
+        type: updated.type,
+        runMode: updated.run_mode,
+        runtime: updated.runtime_kind,
+        configChanged,
+        healthReset: configChanged,
+      },
+    });
+  }
+  return updated;
 }
 
 export function updateMcpServerHealth(id: string, data: McpServerHealthData): McpServerRecord | undefined {
@@ -274,12 +317,52 @@ export function updateMcpServerHealth(id: string, data: McpServerHealthData): Mc
     id,
   );
 
-  return getMcpServer(id);
+  const updated = getMcpServer(id);
+  if (updated) {
+    recordMemoryV2CapabilityEvent({
+      capabilityType: 'mcp',
+      capabilityName: updated.name,
+      scope: updated.scope,
+      action: 'health_checked',
+      status: data.status === 'ok' ? 'success' : data.status,
+      source: 'mcp-health-check',
+      summary: data.message || (data.status === 'ok' ? 'MCP protocol check passed' : 'MCP protocol check did not pass'),
+      detail: data.error || data.message || '',
+      relatedId: updated.id,
+      version: updated.content_hash,
+      metadata: {
+        type: updated.type,
+        transport: data.transport,
+        toolsCount: Array.isArray(data.tools) ? data.tools.length : 0,
+        tools: Array.isArray(data.tools) ? data.tools.slice(0, 40) : [],
+      },
+    });
+  }
+  return updated;
 }
 
 export function deleteMcpServer(id: string): boolean {
   const db = getDb();
+  const existing = getMcpServer(id);
   const result = db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  if (result.changes > 0 && existing) {
+    recordMemoryV2CapabilityEvent({
+      capabilityType: 'mcp',
+      capabilityName: existing.name,
+      scope: existing.scope,
+      action: 'deleted',
+      status: 'success',
+      source: existing.source || (existing.scope === 'builtin' ? 'builtin-resource-sync' : 'mcp-manager'),
+      summary: existing.description,
+      relatedId: existing.id,
+      version: existing.content_hash,
+      metadata: {
+        type: existing.type,
+        runMode: existing.run_mode,
+        runtime: existing.runtime_kind,
+      },
+    });
+  }
   return result.changes > 0;
 }
 
@@ -287,6 +370,27 @@ export function toggleMcpServerEnabled(id: string, enabled: boolean): boolean {
   const db = getDb();
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const result = db.prepare('UPDATE mcp_servers SET is_enabled = ?, updated_at = ? WHERE id = ?').run(enabled ? 1 : 0, now, id);
+  if (result.changes > 0) {
+    const updated = getMcpServer(id);
+    if (updated) {
+      recordMemoryV2CapabilityEvent({
+        capabilityType: 'mcp',
+        capabilityName: updated.name,
+        scope: updated.scope,
+        action: enabled ? 'enabled' : 'disabled',
+        status: 'success',
+        source: 'mcp-manager',
+        summary: updated.description,
+        relatedId: updated.id,
+        version: updated.content_hash,
+        metadata: {
+          type: updated.type,
+          runMode: updated.run_mode,
+          runtime: updated.runtime_kind,
+        },
+      });
+    }
+  }
   return result.changes > 0;
 }
 

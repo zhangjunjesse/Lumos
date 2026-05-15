@@ -37,6 +37,8 @@ type Sensitivity = "normal" | "sensitive_ref" | "secret_ref_required";
 type ImprovementType = "skill" | "mcp" | "workflow" | "prompt" | "rule";
 type ImprovementStatus = "candidate" | "approved" | "building" | "built" | "rejected" | "failed";
 type ImprovementRisk = "low" | "medium" | "high";
+type CapabilityLabType = "skill" | "mcp";
+type CapabilityLabVerdict = "safe" | "review_required" | "blocked" | "unknown";
 
 interface MemoryV2Item {
   id: string;
@@ -125,6 +127,30 @@ interface ImprovementCandidate {
   createdAt: string;
 }
 
+interface CapabilityLabScan {
+  verdict: CapabilityLabVerdict;
+  riskLevel: ImprovementRisk;
+  filesScanned: number;
+  findings: Array<{
+    id: string;
+    severity: string;
+    category: string;
+    message: string;
+    filePath: string;
+    evidence: string;
+  }>;
+  policy?: {
+    installAllowed: boolean;
+    rewriteRequired: boolean;
+    userApprovalRequired: boolean;
+    missingAcceptance: string[];
+    requiredReview: string[];
+    blockedReasons: string[];
+  };
+  patterns: string[];
+  rewriteTarget: string;
+}
+
 const KIND_LABELS: Record<MemoryKind, string> = {
   task: "任务账",
   people: "人/角色账",
@@ -194,6 +220,14 @@ const DEFAULT_DRAFT = {
   secretRef: "",
 };
 
+const DEFAULT_LAB_DRAFT = {
+  capabilityType: "skill" as CapabilityLabType,
+  capabilityName: "",
+  sourceUrl: "",
+  content: "",
+  download: false,
+};
+
 const DEFAULT_SLEEP_CONFIG: SleepConfig = {
   enabled: true,
   time: "03:30",
@@ -238,6 +272,20 @@ function riskClass(risk: ImprovementRisk): string {
   return "border-zinc-200 bg-zinc-50 text-zinc-600";
 }
 
+function labVerdictClass(verdict: CapabilityLabVerdict): string {
+  if (verdict === "safe") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (verdict === "blocked") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (verdict === "review_required") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-zinc-200 bg-zinc-50 text-zinc-600";
+}
+
+function labVerdictLabel(verdict: CapabilityLabVerdict): string {
+  if (verdict === "safe") return "可作为参考";
+  if (verdict === "blocked") return "禁止直装";
+  if (verdict === "review_required") return "需要审核";
+  return "未扫描";
+}
+
 export default function MemoryV2Page() {
   const router = useRouter();
   const [memories, setMemories] = useState<MemoryV2Item[]>([]);
@@ -256,6 +304,9 @@ export default function MemoryV2Page() {
   const [statusFilter, setStatusFilter] = useState<MemoryStatus | "all">("active");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [draft, setDraft] = useState(DEFAULT_DRAFT);
+  const [labDraft, setLabDraft] = useState(DEFAULT_LAB_DRAFT);
+  const [labScanning, setLabScanning] = useState(false);
+  const [labScan, setLabScan] = useState<CapabilityLabScan | null>(null);
   const [sleep, setSleep] = useState<SleepState | null>(null);
   const [sleepDraft, setSleepDraft] = useState<SleepDraft>({
     enabled: DEFAULT_SLEEP_CONFIG.enabled,
@@ -412,6 +463,38 @@ export default function MemoryV2Page() {
     }
   }
 
+  async function scanCapabilityReference() {
+    if (!labDraft.capabilityName.trim() || (!labDraft.content.trim() && (!labDraft.download || !labDraft.sourceUrl.trim()))) {
+      setError("能力名称和参考内容不能为空；如需自动下载，请填写来源链接并启用下载");
+      return;
+    }
+    setLabScanning(true);
+    setError("");
+    try {
+      const res = await fetch("/api/memory-v2/capability-lab", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          capabilityType: labDraft.capabilityType,
+          capabilityName: labDraft.capabilityName,
+          sourceUrl: labDraft.sourceUrl || undefined,
+          content: labDraft.content,
+          download: labDraft.download,
+          source: "memory-v2-ui",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "隔离扫描失败");
+      setLabScan(data.scan || null);
+      await generateImprovements();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "隔离扫描失败");
+    } finally {
+      setLabScanning(false);
+    }
+  }
+
   useEffect(() => {
     if (!sleepHydratedRef.current) return;
     const payload = JSON.stringify(sleepDraft);
@@ -541,13 +624,13 @@ export default function MemoryV2Page() {
               <div>
                 <h2 className="text-sm font-semibold">自我改进</h2>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  睡眠会从能力账和复盘账里自动发现缺口。真正安装 Skill/MCP 前仍由能力生成器把关。
+                  睡眠会从能力账、复盘账、Skill/MCP 操作、第三方隔离研究和 MCP 调用结果里自动发现缺口。真正安装 Skill/MCP 前仍由能力生成器把关。
                 </p>
               </div>
               <div className="mt-4 space-y-2">
                 {improvements.length === 0 ? (
                   <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-                    暂无改进候选。系统会在睡眠时继续扫描能力缺口。
+                    暂无改进候选。系统会在睡眠时继续扫描对话、能力缺口、Skill/MCP 操作、第三方隔离研究和 MCP 调用结果。
                   </div>
                 ) : improvements.slice(0, 6).map((candidate) => {
                   const busy = improvementActionId === candidate.id;
@@ -581,7 +664,7 @@ export default function MemoryV2Page() {
                 <div>
                   <h2 className="text-sm font-semibold">每日睡眠</h2>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    自动完成记忆自省、复盘入账和能力缺口扫描。
+                    自动完成对话提炼、Skill/MCP 操作、第三方隔离研究、调用复盘、记忆自省和能力缺口扫描。
                   </p>
                 </div>
                 <Badge variant={sleep?.config.enabled ? "secondary" : "outline"}>
@@ -740,11 +823,104 @@ export default function MemoryV2Page() {
             </section>
 
             <section className="rounded-lg border border-border bg-card p-4">
+              <div>
+                <h2 className="text-sm font-semibold">第三方能力隔离扫描</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  粘贴第三方 Skill/MCP 参考内容，只写入隔离区并做静态扫描；不会安装、启用或执行。
+                </p>
+              </div>
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-2">
+                  <LabeledSelect
+                    label="类型"
+                    value={labDraft.capabilityType}
+                    onChange={(value) => setLabDraft((prev) => ({ ...prev, capabilityType: value as CapabilityLabType }))}
+                    options={[
+                      { value: "skill", label: "Skill" },
+                      { value: "mcp", label: "MCP" },
+                    ]}
+                  />
+                  <Input
+                    value={labDraft.capabilityName}
+                    onChange={(event) => setLabDraft((prev) => ({ ...prev, capabilityName: event.target.value }))}
+                    placeholder="能力名称，例如 memory-reflect"
+                    aria-label="第三方能力名称"
+                  />
+                </div>
+                <Input
+                  value={labDraft.sourceUrl}
+                  onChange={(event) => setLabDraft((prev) => ({ ...prev, sourceUrl: event.target.value }))}
+                  placeholder="来源链接，可选；支持 GitHub / raw.githubusercontent.com / zip"
+                />
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
+                  <span className="leading-5 text-muted-foreground">
+                    从来源链接下载到隔离区。只允许 GitHub / raw / codeload / gist 的 HTTPS 链接，不安装、不执行。
+                  </span>
+                  <Switch
+                    checked={labDraft.download}
+                    onCheckedChange={(checked) => setLabDraft((prev) => ({ ...prev, download: checked }))}
+                    aria-label="启用第三方链接下载"
+                  />
+                </label>
+                <Textarea
+                  value={labDraft.content}
+                  onChange={(event) => setLabDraft((prev) => ({ ...prev, content: event.target.value }))}
+                  placeholder="粘贴第三方 SKILL.md、README、manifest 或 MCP 代码片段；启用链接下载时可留空"
+                  className="min-h-32 font-mono text-xs"
+                />
+                <Button type="button" className="w-full" variant="outline" onClick={scanCapabilityReference} disabled={labScanning}>
+                  {labScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldAlert className="mr-2 h-4 w-4" />}
+                  隔离保存并扫描
+                </Button>
+                {labScan && (
+                  <div className="rounded-md border border-border px-3 py-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={cn("rounded-full border px-2 py-0.5", labVerdictClass(labScan.verdict))}>
+                        {labVerdictLabel(labScan.verdict)}
+                      </span>
+                      <span className={cn("rounded-full border px-2 py-0.5", riskClass(labScan.riskLevel))}>
+                        风险 {labScan.riskLevel === "high" ? "高" : labScan.riskLevel === "medium" ? "中" : "低"}
+                      </span>
+                      <Badge variant="outline">扫描 {labScan.filesScanned} 个文件</Badge>
+                    </div>
+                    {labScan.patterns.length > 0 && (
+                      <div className="mt-2 text-muted-foreground">可学习：{labScan.patterns.join("；")}</div>
+                    )}
+                    {labScan.policy && (
+                      <div className="mt-2 rounded border border-border bg-muted/30 px-2 py-1.5 leading-5">
+                        <div className="font-medium">
+                          安装门禁：{labScan.policy.installAllowed ? "允许进入安装前确认" : "禁止直装，需二开或补验收"}
+                        </div>
+                        {labScan.policy.blockedReasons.length > 0 && (
+                          <div className="mt-1 text-rose-700">阻断：{labScan.policy.blockedReasons.slice(0, 3).join("；")}</div>
+                        )}
+                        {labScan.policy.missingAcceptance.length > 0 && (
+                          <div className="mt-1 text-amber-700">待补：{labScan.policy.missingAcceptance.join("；")}</div>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-2 whitespace-pre-wrap leading-5 text-muted-foreground">{labScan.rewriteTarget}</div>
+                    {labScan.findings.length > 0 && (
+                      <div className="mt-3 space-y-1.5">
+                        {labScan.findings.slice(0, 4).map((finding) => (
+                          <div key={finding.id} className="rounded border border-border bg-muted/30 px-2 py-1.5">
+                            <div className="font-medium">{finding.severity} · {finding.category} · {finding.filePath}</div>
+                            <div className="mt-0.5 text-muted-foreground">{finding.message}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold">能力缺口扫描</h2>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    从能力账和复盘账里找缺口，交给能力生成器写 Skill 或 MCP。
+                    从能力账、复盘账、Skill/MCP 操作、第三方隔离研究和 MCP 调用结果里找缺口，交给能力生成器写 Skill 或 MCP。
                   </p>
                 </div>
                 <Button type="button" size="sm" variant="outline" onClick={generateImprovements} disabled={generatingImprovements}>
