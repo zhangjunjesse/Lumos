@@ -24,6 +24,7 @@ import {
   resolveMcpConfigPlaceholders,
   type McpPlaceholderContext,
 } from '@/lib/mcp-config-placeholders';
+import { resolveMcpRuntimeCommand } from '@/lib/mcp-runtime-command';
 
 export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
@@ -115,6 +116,7 @@ export function resolveEnabledMcpServers(
     // Step 1a: Resolve path placeholders in command
     if (config.command) {
       config.command = resolveMcpConfigPlaceholders(config.command, placeholderContext);
+      config.command = resolveMcpRuntimeCommand(config);
     }
 
     // Step 1b: Resolve path placeholders in args

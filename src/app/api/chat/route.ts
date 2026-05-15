@@ -108,7 +108,7 @@ Available browser tools (call by exact name):
 - \`mcp__chrome_devtools__take_screenshot\` — take a screenshot. Params: \`pageId\`, optional \`filePath\`
 - \`mcp__chrome_devtools__evaluate_script\` — run JavaScript. Params: \`pageId\`, \`expression\`
 - \`mcp__chrome_devtools__close_page\` — close a tab. Params: \`pageId\`
-- \`mcp__chrome_devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array)
+- \`mcp__chrome_devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array), optional \`timeoutMs\`
 
 Workflow: call \`mcp__chrome_devtools__list_pages\` → get pageId → use other tools with that pageId.
 If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome_devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.

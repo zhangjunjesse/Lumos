@@ -7,6 +7,7 @@ import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
 import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
 import { resolveMcpConfigPlaceholders } from '@/lib/mcp-config-placeholders';
+import { resolveMcpRuntimeCommand } from '@/lib/mcp-runtime-command';
 
 const REQUEST_TIMEOUT_MS = 8000;
 const STREAMABLE_HTTP_PROTOCOL_VERSION = '2025-03-26';
@@ -323,7 +324,7 @@ export function normalizeMcpServerForSmokeTest(raw: unknown): MCPServerConfig {
     ? Object.fromEntries(Object.entries(source.env).map(([key, value]) => [key, resolvePlaceholders(String(value ?? ''))]))
     : {};
 
-  return {
+  const config: MCPServerConfig = {
     command: resolvePlaceholders(String(source.command || '')),
     args: Array.isArray(source.args) ? source.args.map((arg) => resolvePlaceholders(String(arg))) : [],
     env,
@@ -334,6 +335,8 @@ export function normalizeMcpServerForSmokeTest(raw: unknown): MCPServerConfig {
     headers: source.headers || {},
     description: source.description,
   };
+  config.command = resolveMcpRuntimeCommand(config);
+  return config;
 }
 
 function readResponse(

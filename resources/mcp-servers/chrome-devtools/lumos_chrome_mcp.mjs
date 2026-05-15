@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
 
-const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+const DEFAULT_WAIT_TIMEOUT_MS = 60_000;
+const DEFAULT_BRIDGE_TIMEOUT_MS = 30_000;
+const DEFAULT_NAVIGATE_BRIDGE_TIMEOUT_MS = 120_000;
+const DEFAULT_NEW_PAGE_BRIDGE_TIMEOUT_MS = 60_000;
+const DEFAULT_PAGE_READ_BRIDGE_TIMEOUT_MS = 60_000;
 const BACKGROUND_MODE = process.env.LUMOS_BROWSER_BACKGROUND === '1';
 
 const TOOLS = [
@@ -120,6 +124,7 @@ const TOOLS = [
         pageId: { type: 'string' },
         text: { type: 'array', items: { type: 'string' } },
         timeout: { type: 'number' },
+        timeoutMs: { type: 'number' },
       },
       required: ['text'],
     },
@@ -183,6 +188,31 @@ function buildBridgeUrl(baseUrl, pathname, browserContextId) {
   return url.toString();
 }
 
+function resolveDefaultBridgeTimeoutMs(pathname) {
+  switch (pathname) {
+    case '/v1/pages/navigate':
+      return DEFAULT_NAVIGATE_BRIDGE_TIMEOUT_MS;
+    case '/v1/pages/new':
+      return DEFAULT_NEW_PAGE_BRIDGE_TIMEOUT_MS;
+    case '/v1/pages/snapshot':
+    case '/v1/pages/screenshot':
+      return DEFAULT_PAGE_READ_BRIDGE_TIMEOUT_MS;
+    default:
+      return DEFAULT_BRIDGE_TIMEOUT_MS;
+  }
+}
+
+function resolveBridgeTimeoutMs(pathname, options = {}) {
+  if (typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+    return options.timeoutMs;
+  }
+
+  const bodyTimeoutMs = typeof options.body?.timeoutMs === 'number' && Number.isFinite(options.body.timeoutMs) && options.body.timeoutMs > 0
+    ? options.body.timeoutMs
+    : undefined;
+  return bodyTimeoutMs || resolveDefaultBridgeTimeoutMs(pathname);
+}
+
 async function callBridge(pathname, options = {}) {
   const { baseUrl, token, browserContextId, lockOwnerId } = getBridgeConfig();
   if (!baseUrl || !token) {
@@ -191,16 +221,30 @@ async function callBridge(pathname, options = {}) {
     );
   }
 
-  const res = await fetch(buildBridgeUrl(baseUrl, pathname, browserContextId), {
-    method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-lumos-bridge-token': token,
-      ...(browserContextId ? { 'x-lumos-browser-context-id': browserContextId } : {}),
-      ...(lockOwnerId ? { 'x-lumos-browser-owner-id': lockOwnerId } : {}),
-    },
-    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
-  });
+  const timeoutMs = resolveBridgeTimeoutMs(pathname, options);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(buildBridgeUrl(baseUrl, pathname, browserContextId), {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-lumos-bridge-token': token,
+        ...(browserContextId ? { 'x-lumos-browser-context-id': browserContextId } : {}),
+        ...(lockOwnerId ? { 'x-lumos-browser-owner-id': lockOwnerId } : {}),
+      },
+      signal: controller.signal,
+      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Bridge request timed out (${timeoutMs}ms): ${pathname}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) {
@@ -477,7 +521,11 @@ async function handleTool(name, args) {
     case 'wait_for': {
       const text = Array.isArray(args?.text) ? args.text.filter((v) => typeof v === 'string' && v.trim()) : [];
       if (text.length === 0) throw new Error('wait_for requires non-empty text[]');
-      const timeoutMs = typeof args?.timeout === 'number' ? args.timeout : DEFAULT_WAIT_TIMEOUT_MS;
+      const timeoutMs = typeof args?.timeoutMs === 'number'
+        ? args.timeoutMs
+        : typeof args?.timeout === 'number'
+          ? args.timeout
+          : DEFAULT_WAIT_TIMEOUT_MS;
       const pageId = await resolveExplicitPageId(args?.pageId, 'wait_for');
       return withBridgeRetry(
         (resolvedPageId) => callBridge('/v1/pages/wait-for', {

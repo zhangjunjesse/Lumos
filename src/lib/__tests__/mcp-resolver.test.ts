@@ -18,17 +18,21 @@ jest.mock('@/lib/python-runtime', () => ({
 
 jest.mock('@/lib/runtime-resources', () => ({
   resolveRuntimeResourceRootFor: jest.fn(() => '/runtime'),
+  resolveRuntimeResourcePath: jest.fn(() => null),
 }));
 
 import { getEnabledMcpServersAsConfig } from '@/lib/db';
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver';
+import { resolveRuntimeResourcePath } from '@/lib/runtime-resources';
 import type { MCPServerConfig } from '@/types';
 
 const mockedGetEnabledMcpServersAsConfig = getEnabledMcpServersAsConfig as jest.MockedFunction<typeof getEnabledMcpServersAsConfig>;
+const mockedResolveRuntimeResourcePath = resolveRuntimeResourcePath as jest.MockedFunction<typeof resolveRuntimeResourcePath>;
 
 describe('mcp resolver', () => {
   beforeEach(() => {
     mockedGetEnabledMcpServersAsConfig.mockReturnValue({});
+    mockedResolveRuntimeResourcePath.mockReturnValue(null);
   });
 
   test('registers chrome-devtools with SDK-safe chrome_devtools name', () => {
@@ -136,5 +140,24 @@ describe('mcp resolver', () => {
       if (prevPort === undefined) delete process.env.PORT;
       else process.env.PORT = prevPort;
     }
+  });
+
+  test('uses bundled node runtime for node MCP servers when available', () => {
+    mockedResolveRuntimeResourcePath.mockReturnValue('/runtime/node-runtime/darwin/arm64/node');
+    mockedGetEnabledMcpServersAsConfig.mockReturnValue({
+      'chrome-devtools': {
+        command: 'node',
+        args: ['[RUNTIME_PATH]/mcp-servers/chrome-devtools/lumos_chrome_mcp.mjs'],
+        runtime: 'node',
+        env: {},
+      },
+    });
+
+    const resolved = resolveEnabledMcpServers();
+
+    expect(mockedResolveRuntimeResourcePath).toHaveBeenCalledWith(
+      expect.stringMatching(/^node-runtime[/\\]/),
+    );
+    expect(resolved?.['chrome-devtools'].command).toBe('/runtime/node-runtime/darwin/arm64/node');
   });
 });
