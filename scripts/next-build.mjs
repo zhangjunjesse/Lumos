@@ -36,13 +36,32 @@ function runtimeHiddenBase() {
   return process.env.LUMOS_NEXT_RUNTIME_HIDE_DIR || path.dirname(PROJECT_ROOT);
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function moveDir(source, target) {
+  // Windows briefly returns EPERM/EBUSY when antivirus (Defender) still holds
+  // handles on a freshly extracted tree — e.g. right after download-git-bash.mjs
+  // unpacks ~60MB and next-build.mjs tries to relocate it. Retry a few times,
+  // then fall back to copy+remove (same path as EXDEV across volumes).
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      if (attempt > 0) sleepSync(250 * attempt);
+      fs.renameSync(source, target);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (err?.code === 'EXDEV') break;
+      if (err?.code !== 'EPERM' && err?.code !== 'EBUSY') throw err;
+    }
+  }
   try {
-    fs.renameSync(source, target);
-  } catch (err) {
-    if (err?.code !== 'EXDEV') throw err;
     fs.cpSync(source, target, { recursive: true });
     fs.rmSync(source, { recursive: true, force: true });
+  } catch {
+    throw lastErr;
   }
 }
 
