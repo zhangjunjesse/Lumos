@@ -293,12 +293,11 @@ function buildDailyReporterPrompt(input: DailySummaryInput, base: DailySummaryRe
 }
 
 function buildNotification(input: DailySummaryInput, summary: string): string {
-  const topChats = input.data.rows.slice(0, 3);
   return [
     `微信助手：${input.automationName}`,
     summary,
-    topChats.length > 0 ? `重点会话：${topChats.map(rowDisplayName).join('、')}` : '',
-    input.todos.length > 0 ? `待跟进：${input.todos.length} 条` : '待跟进：暂无',
+    '',
+    '完整报告已生成，请打开微信助手「自动化 > 最近结果」查看同一份报告正文。',
   ].filter(Boolean).join('\n');
 }
 

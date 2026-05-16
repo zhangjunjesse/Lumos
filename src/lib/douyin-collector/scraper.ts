@@ -113,15 +113,11 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
   }
 
   const renderData = extractRenderData(html);
-  if (!renderData) {
-    return {
-      ok: false,
-      phase: 'parse',
-      reason: 'share 页未找到 RENDER_DATA 注入；douyin 可能已变更 SSR 结构，请等待下一轮迭代。',
-    };
-  }
-
-  const metadata = extractVideoFromRenderData(renderData, awemeId);
+  const renderMetadata = renderData ? extractVideoFromRenderData(renderData, awemeId) : null;
+  const htmlMetadata = extractVideoMetadataFromHtml(html, awemeId);
+  const metadata = isUsableVideoMetadata(renderMetadata)
+    ? mergeVideoMetadata(renderMetadata, htmlMetadata)
+    : htmlMetadata;
   // Sanity gate: a successful extract returning all-null payload means
   // the SSR matched the awemeId in some stub (e.g., navigation rail)
   // but the actual item_list is empty — typically a deleted / private
@@ -129,16 +125,56 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
   // library with a placeholder row that has no title, cover, or
   // play_addr (and would hard-fail any transcribe attempt).
   const usable =
-    metadata &&
-    (metadata.title || metadata.authorNickname || metadata.playAddrUrls.length > 0);
+    metadata && isUsableVideoMetadata(metadata);
   if (!usable) {
+    if (!renderData) {
+      return {
+        ok: false,
+        phase: 'parse',
+        reason:
+          'share 页未找到 _ROUTER_DATA / RENDER_DATA，也无法从页面标题、描述或封面提取视频信息；抖音可能已变更分享页结构或触发风控。',
+      };
+    }
     return {
       ok: false,
       phase: 'extract',
-      reason: 'RENDER_DATA 中未找到视频元数据；可能是分享被删除或地区受限。',
+      reason:
+        'share 页数据中未找到可用视频元数据；可能是分享被删除、地区受限，或抖音页面结构已变。',
     };
   }
   return { ok: true, metadata };
+}
+
+function isUsableVideoMetadata(
+  metadata: ScrapedVideoMetadata | null | undefined,
+): metadata is ScrapedVideoMetadata {
+  return Boolean(
+    metadata &&
+    (metadata.title || metadata.authorNickname || metadata.cover || metadata.playAddrUrls.length > 0),
+  );
+}
+
+function mergeVideoMetadata(
+  primary: ScrapedVideoMetadata,
+  fallback: ScrapedVideoMetadata | null,
+): ScrapedVideoMetadata {
+  if (!fallback) return primary;
+  return {
+    awemeId: primary.awemeId,
+    title: primary.title ?? fallback.title,
+    cover: primary.cover ?? fallback.cover,
+    duration: primary.duration ?? fallback.duration,
+    authorNickname: primary.authorNickname ?? fallback.authorNickname,
+    authorSecUid: primary.authorSecUid ?? fallback.authorSecUid,
+    nativeSubtitleUrls: uniqueStrings([
+      ...primary.nativeSubtitleUrls,
+      ...fallback.nativeSubtitleUrls,
+    ]),
+    playAddrUrls: uniqueStrings([
+      ...primary.playAddrUrls,
+      ...fallback.playAddrUrls,
+    ]),
+  };
 }
 
 /**
@@ -162,19 +198,14 @@ export function extractRenderData(html: string): unknown | null {
   // starting at the `=`'s following `{`. JSON has no unquoted `{`/`}`
   // outside strings, but strings can contain them — we step over string
   // tokens (with escape support) so brace counting stays accurate.
-  const anchorIdx = html.indexOf('window._ROUTER_DATA');
-  if (anchorIdx >= 0) {
-    const start = html.indexOf('{', anchorIdx);
-    if (start >= 0) {
-      const end = findMatchingBrace(html, start);
-      if (end > start) {
-        try {
-          return JSON.parse(html.slice(start, end + 1));
-        } catch {
-          /* fall through to legacy */
-        }
-      }
-    }
+  for (const globalName of [
+    'window._ROUTER_DATA',
+    'window.__UNIVERSAL_DATA_FOR_REHYDRATION__',
+    'window.SIGI_STATE',
+    'window.__INITIAL_STATE__',
+  ]) {
+    const parsed = extractAssignedJson(html, globalName);
+    if (parsed) return parsed;
   }
   // Legacy RENDER_DATA path (kept for older fixtures / future fallback).
   const match = html.match(
@@ -192,6 +223,20 @@ export function extractRenderData(html: string): unknown | null {
     } catch {
       return null;
     }
+  }
+}
+
+function extractAssignedJson(html: string, anchor: string): unknown | null {
+  const anchorIdx = html.indexOf(anchor);
+  if (anchorIdx < 0) return null;
+  const start = html.indexOf('{', anchorIdx);
+  if (start < 0) return null;
+  const end = findMatchingBrace(html, start);
+  if (end <= start) return null;
+  try {
+    return JSON.parse(html.slice(start, end + 1));
+  } catch {
+    return null;
   }
 }
 
@@ -229,13 +274,24 @@ function findMatchingBrace(s: string, startIdx: number): number {
 
 interface MaybeAweme {
   aweme_id?: string;
+  aweme_id_str?: string;
   awemeId?: string;
+  awemeIdStr?: string;
+  item_id?: string;
+  itemId?: string;
+  group_id_str?: string;
+  groupId?: string;
   desc?: string;
+  title?: string;
   duration?: number;
   video?: {
     cover?: { url_list?: string[]; urlList?: string[] };
+    origin_cover?: { url_list?: string[]; urlList?: string[] };
+    dynamic_cover?: { url_list?: string[]; urlList?: string[] };
     duration?: number;
-    play_addr?: { url_list?: string[] };
+    play_addr?: { url_list?: string[]; urlList?: string[] };
+    playAddr?: { url_list?: string[]; urlList?: string[] };
+    download_addr?: { url_list?: string[]; urlList?: string[] };
     caption_infos?: CaptionInfo[];
     caption?: { caption_infos?: CaptionInfo[] };
   };
@@ -243,6 +299,10 @@ interface MaybeAweme {
     nickname?: string;
     sec_uid?: string;
     secUid?: string;
+  };
+  share_info?: {
+    share_title?: string;
+    shareTitle?: string;
   };
   caption_infos?: CaptionInfo[];
   caption?: { caption_infos?: CaptionInfo[] };
@@ -269,6 +329,10 @@ export function extractVideoFromRenderData(
   const cover =
     pickString(aweme.video?.cover?.url_list) ??
     pickString(aweme.video?.cover?.urlList) ??
+    pickString(aweme.video?.origin_cover?.url_list) ??
+    pickString(aweme.video?.origin_cover?.urlList) ??
+    pickString(aweme.video?.dynamic_cover?.url_list) ??
+    pickString(aweme.video?.dynamic_cover?.urlList) ??
     pickString(aweme.cover?.url_list) ??
     null;
   const durationMs =
@@ -280,11 +344,18 @@ export function extractVideoFromRenderData(
 
   const subtitles = collectSubtitleUrls(aweme);
 
-  const playAddrUrls = pickStringList(aweme.video?.play_addr?.url_list);
+  const playAddrUrls = uniqueStrings([
+    ...pickStringList(aweme.video?.play_addr?.url_list),
+    ...pickStringList(aweme.video?.play_addr?.urlList),
+    ...pickStringList(aweme.video?.playAddr?.url_list),
+    ...pickStringList(aweme.video?.playAddr?.urlList),
+    ...pickStringList(aweme.video?.download_addr?.url_list),
+    ...pickStringList(aweme.video?.download_addr?.urlList),
+  ]);
 
   return {
     awemeId,
-    title: typeof aweme.desc === 'string' && aweme.desc ? aweme.desc : null,
+    title: pickText(aweme.desc, aweme.title, aweme.share_info?.share_title, aweme.share_info?.shareTitle),
     cover,
     duration: durationMs ? Math.round(durationMs / 1000) : null,
     authorNickname:
@@ -298,9 +369,135 @@ export function extractVideoFromRenderData(
   };
 }
 
+export function extractVideoMetadataFromHtml(
+  html: string,
+  awemeId: string,
+): ScrapedVideoMetadata | null {
+  const description = getMetaContent(html, 'description') ?? '';
+  const titleTag = getTitleText(html) ?? '';
+  const title = parseShareTitle(description, titleTag);
+  const authorNickname = parseShareAuthor(description);
+  const cover =
+    getMetaContent(html, 'og:image') ??
+    getMetaContent(html, 'twitter:image') ??
+    getPosterImage(html) ??
+    null;
+  const playAddrUrls = extractPlayAddrUrlsFromHtml(html);
+  if (!title && !authorNickname && !cover && playAddrUrls.length === 0) return null;
+  return {
+    awemeId,
+    title,
+    cover,
+    duration: null,
+    authorNickname,
+    authorSecUid: null,
+    nativeSubtitleUrls: [],
+    playAddrUrls,
+  };
+}
+
+function parseShareTitle(description: string, titleTag: string): string | null {
+  const desc = decodeHtmlEntities(description).trim();
+  const m = /^(.*?)\s*-\s*[^-]{1,100}?于\d{4}/.exec(desc);
+  const value = (m?.[1] || titleTag || desc)
+    .replace(/\s*-\s*抖音\s*$/, '')
+    .trim();
+  return value || null;
+}
+
+function parseShareAuthor(description: string): string | null {
+  const desc = decodeHtmlEntities(description).trim();
+  const m = /\s-\s([^-\n]{1,100}?)于\d{4}/.exec(desc);
+  const value = m?.[1]?.trim();
+  return value || null;
+}
+
+function getTitleText(html: string): string | null {
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const value = match?.[1] ? decodeHtmlEntities(match[1]).trim() : '';
+  return value || null;
+}
+
+function getMetaContent(html: string, name: string): string | null {
+  const wanted = name.toLowerCase();
+  const matches = html.match(/<meta\b[^>]*>/gi) ?? [];
+  for (const tag of matches) {
+    const attrs = parseAttrs(tag);
+    const key = (attrs.name || attrs.property || attrs.itemprop || '').toLowerCase();
+    if (key !== wanted) continue;
+    const content = attrs.content?.trim();
+    if (content) return decodeHtmlEntities(content);
+  }
+  return null;
+}
+
+function getPosterImage(html: string): string | null {
+  const matches = html.match(/<img\b[^>]*>/gi) ?? [];
+  let fallback: string | null = null;
+  for (const tag of matches) {
+    const attrs = parseAttrs(tag);
+    const src = decodeHtmlEntities(attrs.src || attrs['data-src'] || '').trim();
+    if (!src) continue;
+    if (!fallback && /douyinpic|byteimg|bytedance/i.test(src)) fallback = src;
+    if (/\bposter\b/i.test(attrs.class || '')) return src;
+  }
+  return fallback;
+}
+
+function extractPlayAddrUrlsFromHtml(html: string): string[] {
+  const normalized = normalizeEmbeddedText(html);
+  const urls = normalized.match(/https?:\/\/[^"'<>\s]+/g) ?? [];
+  return uniqueStrings(urls
+    .map((url) => decodeHtmlEntities(url).replace(/\\\//g, '/'))
+    .filter((url) => /(?:aweme|douyin|snssdk).*\/(?:aweme\/v1\/play|playwm|play)/i.test(url)));
+}
+
+function normalizeEmbeddedText(value: string): string {
+  return decodeHtmlEntities(value)
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/%2F/gi, '/')
+    .replace(/%3A/gi, ':')
+    .replace(/%3F/gi, '?')
+    .replace(/%3D/gi, '=')
+    .replace(/%26/gi, '&');
+}
+
+function parseAttrs(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z_:.-]+)\s*=\s*(["'])([\s\S]*?)\2/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tag))) {
+    attrs[m[1].toLowerCase()] = decodeHtmlEntities(m[3]);
+  }
+  return attrs;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function pickText(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function pickStringList(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return values.filter((v): v is string => typeof v === 'string' && v.length > 0);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
 }
 
 function collectSubtitleUrls(aweme: MaybeAweme): string[] {
@@ -349,7 +546,7 @@ function findAwemeNode(value: unknown, awemeId: string): MaybeAweme | null {
     if (seen.has(node as object)) continue;
     seen.add(node as object);
     const obj = node as MaybeAweme;
-    if (obj.aweme_id === awemeId || obj.awemeId === awemeId) return obj;
+    if (getAwemeId(obj) === awemeId) return obj;
     for (const key of Object.keys(node as Record<string, unknown>)) {
       stack.push({ node: (node as Record<string, unknown>)[key], depth: depth + 1 });
     }
@@ -616,17 +813,21 @@ function extractAwemeList(value: unknown): ScrapedVideoMetadata[] {
 function hasAwemeId(node: unknown): boolean {
   if (!node || typeof node !== 'object') return false;
   const obj = node as Record<string, unknown>;
-  return typeof obj.aweme_id === 'string' || typeof obj.awemeId === 'string';
+  return Boolean(getAwemeId(obj as MaybeAweme));
 }
 
 function videoFromAweme(node: unknown): ScrapedVideoMetadata | null {
   if (!node || typeof node !== 'object') return null;
   const obj = node as MaybeAweme;
-  const awemeId = obj.aweme_id ?? obj.awemeId;
+  const awemeId = getAwemeId(obj);
   if (typeof awemeId !== 'string' || !awemeId) return null;
   const cover =
     pickString(obj.video?.cover?.url_list) ??
     pickString(obj.video?.cover?.urlList) ??
+    pickString(obj.video?.origin_cover?.url_list) ??
+    pickString(obj.video?.origin_cover?.urlList) ??
+    pickString(obj.video?.dynamic_cover?.url_list) ??
+    pickString(obj.video?.dynamic_cover?.urlList) ??
     pickString(obj.cover?.url_list) ??
     null;
   const durationMs =
@@ -636,10 +837,17 @@ function videoFromAweme(node: unknown): ScrapedVideoMetadata | null {
         ? obj.duration
         : null;
   const subtitles = collectSubtitleUrls(obj);
-  const playAddrUrls = pickStringList(obj.video?.play_addr?.url_list);
+  const playAddrUrls = uniqueStrings([
+    ...pickStringList(obj.video?.play_addr?.url_list),
+    ...pickStringList(obj.video?.play_addr?.urlList),
+    ...pickStringList(obj.video?.playAddr?.url_list),
+    ...pickStringList(obj.video?.playAddr?.urlList),
+    ...pickStringList(obj.video?.download_addr?.url_list),
+    ...pickStringList(obj.video?.download_addr?.urlList),
+  ]);
   return {
     awemeId,
-    title: typeof obj.desc === 'string' && obj.desc ? obj.desc : null,
+    title: pickText(obj.desc, obj.title, obj.share_info?.share_title, obj.share_info?.shareTitle),
     cover,
     duration: durationMs ? Math.round(durationMs / 1000) : null,
     authorNickname:
@@ -651,4 +859,17 @@ function videoFromAweme(node: unknown): ScrapedVideoMetadata | null {
     nativeSubtitleUrls: subtitles,
     playAddrUrls,
   };
+}
+
+function getAwemeId(obj: MaybeAweme): string | null {
+  return pickText(
+    obj.aweme_id,
+    obj.aweme_id_str,
+    obj.awemeId,
+    obj.awemeIdStr,
+    obj.item_id,
+    obj.itemId,
+    obj.group_id_str,
+    obj.groupId,
+  );
 }

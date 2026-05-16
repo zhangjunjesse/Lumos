@@ -190,6 +190,13 @@ describe('wechat assistant automations store', () => {
       id: 'generate_report',
       type: 'agent',
     }));
+    expect(dsl.nodes[1]).toEqual(expect.objectContaining({
+      id: 'notify',
+      type: 'notification',
+      input: expect.objectContaining({
+        message: '{{ steps.generate_report.output.notification }}',
+      }),
+    }));
   });
 
   it('triggers the backing schedule for manual runs', async () => {

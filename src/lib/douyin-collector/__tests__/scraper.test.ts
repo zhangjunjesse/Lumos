@@ -1,4 +1,9 @@
-import { extractRenderData, extractVideoFromRenderData } from '../scraper';
+import {
+  extractRenderData,
+  extractVideoFromRenderData,
+  extractVideoMetadataFromHtml,
+  fetchVideoMetadata,
+} from '../scraper';
 
 const FIXTURE_RENDER_DATA = {
   app: {
@@ -65,6 +70,30 @@ describe('extractRenderData', () => {
     const data = extractRenderData(html);
     expect(data).toEqual({ hello: 'world' });
   });
+
+  it('extracts current window._ROUTER_DATA share-page JSON', () => {
+    const html = `<script>window._ROUTER_DATA = ${JSON.stringify({
+      loaderData: {
+        'video_(id)/page': {
+          videoInfoRes: {
+            item_list: [{
+              aweme_id: '7321234567890123456',
+              desc: 'new ssr',
+              video: { play_addr: { url_list: ['https://aweme.snssdk.com/aweme/v1/playwm/?video_id=x'] } },
+            }],
+          },
+        },
+      },
+    })}</script>`;
+
+    const data = extractRenderData(html);
+    const meta = extractVideoFromRenderData(data, '7321234567890123456');
+
+    expect(meta?.title).toBe('new ssr');
+    expect(meta?.playAddrUrls).toEqual([
+      'https://aweme.snssdk.com/aweme/v1/playwm/?video_id=x',
+    ]);
+  });
 });
 
 describe('extractVideoFromRenderData', () => {
@@ -124,5 +153,67 @@ describe('extractVideoFromRenderData', () => {
       'https://cdn.example.com/b.vtt',
       'https://cdn.example.com/c.json',
     ]));
+  });
+});
+
+describe('extractVideoMetadataFromHtml', () => {
+  it('falls back to share-page title, description and poster when JSON injection is missing', () => {
+    const html = [
+      '<html><head>',
+      '<title data-react-helmet="true">你对我的好我一直记得#双子座 - 抖音</title>',
+      '<meta name="description" content="你对我的好我一直记得#双子座 - 萧萧不吃辣于20240524发布在抖音，已经收获了315418个喜欢，来抖音，记录美好生活！"/>',
+      '</head><body>',
+      '<img class="poster" src="https://p3-sign.douyinpic.com/poster.webp?x=1&amp;y=2" />',
+      '</body></html>',
+    ].join('');
+
+    expect(extractVideoMetadataFromHtml(html, '7372484719365098803')).toEqual({
+      awemeId: '7372484719365098803',
+      title: '你对我的好我一直记得#双子座',
+      cover: 'https://p3-sign.douyinpic.com/poster.webp?x=1&y=2',
+      duration: null,
+      authorNickname: '萧萧不吃辣',
+      authorSecUid: null,
+      nativeSubtitleUrls: [],
+      playAddrUrls: [],
+    });
+  });
+});
+
+describe('fetchVideoMetadata', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('uses HTML metadata fallback when the share page has no JSON injection point', async () => {
+    const html = [
+      '<html><head>',
+      '<title>王自如相关视频 - 抖音</title>',
+      '<meta name="description" content="王自如相关视频 - 科技博主于20260515发布在抖音，来抖音，记录美好生活！"/>',
+      '</head><body>',
+      '<img class="poster" src="https://p3-sign.douyinpic.com/wang.webp" />',
+      '</body></html>',
+    ].join('');
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(new Response(html, { status: 200 })) as unknown as typeof globalThis.fetch;
+
+    const outcome = await fetchVideoMetadata('7372484719365098803');
+
+    expect(outcome).toEqual({
+      ok: true,
+      metadata: expect.objectContaining({
+        awemeId: '7372484719365098803',
+        title: '王自如相关视频',
+        cover: 'https://p3-sign.douyinpic.com/wang.webp',
+        authorNickname: '科技博主',
+      }),
+    });
   });
 });

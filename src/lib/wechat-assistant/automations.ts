@@ -363,7 +363,10 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
           type: 'object',
           properties: {
             summary: { type: 'string' },
-            notification: { type: 'string' },
+            notification: {
+              type: 'string',
+              description: '与报告正文同源的通知内容；每日总结成功时应直接使用完整 reportMarkdown。',
+            },
             reportPath: { type: 'string' },
             reportMarkdown: { type: 'string' },
           },
