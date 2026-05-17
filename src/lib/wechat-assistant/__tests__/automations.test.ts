@@ -5,6 +5,7 @@ import {
   ensureLegacyDailySummaryAutomation,
   listWeChatAutomations,
   parseAutomationSchedule,
+  resyncAutomationDslsForSummaryClassifyFix,
   triggerWeChatAutomation,
   updateWeChatAutomation,
 } from '../automations';
@@ -199,6 +200,46 @@ describe('wechat assistant automations store', () => {
     }));
   });
 
+  it('routes a custom 每日工作总结 (rich 工作群 instruction) through the real summary workflow, not echo', () => {
+    // 实测 bug 复现：name/template 里 微信 与 总结 间距远超旧正则的 6 字，
+    // 旧逻辑误判为普通提醒 → generic 分支把整段指令当消息发回用户。
+    const dsl = buildAutomationWorkflowDsl({
+      id: 'a1',
+      name: '每日工作总结',
+      kind: 'reminder_recurring',
+      cron: '0 21 * * *',
+      cronLabel: '每天 21:00',
+      action: {
+        kind: 'custom',
+        messageTemplate:
+          '汇总今天，注意是今天的所有工作群微信消息，注意是工作群标签的，汇总之前，需要更新微信消息内容，提炼以下内容：1. 今日重点话题，事件。2. 今日待办事项 3. 今日需要跟进的人 4. 其他值得注意的信息。整理完成后，通过微信发送给我，如果没有，就说今日无工作。',
+      },
+      enabled: true,
+      createdAt: 1,
+    });
+    const artifact = generateWorkflowFromDsl(dsl);
+    expect(artifact.validation.valid).toBe(true);
+    expect(artifact.manifest.stepTypes).toEqual(['agent', 'notification']);
+    // 用户的详细指令通过 summary 路径透传给 handler（不再被丢弃/回显）。
+    expect(JSON.stringify(dsl.nodes[0])).toContain('提炼以下内容');
+  });
+
+  it('keeps a pure reminder that merely mentions 微信 as a plain notification', () => {
+    const dsl = buildAutomationWorkflowDsl({
+      id: 'a2',
+      name: '联系提醒',
+      kind: 'reminder_recurring',
+      cron: '0 9 * * *',
+      cronLabel: '每天 09:00',
+      action: { kind: 'custom', messageTemplate: '提醒我 9 点联系微信里的张总确认合同' },
+      enabled: true,
+      createdAt: 1,
+    });
+    const artifact = generateWorkflowFromDsl(dsl);
+    expect(artifact.validation.valid).toBe(true);
+    expect(artifact.manifest.stepTypes).toEqual(['notification']);
+  });
+
   it('triggers the backing schedule for manual runs', async () => {
     const created = await createWeChatAutomation({
       name: '每日微信总结',
@@ -290,6 +331,45 @@ describe('wechat assistant automations store', () => {
 
     expect(listWeChatAutomations()).toHaveLength(1);
     expect(listWeChatAutomations()[0]?.id).toBe('ok');
+  });
+
+  it('resync migration heals a pre-fix automation whose stored DSL was the echo-the-prompt generic shape', async () => {
+    const created = await createWeChatAutomation({
+      name: '每日工作总结',
+      kind: 'reminder_recurring',
+      cron: '0 21 * * *',
+      cronLabel: '每天 21:00',
+      action: {
+        kind: 'custom',
+        messageTemplate:
+          '汇总今天所有工作群微信消息，提炼今日重点、待办、需要跟进的人；没有就说今日无工作。',
+      },
+      enabled: true,
+    });
+    const scheduleId = created.scheduleId!;
+    // 模拟修复前：旧分类器误判 → 存了 generic 单 notification DSL（回显指令）。
+    schedules.set(scheduleId, {
+      ...(schedules.get(scheduleId) as Record<string, unknown>),
+      workflowDsl: {
+        version: 'v3',
+        name: 'stale',
+        nodes: [{ id: 'notify', type: 'notification', input: { message: '微信助手提醒：每日工作总结' } }],
+        edges: [],
+      },
+    });
+
+    await resyncAutomationDslsForSummaryClassifyFix();
+
+    const dsl = (schedules.get(scheduleId) as { workflowDsl: { nodes: Array<{ id: string; type: string }> } })
+      .workflowDsl;
+    expect(dsl.nodes.map((n) => n.type)).toEqual(['agent', 'notification']);
+    expect(dsl.nodes[0].id).toBe('generate_report');
+    expect(store.get('apps.wechat-assistant.automations.summary-classify-fix-migrated')).toBe('1');
+
+    // 幂等：再跑一次不应改动（key 已置位）。
+    const before = JSON.stringify(schedules.get(scheduleId));
+    await resyncAutomationDslsForSummaryClassifyFix();
+    expect(JSON.stringify(schedules.get(scheduleId))).toBe(before);
   });
 
   it('migrates the legacy enabled daily summary task into a real automation once', async () => {

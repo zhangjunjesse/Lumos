@@ -747,8 +747,10 @@ export async function initBuiltinResources(): Promise<void> {
     }
 
     try {
-      const { migrateAutomationDslsToMainAgent } = await import('./wechat-assistant/automations');
+      const { migrateAutomationDslsToMainAgent, resyncAutomationDslsForSummaryClassifyFix } =
+        await import('./wechat-assistant/automations');
       await migrateAutomationDslsToMainAgent();
+      await resyncAutomationDslsForSummaryClassifyFix();
     } catch (err) {
       console.error('[init-builtin-resources] wechat-assistant DSL migration error:', err);
     }

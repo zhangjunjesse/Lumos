@@ -32,6 +32,7 @@ export function listWeChatAutomations(): Automation[] {
 
 export async function ensureLegacyDailySummaryAutomation(): Promise<void> {
   await migrateAutomationDslsToMainAgent();
+  await resyncAutomationDslsForSummaryClassifyFix();
   const current = readAutomations();
   if (current.some(isWeChatSummaryAutomation)) return;
 
@@ -356,6 +357,9 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
               automationId: automation.id,
               automationName: automation.name,
               messageTemplate: automation.action.messageTemplate,
+              ...(automation.action.kind === 'wechat_summary' && automation.action.groupTagId
+                ? { groupTagId: automation.action.groupTagId }
+                : {}),
             },
           },
         },
@@ -390,12 +394,24 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
   };
 }
 
+const SUMMARY_VERB_RE = /总结|汇总|日报|日总结|摘要|提炼|梳理/;
+const WECHAT_SCOPE_RE = /微信|消息|群|聊天|会话/;
+
+/**
+ * 是否一条「微信消息总结」自动化（决定走真实总结 agent 工作流，而不是把
+ * 指令原文当提醒回显）。
+ *
+ * 语义双信号判定，取代原「微信 与 总结 须在 6 字内邻近」的脆弱正则——
+ * 后者对「每日工作总结 / 汇总今天…工作群微信消息…提炼」这类正常措辞间距
+ * 过远 → 误判为普通提醒 → generic 分支把整段指令当消息发回用户（实测 bug）。
+ * 现在只要 name+template 里**同时**出现总结类动词与微信/消息/群范围词
+ * （位置不限）即判为总结。纯提醒（有「微信」但无总结动词）不会被误判。
+ */
 function isWeChatSummaryAutomation(automation: Automation): boolean {
   if (automation.action.kind === 'wechat_summary') return true;
   if (automation.action.kind !== 'custom') return false;
-  return /微信.{0,6}(总结|摘要|日报|汇总)|总结.{0,6}微信|汇总.{0,6}微信/.test(
-    `${automation.name}\n${automation.action.messageTemplate}`,
-  );
+  const text = `${automation.name}\n${automation.action.messageTemplate}`;
+  return SUMMARY_VERB_RE.test(text) && WECHAT_SCOPE_RE.test(text);
 }
 
 function buildNotificationMessage(automation: Automation): string {
@@ -470,4 +486,42 @@ export async function migrateAutomationDslsToMainAgent(): Promise<void> {
   }
   writeAutomations(migrated);
   setSetting(DSL_MIGRATION_KEY, '1');
+}
+
+const SUMMARY_CLASSIFY_FIX_KEY =
+  'apps.wechat-assistant.automations.summary-classify-fix-migrated';
+
+/**
+ * 一次性重建存量自动化的 scheduled workflow DSL。
+ *
+ * 修复前 isWeChatSummaryAutomation 用脆弱的「微信×总结 6 字内邻近」正则，
+ * 把「每日工作总结 / 汇总今天…工作群微信消息…提炼」这类自动化误判为普通
+ * 提醒，存了 generic notification DSL —— 运行时把整段指令原文当消息回显给
+ * 用户（实测 bug），从不真正执行总结。分类器已修，但 DSL 是创建时存死、
+ * scheduler 不重建；存量坏自动化必须重跑 syncSchedule 才会用新分类器重生成
+ * 正确的「总结 agent → 通知」DSL。与 migrateAutomationDslsToMainAgent 同
+ * 模式、独立 key，只跑一次。
+ */
+export async function resyncAutomationDslsForSummaryClassifyFix(): Promise<void> {
+  if (getSetting(SUMMARY_CLASSIFY_FIX_KEY) === '1') return;
+  const current = readAutomations();
+  if (!current.length) {
+    setSetting(SUMMARY_CLASSIFY_FIX_KEY, '1');
+    return;
+  }
+  const rebuilt: Automation[] = [];
+  for (const automation of current) {
+    try {
+      rebuilt.push(await syncSchedule(automation));
+    } catch (error) {
+      console.warn(
+        '[wechat-assistant] summary-classify resync failed for automation',
+        automation.id,
+        error,
+      );
+      rebuilt.push(automation);
+    }
+  }
+  writeAutomations(rebuilt);
+  setSetting(SUMMARY_CLASSIFY_FIX_KEY, '1');
 }
