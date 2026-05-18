@@ -18,6 +18,7 @@ import { loadWeChatOverview } from './overview-loader';
 import { archiveWeChatAutomationReport } from './report-archive';
 import { getWeChatAssistantSettings } from './settings-store';
 import { runSync, type SyncResult } from './sync-engine';
+import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
 
 const DAILY_SUMMARY_HANDLER_ID = 'wechat-assistant.daily-summary';
 
@@ -67,6 +68,91 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
   }
 
   const settings = getWeChatAssistantSettings();
+
+  // 群标签范围：自动化绑定了 groupTagId 时，出"工作群日报"（标签解析 →
+  // 各群近 N 天消息 → LLM），与即时工具同一共享实现，避免双份。
+  //
+  // custom 类自动化（自然语言指令）的 action 没有 groupTagId 字段，结构上
+  // 带不了 tag。但用户常在指令里点名「工作群」等已配置标签（实测："注意是
+  // 工作群标签的"）。结构 param 缺失时按指令文本解析配置过的标签名，命中即
+  // 进 scoped 路径——否则会退回通用路径汇总全部消息、无视用户的标签范围。
+  let groupTagId = normalizeParam(ctx.params.groupTagId, '');
+  if (!groupTagId) {
+    const matched = resolveGroupTagFromInstruction(
+      `${automationName}\n${messageTemplate}`,
+      settings.groupTags,
+    );
+    if (matched) groupTagId = matched.id;
+  }
+  if (groupTagId) {
+    const tag = settings.groupTags.find((t) => t.id === groupTagId);
+    if (!tag) {
+      const message = `群标签未找到（id=${groupTagId}）；请到微信助手设置→群标签确认后再启用本自动化`;
+      await archiveDailySummary(ctx, {
+        automationId, automationName, status: 'error', summary: message, error: message,
+      });
+      return failed(message, sync);
+    }
+    // 动态 import：群标签路径较少触发，避免顶层拉入解析/总结依赖链
+    // （含 setup-state 的 path.join(dataDir,…) 模块级求值），以免污染
+    // workflow-handlers 的模块图（曾导致单测 dataDir undefined 加载失败）。
+    const { summarizeGroupTag } = await import('./group-tag-summary');
+    const r = await summarizeGroupTag({
+      tag,
+      days: settings.ai.windowDays,
+      scopeNote: messageTemplate,
+      settings,
+      signal: ctx.signal,
+    });
+    const md = r.summaryMarkdown || `# ${tag.name} 日报\n\n${r.summary}`;
+    const reportPath = path.join(ctx.outputDir, 'wechat-daily-summary.md');
+    await mkdir(ctx.outputDir, { recursive: true });
+    await writeFile(reportPath, md, 'utf8');
+    // 「没消息/标签空」是正常结果（周末工作群安静），不能误报 error；
+    // 只有真 LLM 失败、或解析失败/未配服务商（配置问题，需可见）才算 error。
+    const normalEmpty =
+      r.ai.status === 'skipped' &&
+      (r.ai.reason === 'tag_empty' || r.ai.reason === 'no_messages');
+    const ok = r.ai.status === 'success' || normalEmpty;
+    await archiveDailySummary(ctx, {
+      automationId,
+      automationName,
+      status: ok ? 'success' : 'error',
+      summary: r.summary,
+      reportMarkdown: md,
+      reportFileName: 'wechat-daily-summary.md',
+      error: ok ? undefined : (r.tagWarning ?? r.ai.reason ?? '未生成 AI 总结'),
+    });
+    return {
+      success: ok,
+      output: {
+        summary: r.summary,
+        notification: buildDailySummaryNotificationMessage(md),
+        reportPath,
+        reportMarkdown: md,
+        metrics: {
+          tag: tag.name,
+          resolvedGroups: r.resolvedGroupCount,
+          summarizedGroups: r.summarizedGroupCount,
+          skippedEmpty: r.skippedEmpty.length,
+          truncatedForBudget: r.truncatedForBudget.length,
+          aiSummaryStatus: r.ai.status,
+        },
+      },
+      metadata: {
+        syncStatus: sync.status,
+        syncReason: sync.reason ?? '',
+        inserted: sync.inserted,
+        seen: sync.seen,
+        reportPath,
+        aiSummaryStatus: r.ai.status,
+        aiSummaryProviderId: r.ai.providerId ?? '',
+        aiSummaryModel: r.ai.model ?? '',
+        aiSummaryError: r.ai.reason ?? '',
+      },
+    };
+  }
+
   const todos = selectTodosForDailySummary(
     listTodos({ status: ['open', 'suggested'] }),
     settings.excludedPersonIds,
@@ -188,6 +274,25 @@ function failed(message: string, sync?: SyncResult): StepResult {
 
 function normalizeParam(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+/**
+ * 从指令文本里解析用户点名的已配置群标签（如指令含「工作群」且配置过名为
+ * 「工作群」的标签）。子串匹配，最长标签名优先（更具体）；命中返回该标签。
+ * 用于 custom 自动化无结构 groupTagId 时把自然语言意图落成真实范围。
+ */
+export function resolveGroupTagFromInstruction(
+  text: string,
+  tags: GroupTag[],
+): GroupTag | null {
+  const hay = text.toLowerCase();
+  let best: GroupTag | null = null;
+  for (const tag of tags ?? []) {
+    const name = tag.name.trim().toLowerCase();
+    if (!name || !hay.includes(name)) continue;
+    if (!best || tag.name.trim().length > best.name.trim().length) best = tag;
+  }
+  return best;
 }
 
 function reasonLabel(reason: string): string {
