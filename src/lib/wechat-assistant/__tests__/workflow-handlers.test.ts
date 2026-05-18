@@ -40,8 +40,7 @@ jest.mock('../report-archive', () => ({
   archiveWeChatAutomationReport: (...args: unknown[]) => mockArchiveWeChatAutomationReport(...args),
 }));
 
-import { resolveGroupTagFromInstruction } from '../workflow-handlers';
-import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
+import '../workflow-handlers';
 
 describe('wechat assistant workflow handlers', () => {
   beforeEach(() => {
@@ -104,31 +103,5 @@ describe('wechat assistant workflow handlers', () => {
       reportMarkdown: markdown,
       reportFileName: 'wechat-daily-summary.md',
     }));
-  });
-});
-
-describe('resolveGroupTagFromInstruction', () => {
-  const tag = (id: string, name: string): GroupTag =>
-    ({ id, name, rule: { kind: 'manual', members: [], matchMode: 'any', groups: [], excludeGroups: [] }, resolved: null }) as GroupTag;
-
-  it('resolves the configured 工作群 tag from a natural-language instruction (the reported bug)', () => {
-    const tags = [tag('t1', '工作群'), tag('t2', '客户群')];
-    const text =
-      '每日工作总结\n汇总今天，注意是今天的所有工作群微信消息，注意是工作群标签的，提炼重点/待办/跟进人。';
-    expect(resolveGroupTagFromInstruction(text, tags)?.id).toBe('t1');
-  });
-
-  it('returns null when no configured tag name appears in the text', () => {
-    expect(resolveGroupTagFromInstruction('汇总今天微信消息', [tag('t1', '工作群')])).toBeNull();
-  });
-
-  it('prefers the longest (most specific) matching tag name', () => {
-    const tags = [tag('a', '工作群'), tag('b', '工作群-核心')];
-    expect(resolveGroupTagFromInstruction('总结工作群-核心的消息', tags)?.id).toBe('b');
-  });
-
-  it('is safe for empty / undefined tag lists', () => {
-    expect(resolveGroupTagFromInstruction('工作群', [])).toBeNull();
-    expect(resolveGroupTagFromInstruction('工作群', undefined as unknown as GroupTag[])).toBeNull();
   });
 });

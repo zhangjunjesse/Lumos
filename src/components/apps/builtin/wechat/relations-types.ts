@@ -88,6 +88,25 @@ export interface SuggestedFollowup {
 export type AutomationKind = 'reminder_once' | 'reminder_recurring';
 export type AutomationRunStatus = 'running' | 'success' | 'error' | 'cancelled' | '';
 
+/**
+ * 总结意图的结构化真源。用户的自然语言只在创建期被 normalizeAutomationDraft
+ * 解析一次成 SummarySpec 存进 automation；DSL 构建、handler 取数全部读这里，
+ * 不再在下游各层用启发式反推（旧架构 bug 类的根因）。
+ *
+ * 存在 summarySpec = 这是一条"总结"自动化；不存在 = 普通提醒。取代
+ * wechat_summary/custom 伪二分与 isWeChatSummaryAutomation 文本分类。
+ */
+export interface SummarySpec {
+  /** 取数范围：某群标签下的群，或全部会话。 */
+  scope: { kind: 'group_tag'; tagId: string } | { kind: 'all' };
+  /** 回看天数；缺省取 settings.ai.windowDays。 */
+  windowDays?: number;
+  /** 无可总结内容时发送的话术（如"今日无工作"）。 */
+  emptyMessage?: string;
+  /** 用户原始指令原话，作为 LLM 的 scopeNote 透传，绝不丢弃。 */
+  extraInstruction?: string;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -97,6 +116,11 @@ export interface Automation {
   cronLabel: string;
   /** What gets executed when it fires */
   action: AutomationAction;
+  /**
+   * 总结自动化的结构化规格（单一真源）。有 = 总结类，下游按此取范围/出报告；
+   * 无 = 普通提醒。由 normalizeAutomationDraft 在创建期写入。
+   */
+  summarySpec?: SummarySpec;
   enabled: boolean;
   createdAt: number;
   lastRunAt?: number;
@@ -117,5 +141,5 @@ export interface Automation {
 export type AutomationAction =
   | { kind: 'remind_followup'; followupId: string; messageTemplate: string }
   | { kind: 'recap_person'; personId: string; messageTemplate: string }
-  | { kind: 'wechat_summary'; messageTemplate: string }
+  | { kind: 'wechat_summary'; messageTemplate: string; groupTagId?: string }
   | { kind: 'custom'; messageTemplate: string };

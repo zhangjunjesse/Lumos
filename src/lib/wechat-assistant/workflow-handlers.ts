@@ -18,7 +18,6 @@ import { loadWeChatOverview } from './overview-loader';
 import { archiveWeChatAutomationReport } from './report-archive';
 import { getWeChatAssistantSettings } from './settings-store';
 import { runSync, type SyncResult } from './sync-engine';
-import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
 
 const DAILY_SUMMARY_HANDLER_ID = 'wechat-assistant.daily-summary';
 
@@ -69,21 +68,10 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
 
   const settings = getWeChatAssistantSettings();
 
-  // 群标签范围：自动化绑定了 groupTagId 时，出"工作群日报"（标签解析 →
-  // 各群近 N 天消息 → LLM），与即时工具同一共享实现，避免双份。
-  //
-  // custom 类自动化（自然语言指令）的 action 没有 groupTagId 字段，结构上
-  // 带不了 tag。但用户常在指令里点名「工作群」等已配置标签（实测："注意是
-  // 工作群标签的"）。结构 param 缺失时按指令文本解析配置过的标签名，命中即
-  // 进 scoped 路径——否则会退回通用路径汇总全部消息、无视用户的标签范围。
-  let groupTagId = normalizeParam(ctx.params.groupTagId, '');
-  if (!groupTagId) {
-    const matched = resolveGroupTagFromInstruction(
-      `${automationName}\n${messageTemplate}`,
-      settings.groupTags,
-    );
-    if (matched) groupTagId = matched.id;
-  }
+  // 群标签范围由 summarySpec 在创建期解析、经 DSL params 传入（automations.ts
+  // deriveSummarySpec 单一真源）。handler 不再从指令文本反推——旧的运行时
+  // resolveGroupTagFromInstruction 已删，意图解析收敛到唯一归一点。
+  const groupTagId = normalizeParam(ctx.params.groupTagId, '');
   if (groupTagId) {
     const tag = settings.groupTags.find((t) => t.id === groupTagId);
     if (!tag) {
@@ -274,25 +262,6 @@ function failed(message: string, sync?: SyncResult): StepResult {
 
 function normalizeParam(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
-}
-
-/**
- * 从指令文本里解析用户点名的已配置群标签（如指令含「工作群」且配置过名为
- * 「工作群」的标签）。子串匹配，最长标签名优先（更具体）；命中返回该标签。
- * 用于 custom 自动化无结构 groupTagId 时把自然语言意图落成真实范围。
- */
-export function resolveGroupTagFromInstruction(
-  text: string,
-  tags: GroupTag[],
-): GroupTag | null {
-  const hay = text.toLowerCase();
-  let best: GroupTag | null = null;
-  for (const tag of tags ?? []) {
-    const name = tag.name.trim().toLowerCase();
-    if (!name || !hay.includes(name)) continue;
-    if (!best || tag.name.trim().length > best.name.trim().length) best = tag;
-  }
-  return best;
 }
 
 function reasonLabel(reason: string): string {

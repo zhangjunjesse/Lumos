@@ -15,12 +15,24 @@ import {
   cancelRunningScheduleRuns,
 } from '@/lib/workflow/schedule-run-control';
 
-import type { Automation } from '@/components/apps/builtin/wechat/relations-types';
+import type {
+  Automation,
+  SummarySpec,
+} from '@/components/apps/builtin/wechat/relations-types';
+import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
+import { getWeChatAssistantSettings } from './settings-store';
 import { listWeChatAssistantTasks } from './tasks';
 
 const SETTINGS_KEY = 'apps.wechat-assistant.automations.v1';
-const DSL_MIGRATION_KEY = 'apps.wechat-assistant.automations.dsl-main-agent-migrated';
+/**
+ * DSL/Spec schema 版本。单调递增——任何会改变 buildAutomationWorkflowDsl 或
+ * deriveSummarySpec 输出的逻辑变更都 +1。存量行在启动时由
+ * ensureAutomationDslSchema 一次性重建（重跑 syncSchedule，顺带回填
+ * summarySpec）。取代过去"每个路由 bug 加一个一次性迁移键"的累积反模式。
+ */
+const DSL_SCHEMA_VERSION = 3;
+const DSL_SCHEMA_VERSION_KEY = 'apps.wechat-assistant.automations.dsl-schema-version';
 
 export type AutomationDraft = Omit<Automation, 'id' | 'createdAt'>;
 
@@ -31,8 +43,7 @@ export function listWeChatAutomations(): Automation[] {
 }
 
 export async function ensureLegacyDailySummaryAutomation(): Promise<void> {
-  await migrateAutomationDslsToMainAgent();
-  await resyncAutomationDslsForSummaryClassifyFix();
+  await ensureAutomationDslSchema();
   const current = readAutomations();
   if (current.some(isWeChatSummaryAutomation)) return;
 
@@ -192,7 +203,11 @@ interface ParsedSchedule {
   nextRunAt?: string;
 }
 
-async function syncSchedule(input: Automation): Promise<Automation> {
+async function syncSchedule(rawInput: Automation): Promise<Automation> {
+  // 唯一归一收口点：create / update / schema 迁移都经此。意图在这里被解析
+  // 一次成结构化 summarySpec，下游（DSL 构建 / handler）只读 spec，不再各
+  // 层启发式反推。
+  const input = withSummarySpec(rawInput);
   const parsed = parseAutomationSchedule(input);
   if (!parsed) {
     if (input.scheduleId) {
@@ -353,14 +368,7 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
           code: {
             handler: 'wechat-assistant.daily-summary',
             strategy: 'code-only',
-            params: {
-              automationId: automation.id,
-              automationName: automation.name,
-              messageTemplate: automation.action.messageTemplate,
-              ...(automation.action.kind === 'wechat_summary' && automation.action.groupTagId
-                ? { groupTagId: automation.action.groupTagId }
-                : {}),
-            },
+            params: buildSummaryParams(automation),
           },
         },
         outputContract: {
@@ -394,24 +402,102 @@ function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
   };
 }
 
+/** 总结 handler 的入参，全部由生效 spec 派生（单一真源）。 */
+function buildSummaryParams(automation: Automation): Record<string, unknown> {
+  const spec = effectiveSummarySpec(automation);
+  return {
+    automationId: automation.id,
+    automationName: automation.name,
+    messageTemplate: spec?.extraInstruction ?? automation.action.messageTemplate,
+    ...(spec?.scope.kind === 'group_tag' ? { groupTagId: spec.scope.tagId } : {}),
+    ...(spec?.emptyMessage ? { emptyMessage: spec.emptyMessage } : {}),
+  };
+}
+
 const SUMMARY_VERB_RE = /总结|汇总|日报|日总结|摘要|提炼|梳理/;
 const WECHAT_SCOPE_RE = /微信|消息|群|聊天|会话/;
+const EMPTY_MESSAGE_RE = /(?:如果|若|要是)?(?:没有|无)[^，。\n]{0,8}?(?:就|则)?说[「"“]?([^」"”，。\n]{1,24})/;
 
 /**
- * 是否一条「微信消息总结」自动化（决定走真实总结 agent 工作流，而不是把
- * 指令原文当提醒回显）。
- *
- * 语义双信号判定，取代原「微信 与 总结 须在 6 字内邻近」的脆弱正则——
- * 后者对「每日工作总结 / 汇总今天…工作群微信消息…提炼」这类正常措辞间距
- * 过远 → 误判为普通提醒 → generic 分支把整段指令当消息发回用户（实测 bug）。
- * 现在只要 name+template 里**同时**出现总结类动词与微信/消息/群范围词
- * （位置不限）即判为总结。纯提醒（有「微信」但无总结动词）不会被误判。
+ * 唯一意图解析器（旧架构的 3 处启发式收敛于此）。判定一条自动化是否"总结"
+ * 类，是则把自然语言解析成结构化 SummarySpec：
+ * - 是否总结：wechat_summary 显式；或 custom 文本双信号（总结动词+微信范围词）。
+ * - scope：显式 groupTagId 优先；否则按指令文本匹配已配置群标签名（最长优先）；
+ *   都没有 = 全部会话。
+ * - emptyMessage：探测"没有就说X"话术（可选，缺省由 handler 兜底默认）。
+ * - extraInstruction：用户原话原样保留，作为 LLM scopeNote 透传，绝不丢弃。
+ * 纯提醒返回 undefined。
  */
+export function deriveSummarySpec(
+  automation: Pick<Automation, 'name' | 'action'>,
+  groupTags: GroupTag[],
+): SummarySpec | undefined {
+  const action = automation.action;
+  const text = `${automation.name}\n${action.messageTemplate}`;
+  const isSummary =
+    action.kind === 'wechat_summary' ||
+    (action.kind === 'custom' &&
+      SUMMARY_VERB_RE.test(text) &&
+      WECHAT_SCOPE_RE.test(text));
+  if (!isSummary) return undefined;
+
+  let scope: SummarySpec['scope'] = { kind: 'all' };
+  if (action.kind === 'wechat_summary' && action.groupTagId) {
+    scope = { kind: 'group_tag', tagId: action.groupTagId };
+  } else {
+    const matched = matchGroupTagByName(text, groupTags);
+    if (matched) scope = { kind: 'group_tag', tagId: matched.id };
+  }
+
+  const empty = EMPTY_MESSAGE_RE.exec(action.messageTemplate)?.[1]?.trim();
+  return {
+    scope,
+    emptyMessage: empty || undefined,
+    extraInstruction: action.messageTemplate.trim() || undefined,
+  };
+}
+
+/** 按已配置群标签名做子串匹配，最长（最具体）优先。 */
+function matchGroupTagByName(text: string, tags: GroupTag[]): GroupTag | null {
+  const hay = text.toLowerCase();
+  let best: GroupTag | null = null;
+  for (const tag of tags ?? []) {
+    const name = tag.name.trim().toLowerCase();
+    if (!name || !hay.includes(name)) continue;
+    if (!best || tag.name.trim().length > best.name.trim().length) best = tag;
+  }
+  return best;
+}
+
+/** 归一：写入/刷新 summarySpec（总结类），或剥除（已变成纯提醒）。 */
+function withSummarySpec(automation: Automation): Automation {
+  const spec = deriveSummarySpec(
+    automation,
+    getWeChatAssistantSettings().groupTags ?? [],
+  );
+  if (spec) return { ...automation, summarySpec: spec };
+  if (!automation.summarySpec) return automation;
+  const { summarySpec: _drop, ...rest } = automation;
+  return rest;
+}
+
+/**
+ * 取生效 spec：持久化的 summarySpec 优先（syncSchedule 经 withSummarySpec
+ * 写入，是真源）；缺失时现场 derive——使 buildAutomationWorkflowDsl 这个
+ * 导出纯函数独立自洽，不依赖调用方先 mutate（更好测、无隐式顺序坑）。
+ */
+function effectiveSummarySpec(
+  automation: Pick<Automation, 'name' | 'action' | 'summarySpec'>,
+): SummarySpec | undefined {
+  return (
+    automation.summarySpec ??
+    deriveSummarySpec(automation, getWeChatAssistantSettings().groupTags ?? [])
+  );
+}
+
+/** 有 summarySpec = 总结类。取代旧的文本分类启发式。 */
 function isWeChatSummaryAutomation(automation: Automation): boolean {
-  if (automation.action.kind === 'wechat_summary') return true;
-  if (automation.action.kind !== 'custom') return false;
-  const text = `${automation.name}\n${automation.action.messageTemplate}`;
-  return SUMMARY_VERB_RE.test(text) && WECHAT_SCOPE_RE.test(text);
+  return !!effectiveSummarySpec(automation);
 }
 
 function buildNotificationMessage(automation: Automation): string {
@@ -462,51 +548,21 @@ function padMinute(value: number): string {
 }
 
 /**
- * One-shot migration: rebuilds the workflow DSL of every existing WeChat
- * automation so the `notify` step routes to the Main Agent session + IM
- * binding instead of the workflow's own transient session id.
+ * 单一版本号迁移，取代过去"每个路由 bug 一个一次性 key"的累积反模式
+ * （曾有 dsl-main-agent-migrated + summary-classify-fix-migrated 两个键）。
  *
- * Idempotent — guarded by a settings flag so repeat boots are cheap.
+ * workflowDsl 是 (automation, 代码) 的纯函数却被持久化进 scheduled_workflows、
+ * scheduler 只跑存量行不重导——所以任何会改变 DSL/Spec 输出的逻辑变更都需
+ * 重建存量。这里用单调 DSL_SCHEMA_VERSION 对比已存版本：落后即对所有
+ * automation 重跑 syncSchedule（顺带经 withSummarySpec 回填 summarySpec），
+ * 然后写入当前版本。幂等；重启廉价。以后逻辑再变只需 +1 版本号，不再加键。
  */
-export async function migrateAutomationDslsToMainAgent(): Promise<void> {
-  if (getSetting(DSL_MIGRATION_KEY) === '1') return;
+export async function ensureAutomationDslSchema(): Promise<void> {
+  const stored = Number(getSetting(DSL_SCHEMA_VERSION_KEY) ?? 0);
+  if (stored >= DSL_SCHEMA_VERSION) return;
   const current = readAutomations();
   if (!current.length) {
-    setSetting(DSL_MIGRATION_KEY, '1');
-    return;
-  }
-  const migrated: Automation[] = [];
-  for (const automation of current) {
-    try {
-      migrated.push(await syncSchedule(automation));
-    } catch (error) {
-      console.warn('[wechat-assistant] DSL migration failed for automation', automation.id, error);
-      migrated.push(automation);
-    }
-  }
-  writeAutomations(migrated);
-  setSetting(DSL_MIGRATION_KEY, '1');
-}
-
-const SUMMARY_CLASSIFY_FIX_KEY =
-  'apps.wechat-assistant.automations.summary-classify-fix-migrated';
-
-/**
- * 一次性重建存量自动化的 scheduled workflow DSL。
- *
- * 修复前 isWeChatSummaryAutomation 用脆弱的「微信×总结 6 字内邻近」正则，
- * 把「每日工作总结 / 汇总今天…工作群微信消息…提炼」这类自动化误判为普通
- * 提醒，存了 generic notification DSL —— 运行时把整段指令原文当消息回显给
- * 用户（实测 bug），从不真正执行总结。分类器已修，但 DSL 是创建时存死、
- * scheduler 不重建；存量坏自动化必须重跑 syncSchedule 才会用新分类器重生成
- * 正确的「总结 agent → 通知」DSL。与 migrateAutomationDslsToMainAgent 同
- * 模式、独立 key，只跑一次。
- */
-export async function resyncAutomationDslsForSummaryClassifyFix(): Promise<void> {
-  if (getSetting(SUMMARY_CLASSIFY_FIX_KEY) === '1') return;
-  const current = readAutomations();
-  if (!current.length) {
-    setSetting(SUMMARY_CLASSIFY_FIX_KEY, '1');
+    setSetting(DSL_SCHEMA_VERSION_KEY, String(DSL_SCHEMA_VERSION));
     return;
   }
   const rebuilt: Automation[] = [];
@@ -515,7 +571,7 @@ export async function resyncAutomationDslsForSummaryClassifyFix(): Promise<void>
       rebuilt.push(await syncSchedule(automation));
     } catch (error) {
       console.warn(
-        '[wechat-assistant] summary-classify resync failed for automation',
+        '[wechat-assistant] DSL schema migration failed for automation',
         automation.id,
         error,
       );
@@ -523,5 +579,5 @@ export async function resyncAutomationDslsForSummaryClassifyFix(): Promise<void>
     }
   }
   writeAutomations(rebuilt);
-  setSetting(SUMMARY_CLASSIFY_FIX_KEY, '1');
+  setSetting(DSL_SCHEMA_VERSION_KEY, String(DSL_SCHEMA_VERSION));
 }

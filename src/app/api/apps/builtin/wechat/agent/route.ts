@@ -319,7 +319,9 @@ function inferAutomationIntent(message: string): AutomationIntent | null {
         kind: 'reminder_recurring',
         cron,
         cronLabel: cronLabel(message, time),
-        action: { kind: 'wechat_summary', messageTemplate: '汇总今天微信消息，提炼重点、待办和需要跟进的人。' },
+        // 保留用户原话——范围/提炼要求由 deriveSummarySpec 在创建期统一解析，
+        // 不再在此硬编码丢弃（旧 lossy 创建路径，架构 review smell #3）。
+        action: { kind: 'wechat_summary', messageTemplate: message },
         enabled: true,
       },
     };

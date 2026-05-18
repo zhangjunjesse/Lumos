@@ -2,13 +2,15 @@ import {
   createWeChatAutomation,
   deleteWeChatAutomation,
   buildAutomationWorkflowDsl,
+  deriveSummarySpec,
+  ensureAutomationDslSchema,
   ensureLegacyDailySummaryAutomation,
   listWeChatAutomations,
   parseAutomationSchedule,
-  resyncAutomationDslsForSummaryClassifyFix,
   triggerWeChatAutomation,
   updateWeChatAutomation,
 } from '../automations';
+import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
 import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 
 const store = new Map<string, string>();
@@ -333,7 +335,7 @@ describe('wechat assistant automations store', () => {
     expect(listWeChatAutomations()[0]?.id).toBe('ok');
   });
 
-  it('resync migration heals a pre-fix automation whose stored DSL was the echo-the-prompt generic shape', async () => {
+  it('ensureAutomationDslSchema rebuilds stale DSL + backfills summarySpec once, then is version-idempotent', async () => {
     const created = await createWeChatAutomation({
       name: '每日工作总结',
       kind: 'reminder_recurring',
@@ -347,7 +349,11 @@ describe('wechat assistant automations store', () => {
       enabled: true,
     });
     const scheduleId = created.scheduleId!;
-    // 模拟修复前：旧分类器误判 → 存了 generic 单 notification DSL（回显指令）。
+    // 模拟重构前持久化态：无 summarySpec + 存了 generic 回显 DSL + 版本落后。
+    const autos = JSON.parse(store.get('apps.wechat-assistant.automations.v1')!) as Record<string, unknown>[];
+    delete autos[0].summarySpec;
+    store.set('apps.wechat-assistant.automations.v1', JSON.stringify(autos));
+    store.delete('apps.wechat-assistant.automations.dsl-schema-version');
     schedules.set(scheduleId, {
       ...(schedules.get(scheduleId) as Record<string, unknown>),
       workflowDsl: {
@@ -358,17 +364,18 @@ describe('wechat assistant automations store', () => {
       },
     });
 
-    await resyncAutomationDslsForSummaryClassifyFix();
+    await ensureAutomationDslSchema();
 
     const dsl = (schedules.get(scheduleId) as { workflowDsl: { nodes: Array<{ id: string; type: string }> } })
       .workflowDsl;
-    expect(dsl.nodes.map((n) => n.type)).toEqual(['agent', 'notification']);
-    expect(dsl.nodes[0].id).toBe('generate_report');
-    expect(store.get('apps.wechat-assistant.automations.summary-classify-fix-migrated')).toBe('1');
+    expect(dsl.nodes.map((n) => n.type)).toEqual(['agent', 'notification']); // DSL 重建
+    const healed = JSON.parse(store.get('apps.wechat-assistant.automations.v1')!) as Array<Record<string, unknown>>;
+    expect(healed[0].summarySpec).toBeTruthy(); // summarySpec 回填
+    expect(store.get('apps.wechat-assistant.automations.dsl-schema-version')).toBe('3');
 
-    // 幂等：再跑一次不应改动（key 已置位）。
+    // 版本已达标 → 再跑一次是 no-op（单调版本，不再每 bug 加键）。
     const before = JSON.stringify(schedules.get(scheduleId));
-    await resyncAutomationDslsForSummaryClassifyFix();
+    await ensureAutomationDslSchema();
     expect(JSON.stringify(schedules.get(scheduleId))).toBe(before);
   });
 
@@ -398,5 +405,58 @@ describe('wechat assistant automations store', () => {
       name: '微信助手 · 每日微信总结',
       scheduleTime: '22:30',
     }));
+  });
+});
+
+describe('deriveSummarySpec (单一意图解析器，取代 3 处启发式)', () => {
+  const tag = (id: string, name: string): GroupTag =>
+    ({
+      id,
+      name,
+      rule: { kind: 'manual', members: [], matchMode: 'any', groups: [], excludeGroups: [] },
+      resolved: null,
+    }) as GroupTag;
+
+  it('wechat_summary action → spec; 显式 groupTagId 进 group_tag scope', () => {
+    const spec = deriveSummarySpec(
+      { name: '每日微信总结', action: { kind: 'wechat_summary', messageTemplate: '总结今天微信消息', groupTagId: 'g1' } },
+      [],
+    );
+    expect(spec?.scope).toEqual({ kind: 'group_tag', tagId: 'g1' });
+    expect(spec?.extraInstruction).toBe('总结今天微信消息');
+  });
+
+  it('custom 措辞读为总结 → spec；无标签匹配则 scope=all，原话保留', () => {
+    const spec = deriveSummarySpec(
+      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总今天工作群微信消息，提炼重点/待办/跟进人' } },
+      [],
+    );
+    expect(spec?.scope).toEqual({ kind: 'all' });
+    expect(spec?.extraInstruction).toContain('提炼重点');
+  });
+
+  it('custom 指令点名已配置标签 → scope=group_tag（最长名优先）', () => {
+    const spec = deriveSummarySpec(
+      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总今天所有工作群-核心的微信消息，提炼重点' } },
+      [tag('a', '工作群'), tag('b', '工作群-核心')],
+    );
+    expect(spec?.scope).toEqual({ kind: 'group_tag', tagId: 'b' });
+  });
+
+  it('纯提醒（有微信无总结动词）→ undefined', () => {
+    expect(
+      deriveSummarySpec(
+        { name: '联系提醒', action: { kind: 'custom', messageTemplate: '提醒我9点联系微信里的张总' } },
+        [],
+      ),
+    ).toBeUndefined();
+  });
+
+  it('探测"没有就说X"话术 → emptyMessage', () => {
+    const spec = deriveSummarySpec(
+      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总工作群微信消息，提炼重点；如果没有就说今日无工作' } },
+      [],
+    );
+    expect(spec?.emptyMessage).toBe('今日无工作');
   });
 });
