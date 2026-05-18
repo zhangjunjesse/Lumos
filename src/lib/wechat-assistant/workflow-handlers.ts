@@ -8,16 +8,11 @@ import {
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
 import type { StepResult } from '@/lib/workflow/types';
 
-import {
-  buildDailySummaryReport,
-  buildSummaryNotification,
-  collectRecentMessagesForDailySummary,
-  selectTodosForDailySummary,
-} from './daily-summary';
-import { listTodos } from './db';
+import { buildSummaryNotification } from './daily-summary';
 import { loadWeChatOverview } from './overview-loader';
 import { archiveWeChatAutomationReport } from './report-archive';
 import { getWeChatAssistantSettings } from './settings-store';
+import { produceSummary } from './summary-engine';
 import { runSync, type SyncResult } from './sync-engine';
 
 const DAILY_SUMMARY_HANDLER_ID = 'wechat-assistant.daily-summary';
@@ -69,126 +64,41 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
 
   const settings = getWeChatAssistantSettings();
 
-  // 群标签范围由 summarySpec 在创建期解析、经 DSL params 传入（automations.ts
-  // deriveSummarySpec 单一真源）。handler 不再从指令文本反推——旧的运行时
-  // resolveGroupTagFromInstruction 已删，意图解析收敛到唯一归一点。
-  const groupTagId = normalizeParam(ctx.params.groupTagId, '');
-  if (groupTagId) {
-    const tag = settings.groupTags.find((t) => t.id === groupTagId);
-    if (!tag) {
-      const message = `群标签未找到（id=${groupTagId}）；请到微信助手设置→群标签确认后再启用本自动化`;
-      await archiveDailySummary(ctx, {
-        automationId, automationName, status: 'error', summary: message, error: message,
-      });
-      return failed(message, sync);
-    }
-    // 动态 import：群标签路径较少触发，避免顶层拉入解析/总结依赖链
-    // （含 setup-state 的 path.join(dataDir,…) 模块级求值），以免污染
-    // workflow-handlers 的模块图（曾导致单测 dataDir undefined 加载失败）。
-    const { summarizeGroupTag } = await import('./group-tag-summary');
-    const r = await summarizeGroupTag({
-      tag,
-      days: settings.ai.windowDays,
-      scopeNote: messageTemplate,
-      settings,
-      signal: ctx.signal,
-    });
-    const md = r.summaryMarkdown || `# ${tag.name} 日报\n\n${r.summary}`;
-    const reportPath = path.join(ctx.outputDir, 'wechat-daily-summary.md');
-    await mkdir(ctx.outputDir, { recursive: true });
-    await writeFile(reportPath, md, 'utf8');
-    // 「没消息/标签空」是正常结果（周末工作群安静），不能误报 error；
-    // 只有真 LLM 失败、或解析失败/未配服务商（配置问题，需可见）才算 error。
-    const normalEmpty =
-      r.ai.status === 'skipped' &&
-      (r.ai.reason === 'tag_empty' || r.ai.reason === 'no_messages');
-    const ok = r.ai.status === 'success' || normalEmpty;
-    await archiveDailySummary(ctx, {
-      automationId,
-      automationName,
-      status: ok ? 'success' : 'error',
-      summary: r.summary,
-      reportMarkdown: md,
-      reportFileName: 'wechat-daily-summary.md',
-      error: ok ? undefined : (r.tagWarning ?? r.ai.reason ?? '未生成 AI 总结'),
-    });
-    return {
-      success: ok,
-      output: {
-        summary: r.summary,
-        notification: buildSummaryNotification(md),
-        reportPath,
-        reportMarkdown: md,
-        metrics: {
-          tag: tag.name,
-          resolvedGroups: r.resolvedGroupCount,
-          summarizedGroups: r.summarizedGroupCount,
-          skippedEmpty: r.skippedEmpty.length,
-          truncatedForBudget: r.truncatedForBudget.length,
-          aiSummaryStatus: r.ai.status,
-        },
-      },
-      metadata: {
-        syncStatus: sync.status,
-        syncReason: sync.reason ?? '',
-        inserted: sync.inserted,
-        seen: sync.seen,
-        reportPath,
-        aiSummaryStatus: r.ai.status,
-        aiSummaryProviderId: r.ai.providerId ?? '',
-        aiSummaryModel: r.ai.model ?? '',
-        aiSummaryError: r.ai.reason ?? '',
-      },
-    };
-  }
-
-  const todos = selectTodosForDailySummary(
-    listTodos({ status: ['open', 'suggested'] }),
-    settings.excludedPersonIds,
-    8,
-  );
-  const report = await buildDailySummaryReport({
+  // 范围/空态话术由 summarySpec 创建期解析、经 DSL params 传入（automations.ts
+  // deriveSummarySpec 单一真源）。引擎按 scope 内部分派，handler 不再 fork。
+  const r = await produceSummary({
+    groupTagId: normalizeParam(ctx.params.groupTagId, ''),
+    emptyMessage: normalizeParam(ctx.params.emptyMessage, '') || undefined,
     automationName,
     messageTemplate,
-    data: overview.data,
-    todos,
+    overviewData: overview.data,
     sync,
-    recentMessages: collectRecentMessagesForDailySummary(settings.ai.windowDays, 80, Date.now(), {
-      excludedIds: settings.excludedPersonIds,
-    }),
-  }, {
-    abortSignal: ctx.signal,
     settings,
+    signal: ctx.signal,
   });
+
   const reportPath = path.join(ctx.outputDir, 'wechat-daily-summary.md');
-  // The workflow runtime sets up outputDir, but on first run / cross-device
-  // moves the parent may not exist yet. mkdir is cheap and idempotent.
+  // 首次运行 / 跨设备搬移时父目录可能尚不存在；mkdir 廉价且幂等。
   await mkdir(ctx.outputDir, { recursive: true });
-  await writeFile(reportPath, report.markdown, 'utf8');
+  await writeFile(reportPath, r.markdown, 'utf8');
   await archiveDailySummary(ctx, {
     automationId,
     automationName,
-    status: 'success',
-    summary: report.summary,
-    reportMarkdown: report.markdown,
+    status: r.ok ? 'success' : 'error',
+    summary: r.summary,
+    reportMarkdown: r.markdown,
     reportFileName: 'wechat-daily-summary.md',
+    error: r.ok ? undefined : r.errorReason,
   });
 
-  const notification = buildSummaryNotification(report.markdown);
   return {
-    success: true,
+    success: r.ok,
     output: {
-      summary: report.summary,
-      notification,
+      summary: r.summary,
+      notification: buildSummaryNotification(r.markdown),
       reportPath,
-      reportMarkdown: report.markdown,
-      metrics: {
-        activeChats: overview.data.totals.activeChats,
-        messagesInWindow: overview.data.totals.messagesInWindow,
-        todayMessages: report.todayMessages,
-        todoCount: todos.length,
-        aiSummaryStatus: report.ai.status,
-      },
+      reportMarkdown: r.markdown,
+      metrics: r.metrics,
     },
     metadata: {
       syncStatus: sync.status,
@@ -196,10 +106,10 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
       inserted: sync.inserted,
       seen: sync.seen,
       reportPath,
-      aiSummaryStatus: report.ai.status,
-      aiSummaryProviderId: report.ai.providerId ?? '',
-      aiSummaryModel: report.ai.model ?? '',
-      aiSummaryError: report.ai.error ?? '',
+      aiSummaryStatus: r.ai.status,
+      aiSummaryProviderId: r.ai.providerId ?? '',
+      aiSummaryModel: r.ai.model ?? '',
+      aiSummaryError: r.ai.error ?? '',
     },
   };
 }
