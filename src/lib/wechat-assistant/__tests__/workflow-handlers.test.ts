@@ -34,6 +34,10 @@ jest.mock('../daily-summary', () => ({
   buildDailySummaryReport: (...args: unknown[]) => mockBuildDailySummaryReport(...args),
   collectRecentMessagesForDailySummary: () => [],
   selectTodosForDailySummary: () => [],
+  buildSummaryNotification: (md: string) =>
+    md && md.trim()
+      ? md.trim()
+      : '微信助手：每日微信总结\n报告正文未生成，请打开微信助手「自动化 > 最近结果」查看失败原因。',
 }));
 
 jest.mock('../report-archive', () => ({

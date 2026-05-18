@@ -10,6 +10,7 @@ import type { StepResult } from '@/lib/workflow/types';
 
 import {
   buildDailySummaryReport,
+  buildSummaryNotification,
   collectRecentMessagesForDailySummary,
   selectTodosForDailySummary,
 } from './daily-summary';
@@ -115,7 +116,7 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
       success: ok,
       output: {
         summary: r.summary,
-        notification: buildDailySummaryNotificationMessage(md),
+        notification: buildSummaryNotification(md),
         reportPath,
         reportMarkdown: md,
         metrics: {
@@ -173,7 +174,7 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
     reportFileName: 'wechat-daily-summary.md',
   });
 
-  const notification = buildDailySummaryNotificationMessage(report.markdown);
+  const notification = buildSummaryNotification(report.markdown);
   return {
     success: true,
     output: {
@@ -203,13 +204,6 @@ async function runDailySummaryHandler(ctx: CodeHandlerContext): Promise<StepResu
   };
 }
 
-function buildDailySummaryNotificationMessage(markdown: string): string {
-  const body = markdown.trim();
-  if (!body) {
-    return '微信助手：每日微信总结\n报告正文未生成，请打开微信助手「自动化 > 最近结果」查看失败原因。';
-  }
-  return body;
-}
 
 async function archiveDailySummary(
   ctx: CodeHandlerContext,

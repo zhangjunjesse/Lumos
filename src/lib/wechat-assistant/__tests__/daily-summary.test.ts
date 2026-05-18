@@ -187,7 +187,8 @@ describe('daily summary report', () => {
     expect(report.markdown.startsWith('# 每日微信总结')).toBe(true);
     expect(report.markdown).toContain('客户 A 今天追问合同回款');
     expect(report.summary).toContain('客户 A 今天追问合同回款');
-    expect(report.notification).toContain('客户 A 今天追问合同回款');
+    // notification 字段已删（曾是死代码）；通知正文现由 markdown 经
+    // buildSummaryNotification 派生，上面对 markdown 的断言已覆盖。
     expect(mockGenerateTextFromProvider).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'provider-1',
       model: 'model-1',
@@ -236,7 +237,7 @@ describe('daily summary report', () => {
     const report = await buildDailySummaryReport(dirty, {
       settings: settings({ providerId: 'provider-1', model: 'model-1' }),
     });
-    const visible = `${report.markdown}\n${report.summary}\n${report.notification}`;
+    const visible = `${report.markdown}\n${report.summary}`;
 
     expect(visible).toContain('客户群');
     expect(visible).toContain('5.6语文作业');

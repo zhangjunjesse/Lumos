@@ -40,7 +40,6 @@ export interface DailySummaryInput {
 
 export interface DailySummaryReport {
   markdown: string;
-  notification: string;
   summary: string;
   todayMessages: number;
   ai: {
@@ -83,7 +82,6 @@ export async function buildDailySummaryReport(
       ...base,
       markdown,
       summary,
-      notification: buildNotification(input, summary),
       ai: {
         status: 'success',
         providerId: target.providerId,
@@ -160,7 +158,6 @@ export function buildDeterministicDailySummaryReport(input: DailySummaryInput): 
 
   return {
     markdown,
-    notification: buildNotification(input, summary),
     summary,
     todayMessages,
     ai: { status: 'skipped' },
@@ -292,13 +289,18 @@ function buildDailyReporterPrompt(input: DailySummaryInput, base: DailySummaryRe
   ].join('\n');
 }
 
-function buildNotification(input: DailySummaryInput, summary: string): string {
-  return [
-    `微信助手：${input.automationName}`,
-    summary,
-    '',
-    '完整报告已生成，请打开微信助手「自动化 > 最近结果」查看同一份报告正文。',
-  ].filter(Boolean).join('\n');
+/**
+ * 唯一的总结通知构建器（收敛自 workflow-handlers 的
+ * buildDailySummaryNotificationMessage 与本文件原 buildNotification——后者
+ * 产出的 report.notification 早已被 handler 用 markdown 覆盖，是死代码、
+ * 也是发散源）。通知正文 = 报告 markdown 本身；空报告给可见失败指引。
+ */
+export function buildSummaryNotification(markdown: string): string {
+  const body = markdown.trim();
+  if (!body) {
+    return '微信助手：每日微信总结\n报告正文未生成，请打开微信助手「自动化 > 最近结果」查看失败原因。';
+  }
+  return body;
 }
 
 function formatTodoLines(todos: DailySummaryTodo[]): string[] {
