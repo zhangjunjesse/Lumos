@@ -5,9 +5,7 @@ import {
   createScheduledWorkflow,
   deleteScheduledWorkflow,
   getScheduledWorkflow,
-  listRunHistory,
   updateScheduledWorkflow,
-  type ScheduledWorkflow,
 } from '@/lib/db/scheduled-workflows';
 import { triggerSchedule } from '@/lib/scheduler/cron-engine';
 import {
@@ -15,16 +13,28 @@ import {
   cancelRunningScheduleRuns,
 } from '@/lib/workflow/schedule-run-control';
 
-import type {
-  Automation,
-  SummarySpec,
-} from '@/components/apps/builtin/wechat/relations-types';
-import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
-import type { WorkflowDSLV3 } from '@/lib/workflow/types-v3';
-import { getWeChatAssistantSettings } from './settings-store';
+import type { Automation } from '@/components/apps/builtin/wechat/relations-types';
+import {
+  deriveSummarySpec,
+  isWeChatSummaryAutomation,
+  withSummarySpec,
+} from './automation-summary-spec';
+import { buildAutomationWorkflowDsl } from './automation-dsl';
+import {
+  dailySummaryScheduleFromLegacyTask,
+  parseAutomationSchedule,
+} from './automation-schedule';
+import {
+  hydrateAutomationScheduleState,
+  readAutomations,
+  writeAutomations,
+} from './automation-store';
 import { listWeChatAssistantTasks } from './tasks';
 
-const SETTINGS_KEY = 'apps.wechat-assistant.automations.v1';
+// 拆分后保持公共入口稳定：intent-spec / dsl-build / schedule-parse 已分层，
+// 仍从 automations re-export 被测试/外部直接引用符号（门面，零行为变化）。
+export { deriveSummarySpec, buildAutomationWorkflowDsl, parseAutomationSchedule };
+
 /**
  * DSL/Spec schema 版本。单调递增——任何会改变 buildAutomationWorkflowDsl 或
  * deriveSummarySpec 输出的逻辑变更都 +1。存量行在启动时由
@@ -127,82 +137,6 @@ export async function triggerWeChatAutomation(id: string): Promise<Automation | 
   return hydrateAutomationScheduleState(hydrated);
 }
 
-function readAutomations(): Automation[] {
-  const raw = getSetting(SETTINGS_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isAutomation);
-  } catch {
-    return [];
-  }
-}
-
-function writeAutomations(automations: Automation[]): void {
-  setSetting(SETTINGS_KEY, JSON.stringify(automations));
-}
-
-function hydrateAutomationScheduleState(automation: Automation): Automation {
-  if (!automation.scheduleId) return automation;
-  const schedule = getScheduledWorkflow(automation.scheduleId);
-  if (!schedule) {
-    return {
-      ...automation,
-      scheduleError: '关联的调度任务不存在，请重新保存这条规则',
-      lastRunAt: undefined,
-      nextRunAt: undefined,
-    };
-  }
-  return mergeScheduleState(automation, schedule);
-}
-
-function mergeScheduleState(automation: Automation, schedule: ScheduledWorkflow): Automation {
-  const latestRun = listRunHistory(schedule.id, 1)[0];
-  const next: Automation = {
-    ...automation,
-    enabled: schedule.enabled,
-    lastRunError: latestRun?.error || schedule.lastError || undefined,
-    latestRunId: latestRun?.id,
-  };
-  if (typeof schedule.runCount === 'number') next.scheduleRunCount = schedule.runCount;
-  const lastRunStatus = latestRun?.status ?? schedule.lastRunStatus;
-  if (lastRunStatus) next.lastRunStatus = lastRunStatus;
-  const lastRunAt = parseIsoMs(schedule.lastRunAt);
-  const nextRunAt = parseIsoMs(schedule.nextRunAt);
-  if (lastRunAt !== undefined) next.lastRunAt = lastRunAt;
-  else delete next.lastRunAt;
-  if (nextRunAt !== undefined) next.nextRunAt = nextRunAt;
-  else delete next.nextRunAt;
-  const scheduleError = automation.scheduleError;
-  if (scheduleError) next.scheduleError = scheduleError;
-  else delete next.scheduleError;
-  if (!next.lastRunError) delete next.lastRunError;
-  if (!next.latestRunId) delete next.latestRunId;
-  return next;
-}
-
-function isAutomation(value: unknown): value is Automation {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as Record<string, unknown>;
-  return typeof row.id === 'string'
-    && typeof row.name === 'string'
-    && (row.kind === 'reminder_once' || row.kind === 'reminder_recurring')
-    && typeof row.cron === 'string'
-    && typeof row.cronLabel === 'string'
-    && typeof row.action === 'object'
-    && typeof row.enabled === 'boolean'
-    && typeof row.createdAt === 'number';
-}
-
-interface ParsedSchedule {
-  runMode: 'scheduled' | 'once';
-  intervalMinutes: number;
-  scheduleTime: string | null;
-  scheduleDayOfWeek: number | null;
-  nextRunAt?: string;
-}
-
 async function syncSchedule(rawInput: Automation): Promise<Automation> {
   // 唯一归一收口点：create / update / schema 迁移都经此。意图在这里被解析
   // 一次成结构化 summarySpec，下游（DSL 构建 / handler）只读 spec，不再各
@@ -267,284 +201,6 @@ async function syncSchedule(rawInput: Automation): Promise<Automation> {
     scheduleId: schedule.id,
     scheduleError: undefined,
   };
-}
-
-export function parseAutomationSchedule(input: Pick<Automation, 'kind' | 'cron' | 'nextRunAt'>): ParsedSchedule | null {
-  if (input.kind === 'reminder_once') {
-    if (!input.nextRunAt || input.nextRunAt <= Date.now()) return null;
-    return {
-      runMode: 'once',
-      intervalMinutes: 0,
-      scheduleTime: null,
-      scheduleDayOfWeek: null,
-      nextRunAt: new Date(input.nextRunAt).toISOString(),
-    };
-  }
-
-  const parts = input.cron.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
-
-  if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*' && isInt(minute) && isInt(hour)) {
-    return {
-      runMode: 'scheduled',
-      intervalMinutes: 1440,
-      scheduleTime: `${padHour(Number(hour))}:${padMinute(Number(minute))}`,
-      scheduleDayOfWeek: null,
-    };
-  }
-
-  if (dayOfMonth === '*' && month === '*' && isInt(minute) && isInt(hour) && isWeekday(dayOfWeek)) {
-    return {
-      runMode: 'scheduled',
-      intervalMinutes: 10080,
-      scheduleTime: `${padHour(Number(hour))}:${padMinute(Number(minute))}`,
-      scheduleDayOfWeek: Number(dayOfWeek),
-    };
-  }
-
-  const minuteStep = /^\*\/(\d+)$/.exec(minute);
-  if (minuteStep && hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-    const interval = Number(minuteStep[1]);
-    return interval > 0 ? {
-      runMode: 'scheduled',
-      intervalMinutes: interval,
-      scheduleTime: null,
-      scheduleDayOfWeek: null,
-    } : null;
-  }
-
-  const hourStep = /^\*\/(\d+)$/.exec(hour);
-  if (isInt(minute) && hourStep && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-    const interval = Number(hourStep[1]) * 60;
-    return interval > 0 ? {
-      runMode: 'scheduled',
-      intervalMinutes: interval,
-      scheduleTime: null,
-      scheduleDayOfWeek: null,
-    } : null;
-  }
-
-  return null;
-}
-
-export function buildAutomationWorkflowDsl(automation: Automation): WorkflowDSLV3 {
-  if (isWeChatSummaryAutomation(automation)) {
-    return buildSummaryWorkflowDsl(automation);
-  }
-
-  return {
-    version: 'v3',
-    name: `微信助手自动化 · ${automation.name}`,
-    description: '由微信助手自动化规则创建的提醒工作流。',
-    nodes: [{
-      id: 'notify',
-      type: 'notification',
-      input: {
-        channel: 'im:wechat',
-        level: 'info',
-        targetSessionRef: 'main-agent',
-        message: buildNotificationMessage(automation),
-      },
-      policy: { timeoutMs: 30_000 },
-    }],
-    edges: [],
-    maxDurationMs: 60_000,
-  };
-}
-
-function buildSummaryWorkflowDsl(automation: Automation): WorkflowDSLV3 {
-  return {
-    version: 'v3',
-    name: `微信助手自动化 · ${automation.name}`,
-    description: '由微信助手自动化规则创建的微信消息总结工作流。',
-    nodes: [
-      {
-        id: 'generate_report',
-        type: 'agent',
-        input: {
-          prompt: '读取本机微信同步镜像，生成微信消息总结报告。',
-          outputMode: 'plain-text',
-          code: {
-            handler: 'wechat-assistant.daily-summary',
-            strategy: 'code-only',
-            params: buildSummaryParams(automation),
-          },
-        },
-        outputContract: {
-          type: 'object',
-          properties: {
-            summary: { type: 'string' },
-            notification: {
-              type: 'string',
-              description: '与报告正文同源的通知内容；每日总结成功时应直接使用完整 reportMarkdown。',
-            },
-            reportPath: { type: 'string' },
-            reportMarkdown: { type: 'string' },
-          },
-        },
-        policy: { timeoutMs: 180_000 },
-      },
-      {
-        id: 'notify',
-        type: 'notification',
-        input: {
-          channel: 'im:wechat',
-          level: 'info',
-          targetSessionRef: 'main-agent',
-          message: '{{ steps.generate_report.output.notification }}',
-        },
-        policy: { timeoutMs: 30_000 },
-      },
-    ],
-    edges: [{ from: 'generate_report', to: 'notify', kind: 'next' }],
-    maxDurationMs: 240_000,
-  };
-}
-
-/** 总结 handler 的入参，全部由生效 spec 派生（单一真源）。 */
-function buildSummaryParams(automation: Automation): Record<string, unknown> {
-  const spec = effectiveSummarySpec(automation);
-  return {
-    automationId: automation.id,
-    automationName: automation.name,
-    messageTemplate: spec?.extraInstruction ?? automation.action.messageTemplate,
-    ...(spec?.scope.kind === 'group_tag' ? { groupTagId: spec.scope.tagId } : {}),
-    ...(spec?.emptyMessage ? { emptyMessage: spec.emptyMessage } : {}),
-  };
-}
-
-const SUMMARY_VERB_RE = /总结|汇总|日报|日总结|摘要|提炼|梳理/;
-const WECHAT_SCOPE_RE = /微信|消息|群|聊天|会话/;
-const EMPTY_MESSAGE_RE = /(?:如果|若|要是)?(?:没有|无)[^，。\n]{0,8}?(?:就|则)?说[「"“]?([^」"”，。\n]{1,24})/;
-
-/**
- * 唯一意图解析器（旧架构的 3 处启发式收敛于此）。判定一条自动化是否"总结"
- * 类，是则把自然语言解析成结构化 SummarySpec：
- * - 是否总结：wechat_summary 显式；或 custom 文本双信号（总结动词+微信范围词）。
- * - scope：显式 groupTagId 优先；否则按指令文本匹配已配置群标签名（最长优先）；
- *   都没有 = 全部会话。
- * - emptyMessage：探测"没有就说X"话术（可选，缺省由 handler 兜底默认）。
- * - extraInstruction：用户原话原样保留，作为 LLM scopeNote 透传，绝不丢弃。
- * 纯提醒返回 undefined。
- */
-export function deriveSummarySpec(
-  automation: Pick<Automation, 'name' | 'action'>,
-  groupTags: GroupTag[],
-): SummarySpec | undefined {
-  const action = automation.action;
-  const text = `${automation.name}\n${action.messageTemplate}`;
-  const isSummary =
-    action.kind === 'wechat_summary' ||
-    (action.kind === 'custom' &&
-      SUMMARY_VERB_RE.test(text) &&
-      WECHAT_SCOPE_RE.test(text));
-  if (!isSummary) return undefined;
-
-  let scope: SummarySpec['scope'] = { kind: 'all' };
-  if (action.kind === 'wechat_summary' && action.groupTagId) {
-    scope = { kind: 'group_tag', tagId: action.groupTagId };
-  } else {
-    const matched = matchGroupTagByName(text, groupTags);
-    if (matched) scope = { kind: 'group_tag', tagId: matched.id };
-  }
-
-  const empty = EMPTY_MESSAGE_RE.exec(action.messageTemplate)?.[1]?.trim();
-  return {
-    scope,
-    emptyMessage: empty || undefined,
-    extraInstruction: action.messageTemplate.trim() || undefined,
-  };
-}
-
-/** 按已配置群标签名做子串匹配，最长（最具体）优先。 */
-function matchGroupTagByName(text: string, tags: GroupTag[]): GroupTag | null {
-  const hay = text.toLowerCase();
-  let best: GroupTag | null = null;
-  for (const tag of tags ?? []) {
-    const name = tag.name.trim().toLowerCase();
-    if (!name || !hay.includes(name)) continue;
-    if (!best || tag.name.trim().length > best.name.trim().length) best = tag;
-  }
-  return best;
-}
-
-/** 归一：写入/刷新 summarySpec（总结类），或剥除（已变成纯提醒）。 */
-function withSummarySpec(automation: Automation): Automation {
-  const spec = deriveSummarySpec(
-    automation,
-    getWeChatAssistantSettings().groupTags ?? [],
-  );
-  if (spec) return { ...automation, summarySpec: spec };
-  if (!automation.summarySpec) return automation;
-  const { summarySpec: _drop, ...rest } = automation;
-  return rest;
-}
-
-/**
- * 取生效 spec：持久化的 summarySpec 优先（syncSchedule 经 withSummarySpec
- * 写入，是真源）；缺失时现场 derive——使 buildAutomationWorkflowDsl 这个
- * 导出纯函数独立自洽，不依赖调用方先 mutate（更好测、无隐式顺序坑）。
- */
-function effectiveSummarySpec(
-  automation: Pick<Automation, 'name' | 'action' | 'summarySpec'>,
-): SummarySpec | undefined {
-  return (
-    automation.summarySpec ??
-    deriveSummarySpec(automation, getWeChatAssistantSettings().groupTags ?? [])
-  );
-}
-
-/** 有 summarySpec = 总结类。取代旧的文本分类启发式。 */
-function isWeChatSummaryAutomation(automation: Automation): boolean {
-  return !!effectiveSummarySpec(automation);
-}
-
-function buildNotificationMessage(automation: Automation): string {
-  const template = automation.action.messageTemplate.trim();
-  return [
-    `微信助手提醒：${automation.name}`,
-    template,
-    automation.followupId ? `关联跟进：${automation.followupId}` : '',
-  ].filter(Boolean).join('\n\n');
-}
-
-function dailySummaryScheduleFromLegacyTask(value: string): { cron: string; cronLabel: string } {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (match) {
-    const hour = padHour(Number(match[1]));
-    const minute = padMinute(Number(match[2]));
-    return {
-      cron: `${Number(minute)} ${Number(hour)} * * *`,
-      cronLabel: `每天 ${hour}:${minute}`,
-    };
-  }
-  return {
-    cron: '0 21 * * *',
-    cronLabel: '每天 21:00',
-  };
-}
-
-function parseIsoMs(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const ts = new Date(value).getTime();
-  return Number.isFinite(ts) ? ts : undefined;
-}
-
-function isInt(value: string): boolean {
-  return /^\d{1,2}$/.test(value);
-}
-
-function isWeekday(value: string): boolean {
-  return /^[0-6]$/.test(value);
-}
-
-function padHour(value: number): string {
-  return String(Math.min(23, Math.max(0, value))).padStart(2, '0');
-}
-
-function padMinute(value: number): string {
-  return String(Math.min(59, Math.max(0, value))).padStart(2, '0');
 }
 
 /**
