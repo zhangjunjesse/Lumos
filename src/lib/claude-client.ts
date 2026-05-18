@@ -328,12 +328,17 @@ function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): stri
 function buildMcpSignatureConfig(
   mcpServers?: Record<string, MCPServerConfig>,
   inProcessMcpServers?: ClaudeStreamOptions['inProcessMcpServers'],
+  inProcessVariantKeys?: ClaudeStreamOptions['inProcessVariantKeys'],
 ): Record<string, MCPServerConfig> | undefined {
   const signatureConfig: Record<string, MCPServerConfig> = { ...(mcpServers || {}) };
   for (const name of Object.keys(inProcessMcpServers || {})) {
+    // R5：默认只认名字会漏掉工具集/配置变体（如 knowledge tagIds），
+    // resume 时把旧变体带进新一轮。变体指纹并入签名 → 变则起新会话，
+    // 不变则照常 resume（零额外开销，无变体的 server 行为不变）。
+    const variantKey = inProcessVariantKeys?.[name];
     signatureConfig[name] = {
       command: '__lumos_in_process_mcp__',
-      args: [name],
+      args: variantKey ? [name, variantKey] : [name],
     };
   }
   return Object.keys(signatureConfig).length > 0 ? signatureConfig : undefined;
@@ -513,6 +518,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     workingDirectory,
     mcpServers,
     inProcessMcpServers,
+    inProcessVariantKeys,
     abortController,
     permissionMode,
     files,
@@ -740,7 +746,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // isolated. Project-level MCP may load only when project settings
         // loading is explicitly enabled.
         const hasMcpServers = !!mcpServers && Object.keys(mcpServers).length > 0;
-        const mcpSignatureConfig = buildMcpSignatureConfig(mcpServers, inProcessMcpServers);
+        const mcpSignatureConfig = buildMcpSignatureConfig(mcpServers, inProcessMcpServers, inProcessVariantKeys);
         const currentMcpSignature = computeMcpSignature(mcpSignatureConfig);
         const storedMcpSignature = sessionId ? (getSetting(getSessionMcpSignatureKey(sessionId)) || '') : '';
         const mcpSignatureChanged = !!sessionId

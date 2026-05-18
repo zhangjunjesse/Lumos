@@ -1036,6 +1036,12 @@ export interface ClaudeStreamOptions {
   mcpServers?: Record<string, MCPServerConfig>;
   /** In-process MCP servers (created via createSdkMcpServer). Merged into mcpServers at query time. */
   inProcessMcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpSdkServerConfigWithInstance>;
+  /**
+   * serverName → 变体指纹。in-process server 的 resume 签名默认只认名字，
+   * 抓不到工具集/配置变体（如 knowledge 的 tagIds/overrides）。此处提供
+   * 变体指纹并入签名，使变更真正触发新会话（R5）。
+   */
+  inProcessVariantKeys?: Record<string, string>;
   abortController?: AbortController;
   permissionMode?: string;
   files?: FileAttachment[];

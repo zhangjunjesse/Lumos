@@ -29,6 +29,8 @@ import { ensureDeepResearchDefaultAutomations } from './app/deep-research-defaul
 import { installApp } from './app/installer/install';
 import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
+// 仅依赖零重依赖的静态来源——不把连接器/工具工厂图拉进启动路径。
+import { DEFAULT_ENABLED_DB_MCP_NAMES } from './agent-capabilities/default-enabled';
 
 const BUILTIN_GOOFISH_APP_ID = 'goofish-assistant';
 const BUILTIN_GOOFISH_VERSION = '0.1.0';
@@ -200,6 +202,21 @@ function importMcpServers(): number {
   let imported = 0;
   const currentNames = new Set<string>();
 
+  // 默认启用集（循环外只算一次）：核心编排基础设施（非 auth-gated）
+  // + 注册中心声明的 auth-gated 连接器（未登录返回结构化 not-ready
+  // 而非工具消失）。真源 docs/agent-capability-registry.md；
+  // DEFAULT_ENABLED_DB_MCP_NAMES 与连接器图由 registry.test.ts 焊死。
+  const DEFAULT_ENABLED_MCP = new Set<string>([
+    'workflow',
+    'deepsearch',
+    'office-docs',
+    'speech-to-text',
+    'chrome-devtools',
+    'image-reader',
+    'im-tools',
+    ...DEFAULT_ENABLED_DB_MCP_NAMES,
+  ]);
+
   for (const file of files) {
     const filePath = path.join(mcpDir, file);
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -245,25 +262,7 @@ function importMcpServers(): number {
         console.log('[init-builtin-resources] Updated MCP server:', config.name);
       }
     } else {
-      // workflow and deepsearch are enabled by default for core orchestration flows
-      const isEnabled = config.name === 'workflow'
-        || config.name === 'deepsearch'
-        || config.name === 'office-docs'
-        || config.name === 'speech-to-text'
-        || config.name === 'chrome-devtools'
-        || config.name === 'image-reader'
-        || config.name === 'im-tools'
-        // goofish-search reads from the local SQLite archive — works without
-        // a live login (returns empty for cold-start users) and is the
-        // primary tool the AI uses to inspect goofish state. Always on.
-        || config.name === 'goofish-search'
-        // x-platform MCP 默认启用:工具在用户未登录时返回 X_AUTH_EXPIRED
-        // 友好提示,让 AI 能引导用户去「服务 → X」登录,而不是工具不存在。
-        || config.name === 'x-platform'
-        // douyin-collector MCP 默认启用:工具在底层未实现时返回 ok:false +
-        // 结构化原因,让 AI 能诚实地告知用户「下一轮迭代实现」而不是
-        // 假装工具不存在或瞎编结果。
-        || config.name === 'douyin-collector';
+      const isEnabled = DEFAULT_ENABLED_MCP.has(config.name);
       // goofish stays disabled by default — its tools call live mtop, which
       // fails with "session expired" until the user logs in via the panel.
       // The auth/login route flips it on automatically on success.

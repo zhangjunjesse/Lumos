@@ -1,18 +1,13 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
-import { createLumosButlerMcpServer, LUMOS_BUTLER_MCP_SYSTEM_HINT } from '@/lib/tools/lumos-butler-mcp-server';
 import { validateSession } from '@/lib/auth/session';
-import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
-import {
-  createWeChatAssistantMcpServer,
-  WECHAT_ASSISTANT_MCP_SYSTEM_HINT,
-  WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT,
-} from '@/lib/tools/wechat-assistant-mcp-server';
-import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
 import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
-import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
-import { createChatKnowledgeMcpServer, CHAT_KNOWLEDGE_MCP_SYSTEM_HINT } from '@/lib/knowledge/chat-knowledge-mcp';
+import {
+  buildCapabilityPlan,
+  buildDbServerHints,
+  buildAskModeAllowance,
+  type ConnectorContext,
+} from '@/lib/agent-capabilities';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
@@ -49,72 +44,8 @@ const FILE_DIRECTIVE_PREFIX = 'FEISHU_SEND_FILE::';
 const MAIL_DIRECTIVE_PREFIX = 'FEISHU_SEND_MAIL::';
 const MAX_FEISHU_CONTEXT_DOCS = 2;
 const FEISHU_CONTEXT_MAX_CHARS = 3500;
-const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools (server name: \`feishu\`) for reading/editing Feishu docs, sheets, wikis, drive, and reports. All tool names use the format \`mcp__feishu__<tool>\`.
-
-**Docs & Wiki** — pass any feishu.cn URL directly:
-- \`mcp__feishu__feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
-- \`mcp__feishu__feishu_doc_append\` — append content to a doc
-- \`mcp__feishu__feishu_doc_update_block\` — update a specific block in a doc
-- \`mcp__feishu__feishu_doc_get_blocks\` / \`mcp__feishu__feishu_doc_create\` / \`mcp__feishu__feishu_doc_overwrite\` — advanced doc ops
-
-**Sheets** (for spreadsheet URLs, NOT doc URLs):
-- \`mcp__feishu__feishu_sheet_read\` — read sheet data
-- \`mcp__feishu__feishu_sheet_append_rows\` / \`mcp__feishu__feishu_sheet_update_cells\` — write to sheets
-
-**Drive & Wiki browse**:
-- \`mcp__feishu__feishu_search\` — search docs/sheets/wiki across drive
-- \`mcp__feishu__feishu_drive_list\` — list files in a folder
-- \`mcp__feishu__feishu_wiki_list_spaces\` — browse wiki spaces/nodes
-
-**Images**: \`mcp__feishu__feishu_image_list\` / \`mcp__feishu__feishu_image_download\`
-
-**Reports** (汇报/weekly/daily summaries):
-- \`mcp__feishu__feishu_report_list\` — find report tasks
-- \`mcp__feishu__feishu_report_read\` — read a report task detail
-
-**Auth**: \`mcp__feishu__feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
-
-Rules:
-- To read any feishu.cn doc or wiki link: call \`mcp__feishu__feishu_doc_read\` with the URL directly.
-- Do not claim content before successful tool_result.
-- If API reports missing scopes, tell user which scope to enable.`;
-const DEEPSEARCH_MCP_SYSTEM_HINT = `You have access to built-in DeepSearch tools for deep web research with shared browser login state. Use them for anti-bot sites like Zhihu, WeChat public articles, Xiaohongshu, Juejin, and Twitter/X.
-
-Available DeepSearch tools (server name: \`deepsearch\`):
-- \`mcp__deepsearch__start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
-- \`mcp__deepsearch__get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by start).
-- \`mcp__deepsearch__pause\` / \`mcp__deepsearch__resume\` / \`mcp__deepsearch__cancel\` — control run lifecycle. Required param: \`runId\`.
-
-Workflow: call \`mcp__deepsearch__start\` → poll \`mcp__deepsearch__get_result\` until status is \`completed\` or \`partial\` → summarize results.
-
-Rules:
-- Do NOT use raw browser click/fill/screenshot steps when the user wants DeepSearch — use these tools instead.
-- Prefer \`managed_page\` (default) unless the user explicitly asks to take over the current browser page.
-- Prefer \`best_effort\` (default) unless every selected site must succeed.
-- If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
-- Never fabricate search results — only report what the tool_result actually contains.`;
-const BROWSER_MCP_SYSTEM_HINT = `You have access to Lumos browser control tools (chrome_devtools) that share the selected browser context's login state. Use them to navigate, read, click, type, and screenshot pages in the current Lumos browser context.
-
-Available browser tools (call by exact name):
-- \`mcp__chrome_devtools__list_pages\` — list all open tabs (returns pageId, url, title)
-- \`mcp__chrome_devtools__new_page\` — open a new tab. Params: \`url\` (optional)
-- \`mcp__chrome_devtools__select_page\` — switch active page. Params: \`pageId\`
-- \`mcp__chrome_devtools__navigate_page\` — navigate a page. Params: \`pageId\`, \`type\` (url/back/forward/reload), \`url\`
-- \`mcp__chrome_devtools__take_snapshot\` — get page elements with uid and page text. Params: \`pageId\`
-- \`mcp__chrome_devtools__click\` — click an element by uid. Params: \`pageId\`, \`uid\`
-- \`mcp__chrome_devtools__type_text\` — type text into focused input. Params: \`pageId\`, \`text\`, optional \`submitKey\`
-- \`mcp__chrome_devtools__fill\` — clear and fill an input. Params: \`pageId\`, \`uid\`, \`value\`
-- \`mcp__chrome_devtools__press_key\` — press key. Params: \`pageId\`, \`key\`
-- \`mcp__chrome_devtools__take_screenshot\` — take a screenshot. Params: \`pageId\`, optional \`filePath\`
-- \`mcp__chrome_devtools__evaluate_script\` — run JavaScript. Params: \`pageId\`, \`expression\`
-- \`mcp__chrome_devtools__close_page\` — close a tab. Params: \`pageId\`
-- \`mcp__chrome_devtools__wait_for\` — wait for text to appear. Params: \`pageId\`, \`text\` (array), optional \`timeoutMs\`
-
-Workflow: call \`mcp__chrome_devtools__list_pages\` → get pageId → use other tools with that pageId.
-If multiple similar tabs are open for the same site, do not guess. Prefer \`mcp__chrome_devtools__new_page\` with the target URL, or explicitly \`select_page\` after verifying the exact pageId.
-Browser tools run in background mode during chat. Do not open or switch the user's visible browser panel unless the user explicitly asks to see/control the page.
-Because login state is shared with the user's browser, you can access sites the user is already logged into.`;
-const BROWSER_CONTEXT_SYSTEM_HINT_PREFIX = 'Current Lumos browser context';
+// FEISHU/DEEPSEARCH/BROWSER 系统提示常量已迁至能力注册中心
+// （src/lib/agent-capabilities/hints.ts），由对应连接器持有。
 const BROWSER_REQUEST_DISALLOWED_TOOLS = [
   'Bash',
   'Task',
@@ -137,22 +68,8 @@ const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main A
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
 
-function buildAskModeToolAllowance(input: {
-  knowledgeEnabledForRequest: boolean;
-  mainAgentSession: boolean;
-}): string {
-  const tools: string[] = [];
-  if (input.knowledgeEnabledForRequest) {
-    tools.push('read-only Lumos knowledge tools when they are needed to answer from the enabled knowledge base');
-  }
-  if (input.mainAgentSession) {
-    tools.push('read-only Lumos butler tools when the user asks about Lumos status, settings, history, tasks, or installed capabilities');
-  }
-  if (tools.length === 0) {
-    return ' Do not use any tools.';
-  }
-  return ` You may use only ${tools.join(' and ')}.`;
-}
+// Ask 模式工具许可已迁至能力注册中心 buildAskModeAllowance（R4 第三通道）。
+// 旧实现只给知识库/管家开口子、漏微信——同一非对称白名单 bug 的第三处。
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -232,20 +149,8 @@ function findMentionedBrowserContext(userInput: string): {
   return matches[0];
 }
 
-function hasFeishuMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers.feishu);
-}
-
-function hasDeepSearchMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers.deepsearch);
-}
-
+// hasFeishuMcp / hasDeepSearchMcp 已由能力注册中心 buildDbServerHints 取代。
+// onlyBrowserMcpServers 保留：用户自装 MCP 不在注册表，浏览器意图下做硬过滤兜底。
 function onlyBrowserMcpServers(
   servers: Record<string, MCPServerConfig> | undefined,
 ): Record<string, MCPServerConfig> | undefined {
@@ -855,7 +760,9 @@ export async function POST(request: NextRequest) {
         break;
       case 'ask':
         permissionMode = 'default';
-        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not read or write files, do not execute commands.${buildAskModeToolAllowance({ knowledgeEnabledForRequest, mainAgentSession: isPrimaryMainAgentSession })} Only respond with text.`;
+        // 工具许可句移到 capabilityPlan 之后由 buildAskModeAllowance 追加
+        // （R4 第三通道：与 MCP 注入/Skills 清单同源，杜绝微信再被漏掉）。
+        systemPromptOverride = `${sessionSystemPrompt}${sessionSystemPrompt ? '\n\n' : ''}You are in Ask mode. Answer questions and provide information only. Do not read or write files, do not execute commands. Only respond with text.`;
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
@@ -903,90 +810,90 @@ export async function POST(request: NextRequest) {
       sessionContextId: sessionBrowserContextId,
     });
     const isDedicatedWeChatAssistantSession = isWeChatAssistantChatSession(session);
-    const shouldExposeWeChatAssistantMcp = permissionMode !== 'default' && !browserAutomationIntent;
-    const skippedMcpNames = new Set<string>();
-    if (browserAutomationIntent) {
-      skippedMcpNames.add('deepsearch');
-    }
-    if (!browserAutomationIntent) {
-      // Agent Chat should read WeChat through the Lumos mirror-backed tool.
-      // The raw wechat-export MCP reads decrypted DB files directly, has a
-      // narrower paging contract, and can surface transient SQLite locks.
-      skippedMcpNames.add('wechat-export');
-    }
+    const selectedBrowserLabel = matchedBrowserContext
+      ? `${matchedBrowserContext.displayName} (${matchedBrowserContext.contextId})`
+      : browserContextId;
+    // 能力注册中心是「本会话有什么能力」的唯一裁决处——route 不再散写
+    // per-connector 门禁。真源：docs/agent-capability-registry.md
+    const connectorContext: ConnectorContext = {
+      sessionId: session_id,
+      userId: lumosUserId,
+      permissionMode: permissionMode as ConnectorContext['permissionMode'],
+      browserAutomationIntent,
+      visibleBrowserIntent,
+      legacyImageAgentPrompt: isLegacyImageAgentPrompt(systemPromptAppend),
+      isPrimaryMainAgentSession,
+      isDedicatedWeChatAssistantSession,
+      isWorkflowChatSession: isWorkflowChatSession(session),
+      isEcommerceAssistantChatSession: isEcommerceAssistantChatSession(session),
+      knowledgeEnabledForRequest,
+      selectedKnowledgeTagIds,
+      knowledgeOverrides: sanitizedKnowledgeOverrides,
+      selectedBrowserLabel,
+    };
+    const capabilityPlan = buildCapabilityPlan(connectorContext);
     let loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedSessionWorkingDirectory,
       sessionId: session_id,
       browserBridgeOverride,
       browserContextId,
-      skipNames: skippedMcpNames,
+      skipNames: capabilityPlan.dbMcpSkipNames,
       browserBackground: !visibleBrowserIntent,
     });
     if (browserAutomationIntent) {
+      // 兜底：用户自装 MCP 不在注册表，浏览器意图下硬过滤只留浏览器工具。
       loadedMcpServers = onlyBrowserMcpServers(loadedMcpServers);
     }
     console.timeEnd('[perf] MCP servers loading');
 
     // Append per-request system prompt (e.g. skill injection for image generation)
     let finalSystemPrompt = systemPromptOverride || sessionSystemPrompt || undefined;
+    // R4 第三通道：Ask 模式工具许可由注册中心统一裁决（含微信只读工具），
+    // 紧接 Ask 指令之后，与 MCP 注入/Skills 清单同源——杜绝微信再被漏。
+    if (effectiveMode === 'ask') {
+      finalSystemPrompt = (finalSystemPrompt || '') + buildAskModeAllowance(connectorContext);
+    }
     if (systemPromptAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + systemPromptAppend;
     }
     if (isPrimaryMainAgentSession) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
     }
-    if (isPrimaryMainAgentSession && !browserAutomationIntent) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUTLER_MCP_SYSTEM_HINT;
-    }
     // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
     }
-    if (knowledgeEnabledForRequest && !browserAutomationIntent) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + CHAT_KNOWLEDGE_MCP_SYSTEM_HINT;
+    // 连接器自身广告（phase 1，模式无关）：微信/知识库/管家等 in-process 连接器 hint。
+    if (capabilityPlan.systemHintAppend) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + capabilityPlan.systemHintAppend;
     }
-    if (permissionMode !== 'default' && hasFeishuMcp(loadedMcpServers)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + FEISHU_MCP_SYSTEM_HINT;
+    // DB-server 相关广告（phase 2，解析后）：feishu/deepsearch/im-tools/chrome-devtools。
+    // R2：恒附，不再被 permissionMode==='default' 吞掉。
+    const presentDbServers = new Set(Object.keys(loadedMcpServers || {}));
+    const dbServerHints = buildDbServerHints(connectorContext, presentDbServers);
+    if (dbServerHints) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + dbServerHints;
     }
-    if (permissionMode !== 'default' && hasDeepSearchMcp(loadedMcpServers)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + DEEPSEARCH_MCP_SYSTEM_HINT;
-    }
-    if (permissionMode !== 'default' && hasImToolsMcp(loadedMcpServers)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IM_TOOLS_SYSTEM_HINT;
-    }
-    if (shouldExposeWeChatAssistantMcp) {
-      finalSystemPrompt = (finalSystemPrompt || '')
-        + '\n\n'
-        + (isDedicatedWeChatAssistantSession
-          ? WECHAT_ASSISTANT_MCP_SYSTEM_HINT
-          : WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT);
-    }
-    if (permissionMode !== 'default' && (loadedMcpServers?.['chrome-devtools'] || loadedMcpServers?.['chrome_devtools'])) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_MCP_SYSTEM_HINT;
-      const selectedBrowserLabel = matchedBrowserContext
-        ? `${matchedBrowserContext.displayName} (${matchedBrowserContext.contextId})`
-        : browserContextId;
-      finalSystemPrompt = (finalSystemPrompt || '')
-        + `\n\n${BROWSER_CONTEXT_SYSTEM_HINT_PREFIX}: \`${selectedBrowserLabel}\`.\n`
-        + 'If the user names a configured browser/profile such as "浏览器1", use the selected Lumos browser context via chrome-devtools tools. Do not use shell commands, system open commands, or the OS default browser as a fallback for browser/profile requests. If chrome-devtools fails, report the failure and the selected context instead of opening Google Chrome.';
-      if (browserAutomationIntent) {
-        finalSystemPrompt = (finalSystemPrompt || '')
-          + '\nThis request explicitly targets browser control. Use chrome_devtools tools only for the browser action. Bash and DeepSearch are unavailable for this browser action, so do not attempt `open`, `osascript`, `curl`, system-browser, or DeepSearch fallbacks.';
-      }
-      if (visibleBrowserIntent) {
-        finalSystemPrompt = (finalSystemPrompt || '')
-          + '\nThe user asked to open or navigate a page. Prefer `mcp__chrome_devtools__new_page` with the target URL and keep it visible in the selected browser context.';
-      }
-    }
-    // Generic MCP discovery hint: list all loaded MCP servers so the agent knows they exist.
-    // This covers user-installed MCPs that don't have a dedicated hint.
-    if (permissionMode !== 'default' && loadedMcpServers) {
+    // 通用发现提示：列出未被专属 hint 覆盖的已加载 MCP（多为用户自装）。
+    // R2：移除 permissionMode==='default' 闸——这正是「Ask 模式 agent
+    // 以为自己没有微信/任何工具」事故的直接修复点。
+    if (loadedMcpServers) {
       const BUILTIN_HINTED_MCPS = new Set(['feishu', 'deepsearch', 'chrome-devtools', 'chrome_devtools']);
       const userMcpNames = Object.keys(loadedMcpServers).filter(n => !BUILTIN_HINTED_MCPS.has(n));
       if (userMcpNames.length > 0) {
         const list = userMcpNames.map(n => `- \`${n}\`: tools available as \`mcp__${n}__<tool_name>\``).join('\n');
         finalSystemPrompt = (finalSystemPrompt || '') + `\n\nYou have access to the following additional MCP servers. Use their tools when relevant:\n${list}`;
       }
+    }
+
+    // Ask 模式权威总钳（必须在所有能力提示之后，靠 recency 压过它们的
+    // 祈使句）。R2 保留能力感知（上面照列，agent 知道有啥、能如实告诉
+    // 用户），但本轮只准调许可内的只读工具——消解「只准用X」与发现/IM/
+    // DeepSearch 提示「use their tools」的指令矛盾，避免 Ask 模式误触工具
+    // /意外权限弹窗。非 Ask 模式不加，零回归。
+    if (effectiveMode === 'ask') {
+      finalSystemPrompt = (finalSystemPrompt || '')
+        + '\n\n(Ask mode — authoritative: the capability and MCP descriptions above are only so you can accurately tell the user what Lumos can do. This turn you may ONLY call the read-only tools explicitly permitted in the Ask-mode allowance stated earlier. Do NOT invoke any other tool — no message sends, web/deepsearch runs, automations, browser control, or goofish/douyin/x tools. If answering needs an action or a non-permitted tool, explain what is possible and that it requires switching out of Ask mode; do not attempt the tool.)';
     }
 
     // Load recent conversation history from DB as fallback context.
@@ -1009,41 +916,10 @@ export async function POST(request: NextRequest) {
       mcpServers: loadedMcpServers ? Object.keys(loadedMcpServers) : 'none',
     });
 
-    // Create in-process MCP servers
-    const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> = {};
-    if (permissionMode !== 'default' && !browserAutomationIntent && !isLegacyImageAgentPrompt(systemPromptAppend)) {
-      const lumosMcpServer = createLumosMcpServer(session_id, lumosUserId);
-      inProcessMcpServers[lumosMcpServer.name] = lumosMcpServer;
-    }
-    if (knowledgeEnabledForRequest && !browserAutomationIntent) {
-      const knowledgeMcpServer = createChatKnowledgeMcpServer({
-        tagIds: selectedKnowledgeTagIds,
-        overrides: sanitizedKnowledgeOverrides,
-      });
-      inProcessMcpServers[knowledgeMcpServer.name] = knowledgeMcpServer;
-    }
-    if (isPrimaryMainAgentSession && !browserAutomationIntent) {
-      const butlerMcpServer = createLumosButlerMcpServer({
-        sessionId: session_id,
-        userId: lumosUserId,
-      });
-      inProcessMcpServers[butlerMcpServer.name] = butlerMcpServer;
-    }
-    // Workflow code runner — only for workflow chat sessions
-    if (isWorkflowChatSession(session) && !browserAutomationIntent) {
-      const workflowMcp = createWorkflowMcpServer();
-      inProcessMcpServers[workflowMcp.name] = workflowMcp;
-    }
-    if (shouldExposeWeChatAssistantMcp) {
-      const wechatAssistantMcp = createWeChatAssistantMcpServer({
-        readOnly: !isDedicatedWeChatAssistantSession,
-      });
-      inProcessMcpServers[wechatAssistantMcp.name] = wechatAssistantMcp;
-    }
-    if (isEcommerceAssistantChatSession(session) && !browserAutomationIntent) {
-      const ecommerceAssistantMcp = createEcommerceAssistantMcpServer();
-      inProcessMcpServers[ecommerceAssistantMcp.name] = ecommerceAssistantMcp;
-    }
+    // In-process MCP servers — 由能力注册中心统一裁决（见上方 capabilityPlan）。
+    // 微信助手在此恒注入（不再被 permissionMode 闸），readOnly=非微信专属会话。
+    const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> =
+      capabilityPlan.inProcessServers;
 
     const claudeStream = streamClaude({
       prompt: promptForModel,
@@ -1055,6 +931,7 @@ export async function POST(request: NextRequest) {
       workingDirectory: resolvedSessionWorkingDirectory,
       mcpServers: loadedMcpServers,
       inProcessMcpServers: Object.keys(inProcessMcpServers).length > 0 ? inProcessMcpServers : undefined,
+      inProcessVariantKeys: capabilityPlan.inProcessVariantKeys,
       abortController,
       permissionMode,
       files: fileAttachments,
