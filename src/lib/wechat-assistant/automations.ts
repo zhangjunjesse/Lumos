@@ -16,20 +16,15 @@ import {
 import type { Automation } from '@/components/apps/builtin/wechat/relations-types';
 import {
   deriveSummarySpec,
-  isWeChatSummaryAutomation,
   withSummarySpec,
 } from './automation-summary-spec';
 import { buildAutomationWorkflowDsl } from './automation-dsl';
-import {
-  dailySummaryScheduleFromLegacyTask,
-  parseAutomationSchedule,
-} from './automation-schedule';
+import { parseAutomationSchedule } from './automation-schedule';
 import {
   hydrateAutomationScheduleState,
   readAutomations,
   writeAutomations,
 } from './automation-store';
-import { listWeChatAssistantTasks } from './tasks';
 
 // 拆分后保持公共入口稳定：intent-spec / dsl-build / schedule-parse 已分层，
 // 仍从 automations re-export 被测试/外部直接引用符号（门面，零行为变化）。
@@ -50,28 +45,6 @@ export function listWeChatAutomations(): Automation[] {
   return readAutomations()
     .map(hydrateAutomationScheduleState)
     .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-export async function ensureLegacyDailySummaryAutomation(): Promise<void> {
-  await ensureAutomationDslSchema();
-  const current = readAutomations();
-  if (current.some(isWeChatSummaryAutomation)) return;
-
-  const dailyTask = listWeChatAssistantTasks().find((task) => task.id === 'daily-summary');
-  if (!dailyTask?.enabled) return;
-
-  const schedule = dailySummaryScheduleFromLegacyTask(dailyTask.schedule);
-  await createWeChatAutomation({
-    name: '每日微信总结',
-    kind: 'reminder_recurring',
-    cron: schedule.cron,
-    cronLabel: schedule.cronLabel,
-    action: {
-      kind: 'wechat_summary',
-      messageTemplate: '汇总今天微信消息，提炼重点、待办和需要跟进的人。',
-    },
-    enabled: true,
-  });
 }
 
 export async function createWeChatAutomation(draft: AutomationDraft): Promise<Automation> {
@@ -128,6 +101,10 @@ export async function triggerWeChatAutomation(id: string): Promise<Automation | 
   const hydrated = hydrateAutomationScheduleState(automation);
   if (!hydrated.scheduleId || hydrated.scheduleError) {
     throw new Error(hydrated.scheduleError || '这条自动化还没有接入调度，暂不能运行');
+  }
+  // "已停用 = 不运行(含手动)"的不变量在决策点强约束，不只靠 UI 藏按钮。
+  if (!hydrated.enabled) {
+    throw new Error('这条自动化已停用，先启用再运行');
   }
   await triggerSchedule(hydrated.scheduleId, {
     automationId: hydrated.id,
@@ -190,9 +167,12 @@ async function syncSchedule(rawInput: Automation): Promise<Automation> {
     };
   }
   if (!input.enabled) {
-    await cancelRunningScheduleRuns(schedule.id, '微信助手自动化已关闭，停止执行中的工作流', {
+    // 与删除路径对等：取消没真正生效就抛错，绝不"UI 显示已关闭但 run 还在跑"
+    // （CLAUDE.md 生命周期硬规则：关闭必须同时取消正在运行的 workflow run）。
+    const cancelResult = await cancelRunningScheduleRuns(schedule.id, '微信助手自动化已关闭，停止执行中的工作流', {
       updateScheduleSummary: false,
     });
+    assertScheduleCancellationResolved(cancelResult, '关闭微信自动化');
     updateScheduledWorkflow(schedule.id, { enabled: false });
   }
 

@@ -16,19 +16,20 @@ import type { GroupTag } from '@/components/apps/builtin/wechat/app-settings';
 
 import { getWeChatAssistantSettings } from './settings-store';
 
-const SUMMARY_VERB_RE = /总结|汇总|日报|日总结|摘要|提炼|梳理/;
-const WECHAT_SCOPE_RE = /微信|消息|群|聊天|会话/;
 const EMPTY_MESSAGE_RE = /(?:如果|若|要是)?(?:没有|无)[^，。\n]{0,8}?(?:就|则)?说[「"“]?([^」"”，。\n]{1,24})/;
 
 /**
- * 唯一意图解析器。判定一条自动化是否"总结"类，是则把自然语言解析成
- * 结构化 SummarySpec：
- * - 是否总结：wechat_summary 显式；或 custom 文本双信号（总结动词+微信范围词）。
+ * 唯一意图解析器。是否"总结"由 action.kind **显式**决定（wechat_summary），
+ * 不再从 custom 文本猜——旧的「总结动词+微信范围词」双信号会把普通提醒
+ * （如"提醒我梳理客户群进展"）静默切成全量扫私信生成报告，非确定性、
+ * 无 UI 暴露。执行方式现在在新建弹框里显式选。
+ *
+ * 是总结则把自然语言解析成结构化 SummarySpec：
  * - scope：显式 groupTagId 优先；否则按指令文本匹配已配置群标签名（最长优先）；
  *   都没有 = 全部会话。
  * - emptyMessage：探测"没有就说X"话术（可选，缺省由 handler 兜底默认）。
  * - extraInstruction：用户原话原样保留，作为 LLM scopeNote 透传，绝不丢弃。
- * 纯提醒返回 undefined。
+ * 非总结（含一切 custom）返回 undefined。
  */
 export function deriveSummarySpec(
   automation: Pick<Automation, 'name' | 'action'>,
@@ -36,12 +37,7 @@ export function deriveSummarySpec(
 ): SummarySpec | undefined {
   const action = automation.action;
   const text = `${automation.name}\n${action.messageTemplate}`;
-  const isSummary =
-    action.kind === 'wechat_summary' ||
-    (action.kind === 'custom' &&
-      SUMMARY_VERB_RE.test(text) &&
-      WECHAT_SCOPE_RE.test(text));
-  if (!isSummary) return undefined;
+  if (action.kind !== 'wechat_summary') return undefined;
 
   let scope: SummarySpec['scope'] = { kind: 'all' };
   if (action.kind === 'wechat_summary' && action.groupTagId) {
@@ -71,7 +67,11 @@ function matchGroupTagByName(text: string, tags: GroupTag[]): GroupTag | null {
   return best;
 }
 
-/** 归一：写入/刷新 summarySpec（总结类），或剥除（已变成纯提醒）。 */
+/**
+ * 归一：summarySpec 严格随 action.kind——显式 wechat_summary 写入/刷新，
+ * 其它一律剥除。单一真源是 action.kind（用户在弹框显式选的执行方式），
+ * 不再有"文本猜的 spec"游离态；用户把执行方式改回纯提醒即真的变纯提醒。
+ */
 export function withSummarySpec(automation: Automation): Automation {
   const spec = deriveSummarySpec(
     automation,

@@ -43,6 +43,10 @@ export function useWeChatAutomations(): UseWeChatAutomations {
   const pendingRef = React.useRef<Map<string, Partial<Automation>>>(new Map());
   const timersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const failedPatchRef = React.useRef<{ id: string; patch: Partial<Automation> } | null>(null);
+  // 乐观新建但服务端列表可能还没收录的 id：保护它不被「早于持久化发出、
+  // 晚于 create 落 state 才 resolve」的 stale refresh 从 UI 抹掉。
+  // 服务端列表一旦收录即清除（自确认，单客户端桌面端无 ghost）。
+  const createdRef = React.useRef<Set<string>>(new Set());
 
   const refresh = React.useCallback(async () => {
     try {
@@ -53,7 +57,7 @@ export function useWeChatAutomations(): UseWeChatAutomations {
         throw new Error(json.message ?? json.error ?? '自动化加载失败');
       }
       const hasSaveFailure = failedPatchRef.current !== null;
-      setAutomations((prev) => mergeAutomations(prev, nextAutomations, pendingRef, failedPatchRef));
+      setAutomations((prev) => mergeAutomations(prev, nextAutomations, pendingRef, failedPatchRef, createdRef));
       if (!hasSaveFailure) setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '自动化加载失败');
@@ -124,6 +128,7 @@ export function useWeChatAutomations(): UseWeChatAutomations {
       if (!res.ok || !isAutomation(automation)) {
         throw new Error(json.message ?? json.error ?? '创建失败');
       }
+      createdRef.current.add(automation.id);
       setAutomations((prev) => replaceAutomation(prev, automation));
       if (!failedPatchRef.current) setError(null);
       return automation;
@@ -165,6 +170,7 @@ export function useWeChatAutomations(): UseWeChatAutomations {
 
   const remove = React.useCallback<UseWeChatAutomations['remove']>((id) => {
     clearPending(id);
+    createdRef.current.delete(id);
     if (failedPatchRef.current?.id === id) clearSaveFailure();
     setAutomations((prev) => prev.filter((item) => item.id !== id));
     setSaving(true);
@@ -267,11 +273,12 @@ async function savePatch(
   }
 }
 
-function mergeAutomations(
+export function mergeAutomations(
   prev: Automation[],
   serverAutomations: Automation[],
   pendingRef: React.MutableRefObject<Map<string, Partial<Automation>>>,
   failedPatchRef: React.MutableRefObject<{ id: string; patch: Partial<Automation> } | null>,
+  createdRef: React.MutableRefObject<Set<string>>,
 ): Automation[] {
   const prevById = new Map(prev.map((automation) => [automation.id, automation]));
   const dirtyIds = new Set<string>([
@@ -281,6 +288,8 @@ function mergeAutomations(
   const merged: Automation[] = [];
 
   for (const serverAutomation of serverAutomations) {
+    // 服务端已收录 → 该乐观新建已确认，撤销保护（防 ghost）。
+    createdRef.current.delete(serverAutomation.id);
     if (dirtyIds.has(serverAutomation.id) && prevById.has(serverAutomation.id)) {
       merged.push(prevById.get(serverAutomation.id)!);
       prevById.delete(serverAutomation.id);
@@ -290,8 +299,10 @@ function mergeAutomations(
     prevById.delete(serverAutomation.id);
   }
 
+  // 仅在 prev 的项：dirty(未存的编辑) 或 刚乐观新建(服务端列表还没追上) 才保留，
+  // 否则视为已在别处删除。create 漏了后者保护会导致新建项被 stale refresh 抹掉。
   for (const [id, automation] of prevById.entries()) {
-    if (dirtyIds.has(id)) merged.push(automation);
+    if (dirtyIds.has(id) || createdRef.current.has(id)) merged.push(automation);
   }
 
   return merged;

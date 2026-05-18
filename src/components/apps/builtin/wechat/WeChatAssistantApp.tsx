@@ -341,7 +341,6 @@ export function WeChatAssistantApp(): React.ReactElement {
             <AutomationsTab
               automations={automations}
               followups={followups}
-              systemAutomation={null}
               loading={automationState.loading}
               saving={automationState.saving}
               canRetrySave={automationState.canRetrySave}

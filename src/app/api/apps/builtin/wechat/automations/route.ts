@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import {
   createWeChatAutomation,
-  ensureLegacyDailySummaryAutomation,
+  ensureAutomationDslSchema,
   listWeChatAutomations,
   updateWeChatAutomation,
 } from '@/lib/wechat-assistant/automations';
@@ -50,7 +50,7 @@ const patchSchema = z.object({
 });
 
 export async function GET() {
-  await ensureLegacyDailySummaryAutomation();
+  await ensureAutomationDslSchema();
   return NextResponse.json({ automations: listWeChatAutomations() });
 }
 

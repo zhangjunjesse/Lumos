@@ -4,7 +4,6 @@ import {
   buildAutomationWorkflowDsl,
   deriveSummarySpec,
   ensureAutomationDslSchema,
-  ensureLegacyDailySummaryAutomation,
   listWeChatAutomations,
   parseAutomationSchedule,
   triggerWeChatAutomation,
@@ -142,6 +141,28 @@ describe('wechat assistant automations store', () => {
     expect(schedules.has('schedule-1')).toBe(true);
   });
 
+  it('does not silently disable an automation when the running workflow is not confirmed stopped', async () => {
+    // CLAUDE.md 生命周期硬规则 + 与删除路径对等：关闭时取消没生效必须抛错，
+    // 绝不"UI 显示已关闭但 run 还在跑"。
+    const created = await createWeChatAutomation({
+      name: '每日微信总结',
+      kind: 'reminder_recurring',
+      cron: '0 21 * * *',
+      cronLabel: '每天 21:00',
+      action: { kind: 'wechat_summary', messageTemplate: '总结今天微信消息' },
+      enabled: true,
+    });
+    mockCancelRunningScheduleRuns.mockResolvedValueOnce({
+      cancelledRuns: [unresolvedCancelRun],
+      unresolvedRuns: [unresolvedCancelRun],
+      allResolved: false,
+    });
+
+    await expect(updateWeChatAutomation(created.id, { enabled: false })).rejects.toThrow(
+      '关闭微信自动化前还有 1 个运行中的执行未确认停止',
+    );
+  });
+
   it('parses common cron shapes into scheduler timing', () => {
     expect(parseAutomationSchedule({
       kind: 'reminder_recurring',
@@ -155,6 +176,11 @@ describe('wechat assistant automations store', () => {
       kind: 'reminder_recurring',
       cron: '0 */4 * * *',
     })).toEqual(expect.objectContaining({ intervalMinutes: 240, scheduleTime: null }));
+    // 友好编辑器「每 N 分钟」产出的 cron 必须被引擎认（UI 能选=引擎能跑）。
+    expect(parseAutomationSchedule({
+      kind: 'reminder_recurring',
+      cron: '*/15 * * * *',
+    })).toEqual(expect.objectContaining({ intervalMinutes: 15, scheduleTime: null }));
   });
 
   it('builds a valid workflow notification DSL for scheduler execution', () => {
@@ -202,9 +228,8 @@ describe('wechat assistant automations store', () => {
     }));
   });
 
-  it('routes a custom 每日工作总结 (rich 工作群 instruction) through the real summary workflow, not echo', () => {
-    // 实测 bug 复现：name/template 里 微信 与 总结 间距远超旧正则的 6 字，
-    // 旧逻辑误判为普通提醒 → generic 分支把整段指令当消息发回用户。
+  it('routes an explicit wechat_summary automation through the real summary workflow, passing the full instruction', () => {
+    // 执行方式现在显式选（弹框 actionMode=summary → action.kind=wechat_summary）。
     const dsl = buildAutomationWorkflowDsl({
       id: 'a1',
       name: '每日工作总结',
@@ -212,7 +237,7 @@ describe('wechat assistant automations store', () => {
       cron: '0 21 * * *',
       cronLabel: '每天 21:00',
       action: {
-        kind: 'custom',
+        kind: 'wechat_summary',
         messageTemplate:
           '汇总今天，注意是今天的所有工作群微信消息，注意是工作群标签的，汇总之前，需要更新微信消息内容，提炼以下内容：1. 今日重点话题，事件。2. 今日待办事项 3. 今日需要跟进的人 4. 其他值得注意的信息。整理完成后，通过微信发送给我，如果没有，就说今日无工作。',
       },
@@ -226,20 +251,27 @@ describe('wechat assistant automations store', () => {
     expect(JSON.stringify(dsl.nodes[0])).toContain('提炼以下内容');
   });
 
-  it('keeps a pure reminder that merely mentions 微信 as a plain notification', () => {
-    const dsl = buildAutomationWorkflowDsl({
-      id: 'a2',
-      name: '联系提醒',
-      kind: 'reminder_recurring',
-      cron: '0 9 * * *',
-      cronLabel: '每天 09:00',
-      action: { kind: 'custom', messageTemplate: '提醒我 9 点联系微信里的张总确认合同' },
-      enabled: true,
-      createdAt: 1,
-    });
-    const artifact = generateWorkflowFromDsl(dsl);
-    expect(artifact.validation.valid).toBe(true);
-    expect(artifact.manifest.stepTypes).toEqual(['notification']);
+  it('never silently turns a custom reminder into a summary, even with 汇总/总结+微信 wording', () => {
+    // 回归锁：旧的「总结动词+微信范围词」双信号会把普通提醒静默切成
+    // 全量扫私信生成报告。custom 一律纯提醒（单 notification）。
+    for (const messageTemplate of [
+      '提醒我 9 点联系微信里的张总确认合同',
+      '记得汇总今天的工作群微信消息进度发我', // 含 汇总+微信+群，旧逻辑会误判
+    ]) {
+      const dsl = buildAutomationWorkflowDsl({
+        id: 'a2',
+        name: '联系提醒',
+        kind: 'reminder_recurring',
+        cron: '0 9 * * *',
+        cronLabel: '每天 09:00',
+        action: { kind: 'custom', messageTemplate },
+        enabled: true,
+        createdAt: 1,
+      });
+      const artifact = generateWorkflowFromDsl(dsl);
+      expect(artifact.validation.valid).toBe(true);
+      expect(artifact.manifest.stepTypes).toEqual(['notification']);
+    }
   });
 
   it('triggers the backing schedule for manual runs', async () => {
@@ -260,6 +292,22 @@ describe('wechat assistant automations store', () => {
       source: 'wechat-assistant',
       manual: true,
     }));
+  });
+
+  it('refuses to manually run a disabled automation (UI 藏按钮 + 决策点强约束一致)', async () => {
+    const created = await createWeChatAutomation({
+      name: '每日微信总结',
+      kind: 'reminder_recurring',
+      cron: '0 21 * * *',
+      cronLabel: '每天 21:00',
+      action: { kind: 'wechat_summary', messageTemplate: '总结今天微信消息' },
+      enabled: true,
+    });
+    await updateWeChatAutomation(created.id, { enabled: false });
+    mockTriggerSchedule.mockClear();
+
+    await expect(triggerWeChatAutomation(created.id)).rejects.toThrow('这条自动化已停用，先启用再运行');
+    expect(mockTriggerSchedule).not.toHaveBeenCalled();
   });
 
   it('allows retrying a schedule after the previous run failed', async () => {
@@ -335,6 +383,30 @@ describe('wechat assistant automations store', () => {
     expect(listWeChatAutomations()[0]?.id).toBe('ok');
   });
 
+  it('reconciles a stale summarySpec on a custom automation away (kind 是唯一真源)', async () => {
+    // 用户把执行方式改回纯提醒（action.kind=custom）后，遗留的 summarySpec
+    // 必须被剥除——否则弹框选的纯提醒形同虚设，仍跑总结流程。
+    const created = await createWeChatAutomation({
+      name: '客户提醒',
+      kind: 'reminder_recurring',
+      cron: '0 21 * * *',
+      cronLabel: '每天 21:00',
+      action: { kind: 'custom', messageTemplate: '提醒我跟进重点客户' },
+      enabled: true,
+    });
+    const autos = JSON.parse(store.get('apps.wechat-assistant.automations.v1')!) as Record<string, unknown>[];
+    autos[0].summarySpec = { scope: { kind: 'all' }, extraInstruction: '旧文本判定残留' };
+    store.set('apps.wechat-assistant.automations.v1', JSON.stringify(autos));
+    store.delete('apps.wechat-assistant.automations.dsl-schema-version');
+
+    await ensureAutomationDslSchema();
+
+    const healed = JSON.parse(store.get('apps.wechat-assistant.automations.v1')!) as Record<string, unknown>[];
+    expect(healed[0].summarySpec).toBeUndefined(); // 剥除，回归纯提醒
+    const dsl = (schedules.get(created.scheduleId!) as { workflowDsl: { nodes: Array<{ type: string }> } }).workflowDsl;
+    expect(dsl.nodes.map((n) => n.type)).toEqual(['notification']);
+  });
+
   it('ensureAutomationDslSchema rebuilds stale DSL + backfills summarySpec once, then is version-idempotent', async () => {
     const created = await createWeChatAutomation({
       name: '每日工作总结',
@@ -342,7 +414,7 @@ describe('wechat assistant automations store', () => {
       cron: '0 21 * * *',
       cronLabel: '每天 21:00',
       action: {
-        kind: 'custom',
+        kind: 'wechat_summary',
         messageTemplate:
           '汇总今天所有工作群微信消息，提炼今日重点、待办、需要跟进的人；没有就说今日无工作。',
       },
@@ -379,7 +451,8 @@ describe('wechat assistant automations store', () => {
     expect(JSON.stringify(schedules.get(scheduleId))).toBe(before);
   });
 
-  it('migrates the legacy enabled daily summary task into a real automation once', async () => {
+  it('does not auto-seed an automation from a legacy enabled daily summary task', async () => {
+    // 用户从未要求过"内置任务"：列表/Schema 路径不得偷偷 seed 一条总结自动化。
     store.set('apps.wechat-assistant.tasks.v1', JSON.stringify({
       'daily-summary': {
         enabled: true,
@@ -389,22 +462,10 @@ describe('wechat assistant automations store', () => {
       },
     }));
 
-    await ensureLegacyDailySummaryAutomation();
-    await ensureLegacyDailySummaryAutomation();
+    await ensureAutomationDslSchema();
 
-    const automations = listWeChatAutomations();
-    expect(automations).toHaveLength(1);
-    expect(automations[0]).toEqual(expect.objectContaining({
-      name: '每日微信总结',
-      cron: '30 22 * * *',
-      cronLabel: '每天 22:30',
-      enabled: true,
-      action: expect.objectContaining({ kind: 'wechat_summary' }),
-    }));
-    expect(schedules.get('schedule-1')).toEqual(expect.objectContaining({
-      name: '微信助手 · 每日微信总结',
-      scheduleTime: '22:30',
-    }));
+    expect(listWeChatAutomations()).toEqual([]);
+    expect(schedules.size).toBe(0);
   });
 });
 
@@ -426,35 +487,31 @@ describe('deriveSummarySpec (单一意图解析器，取代 3 处启发式)', ()
     expect(spec?.extraInstruction).toBe('总结今天微信消息');
   });
 
-  it('custom 措辞读为总结 → spec；无标签匹配则 scope=all，原话保留', () => {
+  it('wechat_summary 无显式 tagId，指令点名已配置标签 → scope=group_tag（最长名优先）', () => {
     const spec = deriveSummarySpec(
-      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总今天工作群微信消息，提炼重点/待办/跟进人' } },
-      [],
-    );
-    expect(spec?.scope).toEqual({ kind: 'all' });
-    expect(spec?.extraInstruction).toContain('提炼重点');
-  });
-
-  it('custom 指令点名已配置标签 → scope=group_tag（最长名优先）', () => {
-    const spec = deriveSummarySpec(
-      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总今天所有工作群-核心的微信消息，提炼重点' } },
+      { name: '每日工作总结', action: { kind: 'wechat_summary', messageTemplate: '汇总今天所有工作群-核心的微信消息，提炼重点' } },
       [tag('a', '工作群'), tag('b', '工作群-核心')],
     );
     expect(spec?.scope).toEqual({ kind: 'group_tag', tagId: 'b' });
   });
 
-  it('纯提醒（有微信无总结动词）→ undefined', () => {
-    expect(
-      deriveSummarySpec(
-        { name: '联系提醒', action: { kind: 'custom', messageTemplate: '提醒我9点联系微信里的张总' } },
-        [],
-      ),
-    ).toBeUndefined();
+  it('custom 一律 undefined——即使含「汇总/总结+微信」也不静默判总结（杜绝误判）', () => {
+    for (const messageTemplate of [
+      '提醒我9点联系微信里的张总',
+      '汇总今天工作群微信消息，提炼重点/待办/跟进人', // 旧双信号会误判为总结
+      '梳理一下本周客户群进展',
+    ]) {
+      expect(
+        deriveSummarySpec({ name: '提醒', action: { kind: 'custom', messageTemplate } }, [
+          tag('a', '工作群'),
+        ]),
+      ).toBeUndefined();
+    }
   });
 
-  it('探测"没有就说X"话术 → emptyMessage', () => {
+  it('探测"没有就说X"话术 → emptyMessage（显式 wechat_summary）', () => {
     const spec = deriveSummarySpec(
-      { name: '每日工作总结', action: { kind: 'custom', messageTemplate: '汇总工作群微信消息，提炼重点；如果没有就说今日无工作' } },
+      { name: '每日工作总结', action: { kind: 'wechat_summary', messageTemplate: '汇总工作群微信消息，提炼重点；如果没有就说今日无工作' } },
       [],
     );
     expect(spec?.emptyMessage).toBe('今日无工作');

@@ -76,24 +76,6 @@ export function parseAutomationSchedule(
   return null;
 }
 
-export function dailySummaryScheduleFromLegacyTask(
-  value: string,
-): { cron: string; cronLabel: string } {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (match) {
-    const hour = padHour(Number(match[1]));
-    const minute = padMinute(Number(match[2]));
-    return {
-      cron: `${Number(minute)} ${Number(hour)} * * *`,
-      cronLabel: `每天 ${hour}:${minute}`,
-    };
-  }
-  return {
-    cron: '0 21 * * *',
-    cronLabel: '每天 21:00',
-  };
-}
-
 export function parseIsoMs(value: string | null): number | undefined {
   if (!value) return undefined;
   const ts = new Date(value).getTime();
