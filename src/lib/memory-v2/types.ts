@@ -31,6 +31,7 @@ export interface MemoryV2Entry {
   updated_at: string;
   last_used_at: string | null;
   hit_count: number;
+  embedding: Buffer | null;
 }
 
 export interface MemoryV2Input {

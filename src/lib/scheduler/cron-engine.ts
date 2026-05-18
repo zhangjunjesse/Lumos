@@ -65,11 +65,9 @@ async function runTick(): Promise<void> {
   runDueTopicExtractions().catch((error: unknown) => {
     console.warn('[wechat-assistant] daily topic extraction tick failed:', error);
   });
-  try {
-    runDueMemoryV2Sleep();
-  } catch (error) {
+  runDueMemoryV2Sleep().catch((error: unknown) => {
     console.warn('[memory-v2] daily sleep tick failed:', error);
-  }
+  });
 }
 
 async function runSchedule(

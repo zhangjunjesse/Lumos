@@ -1,37 +1,9 @@
 import { NextResponse } from 'next/server';
-import {
-  buildMemoryV2ReflectionReport,
-  createMemoryV2ReflectionEntry,
-} from '@/lib/memory-v2/reflection';
-import { parseMemoryV2Tags } from '@/lib/memory-v2/store';
-import type { MemoryV2Entry } from '@/lib/memory-v2/types';
+import { buildMemoryV2ReflectionReport } from '@/lib/memory-v2/reflection';
+import { runMemoryV2Consolidation } from '@/lib/memory-v2/consolidation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function serialize(entry: MemoryV2Entry) {
-  return {
-    id: entry.id,
-    kind: entry.kind,
-    scopeType: entry.scope_type,
-    scopeKey: entry.scope_key,
-    ownerModule: entry.owner_module,
-    status: entry.status,
-    title: entry.title,
-    body: entry.body,
-    summary: entry.summary,
-    tags: parseMemoryV2Tags(entry.tags),
-    sensitivity: entry.sensitivity,
-    secretRef: entry.secret_ref,
-    confidence: entry.confidence,
-    importance: entry.importance,
-    evidence: entry.evidence,
-    createdAt: entry.created_at,
-    updatedAt: entry.updated_at,
-    lastUsedAt: entry.last_used_at,
-    hitCount: entry.hit_count,
-  };
-}
 
 export async function GET() {
   try {
@@ -42,15 +14,17 @@ export async function GET() {
   }
 }
 
+// 手动「立即自省」按底线①不再写体检单记忆：实际去做收敛（去重归档），
+// 返回收敛结果 + 收敛后的报告。
 export async function POST() {
   try {
-    const result = createMemoryV2ReflectionEntry();
+    const consolidation = runMemoryV2Consolidation();
     return NextResponse.json({
-      report: result.report,
-      memory: serialize(result.memory),
-    }, { status: 201 });
+      report: buildMemoryV2ReflectionReport(),
+      consolidation,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to create Memory v2 reflection entry';
+    const message = error instanceof Error ? error.message : 'Failed to run Memory v2 reflection';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

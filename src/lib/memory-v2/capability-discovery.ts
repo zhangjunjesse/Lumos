@@ -1,6 +1,6 @@
-import crypto from 'crypto';
 import { getSetting, setSetting } from '@/lib/db';
 import { listMemoryV2Entries } from './store';
+import { memorySignature } from './dedup';
 import type { CapabilityResearchSource } from './capability-lab';
 import {
   recordMemoryV2ThirdPartyCapabilityResearchEvent,
@@ -63,12 +63,16 @@ function saveSeenFingerprints(values: string[]): void {
   setSetting(SEEN_KEY, JSON.stringify(Array.from(new Set(values)).slice(-MAX_SEEN)));
 }
 
+// 指纹必须按「内容」算，不能按 memory.id/updated_at——否则每晚新生成的
+// 记忆 id 都不同，seen 去重永远不命中，标题就会无限套娃繁殖。
 function fingerprintFor(memory: MemoryV2Entry, source: CapabilityResearchSource, capabilityType: MemoryV2CapabilityEventType): string {
-  return crypto
-    .createHash('sha1')
-    .update(`${memory.id}:${memory.updated_at}:${source}:${capabilityType}`)
-    .digest('hex')
-    .slice(0, 24);
+  return memorySignature({
+    kind: 'capability',
+    scopeType: 'main_agent',
+    scopeKey: `${source}:${capabilityType}`,
+    title: memory.title,
+    body: memory.body,
+  });
 }
 
 function slug(value: string): string {
@@ -149,6 +153,8 @@ export function runMemoryV2CapabilityDiscovery(params: {
   const sourceCounts: Record<string, number> = {};
 
   for (const memory of memories) {
+    // 只挖真实工作沉淀出的记忆，绝不吃记忆子系统自己的产出（断自噬递归）。
+    if (memory.owner_module.startsWith('memory-v2')) continue;
     const candidate = buildCandidate(memory);
     if (!candidate) continue;
     sourceCounts[candidate.source] = (sourceCounts[candidate.source] || 0) + 1;

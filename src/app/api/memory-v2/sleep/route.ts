@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const input = runSchema.parse(body);
-    const run = runMemoryV2Sleep({
+    const run = await runMemoryV2Sleep({
       trigger: input.trigger || 'manual',
       force: input.force !== false,
     });

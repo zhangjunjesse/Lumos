@@ -911,6 +911,12 @@ export function migrateLumosTables(db: Database.Database): void {
       ON memory_v2_capability_events(status, occurred_at DESC);
   `);
 
+  // Memory v2: semantic recall — bge-small-zh (512d) embedding as BLOB.
+  const mv2Cols = db.prepare("PRAGMA table_info(memory_v2_entries)").all() as { name: string }[];
+  if (!mv2Cols.some((c) => c.name === 'embedding')) {
+    db.exec("ALTER TABLE memory_v2_entries ADD COLUMN embedding BLOB DEFAULT NULL");
+  }
+
   // Auto-create or mark "Built-in" provider from the embedded default API key
   const builtinProvider = db.prepare('SELECT id FROM api_providers WHERE is_builtin = 1').get() as { id: string } | undefined;
 

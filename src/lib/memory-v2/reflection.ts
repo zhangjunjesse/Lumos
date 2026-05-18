@@ -1,4 +1,4 @@
-import { createMemoryV2Entry, listMemoryV2Entries, parseMemoryV2Tags } from './store';
+import { listMemoryV2Entries, parseMemoryV2Tags } from './store';
 import type { MemoryV2Entry, MemoryV2Kind } from './types';
 
 export interface MemoryV2ReflectionIssue {
@@ -22,18 +22,6 @@ export interface MemoryV2ReflectionReport {
   issues: MemoryV2ReflectionIssue[];
 }
 
-export interface MemoryV2ReflectionRunResult {
-  report: MemoryV2ReflectionReport;
-  memory: MemoryV2Entry;
-}
-
-export interface CreateMemoryV2ReflectionEntryOptions {
-  report?: MemoryV2ReflectionReport;
-  sourceType?: string;
-  sourceId?: string;
-  titlePrefix?: string;
-  metadata?: Record<string, unknown>;
-}
 
 function normalizeKey(value: string): string {
   return value
@@ -183,67 +171,4 @@ export function buildMemoryV2ReflectionReport(): MemoryV2ReflectionReport {
     },
     issues,
   };
-}
-
-function formatReflectionBody(report: MemoryV2ReflectionReport): string {
-  const lines = [
-    `生成时间：${report.generatedAt}`,
-    `总记忆：${report.stats.total}；生效：${report.stats.active}；候选：${report.stats.candidates}；待补 Vault：${report.stats.resourcesNeedingVault}`,
-    `类型分布：任务 ${report.stats.byKind.task} / 人和角色 ${report.stats.byKind.people} / 资源 ${report.stats.byKind.resource} / 能力 ${report.stats.byKind.capability} / 复盘 ${report.stats.byKind.reflection}`,
-  ];
-
-  if (report.issues.length === 0) {
-    lines.push('', '本次睡眠已完成，暂无需要自动修正的记忆问题。');
-    return lines.join('\n');
-  }
-
-  lines.push('', '自省发现：');
-  for (const issue of report.issues.slice(0, 12)) {
-    lines.push(`- [${issue.severity}] ${issue.title}：${issue.detail}`);
-  }
-  if (report.issues.length > 12) {
-    lines.push(`- 还有 ${report.issues.length - 12} 个问题未展开。`);
-  }
-  return lines.join('\n');
-}
-
-function reflectionImportance(report: MemoryV2ReflectionReport): number {
-  if (report.issues.some((issue) => issue.severity === 'critical')) return 5;
-  if (report.issues.some((issue) => issue.severity === 'warning')) return 4;
-  return report.issues.length > 0 ? 3 : 2;
-}
-
-export function createMemoryV2ReflectionEntry(
-  options: CreateMemoryV2ReflectionEntryOptions = {},
-): MemoryV2ReflectionRunResult {
-  const report = options.report ?? buildMemoryV2ReflectionReport();
-  const body = formatReflectionBody(report);
-  const baseTitle = report.issues.length > 0
-    ? `记忆自省：发现 ${report.issues.length} 个待自动修正的问题`
-    : '记忆自省：暂无需要自动修正的问题';
-  const title = options.titlePrefix ? `${options.titlePrefix}：${baseTitle}` : baseTitle;
-  const memory = createMemoryV2Entry({
-    kind: 'reflection',
-    scopeType: 'main_agent',
-    scopeKey: 'main',
-    ownerModule: 'memory-v2',
-    status: 'active',
-    title,
-    body,
-    summary: body.slice(0, 240),
-    tags: ['reflection', 'memory-v2', 'self-review'],
-    sourceType: options.sourceType ?? 'memory_v2_reflection',
-    sourceId: options.sourceId ?? report.generatedAt,
-    confidence: 1,
-    importance: reflectionImportance(report),
-    evidence: report.issues.slice(0, 8).map((issue) => `${issue.title}: ${issue.memoryIds.join(',')}`).join('\n'),
-    metadata: {
-      reportGeneratedAt: report.generatedAt,
-      stats: report.stats,
-      issueCount: report.issues.length,
-      issues: report.issues.slice(0, 50),
-      ...(options.metadata ?? {}),
-    },
-  });
-  return { report, memory };
 }

@@ -925,7 +925,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                   prompt: rawPrompt || userInput.prompt || prompt,
                   includeLegacyMemory: false,
                 });
-                const actionMemoryPack = buildMemoryV2PackForPrompt({
+                const actionMemoryPack = await buildMemoryV2PackForPrompt({
                   sessionId,
                   projectPath: workingDirectory || queryOptions.cwd,
                   prompt: rawPrompt || userInput.prompt || prompt,

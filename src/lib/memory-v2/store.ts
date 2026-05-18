@@ -323,6 +323,25 @@ export function deleteMemoryV2Entry(id: string): boolean {
   return result.changes > 0;
 }
 
+// 语义召回向量。写入与内容解耦：创建/更新仍同步，向量由 extraction 写后即嵌入、
+// 睡眠回填兜底（幂等：只填 embedding IS NULL 的）。
+export function setMemoryV2Embedding(id: string, embedding: Buffer): boolean {
+  const result = getDb().prepare(
+    'UPDATE memory_v2_entries SET embedding = ? WHERE id = ?',
+  ).run(embedding, id);
+  return result.changes > 0;
+}
+
+export function listMemoryV2EntriesMissingEmbedding(limit = 200): MemoryV2Entry[] {
+  const safeLimit = Math.max(1, Math.min(limit, 1000));
+  return getDb().prepare(
+    `SELECT * FROM memory_v2_entries
+     WHERE embedding IS NULL AND status IN ('active','candidate')
+     ORDER BY updated_at DESC
+     LIMIT ?`,
+  ).all(safeLimit) as MemoryV2Entry[];
+}
+
 export function touchMemoryV2Usage(ids: string[], params: {
   sessionId?: string;
   scopeKey?: string;
@@ -332,8 +351,10 @@ export function touchMemoryV2Usage(ids: string[], params: {
   if (memoryIds.length === 0) return;
   const db = getDb();
   const now = nowSql();
+  // 召回只更新使用痕迹，绝不刷 updated_at——否则"被注入=变新鲜"，
+  // 排序里的新鲜度永不衰减、hit_count 滚雪球，噪声会自我置顶。
   const update = db.prepare(
-    'UPDATE memory_v2_entries SET hit_count = hit_count + 1, last_used_at = ?, updated_at = ? WHERE id = ?',
+    'UPDATE memory_v2_entries SET hit_count = hit_count + 1, last_used_at = ? WHERE id = ?',
   );
   const insert = db.prepare(
     `INSERT INTO memory_v2_usage_log (id, memory_id, session_id, scope_key, prompt_preview, used_at)
@@ -341,7 +362,7 @@ export function touchMemoryV2Usage(ids: string[], params: {
   );
   const run = db.transaction((idsToTouch: string[]) => {
     for (const id of idsToTouch) {
-      update.run(now, now, id);
+      update.run(now, id);
       insert.run(
         crypto.randomBytes(16).toString('hex'),
         id,

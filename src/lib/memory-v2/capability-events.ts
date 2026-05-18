@@ -82,7 +82,6 @@ export interface MemoryV2CapabilityEventSummaryResult {
 
 const LAST_ROWID_KEY = 'memory_v2_capability_events_last_rowid';
 const SOURCE_TYPE = 'memory_v2_capability_event';
-const SUMMARY_SOURCE_TYPE = 'memory_v2_capability_event_summary';
 const FIRST_SCAN_DAYS = 7;
 const THIRD_PARTY_RESEARCH_ACTIONS = new Set<MemoryV2CapabilityResearchAction>([
   'third_party_discovered',
@@ -320,13 +319,6 @@ function eventAlreadyCaptured(eventId: string): boolean {
   return Boolean(row);
 }
 
-function summaryAlreadyCaptured(sourceId: string): boolean {
-  const row = getDb().prepare(
-    'SELECT id FROM memory_v2_entries WHERE source_type = ? AND source_id = ? LIMIT 1',
-  ).get(SUMMARY_SOURCE_TYPE, sourceId) as { id: string } | undefined;
-  return Boolean(row);
-}
-
 function actionLabel(event: MemoryV2CapabilityEvent): string {
   const noun = event.capability_type === 'mcp' ? 'MCP' : 'Skill';
   const labels: Record<string, string> = {
@@ -491,71 +483,6 @@ function createMemoryForEvent(event: MemoryV2CapabilityEvent): MemoryV2Entry | n
   });
 }
 
-function createSummaryMemory(events: MemoryV2CapabilityEvent[]): MemoryV2Entry | null {
-  if (events.length === 0) return null;
-  const first = events[0]._rowid || 0;
-  const last = events[events.length - 1]._rowid || first;
-  const sourceId = `${first}-${last}`;
-  if (summaryAlreadyCaptured(sourceId)) return null;
-
-  const failed = events.filter((event) => event.status === 'failed');
-  const research = events.filter((event) => isThirdPartyResearchEvent(event, parseMetadata(event.metadata)));
-  const needsReview = events.filter((event) => {
-    const metadata = parseMetadata(event.metadata);
-    return isRiskyResearchEvent(event, metadata) || event.action === 'rewrite_planned';
-  });
-  const byType = events.reduce<Record<string, number>>((acc, event) => {
-    acc[event.capability_type] = (acc[event.capability_type] || 0) + 1;
-    return acc;
-  }, {});
-  const byAction = events.reduce<Record<string, number>>((acc, event) => {
-    acc[event.action] = (acc[event.action] || 0) + 1;
-    return acc;
-  }, {});
-  const lines = [
-    `本轮睡眠扫描到 ${events.length} 条 Skill/MCP 能力事件。`,
-    `类型：Skill ${byType.skill || 0}，MCP ${byType.mcp || 0}。`,
-    `动作：${Object.entries(byAction).map(([key, count]) => `${key} ${count}`).join('，') || '无' }。`,
-    research.length > 0 ? `第三方隔离研究事件：${research.length} 条。` : '',
-    needsReview.length > 0
-      ? `需要审核 / 二开的事件：${needsReview.slice(0, 8).map((event) => `${event.capability_type}:${event.capability_name}:${event.action}`).join('；')}`
-      : '',
-    failed.length > 0
-      ? `失败事件：${failed.slice(0, 8).map((event) => `${event.capability_type}:${event.capability_name}:${event.action}`).join('；')}`
-      : '未发现失败事件。',
-  ].filter(Boolean);
-  return createMemoryV2Entry({
-    kind: 'reflection',
-    scopeType: 'main_agent',
-    scopeKey: 'main',
-    ownerModule: 'memory-v2-capability-events',
-    status: 'active',
-    title: needsReview.length > 0
-      ? '睡眠能力事件复盘：发现需审核或二开的事件'
-      : failed.length > 0
-        ? '睡眠能力事件复盘：发现失败事件'
-        : '睡眠能力事件复盘：能力运行正常',
-    body: lines.join('\n'),
-    summary: normalizeText(lines.join(' '), 260),
-    tags: ['reflection', 'capability-events', needsReview.length > 0 || failed.length > 0 ? 'self-improvement' : 'health'],
-    sourceType: SUMMARY_SOURCE_TYPE,
-    sourceId,
-    confidence: 0.76,
-    importance: needsReview.length > 0 || failed.length > 0 ? 4 : 3,
-    evidence: `事件 rowid 范围：${sourceId}`,
-    metadata: {
-      firstRowId: first,
-      lastRowId: last,
-      scanned: events.length,
-      failed: failed.length,
-      research: research.length,
-      needsReview: needsReview.length,
-      byType,
-      byAction,
-    },
-  });
-}
-
 export function summarizeNewMemoryV2CapabilityEvents(params: {
   limit?: number;
 } = {}): MemoryV2CapabilityEventSummaryResult {
@@ -577,9 +504,6 @@ export function summarizeNewMemoryV2CapabilityEvents(params: {
     const memory = createMemoryForEvent(event);
     if (memory) created.push(memory);
   }
-
-  const summary = createSummaryMemory(events);
-  if (summary) created.push(summary);
 
   if (maxRowId > lastRowId) {
     setSetting(LAST_ROWID_KEY, String(maxRowId));

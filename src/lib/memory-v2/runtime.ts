@@ -10,6 +10,7 @@ import {
   touchMemoryV2Usage,
 } from './store';
 import { processMemoryV2ResourceSecrets } from './resource-secrets';
+import { bufferToVec, cosineSimilarity, embedMemoryQuery } from './vector';
 import type {
   MemoryV2Entry,
   MemoryV2Input,
@@ -240,26 +241,61 @@ export function captureExplicitMemoryV2FromUserInput(params: {
   return createMemoryV2Entry(input);
 }
 
+// \u53ec\u56de\u6253\u5206 = Generative-Agents \u6807\u51c6\u5f0f\uff1arelevance(\u8bed\u4e49\u4f59\u5f26) + recency(\u6307\u6570\u8870\u51cf)
+// + importance\uff0c\u5404\u5206\u91cf\u5929\u7136 [0,1]\uff0c\u76f4\u63a5\u52a0\u6743\u3002relevance \u4e3b\u5bfc\uff08\u8fd9\u6b63\u662f\u4fee\u590d\u70b9\uff1a
+// \u9760\u8bed\u4e49\u76f8\u5173\u53ec\u56de\uff0c\u4e0d\u9760\u5b57\u9762\u8bcd\u649e\uff09\u3002\u5d4c\u5165\u5668/\u5411\u91cf\u7f3a\u5931\u65f6\u8be5\u6761\u964d\u7ea7\u4e3a\u5173\u952e\u8bcd\u547d\u4e2d\u7387\u3002
+const W_RELEVANCE = 1.0;
+const W_RECENCY = 0.5;
+const W_IMPORTANCE = 0.4;
+const RECENCY_DECAY_PER_HOUR = 0.995;
+
 function splitKeywords(prompt: string): string[] {
   const en = prompt.toLowerCase().split(/[^a-z0-9_]+/g).filter((item) => item.length >= 3);
   const zh = prompt.match(/[\u4e00-\u9fff]{2,}/g) || [];
   return Array.from(new Set([...en, ...zh])).slice(0, 40);
 }
 
-function scoreEntry(entry: MemoryV2Entry, keywords: string[]): number {
-  let score = entry.importance * 20 + Math.min(entry.hit_count, 10) * 2;
-  if (entry.kind === 'resource') score += 8;
-  if (entry.kind === 'task') score += 6;
+function keywordRelevance(entry: MemoryV2Entry, keywords: string[]): number {
+  if (keywords.length === 0) return 0;
   const haystack = `${entry.title} ${entry.body} ${entry.summary} ${entry.tags}`.toLowerCase();
+  let hits = 0;
   for (const keyword of keywords) {
-    if (haystack.includes(keyword.toLowerCase())) score += keyword.length >= 4 ? 12 : 6;
+    if (haystack.includes(keyword.toLowerCase())) hits += 1;
   }
-  const updated = Date.parse(entry.updated_at.replace(' ', 'T'));
-  if (Number.isFinite(updated)) {
-    const days = Math.floor((Date.now() - updated) / 86_400_000);
-    score += Math.max(0, 14 - Math.min(days, 14));
-  }
-  return score;
+  return hits / keywords.length;
+}
+
+function recencyScore(entry: MemoryV2Entry): number {
+  const stamp = (entry.last_used_at || entry.created_at || '').replace(' ', 'T');
+  const ts = Date.parse(stamp);
+  if (!Number.isFinite(ts)) return 0;
+  const hours = Math.max(0, (Date.now() - ts) / 3_600_000);
+  return RECENCY_DECAY_PER_HOUR ** hours;
+}
+
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+async function scoreEntries(
+  entries: MemoryV2Entry[],
+  prompt: string,
+): Promise<Array<{ entry: MemoryV2Entry; score: number }>> {
+  const keywords = splitKeywords(prompt);
+  const queryVec = await embedMemoryQuery(prompt);
+  return entries.map((entry) => {
+    let relevance: number;
+    const vec = queryVec ? bufferToVec(entry.embedding) : null;
+    if (queryVec && vec) {
+      relevance = clamp01(cosineSimilarity(queryVec, vec));
+    } else {
+      relevance = keywordRelevance(entry, keywords);
+    }
+    const score = W_RELEVANCE * relevance
+      + W_RECENCY * recencyScore(entry)
+      + W_IMPORTANCE * (entry.importance / 5);
+    return { entry, score };
+  });
 }
 
 function formatEntry(entry: MemoryV2Entry): string {
@@ -306,13 +342,13 @@ function formatMemoryV2Context(entries: MemoryV2Entry[], scopes: MemoryV2Scope[]
   return lines.join('\n');
 }
 
-export function buildMemoryV2PackForPrompt(params: {
+export async function buildMemoryV2PackForPrompt(params: {
   sessionId: string;
   projectPath?: string;
   prompt: string;
   maxItems?: number;
   trackUsage?: boolean;
-}): MemoryV2Pack {
+}): Promise<MemoryV2Pack> {
   const session = getSession(params.sessionId);
   const projectPath = normalizeProjectPath(params.projectPath || session?.sdk_cwd || session?.working_directory || '');
   const mainAgent = isMainAgentSession(session);
@@ -325,9 +361,8 @@ export function buildMemoryV2PackForPrompt(params: {
     mainAgent,
     ownerModule,
   });
-  const keywords = splitKeywords(params.prompt);
-  const candidates = listMemoryV2ForScopes({ scopes, limit: 120 })
-    .map((entry) => ({ entry, score: scoreEntry(entry, keywords) }))
+  const scored = await scoreEntries(listMemoryV2ForScopes({ scopes, limit: 120 }), params.prompt);
+  const candidates = scored
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(1, Math.min(params.maxItems ?? 12, 24)))
