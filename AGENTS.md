@@ -40,6 +40,7 @@ When the user asks for the status of a design doc or module, prefer this shape:
 - This user prefers strict completion language.
 - This user can only perform UI testing unless they say otherwise.
 - Avoid mixing architecture progress, implementation progress, and UI acceptance progress in one vague "done" statement.
+- Release packaging rule: do not build release packages locally by default. When the user says to package/release Lumos, commit all requested changes, create the git tag, push `main` and the tag, and let GitHub Release / GitHub Actions produce the installers unless the user explicitly asks for a local package.
 
 ## Goal Tracking Rules
 
