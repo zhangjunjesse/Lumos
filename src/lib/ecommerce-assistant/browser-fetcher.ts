@@ -47,6 +47,7 @@ interface CapturedHtml {
 }
 
 const DEFAULT_BROWSER_FETCH_TIMEOUT_MS = 90_000;
+const BROWSER_FETCH_LOCK_OWNER = 'ecommerce-discover';
 const HTML_CAPTURE_POLL_MS = 750;
 const HTML_MIN_SETTLE_MS = 12_000;
 const MARKETPLACE_PRODUCT_WAIT_MS = 45_000;
@@ -296,7 +297,7 @@ export async function fetchViaBrowser(
   const browserContextId = normalizeBrowserContextId(settings.browserContextId);
   const config = resolveBrowserBridgeRuntimeConfig({
     browserContextId,
-    lockOwnerId: 'ecommerce-discover',
+    lockOwnerId: BROWSER_FETCH_LOCK_OWNER,
   });
   if (!config) {
     throw new BrowserFetchError('Browser Bridge 未连接，请确认 Lumos 桌面端浏览器运行时已启动。', 'connect');
@@ -335,8 +336,12 @@ export async function fetchViaBrowser(
     }
     throw new BrowserFetchError(error instanceof Error ? error.message : String(error), pageId ? 'evaluate' : 'open');
   } finally {
-    if (pageId && opts.closePage !== false) {
-      await closeBrowserBridgePage(config, pageId, opts.abortSignal).catch(() => undefined);
+    try {
+      if (pageId && opts.closePage !== false) {
+        await closeBrowserBridgePage(config, pageId, opts.abortSignal).catch(() => undefined);
+      }
+    } finally {
+      await releaseBrowserBridgeContext(config);
     }
   }
 }
@@ -356,10 +361,14 @@ export async function closeBrowserFetchPage(
   const browserContextId = normalizeBrowserContextId(result.browserContextId || settings.browserContextId);
   const config = resolveBrowserBridgeRuntimeConfig({
     browserContextId,
-    lockOwnerId: 'ecommerce-discover',
+    lockOwnerId: BROWSER_FETCH_LOCK_OWNER,
   });
   if (!config) return;
-  await closeBrowserBridgePage(config, result.pageId);
+  try {
+    await closeBrowserBridgePage(config, result.pageId);
+  } finally {
+    await releaseBrowserBridgeContext(config);
+  }
 }
 
 async function closeBrowserBridgePage(
@@ -373,4 +382,19 @@ async function closeBrowserBridgePage(
     { pageId, background: MARKETPLACE_FETCH_BACKGROUND },
     { signal: abortSignal, timeoutMs: 10_000 },
   );
+}
+
+async function releaseBrowserBridgeContext(
+  config: NonNullable<ReturnType<typeof resolveBrowserBridgeRuntimeConfig>>,
+): Promise<void> {
+  try {
+    await postToBrowserBridge(
+      config,
+      '/v1/context/release',
+      {},
+      { timeoutMs: 10_000 },
+    );
+  } catch {
+    // Releasing a best-effort automation lease must not hide the scrape result.
+  }
 }

@@ -45,6 +45,8 @@ export interface WeChatExportStatus {
     hasKey: boolean;
     keyCount: number;
     lastExtractedAt: number | null;
+    /** Wall-clock ms of the last successful mirror sync, null if never synced. */
+    lastSyncedAt: number | null;
   };
   consent?: {
     version: string;

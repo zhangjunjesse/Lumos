@@ -30,18 +30,48 @@ export const SETTLE_SCRIPT = `(async () => {
 
 export const HOVER_SCRIPT = `(async () => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-  const rnd = (a,b) => a + Math.random()*(b-a);
-  const sig = /estimated\\s*search|search\\s*volume|competition|搜索量|竞争度|monthly\\s*search/i;
-  const TAG_SEL = 'a[href*="/search?q="], a[href*="etsy.com/c/"], a[href*="/market/"], [class*="tag" i] a, [class*="tag" i] span, [class*="chip" i]';
-  const hasEhunt = () => !!document.querySelector('[class*="ehunt" i],[id*="ehunt" i],[data-ehunt]')
-    || /ehunt/i.test(document.body ? document.body.innerText.slice(0, 5000) : '');
-  const tagCount = () => document.querySelectorAll(TAG_SEL).length;
-  // 后台自动化页 visibilityState 恒为 'hidden'，EHunt 这类扩展常把数据抓取
-  // 门控在「页面可见/获焦/滚动」上 → 后台页无论等多久都不注入数据（这才
-  // 是时序修好后"每次还是同样问题"的更深层因）。不前台化、不碰全局浏览器
-  // （守 CLAUDE.md 后台规则与 feedback_no_global_browser_changes）；只在页内
-  // 主动派发可见/获焦事件并滚动，触发扩展的 visibilitychange /
-  // IntersectionObserver / scroll 钩子去拉数据。
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const EXT = 'pmpgnefoilpinnblccjddomajohmbpko';
+  // EHunt 真实结构（bridge 自驱实测+用户截图坐实）：Vue 注入，类名前缀 eh-。
+  // 每个 listing 的 tag 在 .eh-exe-tags-list > .eh-exe-tags-list-item，内有
+  // .el-tooltip__trigger（tag 文字）+ .eh-exe-tags-list-item-value（仅 Views
+  // total 如 "(16.1M)"）。**完整指标在 hover trigger 弹出的 .el-popper.is-dark
+  // .el-tooltip 里**：Views total/monthly、Favorites、Sales total/monthly、
+  // Competition。按内容签名 /Views:|Competition:/ 区分 EHunt 暗 tooltip 与
+  // Etsy 自身 tooltip（class 空/配送评价文案）。
+  const ehDetect = () => {
+    try {
+      return !!(document.querySelector('.eh-product-detail, .eh-exe-tags-list, .eh-panel-header')
+        || document.querySelector('img[src*="' + EXT + '"]')
+        || document.querySelector('[class^="eh-"], [class*=" eh-"]'));
+    } catch (e) { return false; }
+  };
+  const tagText = (it) => {
+    let t = '';
+    try {
+      const trg = it.querySelector('.el-tooltip__trigger');
+      if (trg) t = (trg.innerText || trg.textContent || '').trim();
+    } catch (e) {}
+    if (!t) {
+      try {
+        const cl = it.cloneNode(true);
+        cl.querySelectorAll('.eh-exe-tags-list-item-value, img').forEach((n) => n.remove());
+        t = (cl.innerText || cl.textContent || '').trim();
+      } catch (e) {}
+    }
+    return t;
+  };
+  const readEhTip = () => {
+    let nodes = [];
+    try {
+      nodes = document.querySelectorAll('.el-popper.is-dark.el-tooltip, .el-popper.el-tooltip, [role="tooltip"]');
+    } catch (e) {}
+    for (const n of nodes) {
+      const tx = (n.innerText || n.textContent || '').trim();
+      if (tx && /Views:|Competition:|Favorites:|Sales:/i.test(tx) && tx.length < 600) return tx;
+    }
+    return '';
+  };
   const wake = () => {
     try {
       window.dispatchEvent(new Event('focus'));
@@ -54,69 +84,98 @@ export const HOVER_SCRIPT = `(async () => {
     } catch (e) {}
   };
   wake();
-  // 0) 就绪等待，分两段。a) 等 DOM complete + tag 元素出现，最长 ~20s；
-  //    b) 再持续轮询直到 hasEhunt()，最长 ~55s（超过姊妹 ehunt 模块 45s
-  //    经验值），每轮重新 wake()，绝不因 DOM 已 complete 提前放弃注入。
-  const domDeadline = Date.now() + 20000;
+  const domDeadline = Date.now() + 12000;
   while (Date.now() < domDeadline) {
-    if (document.readyState === 'complete' && tagCount() > 0) break;
+    if (document.readyState === 'complete') break;
     await sleep(1000);
   }
-  const ehuntDeadline = Date.now() + 55000;
-  while (Date.now() < ehuntDeadline) {
+  // 轮询等 EHunt 注入 tag 列表（≤55s，每轮 wake）。
+  const ehDeadline = Date.now() + 30000;
+  while (Date.now() < ehDeadline) {
     wake();
-    if (hasEhunt()) break;
+    try { if (document.querySelectorAll('.eh-exe-tags-list-item').length > 0) break; } catch (e) {}
     await sleep(1500);
   }
-  const ehuntMark = hasEhunt();
-  // 诊断信号回传：失败时不再笼统三选一，让首次真跑就能定位（对齐模块
-  // "如实标原因不伪造" + "推测没中就停下要数据"，停止盲目循环猜测）。
-  const diag = ' [rs=' + document.readyState + ' vis=' + document.visibilityState
-    + ' tags=' + tagCount() + ' ehunt=' + (ehuntMark ? 1 : 0) + ']';
-  // 2) 收集 tag 元素：listing 的 tag 通常是短文本链接（Etsy 站内搜索/类目），
-  //    或 EHunt 注入的 chip。文本 1-5 词、长度合理，去重。
-  const cands = [];
-  const seen = new Set();
-  const push = (el) => {
-    const t = (el.innerText || el.textContent || '').trim();
-    if (!t || t.length < 2 || t.length > 40) return;
-    if (t.split(/\\s+/).length > 5) return;
-    const key = t.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    cands.push({ el, tag: t });
-  };
-  document.querySelectorAll(TAG_SEL).forEach(push);
-  const tags = cands.slice(0, 15);
-  if (tags.length === 0) {
-    return JSON.stringify({ ehuntDetected: ehuntMark, reason: (ehuntMark
-      ? '页面已加载且检测到 EHunt，但未找到可 hover 的 tag 元素（listing 页结构或选择器需按真实 DOM 调整）'
-      : '等待页面加载与 EHunt 注入（最长约 75s，已主动派发可见/滚动事件唤醒后台页）后仍无 tag 元素且未检测到 EHunt（页面未就绪 / EHunt 未登录 / 非 EHunt 浏览器上下文 / 后台页扩展未激活）') + diag, tags: [] });
-  }
-  // 3) 逐 tag hover，抓最可能的浮窗文本（新出现 / role=tooltip / tippy / 含信号词）。
+  let items = [];
+  try { items = [...document.querySelectorAll('.eh-exe-tags-list-item')]; } catch (e) {}
+  const itemCount = items.length;
+  items = items.slice(0, 15); // 控时：Etsy listing 至多 ~13 tag；每项 hover ~1s，全程须 < CDP evaluate 超时
   const out = [];
-  let sawTooltip = false;
-  for (const { el, tag } of tags) {
-    try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
-    const fire = (type) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-    fire('mouseover'); fire('mouseenter'); fire('mousemove');
-    await sleep(rnd(450, 650));
-    let raw = '';
-    const tip = document.querySelector('[role="tooltip"], .tippy-box, [class*="tooltip" i], [class*="popover" i], [class*="ehunt" i] [class*="pop" i]');
-    if (tip && sig.test(tip.innerText || '')) raw = (tip.innerText || '').trim();
-    if (!raw) {
-      // fallback：扫描可见元素里含信号词且文本不长的，取最短的那个
-      let best = '';
-      document.querySelectorAll('div,section,span,table,ul').forEach((n) => {
-        const tx = (n.innerText || '').trim();
-        if (tx && tx.length < 400 && sig.test(tx) && (best === '' || tx.length < best.length)) best = tx;
-      });
-      raw = best;
+  let tipSeen = 0;
+  const clearTip = async () => {
+    try {
+      document.body.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 2, clientY: 2 }));
+    } catch (e) {}
+    for (let w = 0; w < 6; w += 1) {
+      if (!readEhTip()) return;
+      await sleep(180);
     }
-    if (raw) sawTooltip = true;
-    out.push({ tag, raw });
-    el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
-    await sleep(rnd(800, 1500));
+  };
+  for (const it of items) {
+    const tag = tagText(it);
+    if (!tag || tag.length < 2 || tag.length > 60) continue;
+    let trg = null;
+    try { trg = it.querySelector('.el-tooltip__trigger') || it; } catch (e) { trg = it; }
+    // 关键准确性：hover 下一个前先让上一个 tooltip 消失，否则会把上一个
+    // tag 的指标错记到当前 tag（实测前两个 tag 数据雷同即此）。
+    await clearTip();
+    try { trg.scrollIntoView({ block: 'center' }); } catch (e) {}
+    const fire = (t) => { try { trg.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} };
+    fire('mouseenter'); fire('mouseover'); fire('mousemove');
+    let raw = '';
+    for (let w = 0; w < 5; w += 1) {
+      await sleep(220);
+      raw = readEhTip();
+      if (raw) break;
+    }
+    if (raw) tipSeen += 1;
+    out.push({ tag: tag, raw: raw });
+    fire('mouseout'); fire('mouseleave');
   }
-  return JSON.stringify({ ehuntDetected: ehuntMark || sawTooltip, reason: (ehuntMark || sawTooltip) ? undefined : ('hover 未出现含搜索量/竞争度的浮窗，EHunt 可能未登录、未注入，或后台页扩展未激活' + diag + ' tooltip=0'), tags: out });
+  const ehunt = ehDetect() || itemCount > 0;
+  const diag = ' [rs=' + document.readyState + ' vis=' + document.visibilityState
+    + ' ehunt=' + (ehunt ? 1 : 0) + ' tagItems=' + itemCount + ' tips=' + tipSeen + ']';
+  if (out.length > 0 && tipSeen > 0) {
+    return JSON.stringify({ ehuntDetected: true, tags: out });
+  }
+  // 没抓到 tooltip：回传深扫快照（含真实 eh- 类名）供诊断。
+  const deepRoots = () => {
+    const o = []; const seen = new Set();
+    const v = (r) => {
+      if (!r || seen.has(r)) return; seen.add(r); o.push(r);
+      let e = []; try { e = r.querySelectorAll('*'); } catch (x) {}
+      for (const el of e) { if (el.shadowRoot) v(el.shadowRoot); }
+      let f = []; try { f = r.querySelectorAll('iframe'); } catch (x) {}
+      for (const z of f) { try { if (z.contentDocument) v(z.contentDocument); } catch (x) {} }
+    };
+    v(document); return o;
+  };
+  let probe = '';
+  try {
+    const roots = deepRoots();
+    const ehEls = [];
+    for (const r of roots) {
+      let els = [];
+      try { els = r.querySelectorAll('[class^="eh-"], [class*=" eh-"]'); } catch (x) {}
+      for (const el of els) {
+        const c = (el.className && el.className.toString) ? el.className.toString() : '';
+        if (c) ehEls.push(c.slice(0, 60));
+        if (ehEls.length >= 30) break;
+      }
+      if (ehEls.length >= 30) break;
+    }
+    probe = ('ROOTS=' + roots.length + ' ehDetect=' + (ehDetect() ? 1 : 0)
+      + ' tagItems=' + itemCount + ' tipsSeen=' + tipSeen
+      + '\\nEH_CLASSES:\\n' + [...new Set(ehEls)].join('\\n')).slice(0, 5000);
+  } catch (e) { probe = 'probe 失败：' + (e && e.message ? e.message : String(e)); }
+  return JSON.stringify({
+    ehuntDetected: ehunt,
+    reason: (ehunt
+      ? (itemCount > 0
+        ? 'EHunt tag 列表已注入但 hover 未弹出 .el-popper.is-dark.el-tooltip 指标浮窗（hover 触发/等待需调）'
+        : 'EHunt 已检测到但未注入 .eh-exe-tags-list-item（页面非 listing / 结构变更）')
+      : '未检测到 EHunt（未登录 / 非 EHunt 浏览器上下文 / 扩展未注入）') + diag,
+    tags: [],
+    domProbe: probe
+  });
 })()`;

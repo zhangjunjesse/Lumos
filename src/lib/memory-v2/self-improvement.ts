@@ -241,7 +241,7 @@ export function getMemoryV2ImprovementCandidate(id: string): MemoryV2Improvement
   return getDb().prepare('SELECT * FROM memory_v2_improvement_candidates WHERE id = ?').get(id) as MemoryV2ImprovementCandidate | undefined;
 }
 
-function getImprovementByFingerprint(fingerprint: string): MemoryV2ImprovementCandidate | undefined {
+export function getImprovementByFingerprint(fingerprint: string): MemoryV2ImprovementCandidate | undefined {
   if (!fingerprint) return undefined;
   return getDb()
     .prepare('SELECT * FROM memory_v2_improvement_candidates WHERE fingerprint = ? LIMIT 1')

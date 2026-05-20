@@ -30,6 +30,7 @@ import type { ToolUIPart } from 'ai';
 import type { PermissionRequestEvent, PlannerOutput } from '@/types';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
+import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
 
 interface ImageGenRequest {
   prompt: string;
@@ -387,6 +388,7 @@ export function StreamingMessage({
   const reasoningContent = reasoningSummaries
     .map((summary) => `- ${summary}`)
     .join('\n');
+  const displayContent = stripLeakedToolTraceText(content);
 
   // Determine confirmation state for the AI Elements component
   const getConfirmationState = (): ToolUIPart['state'] => {
@@ -555,9 +557,9 @@ export function StreamingMessage({
         )}
 
         {/* Streaming text content rendered via Streamdown */}
-        {content && (() => {
+        {displayContent && (() => {
           // Try batch-plan first (Image Agent batch mode)
-          const batchPlanResult = parseBatchPlan(content);
+          const batchPlanResult = parseBatchPlan(displayContent);
           if (batchPlanResult) {
             return (
               <>
@@ -569,7 +571,7 @@ export function StreamingMessage({
           }
 
           // Try image-gen-request
-          const parsed = parseImageGenRequest(content);
+          const parsed = parseImageGenRequest(displayContent);
           if (parsed) {
             const refs = buildReferenceImages(
               PENDING_KEY,
@@ -591,9 +593,9 @@ export function StreamingMessage({
           }
           // Strip partial or unparseable code fence blocks to avoid Shiki errors
           if (isStreaming) {
-            const hasImageGenBlock = /```image-gen-request/.test(content);
-            const hasBatchPlanBlock = /```batch-plan/.test(content);
-            const stripped = content
+            const hasImageGenBlock = /```image-gen-request/.test(displayContent);
+            const hasBatchPlanBlock = /```batch-plan/.test(displayContent);
+            const stripped = displayContent
               .replace(/```image-gen-request[\s\S]*$/, '')
               .replace(/```batch-plan[\s\S]*$/, '')
               .trim();
@@ -602,7 +604,7 @@ export function StreamingMessage({
             if (hasImageGenBlock || hasBatchPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
             return null;
           }
-          const stripped = content
+          const stripped = displayContent
             .replace(/```image-gen-request[\s\S]*?```/g, '')
             .replace(/```batch-plan[\s\S]*?```/g, '')
             .trim();

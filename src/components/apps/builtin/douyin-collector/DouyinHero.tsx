@@ -71,21 +71,21 @@ export function DouyinHero({
     lastPatrolAge.hours >= PATROL_STALE_HOURS;
 
   return (
-    <div className="flex items-start gap-4 border-b bg-card px-9 py-6">
-      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-rose-500 text-white shadow-sm">
-        <Video className="size-6" strokeWidth={1.75} />
+    <div className="flex items-start gap-3 border-b bg-card px-10 py-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-rose-500 text-white">
+        <Video className="size-4" strokeWidth={1.75} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">抖音采集器</h1>
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <h1 className="text-base font-semibold tracking-tight">抖音采集器</h1>
           <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             内置 · 知识采集
           </span>
         </div>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+        <p className="truncate text-xs text-muted-foreground">
           按博主或关键词采集抖音视频，抓字幕、做摘要、入知识库；长视频自动分段转写。
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           <span className="inline-flex items-center gap-1.5">
             <PhaseDot tone={tone} loading={loading} />
             <span className="text-foreground">{phaseText}</span>

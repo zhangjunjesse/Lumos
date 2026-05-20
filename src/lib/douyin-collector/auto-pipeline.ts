@@ -2,6 +2,7 @@ import { COLLECTION_VIDEOS } from './constants';
 import { getDouyinCollectorSettings } from './settings';
 import { getDouyinCollectorStore } from './storage';
 import { transcribeVideoFromNative } from './transcribe';
+import { publishVideoToKnowledge } from './publish';
 
 const RUN_HISTORY_COLLECTION = 'run_history';
 
@@ -34,7 +35,50 @@ export interface AutoPipelineResult {
  *     Round 12 fix: previously the loop was sequential despite a comment
  *     claiming it honored the setting.
  */
-export async function maybeRunAutoPipeline(videoIds: string[]): Promise<AutoPipelineResult> {
+export interface AutoPipelineOpts {
+  /**
+   * 单条调用强制跑链路，覆盖全局 autoTranscribe 关闭（默认 false）。
+   * 对齐同步 douyin_search_keyword 的 auto_process 语义：用户/AI 显式
+   * 要求处理时，不被默认关闭的全局设置 gate 掉。
+   */
+  force?: boolean;
+  /**
+   * undefined=沿用全局 autoPublish；true/false=本次采集入口显式要求。
+   * MCP 的 douyin_start_collect 默认 true，避免“已处理”但资料库无记录。
+   */
+  publishToKnowledge?: boolean;
+  /** 每处理完 1 条回调（done=已完成数, total=总数），驱动实时进度。 */
+  onProgress?: (done: number, total: number) => void;
+}
+
+// 单条处理硬上限：字幕抓取 + 可能的音频下载 + 云 ASR。给足余量但必须有界，
+// 否则一条卡住的视频会让整个 worker 池 Promise.all 永不 resolve（用户实测
+// 「卡 1/20 再无进展」的机制）。超时按失败计并继续，不静默吞。
+const PER_VIDEO_TIMEOUT_MS = 4 * 60_000;
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`处理超时（>${Math.round(ms / 1000)}s）：${label}`)),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    // 关键：promise 先 settle 时必须清掉定时器，否则 4min 定时器挂住事件
+    // 循环（测试报 worker 不退出；生产是逐条累积的泄漏）。
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function maybeRunAutoPipeline(
+  videoIds: string[],
+  opts: AutoPipelineOpts = {},
+): Promise<AutoPipelineResult> {
   const emptyResult = (skipReason: AutoPipelineResult['skipReason']): AutoPipelineResult => ({
     attempted: 0,
     succeeded: 0,
@@ -48,17 +92,20 @@ export async function maybeRunAutoPipeline(videoIds: string[]): Promise<AutoPipe
   });
   if (videoIds.length === 0) return emptyResult('empty');
   const settings = getDouyinCollectorSettings();
-  if (!settings.autoTranscribe) {
+  const publishToKnowledge = opts.publishToKnowledge ?? settings.autoPublish;
+  if (!settings.autoTranscribe && !opts.force) {
     return {
       ...emptyResult('auto_transcribe_disabled'),
       autoSummarize: settings.autoSummarize,
-      autoPublish: settings.autoPublish,
+      autoPublish: publishToKnowledge,
       libraryCollectionId: settings.libraryCollectionId,
     };
   }
 
   const store = getDouyinCollectorStore();
   let succeeded = 0;
+  let done = 0;
+  const total = videoIds.length;
   const failures: string[] = [];
   const concurrency = Math.max(1, Math.min(8, settings.transcribeConcurrency || 3));
   const queue = [...videoIds];
@@ -68,11 +115,38 @@ export async function maybeRunAutoPipeline(videoIds: string[]): Promise<AutoPipe
       const videoId = queue.shift();
       if (!videoId) return;
       try {
-        const r = await transcribeVideoFromNative(videoId);
-        if (r.ok) succeeded += 1;
-        else failures.push(r.reason ?? '抓字幕失败');
+        const r = await withTimeout(
+          transcribeVideoFromNative(videoId),
+          PER_VIDEO_TIMEOUT_MS,
+          videoId,
+        );
+        if (!r.ok) {
+          failures.push(r.reason ?? '抓字幕失败');
+        } else if (publishToKnowledge) {
+          const collectionId = settings.libraryCollectionId;
+          if (!collectionId) {
+            failures.push('已抓到字幕，但未设置默认资料库，无法入库。');
+          } else {
+            const publish = await publishVideoToKnowledge(videoId, collectionId);
+            if (publish.ok) {
+              succeeded += 1;
+            } else {
+              failures.push(publish.reason || '入库失败');
+            }
+          }
+        } else {
+          succeeded += 1;
+        }
       } catch (err) {
+        // 含超时：按失败计入并继续，绝不让一条卡死冻结整池。
         failures.push(err instanceof Error ? err.message : String(err));
+      } finally {
+        done += 1;
+        try {
+          opts.onProgress?.(done, total);
+        } catch {
+          // 进度回调失败绝不能破坏 pipeline。
+        }
       }
     }
   }
@@ -84,7 +158,11 @@ export async function maybeRunAutoPipeline(videoIds: string[]): Promise<AutoPipe
   // per video. Keeps the run history tidy when 30 videos arrive at once.
   const distinct = Array.from(new Set(failures)).slice(0, 3);
   const status = failures.length === 0 ? 'success' : 'failed';
-  const settingsSuffix = describeAutoPipelineSettings(settings);
+  const settingsSuffix = describeAutoPipelineSettings({
+    autoSummarize: settings.autoSummarize,
+    autoPublish: publishToKnowledge,
+    libraryCollectionId: settings.libraryCollectionId,
+  });
   const summary =
     failures.length === 0
       ? `自动管线：${succeeded} / ${videoIds.length} 条字幕已抓；${settingsSuffix}`
@@ -109,7 +187,7 @@ export async function maybeRunAutoPipeline(videoIds: string[]): Promise<AutoPipe
     failures,
     skipped: false,
     autoSummarize: settings.autoSummarize,
-    autoPublish: settings.autoPublish,
+    autoPublish: publishToKnowledge,
     libraryCollectionId: settings.libraryCollectionId,
   };
 }

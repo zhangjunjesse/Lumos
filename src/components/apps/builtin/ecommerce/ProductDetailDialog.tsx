@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { EhuntReviewPanel } from './EhuntReviewPanel';
 
 import type {
   DiscoverCandidate,
@@ -27,7 +28,7 @@ import type {
   ProductInput,
 } from './types';
 
-type DetailTab = 'overview' | 'assets' | 'jobs' | 'listings' | 'source' | 'followups' | 'activity';
+type DetailTab = 'overview' | 'assets' | 'jobs' | 'listings' | 'source' | 'ehunt' | 'followups' | 'activity';
 
 interface AuditEvent {
   id: string;
@@ -195,6 +196,7 @@ export function ProductDetailDialog({
             <TabsTrigger value="listings">Listing ({productDrafts.length})</TabsTrigger>
             <TabsTrigger value="followups">售后</TabsTrigger>
             {candidate ? <TabsTrigger value="source">源候选</TabsTrigger> : null}
+            {candidate ? <TabsTrigger value="ehunt">EHunt</TabsTrigger> : null}
             <TabsTrigger value="activity">活动</TabsTrigger>
           </TabsList>
 
@@ -412,6 +414,12 @@ export function ProductDetailDialog({
               <UrlListSection title="参考竞品" raw={candidate.reference_urls} />
               <UrlListSection title="货源搜索" raw={candidate.source_search_urls} />
               <SourcesAudit raw={candidate.sources} />
+            </TabsContent>
+          ) : null}
+
+          {candidate ? (
+            <TabsContent value="ehunt" className="mt-4">
+              <EhuntReviewPanel candidate={candidate} />
             </TabsContent>
           ) : null}
         </Tabs>

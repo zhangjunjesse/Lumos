@@ -12,6 +12,7 @@ import type {
   PipelineEntry,
   ProductInput,
   ResearchReport,
+  SelectionEvidence,
   StylePreset,
 } from './types';
 
@@ -23,6 +24,7 @@ interface AppData {
   outputs: ImageOutput[];
   presets: StylePreset[];
   candidates: DiscoverCandidate[];
+  selectionEvidence: SelectionEvidence[];
   drafts: ListingDraft[];
   pipeline: PipelineEntry[];
   dashboard: DashboardSnapshot | null;
@@ -40,6 +42,7 @@ export function useEcommerceAppData(): AppData {
   const [outputs, setOutputs] = React.useState<ImageOutput[]>([]);
   const [presets, setPresets] = React.useState<StylePreset[]>([]);
   const [candidates, setCandidates] = React.useState<DiscoverCandidate[]>([]);
+  const [selectionEvidence, setSelectionEvidence] = React.useState<SelectionEvidence[]>([]);
   const [drafts, setDrafts] = React.useState<ListingDraft[]>([]);
   const [pipeline, setPipeline] = React.useState<PipelineEntry[]>([]);
   const [dashboard, setDashboard] = React.useState<DashboardSnapshot | null>(null);
@@ -76,7 +79,7 @@ export function useEcommerceAppData(): AppData {
           '/api/apps/builtin/ecommerce/presets',
           ctrl.signal,
         ),
-        fetchJson<{ candidates: DiscoverCandidate[] }>(
+        fetchJson<{ candidates: DiscoverCandidate[]; selection_evidence?: SelectionEvidence[] }>(
           '/api/apps/builtin/ecommerce/discover',
           ctrl.signal,
         ),
@@ -117,6 +120,9 @@ export function useEcommerceAppData(): AppData {
       setCandidates(
         'error' in candidatesRes ? [] : candidatesRes.value.candidates ?? [],
       );
+      setSelectionEvidence(
+        'error' in candidatesRes ? [] : candidatesRes.value.selection_evidence ?? [],
+      );
       setDrafts('error' in draftsRes ? [] : draftsRes.value.drafts ?? []);
       setPipeline('error' in pipelineRes ? [] : pipelineRes.value.entries ?? []);
       setDashboard('error' in dashboardRes ? null : dashboardRes.value);
@@ -149,6 +155,7 @@ export function useEcommerceAppData(): AppData {
     outputs,
     presets,
     candidates,
+    selectionEvidence,
     drafts,
     pipeline,
     dashboard,

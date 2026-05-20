@@ -78,7 +78,12 @@ export async function collectVideoForAi(
   const resolved = await resolveAwemeInput(input);
   if (!resolved.ok) return resolved;
 
-  const job = createJob({ kind: 'link', targetRef: resolved.targetRef });
+  const job = createJob({
+    kind: 'link',
+    targetRef: resolved.targetRef,
+    autoProcess: opts.autoProcess,
+    publishToKnowledge: opts.publishToKnowledge,
+  });
   const finalJob = await runJob(job.id);
   const video = findVideoByAwemeId(resolved.awemeId);
   let process: unknown;
@@ -108,7 +113,12 @@ export async function collectCreatorForAi(
   });
   if (!creatorResult.ok) return creatorResult;
 
-  const job = createJob({ kind: 'creator', targetRef: creatorResult.creator.id });
+  const job = createJob({
+    kind: 'creator',
+    targetRef: creatorResult.creator.id,
+    autoProcess: opts.autoProcess,
+    publishToKnowledge: opts.publishToKnowledge,
+  });
   const finalJob = await runJob(job.id);
   const videos = listVideosByCreator(creatorResult.creator.sec_uid ?? '', opts.limit ?? 30);
 
@@ -146,7 +156,12 @@ export async function collectKeywordForAi(
   });
   if (!keywordResult.ok) return keywordResult;
 
-  const job = createJob({ kind: 'keyword', targetRef: keywordResult.keyword.id });
+  const job = createJob({
+    kind: 'keyword',
+    targetRef: keywordResult.keyword.id,
+    autoProcess: opts.autoProcess,
+    publishToKnowledge: opts.publishToKnowledge,
+  });
   const finalJob = await runJob(job.id);
   const videos = listVideosByKeyword(keywordResult.keyword.query, opts.limit ?? 30);
 
@@ -175,7 +190,8 @@ export async function batchCollectForAi(input: {
   const results: unknown[] = [];
   const failures: Array<{ input: string; error: string }> = [];
   const limit = Math.max(1, Math.min(100, Number(input.limitPerSource ?? 30)));
-  const autoProcess = Boolean(input.autoProcess);
+  // 默认开启处理（采集即抓字幕→总结→入库）；仅显式传 false 才只采元数据。
+  const autoProcess = input.autoProcess !== false;
   const publishToKnowledge = input.publishToKnowledge ?? true;
 
   for (const creator of (input.creators ?? []).slice(0, 20)) {
@@ -305,7 +321,7 @@ export async function resolveVideoForAi(input: ProcessVideoForAiInput): Promise<
   return { ok: false, phase: 'resolve-video', error: '需要 videoId、awemeId 或抖音视频链接。' };
 }
 
-async function ensureCreatorForAi(
+export async function ensureCreatorForAi(
   input: string,
   opts: { nickname?: string | null; cadence?: CreatorCadence | string | null } = {},
 ): Promise<AiOutcome<{ creator: CreatorRecord & { id: string } }>> {
@@ -347,7 +363,7 @@ async function ensureCreatorForAi(
   return { ok: true, creator: created as CreatorRecord & { id: string } };
 }
 
-function ensureKeywordForAi(
+export function ensureKeywordForAi(
   queryRaw: string,
   opts: {
     timeWindow?: KeywordTimeWindow | string | null;
@@ -376,7 +392,7 @@ function ensureKeywordForAi(
   return { ok: true, keyword: created as KeywordRecord & { id: string } };
 }
 
-async function resolveAwemeInput(input: string): Promise<AiOutcome<{ awemeId: string; targetRef: string }>> {
+export async function resolveAwemeInput(input: string): Promise<AiOutcome<{ awemeId: string; targetRef: string }>> {
   const raw = input.trim();
   if (!raw) return { ok: false, phase: 'video-input', error: '视频链接或 aweme_id 不能为空。' };
   let parsed = parseDouyinInput(raw);

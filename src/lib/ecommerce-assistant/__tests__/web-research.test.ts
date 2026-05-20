@@ -523,6 +523,155 @@ describe('fetchSearchSamples', () => {
     }
   });
 
+  it('releases ecommerce browser leases before the EHunt enhancement opens the same AdsPower profile', async () => {
+    const db = setupDb();
+    const store = createAppDataStore(db, APP_ID);
+    setBrowserFetchSettings(store, {
+      enabled: true,
+      browserContextId: 'adspower:kabc123',
+    });
+    mockResolveBrowserBridgeRuntimeConfig.mockImplementation((options: { browserContextId?: string; lockOwnerId?: string }) => ({
+      baseUrl: 'http://127.0.0.1:39000',
+      token: 'token',
+      source: 'env',
+      browserContextId: options.browserContextId,
+      lockOwnerId: options.lockOwnerId,
+    }));
+
+    const padding = 'x'.repeat(5000);
+    const gallery = [
+      'https://i.etsystatic.com/111/r/il/aaaa/6000000001/il_794xN.6000000001_abcd.jpg',
+      'https://i.etsystatic.com/111/r/il/bbbb/6000000002/il_794xN.6000000002_efgh.jpg',
+      'https://i.etsystatic.com/111/r/il/cccc/6000000003/il_794xN.6000000003_ijkl.jpg',
+    ];
+    let activeOwner: string | null = null;
+    let pageSeq = 0;
+    const pageKinds = new Map<string, 'search' | 'detail' | 'ehunt'>();
+    const releaseCalls: string[] = [];
+    let ehuntPresenceCalls = 0;
+    let ehuntMetricCalls = 0;
+
+    mockPostToBrowserBridge.mockImplementation((config, pathname, body) => {
+      const owner = (config as { lockOwnerId?: string }).lockOwnerId ?? 'anonymous';
+      if (pathname === '/v1/context/release') {
+        releaseCalls.push(owner);
+        if (activeOwner === owner) activeOwner = null;
+        return Promise.resolve({ ok: true });
+      }
+      if (pathname.startsWith('/v1/pages/')) {
+        if (activeOwner && activeOwner !== owner) {
+          throw new Error(`该浏览器正在被另一个会话使用：${activeOwner}`);
+        }
+        activeOwner = owner;
+      }
+      if (pathname === '/v1/pages/new') {
+        pageSeq += 1;
+        const pageId = `page-${pageSeq}`;
+        pageKinds.set(pageId, owner === 'ecommerce-ehunt' ? 'ehunt' : pageSeq === 1 ? 'search' : 'detail');
+        return Promise.resolve({ ok: true, pageId });
+      }
+      if (pathname === '/v1/pages/evaluate') {
+        const pageId = (body as { pageId?: string }).pageId ?? '';
+        const kind = pageKinds.get(pageId);
+        if (kind === 'search') {
+          return Promise.resolve({
+            ok: true,
+            pageId,
+            value: {
+              url: 'https://www.etsy.com/search?q=pet%20sofa',
+              title: 'Pet sofa - Etsy',
+              readyState: 'complete',
+              bodyHtmlLength: 5000,
+              bodyTextLength: 1000,
+              bodyChildCount: 1,
+              productImageUrls: [gallery[0]],
+              html: `<html><body>${padding}
+                <div data-behat-listing-card="" data-listing-id="4477469671">
+                  <a href="https://www.etsy.com/listing/4477469671/calming-plush-pet-sofa-bed-for-dogs-cats">
+                    <h3>Calming Plush Pet Sofa Bed for Dogs & Cats</h3>
+                  </a>
+                  <img src="${gallery[0]}" alt="Calming Plush Pet Sofa Bed for Dogs & Cats" />
+                  <span class="currency-symbol">$</span><span class="currency-value">52.57</span>
+                </div>
+              </body></html>`,
+            },
+          });
+        }
+        if (kind === 'detail') {
+          return Promise.resolve({
+            ok: true,
+            pageId,
+            value: {
+              url: 'https://www.etsy.com/listing/4477469671/calming-plush-pet-sofa-bed-for-dogs-cats',
+              title: 'Calming Plush Pet Sofa Bed for Dogs & Cats - Etsy',
+              readyState: 'complete',
+              bodyHtmlLength: 5000,
+              bodyTextLength: 1200,
+              bodyChildCount: 1,
+              productImageUrls: gallery,
+              html: `<html><body>${padding}<h1>Calming Plush Pet Sofa Bed for Dogs & Cats</h1>${gallery.map((url) => `<img src="${url}" />`).join('')}</body></html>`,
+            },
+          });
+        }
+        if (kind === 'ehunt') {
+          const expression = String((body as { expression?: unknown }).expression ?? '');
+          if (expression.includes('present: marker')) {
+            ehuntPresenceCalls += 1;
+            return Promise.resolve({
+              ok: true,
+              pageId,
+              value: { present: ehuntPresenceCalls >= 3 },
+            });
+          }
+          ehuntMetricCalls += 1;
+          return Promise.resolve({
+            ok: true,
+            pageId,
+            value: [{
+              listingId: '4477469671',
+              sales: '5.7K(56)',
+              favorites: '13.3K',
+              storeWeeklySales: '4.4K',
+              listed: '05/01/2026',
+            }],
+          });
+        }
+      }
+      if (pathname === '/v1/pages/close') {
+        return Promise.resolve({ ok: true });
+      }
+      throw new Error(`unexpected bridge call ${pathname}`);
+    });
+    global.fetch = jest.fn(() => {
+      throw new Error('server fetch should not run');
+    }) as unknown as typeof fetch;
+
+    try {
+      const out = await fetchSearchSamples({
+        source: 'etsy',
+        url: 'https://www.etsy.com/search?q=pet%20sofa',
+        maxSamples: 5,
+        store,
+      });
+
+      expect(out.details).toHaveLength(1);
+      expect(out.details[0].ehunt?.salesTotal).toBe(5700);
+      expect(out.details[0].ehunt?.salesRecent).toBe(56);
+      expect(out.details[0].ehunt?.favorites).toBe(13300);
+      expect(out.details[0].ehunt?.storeWeeklySales).toBe(4400);
+      expect(ehuntPresenceCalls).toBeGreaterThanOrEqual(3);
+      expect(ehuntMetricCalls).toBe(1);
+      expect(out.detailWarnings ?? []).not.toEqual(
+        expect.arrayContaining([expect.stringContaining('另一个会话')]),
+      );
+      expect(releaseCalls).toEqual(
+        expect.arrayContaining(['ecommerce-discover', 'ecommerce-ehunt']),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps Etsy gallery images captured from the rendered browser DOM', async () => {
     const db = setupDb();
     const store = createAppDataStore(db, APP_ID);

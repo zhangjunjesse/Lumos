@@ -221,7 +221,9 @@ export async function* streamTextFromProvider(params: StreamTextParams): AsyncIt
     for await (const chunk of result.textStream) {
       yield chunk;
     }
-    requestLog.finish({ status: 'succeeded' });
+    // 流耗尽后 totalUsage 已 resolve；接住真实 token（主聊天是消耗大头，不能漏）。
+    const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
+    requestLog.finish({ status: 'succeeded', usage });
   } catch (error) {
     recordLlmProviderFailure({
       providerId: provider.id,
@@ -266,7 +268,7 @@ export async function generateTextFromProvider(params: StreamTextParams): Promis
       abortSignal: params.abortSignal || AbortSignal.timeout(120_000),
     });
 
-    requestLog.finish({ status: 'succeeded' });
+    requestLog.finish({ status: 'succeeded', usage: result.usage });
     return result.text;
   } catch (error) {
     recordLlmProviderFailure({
@@ -359,7 +361,7 @@ export async function generateObjectFromProvider<T>(params: GenerateObjectParams
           prompt: params.prompt,
         });
 
-    requestLog.finish({ status: 'succeeded' });
+    requestLog.finish({ status: 'succeeded', usage: result.usage });
     return result.object;
   } catch (error) {
     recordLlmProviderFailure({

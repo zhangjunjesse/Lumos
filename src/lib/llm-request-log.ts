@@ -16,7 +16,11 @@ export interface LlmRequestLogStartParams {
 
 export interface LlmRequestLogHandle {
   id: string
-  finish: (params: { status: 'succeeded' | 'failed' | 'blocked'; error?: unknown }) => void
+  finish: (params: {
+    status: 'succeeded' | 'failed' | 'blocked'
+    error?: unknown
+    usage?: LlmUsageUsage
+  }) => void
 }
 
 export interface LlmRequestLogRow {
@@ -39,6 +43,9 @@ export interface LlmRequestLogRow {
   error_code: string
   error_message: string
   duration_ms: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
   created_at: string
   updated_at: string
 }
@@ -49,7 +56,16 @@ export interface LlmRequestLogSummaryRow {
   status: string
   count: number
   avg_duration_ms: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
   last_at: string
+}
+
+export interface LlmUsageUsage {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
 }
 
 let schemaReady = false
@@ -94,6 +110,9 @@ function ensureSchema(): ReturnType<typeof getDb> {
       error_code TEXT NOT NULL DEFAULT '',
       error_message TEXT NOT NULL DEFAULT '',
       duration_ms INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -102,6 +121,13 @@ function ensureSchema(): ReturnType<typeof getDb> {
     CREATE INDEX IF NOT EXISTS idx_llm_request_logs_provider ON llm_request_logs(provider_id, model, created_at);
     CREATE INDEX IF NOT EXISTS idx_llm_request_logs_status ON llm_request_logs(status, created_at);
   `)
+  // 旧库已建表但无 token 列时补上（不破坏现有数据）。
+  const cols = db.prepare("PRAGMA table_info(llm_request_logs)").all() as { name: string }[]
+  for (const c of ['input_tokens', 'output_tokens', 'total_tokens']) {
+    if (!cols.some((x) => x.name === c)) {
+      db.exec(`ALTER TABLE llm_request_logs ADD COLUMN ${c} INTEGER NOT NULL DEFAULT 0`)
+    }
+  }
   schemaReady = true
   return db
 }
@@ -149,17 +175,23 @@ export function startLlmRequestLog(params: LlmRequestLogStartParams): LlmRequest
 
   return {
     id,
-    finish: ({ status, error }) => {
+    finish: ({ status, error, usage }) => {
       try {
         const db = ensureSchema()
         const terminal = error ? classifyTerminalLlmError(error) : null
         const rawMessage = error instanceof Error ? error.message : (error ? String(error) : '')
+        const inTok = Math.max(0, Math.floor(usage?.inputTokens || 0))
+        const outTok = Math.max(0, Math.floor(usage?.outputTokens || 0))
+        const totTok = Math.max(0, Math.floor(usage?.totalTokens || inTok + outTok))
         db.prepare(`
           UPDATE llm_request_logs
           SET status=?,
               error_code=?,
               error_message=?,
               duration_ms=?,
+              input_tokens=?,
+              output_tokens=?,
+              total_tokens=?,
               updated_at=?
           WHERE id=?
         `).run(
@@ -167,6 +199,9 @@ export function startLlmRequestLog(params: LlmRequestLogStartParams): LlmRequest
           terminal?.code || '',
           terminal?.userMessage || rawMessage.slice(0, 1000),
           Math.max(0, Date.now() - startedAt),
+          inTok,
+          outTok,
+          totTok,
           toSqlTimestamp(),
           id,
         )
@@ -202,6 +237,9 @@ export function listLlmRequestLogs(options?: {
       status,
       COUNT(*) AS count,
       ROUND(AVG(duration_ms)) AS avg_duration_ms,
+      SUM(input_tokens) AS input_tokens,
+      SUM(output_tokens) AS output_tokens,
+      SUM(total_tokens) AS total_tokens,
       MAX(created_at) AS last_at
     FROM llm_request_logs
     WHERE created_at >= ?

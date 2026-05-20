@@ -7,6 +7,9 @@ import { generateStructured, EcommerceLlmUnavailableError } from './llm-client';
 import { fetchViaBrowser, BrowserFetchError } from './browser-fetcher';
 import { getBrowserFetchSettings } from './discover-settings';
 import { parseProductFromHtml, type ParsedProduct } from './url-adapters';
+import { enrichListingDetailsWithEhunt } from './ehunt/collect';
+import { isAdsPowerContext } from './ehunt/detector';
+import type { EhuntMetrics } from './ehunt/types';
 
 export interface MarketSample {
   title: string;
@@ -48,6 +51,8 @@ export interface MarketProductDetail {
   galleryImageUrls?: string[];
   reviewSnippets?: string[];
   badges?: string[];
+  /** EHunt 注入指标（仅 AdsPower + 装了 EHunt 时非空；缺失不影响普通采集）。 */
+  ehunt?: EhuntMetrics;
   fetchedAt: string;
   fetchedVia: 'browser' | 'server-fetch';
 }
@@ -183,6 +188,32 @@ export async function fetchSearchSamples(opts: FetchSamplesOpts): Promise<FetchS
           browserContextId: browserOut.browserContextId,
         });
         if (browserResult.samples.length > 0) {
+          // EHunt 指标增强：仅 AdsPower 上下文 + Etsy 页面才尝试；失败只警告，绝不阻断采集。
+          if (
+            browserResult.fetchedVia === 'browser'
+            && isAdsPowerContext(browserOut.browserContextId)
+            && /etsy\.com/i.test(browserResult.url)
+          ) {
+            try {
+              const det = await enrichListingDetailsWithEhunt(
+                browserResult.details,
+                browserOut.browserContextId,
+                browserResult.url,
+                { signal: opts.abortSignal },
+              );
+              if (det.status !== 'ok') {
+                browserResult.detailWarnings = [
+                  ...(browserResult.detailWarnings ?? []),
+                  `EHunt: ${det.reason}`,
+                ];
+              }
+            } catch (err) {
+              browserResult.detailWarnings = [
+                ...(browserResult.detailWarnings ?? []),
+                `EHunt 指标采集异常: ${err instanceof Error ? err.message : String(err)}`,
+              ];
+            }
+          }
           return browserResult;
         }
         const fallback = await plainServerFetch({ ...opts, max, fetchedAt });

@@ -29,6 +29,8 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { stashPendingChatBootstrap } from "@/lib/chat/session-bootstrap";
 import { cn } from "@/lib/utils";
+import { DailyReviewList } from "@/components/memory-v2/DailyReviewList";
+import { TokenUsageCard } from "@/components/memory-v2/TokenUsageCard";
 
 type MemoryKind = "task" | "people" | "resource" | "capability" | "reflection";
 type ScopeType = "user" | "main_agent" | "project" | "session" | "module" | "entity";
@@ -595,6 +597,10 @@ export default function MemoryV2Page() {
             {error}
           </div>
         )}
+
+        <DailyReviewList />
+
+        <TokenUsageCard />
 
         <section className="grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
           <div className="space-y-5">

@@ -57,6 +57,39 @@ export type TopicMinChatMessages = 5 | 10 | 20 | 50;
 export const TOPIC_BATCH_SIZES: TopicBatchSize[] = [200, 500, 1000, 2000];
 export const TOPIC_MIN_CHAT_MESSAGES: TopicMinChatMessages[] = [5, 10, 20, 50];
 
+/**
+ * 群标签：把「什么是工作群」等分类沉淀为可复用规则。
+ * - member_in_group：成员所在群（members 存 contact wxid，稳定不随备注漂移；
+ *   matchMode 固定 any = 任一成员在的群即命中）
+ * - manual：手选群
+ * 最终群集 = (member 解析 ∪ manual.groups) − excludeGroups。
+ */
+export type GroupTagRuleKind = 'member_in_group' | 'manual';
+
+export interface GroupTagRule {
+  kind: GroupTagRuleKind;
+  /** member_in_group：成员 contact wxid 列表（建标签时解析选定）。 */
+  members: string[];
+  /** 多成员匹配模式，固定 any（任一成员在的群）。预留枚举位。 */
+  matchMode: 'any';
+  /** manual：手动圈定的群 wxid。 */
+  groups: string[];
+  /** 从最终集中排除的群 wxid（如刘总的家庭群）。 */
+  excludeGroups: string[];
+}
+
+export interface GroupTag {
+  id: string;
+  name: string;
+  rule: GroupTagRule;
+  /** 解析快照缓存；sourceMtime = contact.db mtime，用于失效判定。 */
+  resolved: {
+    groupWxids: string[];
+    resolvedAt: string;
+    sourceMtime: number;
+  } | null;
+}
+
 export interface AppSettings {
   ai: {
     /** null = follow Lumos global default provider. */
@@ -102,6 +135,8 @@ export interface AppSettings {
     /** 0..23 */
     defaultReminderHour: number;
   };
+  /** 群标签规则（工作群等分类）。默认空 = 未定义任何标签。 */
+  groupTags: GroupTag[];
 }
 
 /**
@@ -146,4 +181,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   followups: {
     defaultReminderHour: 9,
   },
+  groupTags: [],
 };

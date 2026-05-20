@@ -14,6 +14,49 @@ import { buildApproximateAsrSegments } from './asr-segments';
 import { publishVideoToKnowledge } from './publish';
 import { getDouyinCollectorSettings, type TranscribePrefer } from './settings';
 import { summarizeVideo } from './ai-summary';
+import { DESKTOP_UA } from './scraper';
+
+// 抖音媒体 CDN（douyinvod / snssdk play_addr）拒绝裸匿名请求：必须带
+// Referer + 真实 UA，否则 403/404。裸 fetch(playUrls[0]) 正是「音频下载
+// HTTP 404」失败的根因。统一在此构造下载请求头。
+const DOUYIN_MEDIA_HEADERS = {
+  'user-agent': DESKTOP_UA,
+  referer: 'https://www.douyin.com/',
+} as const;
+
+/**
+ * 依次尝试所有 play_addr URL（旧代码只试第一个就放弃，抖音常返回多个候选，
+ * 首个签名失效/被拒时后续可能可用），带 CDN 要求的 Referer + UA 下载到
+ * destPath。全部失败才返回聚合的真实原因，绝不 mock。
+ */
+async function downloadPlayAddr(
+  urls: string[],
+  destPath: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const failures: string[] = [];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { headers: DOUYIN_MEDIA_HEADERS, redirect: 'follow' });
+      if (!res.ok) {
+        failures.push(`HTTP ${res.status}`);
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength === 0) {
+        failures.push('空响应体');
+        continue;
+      }
+      await fs.writeFile(destPath, buf);
+      return { ok: true };
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return {
+    ok: false,
+    reason: `下载视频音频失败：尝试了 ${urls.length} 个 play_addr 均失败（${failures.join(' / ')}）。`,
+  };
+}
 
 interface VideoRecord {
   aweme_id?: string;
@@ -223,39 +266,25 @@ async function fallbackToLocalAsr(
     return { ok: false, reason };
   }
 
-  // Download the first available play_addr URL into /tmp.
-  let tmpPath: string | null = null;
-  try {
-    const res = await fetch(playUrls[0], { redirect: 'follow' });
-    if (!res.ok) {
-      const reason = `下载视频音频失败：HTTP ${res.status}（play_addr 可能需要 cookie / referer）。`;
-      store.update(COLLECTION_VIDEOS, videoId, {
-        transcript_status: 'failed',
-        failure_reason: reason,
-        updated_at: new Date().toISOString(),
-      });
-      return { ok: false, reason };
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    tmpPath = path.join(
-      os.tmpdir(),
-      `douyin-collector-${video.aweme_id ?? videoId}-${Date.now()}.mp4`,
-    );
-    await fs.writeFile(tmpPath, buf);
-  } catch (err) {
-    const reason = `下载视频音频异常：${err instanceof Error ? err.message : String(err)}`;
-    // tmpPath may have been set just before the throw (e.g. fs.writeFile
-    // partially wrote then errored). Clean up before returning so /tmp
-    // doesn't accumulate orphaned mp4 fragments across many failures.
-    if (tmpPath) {
-      await fs.unlink(tmpPath).catch(() => undefined);
-    }
+  // Download into /tmp via downloadPlayAddr: proper Referer + UA headers
+  // (the missing-headers naked fetch was the HTTP 404 root cause) and tries
+  // every play_addr candidate, not just the first.
+  let tmpPath: string | null = path.join(
+    os.tmpdir(),
+    `douyin-collector-${video.aweme_id ?? videoId}-${Date.now()}.mp4`,
+  );
+  const download = await downloadPlayAddr(playUrls, tmpPath);
+  if (!download.ok) {
+    // Nothing landed (or a partial fragment) — clean up so /tmp doesn't
+    // accumulate orphaned mp4s across many failures.
+    await fs.unlink(tmpPath).catch(() => undefined);
+    tmpPath = null;
     store.update(COLLECTION_VIDEOS, videoId, {
       transcript_status: 'failed',
-      failure_reason: reason,
+      failure_reason: download.reason,
       updated_at: new Date().toISOString(),
     });
-    return { ok: false, reason };
+    return { ok: false, reason: download.reason };
   }
 
   // Try ffmpeg-extract just the audio track before ASR. This is not a

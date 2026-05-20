@@ -300,6 +300,94 @@ def list_contacts(args: dict) -> dict:
     return {"items": items[:limit], "total": len(items)}
 
 
+def resolve_contact(args: dict) -> dict:
+    """Resolve a fuzzy name (remark / nickname / wxid fragment) to *person*
+    contact candidates. Used when defining a group tag's member rule so the
+    caller can pin the exact wxid (stable) instead of a drifting display name.
+    Excludes groups and official accounts — they aren't group "members".
+    """
+    query = (args.get("query") or "").strip().lower()
+    limit = max(1, min(int(args.get("limit") or 10), 50))
+    contacts = server._load_contacts()
+    items: list[dict] = []
+    for wxid, info in contacts.items():
+        if "@chatroom" in wxid or wxid.startswith("gh_"):
+            continue
+        nick = (info.get("nickname") or "").strip()
+        remark = (info.get("remark") or "").strip()
+        if query:
+            if query not in f"{wxid} {nick} {remark}".lower():
+                continue
+        items.append({
+            "wxid": wxid,
+            "display": remark or nick or wxid,
+            "nickname": nick,
+            "remark": remark,
+            "has_remark": bool(remark),
+        })
+    items.sort(key=lambda x: (not x["has_remark"], x["display"].lower()))
+    return {"items": items[:limit], "total": len(items)}
+
+
+def list_groups_with_member(args: dict) -> dict:
+    """Groups a member belongs to, from contact.db `chatroom_member`.
+
+    match_mode 'any' (default): a group qualifies if ANY of member_wxids is
+    in it. 'all': only groups containing every listed member. Membership is
+    the source of truth here — NOT "has spoken" (a silent member still
+    counts), which is exactly what the work-group definition needs.
+    """
+    members = [
+        w.strip() for w in (args.get("member_wxids") or [])
+        if isinstance(w, str) and w.strip()
+    ]
+    match_mode = args.get("match_mode") or "any"
+    if not members:
+        return {"groups": [], "total": 0, "warning": "member_wxids 为空"}
+    try:
+        contact_db = os.path.join(server._find_data_dir(), "contact", "contact.db")
+    except Exception as e:  # noqa: BLE001
+        return {"groups": [], "total": 0, "warning": f"未找到 contact.db：{e}"}
+    if not os.path.exists(contact_db):
+        return {"groups": [], "total": 0, "warning": "contact.db 不存在"}
+    in_list = ",".join("'" + w.replace("'", "''") + "'" for w in members)
+    sql = (
+        "SELECT cr.username AS room_wxid, rc.nick_name AS room_nick, "
+        "rc.remark AS room_remark, c.username AS member_wxid "
+        "FROM chatroom_member m "
+        "JOIN contact c ON c.id = m.member_id "
+        "JOIN chat_room cr ON cr.id = m.room_id "
+        "LEFT JOIN contact rc ON rc.username = cr.username "
+        f"WHERE c.username IN ({in_list});"
+    )
+    try:
+        rows = server._query(contact_db, sql)
+    except Exception as e:  # noqa: BLE001
+        return {"groups": [], "total": 0, "warning": f"查询失败：{e}"}
+    groups: dict[str, dict] = {}
+    for r in rows:
+        room = (r.get("room_wxid") or "").strip()
+        if not room:
+            continue
+        g = groups.setdefault(room, {"wxid": room, "name": "", "matched_members": []})
+        nm = (r.get("room_remark") or "").strip() or (r.get("room_nick") or "").strip()
+        if nm and not g["name"]:
+            g["name"] = nm
+        mw = (r.get("member_wxid") or "").strip()
+        if mw and mw not in g["matched_members"]:
+            g["matched_members"].append(mw)
+    member_set = set(members)
+    out: list[dict] = []
+    for room, g in groups.items():
+        if match_mode == "all" and not member_set.issubset(set(g["matched_members"])):
+            continue
+        if not g["name"]:
+            g["name"] = server._resolve_contact_name(room)
+        out.append(g)
+    out.sort(key=lambda x: x["name"])
+    return {"groups": out, "total": len(out), "match_mode": match_mode}
+
+
 SESSION_DB_PATH = lambda: os.path.join(server._find_data_dir(), "session", "session.db")  # noqa: E731
 
 
@@ -803,12 +891,19 @@ def _stream_db_messages(
     name2id: dict[str, str],
     contacts: dict,
     session_meta: dict[str, dict],
+    chat_cursors: dict[str, int],
+    overlap_seconds: int,
 ) -> int:
     """Pull all in-window messages from one db in a SINGLE sqlcipher process.
 
     The PBKDF2 key-derivation cost dominates per-process startup, so we
     batch every Msg_ table SELECT into one stdin payload. Output is parsed
     incrementally via csv.reader streaming over the subprocess stdout.
+
+    The create_time floor is computed PER TABLE from that chat's own resume
+    point (chat_cursors[wxid] − overlap), not a single global watermark, so
+    a quiet chat is never skipped because some busy chat advanced a shared
+    cursor. Unknown chats fall back to since_timestamp (0 ⇒ full history).
     Returns the number of messages emitted.
     """
     key = server._key_for_db(db_path)
@@ -821,10 +916,14 @@ def _stream_db_messages(
         ".headers off",
         ".mode csv",
     ]
-    where_extra = (
-        f" AND create_time >= {int(since_timestamp)}" if since_timestamp > 0 else ""
-    )
     for tbl in tables:
+        wxid = name2id.get(tbl, tbl)
+        chat_ts = chat_cursors.get(wxid)
+        if chat_ts is not None:
+            floor_ts = max(int(chat_ts) - int(overlap_seconds), 0)
+        else:
+            floor_ts = int(since_timestamp)
+        where_extra = f" AND create_time >= {floor_ts}" if floor_ts > 0 else ""
         sql_lines.append(
             f"SELECT '{tbl}', local_id, create_time, local_type, real_sender_id, message_content "
             f"FROM {tbl} "
@@ -949,8 +1048,31 @@ def sync_stream(args: dict) -> None:
     if since_timestamp < 0:
         since_timestamp = 0
 
+    # Per-chat resume points {wxid: newest mirrored ts}. A chat absent here
+    # has no mirrored history → falls back to since_timestamp (0 = full),
+    # which is exactly how stranded/never-synced chats get backfilled.
+    raw_cursors = args.get("chat_cursors") or {}
+    chat_cursors: dict[str, int] = {}
+    if isinstance(raw_cursors, dict):
+        for k, v in raw_cursors.items():
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                continue
+            if k and iv > 0:
+                chat_cursors[k] = iv
+    try:
+        overlap_seconds = int(args.get("overlap_seconds") or 0)
+    except (TypeError, ValueError):
+        overlap_seconds = 0
+    if overlap_seconds < 0:
+        overlap_seconds = 0
+
     t0 = time.monotonic()
-    sys.stderr.write(f"[sync_stream] start since={since_timestamp}\n")
+    sys.stderr.write(
+        f"[sync_stream] start since={since_timestamp} "
+        f"chat_cursors={len(chat_cursors)} overlap={overlap_seconds}\n"
+    )
     sys.stderr.flush()
 
     # Pull session metadata for as many chats as the user has.
@@ -1022,6 +1144,8 @@ def sync_stream(args: dict) -> None:
             name2id,
             contacts,
             session_meta,
+            chat_cursors,
+            overlap_seconds,
         )
         _emit_jsonl({"type": "db_done", "db": db_basename, "messages": emitted_for_db})
         sys.stderr.write(
@@ -1087,6 +1211,8 @@ def resolve_image(args: dict) -> dict:
 
 OPS = {
     "list_contacts": list_contacts,
+    "resolve_contact": resolve_contact,
+    "list_groups_with_member": list_groups_with_member,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
     "analyze_snapshot": analyze_snapshot,

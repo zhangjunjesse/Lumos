@@ -10,6 +10,7 @@ import {
   getConsent,
 } from '@/lib/wechat-export/disclaimer';
 import { getSetupStatus, getWeChatExportPlatform, readWindowsAccounts, readWindowsPathConfig } from '@/lib/wechat-export/setup-state';
+import { getLastMirrorSyncAt } from '@/lib/wechat-assistant/mirror-store';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -54,7 +55,7 @@ export async function GET() {
       msgDir: dataDirHint.msgDir,
       messageDbDir: dataDirHint.messageDbDir,
     } : undefined,
-    status,
+    status: { ...status, lastSyncedAt: getLastMirrorSyncAt() },
     consent: {
       version: DISCLAIMER_VERSION,
       effectiveAt: DISCLAIMER_EFFECTIVE_AT,

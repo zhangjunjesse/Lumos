@@ -3,6 +3,7 @@ import {
   extractVideoFromRenderData,
   extractVideoMetadataFromHtml,
   fetchVideoMetadata,
+  isRiskControlSkeleton,
 } from '../scraper';
 
 const FIXTURE_RENDER_DATA = {
@@ -180,6 +181,47 @@ describe('extractVideoMetadataFromHtml', () => {
   });
 });
 
+describe('isRiskControlSkeleton', () => {
+  const bare = {
+    awemeId: '7',
+    title: null as string | null,
+    cover: null as string | null,
+    duration: null as number | null,
+    authorNickname: null as string | null,
+    authorSecUid: null as string | null,
+    nativeSubtitleUrls: [] as string[],
+    playAddrUrls: [] as string[],
+  };
+
+  it('flags the slogan-title placeholder with no author/cover/playaddr', () => {
+    expect(
+      isRiskControlSkeleton({ ...bare, title: '在抖音记录美好生活20260516' }, false),
+    ).toBe(true);
+  });
+
+  it('flags an empty-title no-data page', () => {
+    expect(isRiskControlSkeleton({ ...bare, title: '' }, false)).toBe(true);
+  });
+
+  it('does NOT flag when render data was present', () => {
+    expect(
+      isRiskControlSkeleton({ ...bare, title: '在抖音记录美好生活' }, true),
+    ).toBe(false);
+  });
+
+  it('does NOT flag a real video that has an author', () => {
+    expect(
+      isRiskControlSkeleton({ ...bare, title: '在抖音记录美好生活', authorNickname: '某博主' }, false),
+    ).toBe(false);
+  });
+
+  it('does NOT flag a real video whose title merely contains the slogan as suffix', () => {
+    expect(
+      isRiskControlSkeleton({ ...bare, title: '我的视频 来抖音，记录美好生活！' }, false),
+    ).toBe(false);
+  });
+});
+
 describe('fetchVideoMetadata', () => {
   let originalFetch: typeof globalThis.fetch;
 
@@ -215,5 +257,22 @@ describe('fetchVideoMetadata', () => {
         authorNickname: '科技博主',
       }),
     });
+  });
+
+  it('reports phase=risk on the anti-bot skeleton page instead of a junk row', async () => {
+    const skeleton = [
+      '<html><head>',
+      '<title>在抖音记录美好生活20260516</title>',
+      '<meta name="description" content="在抖音记录美好生活"/>',
+      '</head><body></body></html>',
+    ].join('');
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(new Response(skeleton, { status: 200 })) as unknown as typeof globalThis.fetch;
+
+    const outcome = await fetchVideoMetadata('7372484719365098803');
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome).toMatchObject({ ok: false, phase: 'risk' });
   });
 });

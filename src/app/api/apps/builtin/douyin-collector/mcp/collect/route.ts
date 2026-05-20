@@ -34,15 +34,14 @@ export async function POST(req: NextRequest) {
 
     const common = {
       limit: body.limit,
-      autoProcess: body.auto_process ?? false,
+      // 默认开启：采集即处理（抓字幕→总结→入库），与其它采集入口一致。
+      // 只想要元数据时显式 auto_process=false。
+      autoProcess: body.auto_process ?? true,
       publishToKnowledge: body.publish_to_knowledge ?? true,
     };
     const result =
       kind === 'link' || kind === 'video'
-        ? await collectVideoForAi(input, {
-            ...common,
-            autoProcess: body.auto_process ?? true,
-          })
+        ? await collectVideoForAi(input, { ...common })
         : kind === 'creator'
           ? await collectCreatorForAi(input, {
               ...common,

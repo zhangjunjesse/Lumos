@@ -33,6 +33,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -49,7 +50,13 @@ import { openExternalUrl } from '@/lib/open-external';
 
 import { BrowserFetchSettingsCard } from './BrowserFetchSettingsCard';
 
-import type { DiscoverCandidate, DiscoverReferenceUrl } from './types';
+import type {
+  DiscoverCandidate,
+  DiscoverReferenceUrl,
+  SelectionEvidence,
+  SelectionEvidenceStage,
+} from './types';
+import type { EhuntMetrics } from '@/lib/ecommerce-assistant/ehunt/types';
 
 interface CompareResult {
   recommended_id: string;
@@ -96,6 +103,7 @@ interface SourceSample {
   heat_level?: string | null;
   heat_confidence?: string | null;
   heat_reasons?: string[];
+  ehunt?: EhuntMetrics | null;
 }
 
 interface SourceDetail extends SourceSample {
@@ -141,6 +149,7 @@ interface ResearchSample {
   heatLevel: string | null;
   heatConfidence: string | null;
   heatReasons: string[];
+  ehunt: EhuntMetrics | null;
 }
 
 interface ResearchRun {
@@ -153,6 +162,7 @@ interface ResearchRun {
   hotSellingOnly: boolean;
   status: '研究中' | '已完成' | '失败';
   candidates: DiscoverCandidate[];
+  selectionEvidence: SelectionEvidenceView[];
   samples: ResearchSample[];
   sampleCount: number;
   detailCount: number;
@@ -161,6 +171,11 @@ interface ResearchRun {
   detailWarnings: string[];
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+interface SelectionEvidenceView extends SelectionEvidence {
+  data: unknown;
+  rowCount: number;
 }
 
 interface InsightItem {
@@ -208,8 +223,25 @@ const KEYWORD_TRANSLATION_LANGUAGES = [
   { value: 'custom', label: '自定义' },
 ] as const;
 
+const SELECTION_EVIDENCE_STAGE_ORDER: SelectionEvidenceStage[] = [
+  'seed_terms',
+  'keyword_metrics',
+  'opportunity_candidates',
+  'manual_validation_notes',
+  'product_brief',
+];
+
+const SELECTION_EVIDENCE_STAGE_LABELS: Record<SelectionEvidenceStage, string> = {
+  seed_terms: '原始种子词',
+  keyword_metrics: '关键词/样品指标表',
+  opportunity_candidates: '机会候选表',
+  manual_validation_notes: '人工验证卡',
+  product_brief: '产品 brief',
+};
+
 interface DiscoverTabProps {
   candidates: DiscoverCandidate[];
+  selectionEvidence: SelectionEvidence[];
   loading: boolean;
   onChanged: () => void;
   onSwitchToStudio: () => void;
@@ -217,6 +249,7 @@ interface DiscoverTabProps {
 
 export function DiscoverTab({
   candidates,
+  selectionEvidence,
   loading,
   onChanged,
   onSwitchToStudio,
@@ -256,7 +289,10 @@ export function DiscoverTab({
       ...candidates,
     ];
   }, [candidates, optimisticCandidates]);
-  const researchRuns = React.useMemo(() => buildResearchRuns(effectiveCandidates), [effectiveCandidates]);
+  const researchRuns = React.useMemo(
+    () => buildResearchRuns(effectiveCandidates, selectionEvidence),
+    [effectiveCandidates, selectionEvidence],
+  );
   const detailResearch = React.useMemo(
     () => researchRuns.find((run) => run.id === detailResearchId) ?? null,
     [researchRuns, detailResearchId],
@@ -802,7 +838,14 @@ function ResearchWorkspace({
     );
   }
 
-  return <ResearchListPage loading={loading} runs={runs} onOpenRun={onOpenRun} />;
+  return (
+    <ResearchListPage
+      loading={loading}
+      runs={runs}
+      onOpenRun={onOpenRun}
+      onChanged={onChanged}
+    />
+  );
 }
 
 function ResearchDetailLoadingPage({
@@ -837,11 +880,82 @@ function ResearchListPage({
   loading,
   runs,
   onOpenRun,
+  onChanged,
 }: {
   loading: boolean;
   runs: ResearchRun[];
   onOpenRun: (id: string) => void;
+  onChanged: () => void;
 }): React.ReactElement {
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = React.useState(false);
+
+  // runs 由候选派生、随轮询换引用；按 id 存的选择天然保留，但要剪掉已不存在
+  // 的 run id（被删 / 候选清空），否则计数和删除 payload 会带上幽灵 id。
+  React.useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set<string>();
+      for (const run of runs) if (prev.has(run.id)) valid.add(run.id);
+      return valid.size === prev.size ? prev : valid;
+    });
+  }, [runs]);
+
+  const selectedCount = selectedIds.size;
+  const allSelected = runs.length > 0 && selectedCount === runs.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  const toggleOne = React.useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = () => {
+    setSelectedIds((prev) =>
+      prev.size === runs.length ? new Set() : new Set(runs.map((run) => run.id)),
+    );
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const handleBatchDelete = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        `删除选中的 ${ids.length} 条研究记录？运行中的会先取消，名下候选与采集数据一并移除；已转工坊（promoted）的候选会保留。`,
+      )
+    ) {
+      return;
+    }
+    setBatchDeleting(true);
+    try {
+      const res = await fetch('/api/apps/builtin/ecommerce/discover/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ research_ids: ids }),
+      });
+      if (!res.ok) throw new Error('批量删除失败');
+      const data = (await res.json().catch(() => ({}))) as { skippedPromoted?: number };
+      setSelectedIds(new Set());
+      onChanged();
+      if (typeof window !== 'undefined' && (data.skippedPromoted ?? 0) > 0) {
+        window.alert(
+          `已删除，但有 ${data.skippedPromoted} 个已转工坊（promoted）的候选被保留——删它会切断流水线追溯，请到工坊归档对应 product_input。`,
+        );
+      }
+    } catch {
+      /* 失败保留选择，用户可重试 */
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -862,11 +976,47 @@ function ResearchListPage({
             还没有研究记录。先从上方发起一次选品研究。
           </p>
         ) : (
-          <div className="overflow-hidden rounded-lg border bg-background">
+          <>
+            {selectedCount > 0 ? (
+              <div className="mb-3 flex flex-wrap items-center gap-3 border-b pb-2">
+                <span className="text-xs text-muted-foreground">已选 {selectedCount}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                  onClick={handleBatchDelete}
+                  disabled={batchDeleting}
+                  data-testid="discover-batch-delete"
+                >
+                  {batchDeleting ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-3.5" />
+                  )}
+                  删除选中（{selectedCount}）
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={clearSelection}
+                  disabled={batchDeleting}
+                >
+                  取消选择
+                </Button>
+              </div>
+            ) : null}
+            <div className="overflow-hidden rounded-lg border bg-background">
             <div className="overflow-x-auto">
-              <table className="min-w-[980px] w-full border-collapse text-left text-xs">
+              <table className="min-w-[1024px] w-full border-collapse text-left text-xs">
                 <thead className="bg-muted/60 text-[11px] text-muted-foreground">
                   <tr>
+                    <EvidenceTh className="w-[44px]">
+                      <Checkbox
+                        checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                        onCheckedChange={toggleAll}
+                        aria-label="全选研究记录"
+                      />
+                    </EvidenceTh>
                     <EvidenceTh className="w-[300px]">研究关键词</EvidenceTh>
                     <EvidenceTh className="w-[230px]">市场 / 平台</EvidenceTh>
                     <EvidenceTh className="w-[90px]">样品</EvidenceTh>
@@ -884,6 +1034,18 @@ function ResearchListPage({
                       className="cursor-pointer border-t align-middle hover:bg-foreground/[0.02]"
                       onClick={() => onOpenRun(run.id)}
                     >
+                      <EvidenceTd>
+                        <span
+                          className="inline-flex"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Checkbox
+                            checked={selectedIds.has(run.id)}
+                            onCheckedChange={() => toggleOne(run.id)}
+                            aria-label={`选择研究 ${run.keyword}`}
+                          />
+                        </span>
+                      </EvidenceTd>
                       <EvidenceTd>
                         <p className="text-sm font-semibold">{run.keyword}</p>
                         <p className="mt-1 text-[11px] text-muted-foreground">
@@ -936,7 +1098,8 @@ function ResearchListPage({
                 </tbody>
               </table>
             </div>
-          </div>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -1089,10 +1252,11 @@ function ResearchDetail({
           </div>
           <ResearchStatusBadge status={run.status} />
         </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-4">
+        <div className="mt-4 grid gap-2 sm:grid-cols-5">
           <ResearchStat icon={<Search className="size-3.5" />} label="原始样品" value={`${run.sampleCount}`} />
           <ResearchStat icon={<Eye className="size-3.5" />} label="打开详情" value={`${run.detailCount}`} />
           <ResearchStat icon={<PackageCheck className="size-3.5" />} label="候选方案" value={`${run.candidates.length}`} />
+          <ResearchStat icon={<Layers3 className="size-3.5" />} label="过程产物" value={formatEvidenceProgress(run.selectionEvidence)} />
           <ResearchStat icon={<Target className="size-3.5" />} label="决策状态" value={run.status} />
         </div>
         {run.status === '研究中' ? (
@@ -1151,31 +1315,7 @@ function ResearchDetail({
         </TabsContent>
 
         <TabsContent value="sop" className="mt-0">
-          <section>
-            <SectionHeader
-              icon={<Layers3 className="size-4" />}
-              title="SOP 复盘"
-              description="当前先把采集证据前置；完整手册流程会继续拆成可验收步骤。"
-            />
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <InsightCard
-                item={{
-                  title: '第一步',
-                  value: '先验采集质量',
-                  detail: '必须先确认标题、价格、图片、review、详情页证据是否足够，再进入分析。',
-                  tone: 'blue',
-                }}
-              />
-              <InsightCard
-                item={{
-                  title: '当前状态',
-                  value: run.sampleCount > 0 ? '已有原始样本池' : '缺少原始样本',
-                  detail: '采集详情 Tab 是后续所有市场判断、差异化和立项建议的证据底座。',
-                  tone: run.sampleCount > 0 ? 'green' : 'amber',
-                }}
-              />
-            </div>
-          </section>
+          <SelectionEvidenceTab run={run} />
         </TabsContent>
 
         <TabsContent value="insights" className="mt-0">
@@ -1893,6 +2033,126 @@ function EmptyBlock({ text }: { text: string }): React.ReactElement {
   );
 }
 
+function SelectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElement {
+  const stages = buildSelectionEvidenceSlots(run.id, run.selectionEvidence);
+  const available = stages.filter((item) => item.status === 'available').length;
+  const partial = stages.filter((item) => item.status === 'partial').length;
+  const missing = stages.filter((item) => item.status === 'missing').length;
+  const assessment = buildSelectionEvidenceAssessment(run, stages);
+
+  return (
+    <section>
+      <SectionHeader
+        icon={<Layers3 className="size-4" />}
+        title="SOP 复盘"
+        description="这里展示本次研究保存下来的过程产物，用来判断最终候选是否有足够支撑。"
+      />
+
+      <Alert className={`mt-3 ${assessment.className}`}>
+        <AlertCircle className="size-4" />
+        <AlertTitle className="text-xs">支撑判断：{assessment.title}</AlertTitle>
+        <AlertDescription className="text-xs">{assessment.detail}</AlertDescription>
+      </Alert>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <ResearchStat icon={<Layers3 className="size-3.5" />} label="过程层数" value={`${run.selectionEvidence.length}/${SELECTION_EVIDENCE_STAGE_ORDER.length}`} />
+        <ResearchStat icon={<Check className="size-3.5" />} label="已保存" value={`${available}`} />
+        <ResearchStat icon={<AlertCircle className="size-3.5" />} label="部分" value={`${partial}`} />
+        <ResearchStat icon={<X className="size-3.5" />} label="缺失" value={`${missing}`} />
+      </div>
+
+      {run.selectionEvidence.length === 0 ? (
+        <EmptyBlock text="这条旧研究还没有独立过程产物。重新发起研究后，会保存原始种子词、关键词/样品指标、机会候选、人工验证卡和产品 brief 五层证据。" />
+      ) : (
+        <div className="mt-3 space-y-3">
+          {stages.map((item) => (
+            <SelectionEvidenceStageBlock key={item.stage} item={item} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SelectionEvidenceStageBlock({ item }: { item: SelectionEvidenceView }): React.ReactElement {
+  return (
+    <div className="rounded-lg border bg-background p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium text-muted-foreground">过程产物</p>
+          <h4 className="mt-1 text-sm font-semibold">{item.title}</h4>
+        </div>
+        <SelectionEvidenceStatusBadge status={item.status} />
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-foreground/75">{item.summary}</p>
+      <SelectionEvidencePreview item={item} />
+    </div>
+  );
+}
+
+function SelectionEvidenceStatusBadge({
+  status,
+}: {
+  status: SelectionEvidence['status'];
+}): React.ReactElement {
+  const cls =
+    status === 'available'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900'
+      : status === 'partial'
+        ? 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:ring-blue-900'
+        : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:ring-amber-900';
+  const label = status === 'available' ? '已保存' : status === 'partial' ? '部分' : '缺失';
+  return <span className={`rounded-md px-2 py-1 text-[11px] font-semibold ring-1 ${cls}`}>{label}</span>;
+}
+
+function SelectionEvidencePreview({ item }: { item: SelectionEvidenceView }): React.ReactElement {
+  const rows = asRecordArray(item.data);
+  if (!rows.length) {
+    return (
+      <div className="mt-3 rounded-md border border-dashed px-3 py-4 text-xs text-muted-foreground">
+        本阶段还没有明细数据。
+      </div>
+    );
+  }
+  const columns = selectionEvidenceColumns(item.stage);
+  const previewRows = rows.slice(0, 4);
+  return (
+    <div className="mt-3 overflow-hidden rounded-md border bg-background">
+      <div className="overflow-x-auto">
+        <table className="min-w-[860px] w-full border-collapse text-left text-xs">
+          <thead className="bg-muted/60 text-[11px] text-muted-foreground">
+            <tr>
+              {columns.map((column) => (
+                <th key={column.key} className="px-3 py-2 font-medium">
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.map((row, index) => (
+              <tr key={`${item.stage}-${index}`} className="border-t align-top">
+                {columns.map((column) => (
+                  <td key={column.key} className="px-3 py-2">
+                    <span className="line-clamp-3 leading-relaxed">
+                      {formatEvidenceValue(row[column.key])}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > previewRows.length ? (
+        <p className="border-t bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+          仅预览前 {previewRows.length} 行，共 {rows.length} 行。
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function CollectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElement {
   const [previewImage, setPreviewImage] = React.useState<{ url: string; title: string } | null>(
     null,
@@ -1958,7 +2218,7 @@ function CollectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElemen
       ) : (
         <div className="mt-3 overflow-hidden rounded-lg border bg-background">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1980px] table-fixed border-collapse text-left text-xs">
+            <table className="w-full min-w-[2200px] table-fixed border-collapse text-left text-xs">
               <thead className="bg-muted/60 text-[11px] text-muted-foreground">
                 <tr>
                   <EvidenceTh className="w-[74px]">序号</EvidenceTh>
@@ -1968,6 +2228,7 @@ function CollectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElemen
                   <EvidenceTh className="w-[130px]">价格</EvidenceTh>
                   <EvidenceTh className="w-[160px]">评分 / 评论</EvidenceTh>
                   <EvidenceTh className="w-[190px]">销量 / 热销</EvidenceTh>
+                  <EvidenceTh className="w-[220px]">EHunt 指标</EvidenceTh>
                   <EvidenceTh className="w-[200px]">品牌 / 类目</EvidenceTh>
                   <EvidenceTh className="w-[330px]">详情内容</EvidenceTh>
                   <EvidenceTh className="w-[176px]">链接 / 状态</EvidenceTh>
@@ -1978,11 +2239,11 @@ function CollectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElemen
                   <React.Fragment key={sample.id}>
                     {index > 0 ? (
                       <tr aria-hidden="true">
-                        <td colSpan={10} className="h-3 bg-muted/60 p-0" />
+                        <td colSpan={11} className="h-3 bg-muted/60 p-0" />
                       </tr>
                     ) : null}
                     <tr className="border-t border-border bg-muted/25">
-                      <td colSpan={10} className="border-l-4 border-l-foreground/35 px-3 py-3">
+                      <td colSpan={11} className="border-l-4 border-l-foreground/35 px-3 py-3">
                         <ProductImageStrip
                           sample={sample}
                           rankLabel={`#${sample.rank ?? index + 1}`}
@@ -2056,6 +2317,9 @@ function CollectionEvidenceTab({ run }: { run: ResearchRun }): React.ReactElemen
                             <p className="text-[11px] text-muted-foreground">热销标识未采到</p>
                           )}
                         </div>
+                      </EvidenceTd>
+                      <EvidenceTd>
+                        <EhuntMetricsCell metrics={sample.ehunt} />
                       </EvidenceTd>
                       <EvidenceTd>
                         <div className="space-y-1">
@@ -2294,6 +2558,49 @@ function FieldValue({
   return <p className={`${strong ? 'font-semibold text-foreground' : 'text-foreground/75'}`}>{displayValue}</p>;
 }
 
+function EhuntMetricsCell({ metrics }: { metrics: EhuntMetrics | null }): React.ReactElement {
+  if (!metrics) {
+    return (
+      <div className="space-y-1 text-[11px] text-muted-foreground">
+        <p>未采到 EHunt</p>
+        <p>需 AdsPower + EHunt 插件</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <MiniMetric label="总销量" value={formatMetricCount(metrics.salesTotal)} strong />
+      <MiniMetric label="近期" value={formatMetricCount(metrics.salesRecent)} />
+      <MiniMetric label="收藏" value={formatMetricCount(metrics.favorites)} />
+      <MiniMetric label="店铺周销" value={formatMetricCount(metrics.storeWeeklySales)} />
+      <MiniMetric label="上架" value={metrics.listedDate} />
+    </div>
+  );
+}
+
+function MiniMetric({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: string | null | undefined;
+  strong?: boolean;
+}): React.ReactElement {
+  return (
+    <div className="flex justify-between gap-2 rounded bg-foreground/[0.03] px-1.5 py-0.5 text-[10px]">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className={`truncate text-right tabular-nums ${strong ? 'font-semibold text-foreground' : 'text-foreground/75'}`}>
+        {value || '—'}
+      </span>
+    </div>
+  );
+}
+
+function formatMetricCount(value: number | null | undefined): string | null {
+  return value == null ? null : `${value.toLocaleString('en-US')} 个`;
+}
+
 function HeatScoreCell({ sample }: { sample: ResearchSample }): React.ReactElement {
   if (sample.heatScore == null) {
     return (
@@ -2442,11 +2749,21 @@ function strategyExplanation(strategy?: string | null, label?: string): string {
   return '综合需求、竞争、利润、合规和物流评分排序。';
 }
 
-function buildResearchRuns(candidates: DiscoverCandidate[]): ResearchRun[] {
+function buildResearchRuns(
+  candidates: DiscoverCandidate[],
+  selectionEvidence: SelectionEvidence[],
+): ResearchRun[] {
   const groups = new Map<string, DiscoverCandidate[]>();
   for (const candidate of candidates) {
     const key = candidate.research_id || `legacy-${candidate.id}`;
     groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  }
+  const evidenceGroups = new Map<string, SelectionEvidenceView[]>();
+  for (const record of selectionEvidence) {
+    const key = record.research_id;
+    if (!key) continue;
+    evidenceGroups.set(key, [...(evidenceGroups.get(key) ?? []), normalizeSelectionEvidence(record)]);
+    if (!groups.has(key)) groups.set(key, []);
   }
 
   return Array.from(groups.entries())
@@ -2454,6 +2771,7 @@ function buildResearchRuns(candidates: DiscoverCandidate[]): ResearchRun[] {
       const sorted = [...group].sort((a, b) => (b.score_total ?? 0) - (a.score_total ?? 0));
       const productCandidates = sorted.filter((candidate) => candidate.product_name !== '研究中…');
       const first = sorted[0];
+      const evidence = sortSelectionEvidence(evidenceGroups.get(id) ?? []);
       const sourceEntries = group.flatMap((candidate) => parseList<SourceEntry>(candidate.sources));
       const hotSellingOnly = sourceEntries.some(
         (entry) => entry.kind === 'research-preferences' && entry.hot_selling_only === true,
@@ -2495,6 +2813,7 @@ function buildResearchRuns(candidates: DiscoverCandidate[]): ResearchRun[] {
         hotSellingOnly,
         status: inferResearchStatus(group),
         candidates: productCandidates,
+        selectionEvidence: evidence,
         samples,
         sampleCount: samples.length,
         detailCount: samples.filter((sample) => sample.detailStatus === '详情页已打开').length,
@@ -2506,6 +2825,170 @@ function buildResearchRuns(candidates: DiscoverCandidate[]): ResearchRun[] {
       } satisfies ResearchRun;
     })
     .sort((a, b) => dateValue(b.updatedAt) - dateValue(a.updatedAt));
+}
+
+function normalizeSelectionEvidence(record: SelectionEvidence): SelectionEvidenceView {
+  const data = parseJsonValue(record.data_json, []);
+  return {
+    ...record,
+    data,
+    rowCount: Array.isArray(data) ? data.length : data ? 1 : 0,
+  };
+}
+
+function sortSelectionEvidence(records: SelectionEvidenceView[]): SelectionEvidenceView[] {
+  const order = new Map(SELECTION_EVIDENCE_STAGE_ORDER.map((stage, index) => [stage, index]));
+  return [...records].sort(
+    (a, b) => (order.get(a.stage) ?? 99) - (order.get(b.stage) ?? 99),
+  );
+}
+
+function buildSelectionEvidenceSlots(
+  researchId: string,
+  records: SelectionEvidenceView[],
+): SelectionEvidenceView[] {
+  const byStage = new Map<SelectionEvidenceStage, SelectionEvidenceView>();
+  for (const record of records) {
+    if (!byStage.has(record.stage)) byStage.set(record.stage, record);
+  }
+  return SELECTION_EVIDENCE_STAGE_ORDER.map((stage) => {
+    const existing = byStage.get(stage);
+    if (existing) return existing;
+    return {
+      id: `${researchId}-${stage}-missing`,
+      research_id: researchId,
+      stage,
+      title: SELECTION_EVIDENCE_STAGE_LABELS[stage],
+      status: 'missing',
+      summary: '本阶段尚未产出独立记录。',
+      data_json: '[]',
+      data: [],
+      rowCount: 0,
+      created_at: null,
+      updated_at: null,
+    };
+  });
+}
+
+function buildSelectionEvidenceAssessment(
+  run: ResearchRun,
+  stages: SelectionEvidenceView[],
+): { title: string; detail: string; className: string } {
+  if (run.status === '研究中') {
+    return {
+      title: '正在生成过程产物',
+      detail: '研究还在执行中，采集和分析完成后会补上五层过程记录。',
+      className: 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100',
+    };
+  }
+  const missing = stages.filter((stage) => stage.status === 'missing');
+  const partial = stages.filter((stage) => stage.status === 'partial');
+  if (run.status === '失败' || missing.length === stages.length) {
+    return {
+      title: '支撑不足',
+      detail: '本次研究没有形成完整证据链，不能作为选品结论使用。请查看失败原因或重新研究。',
+      className: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100',
+    };
+  }
+  if (missing.length || partial.length) {
+    return {
+      title: '可复盘，但不能直接立项',
+      detail:
+        '候选已有采集和分析记录支撑；但 eRank 月搜/CTR/KD、评论痛点、供应链成本和真实利润测算仍有待补项，当前只能支撑到“候选/预立项”。',
+      className: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100',
+    };
+  }
+  return {
+    title: '过程证据已保存',
+    detail: '五层过程产物已保存，可从每一层明细追溯最终候选的来源；正式立项前仍建议复核成本、供应链和合规。',
+    className: 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100',
+  };
+}
+
+function formatEvidenceProgress(records: SelectionEvidenceView[]): string {
+  const saved = records.filter((record) => record.status !== 'missing').length;
+  return `${saved}/${SELECTION_EVIDENCE_STAGE_ORDER.length}`;
+}
+
+function selectionEvidenceColumns(stage: SelectionEvidenceStage): Array<{ key: string; label: string }> {
+  if (stage === 'seed_terms') {
+    return [
+      { key: 'source_tool', label: '来源' },
+      { key: 'keyword', label: '种子词' },
+      { key: 'market', label: '市场' },
+      { key: 'note', label: '说明' },
+    ];
+  }
+  if (stage === 'keyword_metrics') {
+    return [
+      { key: 'keyword', label: '关键词' },
+      { key: 'sample_title', label: '样品' },
+      { key: 'price', label: '价格' },
+      { key: 'reviews', label: '评论' },
+      { key: 'heat_score', label: '热销分' },
+      { key: 'search_volume', label: '月搜' },
+      { key: 'ctr', label: 'CTR' },
+      { key: 'kd', label: 'KD' },
+    ];
+  }
+  if (stage === 'opportunity_candidates') {
+    return [
+      { key: 'grade', label: '档位' },
+      { key: 'opportunity_keyword', label: '机会词' },
+      { key: 'product_guess', label: '对应产品' },
+      { key: 'score_total', label: '总分' },
+      { key: 'reason', label: '依据' },
+      { key: 'next_step', label: '下一步' },
+    ];
+  }
+  if (stage === 'manual_validation_notes') {
+    return [
+      { key: 'product_guess', label: '产品' },
+      { key: 'supporting_sample_count', label: '支撑样品' },
+      { key: 'price_band', label: '价格带' },
+      { key: 'review_notes', label: '评论/痛点' },
+      { key: 'risk_notes', label: '待验证风险' },
+    ];
+  }
+  return [
+    { key: 'target', label: '立项对象' },
+    { key: 'value_prop', label: '价值主张' },
+    { key: 'profit', label: '利润状态' },
+    { key: 'abc', label: 'A/B/C' },
+    { key: 'action', label: '动作' },
+  ];
+}
+
+function asRecordArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> => {
+    return Boolean(item) && typeof item === 'object' && !Array.isArray(item);
+  });
+}
+
+function formatEvidenceValue(value: unknown): string {
+  if (value == null || value === '') return '待补';
+  if (Array.isArray(value)) {
+    const text = value.map((item) => formatEvidenceValue(item)).filter((item) => item !== '待补');
+    return text.length ? text.slice(0, 5).join(' / ') : '待补';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function parseJsonValue<T>(raw: string | null | undefined, fallback: T): unknown | T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return fallback;
+  }
 }
 
 function collectResearchSamples(candidates: DiscoverCandidate[], sortByHotSelling: boolean): ResearchSample[] {
@@ -2610,6 +3093,7 @@ function normalizeSample(args: {
     heatLevel: cleanEvidenceText(args.sample.heat_level),
     heatConfidence: cleanEvidenceText(args.sample.heat_confidence),
     heatReasons: cleanEvidenceList(args.sample.heat_reasons),
+    ehunt: args.sample.ehunt ?? null,
   };
 }
 
@@ -2637,6 +3121,7 @@ function mergeSample(
     heatLevel: next.heatLevel ?? existing.heatLevel,
     heatConfidence: next.heatConfidence ?? existing.heatConfidence,
     heatReasons: uniqueStrings([...existing.heatReasons, ...next.heatReasons]),
+    ehunt: next.ehunt ?? existing.ehunt,
     productId: next.productId ?? existing.productId,
     sponsored: existing.sponsored || next.sponsored,
     brand: next.brand ?? existing.brand,

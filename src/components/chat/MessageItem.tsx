@@ -30,6 +30,7 @@ import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
 import { unwrapToolResult } from '@/lib/tool-result-parser';
+import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
 
 interface ImageGenRequest {
   prompt: string;
@@ -416,7 +417,7 @@ export function MessageItem({ message }: MessageItemProps) {
     ? parseMessageMeta(text)
     : { files: [], source: undefined, text };
 
-  const displayText = isUser ? textWithoutMeta : text;
+  const displayText = isUser ? textWithoutMeta : stripLeakedToolTraceText(text);
 
   useEffect(() => {
     if (isUser && contentRef.current) {

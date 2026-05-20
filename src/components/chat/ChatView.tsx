@@ -32,6 +32,7 @@ import {
   getChatStreamController,
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
+import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
 
 interface ToolUseInfo {
   id: string;
@@ -1298,7 +1299,8 @@ export function ChatView({
         const finalToolResults = toolResultsRef.current;
         const hasStructuredBlocks = finalReasoningSummaries.length > 0 || finalToolUses.length > 0 || finalToolResults.length > 0;
 
-        let messageContent = accumulated.trim();
+        const sanitizedAccumulated = stripLeakedToolTraceText(accumulated).trim();
+        let messageContent = sanitizedAccumulated;
         if (hasStructuredBlocks) {
           const contentBlocks: Array<Record<string, unknown>> = [];
           for (const summary of finalReasoningSummaries) {
@@ -1311,8 +1313,8 @@ export function ChatView({
               contentBlocks.push({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content });
             }
           }
-          if (accumulated.trim()) {
-            contentBlocks.push({ type: 'text', text: accumulated.trim() });
+          if (sanitizedAccumulated) {
+            contentBlocks.push({ type: 'text', text: sanitizedAccumulated });
           }
           messageContent = JSON.stringify(contentBlocks);
         }

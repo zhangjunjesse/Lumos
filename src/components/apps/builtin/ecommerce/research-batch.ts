@@ -1,32 +1,5 @@
 import type { ResearchReport } from './types';
 
-const PLATFORM_SEPARATOR = /[\s,，;；、|]+/;
-
-/**
- * Parse the platform input field into a clean list of unique, trimmed,
- * lowercase platform keys. Accepts comma / whitespace / Chinese-comma /
- * semicolon / pipe separators so "etsy, amazon walmart" works as one would
- * expect.
- *
- * Returns at most `max` platforms — anything beyond gets dropped silently
- * so a runaway input doesn't try to fire 100 API calls.
- */
-export function parsePlatformInput(raw: string, max = 6): string[] {
-  const tokens = String(raw ?? '')
-    .split(PLATFORM_SEPARATOR)
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of tokens) {
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
-    if (out.length >= max) break;
-  }
-  return out;
-}
-
 /**
  * Cluster reports by (query, ~5min window of created_at) so a multi-platform
  * submission shows up as one "batch" the user can scan across.

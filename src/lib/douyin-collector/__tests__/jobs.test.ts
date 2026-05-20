@@ -296,7 +296,7 @@ describe('runJob — link path (uses scraper)', () => {
     )}</script>`;
     globalThis.fetch = jest
       .fn()
-      .mockResolvedValue(new Response(html, { status: 200 })) as unknown as typeof globalThis.fetch;
+      .mockImplementation(() => Promise.resolve(new Response(html, { status: 200 }))) as unknown as typeof globalThis.fetch;
 
     const job = createJob({
       kind: 'link',
@@ -367,7 +367,7 @@ describe('runJob — link path (uses scraper)', () => {
     expect(videos[0].duration_bucket).toBe('long');
   });
 
-  it('triggers auto-pipeline only on newly-created videos', async () => {
+  it('triggers auto-pipeline on new videos and explicit knowledge backfill reruns', async () => {
     const { maybeRunAutoPipeline } = jest.requireMock('../auto-pipeline') as {
       maybeRunAutoPipeline: jest.Mock;
     };
@@ -392,7 +392,7 @@ describe('runJob — link path (uses scraper)', () => {
     )}</script>`;
     globalThis.fetch = jest
       .fn()
-      .mockResolvedValue(new Response(html, { status: 200 })) as unknown as typeof globalThis.fetch;
+      .mockImplementation(() => Promise.resolve(new Response(html, { status: 200 }))) as unknown as typeof globalThis.fetch;
 
     const job1 = createJob({
       kind: 'link',
@@ -403,13 +403,26 @@ describe('runJob — link path (uses scraper)', () => {
     const firstArg = (maybeRunAutoPipeline.mock.calls[0]?.[0] as string[]) ?? [];
     expect(firstArg).toHaveLength(1);
 
-    // Second run on the same aweme_id → already exists → pipeline NOT called.
+    // Second run on the same aweme_id → already exists, no explicit publish
+    // request → pipeline NOT called. This keeps patrols from reprocessing all
+    // old videos every time.
     const job2 = createJob({
       kind: 'link',
       targetRef: 'https://www.douyin.com/video/7321234567890123456',
     });
     await runJob(job2.id);
     expect(maybeRunAutoPipeline).toHaveBeenCalledTimes(1);
+
+    // Progress-visible AI/MCP jobs promise "publish to knowledge" by default.
+    // If the row already exists but the KB item is missing, rerun the pipeline
+    // so the publish step can backfill instead of reporting a fake success.
+    const job3 = createJob({
+      kind: 'link',
+      targetRef: 'https://www.douyin.com/video/7321234567890123456',
+      publishToKnowledge: true,
+    });
+    await runJob(job3.id);
+    expect(maybeRunAutoPipeline).toHaveBeenCalledTimes(2);
   });
 
   it('updates collect job transcribed_count from the post-collect auto-pipeline result', async () => {

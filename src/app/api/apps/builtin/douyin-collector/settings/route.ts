@@ -47,6 +47,9 @@ export async function PATCH(req: NextRequest) {
     if (typeof body.aiChaptersPrompt === 'string') patch.aiChaptersPrompt = body.aiChaptersPrompt;
     if (typeof body.aiTagsPrompt === 'string') patch.aiTagsPrompt = body.aiTagsPrompt;
     if (typeof body.riskNote === 'string') patch.riskNote = body.riskNote;
+    if (typeof body.browserContextId === 'string') {
+      patch.browserContextId = body.browserContextId;
+    }
 
     const updated = updateDouyinCollectorSettings(patch);
     return NextResponse.json({

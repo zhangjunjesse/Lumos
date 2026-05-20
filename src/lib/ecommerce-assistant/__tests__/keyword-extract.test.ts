@@ -17,6 +17,7 @@ function tag(p: Partial<TagPerformance> & { tag: string }): TagPerformance {
   return {
     searchVolume: 1000,
     competition: 'low',
+    competitionRaw: null,
     trend: 'stable',
     raw: '',
     parsed: true,
@@ -296,3 +297,29 @@ describe('aggregateCompetition is conservative on ties (no opportunity inflation
   });
 });
 
+
+describe('competition median banding（EHunt Competition 数值 → 类目内 low/high → 真四象限）', () => {
+  it('bands competitionRaw by category median; enables real blue ocean', () => {
+    // 高搜索 + 低竞争(低于类目中位) → 蓝海；竞争 raw 来自 EHunt tooltip。
+    const tags: TagPerformance[] = [
+      { tag: 'blue', searchVolume: 9000, competition: 'unknown', competitionRaw: 1000, trend: 'unknown', raw: '', parsed: true },
+      { tag: 'mustwin', searchVolume: 8000, competition: 'unknown', competitionRaw: 90000, trend: 'unknown', raw: '', parsed: true },
+      { tag: 'longtail', searchVolume: 100, competition: 'unknown', competitionRaw: 800, trend: 'unknown', raw: '', parsed: true },
+      { tag: 'redsea', searchVolume: 90, competition: 'unknown', competitionRaw: 95000, trend: 'unknown', raw: '', parsed: true },
+    ];
+    const c = analyzeCategory({
+      categoryId: 'c', categoryName: 'C', categoryPath: ['Root', 'C'],
+      query: 'q', listings: [listing('u', true, tags)], titles: [],
+    });
+    expect(c.ok).toBe(true);
+    expect(c.health).not.toBeNull(); // 竞争度可得 → 不走 volume-only 降级
+    const byKw = Object.fromEntries(c.scoredKeywords.map((k) => [k.keyword, k]));
+    // 中位数(1000,90000,800,95000)=(90000+1000)/2 排序[800,1000,90000,95000]→中位=(1000+90000)/2=45500
+    expect(byKw.blue.competition).toBe('low');
+    expect(byKw.blue.quadrant).toBe('blue_ocean');
+    expect(byKw.mustwin.competition).toBe('high');
+    expect(byKw.mustwin.quadrant).toBe('must_have');
+    expect(byKw.redsea.quadrant).toBe('red_ocean');
+    expect(c.quadrantDist.blue_ocean).toBeGreaterThan(0);
+  });
+});

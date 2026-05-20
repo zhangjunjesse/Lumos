@@ -279,7 +279,6 @@ const MODEL_FIRST_RESPONSE_TIMEOUT_MS = 180_000;
 const MODEL_FIRST_RESPONSE_TIMEOUT_ERROR = 'LUMOS_MODEL_FIRST_RESPONSE_TIMEOUT';
 const FALLBACK_HISTORY_MAX_CHARS = 80_000;
 const FALLBACK_HISTORY_MESSAGE_MAX_CHARS = 12_000;
-const FALLBACK_HISTORY_TOOL_RESULT_MAX_CHARS = 500;
 
 function mergeDisallowedTools(tools?: string[]): string[] {
   return Array.from(new Set([...DEFAULT_CHAT_DISALLOWED_TOOLS, ...(tools || [])]));
@@ -389,14 +388,6 @@ function normalizeHistoryMessageForFallback(msg: { role: 'user' | 'assistant'; c
           const b = block as Record<string, unknown>;
           if (b.type === 'text' && typeof b.text === 'string') {
             parts.push(truncateHistoryText(b.text, FALLBACK_HISTORY_MESSAGE_MAX_CHARS));
-          } else if (b.type === 'tool_use') {
-            const name = typeof b.name === 'string' ? b.name : 'unknown';
-            parts.push(`[Used tool: ${name}]`);
-          } else if (b.type === 'tool_result') {
-            const resultStr = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
-            parts.push(`[Tool result: ${truncateHistoryText(resultStr, FALLBACK_HISTORY_TOOL_RESULT_MAX_CHARS)}]`);
-          } else if (b.type === 'reasoning' && typeof b.summary === 'string') {
-            parts.push(`[Reasoning summary: ${truncateHistoryText(b.summary, 1_500)}]`);
           }
         }
         return truncateHistoryText(parts.join('\n'), FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
@@ -859,13 +850,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
 
           // Auto-approve built-in in-process MCP server tools (read-only or fully owned by Lumos).
-          if (
-            toolName.startsWith('mcp__feishu__')
-            || toolName.startsWith('mcp__lumos-image__')
-            || toolName.startsWith('mcp__lumos-butler__')
-            || toolName.startsWith('mcp__lumos-knowledge__')
-            || toolName.startsWith('mcp__lumos-wechat-assistant__')
-            || toolName.startsWith('mcp__wechat-export__')
+            if (
+              toolName.startsWith('mcp__feishu__')
+              || toolName.startsWith('mcp__lumos-image__')
+              || toolName.startsWith('mcp__lumos-butler__')
+              || toolName.startsWith('mcp__lumos-issue-reporter__')
+              || toolName.startsWith('mcp__lumos-knowledge__')
+              || toolName.startsWith('mcp__lumos-wechat-assistant__')
+              || toolName.startsWith('mcp__wechat-export__')
             || toolName.startsWith('mcp__chrome-devtools__')
             || toolName.startsWith('mcp__chrome_devtools__')
           ) {

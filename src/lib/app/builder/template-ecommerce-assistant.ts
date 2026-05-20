@@ -71,6 +71,7 @@ function buildEcommerceCollections(): unknown[] {
     buildImageOutputsCollection(),
     buildStylePresetsCollection(),
     buildDiscoverCandidatesCollection(),
+    buildSelectionEvidenceCollection(),
     buildListingDraftsCollection(),
     buildAuditEventsCollection(),
     buildListingFollowupsCollection(),
@@ -263,6 +264,45 @@ function buildDiscoverCandidatesCollection() {
       { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
     ],
     indexes: [['research_id'], ['status'], ['score_total'], ['updated_at']],
+  };
+}
+
+function buildSelectionEvidenceCollection() {
+  return {
+    name: 'selection_evidence',
+    label: '选品过程证据',
+    fields: [
+      { name: 'id', type: 'uuid', primary: true, auto: 'uuid' },
+      { name: 'research_id', type: 'string', label: '研究批次', required: true, indexed: true },
+      {
+        name: 'stage',
+        type: 'enum',
+        label: '过程阶段',
+        options: [
+          'seed_terms',
+          'keyword_metrics',
+          'opportunity_candidates',
+          'manual_validation_notes',
+          'product_brief',
+        ],
+        required: true,
+        indexed: true,
+      },
+      { name: 'title', type: 'string', label: '标题', required: true },
+      {
+        name: 'status',
+        type: 'enum',
+        label: '证据状态',
+        options: ['available', 'partial', 'missing'],
+        default: 'missing',
+        indexed: true,
+      },
+      { name: 'summary', type: 'text', label: '摘要' },
+      { name: 'data_json', type: 'text', label: '明细数据（JSON）' },
+      { name: 'created_at', type: 'datetime', label: '创建时间' },
+      { name: 'updated_at', type: 'datetime', label: '更新时间', auto: 'now' },
+    ],
+    indexes: [['research_id'], ['stage'], ['status'], ['updated_at']],
   };
 }
 
@@ -963,6 +1003,7 @@ function buildEcommerceNativeAppSpec(appName: string) {
         'image_outputs',
         'style_presets',
         'discover_candidates',
+        'selection_evidence',
         'listing_drafts',
         'audit_events',
         'listing_followups',

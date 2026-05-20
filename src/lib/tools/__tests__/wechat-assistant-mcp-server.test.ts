@@ -99,12 +99,15 @@ describe('wechat assistant MCP server', () => {
       'get_wechat_assistant_status',
       'list_wechat_automations',
       'list_wechat_followups',
+      'list_wechat_group_tags',
+      'preview_wechat_group_tag',
       'read_wechat_automation_report',
       'read_wechat_chat',
       'resolve_wechat_automation',
       'resolve_wechat_followup',
       'search_wechat_messages',
       'set_wechat_automation_enabled',
+      'summarize_wechat_groups',
       'trigger_wechat_automation',
       'update_wechat_automation',
     ]);
@@ -119,8 +122,11 @@ describe('wechat assistant MCP server', () => {
     expect(server.name).toBe(WECHAT_ASSISTANT_MCP_SERVER_NAME);
     expect(server.tools.map((item) => item.name).sort()).toEqual([
       'get_wechat_assistant_status',
+      'list_wechat_group_tags',
+      'preview_wechat_group_tag',
       'read_wechat_chat',
       'search_wechat_messages',
+      'summarize_wechat_groups',
     ]);
     expect(server.tools.map((item) => item.name)).not.toContain('create_wechat_automation');
     expect(server.tools.map((item) => item.name)).not.toContain('update_wechat_automation');

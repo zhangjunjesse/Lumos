@@ -34,6 +34,7 @@ import {
   synthesizeSpeechAttachment,
   transcribeAudioAttachment,
 } from '@/lib/im/core/speech';
+import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
 
 export interface DispatchResult {
   ok: boolean;
@@ -195,7 +196,7 @@ export async function dispatchInbound(
       throw err;
     }
 
-    const rawReply = (response.visibleText || '').trim();
+    const rawReply = stripLeakedToolTraceText(response.visibleText || '').trim();
 
     // ---- 3. 流式预览路径（feishu）独立返回 -------------------------------
     if (previewHandle && streamingAdapter && hasStreamingPreview(streamingAdapter)) {

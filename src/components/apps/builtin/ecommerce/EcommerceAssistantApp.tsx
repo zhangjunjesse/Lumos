@@ -9,6 +9,7 @@ import { BottomChatPanel } from '@/components/layout/BottomChatPanel';
 
 import { DiscoverTab } from './DiscoverTab';
 import { ResearchTab } from './ResearchTab';
+import { CategoryKeywordTab } from './CategoryKeywordTab';
 import { EcommerceHero } from './EcommerceHero';
 import { ListingsTab } from './ListingsTab';
 import { OverviewTab } from './OverviewTab';
@@ -35,16 +36,17 @@ export function EcommerceAssistantApp(): React.ReactElement {
     void dataRefresh();
   }, [dataRefresh]);
 
-  const hasActiveJobs = React.useMemo(
-    () =>
-      data.jobs.some(
-        (job) => !['completed', 'failed', 'cancelled'].includes(job.status),
-      ),
-    [data.jobs],
-  );
+  const hasActiveJobs = React.useMemo(() => {
+    const TERMINAL = ['completed', 'failed', 'cancelled'];
+    const jobActive = data.jobs.some((job) => !TERMINAL.includes(job.status));
+    // 调研报告也是非终态任务：不纳入会导致启动调研后 UI 不自动刷新，
+    // 用户必须手动点「刷新」才看到进度/完成。
+    const reportActive = data.reports.some((r) => !TERMINAL.includes(r.status));
+    return jobActive || reportActive;
+  }, [data.jobs, data.reports]);
 
-  // Lightweight polling: while there's at least one running / queued / non-terminal job,
-  // refresh data every 5s so the UI keeps up with progress without manual reload.
+  // Lightweight polling: while there's at least one running / queued / non-terminal
+  // job or research report, refresh every 5s so the UI keeps up without manual reload.
   React.useEffect(() => {
     if (!hasActiveJobs) return undefined;
     const id = window.setInterval(() => void dataRefresh(), POLL_MS);
@@ -69,7 +71,8 @@ export function EcommerceAssistantApp(): React.ReactElement {
         <div className="overflow-x-auto border-b bg-muted/20">
           <TabsList className="mx-auto h-auto min-w-max gap-1 bg-transparent px-9 py-1.5">
             <TabPill value="overview" label="总览" />
-            <TabPill value="research" label="调研" />
+            <TabPill value="research" label="资讯调研" />
+            <TabPill value="category-keyword" label="类目&关键词调研" />
             <TabPill value="discover" label="选品" />
             <TabPill value="studio" label="工坊" />
             <TabPill value="jobs" label="任务" badge={runningCount} />
@@ -107,9 +110,13 @@ export function EcommerceAssistantApp(): React.ReactElement {
               onChanged={refresh}
             />
           </TabsContent>
+          <TabsContent value="category-keyword" className="m-0">
+            <CategoryKeywordTab />
+          </TabsContent>
           <TabsContent value="discover" className="m-0">
             <DiscoverTab
               candidates={data.candidates}
+              selectionEvidence={data.selectionEvidence}
               loading={data.loading}
               onChanged={refresh}
               onSwitchToStudio={() => setTab('studio')}

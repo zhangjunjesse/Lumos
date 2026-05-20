@@ -10,7 +10,7 @@ import { providerSupportsCapability } from '@/lib/provider-config';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
 import {
-  generateObjectFromProvider,
+  generateObjectWithFallback,
   generateTextFromProvider,
 } from '@/lib/text-generator';
 import type { ApiProvider } from '@/types';
@@ -236,7 +236,7 @@ async function callKnowledgeObjectModelOnce<T>(params: {
   timeoutMs: number;
   maxTokens?: number;
 }): Promise<T> {
-  return generateObjectFromProvider({
+  return generateObjectWithFallback({
     providerId: params.providerId,
     model: params.model,
     system: params.system || '',

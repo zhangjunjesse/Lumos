@@ -17,6 +17,7 @@ import {
   BROWSER_MCP_SYSTEM_HINT,
   DEEPSEARCH_MCP_SYSTEM_HINT,
   FEISHU_MCP_SYSTEM_HINT,
+  DOUYIN_MCP_SYSTEM_HINT,
 } from '../hints';
 
 const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
@@ -42,6 +43,8 @@ const douyinConnector: ConnectorDefinition = {
     ownedDbMcpNames: ['douyin-collector'],
     defaultEnabledDbMcpNames: ['douyin-collector'],
   }),
+  buildDbHint: (_ctx, presentDbServers) =>
+    presentDbServers.has('douyin-collector') ? DOUYIN_MCP_SYSTEM_HINT : null,
 };
 
 /** X：未登录返回 X_AUTH_EXPIRED 友好提示，默认启用让 AI 引导登录。 */

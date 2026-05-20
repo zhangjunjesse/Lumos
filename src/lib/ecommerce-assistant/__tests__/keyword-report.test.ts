@@ -10,6 +10,7 @@ function tag(p: Partial<TagPerformance> & { tag: string }): TagPerformance {
   return {
     searchVolume: 1000,
     competition: 'low',
+    competitionRaw: null,
     trend: 'stable',
     raw: '',
     parsed: true,
@@ -21,8 +22,9 @@ function listing(
   url: string,
   ehuntDetected: boolean,
   tags: TagPerformance[],
+  domProbe?: string,
 ): ListingHoverResult {
-  return { url, ehuntDetected, tags };
+  return { url, ehuntDetected, tags, domProbe };
 }
 
 const base = { categoryId: 'c', categoryName: 'C', categoryPath: ['Root', 'C'], query: 'q', titles: [] };
@@ -201,6 +203,88 @@ describe('scraped tag text never breaks the GFM table (cell escaping)', () => {
     expect(markdown).toContain('| bo\\|ho art | 1200 |');
     // 任何表格单元格都不得是未转义的原始管道形态（否则 GFM 多切一列）。
     expect(markdown).not.toMatch(/\| bo\|ho/);
+  });
+});
+
+describe('竞争度全 unknown（EHunt 内联常态）→ 不出四象限/健康度伪结论', () => {
+  it('volume-only: ok 但 health=null，报告给 EHunt 值清单 + 显式说明，无健康度/红灯/象限', () => {
+    const c = analyzeCategory({
+      ...base,
+      categoryPath: ['Root', 'V'],
+      listings: [
+        listing('u1', true, [
+          tag({ tag: 'best mom mug', searchVolume: 16_100_000, competition: 'unknown', trend: 'unknown' }),
+          tag({ tag: 'mom gift', searchVolume: 49_900_000, competition: 'unknown', trend: 'unknown' }),
+        ]),
+      ],
+    });
+    expect(c.ok).toBe(true);
+    expect(c.health).toBeNull();
+    expect(c.redLight).toBe(false);
+    expect(c.scoredKeywords.length).toBe(2);
+    // 按 EHunt 值降序
+    expect(c.scoredKeywords[0].keyword).toBe('mom gift');
+    const { markdown } = composeKeywordReport([c]);
+    expect(markdown).toContain('| 关键词 | EHunt 值 | 商品数 |');
+    expect(markdown).toContain('不做四象限/健康度/红灯');
+    // 不得出现伪造的判定
+    expect(markdown).not.toContain('健康度 **');
+    expect(markdown).not.toContain('🔴 关键词红灯');
+    expect(markdown).not.toMatch(/蓝海 \d+ · 必争/);
+  });
+});
+
+describe('EHunt 检测到但解析失败 → 原样附浮窗 raw（让"发开发者"落地）', () => {
+  it('surfaces captured raw tooltip text in a fenced code block', () => {
+    const c = analyzeCategory({
+      ...base,
+      categoryPath: ['Root', 'Z'],
+      listings: [
+        // EHunt 检测到，但 hover 抓到的浮窗文本没被 parseTag 解析出来。
+        listing('u', true, [
+          tag({
+            tag: 'macrame wall hanging',
+            parsed: false,
+            searchVolume: null,
+            raw: 'Searches 1,234 ·· Competition: tricky-label 趋势↑',
+          }),
+        ]),
+      ],
+    });
+    expect(c.ok).toBe(false);
+    expect(c.ehuntRawSamples?.length).toBeGreaterThan(0);
+    const { markdown } = composeKeywordReport([c]);
+    // 报告必须含代码块且原样保留 raw（开发者据此调解析器）。
+    expect(markdown).toContain('```text');
+    expect(markdown).toContain(
+      '[macrame wall hanging] Searches 1,234 ·· Competition: tricky-label 趋势↑',
+    );
+  });
+});
+
+describe('hover 全无浮窗 → 回传 EHunt 真实注入 DOM 快照（据真机调选择器）', () => {
+  it('surfaces domProbe in the report code block when all tags empty', () => {
+    const probe =
+      'EHUNT_EL <DIV class="ehunt-panel">\n<div>Searches 1.2k</div>\n---\nSIGNAL_LINES(2):\nEstimated search 1,234\nCompetition Low';
+    const c = analyzeCategory({
+      ...base,
+      categoryPath: ['Root', 'P'],
+      listings: [
+        listing(
+          'u',
+          true,
+          [tag({ tag: 'name necklace', parsed: false, searchVolume: null, raw: '' })],
+          probe,
+        ),
+      ],
+    });
+    expect(c.ok).toBe(false);
+    expect(c.ehuntRawSamples).toEqual([probe]);
+    const { markdown } = composeKeywordReport([c]);
+    expect(markdown).toContain('```text');
+    expect(markdown).toContain('EHUNT_EL <DIV class="ehunt-panel">');
+    expect(markdown).toContain('Estimated search 1,234');
+    expect(markdown).toContain('真实注入 DOM 快照');
   });
 });
 

@@ -1,16 +1,10 @@
-const mockFetchSearchSamples = jest.fn();
-const mockBuildPlatformSearchUrl = jest.fn();
-const mockGetEcommerceStore = jest.fn(() => ({ id: 'mock-store' }));
+const mockFetchTopicKnowledge = jest.fn();
 const mockListDeepSearchSitesView = jest.fn();
 const mockListDeepSearchRunsView = jest.fn(async () => []);
 const mockDouyinStoreQuery = jest.fn(() => []);
 
-jest.mock('../web-research', () => ({
-  fetchSearchSamples: (...args: unknown[]) => mockFetchSearchSamples(...args),
-  buildPlatformSearchUrl: (...args: unknown[]) => mockBuildPlatformSearchUrl(...args),
-}));
-jest.mock('../storage', () => ({
-  getEcommerceStore: () => mockGetEcommerceStore(),
+jest.mock('../research-web-knowledge', () => ({
+  fetchTopicKnowledge: (...args: unknown[]) => mockFetchTopicKnowledge(...args),
 }));
 jest.mock('@/lib/deepsearch/service', () => ({
   listDeepSearchSitesView: (...args: unknown[]) => mockListDeepSearchSitesView(...args),
@@ -28,9 +22,9 @@ jest.mock('@/lib/douyin-collector/constants', () => ({
 
 import {
   getRegisteredSource,
-  resetRegisteredSourcesForTesting,
   type ResearchSourceContext,
 } from '../research-sources';
+import { resetRegisteredSourcesForTesting } from '../research-source-adapters';
 
 function ctx(overrides: Partial<ResearchSourceContext> = {}): ResearchSourceContext {
   return {
@@ -49,97 +43,97 @@ beforeEach(() => {
   resetRegisteredSourcesForTesting();
 });
 
-describe('web research adapter', () => {
-  it('maps fetchSearchSamples output into ResearchSourceItem shape with facts snippet', async () => {
-    mockBuildPlatformSearchUrl.mockReturnValueOnce({
-      source: 'etsy',
-      url: 'https://etsy.com/search?q=…',
-      acceptLanguage: 'en-US,en;q=0.9',
-    });
-    mockFetchSearchSamples.mockResolvedValueOnce({
-      source: 'etsy',
-      url: 'https://etsy.com/search?q=…',
-      samples: [
-        {
-          title: 'Handmade Mug A',
-          url: 'https://etsy.com/listing/1',
-          price: '$32',
-          rating: '4.8',
-          reviews: '120',
-          sales: '500+',
-          brand: 'Brand X',
-          heatLevel: 'hot',
-          heatScore: 0.91,
-        },
+describe('web research adapter (B: 选题/知识检索，不抓 marketplace、不开浏览器)', () => {
+  it('maps topic-knowledge results into ResearchSourceItem data; platform is only context', async () => {
+    mockFetchTopicKnowledge.mockResolvedValueOnce({
+      searchQuery: '如何选品 etsy',
+      items: [
+        { title: 'Etsy 选品方法论', url: 'https://example.com/a', snippet: '从需求与竞争出发' },
+        { title: '选品避坑', url: 'https://example.com/b' },
       ],
-      details: [],
-      fetchedAt: '2026-05-13T00:00:00.000Z',
     });
 
-    const result = await getRegisteredSource('web')!(ctx());
+    const result = await getRegisteredSource('web')!(ctx({ query: '如何选品' }));
 
-    expect(mockBuildPlatformSearchUrl).toHaveBeenCalledWith('etsy', '手作陶瓷杯');
-    expect(mockFetchSearchSamples).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'etsy', maxSamples: 12, store: { id: 'mock-store' } }),
+    // query 当主题，platform 仅作上下文传入；绝不调用 marketplace URL 构造。
+    expect(mockFetchTopicKnowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ query: '如何选品', platform: 'etsy', maxResults: 12 }),
     );
     expect(result.ok).toBe(true);
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].title).toBe('Handmade Mug A');
-    expect(result.items[0].snippet).toContain('价格 $32');
-    expect(result.items[0].snippet).toContain('评分 4.8');
-    expect(result.items[0].snippet).toContain('销量 500+');
-    expect(result.items[0].score).toBe(0.91);
+    const data = result.items.filter((i) => i.kind !== 'notice');
+    expect(data).toHaveLength(2);
+    expect(data[0].title).toBe('Etsy 选品方法论');
+    expect(data[0].url).toBe('https://example.com/a');
+    expect(data[0].snippet).toContain('从需求与竞争出发');
   });
 
-  it('returns ok=false with explanation when the platform has no search URL mapping', async () => {
-    mockBuildPlatformSearchUrl.mockReturnValueOnce(null);
-
-    const result = await getRegisteredSource('web')!(ctx({ platform: 'unknown' }));
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/不支持平台/);
-    expect(mockFetchSearchSamples).not.toHaveBeenCalled();
-  });
-
-  it('passes through fetchSearchSamples warning', async () => {
-    mockBuildPlatformSearchUrl.mockReturnValueOnce({
-      source: 'etsy',
-      url: 'u',
-      acceptLanguage: 'en',
-    });
-    mockFetchSearchSamples.mockResolvedValueOnce({
-      source: 'etsy',
-      url: 'u',
-      samples: [],
-      details: [],
-      fetchedAt: 't',
-      warning: 'captcha 命中',
+  it('zero results → honest notice (no real data), never fabricates', async () => {
+    mockFetchTopicKnowledge.mockResolvedValueOnce({
+      searchQuery: '如何选品',
+      items: [],
+      warning: '主题检索 HTTP 429（被限流）。',
     });
 
-    const result = await getRegisteredSource('web')!(ctx());
+    const result = await getRegisteredSource('web')!(ctx({ query: '如何选品', platform: 'general' }));
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe('captcha 命中');
+    expect(result.ok).toBe(true);
+    expect(result.items.every((i) => i.kind === 'notice')).toBe(true);
+    expect(result.items.filter((i) => i.kind !== 'notice')).toHaveLength(0);
+    expect(result.items[0].snippet).toContain('被限流');
+    expect(result.items[0].snippet).toContain('如何选品');
   });
 });
 
 describe('deepsearch adapter', () => {
-  it('returns matching sites by siteKey contains-match (case-insensitive)', async () => {
+  it('B: lists ALL configured sites regardless of platform (no platform-name gate)', async () => {
     mockListDeepSearchSitesView.mockResolvedValueOnce([
       { siteKey: 'etsy', displayName: 'Etsy', cookieStatus: 'valid', hasCookie: true, baseUrl: 'https://etsy.com', lastValidatedAt: '2026-05-12' },
       { siteKey: 'xhs', displayName: '小红书', cookieStatus: 'missing', hasCookie: false, baseUrl: 'https://www.xiaohongshu.com', lastValidatedAt: null },
     ]);
 
-    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'ETSY' }));
+    // platform 与任何站点 key/name 都不沾边，旧逻辑会整体挡掉；B 下不再过滤。
+    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'etsy' }));
 
     expect(result.ok).toBe(true);
     const titles = result.items.map((i) => i.title);
     expect(titles).toContain('Etsy');
-    // Always appends a "继续深挖建议" hint card at the end.
+    expect(titles).toContain('小红书'); // 不含 platform 名的站点也要出现
     expect(titles[titles.length - 1]).toContain('继续深挖');
   });
 
-  it('returns informational item when no site matches the platform', async () => {
+  it('matched site list is notice, not data (no prior runs → zero real data)', async () => {
+    mockListDeepSearchSitesView.mockResolvedValueOnce([
+      { siteKey: 'zhihu', displayName: '知乎', cookieStatus: 'valid', hasCookie: true, baseUrl: 'https://zhihu.com', lastValidatedAt: '2026-05-12' },
+    ]);
+    mockListDeepSearchRunsView.mockResolvedValueOnce([]); // 无历史 run
+
+    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'zhihu' }));
+
+    // 站点配置/登录态是能力清单，不是调研数据：全部 notice，真实数据 0。
+    expect(result.items.every((i) => i.kind === 'notice')).toBe(true);
+    expect(result.items.filter((i) => i.kind !== 'notice')).toHaveLength(0);
+    const site = result.items.find((i) => i.title === '知乎')!;
+    expect(site.kind).toBe('notice');
+    expect(site.snippet).toMatch(/siteKey=zhihu/);
+  });
+
+  it('a related DeepSearch run IS real data (counts), site stays notice', async () => {
+    mockListDeepSearchSitesView.mockResolvedValueOnce([
+      { siteKey: 'zhihu', displayName: '知乎', cookieStatus: 'valid', hasCookie: true, baseUrl: 'z', lastValidatedAt: null },
+    ]);
+    mockListDeepSearchRunsView.mockResolvedValueOnce([
+      { id: 'run-9', queryText: '手作陶瓷杯', siteKeys: ['zhihu'], status: 'completed', resultSummary: '12 条', records: [{ id: 'a' }], artifacts: [] },
+    ]);
+
+    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'zhihu', query: '手作陶瓷杯' }));
+
+    const data = result.items.filter((i) => i.kind !== 'notice');
+    expect(data).toHaveLength(1);
+    expect(data[0].title).toContain('DeepSearch run');
+    expect(result.items.find((i) => i.title === '知乎')!.kind).toBe('notice');
+  });
+
+  it('B: platform unrelated to any site no longer blocks — sites still surfaced', async () => {
     mockListDeepSearchSitesView.mockResolvedValueOnce([
       { siteKey: 'xhs', displayName: '小红书', cookieStatus: 'valid', hasCookie: true, baseUrl: 'x', lastValidatedAt: null },
     ]);
@@ -147,8 +141,18 @@ describe('deepsearch adapter', () => {
     const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'amazon' }));
 
     expect(result.ok).toBe(true);
-    expect(result.items[0].title).toMatch(/没有匹配/);
-    expect(result.items[0].snippet).toMatch(/xhs/);
+    // 旧逻辑此处返回「没有匹配」整体挡掉；B 下站点正常作为能力 notice 出现。
+    expect(result.items.some((i) => i.title === '小红书')).toBe(true);
+    expect(result.items.find((i) => i.title === '小红书')!.snippet).toMatch(/siteKey=xhs/);
+  });
+
+  it('B: only-empty-when-no-sites-configured notice', async () => {
+    mockListDeepSearchSitesView.mockResolvedValueOnce([]);
+
+    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'etsy' }));
+
+    expect(result.ok).toBe(true);
+    expect(result.items[0].title).toMatch(/还没有配置 DeepSearch 站点/);
   });
 
   it('returns ok=false with error when listDeepSearchSitesView throws', async () => {
@@ -168,22 +172,22 @@ describe('deepsearch adapter — recent runs', () => {
     ]);
   });
 
-  it('appends recent completed runs whose siteKeys overlap with matched sites', async () => {
+  it('B: appends runs by queryText overlap with the topic — NOT by site overlap', async () => {
     mockListDeepSearchRunsView.mockResolvedValueOnce([
       {
         id: 'run-1',
-        queryText: 'handmade mug',
-        siteKeys: ['etsy'],
+        queryText: '手作陶瓷杯选品调研',
+        siteKeys: ['zhihu'], // 站点不沾 platform，旧 siteOverlap 不会命中
         status: 'completed',
-        resultSummary: '10 items 抓到，3 个高评分',
+        resultSummary: '10 条要点',
         completedAt: '2026-05-12T12:00:00Z',
         records: [{ id: 'r1' }],
         artifacts: [],
       },
       {
         id: 'run-2',
-        queryText: 'unrelated',
-        siteKeys: ['xhs'],
+        queryText: 'unrelated topic',
+        siteKeys: ['etsy'], // 站点命中 platform，但 query 无关 → B 下必须排除
         status: 'completed',
         resultSummary: 'noise',
         records: [],
@@ -191,11 +195,11 @@ describe('deepsearch adapter — recent runs', () => {
       },
     ]);
 
-    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'etsy' }));
+    const result = await getRegisteredSource('deepsearch')!(ctx({ platform: 'etsy', query: '手作陶瓷杯' }));
 
     const runTitles = result.items.filter((i) => i.title.startsWith('DeepSearch run')).map((i) => i.title);
     expect(runTitles).toHaveLength(1);
-    expect(runTitles[0]).toContain('handmade mug');
+    expect(runTitles[0]).toContain('手作陶瓷杯选品调研');
     expect(result.items.find((i) => i.title.startsWith('DeepSearch run'))?.meta?.run_id).toBe('run-1');
   });
 

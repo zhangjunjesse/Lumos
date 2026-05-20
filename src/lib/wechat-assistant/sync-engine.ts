@@ -17,7 +17,7 @@ import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { hasRecoveredKey } from '@/lib/wechat-export/setup-state';
 
 import {
-  getLatestMessageTs,
+  getPerChatCursors,
   getSyncState,
   insertMessages,
   markSyncFinished,
@@ -104,13 +104,13 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
   }
 
   const state = getSyncState();
-  const isFirstSync = state.cursorTs === 0;
-  const latestStoredMessageTs = getLatestMessageTs();
-  const effectiveCursor = !options.fullResync && state.cursorTs > 0 && latestStoredMessageTs > 0
-    ? Math.min(state.cursorTs, latestStoredMessageTs)
-    : state.cursorTs;
-  const cursorWasClamped = effectiveCursor !== state.cursorTs;
-  const since = options.fullResync ? 0 : Math.max(effectiveCursor - OVERLAP_SECONDS, 0);
+  // Incremental position is per-chat, derived from the mirror itself: each
+  // chat resumes from its own newest mirrored ts. A global watermark let
+  // high-traffic chats drag the frontier past quiet chats, permanently
+  // stranding their messages; this cannot. Empty map (or fullResync after
+  // resetMirror) ⇒ every chat re-imports in full.
+  const chatCursors = options.fullResync ? {} : getPerChatCursors();
+  const isFirstSync = Object.keys(chatCursors).length === 0;
 
   emit({ type: 'start', cursorTs: state.cursorTs, firstSync: isFirstSync });
   markSyncStarted();
@@ -118,7 +118,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
   let messageBuffer: MirrorMessage[] = [];
   let totalInserted = 0;
   let totalSeen = 0;
-  let maxTsSeen = effectiveCursor;
+  let maxTsSeen = state.cursorTs;
   let currentDb: string | null = null;
   const flush = () => {
     if (messageBuffer.length === 0) return;
@@ -196,7 +196,7 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
   try {
     const result = await streamWeChatApi(
       'sync_stream',
-      { since_timestamp: since },
+      { since_timestamp: 0, chat_cursors: chatCursors, overlap_seconds: OVERLAP_SECONDS },
       { onLine, signal: options.signal },
     );
     flush();
@@ -228,7 +228,9 @@ async function doRunSync(options: RunSyncOptions): Promise<SyncResult> {
     };
   }
 
-  if (maxTsSeen > state.cursorTs || cursorWasClamped) setCursor(maxTsSeen);
+  // Global cursor is now telemetry only (per-chat cursors drive filtering);
+  // keep it monotonic so freshness/state reporting stays sane.
+  if (maxTsSeen > state.cursorTs) setCursor(maxTsSeen);
   markSyncFinished(totalInserted);
 
   const durationMs = Date.now() - t0;

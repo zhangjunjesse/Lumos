@@ -185,6 +185,14 @@ export function getMemoryV2Entry(id: string): MemoryV2Entry | undefined {
   return getDb().prepare('SELECT * FROM memory_v2_entries WHERE id = ?').get(id) as MemoryV2Entry | undefined;
 }
 
+// 按 (来源类型, 来源 id) 精确取一条——daily-review 用确定性 sourceId 做"命中即更新"。
+export function getMemoryV2EntryBySource(sourceType: string, sourceId: string): MemoryV2Entry | undefined {
+  if (!sourceType || !sourceId) return undefined;
+  return getDb()
+    .prepare('SELECT * FROM memory_v2_entries WHERE source_type = ? AND source_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(sourceType, sourceId) as MemoryV2Entry | undefined;
+}
+
 export function createMemoryV2Entry(input: MemoryV2Input): MemoryV2Entry {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');

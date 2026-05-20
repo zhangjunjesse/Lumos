@@ -43,5 +43,17 @@ export interface CollectJobRecord {
   failure_reason?: string | null;
   discovered_count: number;
   transcribed_count: number;
+  /**
+   * 是否在元数据采集后继续跑「字幕→摘要→入库」完整链路。
+   * 缺省视为 true（对齐同步 douyin_search_keyword 的 auto_process 默认）。
+   * false 时只采元数据，且任务终态消息如实写明「仅元数据，未处理内容」。
+   */
+  auto_process?: boolean;
+  /**
+   * AI / IM 入口是否要求把处理结果发布到默认资料库。
+   * undefined 代表沿用全局 autoPublish 设置；true / false 代表本次 job 的
+   * 显式语义，避免工具文案承诺“入库”但运行时只抓字幕。
+   */
+  publish_to_knowledge?: boolean;
   updated_at?: string;
 }

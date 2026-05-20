@@ -5,6 +5,7 @@ import {
   listCandidates,
   ensureBuiltinStylePresets,
 } from '@/lib/ecommerce-assistant/storage';
+import { listSelectionEvidence } from '@/lib/ecommerce-assistant/discover-evidence-storage';
 import {
   startDiscoverResearch,
   DiscoverResearchError,
@@ -23,7 +24,8 @@ export async function GET(req: NextRequest) {
     const researchId = url.searchParams.get('research_id');
     const filter = researchId ? { research_id: researchId } : undefined;
     const candidates = listCandidates(store, filter);
-    return NextResponse.json({ candidates });
+    const selection_evidence = listSelectionEvidence(store, filter);
+    return NextResponse.json({ candidates, selection_evidence });
   } catch (err) {
     return errorResponse(err, 500);
   }

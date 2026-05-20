@@ -28,9 +28,6 @@ import {
   type BrowserBridgeRuntimeConfig,
 } from '@/lib/browser-runtime/bridge-client';
 import { EMBEDDED_BROWSER_CONTEXT_ID, normalizeBrowserContextId } from '@/lib/browser-provider/labels';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { getDouyinCollectorSettings, markCookieOk } from './settings';
 
 // Exported so keyword-browser-scrape can share the bridge config.
@@ -71,13 +68,6 @@ function parseCookieString(raw: string): Array<{ name: string; value: string }> 
  * + 5 × evaluate.
  */
 let lastCookieKey: { baseUrl: string; browserContextId: string; cookieRaw: string } | null = null;
-
-interface RuntimeBrowserProviderConfig {
-  id?: string;
-  providerType?: string;
-  enabled?: boolean;
-  profileId?: string;
-}
 
 const DOUYIN_HTTP_ONLY_COOKIE_NAMES = new Set([
   'sessionid',
@@ -232,40 +222,19 @@ export async function closeDouyinScrapePage(
   ).catch(() => undefined);
 }
 
-function getConfiguredDataDir(): string {
-  return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
-}
-
-function readRuntimePreferredBrowserContextId(): string | null {
-  if (process.env.JEST_WORKER_ID && !process.env.LUMOS_DATA_DIR && !process.env.CLAUDE_GUI_DATA_DIR) {
-    return null;
-  }
-  try {
-    const file = path.join(getConfiguredDataDir(), 'runtime', 'browser-providers.json');
-    if (!fs.existsSync(file)) return null;
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { configs?: RuntimeBrowserProviderConfig[] };
-    const config = parsed.configs?.find((item) => item.enabled !== false && item.providerType === 'adspower' && item.profileId?.trim())
-      ?? parsed.configs?.find((item) => item.enabled !== false && item.providerType === 'external-cdp' && item.id?.trim());
-    if (!config) return null;
-    if (config.providerType === 'adspower' && config.profileId?.trim()) {
-      return `adspower:${config.profileId.trim()}`;
-    }
-    if (config.providerType === 'external-cdp' && config.id?.trim()) {
-      return `external-cdp:${config.id.trim()}`;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * The single browser context creator/keyword scraping runs in — the
+ * user's explicit choice from Settings → 采集浏览器. Returned as a
+ * one-element array because callers iterate contexts; there is
+ * deliberately NO fallback to a second browser. Silent fallback is what
+ * produced the old confusing double-error ("adspower:xxx fetch failed；
+ * embedded:default 验证码页"): the code auto-picked an un-launched
+ * AdsPower profile, then quietly retried the embedded browser which hit
+ * a captcha — neither of which the user had chosen. Now a wrong/down
+ * context fails loudly pointing only at itself.
+ */
 export function resolveDouyinBrowserContextIds(): string[] {
-  const preferred = readRuntimePreferredBrowserContextId();
-  const ids = [
-    preferred ? normalizeBrowserContextId(preferred) : null,
-    EMBEDDED_BROWSER_CONTEXT_ID,
-  ].filter((id): id is string => Boolean(id));
-  return Array.from(new Set(ids));
+  return [normalizeBrowserContextId(getDouyinCollectorSettings().browserContextId)];
 }
 
 /**

@@ -63,6 +63,14 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     defaultVisible: false,
     icon: 'compass',
   },
+  {
+    id: 'etsy-erank',
+    name: 'Etsy eRank 选品雷达',
+    description:
+      'eRank 趋势成交当种子，AI 收敛打分，配额台账与人工验证闸——不烧配额、不编数字（demo）',
+    defaultVisible: false,
+    icon: 'radar',
+  },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';

@@ -18,7 +18,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/dialog';
 
 import type { ResearchReport, ResearchReportStatus } from './types';
-import { clusterReportsByBatch, parsePlatformInput } from './research-batch';
+import { clusterReportsByBatch } from './research-batch';
 import { openReportPrintWindow } from './research-pdf-export';
 
 interface ResearchTabProps {
@@ -42,7 +42,6 @@ interface ResearchTabProps {
   onChanged: () => void;
 }
 
-const PRESET_PLATFORMS = ['etsy', 'amazon', 'taobao', 'goofish', 'douyin', 'general'];
 
 type ResearchSubTab = 'tasks' | 'reports';
 
@@ -128,6 +127,95 @@ function TasksPanel({
   onOpenReport: (id: string) => void;
 }): React.ReactElement {
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [cleaning, setCleaning] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = React.useState(false);
+
+  const cleanableCount = React.useMemo(
+    () => reports.filter((r) => r.status === 'failed' || r.status === 'cancelled').length,
+    [reports],
+  );
+
+  // 5s 自动刷新会换 reports 引用；按 id 存的选择天然保留，但要剪掉已不存在
+  // 的 id（被删/被清理），否则计数和批量删除 payload 会带上幽灵 id。
+  React.useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set<string>();
+      for (const r of reports) if (prev.has(r.id)) valid.add(r.id);
+      return valid.size === prev.size ? prev : valid;
+    });
+  }, [reports]);
+
+  const selectedCount = selectedIds.size;
+  const allSelected = reports.length > 0 && selectedCount === reports.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  const toggleOne = React.useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = () => {
+    setSelectedIds((prev) =>
+      prev.size === reports.length ? new Set() : new Set(reports.map((r) => r.id)),
+    );
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const handleBatchDelete = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`删除选中的 ${ids.length} 个任务？运行中的会先取消，磁盘 md 一并移除。`)
+    ) {
+      return;
+    }
+    setBatchDeleting(true);
+    try {
+      const res = await fetch('/api/apps/builtin/ecommerce/research/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error('批量删除失败');
+      setSelectedIds(new Set());
+      onChanged();
+    } catch {
+      /* 失败保留选择，用户可重试 */
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
+
+  const handleCleanup = async () => {
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`清理 ${cleanableCount} 个失败/已取消的任务？已完成报告不受影响。`)
+    ) {
+      return;
+    }
+    setCleaning(true);
+    try {
+      const res = await fetch('/api/apps/builtin/ecommerce/research/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statuses: ['failed', 'cancelled'] }),
+      });
+      if (!res.ok) throw new Error('清理失败');
+      onChanged();
+    } catch {
+      /* 失败保持原状；用户可重试 */
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -138,6 +226,22 @@ function TasksPanel({
             <span className="text-xs text-muted-foreground">
               {refreshing ? '同步中…' : `${reports.length} 条`}
             </span>
+            {cleanableCount > 0 ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCleanup}
+                disabled={cleaning}
+                title="删除所有失败 / 已取消的任务（不影响已完成报告）"
+              >
+                {cleaning ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+                清理失败/已取消（{cleanableCount}）
+              </Button>
+            ) : null}
             <Button
               size="sm"
               onClick={() => setDialogOpen(true)}
@@ -156,37 +260,81 @@ function TasksPanel({
               还没有调研任务。先在上方提交一条。
             </p>
           ) : (
-            <ul className="flex flex-col gap-3">
-              {clusterReportsByBatch(reports).map((batch) =>
-                batch.reports.length > 1 ? (
-                  <li
-                    key={batch.key}
-                    className="rounded-md border border-dashed border-foreground/20 bg-muted/20 p-2"
-                  >
-                    <p className="mb-2 text-[11px] font-medium text-muted-foreground">
-                      📦 批次 · {batch.query} · {batch.reports.length} 个平台
-                    </p>
-                    <ul className="flex flex-col gap-2">
-                      {batch.reports.map((report) => (
-                        <TaskRow
-                          key={report.id}
-                          report={report}
-                          onOpenReport={onOpenReport}
-                          onChanged={onChanged}
-                        />
-                      ))}
-                    </ul>
-                  </li>
-                ) : (
-                  <TaskRow
-                    key={batch.reports[0].id}
-                    report={batch.reports[0]}
-                    onOpenReport={onOpenReport}
-                    onChanged={onChanged}
+            <>
+              <div className="mb-3 flex flex-wrap items-center gap-3 border-b pb-2">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                    onCheckedChange={toggleAll}
+                    aria-label="全选任务"
                   />
-                ),
-              )}
-            </ul>
+                  全选
+                </label>
+                {selectedCount > 0 ? (
+                  <>
+                    <span className="text-xs text-muted-foreground">已选 {selectedCount}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={handleBatchDelete}
+                      disabled={batchDeleting}
+                      data-testid="research-batch-delete"
+                    >
+                      {batchDeleting ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      删除选中（{selectedCount}）
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={clearSelection}
+                      disabled={batchDeleting}
+                    >
+                      取消选择
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+              <ul className="flex flex-col gap-3">
+                {clusterReportsByBatch(reports).map((batch) =>
+                  batch.reports.length > 1 ? (
+                    <li
+                      key={batch.key}
+                      className="rounded-md border border-dashed border-foreground/20 bg-muted/20 p-2"
+                    >
+                      <p className="mb-2 text-[11px] font-medium text-muted-foreground">
+                        📦 批次 · {batch.query} · {batch.reports.length} 个平台
+                      </p>
+                      <ul className="flex flex-col gap-2">
+                        {batch.reports.map((report) => (
+                          <TaskRow
+                            key={report.id}
+                            report={report}
+                            selected={selectedIds.has(report.id)}
+                            onToggleSelect={toggleOne}
+                            onOpenReport={onOpenReport}
+                            onChanged={onChanged}
+                          />
+                        ))}
+                      </ul>
+                    </li>
+                  ) : (
+                    <TaskRow
+                      key={batch.reports[0].id}
+                      report={batch.reports[0]}
+                      selected={selectedIds.has(batch.reports[0].id)}
+                      onToggleSelect={toggleOne}
+                      onOpenReport={onOpenReport}
+                      onChanged={onChanged}
+                    />
+                  ),
+                )}
+              </ul>
+            </>
           )}
         </CardContent>
       </Card>
@@ -212,7 +360,6 @@ function NewTaskDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }): React.ReactElement {
-  const [platform, setPlatform] = React.useState('etsy');
   const [query, setQuery] = React.useState('');
   const [instruction, setInstruction] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
@@ -230,50 +377,26 @@ function NewTaskDialog({
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!query.trim()) {
-      setError('请填写调研指令');
+      setError('请描述要调研什么');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      const platforms = parsePlatformInput(platform);
-      const targets = platforms.length > 0 ? platforms : ['general'];
-      const responses = await Promise.allSettled(
-        targets.map((p) =>
-          fetch('/api/apps/builtin/ecommerce/research', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              platform: p,
-              query: query.trim(),
-              instruction: instruction.trim() || undefined,
-            }),
-          }).then(async (res) => {
-            const json = (await res.json().catch(() => ({}))) as {
-              error?: string;
-              report?: ResearchReport;
-            };
-            if (!res.ok || !json.report) throw new Error(json.error ?? '提交失败');
-            return json.report;
-          }),
-        ),
-      );
-      const created = responses
-        .filter((r): r is PromiseFulfilledResult<ResearchReport> => r.status === 'fulfilled')
-        .map((r) => r.value);
-      const failed = responses
-        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-        .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)));
-      if (created.length === 0) {
-        throw new Error(failed[0] ?? '提交失败');
-      }
-      if (failed.length > 0) {
-        // Some platforms succeeded, some failed — surface the partial failure
-        // but still close the dialog so the user can see what landed.
-        setError(`部分平台提交失败：${failed.join('; ')}`);
-        setSubmitting(false);
-        return;
-      }
+      // 平台写在描述里，由 SOP planner 自己抽——单次提交，不再按平台扇出。
+      const res = await fetch('/api/apps/builtin/ecommerce/research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query.trim(),
+          instruction: instruction.trim() || undefined,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        report?: ResearchReport;
+      };
+      if (!res.ok || !json.report) throw new Error(json.error ?? '提交失败');
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败');
@@ -288,36 +411,19 @@ function NewTaskDialog({
         <DialogHeader>
           <DialogTitle>新建调研任务</DialogTitle>
           <DialogDescription>
-            选定平台 + 调研指令后启动；可以同时下发多个平台并行调研。完成后会出现在「调研报告」子 tab。
+            用一段话描述要调研什么，平台 / 品类 / 价位 / 关注点都写在这里。系统会内置 SOP 多轮调研（搜集→分析→补搜→汇总），完成后出现在「调研报告」子 tab。
           </DialogDescription>
         </DialogHeader>
         <form className="grid gap-3" onSubmit={handleSubmit}>
           <div className="grid gap-2">
-            <Label htmlFor="research-platform">目标平台</Label>
-            <Input
-              id="research-platform"
-              list="research-platform-presets"
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-              placeholder="etsy 或 etsy, amazon, walmart"
-              autoFocus
-            />
-            <datalist id="research-platform-presets">
-              {PRESET_PLATFORMS.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
-            <p className="text-[10px] text-muted-foreground">
-              逗号/空格隔开可并行多平台（最多 6 个）。
-            </p>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="research-query">调研指令 *</Label>
-            <Input
+            <Label htmlFor="research-query">调研需求 *</Label>
+            <Textarea
               id="research-query"
+              rows={4}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="例：手作陶瓷杯，价格带 25-45 USD，最近 30 天热门 listing"
+              placeholder="例：在 Etsy 上调研手作陶瓷杯，价格带 25-45 USD，最近 30 天热门 listing，重点看礼物属性"
+              autoFocus
             />
           </div>
           <div className="grid gap-2">
@@ -352,10 +458,14 @@ function NewTaskDialog({
 
 function TaskRow({
   report,
+  selected,
+  onToggleSelect,
   onOpenReport,
   onChanged,
 }: {
   report: ResearchReport;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
   onOpenReport: (id: string) => void;
   onChanged: () => void;
 }): React.ReactElement {
@@ -420,8 +530,18 @@ function TaskRow({
   const isLive = report.status === 'queued' || report.status === 'running';
 
   return (
-    <li className="rounded-md border bg-card p-3">
+    <li
+      className={`rounded-md border bg-card p-3 ${
+        selected ? 'border-foreground/40 bg-muted/40' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
+        <Checkbox
+          className="mt-0.5 shrink-0"
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(report.id)}
+          aria-label="选择该任务"
+        />
         <button
           type="button"
           onClick={() => onOpenReport(report.id)}

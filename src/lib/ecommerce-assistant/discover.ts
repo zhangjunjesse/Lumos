@@ -19,6 +19,9 @@ import {
   getEcommerceStore,
   type DiscoverCandidateRow,
 } from './storage';
+import { registerDiscoverRun, unregisterDiscoverRun } from './discover-lifecycle';
+import { buildSelectionEvidenceItems, toSelectionEvidenceRecords } from './discover-evidence';
+import { persistSelectionEvidence } from './discover-evidence-storage';
 
 const referenceUrlObjectSchema = z.object({
   platform: z.string().min(1),
@@ -222,11 +225,17 @@ export function startDiscoverResearch(
   input: ResearchInput,
 ): StartedResearchOutcome {
   const started = createResearchPlaceholder(store, input);
-  void completeDiscoverResearch(getFreshEcommerceStore(), input, started).catch((err) => {
-    // completeDiscoverResearch writes the visible failed state; keep this log
-    // for local diagnostics if the failure happens outside its guarded sections.
-    console.error('[ecommerce-discover] background research failed', err);
-  });
+  // 注册按 researchId 的 AbortController，把 signal 接进 fire-and-forget 的
+  // 后台研究——这样删除研究记录时可走 cancel-then-delete（CLAUDE.md 生命周期）。
+  // completeDiscoverResearch 及其下游 fetch/LLM/图片已全程接受 abortSignal。
+  const controller = registerDiscoverRun(started.researchId);
+  void completeDiscoverResearch(getFreshEcommerceStore(), input, started, controller?.signal)
+    .catch((err) => {
+      // completeDiscoverResearch writes the visible failed state; keep this log
+      // for local diagnostics if the failure happens outside its guarded sections.
+      console.error('[ecommerce-discover] background research failed', err);
+    })
+    .finally(() => unregisterDiscoverRun(started.researchId));
   return { researchId: started.researchId, placeholder: started.placeholder };
 }
 
@@ -267,24 +276,22 @@ async function completeDiscoverResearch(
   const liveSamples = await fetchSamplesForResearch(store, input, abortSignal);
   const usable = liveSamples.filter((r) => r.samples.length > 0);
   if (usable.length === 0) {
-    const attempts = liveSamples.length > 0
-      ? liveSamples.map((r) => ({
-          source: r.source,
-          url: r.url,
-          reason: r.warning ?? '空结果',
-        }))
-      : [
-          {
-            source: input.platformFocus?.[0] ?? 'unknown',
-            url: '',
-            reason: '没有可用的平台 fetcher（请选 Amazon/Etsy/Walmart/TikTok Shop 等支持联网抓取的平台）',
-          },
-        ];
+    const attempts = buildSourceAttempts(liveSamples, input);
     const err = new DiscoverNoLiveDataError(attempts);
     setCandidateStatus(store, placeholder.id, 'failed', {
       failure_reason: err.message,
       sources: JSON.stringify(buildSourcesEntry(liveSamples, strategy, input)),
     });
+    if (!abortSignal?.aborted) {
+      persistResearchEvidence(store, {
+        researchId,
+        input,
+        strategy,
+        liveSamples,
+        sourceAttempts: attempts,
+        candidates: [],
+      });
+    }
     throw err;
   }
 
@@ -296,7 +303,6 @@ async function completeDiscoverResearch(
       abortSignal,
       maxTokens: 6144,
     });
-    store.delete('discover_candidates', placeholder.id);
 
     const rows: DiscoverCandidateRow[] = [];
     for (const c of data.candidates) {
@@ -330,8 +336,27 @@ async function completeDiscoverResearch(
       });
       rows.push(row);
     }
+    persistResearchEvidence(store, {
+      researchId,
+      input,
+      strategy,
+      liveSamples,
+      sourceAttempts: buildSourceAttempts(liveSamples, input),
+      candidates: rows,
+    });
+    store.delete('discover_candidates', placeholder.id);
     return { researchId, candidates: rows };
   } catch (err) {
+    if (!isAbortLike(err, abortSignal)) {
+      persistResearchEvidence(store, {
+        researchId,
+        input,
+        strategy,
+        liveSamples,
+        sourceAttempts: buildSourceAttempts(liveSamples, input),
+        candidates: [],
+      });
+    }
     setCandidateStatus(store, placeholder.id, 'failed', {
       failure_reason: err instanceof Error ? err.message : String(err),
       sources: JSON.stringify(buildSourcesEntry(liveSamples, strategy, input)),
@@ -339,6 +364,60 @@ async function completeDiscoverResearch(
     if (err instanceof EcommerceLlmUnavailableError) throw err;
     throw new DiscoverResearchError(err instanceof Error ? err.message : String(err));
   }
+}
+
+function persistResearchEvidence(
+  store: AppDataStore,
+  args: {
+    researchId: string;
+    input: ResearchInput;
+    strategy: SelectionStrategyRule;
+    liveSamples: FetchSamplesResult[];
+    sourceAttempts?: Array<{ source: string; url: string; reason: string }>;
+    candidates: DiscoverCandidateRow[];
+  },
+): void {
+  try {
+    const items = buildSelectionEvidenceItems({
+      researchId: args.researchId,
+      keyword: args.input.keyword,
+      market: args.input.market,
+      strategyLabel: args.strategy.label,
+      liveSamples: args.liveSamples,
+      sourceAttempts: args.sourceAttempts,
+      candidates: args.candidates,
+    });
+    persistSelectionEvidence(
+      store,
+      toSelectionEvidenceRecords({ researchId: args.researchId, items }),
+    );
+  } catch (err) {
+    console.warn('[ecommerce-discover] selection evidence write failed', err);
+  }
+}
+
+function buildSourceAttempts(
+  liveSamples: FetchSamplesResult[],
+  input: ResearchInput,
+): Array<{ source: string; url: string; reason: string }> {
+  if (liveSamples.length > 0) {
+    return liveSamples.map((r) => ({
+      source: r.source,
+      url: r.url,
+      reason: r.warning ?? (r.samples.length > 0 ? '已采到样品' : '空结果'),
+    }));
+  }
+  return [
+    {
+      source: input.platformFocus?.[0] ?? 'unknown',
+      url: '',
+      reason: '没有可用的平台 fetcher（请选 Amazon/Etsy/Walmart/TikTok Shop 等支持联网抓取的平台）',
+    },
+  ];
+}
+
+function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted) || (err instanceof Error && err.name === 'AbortError');
 }
 
 function normalizeReferenceUrls(values: unknown): Array<z.infer<typeof referenceUrlObjectSchema>> {
@@ -582,6 +661,7 @@ function extractCandidateDetails(c: DiscoverCandidateRow): MarketProductDetail[]
         galleryImageUrls: raw.galleryImageUrls ?? raw.gallery_image_urls ?? [],
         reviewSnippets: raw.reviewSnippets ?? raw.review_snippets ?? [],
         badges: raw.badges ?? [],
+        ehunt: raw.ehunt ?? undefined,
         fetchedAt: raw.fetchedAt ?? raw.fetched_at ?? '',
         fetchedVia: raw.fetchedVia ?? raw.fetched_via ?? 'server-fetch',
       });
@@ -832,6 +912,7 @@ function buildSourcesEntry(
           gallery_image_urls: d.galleryImageUrls ?? [],
           review_snippets: d.reviewSnippets ?? [],
           badges: d.badges ?? [],
+          ehunt: d.ehunt ?? null,
           fetched_via: d.fetchedVia,
           fetched_at: d.fetchedAt,
         })),

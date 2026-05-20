@@ -78,8 +78,11 @@ function poolBlueOcean(cats: CategoryKeywordResult[]): PooledEntry[] {
 }
 
 const DATA_BASIS =
-  '数据：内置浏览器在 EHunt 所在上下文打开 Etsy listing，逐 tag hover 抓 EHunt 浮窗（搜索量/竞争度/趋势）。' +
-  '关键词=listing 标签（tags=关键词=SEO 词）。EHunt 未就绪的类目不打分、如实标原因，不伪造。';
+  '数据：内置浏览器在 EHunt 所在上下文打开 Etsy listing，逐 tag hover EHunt 浮窗' +
+  '（.el-popper.is-dark.el-tooltip）取真实指标：搜索量=Views monthly，竞争度=EHunt' +
+  ' Competition 数值按本类目中位数分档（低于中位=低，否则=高，对齐 SOP 中位分界）。' +
+  '趋势此视图无 → unknown，不伪造。关键词=listing 标签（tags=SEO 词）。' +
+  'hover 全失败的类目降级为按值排序清单并标原因，EHunt 未就绪的类目不打分。';
 
 function rankedSummary(cats: CategoryKeywordResult[]): string[] {
   const ok = rankOk(cats);
@@ -154,6 +157,46 @@ export function composeKeywordReport(cats: CategoryKeywordResult[]): {
         L.push(
           `- 旁证（标题高频，无搜索量，仅供参考）：${c.supplementalTitleCandidates
             .slice(0, 12)
+            .map((k) => k.keyword)
+            .join('、')}`,
+        );
+      }
+      // EHunt 检测到却没解析出 → 原样附上 hover 抓到的浮窗文本。代码块
+      // 保真（不被 Markdown 破坏）、可整段复制发开发者按真机结构调解析。
+      if (c.ehuntRawSamples?.length) {
+        L.push('');
+        L.push('**EHunt 浮窗原始文本**（解析失败，整段复制发开发者调解析器）：');
+        L.push('');
+        L.push('```text');
+        for (const s of c.ehuntRawSamples) {
+          // 三反引号会提前闭合代码块——退化为单引号保真不破栏。
+          L.push(s.replace(/```/g, "'''"));
+        }
+        L.push('```');
+      }
+      L.push('');
+      continue;
+    }
+    // 竞争度全 unknown（EHunt 内联常态）→ 不出四象限/健康度/红灯伪结论，
+    // 如实给"按 EHunt 值降序的关键词清单"。c.ok 已为真，故 !health=该模式。
+    if (!c.health) {
+      L.push(`- 采样 listing ${c.listingCount} · 关键词 ${c.scoredKeywords.length}（按 EHunt 值降序）`);
+      L.push(
+        '- ℹ EHunt 内联标签只给单一热度/搜索量值，未提供竞争度/趋势 → 不做四象限/健康度/红灯（不伪造）',
+      );
+      L.push('');
+      L.push('| 关键词 | EHunt 值 | 商品数 |');
+      L.push('|---|--:|--:|');
+      for (const k of c.scoredKeywords.slice(0, 50)) {
+        L.push(`| ${cell(k.keyword)} | ${k.searchVolume} | ${k.listingCount} |`);
+      }
+      L.push('');
+      L.push(`**说明**：${c.recommendation}`);
+      if (c.supplementalTitleCandidates.length) {
+        L.push('');
+        L.push(
+          `旁证·标题高频候选（无搜索量）：${c.supplementalTitleCandidates
+            .slice(0, 15)
             .map((k) => k.keyword)
             .join('、')}`,
         );

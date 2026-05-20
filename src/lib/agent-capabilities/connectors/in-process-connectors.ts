@@ -12,13 +12,19 @@ import {
   createLumosButlerMcpServer,
   LUMOS_BUTLER_MCP_SYSTEM_HINT,
 } from '@/lib/tools/lumos-butler-mcp-server';
+import {
+  createLumosIssueReporterMcpServer,
+  LUMOS_ISSUE_REPORTER_MCP_SYSTEM_HINT,
+} from '@/lib/tools/lumos-issue-reporter-mcp-server';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
 import {
   createChatKnowledgeMcpServer,
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT,
 } from '@/lib/knowledge/chat-knowledge-mcp';
-import type { ConnectorDefinition } from '../types';
+import type { ConnectorContext, ConnectorDefinition } from '../types';
+
+const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
 
 /** 图像生成（写/exec 类）——default/ask 文本模式不暴露属既定策略。 */
 const lumosImageConnector: ConnectorDefinition = {
@@ -72,6 +78,20 @@ const butlerConnector: ConnectorDefinition = {
     'read-only Lumos butler tools when the user asks about Lumos status, settings, history, tasks, or installed capabilities',
 };
 
+/** Lumos bug 上报：写 GitHub Issue，工具内部按真实登录邮箱做白名单校验。 */
+const issueReporterConnector: ConnectorDefinition = {
+  id: 'lumos-issue-reporter',
+  label: 'Lumos Bug 上报',
+  appliesTo: notBrowser,
+  resolve: (ctx) => ({
+    inProcess: () =>
+      createLumosIssueReporterMcpServer({ sessionId: ctx.sessionId, userId: ctx.userId }),
+  }),
+  buildHint: () => LUMOS_ISSUE_REPORTER_MCP_SYSTEM_HINT,
+  askModeReadAllowance: () =>
+    'the Lumos issue reporter tool only when the user explicitly asks to submit/report a Lumos bug to GitHub; the tool must verify the logged-in email allowlist and must not claim success without an issue URL',
+};
+
 /** Workflow 代码运行器——仅 workflow 专属会话。 */
 const workflowConnector: ConnectorDefinition = {
   id: 'workflow',
@@ -92,6 +112,7 @@ export const inProcessConnectors: ConnectorDefinition[] = [
   lumosImageConnector,
   knowledgeConnector,
   butlerConnector,
+  issueReporterConnector,
   workflowConnector,
   ecommerceConnector,
 ];

@@ -21,6 +21,9 @@ import {
   searchMessages,
   type ChatReadCandidate,
 } from '@/lib/wechat-assistant/mirror-store';
+import { resolveGroupTag, findGroupTag } from '@/lib/wechat-assistant/group-tag-resolver';
+import { summarizeGroupTag } from '@/lib/wechat-assistant/group-tag-summary';
+import { getWeChatAssistantSettings } from '@/lib/wechat-assistant/settings-store';
 import {
   getArchivedWeChatAutomationReport,
   getLatestArchivedReportForAutomation,
@@ -94,6 +97,9 @@ export function createWeChatAssistantMcpServer(options: CreateWeChatAssistantMcp
     createGetWeChatAssistantStatusTool(),
     createSearchWeChatMessagesTool(),
     createReadWeChatChatTool(),
+    createListWeChatGroupTagsTool(),
+    createPreviewWeChatGroupTagTool(),
+    createSummarizeWeChatGroupsTool(),
   ];
   const tools = options.readOnly
     ? readOnlyTools
@@ -528,6 +534,8 @@ function createCreateWeChatAutomationTool() {
         .describe('wechat_summary generates a daily WeChat report; custom sends a reminder notification. Defaults by name/content.'),
       message_template: z.string().min(1).max(500).optional()
         .describe('Report requirement or reminder text.'),
+      group_tag: z.string().min(1).optional()
+        .describe('Only for wechat_summary: a 群标签 name/id (微信助手 设置 → 群标签). Scopes the daily report to that tag\'s groups (e.g. "工作群" = 刘总所在的群).'),
       enabled: z.boolean().optional().describe('Whether the automation should be enabled. Defaults to true.'),
     },
     async (args): Promise<CallToolResult> => {
@@ -535,12 +543,34 @@ function createCreateWeChatAutomationTool() {
         const actionKind = args.action_kind ?? inferAutomationActionKind(
           `${args.name ?? ''}\n${args.message_template ?? ''}`,
         );
+        let groupTagId: string | undefined;
+        if (args.group_tag) {
+          const tag = findGroupTag(getWeChatAssistantSettings().groupTags, args.group_tag);
+          if (!tag) {
+            return jsonResult({
+              schema: 'wechat-assistant-automation-created/v1',
+              created: false,
+              error: 'group_tag_not_found',
+              guidance: `未找到群标签「${args.group_tag}」。先用 list_wechat_group_tags 查看，或到设置→群标签新建后再绑定。未创建自动化。`,
+            });
+          }
+          if (actionKind !== 'wechat_summary') {
+            return jsonResult({
+              schema: 'wechat-assistant-automation-created/v1',
+              created: false,
+              error: 'group_tag_requires_summary',
+              guidance: 'group_tag 仅对 wechat_summary 自动化有效（提醒类不产报告）。请去掉 group_tag 或用总结类。',
+            });
+          }
+          groupTagId = tag.id;
+        }
         const draft = buildAutomationDraftFromToolArgs({
           name: args.name,
           scheduleText: args.schedule_text,
           actionKind,
           messageTemplate: args.message_template,
           enabled: args.enabled ?? true,
+          groupTagId,
         });
         const existing = listWeChatAutomations()
           .find((item) => normalizeLookupText(item.name) === normalizeLookupText(draft.name)) ?? null;
@@ -812,6 +842,148 @@ function createReadWeChatAutomationReportTool() {
   );
 }
 
+/* ─── Group tags (工作群等分类) ───────────────────────────────────── */
+
+function createListWeChatGroupTagsTool() {
+  return tool(
+    'list_wechat_group_tags',
+    'List configured WeChat group tags (e.g. 工作群) and their rules. Tags are defined in 微信助手 设置 → 群标签.',
+    {},
+    async (): Promise<CallToolResult> => {
+      try {
+        const tags = getWeChatAssistantSettings().groupTags;
+        return jsonResult({
+          schema: 'wechat-assistant-group-tags/v1',
+          count: tags.length,
+          tags: tags.map((t) => ({
+            id: t.id,
+            name: t.name,
+            rule_kind: t.rule.kind,
+            member_count: t.rule.members.length,
+            manual_group_count: t.rule.groups.length,
+            exclude_count: t.rule.excludeGroups.length,
+            cached_group_count: t.resolved?.groupWxids.length ?? null,
+            cached_at: t.resolved?.resolvedAt ?? null,
+          })),
+          guidance: tags.length === 0
+            ? '还没有群标签。到「微信助手 → 设置 → 群标签」新建（如"工作群 = 刘总所在的群"）。'
+            : '用 preview_wechat_group_tag 看某标签当前命中哪些群，用 summarize_wechat_groups 总结。',
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+function createPreviewWeChatGroupTagTool() {
+  return tool(
+    'preview_wechat_group_tag',
+    'Resolve a WeChat group tag to the concrete groups it currently matches, with member-match evidence. Read-only; for verifying a tag rule before relying on it.',
+    {
+      tag: z.string().min(1).describe('Group tag name or id from list_wechat_group_tags.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        const settings = getWeChatAssistantSettings();
+        const tag = findGroupTag(settings.groupTags, args.tag);
+        if (!tag) {
+          return jsonResult({
+            schema: 'wechat-assistant-group-tag-preview/v1',
+            found: false,
+            available_tags: settings.groupTags.map((t) => t.name),
+            guidance: '未找到该标签。先用 list_wechat_group_tags 看可用标签。',
+          });
+        }
+        const resolved = await resolveGroupTag(tag);
+        return jsonResult({
+          schema: 'wechat-assistant-group-tag-preview/v1',
+          found: true,
+          tag: { id: tag.id, name: tag.name },
+          group_count: resolved.groupWxids.length,
+          warning: resolved.warning ?? null,
+          groups: resolved.groups.map((g) => ({
+            chat: g.name,
+            wxid: g.wxid,
+            via: g.via,
+            matched_members: g.matchedMembers ?? [],
+          })),
+          resolved_at: resolved.resolvedAt,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+function createSummarizeWeChatGroupsTool() {
+  return tool(
+    'summarize_wechat_groups',
+    'Summarize recent messages of every group under a WeChat group tag (e.g. 总结"工作群"). Resolves the tag, pulls each group\'s recent text, and produces one structured report. Never fabricates: groups with no messages are reported as skipped.',
+    {
+      tag: z.string().min(1).describe('Group tag name or id (微信助手 设置 → 群标签). E.g. "工作群".'),
+      days: z.number().int().min(1).max(60).optional().describe('Recent-day window. Defaults to 1.'),
+      per_chat_limit: z.number().int().min(10).max(1000).optional()
+        .describe('Max messages per group fed to the model. Defaults to 120.'),
+      scope_note: z.string().max(500).optional()
+        .describe('Extra instruction, e.g. "只挑待办、风险和需我回复的".'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        const settings = getWeChatAssistantSettings();
+        const tag = findGroupTag(settings.groupTags, args.tag);
+        if (!tag) {
+          return jsonResult({
+            schema: 'wechat-assistant-group-summary/v1',
+            found: false,
+            available_tags: settings.groupTags.map((t) => t.name),
+            guidance: '未找到该标签。先用 list_wechat_group_tags，或到设置→群标签新建。',
+          });
+        }
+        // 同步镜像与解析标签是两次独立的 python 调用，互不依赖 → 并行，
+        // 砍掉串行等待（聊天里用户在等这个返回）。
+        const [sync, preResolved] = await Promise.all([
+          syncMirrorBeforeMessageAccess(),
+          resolveGroupTag(tag),
+        ]);
+        const r = await summarizeGroupTag({
+          tag,
+          preResolved,
+          days: args.days,
+          perChatLimit: args.per_chat_limit,
+          scopeNote: args.scope_note,
+          settings,
+        });
+        return jsonResult({
+          schema: 'wechat-assistant-group-summary/v1',
+          found: true,
+          tag: { id: tag.id, name: tag.name },
+          window_days: r.windowDays,
+          resolved_group_count: r.resolvedGroupCount,
+          summarized_group_count: r.summarizedGroupCount,
+          included_groups: r.includedGroups,
+          skipped_empty: r.skippedEmpty,
+          truncated_for_budget: r.truncatedForBudget,
+          tag_warning: r.tagWarning,
+          ai: r.ai,
+          summary: r.summary,
+          summary_markdown: r.summaryMarkdown,
+          sync,
+          guidance:
+            r.ai.status === 'success'
+              ? '转发时直接使用 summary_markdown 原文，保持与数据一致。'
+              : r.ai.status === 'failed'
+                ? 'AI 总结失败，已返回分组计数与失败原因，请勿用其它内容冒充本报告。'
+                : '未做 AI 总结（标签空 / 无消息 / 未配服务商），如实告知，不要伪造。',
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
 type AutomationLite = ReturnType<typeof listWeChatAutomations>[number];
 
 function normalizePageLimit(value: number | undefined, fallback: number): number {
@@ -999,6 +1171,7 @@ function buildAutomationDraftFromToolArgs(input: {
   actionKind: 'wechat_summary' | 'custom';
   messageTemplate?: string;
   enabled: boolean;
+  groupTagId?: string;
 }): AutomationDraft {
   const scheduleText = input.scheduleText.trim();
   const time = inferSchedule(scheduleText) ?? '09:00';
@@ -1011,10 +1184,13 @@ function buildAutomationDraftFromToolArgs(input: {
     kind: recurring ? 'reminder_recurring' : 'reminder_once',
     cron: recurring ? inferCron(scheduleText, time) : cronFromTime(time),
     cronLabel: recurring ? cronLabel(scheduleText, time) : `${relativeDateLabel(scheduleText)} ${time}`,
-    action: {
-      kind: input.actionKind,
-      messageTemplate,
-    },
+    action: input.actionKind === 'wechat_summary'
+      ? {
+          kind: 'wechat_summary',
+          messageTemplate,
+          ...(input.groupTagId ? { groupTagId: input.groupTagId } : {}),
+        }
+      : { kind: 'custom', messageTemplate },
     enabled: input.enabled,
     nextRunAt: recurring ? undefined : inferOneTimeTs(scheduleText, time),
   };

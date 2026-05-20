@@ -133,12 +133,12 @@ export function buildDbServerHints(
 }
 
 /**
- * R4 第三通道：Ask（纯问答）模式工具许可，由注册中心驱动。
+ * R4 第三通道：Ask（默认问答）模式工具许可，由注册中心驱动。
  *
  * 取代 chat/route.ts 里硬编码的 buildAskModeToolAllowance（它只给
  * 知识库/管家开口子、漏了微信——同一非对称白名单 bug 的第三处）。
- * 返回拼接进 Ask 系统提示的尾句：有可用只读连接器则枚举之，否则
- * 明确禁止用工具。措辞与旧实现一致以零回归。
+ * 返回拼接进 Ask 系统提示的尾句：有可用只读工具或明确用户触发的
+ * 受控低风险动作则枚举之，否则明确禁止用工具。
  */
 export function buildAskModeAllowance(ctx: ConnectorContext): string {
   const phrases: string[] = [];

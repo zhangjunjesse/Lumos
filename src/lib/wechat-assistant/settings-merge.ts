@@ -69,6 +69,29 @@ const inputSchema = z
       })
       .partial()
       .default({}),
+    groupTags: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          name: z.string().min(1),
+          rule: z.object({
+            kind: z.enum(['member_in_group', 'manual']),
+            members: z.array(z.string()).default([]),
+            matchMode: z.literal('any').default('any'),
+            groups: z.array(z.string()).default([]),
+            excludeGroups: z.array(z.string()).default([]),
+          }),
+          resolved: z
+            .object({
+              groupWxids: z.array(z.string()),
+              resolvedAt: z.string(),
+              sourceMtime: z.number(),
+            })
+            .nullable()
+            .default(null),
+        }),
+      )
+      .default([]),
   })
   .partial();
 
@@ -146,6 +169,11 @@ function cloneDefaults(): AppSettings {
       whitelistGroups: [...DEFAULT_SETTINGS.topicAnalysis.whitelistGroups],
     },
     followups: { ...DEFAULT_SETTINGS.followups },
+    groupTags: DEFAULT_SETTINGS.groupTags.map((t) => ({
+      ...t,
+      rule: { ...t.rule },
+      resolved: t.resolved ? { ...t.resolved } : null,
+    })),
   };
 }
 

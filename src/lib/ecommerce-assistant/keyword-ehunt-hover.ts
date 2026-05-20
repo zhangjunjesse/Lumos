@@ -40,6 +40,8 @@ export interface TagPerformance {
   tag: string;
   searchVolume: number | null;
   competition: Competition;
+  /** EHunt tooltip 的 Competition 裸数值（如 42400）；按类目中位数分档前保留。 */
+  competitionRaw: number | null;
   trend: Trend;
   /** 悬浮窗原始文本（解析失败时据此诊断/调选择器，不丢不造）。 */
   raw: string;
@@ -51,6 +53,8 @@ export interface ListingHoverResult {
   ehuntDetected: boolean;
   reason?: string;
   tags: TagPerformance[];
+  /** EHunt 检测到但无浮窗时回传的真实注入 DOM 结构快照（供按真机调）。 */
+  domProbe?: string;
 }
 
 interface NewPageResp extends BrowserBridgeResponse {
@@ -65,6 +69,7 @@ interface RawScriptOut {
   ehuntDetected: boolean;
   reason?: string;
   tags: { tag: string; raw: string }[];
+  domProbe?: string;
 }
 
 /** 解析 bridge 配置；未连接返回 null（调用方据此给可见原因，不抛）。 */
@@ -74,32 +79,47 @@ export function resolveKeywordBridgeConfig(
   return resolveBrowserBridgeRuntimeConfig({ browserContextId, lockOwnerId: LOCK_OWNER });
 }
 
-function parseTag(tag: string, raw: string): TagPerformance {
-  const text = raw.replace(/\s+/g, ' ').trim();
-  let searchVolume: number | null = null;
-  const vol = /(?:estimated\s*search|search\s*volume|monthly\s*search|搜索量)[^\d]{0,12}([\d,.]+)\s*([km])?/i.exec(text)
-    || /([\d,.]+)\s*([km])?\s*(?:\/\s*mo|monthly|searches|搜索)/i.exec(text);
-  if (vol) {
-    const base = Number(vol[1].replace(/,/g, ''));
-    const mult = vol[2]?.toLowerCase() === 'k' ? 1000 : vol[2]?.toLowerCase() === 'm' ? 1_000_000 : 1;
-    if (Number.isFinite(base)) searchVolume = Math.round(base * mult);
-  }
-  // 竞争度优先在「competition/竞争度」上下文附近判级，避免误把别处的
-  // low/high 当竞争度；CJK 不用 \b（JS \b 对中文无效）。
-  const compCtx = /(?:competition|竞争度)[^a-z一-龥]{0,16}(low|medium|mid|high|低|中|高)/i.exec(text);
-  const compWord = (compCtx?.[1] ?? '').toLowerCase();
-  let competition: Competition = 'unknown';
-  if (compWord) {
-    competition = /low|低/.test(compWord) ? 'low' : /high|高/.test(compWord) ? 'high' : 'medium';
-  } else if (/\blow\b|竞争[度]?\s*[:：]?\s*低/i.test(text)) competition = 'low';
-  else if (/\bhigh\b|竞争[度]?\s*[:：]?\s*高/i.test(text)) competition = 'high';
-  else if (/\bmedium\b|\bmid\b|竞争[度]?\s*[:：]?\s*中/i.test(text)) competition = 'medium';
-  let trend: Trend = 'unknown';
-  if (/(rising|up\b|↑|增长|上升)/i.test(text)) trend = 'rising';
-  else if (/(falling|down\b|↓|下降)/i.test(text)) trend = 'falling';
-  else if (/(stable|flat|平稳|持平)/i.test(text)) trend = 'stable';
-  const parsed = searchVolume !== null || competition !== 'unknown';
-  return { tag, searchVolume, competition, trend, raw: text.slice(0, 500), parsed };
+/** "16.1M" / "719.2K" / "2,306" / "42.4K" → 数值。失败 → null。 */
+function num(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = /([\d][\d.,]*)\s*([kmb])?/i.exec(s);
+  if (!m) return null;
+  const base = Number(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(base)) return null;
+  const u = (m[2] || '').toLowerCase();
+  const mult = u === 'k' ? 1_000 : u === 'm' ? 1_000_000 : u === 'b' ? 1_000_000_000 : 1;
+  return Math.round(base * mult);
+}
+
+/**
+ * 解析 EHunt hover tooltip（bridge 自驱实测原文，多行）：
+ *   Views:  total (16.1M)  monthly (2.9M)
+ *   Favorites:  total (719.2K)  monthly (2.0K)
+ *   Sales:  total (399.3K)  monthly (10.4K)
+ *   Competition:  42.4K
+ * 取 **Views monthly** 作搜索量代理（月级流量最贴近"搜索热度"），
+ * **Competition 裸数值** 入 competitionRaw（分档由 analyzeCategory 按类目
+ * 中位数决定，对齐 SOP 的中位分界，避免凭空设阈值）。trend 此视图无 → unknown。
+ * 内联兜底：若 raw 只是 "(16.1M)" 这类单值（hover 没出 tooltip 时），仍取作
+ * searchVolume，competitionRaw=null（下游降级 volume-only，不伪造竞争度）。
+ */
+export function parseTag(tag: string, raw: string): TagPerformance {
+  const text = (raw || '').replace(/[ \t]+/g, ' ').trim();
+  const viewsMonthly = num(/Views:[^\n]*?monthly\s*\(([^)]+)\)/i.exec(text)?.[1]);
+  const viewsTotal = num(/Views:\s*total\s*\(([^)]+)\)/i.exec(text)?.[1]);
+  const competitionRaw = num(/Competition:\s*\(?\s*([\d.,]+\s*[kmb]?)/i.exec(text)?.[1]);
+  // 有 tooltip → Views monthly（无则 total）；无结构 → 退化为整串单值。
+  const searchVolume =
+    viewsMonthly ?? viewsTotal ?? (/Views:|Competition:/i.test(text) ? null : num(text.replace(/[()]/g, '')));
+  return {
+    tag,
+    searchVolume,
+    competition: 'unknown', // 真实分档由 analyzeCategory 按类目中位数定
+    competitionRaw,
+    trend: 'unknown',
+    raw: text.slice(0, 240),
+    parsed: searchVolume !== null,
+  };
 }
 
 function parseScriptOut(raw: unknown): RawScriptOut | null {
@@ -215,6 +235,7 @@ export async function extractListingTagPerformance(
           ehuntDetected: !!parsedOut.ehuntDetected,
           reason: parsedOut.reason ? parsedOut.reason + log.trace() : undefined,
           tags,
+          domProbe: parsedOut.domProbe,
         };
       } catch (err) {
         lastErr = err instanceof Error ? err.message : String(err);

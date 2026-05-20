@@ -6,9 +6,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 
-import { getMirrorDb } from './mirror-db';
+import { getMirrorDb, MIRROR_DB_PATH } from './mirror-db';
 import { SYNC_STATE_KEYS } from './mirror-schema';
 import { businessDayBounds } from './topic-time';
 import type { SnapshotMessage, SnapshotSession } from './overview-compute';
@@ -270,12 +271,45 @@ export function getSyncState(): MirrorSyncState {
   };
 }
 
+/**
+ * Wall-clock ms of the last successful mirror sync, or null if the mirror
+ * has never synced. Guarded by file existence so a read-only status poll
+ * never force-creates the sidecar DB just to report freshness.
+ */
+export function getLastMirrorSyncAt(): number | null {
+  if (!fs.existsSync(MIRROR_DB_PATH)) return null;
+  const finished = getSyncState().lastFinishedAt;
+  return finished > 0 ? finished : null;
+}
+
 export function getLatestMessageTs(): number {
   const row = getMirrorDb()
     .prepare<[], { latest_ts: number | null }>('SELECT MAX(ts) AS latest_ts FROM messages')
     .get();
   const latest = Number(row?.latest_ts ?? 0);
   return Number.isFinite(latest) && latest > 0 ? Math.floor(latest) : 0;
+}
+
+/**
+ * Per-chat sync watermark: the newest `ts` already mirrored for each wxid.
+ *
+ * This IS the incremental cursor — derived from the messages table itself,
+ * not a duplicated piece of state that can drift. A chat absent here has no
+ * mirrored messages, so the next sync re-imports its full history (this is
+ * what backfills chats the old global-cursor design silently stranded).
+ */
+export function getPerChatCursors(): Record<string, number> {
+  const rows = getMirrorDb()
+    .prepare<[], { wxid: string; max_ts: number | null }>(
+      'SELECT wxid, MAX(ts) AS max_ts FROM messages GROUP BY wxid',
+    )
+    .all();
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const ts = Number(r.max_ts ?? 0);
+    if (r.wxid && Number.isFinite(ts) && ts > 0) out[r.wxid] = Math.floor(ts);
+  }
+  return out;
 }
 
 export function setCursor(cursorTs: number): void {

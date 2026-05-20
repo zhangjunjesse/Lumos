@@ -27,6 +27,10 @@ jest.mock('@/lib/tools/lumos-butler-mcp-server', () => ({
   createLumosButlerMcpServer: () => ({ name: 'lumos-butler' }),
   LUMOS_BUTLER_MCP_SYSTEM_HINT: 'BUTLER_HINT_TEXT',
 }));
+jest.mock('@/lib/tools/lumos-issue-reporter-mcp-server', () => ({
+  createLumosIssueReporterMcpServer: () => ({ name: 'lumos-issue-reporter' }),
+  LUMOS_ISSUE_REPORTER_MCP_SYSTEM_HINT: 'ISSUE_REPORTER_HINT_TEXT',
+}));
 jest.mock('@/lib/tools/workflow-mcp-server', () => ({
   createWorkflowMcpServer: () => ({ name: 'workflow-runner' }),
 }));
@@ -122,11 +126,13 @@ describe('R2 权限模式不删读/消息能力与广告', () => {
   });
 
   test('DB hint(feishu/deepsearch/im) 恒附，不受 default 模式影响', () => {
-    const present = new Set(['feishu', 'deepsearch', 'im-tools']);
+    const present = new Set(['feishu', 'deepsearch', 'im-tools', 'douyin-collector']);
     const hint = buildDbServerHints(ctx({ permissionMode: 'default' }), present);
     expect(hint).toContain('Feishu MCP tools');
     expect(hint).toContain('DeepSearch');
     expect(hint).toContain('IM_TOOLS_HINT_TEXT');
+    expect(hint).toContain('Douyin Collector MCP tools');
+    expect(hint).toContain('Do not infer or simulate transcript content');
   });
 
   test('lumos-image 写类在 default 模式不暴露属既定策略(非回归)', () => {
@@ -277,6 +283,18 @@ describe('R4 第三通道：Ask 模式工具许可由注册中心驱动', () => 
     const clause = buildAskModeAllowance(ctx({ permissionMode: 'default', browserAutomationIntent: true }));
     expect(clause).not.toContain('lumos-wechat-assistant');
   });
+
+  test('Ask 模式允许用户明确要求的 Lumos bug Issue 受控提交', () => {
+    const clause = buildAskModeAllowance(ctx({ permissionMode: 'default' }));
+    expect(clause).toContain('Lumos issue reporter tool');
+    expect(clause).toContain('explicitly asks to submit/report a Lumos bug');
+    expect(clause).toContain('issue URL');
+  });
+
+  test('浏览器自动化意图：Issue reporter 不在 Ask 许可里', () => {
+    const clause = buildAskModeAllowance(ctx({ permissionMode: 'default', browserAutomationIntent: true }));
+    expect(clause).not.toContain('Lumos issue reporter tool');
+  });
 });
 
 describe('逐连接器零回归点位', () => {
@@ -311,6 +329,15 @@ describe('逐连接器零回归点位', () => {
     expect(k.systemHintAppend).toContain('KNOWLEDGE_HINT_TEXT');
     const off = buildCapabilityPlan(ctx());
     expect(Object.keys(off.inProcessServers)).not.toContain('chat-knowledge');
+  });
+
+  test('lumos-issue-reporter：普通非浏览器会话注入 + hint，浏览器意图下移除', () => {
+    const normal = buildCapabilityPlan(ctx());
+    expect(Object.keys(normal.inProcessServers)).toContain('lumos-issue-reporter');
+    expect(normal.systemHintAppend).toContain('ISSUE_REPORTER_HINT_TEXT');
+
+    const browser = buildCapabilityPlan(ctx({ browserAutomationIntent: true }));
+    expect(Object.keys(browser.inProcessServers)).not.toContain('lumos-issue-reporter');
   });
 
   test('workflow/ecommerce：仅对应专属会话注入', () => {

@@ -106,7 +106,7 @@ describe('runSync', () => {
     expect(getSyncState().totalMessages).toBe(1);
   });
 
-  it('does not let a session-summary cursor skip unsynced detail messages', async () => {
+  it('does not let an ahead/summary global cursor skip unsynced detail messages (per-chat cursor)', async () => {
     insertMessages([
       {
         wxid: 'alice',
@@ -118,9 +118,13 @@ describe('runSync', () => {
         content: '旧消息',
       },
     ]);
+    // Old failure trigger: a global cursor ahead of the actual mirrored
+    // detail (e.g. derived from a newer session summary).
     setCursor(2000);
+
+    let sentArgs: unknown;
     mockStreamWeChatApi.mockImplementation(async (_op, args, opts) => {
-      expect(args).toEqual({ since_timestamp: 940 });
+      sentArgs = args;
       opts.onLine({ type: 'meta', sessions: [{ wxid: 'alice', display: 'A', is_group: false, last_timestamp: 3000 }] });
       opts.onLine({ type: 'db_start', db: 'm.db', tables: 1 });
       opts.onLine({ type: 'msg', wxid: 'alice', ts: 1500, sender: 'them', msg_type: 1, content: '补回来的消息' });
@@ -131,10 +135,15 @@ describe('runSync', () => {
 
     const result = await runSync({});
 
+    // Filtering is driven by alice's OWN mirrored watermark (1000), derived
+    // from the messages table — not the ahead global cursor (2000) — so the
+    // ts=1500 detail cannot be skipped.
+    expect(sentArgs).toEqual({ since_timestamp: 0, chat_cursors: { alice: 1000 }, overlap_seconds: 60 });
     expect(result.status).toBe('completed');
-    expect(result.cursorTs).toBe(1500);
-    expect(getSyncState().cursorTs).toBe(1500);
+    expect(result.inserted).toBe(1);
     expect(querySnapshot(60, 1600).messages.map((item) => item.content)).toContain('补回来的消息');
+    // Global cursor is telemetry-only now and stays monotonic.
+    expect(getSyncState().cursorTs).toBeGreaterThanOrEqual(2000);
   });
 
   it('records lastError and returns failed status when stream errors out', async () => {

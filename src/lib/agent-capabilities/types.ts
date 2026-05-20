@@ -111,10 +111,11 @@ export interface ConnectorDefinition {
    */
   buildDbHint?: (ctx: ConnectorContext, presentDbServers: Set<string>) => string | null;
   /**
-   * Ask（纯问答）模式下，本连接器允许使用的**只读**工具的一句话描述
+   * Ask（默认问答）模式下，本连接器允许使用的工具/受控动作的一句话描述
    * （R4 第三通道：Ask 工具许可也由注册中心驱动，不再是 route 里第三份
-   * 手维护白名单）。返回 null = 本连接器在 Ask 模式无可用只读工具。
-   * 仅 appliesTo 通过时求值；写/exec 类连接器应返回 null。
+   * 手维护白名单）。默认应只放只读工具；确实由用户明确触发、且工具内部
+   * 有二次校验/确认的低风险写动作（如提交 Lumos bug Issue）也可在这里
+   * 列明。返回 null = 本连接器在 Ask 模式无可用工具。
    */
   askModeReadAllowance?: (ctx: ConnectorContext) => string | null;
 }

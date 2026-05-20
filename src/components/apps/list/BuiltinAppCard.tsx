@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Compass,
   MessageCircleHeart,
+  Radar,
   ShoppingBag,
   Sparkles,
   Video,
@@ -426,4 +427,48 @@ function deepResearchPhaseLabel(phase?: string): string {
     default:
       return '检测中';
   }
+}
+
+/**
+ * demo 卡片:不依赖 status 接口(纯前端原型,未接后端)。点开进
+ * /apps/etsy-erank 看完整 UI/交互/流程。状态如实标 demo,不伪装就绪。
+ */
+export function BuiltinEtsyErankCard(): React.ReactElement {
+  return (
+    <Link
+      href="/apps/etsy-erank"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-indigo-500 text-white shadow-sm">
+          <Radar className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              Etsy eRank 选品雷达
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · demo
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        eRank 趋势成交当种子，AI 收敛打分，配额台账与人工验证闸——不烧配额、不编数字
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone="warn" />
+          <span className="text-muted-foreground">demo · mock 数据，未接后端</span>
+        </span>
+      </div>
+    </Link>
+  );
 }

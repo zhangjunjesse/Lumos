@@ -36,6 +36,7 @@ describe('builtin-apps-visibility', () => {
       'deep-research',
       'douyin-collector',
       'ecommerce-assistant',
+      'etsy-erank',
       'goofish-assistant',
       'wechat-assistant',
     ]);

@@ -145,9 +145,11 @@ export class WechatClient {
   async verifyToken(): Promise<{ ok: boolean; error?: string }> {
     try {
       const r = await this.getUpdates('', 5_000);
-      // ilink 成功响应不带 ret 字段（仅错误时返回）— undefined / null 视为成功。
-      if (r.ret == null || r.ret === 0) return { ok: true };
-      return { ok: false, error: `ret=${r.ret} ${r.errmsg ?? ''}`.trim() };
+      // Same classifier as outbound: a `{ errmsg, no-ret }` session-timeout
+      // body must fail the probe so Settings "测试连接" reflects the real
+      // state instead of showing green while every send silently drops.
+      const verdict = classifyIlinkResponse(r);
+      return verdict.ok ? { ok: true } : { ok: false, error: verdict.error };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'verify failed' };
     }
@@ -281,12 +283,9 @@ export class WechatClient {
         DEFAULT_API_TIMEOUT_MS,
         'sendMessage',
       )) as SendMessageResp | null;
-      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
-      return {
-        ok: false,
-        ret: data.ret,
-        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
-      };
+      const verdict = classifyIlinkResponse(data);
+      if (verdict.ok) return { ok: true, clientId };
+      return { ok: false, ret: verdict.ret, error: verdict.error };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
     }
@@ -388,12 +387,9 @@ export class WechatClient {
         DEFAULT_API_TIMEOUT_MS,
         'sendMessage',
       )) as SendMessageResp | null;
-      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
-      return {
-        ok: false,
-        ret: data.ret,
-        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
-      };
+      const verdict = classifyIlinkResponse(data);
+      if (verdict.ok) return { ok: true, clientId };
+      return { ok: false, ret: verdict.ret, error: verdict.error };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
     }
@@ -500,12 +496,9 @@ export class WechatClient {
         DEFAULT_API_TIMEOUT_MS,
         'sendMessage',
       )) as SendMessageResp | null;
-      if (!data || data.ret == null || data.ret === 0) return { ok: true, clientId };
-      return {
-        ok: false,
-        ret: data.ret,
-        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
-      };
+      const verdict = classifyIlinkResponse(data);
+      if (verdict.ok) return { ok: true, clientId };
+      return { ok: false, ret: verdict.ret, error: verdict.error };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'sendMessage failed' };
     }
@@ -537,15 +530,10 @@ export class WechatClient {
         DEFAULT_API_TIMEOUT_MS,
         'sendMessage',
       )) as SendMessageResp | null;
-      // ilink 成功响应不带 ret 字段（仅错误时返回）— undefined / null 视为成功，
-      // 与 getUpdates 一致。之前 `data.ret === 0` 在 undefined 时为 false，每条
-      // AI 回复都被误判为发送失败。
-      if (!data || data.ret == null || data.ret === 0) return { ok: true };
-      return {
-        ok: false,
-        ret: data.ret,
-        error: `ret=${data.ret} errcode=${data.errcode ?? ''} errmsg=${data.errmsg ?? ''}`.trim(),
-      };
+      const verdict = classifyIlinkResponse(data);
+      return verdict.ok
+        ? { ok: true }
+        : { ok: false, ret: verdict.ret, error: verdict.error };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'send failed' };
     }
@@ -553,6 +541,37 @@ export class WechatClient {
 }
 
 // ---- Helpers ----------------------------------------------------------------
+
+/**
+ * Classify an ilink JSON response into success / failure.
+ *
+ * ilink success responses omit `ret` entirely (it is only emitted on errors),
+ * so a missing/zero `ret` is NOT by itself proof of delivery. The documented
+ * bot-side failure — session timeout / not logged in — comes back as HTTP 200
+ * with `{ errmsg: "..." }` and NO `ret` field (see the headers() note about the
+ * `AuthorizationType: ilink_bot_token` header). Classifying that as success
+ * silently drops every outbound reply: the caller logs a fabricated clientId,
+ * ingest returns 200, and nothing — log, status probe, UI — ever shows the
+ * failure.
+ *
+ * Success therefore requires the absence of *every* error signal: no non-zero
+ * `ret`, no non-zero `errcode`, and no `errmsg`. An empty body (post() returns
+ * null) stays a success — that is the genuine ilink "accepted" shape.
+ */
+function classifyIlinkResponse(
+  data: { ret?: number; errcode?: number; errmsg?: string } | null,
+): { ok: true } | { ok: false; ret?: number; error: string } {
+  if (!data) return { ok: true };
+  const errmsg = typeof data.errmsg === 'string' ? data.errmsg.trim() : '';
+  const retFailed = data.ret != null && data.ret !== 0;
+  const errcodeFailed = typeof data.errcode === 'number' && data.errcode !== 0;
+  if (!retFailed && !errcodeFailed && !errmsg) return { ok: true };
+  return {
+    ok: false,
+    ret: data.ret,
+    error: `ret=${data.ret ?? 'n/a'} errcode=${data.errcode ?? ''} errmsg=${errmsg}`.trim(),
+  };
+}
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;

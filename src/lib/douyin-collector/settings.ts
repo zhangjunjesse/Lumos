@@ -1,4 +1,5 @@
 import { getDb, getSetting, setSetting } from '@/lib/db';
+import { normalizeBrowserContextId } from '@/lib/browser-provider/labels';
 
 /**
  * Douyin collector settings live in the global Lumos settings store rather
@@ -22,6 +23,7 @@ const KEY_AI_SUMMARY_PROMPT = 'douyin_collector_ai_summary_prompt';
 const KEY_AI_CHAPTERS_PROMPT = 'douyin_collector_ai_chapters_prompt';
 const KEY_AI_TAGS_PROMPT = 'douyin_collector_ai_tags_prompt';
 const KEY_RISK_NOTE = 'douyin_collector_risk_note';
+const KEY_BROWSER_CONTEXT_ID = 'douyin_collector_browser_context_id';
 
 const DEFAULT_LIBRARY_COLLECTION_NAME = '联网搜索资料';
 const DEFAULT_LIBRARY_COLLECTION_DESCRIPTION =
@@ -45,6 +47,13 @@ export interface DouyinCollectorSettings {
   aiChaptersPrompt: string;
   aiTagsPrompt: string;
   riskNote: string;
+  /**
+   * Which Lumos browser context creator/keyword scraping must use.
+   * Explicit user choice — no silent fallback to another browser
+   * (a wrong/un-launched context fails loudly pointing at itself,
+   * instead of the old auto-guess that masked the real cause).
+   */
+  browserContextId: string;
 }
 
 const DEFAULT_AI_SUMMARY = `请用 4–6 句话总结这条抖音视频的要点：先列结论，再给关键论据；用客观陈述，不加营销修辞。`;
@@ -74,6 +83,7 @@ export function getDouyinCollectorSettings(): DouyinCollectorSettings {
     aiChaptersPrompt: getSetting(KEY_AI_CHAPTERS_PROMPT) ?? DEFAULT_AI_CHAPTERS,
     aiTagsPrompt: getSetting(KEY_AI_TAGS_PROMPT) ?? DEFAULT_AI_TAGS,
     riskNote: getSetting(KEY_RISK_NOTE) ?? DEFAULT_RISK_NOTE,
+    browserContextId: normalizeBrowserContextId(getSetting(KEY_BROWSER_CONTEXT_ID)),
   };
 }
 
@@ -148,6 +158,9 @@ export function updateDouyinCollectorSettings(patch: Partial<DouyinCollectorSett
   if (typeof patch.aiChaptersPrompt === 'string') setSetting(KEY_AI_CHAPTERS_PROMPT, patch.aiChaptersPrompt);
   if (typeof patch.aiTagsPrompt === 'string') setSetting(KEY_AI_TAGS_PROMPT, patch.aiTagsPrompt);
   if (typeof patch.riskNote === 'string') setSetting(KEY_RISK_NOTE, patch.riskNote);
+  if (typeof patch.browserContextId === 'string') {
+    setSetting(KEY_BROWSER_CONTEXT_ID, normalizeBrowserContextId(patch.browserContextId));
+  }
 
   return getDouyinCollectorSettings();
 }

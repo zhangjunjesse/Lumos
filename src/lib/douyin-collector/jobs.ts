@@ -16,11 +16,43 @@ import {
 } from './scraper';
 import { fetchCreatorAwemesViaBrowser } from './creator-browser-scrape';
 import { fetchKeywordAwemesViaBrowser } from './keyword-browser-scrape';
+import { fetchVideoMetadataResilient } from './video-metadata-resilient';
+import { reportJobProgress } from './job-progress';
 import { parseVideoTags } from './parsers';
 import type { CreatorRecord, KeywordRecord } from './types';
 import { COLLECTION_CREATORS, COLLECTION_KEYWORDS } from './constants';
 
 const RUN_HISTORY_COLLECTION = 'run_history';
+
+/**
+ * Back-fill failures split into two honest buckets so the job summary
+ * tells the user *why* videos didn't land:
+ *   - 风控 (`phase:'risk'`): douyin rate-limit skeleton — recoverable,
+ *     worth a re-run or a logged-in 采集浏览器.
+ *   - 无效: genuinely deleted / private / region-locked — not coming back.
+ */
+export function backfillFailureSuffix(riskCount: number, otherCount: number): string {
+  const parts: string[] = [];
+  if (riskCount > 0) {
+    parts.push(`${riskCount} 条被抖音风控（限流骨架页，稍后重跑失败或换已登录采集浏览器）`);
+  }
+  if (otherCount > 0) parts.push(`${otherCount} 条无效（已删除 / 私密 / 地区受限）`);
+  return parts.length > 0 ? ` · ${parts.join(' · ')}` : '';
+}
+
+export function backfillFailureReason(
+  riskCount: number,
+  otherCount: number,
+  sample?: string,
+): string {
+  if (riskCount > 0 && otherCount === 0) {
+    return `本批 ${riskCount} 条全部被抖音风控（返回限流骨架页）；点「重跑失败」稍后再试，或在「设置 → 采集浏览器」选一个已登录上下文重采。`;
+  }
+  if (riskCount > 0) {
+    return `${riskCount} 条被风控、${otherCount} 条无效；风控部分稍后重跑或换已登录采集浏览器。`;
+  }
+  return sample ?? '搜索结果均未能读取视频元数据。';
+}
 
 /**
  * Bookkeeping for collect_jobs: enqueue a job, mark it running / success /
@@ -32,6 +64,10 @@ const RUN_HISTORY_COLLECTION = 'run_history';
 export interface CreateJobInput {
   kind: JobKind;
   targetRef: string;
+  /** 元数据后是否继续跑字幕→摘要→入库；缺省 true。 */
+  autoProcess?: boolean;
+  /** undefined=沿用全局设置；true/false=本次 job 显式入库语义。 */
+  publishToKnowledge?: boolean;
 }
 
 export function createJob(input: CreateJobInput): CollectJobRow {
@@ -46,6 +82,8 @@ export function createJob(input: CreateJobInput): CollectJobRow {
     failure_reason: null,
     discovered_count: 0,
     transcribed_count: 0,
+    auto_process: input.autoProcess !== false,
+    publish_to_knowledge: input.publishToKnowledge,
     updated_at: now,
   });
 }
@@ -138,6 +176,10 @@ async function runKeywordJob(
   }
   const query = keyword.query.trim();
 
+  reportJobProgress(jobId, {
+    phase: 'discovering',
+    message: `正在抖音搜索"${query}"，打开页面发现视频列表…`,
+  });
   // Round 169/181: route through BrowserManager (same architectural path
   // creator scraping unblocked in Round 167). Search SSR is dead, but the
   // rendered DOM after JS-VM unpack works once cookies are injected.
@@ -158,12 +200,26 @@ async function runKeywordJob(
   }
 
   let added = 0;
-  const newVideoIds: string[] = [];
+  let riskCount = 0;
+  const processVideoIds: string[] = [];
   const failures: string[] = [];
+  const total = browserOutcome.awemeIds.length;
+  reportJobProgress(jobId, {
+    phase: 'backfilling',
+    total,
+    processed: 0,
+    message: `发现 ${total} 条视频，正在补全"${query}"的元数据…`,
+  });
+  let processed = 0;
   for (const awemeId of browserOutcome.awemeIds) {
-    const single = await fetchVideoMetadata(awemeId);
+    // Resilient back-fill: paced anonymous HTTP, with a logged-in
+    // browser retry when douyin answers the rate-limit skeleton.
+    const single = await fetchVideoMetadataResilient(awemeId);
+    processed += 1;
     if (!single.ok) {
+      if (single.phase === 'risk') riskCount += 1;
       failures.push(`${awemeId}: ${single.reason}`);
+      reportJobProgress(jobId, { processed, added, risk: riskCount, message: '' });
       continue;
     }
     const r = upsertVideoFromScrape(single.metadata);
@@ -177,28 +233,53 @@ async function runKeywordJob(
         tags: JSON.stringify([...existing, query]),
       });
     }
-    if (r.created) newVideoIds.push(r.id);
+    if (shouldProcessVideoForJob(r.created, job)) processVideoIds.push(r.id);
     added += 1;
+    reportJobProgress(jobId, { processed, added, risk: riskCount, message: '' });
   }
 
-  const finalStatus = added > 0 ? 'success' : 'failed';
-  const finalFailureReason = added === 0 && failures.length > 0 ? failures[0] : undefined;
+  const otherCount = failures.length - riskCount;
+  const metadataOk = added > 0;
+  // 关键修复：元数据成功且后面要跑 pipeline 时，job 必须保持非终态，
+  // 由 runAutoPipelineForJob 写诚实终态——杜绝「先标 success 再处理」的静默失败。
+  const willProcess = metadataOk && processVideoIds.length > 0 && job.auto_process !== false;
+  const finalStatus = metadataOk ? 'success' : 'failed';
+  reportJobProgress(jobId, {
+    phase: willProcess ? 'processing' : metadataOk ? 'done' : 'failed',
+    processed: total,
+    added,
+    risk: riskCount,
+    skipped: otherCount,
+    message: willProcess
+      ? `元数据补全完成（入库 ${added}、风控 ${riskCount}），正在后台抓字幕/总结/入库…`
+      : metadataOk
+        ? `仅采集元数据 ${added} 条（未要求 auto_process 或无新视频，未抓字幕/入库）。`
+        : '',
+  });
+  const finalFailureReason =
+    added === 0 && failures.length > 0
+      ? backfillFailureReason(riskCount, otherCount, failures[0])
+      : undefined;
   store.update<KeywordRecord>(COLLECTION_KEYWORDS, keyword.id, {
-    last_failure_reason: finalStatus === 'success' ? null : finalFailureReason ?? '关键词搜索结果均未能读取视频元数据。',
+    last_failure_reason: metadataOk ? null : finalFailureReason ?? '关键词搜索结果均未能读取视频元数据。',
     last_checked_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
   const summary = `已采集 ${added} 条视频（关键词路径：内置浏览器；query=${query}）${
-    failures.length > 0 ? ` · 跳过 ${failures.length} 条无效`: ''
+    backfillFailureSuffix(riskCount, otherCount)
   }`;
+  // willProcess 时保持 running；终态与 run_history 由 pipeline 链路负责。
   const updated = markJobStatus(jobId, {
-    status: finalStatus,
+    status: willProcess ? 'running' : finalStatus,
     discoveredCount: added,
-    failureReason: finalFailureReason,
+    failureReason: willProcess ? undefined : finalFailureReason,
   });
-  recordRun(job, finalStatus, summary);
-  if (newVideoIds.length > 0) {
-    await runAutoPipelineForJob(jobId, newVideoIds);
+  if (!willProcess) recordRun(job, finalStatus, summary);
+  if (processVideoIds.length > 0) {
+    await runAutoPipelineForJob(jobId, processVideoIds, {
+      force: job.auto_process !== false,
+      publishToKnowledge: job.publish_to_knowledge,
+    });
   }
   return updated;
 }
@@ -250,8 +331,11 @@ async function runLinkJob(
     discoveredCount: 1,
   });
   recordRun(job, 'success', summary);
-  if (created) {
-    await runAutoPipelineForJob(jobId, [id]);
+  if (shouldProcessVideoForJob(created, job)) {
+    await runAutoPipelineForJob(jobId, [id], {
+      force: job.auto_process !== false,
+      publishToKnowledge: job.publish_to_knowledge,
+    });
   }
   return updated;
 }
@@ -272,6 +356,10 @@ async function runCreatorJob(
     return updated;
   }
 
+  reportJobProgress(jobId, {
+    phase: 'discovering',
+    message: '正在打开博主主页，发现视频列表…',
+  });
   // Round 167: try the embedded BrowserManager path FIRST. iesdouyin's
   // share/user/* endpoint is JS-VM packed (Round 161); only a real
   // browser context can extract the video list. If the bridge is down
@@ -280,14 +368,28 @@ async function runCreatorJob(
   const browserOutcome = await fetchCreatorAwemesViaBrowser(secUid);
   if (browserOutcome.ok && browserOutcome.awemeIds && browserOutcome.awemeIds.length > 0) {
     let added = 0;
+    let riskCount = 0;
     let skippedAuthorMismatch = 0;
-    const newVideoIds: string[] = [];
+    const processVideoIds: string[] = [];
     const failures: string[] = [];
     let firstAuthorNickname: string | null = null;
+    const total = browserOutcome.awemeIds.length;
+    let processed = 0;
+    reportJobProgress(jobId, {
+      phase: 'backfilling',
+      total,
+      processed: 0,
+      message: `发现 ${total} 条视频，正在补全博主视频元数据…`,
+    });
     for (const awemeId of browserOutcome.awemeIds) {
-      const single = await fetchVideoMetadata(awemeId);
+      // Resilient back-fill: paced anonymous HTTP, with a logged-in
+      // browser retry when douyin answers the rate-limit skeleton.
+      const single = await fetchVideoMetadataResilient(awemeId);
+      processed += 1;
       if (!single.ok) {
+        if (single.phase === 'risk') riskCount += 1;
         failures.push(`${awemeId}: ${single.reason}`);
+        reportJobProgress(jobId, { processed, added, risk: riskCount, message: '' });
         continue;
       }
       // douyin user pages embed Baidu/SEO-spider video links under
@@ -307,9 +409,21 @@ async function runCreatorJob(
         firstAuthorNickname = single.metadata.authorNickname;
       }
       const r = upsertVideoFromScrape(single.metadata);
-      if (r.created) newVideoIds.push(r.id);
+      if (shouldProcessVideoForJob(r.created, job)) processVideoIds.push(r.id);
       added += 1;
+      reportJobProgress(jobId, { processed, added, risk: riskCount, message: '' });
     }
+    reportJobProgress(jobId, {
+      phase: added > 0 ? 'processing' : 'failed',
+      processed: total,
+      added,
+      risk: riskCount,
+      skipped: skippedAuthorMismatch + (failures.length - riskCount),
+      message:
+        added > 0
+          ? `元数据补全完成（入库 ${added}、风控 ${riskCount}），后续抓字幕/总结/入库在后台继续…`
+          : '',
+    });
     if (creator) {
       const creatorPatch: Partial<CreatorRecord> = {
         last_failure_reason: null,
@@ -327,18 +441,25 @@ async function runCreatorJob(
       }
       store.update<CreatorRecord>(COLLECTION_CREATORS, creator.id, creatorPatch);
     }
+    const otherCount = failures.length - riskCount;
     const skippedSuffix = skippedAuthorMismatch > 0 ? ` · 跳过 ${skippedAuthorMismatch} 条非该博主的相关推荐` : '';
     const summary = failures.length === 0
       ? `已采集 ${added} 条视频（内置浏览器；secUid ${secUid.slice(0, 8)}…）${skippedSuffix}`
-      : `已采集 ${added} 条 / ${failures.length} 失败${skippedSuffix}（${failures.slice(0, 1).join('；')}…）`;
+      : `已采集 ${added} 条${skippedSuffix}${backfillFailureSuffix(riskCount, otherCount)}`;
     const updated = markJobStatus(jobId, {
       status: failures.length === 0 || added > 0 ? 'success' : 'failed',
       discoveredCount: added,
-      failureReason: failures.length > 0 && added === 0 ? failures[0] : undefined,
+      failureReason:
+        failures.length > 0 && added === 0
+          ? backfillFailureReason(riskCount, otherCount, failures[0])
+          : undefined,
     });
     recordRun(job, failures.length === 0 || added > 0 ? 'success' : 'failed', summary);
-    if (newVideoIds.length > 0) {
-      await runAutoPipelineForJob(jobId, newVideoIds);
+    if (processVideoIds.length > 0) {
+      await runAutoPipelineForJob(jobId, processVideoIds, {
+        force: job.auto_process !== false,
+        publishToKnowledge: job.publish_to_knowledge,
+      });
     }
     return updated;
   }
@@ -366,10 +487,10 @@ async function runCreatorJob(
   }
 
   let added = 0;
-  const newVideoIds: string[] = [];
+  const processVideoIds: string[] = [];
   for (const meta of outcome.profile.videos) {
     const r = upsertVideoFromScrape(meta);
-    if (r.created) newVideoIds.push(r.id);
+    if (shouldProcessVideoForJob(r.created, job)) processVideoIds.push(r.id);
     added += 1;
   }
   if (creator) {
@@ -386,17 +507,20 @@ async function runCreatorJob(
   const summary = `已采集 ${added} 条视频（博主：${outcome.profile.nickname ?? secUid.slice(0, 8) + '…'}）`;
   const updated = markJobStatus(jobId, { status: 'success', discoveredCount: added });
   recordRun(job, 'success', summary);
-  if (newVideoIds.length > 0) {
-    await runAutoPipelineForJob(jobId, newVideoIds);
+  if (processVideoIds.length > 0) {
+    await runAutoPipelineForJob(jobId, processVideoIds, {
+      force: job.auto_process !== false,
+      publishToKnowledge: job.publish_to_knowledge,
+    });
   }
   return updated;
 }
 
 /**
  * Upsert a scraped video. Returns the row id and whether the row was
- * newly created (true) or just updated (false). The auto-pipeline only
- * fires on newly-created videos to avoid re-running transcribe / publish
- * on the same video every time the patrol re-fetches the creator.
+ * newly created (true) or just updated (false). Most jobs only auto-process
+ * newly-created videos to avoid re-running transcribe / publish on every
+ * patrol; explicit publish-to-knowledge jobs may backfill existing videos.
  */
 function upsertVideoFromScrape(
   meta: ScrapedVideoMetadata,
@@ -475,6 +599,15 @@ function upsertVideoFromScrape(
   return { id: created.id, created: true };
 }
 
+function shouldProcessVideoForJob(created: boolean, job: CollectJobRow): boolean {
+  if (job.auto_process === false) return false;
+  if (created) return true;
+  // Existing rows are normally left alone so patrols don't repeatedly
+  // transcribe old videos. The progress-visible AI/MCP path explicitly sets
+  // publish_to_knowledge=true, so reruns can backfill a missing knowledge item.
+  return job.publish_to_knowledge === true;
+}
+
 function recordRun(
   job: CollectJobRow,
   status: 'success' | 'failed',
@@ -496,16 +629,61 @@ function recordRun(
   });
 }
 
+/**
+ * 元数据入库后跑「字幕→摘要→入库」并**中心化诚实终态**：所有 kind 共用，
+ * 杜绝「pipeline 没真正成功却留 success」的静默失败，并把处理阶段逐条进度
+ * 推给 job-progress（修复 processing 空转、卡 1/20 无反馈）。
+ */
 async function runAutoPipelineForJob(
   jobId: string,
   videoIds: string[],
+  opts: { force: boolean; publishToKnowledge?: boolean },
 ): Promise<AutoPipelineResult | null> {
   if (videoIds.length === 0) return null;
-  const result = await maybeRunAutoPipeline(videoIds);
-  if (result && !result.skipped) {
+  const total = videoIds.length;
+  const result = await maybeRunAutoPipeline(videoIds, {
+    force: opts.force,
+    publishToKnowledge: opts.publishToKnowledge,
+    onProgress: (done) =>
+      reportJobProgress(jobId, { phase: 'processing', processed: done, total, message: '' }),
+  });
+  // 防御：maybeRunAutoPipeline 实际总返回结果，但测试会 mock 成 undefined，
+  // 且历史契约允许 null —— 拿不到结果就不臆断终态，原样返回。
+  if (!result) return null;
+  if (!result.skipped) {
     updateJobTranscribedCount(jobId, result.succeeded);
   }
-  return result ?? null;
+
+  if (result.skipped) {
+    // 未强制且全局自动处理关闭 → 按设计只采元数据；如实标注，不算失败。
+    reportJobProgress(jobId, {
+      phase: 'done',
+      message:
+        result.skipReason === 'auto_transcribe_disabled'
+          ? '仅采集了元数据：未要求 auto_process 且全局自动处理关闭（字幕/摘要/入库未运行）。'
+          : '',
+    });
+    return result;
+  }
+  if (result.succeeded === 0) {
+    // 关键：有视频却 0 条成功 = 静默失败的根，必须把 job 写成 failed。
+    const detail = result.failures.slice(0, 2).join('；') || '未知原因';
+    const reason = `元数据已入库，但字幕/摘要/入库全部失败（${result.failed} 条）：${detail}`;
+    markJobStatus(jobId, { status: 'failed', failureReason: reason, transcribedCount: 0 });
+    reportJobProgress(jobId, { phase: 'failed', message: reason });
+  } else {
+    const msg =
+      result.failed > 0
+        ? `完成：${result.succeeded} 条${result.autoPublish ? '已抓字幕入库' : '已抓字幕'} / ${result.failed} 条失败`
+        : `完成：${result.succeeded} 条${result.autoPublish ? '已抓字幕并入库' : '已抓字幕'}`;
+    markJobStatus(jobId, {
+      status: 'success',
+      transcribedCount: result.succeeded,
+      failureReason: result.failed > 0 ? msg : null,
+    });
+    reportJobProgress(jobId, { phase: 'done', added: result.succeeded, message: msg });
+  }
+  return result;
 }
 
 function updateJobTranscribedCount(jobId: string, count: number): CollectJobRow | null {

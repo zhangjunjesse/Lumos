@@ -48,8 +48,8 @@ function ExtensionsPageInner() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-6 py-2">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-6 py-2">
         <Tabs value={tab} onValueChange={(v) => setTab(v as ExtTab)}>
           <TabsList>
             <TabsTrigger value="skills">{t('extensions.skills')}</TabsTrigger>
@@ -64,7 +64,7 @@ function ExtensionsPageInner() {
         </Tabs>
         <ExtensionPackManager onImported={() => setRefreshKey((value) => value + 1)} />
       </div>
-      <div className="flex-1 overflow-hidden p-6 flex flex-col min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden p-6">
         {tab === "skills" && <SkillsManager refreshKey={refreshKey} />}
         {tab === "mcp" && <McpManager refreshKey={refreshKey} />}
         {tab === "deepsearch" && <DeepSearchPanel />}

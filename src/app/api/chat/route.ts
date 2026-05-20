@@ -33,6 +33,7 @@ import {
   isBrowserAutomationRequest,
   prefersVisibleBrowserAction,
 } from '@/lib/browser-provider/chat-intent';
+import { isExplicitLumosBugIssueRequest } from '@/lib/lumos-issue-reporter/intent';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -67,6 +68,16 @@ const BROWSER_REQUEST_DISALLOWED_TOOLS = [
 const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main Agent space, not a project-specific thread.
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
 If no project is currently selected, say that clearly and stay general.`;
+
+const LUMOS_BUG_ISSUE_REQUEST_HINT = `
+The user's current message explicitly asks to submit/report a Lumos bug.
+You must use \`mcp__lumos-issue-reporter__report_lumos_bug\` for this request, unless a required field is truly impossible to infer.
+If the user used direct wording such as "提 bug", "提交 bug", "提 issue", or "报到 GitHub", treat that as submission confirmation and set \`confirmed_by_user=true\`.
+Build an issue that is useful for AI code repair: include the visible product area, reproduction steps, actual behavior, expected behavior, source message/link, suspected modules when grounded, and acceptance checks.
+Do not answer with only a suggestion to report the bug.
+Do not say the bug was submitted unless the tool returns \`success: true\` and an \`issueUrl\`.
+If the tool fails, report the exact tool error and the next setup step.
+`.trim();
 
 // Ask 模式工具许可已迁至能力注册中心 buildAskModeAllowance（R4 第三通道）。
 // 旧实现只给知识库/管家开口子、漏微信——同一非对称白名单 bug 的第三处。
@@ -793,6 +804,7 @@ export async function POST(request: NextRequest) {
         })
       : undefined;
 
+    const hasLumosBugIssueIntent = isExplicitLumosBugIssueRequest(content);
     const feishuContext = await buildFeishuOnDemandContext(content, fileAttachments);
     const promptForModel = feishuContext ? `${content}\n\n${feishuContext}` : content;
     const neutralMainAgentWorkingDirectory = process.env.LUMOS_DATA_DIR
@@ -859,6 +871,9 @@ export async function POST(request: NextRequest) {
     if (isPrimaryMainAgentSession) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;
     }
+    if (hasLumosBugIssueIntent) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUG_ISSUE_REQUEST_HINT;
+    }
     // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
@@ -888,12 +903,12 @@ export async function POST(request: NextRequest) {
 
     // Ask 模式权威总钳（必须在所有能力提示之后，靠 recency 压过它们的
     // 祈使句）。R2 保留能力感知（上面照列，agent 知道有啥、能如实告诉
-    // 用户），但本轮只准调许可内的只读工具——消解「只准用X」与发现/IM/
+    // 用户），但本轮只准调许可内工具/受控动作——消解「只准用X」与发现/IM/
     // DeepSearch 提示「use their tools」的指令矛盾，避免 Ask 模式误触工具
     // /意外权限弹窗。非 Ask 模式不加，零回归。
     if (effectiveMode === 'ask') {
       finalSystemPrompt = (finalSystemPrompt || '')
-        + '\n\n(Ask mode — authoritative: the capability and MCP descriptions above are only so you can accurately tell the user what Lumos can do. This turn you may ONLY call the read-only tools explicitly permitted in the Ask-mode allowance stated earlier. Do NOT invoke any other tool — no message sends, web/deepsearch runs, automations, browser control, or goofish/douyin/x tools. If answering needs an action or a non-permitted tool, explain what is possible and that it requires switching out of Ask mode; do not attempt the tool.)';
+        + '\n\n(Ask mode — authoritative: the capability and MCP descriptions above are only so you can accurately tell the user what Lumos can do. This turn you may ONLY call tools or controlled actions explicitly permitted in the Ask-mode allowance stated earlier. Do NOT invoke any other tool — no message sends, web/deepsearch runs, automations, browser control, or goofish/douyin/x tools. For Lumos bug reports, use the issue reporter only when the user explicitly asks to submit/report a bug, and only claim success after the tool returns an issue URL. If answering needs any other action or a non-permitted tool, explain what is possible and that it requires switching out of Ask mode; do not attempt the tool.)';
     }
 
     // Load recent conversation history from DB as fallback context.

@@ -5,6 +5,7 @@ import { createAppDataStore } from '@/lib/app/runtime/data-store';
 
 let _db: Database.Database | null = null;
 let _autoTranscribe = false;
+let _libraryCollectionId: string | null = null;
 
 jest.mock('../storage', () => {
   const actual = jest.requireActual('../storage');
@@ -22,7 +23,7 @@ jest.mock('../settings', () => ({
     transcribePrefer: 'allow-asr',
     longVideoSplitMinutes: 10,
     transcribeConcurrency: 3,
-    libraryCollectionId: null,
+    libraryCollectionId: _libraryCollectionId,
     autoPublish: false,
     autoSummarize: false,
     autoTranscribe: _autoTranscribe,
@@ -37,7 +38,12 @@ jest.mock('../transcribe', () => ({
   transcribeVideoFromNative: jest.fn(),
 }));
 
+jest.mock('../publish', () => ({
+  publishVideoToKnowledge: jest.fn(),
+}));
+
 import { transcribeVideoFromNative as mockedTranscribe } from '../transcribe';
+import { publishVideoToKnowledge as mockedPublish } from '../publish';
 import { maybeRunAutoPipeline } from '../auto-pipeline';
 
 function storeForTests() {
@@ -59,7 +65,10 @@ beforeEach(() => {
     );
   `);
   _autoTranscribe = false;
+  _libraryCollectionId = null;
   (mockedTranscribe as jest.Mock).mockReset();
+  (mockedPublish as jest.Mock).mockReset();
+  (mockedPublish as jest.Mock).mockResolvedValue({ ok: true, itemId: 'kb-1', collectionId: 'col-1' });
 });
 
 describe('maybeRunAutoPipeline', () => {
@@ -200,5 +209,52 @@ describe('maybeRunAutoPipeline', () => {
     // hit exactly 3 (or close to it under jest fake-timer jitter).
     expect(peakInFlight).toBeGreaterThanOrEqual(3);
     expect(peakInFlight).toBeLessThanOrEqual(3);
+  });
+
+  // 回归：异步关键词采集静默失败根因 —— autoTranscribe 默认 false 时，
+  // 显式 force（auto_process=true）必须强制跑链路，不被全局设置 gate 掉。
+  it('force=true runs the pipeline even when autoTranscribe is off (silent-fail root cause)', async () => {
+    _autoTranscribe = false;
+    (mockedTranscribe as jest.Mock).mockResolvedValue({ ok: true, segments: [] });
+
+    const result = await maybeRunAutoPipeline(['v1', 'v2'], { force: true });
+
+    expect(mockedTranscribe).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ attempted: 2, succeeded: 2, failed: 0, skipped: false });
+  });
+
+  it('publishToKnowledge=true publishes even when global autoPublish is off', async () => {
+    _autoTranscribe = false;
+    _libraryCollectionId = 'col-knowledge';
+    (mockedTranscribe as jest.Mock).mockResolvedValue({ ok: true, segments: [] });
+
+    const result = await maybeRunAutoPipeline(['v1'], {
+      force: true,
+      publishToKnowledge: true,
+    });
+
+    expect(mockedTranscribe).toHaveBeenCalledWith('v1');
+    expect(mockedPublish).toHaveBeenCalledWith('v1', 'col-knowledge');
+    expect(result).toMatchObject({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      autoPublish: true,
+      libraryCollectionId: 'col-knowledge',
+    });
+  });
+
+  it('reports per-video progress via onProgress (fixes processing 卡 1/20 无反馈)', async () => {
+    _autoTranscribe = true;
+    (mockedTranscribe as jest.Mock).mockResolvedValue({ ok: true, segments: [] });
+    const ticks: Array<[number, number]> = [];
+
+    await maybeRunAutoPipeline(['v1', 'v2', 'v3'], {
+      onProgress: (done, total) => ticks.push([done, total]),
+    });
+
+    expect(ticks).toHaveLength(3);
+    expect(ticks.map((t) => t[0]).sort()).toEqual([1, 2, 3]);
+    expect(ticks.every((t) => t[1] === 3)).toBe(true);
   });
 });

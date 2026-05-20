@@ -3,8 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   getCandidate,
   getEcommerceStore,
+  listCandidates,
   patchCandidate,
 } from '@/lib/ecommerce-assistant/storage';
+import { isProtectedPromoted } from '@/lib/ecommerce-assistant/discover-lifecycle';
+import { deleteSelectionEvidenceByResearchId } from '@/lib/ecommerce-assistant/discover-evidence-storage';
 import type { DiscoverCandidateRecord } from '@/lib/ecommerce-assistant/types';
 
 export const runtime = 'nodejs';
@@ -76,17 +79,23 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const store = getEcommerceStore();
     const candidate = getCandidate(store, id);
     if (!candidate) return NextResponse.json({ error: '候选不存在。' }, { status: 404 });
-    if (candidate.status === 'promoted') {
+    if (isProtectedPromoted(store, candidate)) {
       return NextResponse.json(
         {
           error:
-            '候选已转入工坊（promoted），不能直接删除——会切断流水线追溯。请先在工坊归档对应的 product_input。',
+            '候选已转入工坊（promoted）且下游 product_input 仍在，不能直接删除——会切断流水线追溯。请先在工坊归档对应的 product_input。',
         },
         { status: 409 },
       );
     }
     const ok = store.delete('discover_candidates', id);
     if (!ok) return NextResponse.json({ error: '候选不存在。' }, { status: 404 });
+    if (
+      candidate.research_id &&
+      listCandidates(store, { research_id: candidate.research_id }).length === 0
+    ) {
+      deleteSelectionEvidenceByResearchId(store, candidate.research_id);
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

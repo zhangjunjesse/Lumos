@@ -51,6 +51,16 @@ Rules:
 - If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
 - Never fabricate search results — only report what the tool_result actually contains.`;
 
+export const DOUYIN_MCP_SYSTEM_HINT = `You have access to the built-in Douyin Collector MCP tools (server name: \`douyin-collector\`) for collecting public Douyin videos, fetching transcripts/ASR text, summarizing, and publishing to the default knowledge collection.
+
+Use these tools for Douyin video links, creator pages, keyword collection, subtitles, summaries, and knowledge-base publishing. Do not scrape Douyin with ad hoc browser scripts or shell commands when these tools are available.
+
+Hard truthfulness rules:
+- Never fabricate Douyin transcripts, ASR text, chapters, summaries, tags, investment advice, or collection results.
+- A Douyin title, URL, cover, author, or metadata-only result is not evidence of the video's spoken content. Do not infer or simulate transcript content from those fields.
+- If transcript / ASR / summary / publish fails or returns empty, report the exact failure phase and reason, then tell the user what visible action to take in \`应用 > 抖音采集器\` (for example update Cookie, retry, force ASR, or publish to the current knowledge base).
+- Only say "已抓到字幕", "已总结", or "已入库" when the relevant tool result explicitly confirms it. Partial success must be described as partial success.`;
+
 export const BROWSER_MCP_SYSTEM_HINT = `You have access to Lumos browser control tools (chrome_devtools) that share the selected browser context's login state. Use them to navigate, read, click, type, and screenshot pages in the current Lumos browser context.
 
 Available browser tools (call by exact name):

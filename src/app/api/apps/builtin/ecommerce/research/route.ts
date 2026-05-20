@@ -5,6 +5,7 @@ import {
   listResearchReports,
 } from '@/lib/ecommerce-assistant/research-storage';
 import { startReport } from '@/lib/ecommerce-assistant/research-runner';
+import { reconcileOrphans } from '@/lib/ecommerce-assistant/research-lifecycle';
 import type { ResearchReportStatus } from '@/lib/ecommerce-assistant/types';
 
 export const runtime = 'nodejs';
@@ -28,6 +29,9 @@ export async function GET(req: NextRequest) {
       ? (statusParam as ResearchReportStatus)
       : undefined;
     const limit = limitParam ? Math.min(500, Math.max(1, Number(limitParam))) : undefined;
+    // 自愈：把进程重启后残留的 queued/running zombie 行对账成终态，
+    // 这样 UI 永远不会卡在「运行中」死态，无需全局启动钩子。
+    reconcileOrphans();
     const reports = listResearchReports(getResearchStore(), {
       status,
       platform,
@@ -47,10 +51,15 @@ export async function POST(req: NextRequest) {
       instruction?: string;
       sources?: string[];
     };
+    // 平台不再必填——写在 query（自然语言调研需求）里，SOP planner 自己抽。
     const platform = String(body.platform ?? '').trim();
     const query = String(body.query ?? '').trim();
-    if (!platform) return NextResponse.json({ error: '必须提供 platform。' }, { status: 400 });
-    if (!query) return NextResponse.json({ error: '必须提供 query。' }, { status: 400 });
+    if (!query) {
+      return NextResponse.json(
+        { error: '必须提供调研需求描述（query）。' },
+        { status: 400 },
+      );
+    }
     const sources = Array.isArray(body.sources)
       ? body.sources.map((s) => String(s).trim()).filter(Boolean)
       : undefined;

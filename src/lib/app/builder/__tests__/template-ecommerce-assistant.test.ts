@@ -74,6 +74,7 @@ describe('template-ecommerce-assistant', () => {
       'image_jobs',
       'image_outputs',
       'style_presets',
+      'selection_evidence',
     ]) {
       expect(entities).toContain(business);
     }

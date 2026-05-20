@@ -90,16 +90,17 @@ export function aggregateTagPerformance(listings: ListingHoverResult[]): {
   listingCount: number;
 } {
   const ehuntDetected = listings.some((l) => l.ehuntDetected);
-  const byTag = new Map<string, { vols: number[]; comps: TagPerformance['competition'][]; trends: TagPerformance['trend'][]; listings: Set<number> }>();
+  const byTag = new Map<string, { vols: number[]; comps: TagPerformance['competition'][]; compRaws: number[]; trends: TagPerformance['trend'][]; listings: Set<number> }>();
   listings.forEach((l, idx) => {
     for (const t of l.tags) {
       if (!t.parsed || t.searchVolume === null) continue; // 未解析的不进打分池，不造数
       const key = t.tag.trim().toLowerCase();
       if (key.length < 2) continue;
       let e = byTag.get(key);
-      if (!e) { e = { vols: [], comps: [], trends: [], listings: new Set() }; byTag.set(key, e); }
+      if (!e) { e = { vols: [], comps: [], compRaws: [], trends: [], listings: new Set() }; byTag.set(key, e); }
       e.vols.push(t.searchVolume);
       e.comps.push(t.competition);
+      if (typeof t.competitionRaw === 'number') e.compRaws.push(t.competitionRaw);
       e.trends.push(t.trend);
       e.listings.add(idx);
     }
@@ -108,6 +109,7 @@ export function aggregateTagPerformance(listings: ListingHoverResult[]): {
     keyword,
     searchVolume: median(e.vols),
     competition: aggregateCompetition(e.comps),
+    competitionRaw: e.compRaws.length ? median(e.compRaws) : null,
     trend: mode(e.trends, 'unknown' as TagPerformance['trend']),
     listingCount: e.listings.size,
   }));
@@ -201,21 +203,81 @@ export function analyzeCategory(input: AnalyzeCategoryInput): CategoryKeywordRes
   };
 
   if (!agg.ehuntDetected || agg.scored.length === 0) {
-    // 透出代表性 hover 失败原因（首跑调试需要：是没登录 / 没 tag 元素 /
-    // 解析不到，三种处理完全不同），而非笼统一句。
+    // 透出代表性 hover 失败原因（没登录/没 tag/解析不到，处理各异）。
     const sampleReason = input.listings.find((l) => l.reason)?.reason;
+    // EHunt 检测到却没解析出 → 收集 `[tag] raw` 去重原样回报告供调解析器。
+    const rawSamples: string[] = [];
+    let emptyRaw = 0;
+    let tagTotal = 0;
+    for (const l of input.listings) {
+      for (const t of l.tags) {
+        tagTotal += 1;
+        const r = (t.raw || '').trim();
+        if (r) rawSamples.push(`[${t.tag}] ${r}`);
+        else emptyRaw += 1;
+      }
+    }
+    let ehuntRawSamples = [...new Set(rawSamples)].slice(0, 12);
+    // 全空但有 DOM 探针 → 用真实注入结构快照填充（同一报告代码块通路）。
+    const domProbes = [
+      ...new Set(input.listings.map((l) => l.domProbe || '').filter(Boolean)),
+    ].slice(0, 3);
+    const usingProbe = ehuntRawSamples.length === 0 && domProbes.length > 0;
+    if (usingProbe) ehuntRawSamples = domProbes;
+    const detail = !agg.ehuntDetected
+      ? ''
+      : rawSamples.length
+        ? `——已附 ${ehuntRawSamples.length} 条 hover 浮窗原始文本（见下方），按真实 EHunt 结构调解析器`
+        : usingProbe
+          ? `——${tagTotal} 个 tag hover 均无浮窗，已附 EHunt 真实注入 DOM 快照（见下方），据此调选择器`
+          : `——${tagTotal} 个 tag 全部未捕获到浮窗文本（hover 触发方式 / 浮窗选择器需按真机调，${emptyRaw} 个空）`;
     const reason = !agg.ehuntDetected
       ? `EHunt 未就绪/未检测到（请到「选品」标签页的「浏览器抓取 / 反爬」选 AdsPower 上下文并登录 EHunt 付费账号；非降级，不伪造数据）${sampleReason ? `。诊断：${sampleReason}` : ''}`
-      : `EHunt 已检测到但本批 ${input.listings.length} 个 listing 未解析出可用 tag 表现${sampleReason ? `（诊断：${sampleReason}）` : ''}——可把回传的 raw 文本发开发者按真实浮窗结构调解析`;
+      : `EHunt 已检测到但本批 ${input.listings.length} 个 listing 未解析出可用 tag 表现${sampleReason ? `（诊断：${sampleReason}）` : ''}${detail}`;
     return {
       ...base, ok: false, reason,
       scoredKeywords: [], quadrantDist: { ...EMPTY_QUAD },
       health: null, redLight: false, redLightReasons: [],
       recommendation: '本类目未产出关键词分析。' + reason,
+      ...(agg.ehuntDetected && ehuntRawSamples.length ? { ehuntRawSamples } : {}),
     };
   }
 
-  const scored = classify(agg.scored).sort(
+  // EHunt Competition 是裸数值 → 按类目内中位数分 low/high（对齐 SOP 的
+  // 搜索量中位分界；类目内相对判定，不凭空设阈值、不伪造）。
+  const rawComps = agg.scored
+    .map((s) => s.competitionRaw)
+    .filter((n): n is number => typeof n === 'number');
+  if (rawComps.length > 0) {
+    const compMedian = median(rawComps);
+    for (const s of agg.scored) {
+      if (typeof s.competitionRaw === 'number') {
+        s.competition = s.competitionRaw < compMedian ? 'low' : 'high';
+      }
+    }
+  }
+  const classified = classify(agg.scored);
+  // competition 全 unknown（hover 全失败）→ 强行套四象限得伪结论，降级清单。
+  const compKnown = classified.some((k) => k.competition !== 'unknown');
+  if (!compKnown) {
+    const ranked = [...classified].sort((a, b) => b.searchVolume - a.searchVolume);
+    return {
+      ...base,
+      ok: true,
+      scoredKeywords: ranked,
+      quadrantDist: { ...EMPTY_QUAD },
+      health: null,
+      redLight: false,
+      redLightReasons: [],
+      recommendation:
+        `已取 ${ranked.length} 个关键词，按 EHunt 值降序。EHunt 内联标签视图` +
+        `只提供单一热度/搜索量值，未提供竞争度/趋势，故不做四象限/健康度/` +
+        `红灯判定（避免数据缺失下的伪结论，不伪造）。竞争度需 EHunt` +
+        `「Batch Analysis」富视图，本模块未接入。`,
+    };
+  }
+
+  const scored = classified.sort(
     (a, b) => (a.quadrant === 'blue_ocean' ? -1 : 0) - (b.quadrant === 'blue_ocean' ? -1 : 0) || b.searchVolume - a.searchVolume,
   );
   const quadrantDist = { ...EMPTY_QUAD };

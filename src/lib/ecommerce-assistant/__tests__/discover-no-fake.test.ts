@@ -18,6 +18,7 @@ import {
   DiscoverNoLiveDataError,
   DiscoverResearchError,
 } from '../discover';
+import type { SelectionEvidenceRecord } from '../discover-evidence';
 import type { DiscoverCandidateRecord } from '../types';
 
 const APP_ID = 'ecommerce-assistant';
@@ -93,6 +94,23 @@ describe('runDiscoverResearch — no-fake-data policy', () => {
       limit: 10,
     });
     expect(stuck).toHaveLength(0);
+
+    const failed = store.query<DiscoverCandidateRecord>('discover_candidates', {
+      filter: { status: 'failed' },
+      limit: 10,
+    });
+    expect(failed).toHaveLength(1);
+    const evidence = store.query<SelectionEvidenceRecord>('selection_evidence', {
+      filter: { research_id: failed[0].research_id },
+      limit: 10,
+    });
+    expect(evidence).toHaveLength(5);
+    expect(evidence.find((row) => row.stage === 'seed_terms')).toMatchObject({
+      status: 'partial',
+    });
+    expect(evidence.find((row) => row.stage === 'opportunity_candidates')).toMatchObject({
+      status: 'missing',
+    });
   });
 
   it('error message guides the user toward concrete remediation', async () => {
@@ -216,6 +234,29 @@ describe('runDiscoverResearch — no-fake-data policy', () => {
     expect(sources.find((s) => s.kind === 'selection-strategy')).toMatchObject({
       id: 'blue-ocean',
       weights: expect.objectContaining({ competition: 0.4 }),
+    });
+
+    const evidence = store.query<SelectionEvidenceRecord>('selection_evidence', {
+      filter: { research_id: out.researchId },
+      limit: 10,
+    });
+    expect(evidence.map((row) => row.stage).sort()).toEqual([
+      'keyword_metrics',
+      'manual_validation_notes',
+      'opportunity_candidates',
+      'product_brief',
+      'seed_terms',
+    ]);
+    expect(evidence.find((row) => row.stage === 'opportunity_candidates')).toMatchObject({
+      status: 'available',
+    });
+    const metrics = evidence.find((row) => row.stage === 'keyword_metrics');
+    expect(metrics).toMatchObject({ status: 'partial' });
+    expect(JSON.parse(metrics?.data_json ?? '[]')[0]).toMatchObject({
+      sample_title: 'Handmade Travel Mug',
+      search_volume: null,
+      ctr: null,
+      kd: null,
     });
   });
 
@@ -391,6 +432,16 @@ describe('runDiscoverResearch — no-fake-data policy', () => {
     expect(liveFetch?.details?.[0]).toMatchObject({
       title: 'Handmade Travel Mug',
       bullet_points: ['handmade ceramic'],
+    });
+    const evidence = store.query<SelectionEvidenceRecord>('selection_evidence', {
+      filter: { research_id: rows[0].research_id },
+      limit: 10,
+    });
+    expect(evidence.find((row) => row.stage === 'seed_terms')).toMatchObject({
+      status: 'available',
+    });
+    expect(evidence.find((row) => row.stage === 'opportunity_candidates')).toMatchObject({
+      status: 'missing',
     });
   });
 

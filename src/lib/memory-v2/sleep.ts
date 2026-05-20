@@ -12,7 +12,8 @@ import {
 import { listMemoryV2EntriesMissingEmbedding, setMemoryV2Embedding } from './store';
 import { embedMemoryEntryText, memoryEmbedText } from './vector';
 import { generateMemoryV2ImprovementCandidates } from './self-improvement';
-import { summarizeNewMemoryV2FromMessages } from './auto-summary';
+import { runDailyReview } from './daily-review';
+import { autoProcessSessions, AUTO_ACTION_LLM_BUDGET } from './digest-actions';
 import { summarizeNewMemoryV2CapabilityEvents } from './capability-events';
 import { runMemoryV2CapabilityDiscovery } from './capability-discovery';
 
@@ -45,7 +46,14 @@ export interface MemoryV2SleepReport extends MemoryV2ReflectionReport {
   decay?: { scanned: number; archived: number };
   embeddingBackfill?: { scanned: number; embedded: number };
   pipeline?: {
-    autoMemory: { scanned: number; considered: number; created: number; maxRowId: number };
+    dailyReview: { sessionCount: number; status: string; truncated: boolean };
+    dailyAuto: {
+      improvements: number;
+      experiences: number;
+      insights: number;
+      llmCalls: number;
+      stoppedByBudget: boolean;
+    };
     capabilityEvents: { scanned: number; created: number; maxRowId: number };
     capabilityDiscovery: { scanned: number; created: number; skipped: number };
     selfImprovement: { scanned: number; created: number; totalCandidates: number };
@@ -304,7 +312,11 @@ export async function runMemoryV2Sleep(params: {
   }
 
   try {
-    const autoMemory = await summarizeNewMemoryV2FromMessages();
+    const dailyReview = await runDailyReview({ trigger: triggerType, day: config.today, timezone: config.timezone });
+    // 自动化：总结出来后，自动跑进化建议/沉淀经验/沉淀洞察（幂等，带每晚 LLM 预算刹车）。
+    const dailyAuto = dailyReview.status === 'ok'
+      ? await autoProcessSessions(dailyReview.sourceSessions.map((s) => s.id), AUTO_ACTION_LLM_BUDGET)
+      : { improvements: 0, experiences: 0, insights: 0, llmCalls: 0, stoppedByBudget: false };
     const capabilityDiscovery = runMemoryV2CapabilityDiscovery();
     const capabilityEvents = summarizeNewMemoryV2CapabilityEvents();
     const consolidation = runMemoryV2Consolidation();
@@ -315,7 +327,7 @@ export async function runMemoryV2Sleep(params: {
 
     if (
       baseReport.stats.total === 0
-      && autoMemory.created.length === 0
+      && dailyReview.status !== 'ok'
       && capabilityDiscovery.created.length === 0
       && capabilityEvents.created.length === 0
       && consolidation.archived === 0
@@ -331,12 +343,12 @@ export async function runMemoryV2Sleep(params: {
       decay: { scanned: decay.scanned, archived: decay.archivedIds.length },
       embeddingBackfill,
       pipeline: {
-        autoMemory: {
-          scanned: autoMemory.scanned,
-          considered: autoMemory.considered,
-          created: autoMemory.created.length,
-          maxRowId: autoMemory.maxRowId,
+        dailyReview: {
+          sessionCount: dailyReview.sessionCount,
+          status: dailyReview.status,
+          truncated: dailyReview.truncated,
         },
+        dailyAuto,
         capabilityEvents: {
           scanned: capabilityEvents.scanned,
           created: capabilityEvents.created.length,

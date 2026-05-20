@@ -1,4 +1,4 @@
-import { clusterReportsByBatch, parsePlatformInput } from '../research-batch';
+import { clusterReportsByBatch } from '../research-batch';
 import type { ResearchReport } from '../types';
 
 function r(overrides: Partial<ResearchReport>): ResearchReport {
@@ -23,34 +23,6 @@ function r(overrides: Partial<ResearchReport>): ResearchReport {
     updated_at: null,
   };
 }
-
-describe('parsePlatformInput', () => {
-  it('splits a comma+space input into trimmed lowercase tokens', () => {
-    expect(parsePlatformInput('etsy, AMAZON  walmart')).toEqual(['etsy', 'amazon', 'walmart']);
-  });
-
-  it('accepts Chinese commas and semicolons too', () => {
-    expect(parsePlatformInput('etsy，amazon；walmart')).toEqual(['etsy', 'amazon', 'walmart']);
-  });
-
-  it('returns an empty list for empty / whitespace input', () => {
-    expect(parsePlatformInput('')).toEqual([]);
-    expect(parsePlatformInput('   ')).toEqual([]);
-  });
-
-  it('deduplicates repeated platforms', () => {
-    expect(parsePlatformInput('etsy etsy etsy amazon')).toEqual(['etsy', 'amazon']);
-  });
-
-  it('caps the result at the max (default 6)', () => {
-    const input = 'a b c d e f g h i j';
-    expect(parsePlatformInput(input)).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
-  });
-
-  it('honors a custom max', () => {
-    expect(parsePlatformInput('a b c d', 2)).toEqual(['a', 'b']);
-  });
-});
 
 describe('clusterReportsByBatch', () => {
   it('groups same-query reports created within 5 minutes', () => {

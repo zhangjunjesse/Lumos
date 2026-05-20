@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 
 // 把 LLM 网络边界 mock 在 knowledge/llm（保留真实 KnowledgeEnhancementUnavailableError
-// 与探测器）。默认抽取不出事实，单测按需用 programExtraction 注入 facts/decisions。
+// 与探测器）。单测按需用 programDailyReview 注入单会话小结。
 jest.mock('@/lib/knowledge/llm', () => {
   const actual = jest.requireActual('@/lib/knowledge/llm');
   return {
@@ -32,17 +32,24 @@ async function programEmbeddings(vectorFor: (text: string) => number[]): Promise
   (emb.embedQuery as jest.Mock).mockImplementation(async (text: string) => vectorFor(text));
 }
 
-async function programExtraction(
-  facts: unknown[],
-  decisions: unknown[],
-): Promise<void> {
+async function programDailyReview(digest: unknown): Promise<void> {
   const llm = await import('@/lib/knowledge/llm');
-  (llm.callKnowledgeObjectModel as jest.Mock).mockImplementation(async (params: { system: string }) => (
-    params.system.includes('行动记忆提炼器') ? { facts } : { decisions }
-  ));
+  (llm.callKnowledgeObjectModel as jest.Mock).mockImplementation(async () => digest);
 }
 
-async function failExtractionUnavailable(): Promise<void> {
+// 按 system 提示词分流：digest / 进化建议 / 沉淀经验 三种返回。
+async function programActions(digest: unknown, improvement: unknown, reflection: unknown): Promise<void> {
+  const llm = await import('@/lib/knowledge/llm');
+  (llm.callKnowledgeObjectModel as jest.Mock).mockImplementation(async (p: { system: string }) =>
+    p.system.includes('自我进化建议')
+      ? improvement
+      : p.system.includes('可复用的经验')
+        ? reflection
+        : digest,
+  );
+}
+
+async function failObjectModelUnavailable(): Promise<void> {
   const llm = await import('@/lib/knowledge/llm');
   const { KnowledgeEnhancementUnavailableError } = jest.requireActual('@/lib/knowledge/llm');
   (llm.callKnowledgeObjectModel as jest.Mock).mockRejectedValue(
@@ -516,10 +523,16 @@ describe('Memory v2 action memory runtime', () => {
       metadata: { toolsCount: 0 },
     });
     updateMemoryV2SleepConfig({ enabled: true, time: '00:00' });
-    await programExtraction(
-      [{ kind: 'people', scope: 'user', title: '用户偏好：记忆自动处理', body: '以后不要让我手动点归档或确认，记忆应该由系统自动处理。', importance: 4, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'ADD' }],
-    );
+    await programDailyReview({
+      events: [
+        {
+          requirement: '让记忆由系统自动处理，不要手动点归档或确认',
+          process: '与用户确认偏好',
+          outcome: '已与用户确认该偏好',
+          shortcomings: [],
+        },
+      ],
+    });
 
     const first = await runMemoryV2Sleep({ trigger: 'daily', force: true });
     expect(first.status).toBe('success');
@@ -528,9 +541,17 @@ describe('Memory v2 action memory runtime', () => {
     expect(first.report?.consolidation).toBeTruthy();
     expect(listMemoryV2ImprovementCandidates().length).toBeGreaterThanOrEqual(1);
 
-    // 真实对话/能力事件仍沉淀为记忆
-    const autoMemories = listMemoryV2Entries({ query: '手动点归档', limit: 10 });
-    expect(autoMemories.some((memory) => memory.source_type === 'memory_v2_sleep_auto_summary')).toBe(true);
+    // 当天会话沉淀为「每日复盘产物」，不写回行动记忆（底线①）
+    const { getDailyReview } = await import('../daily-review-store');
+    const review = getDailyReview(getMemoryV2SleepConfig().today);
+    expect(review?.status).toBe('ok');
+    expect(review?.sourceSessions).toHaveLength(1);
+    expect(
+      (review?.sourceSessions[0]?.digest?.events ?? []).some(
+        (e) => e.requirement.includes('记忆'),
+      ),
+    ).toBe(true);
+    expect(listMemoryV2Entries({ query: '手动点归档', limit: 10 })).toHaveLength(0);
     const capabilityMemories = listMemoryV2Entries({ query: 'broken-orders', limit: 10 });
     expect(capabilityMemories.some((memory) => memory.source_type === 'memory_v2_capability_event')).toBe(true);
 
@@ -608,89 +629,26 @@ describe('Memory v2 action memory runtime', () => {
     expect(second.created.length).toBe(0);
   });
 
-  it('LLM extraction ADD creates a scoped memory; repeat is NOOP (no dup)', async () => {
-    const { listMemoryV2Entries } = await import('../store');
-    const { extractAndReconcileMemoryV2 } = await import('../extraction');
-    const ctx = { sessionId: 's1', projectPath: '', ownerModule: 'main-agent' };
-
-    await programExtraction(
-      [{ kind: 'people', scope: 'user', title: '用户沟通偏好', body: '用户希望先给结论再给细节。', importance: 4, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'ADD' }],
-    );
-    const r1 = await extractAndReconcileMemoryV2([{ role: 'user', text: '以后先给结论再给细节' }], ctx);
-    expect(r1.available).toBe(true);
-    expect(r1.added).toHaveLength(1);
-    expect(r1.added[0].scope_type).toBe('user');
-
-    await programExtraction(
-      [{ kind: 'people', scope: 'user', title: '用户沟通偏好', body: '用户希望先给结论再给细节。', importance: 4, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'NOOP' }],
-    );
-    const r2 = await extractAndReconcileMemoryV2([{ role: 'user', text: '再说一遍先结论' }], ctx);
-    expect(r2.added).toHaveLength(0);
-    expect(r2.noop).toBe(1);
-    expect(listMemoryV2Entries({ kind: 'people', status: 'active', scopeType: 'user', scopeKey: 'default', limit: 10 })).toHaveLength(1);
-  });
-
-  it('LLM extraction UPDATE merges an existing memory; DELETE archives it', async () => {
-    const { createMemoryV2Entry, getMemoryV2Entry } = await import('../store');
-    const { extractAndReconcileMemoryV2 } = await import('../extraction');
-    const ctx = { sessionId: 's2', projectPath: '', ownerModule: 'main-agent' };
-    const existing = createMemoryV2Entry({
-      kind: 'task', scopeType: 'session', scopeKey: 's2', sessionId: 's2',
-      title: '部署目标', body: '部署到测试环境。', importance: 3,
-    });
-
-    await programExtraction(
-      [{ kind: 'task', scope: 'session', title: '部署目标', body: '改为部署到生产环境。', importance: 4, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'UPDATE', targetId: existing.id, title: '部署目标', body: '改为部署到生产环境。' }],
-    );
-    const r1 = await extractAndReconcileMemoryV2([{ role: 'user', text: '部署目标变了' }], ctx);
-    expect(r1.updated).toHaveLength(1);
-    expect(getMemoryV2Entry(existing.id)?.body).toContain('生产环境');
-
-    await programExtraction(
-      [{ kind: 'task', scope: 'session', title: '废弃', body: '之前的部署目标作废。', importance: 2, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'DELETE', targetId: existing.id }],
-    );
-    const r2 = await extractAndReconcileMemoryV2([{ role: 'user', text: '作废' }], ctx);
-    expect(r2.archivedIds).toContain(existing.id);
-    expect(getMemoryV2Entry(existing.id)?.status).toBe('archived');
-  });
-
-  it('project-scoped fact without a project path is skipped (never pollutes global)', async () => {
-    const { listMemoryV2Entries } = await import('../store');
-    const { extractAndReconcileMemoryV2 } = await import('../extraction');
-
-    await programExtraction(
-      [{ kind: 'task', scope: 'project', title: '项目内决定', body: '这个项目先不做 X。', importance: 3, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'ADD' }],
-    );
-    const r = await extractAndReconcileMemoryV2(
-      [{ role: 'user', text: '这个项目先不做 X' }],
-      { sessionId: 's3', projectPath: '', ownerModule: 'chat' },
-    );
-    expect(r.skipped).toBe(1);
-    expect(r.added).toHaveLength(0);
-    expect(listMemoryV2Entries({ status: 'all', includeArchived: true, limit: 50 })).toHaveLength(0);
-  });
-
-  it('no text model available: capture nothing, no regex fallback, sleep still succeeds', async () => {
+  it('no text model available: daily review is unavailable, fabricates nothing, sleep still succeeds', async () => {
     const { addMessage, createSession } = await import('@/lib/db');
-    const { listMemoryV2Entries, createMemoryV2Entry } = await import('../store');
-    const { runMemoryV2Sleep, updateMemoryV2SleepConfig } = await import('../sleep');
+    const { createMemoryV2Entry } = await import('../store');
+    const { getMemoryV2SleepConfig, runMemoryV2Sleep, updateMemoryV2SleepConfig } = await import('../sleep');
+    const { getDailyReview } = await import('../daily-review-store');
     const session = createSession('no model', '', '', path.join(tmpDir, 'nm'), 'code');
     addMessage(session.id, 'user', '以后部署都用 staging 分支，不要直接上 main。');
     createMemoryV2Entry({ kind: 'capability', scopeType: 'main_agent', scopeKey: 'main', title: '缺能力', body: '需要补齐 MCP 能力。', tags: ['gap'] });
     updateMemoryV2SleepConfig({ enabled: true, time: '00:00' });
-    await failExtractionUnavailable();
+    await failObjectModelUnavailable();
 
     const run = await runMemoryV2Sleep({ trigger: 'daily', force: true });
     expect(run.status).toBe('success');
-    expect(run.report?.pipeline?.autoMemory.created).toBe(0);
-    const auto = listMemoryV2Entries({ status: 'all', includeArchived: true, limit: 50 })
-      .filter((memory) => memory.source_type === 'memory_v2_sleep_auto_summary');
-    expect(auto).toHaveLength(0);
+    expect(run.report?.pipeline?.dailyReview.status).toBe('unavailable');
+
+    const review = getDailyReview(getMemoryV2SleepConfig().today);
+    expect(review?.status).toBe('unavailable');
+    // 小结失败但会话仍被列出（可点开看原对话），且不编造小结
+    expect(review?.sourceSessions).toHaveLength(1);
+    expect(review?.sourceSessions[0]?.digest).toBeNull();
   });
 
   it('semantic recall surfaces a relevant memory with zero keyword overlap', async () => {
@@ -738,30 +696,188 @@ describe('Memory v2 action memory runtime', () => {
     expect(getMemoryV2Entry(stale.id)?.status).toBe('archived');
   });
 
-  it('reconcile finds a semantically-equal memory across scopes (no cross-scope dup)', async () => {
-    const { createMemoryV2Entry, setMemoryV2Embedding, listMemoryV2Entries } = await import('../store');
-    const { extractAndReconcileMemoryV2 } = await import('../extraction');
-    const { vectorToBuffer } = await import('@/lib/knowledge/embedder');
-
-    await programEmbeddings((t) => (/密码|password|凭证|登录/.test(t) ? [1, 0, 0] : [0, 1, 0]));
-    const existing = createMemoryV2Entry({
-      kind: 'resource', scopeType: 'user', scopeKey: 'default',
-      title: '本机密码', body: '本地电脑登录密码已存 Vault。', importance: 5,
+  it('daily review builds a structured artifact from the day sessions, not memory entries', async () => {
+    const { addMessage, createSession, getDb } = await import('@/lib/db');
+    const { runDailyReview } = await import('../daily-review');
+    const { getDailyReview } = await import('../daily-review-store');
+    const session = createSession('today work', '', '', path.join(tmpDir, 'dr'), 'code');
+    addMessage(session.id, 'user', '帮我把抖音采集脚本跑通，老是 404。');
+    addMessage(session.id, 'assistant', '尝试了三次仍 404，没能跑通。');
+    await programDailyReview({
+      events: [
+        {
+          requirement: '让抖音采集脚本跑通',
+          process: '尝试三次均失败',
+          outcome: '仍 404，未跑通',
+          shortcomings: ['连续 3 次 404 未解决'],
+        },
+      ],
+      insights: [{ type: '能力缺口', content: '缺少抖音风控应对能力' }],
     });
-    setMemoryV2Embedding(existing.id, vectorToBuffer([1, 0, 0]));
 
-    await programExtraction(
-      [{ kind: 'resource', scope: 'session', title: '本机密码', body: '本地电脑登录密码。', importance: 5, confidence: 0.9 }],
-      [{ factIndex: 0, op: 'NOOP' }],
+    const rec = await runDailyReview({ trigger: 'manual' });
+    expect(rec.status).toBe('ok');
+    expect(rec.sessionCount).toBe(1);
+
+    const { digestId } = await import('../daily-review-store');
+    const stored = getDailyReview(rec.reviewDay);
+    const ss = stored?.sourceSessions ?? [];
+    expect(ss).toHaveLength(1);
+    expect(ss[0]).toMatchObject({ id: session.id, title: 'today work', messageCount: 2 });
+    expect(ss[0].digest?.events[0]).toEqual({
+      id: digestId(session.id, '让抖音采集脚本跑通'),
+      requirement: '让抖音采集脚本跑通',
+      process: '尝试三次均失败',
+      outcome: '仍 404，未跑通',
+      shortcomings: ['连续 3 次 404 未解决'],
+    });
+    expect(ss[0].digest?.insights[0]).toEqual({
+      id: digestId(session.id, '能力缺口', '缺少抖音风控应对能力'),
+      type: '能力缺口',
+      content: '缺少抖音风控应对能力',
+    });
+
+    // 底线①：复盘产物不落 memory_v2_entries
+    const entries = getDb().prepare('SELECT COUNT(*) AS n FROM memory_v2_entries').get() as { n: number };
+    expect(entries.n).toBe(0);
+  });
+
+  it('empty day produces an explicit empty review, never a fabricated one', async () => {
+    const { runDailyReview } = await import('../daily-review');
+    const rec = await runDailyReview({ trigger: 'manual', day: '2000-01-01' });
+    expect(rec.status).toBe('empty');
+    expect(rec.sessionCount).toBe(0);
+    expect(rec.sourceSessions).toEqual([]);
+  });
+
+  it('findDailyReviewSession looks up a session (with digest) for the drill-down page', async () => {
+    const { addMessage, createSession } = await import('@/lib/db');
+    const { runDailyReview } = await import('../daily-review');
+    const { findDailyReviewSession } = await import('../daily-review-store');
+    const session = createSession('钻取测试', '', '', path.join(tmpDir, 'dd'), 'code');
+    addMessage(session.id, 'user', '帮我看下这个会话能不能钻取。');
+    await programDailyReview({
+      events: [{ requirement: '验证钻取', process: '', outcome: '', shortcomings: [] }],
+    });
+
+    await runDailyReview({ trigger: 'manual' });
+
+    const found = findDailyReviewSession(session.id);
+    expect(found?.session.title).toBe('钻取测试');
+    expect(found?.session.digest?.events[0]?.requirement).toBe('验证钻取');
+    expect(findDailyReviewSession('no-such-session')).toBeUndefined();
+  });
+
+  it('digest prompt is configurable and falls back to the built-in default', async () => {
+    const { getDigestPrompt, setDigestPrompt } = await import('../digest-prompt');
+    const { DIGEST_SYSTEM } = await import('../daily-review-schema');
+
+    const initial = getDigestPrompt();
+    expect(initial.isCustom).toBe(false);
+    expect(initial.prompt).toBe(DIGEST_SYSTEM);
+
+    const custom = setDigestPrompt('只输出一句话总结。');
+    expect(custom.isCustom).toBe(true);
+    expect(custom.prompt).toBe('只输出一句话总结。');
+    expect(getDigestPrompt().prompt).toBe('只输出一句话总结。');
+
+    // 空 → 恢复默认
+    const reset = setDigestPrompt('   ');
+    expect(reset.isCustom).toBe(false);
+    expect(reset.prompt).toBe(DIGEST_SYSTEM);
+
+    // 等于默认 → 视为未自定义
+    const sameAsDefault = setDigestPrompt(DIGEST_SYSTEM);
+    expect(sameAsDefault.isCustom).toBe(false);
+  });
+
+  it('sinkInsight 把洞察按类型沉淀进 memory_v2_entries（用户偏好→people / 能力缺口→capability）', async () => {
+    const { addMessage, createSession } = await import('@/lib/db');
+    const { runDailyReview } = await import('../daily-review');
+    const { sinkInsight } = await import('../digest-actions');
+    const { listMemoryV2Entries } = await import('../store');
+    const session = createSession('沉淀洞察', '', '', path.join(tmpDir, 'si'), 'code');
+    addMessage(session.id, 'user', '又让你查微信群消息。');
+    await programDailyReview({
+      events: [{ requirement: '查微信群消息', process: '', outcome: '未解决', shortcomings: [] }],
+      insights: [
+        { type: '用户偏好', content: '希望 Lumos 直接承认做不到，别编理由' },
+        { type: '能力缺口', content: '缺少微信工作群消息查询工具' },
+      ],
+    });
+    await runDailyReview({ trigger: 'manual' });
+
+    const r0 = sinkInsight(session.id, 0);
+    expect(r0.status).toBe('ok');
+    expect(r0.entry?.kind).toBe('people');
+    const r1 = sinkInsight(session.id, 1);
+    expect(r1.status).toBe('ok');
+    expect(r1.entry?.kind).toBe('capability');
+    expect(sinkInsight(session.id, 9).status).toBe('error');
+
+    const entries = listMemoryV2Entries({ status: 'all', includeArchived: true, limit: 50 });
+    expect(entries.some((e) => e.kind === 'people' && e.body.includes('编理由'))).toBe(true);
+    expect(entries.some((e) => e.kind === 'capability' && e.body.includes('微信工作群'))).toBe(true);
+
+    // 幂等：同一洞察再沉淀 → 命中同一编号更新，不产生重复
+    const again = sinkInsight(session.id, 0);
+    expect(again.entry?.id).toBe(r0.entry?.id);
+    const people = listMemoryV2Entries({ status: 'all', kind: 'people', includeArchived: true, limit: 50 })
+      .filter((e) => e.source_type === 'memory_v2_daily_review');
+    expect(people).toHaveLength(1);
+  });
+
+  it('夜间自动化：总结后自动出进化建议/沉淀经验/沉淀洞察；超预算即停', async () => {
+    const { addMessage, createSession } = await import('@/lib/db');
+    const { runDailyReview } = await import('../daily-review');
+    const { autoProcessSessions } = await import('../digest-actions');
+    const { listMemoryV2ImprovementCandidates } = await import('../self-improvement');
+    const s = createSession('自动化会话', '', '', path.join(tmpDir, 'auto'), 'code');
+    addMessage(s.id, 'user', '看下微信消息');
+    await programActions(
+      {
+        events: [{ requirement: '看微信', process: '', outcome: '部分', shortcomings: ['没有工具调用证据'] }],
+        insights: [{ type: '能力缺口', content: '缺微信查询工具' }],
+      },
+      { candidateType: 'mcp', title: '补微信查询 MCP', problem: '缺工具', proposedCapability: '实现微信群消息查询', riskLevel: 'medium' },
+      { title: '工具缺失先承认', lesson: '没工具就直说，别虚报' },
     );
-    const r = await extractAndReconcileMemoryV2(
-      [{ role: 'user', text: '我本地电脑登录密码这事' }],
-      { sessionId: 'sx', projectPath: '', ownerModule: 'main-agent' },
-    );
-    expect(r.added).toHaveLength(0);
-    expect(r.noop).toBe(1);
-    const resources = listMemoryV2Entries({ kind: 'resource', status: 'active', limit: 20 });
-    expect(resources).toHaveLength(1);
-    expect(resources[0].id).toBe(existing.id);
+    await runDailyReview({ trigger: 'manual' });
+
+    const r = await autoProcessSessions([s.id], 40);
+    expect(r.improvements).toBe(1);
+    expect(r.experiences).toBe(1);
+    expect(r.insights).toBe(1);
+    expect(listMemoryV2ImprovementCandidates({ limit: 10 }).length).toBeGreaterThanOrEqual(1);
+
+    // 幂等：再跑一次不新增候选
+    const r2 = await autoProcessSessions([s.id], 40);
+    expect(r2.improvements).toBe(1);
+    expect(listMemoryV2ImprovementCandidates({ limit: 10 }).length).toBe(1);
+
+    // 预算刹车：预算 1 时跑不完，stoppedByBudget=true
+    const tight = await autoProcessSessions([s.id], 1);
+    expect(tight.stoppedByBudget).toBe(true);
+  });
+
+  it('每日复盘排除定时/工作流等自动化会话，只看真实用户会话', async () => {
+    const { addMessage, createSession } = await import('@/lib/db');
+    const { runDailyReview } = await import('../daily-review');
+    const real = createSession('看下微信消息可以吗', '', '', path.join(tmpDir, 'real'), 'code');
+    addMessage(real.id, 'user', '看下 etsy 群消息');
+    const sched = createSession('[定时] 微信助手 · 每日工作总结', '', '', path.join(tmpDir, 'sch'), 'code');
+    addMessage(sched.id, 'assistant', '（每日工作总结自动产出）');
+    const wf = createSession('工作流跑批', '', '', path.join(tmpDir, 'wf'), 'workflow');
+    addMessage(wf.id, 'user', '执行节点');
+    await programDailyReview({
+      events: [{ requirement: '看微信消息', process: '', outcome: '部分', shortcomings: [] }],
+      insights: [],
+    });
+
+    const rec = await runDailyReview({ trigger: 'manual' });
+    const ids = rec.sourceSessions.map((s) => s.id);
+    expect(ids).toContain(real.id);
+    expect(ids).not.toContain(sched.id);
+    expect(ids).not.toContain(wf.id);
   });
 });

@@ -29,6 +29,8 @@ export interface ScoredKeyword {
   keyword: string;
   searchVolume: number;
   competition: Competition;
+  /** EHunt Competition 裸数值（类目内中位数前）；hover 失败时 null。 */
+  competitionRaw: number | null;
   trend: Trend;
   quadrant: Quadrant;
   /** 命中该 tag 的 listing 数（卖家使用广度）。 */
@@ -64,6 +66,12 @@ export interface CategoryKeywordResult {
   recommendation: string;
   /** 标题 n-gram 候选（无搜索量，仅旁证，单独陈列不混入打分池）。 */
   supplementalTitleCandidates: { keyword: string; listingCount: number }[];
+  /**
+   * EHunt 检测到但 tag 未解析出表现时，回传 hover 抓到的浮窗原始文本
+   * （`[tag] raw`，去重截断）。报告以代码块原样呈现，供按真实 EHunt DOM
+   * 结构调解析器——不伪造、不丢，把"发 raw 给开发者"落到实处。
+   */
+  ehuntRawSamples?: string[];
 }
 
 export interface KeywordResearchReport {

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import {
-  deleteResearchReport,
   getResearchReport,
   getResearchStore,
   readReportMarkdown,
 } from '@/lib/ecommerce-assistant/research-storage';
+import { deleteReportWithCancel } from '@/lib/ecommerce-assistant/research-lifecycle';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,7 +32,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
     const { id } = await params;
-    const ok = deleteResearchReport(getResearchStore(), id);
+    // 先取消正在运行的后台任务，再删可见记录与磁盘 md（CLAUDE.md 生命周期规则）。
+    const ok = deleteReportWithCancel(id);
     if (!ok) return NextResponse.json({ error: '报告不存在或已被删除。' }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err) {

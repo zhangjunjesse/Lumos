@@ -6,6 +6,7 @@ import {
   BuiltinDeepResearchCard,
   BuiltinDouyinCollectorCard,
   BuiltinEcommerceCard,
+  BuiltinEtsyErankCard,
   BuiltinGoofishCard,
   BuiltinWeChatCard,
 } from '@/components/apps/list/BuiltinAppCard';
@@ -195,6 +196,7 @@ export default function AppsListPage(): React.ReactElement {
             {visibleBuiltinIds.has('deep-research') ? (
               <BuiltinDeepResearchCard status={deepResearchStatus} />
             ) : null}
+            {visibleBuiltinIds.has('etsy-erank') ? <BuiltinEtsyErankCard /> : null}
           </div>
         ) : (
           <EmptyAppsHint />

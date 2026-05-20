@@ -8,63 +8,22 @@ import {
 } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
-import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import {
-  createLumosButlerMcpServer,
-  LUMOS_BUTLER_MCP_SYSTEM_HINT,
-} from '@/lib/tools/lumos-butler-mcp-server';
-import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
-import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im';
+  buildCapabilityPlan,
+  buildDbServerHints,
+} from '@/lib/agent-capabilities/registry';
+import type { ConnectorContext } from '@/lib/agent-capabilities/types';
+import { hasImToolsMcp } from '@/lib/im';
 import { buildLatestAppImNotificationHint } from '@/lib/app/im-bridge';
 import { getActiveUserId } from '@/lib/auth/user-service';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
-import type { ClaudeStreamOptions, FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
+import { isWeChatAssistantChatSession } from '@/lib/chat/wechat-assistant-session';
+import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
+import { isEcommerceAssistantChatSession } from '@/lib/chat/ecommerce-assistant-session';
+import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
+import type { FileAttachment, MCPServerConfig, MessageContentBlock, TokenUsage } from '@/types';
 import fs from 'node:fs';
 import path from 'node:path';
-
-const FEISHU_MCP_SYSTEM_HINT = `You have access to Feishu MCP tools (server name: \`feishu\`) for reading/editing Feishu docs, sheets, wikis, drive, and reports. All tool names use the format \`mcp__feishu__<tool>\`.
-
-**Docs & Wiki** — pass any feishu.cn URL directly:
-- \`mcp__feishu__feishu_doc_read\` — read a doc/wiki/docx by URL (returns Markdown). Works for wiki links too.
-- \`mcp__feishu__feishu_doc_append\` — append content to a doc
-- \`mcp__feishu__feishu_doc_update_block\` — update a specific block in a doc
-- \`mcp__feishu__feishu_doc_get_blocks\` / \`mcp__feishu__feishu_doc_create\` / \`mcp__feishu__feishu_doc_overwrite\` — advanced doc ops
-
-**Sheets** (for spreadsheet URLs, NOT doc URLs):
-- \`mcp__feishu__feishu_sheet_read\` — read sheet data
-- \`mcp__feishu__feishu_sheet_append_rows\` / \`mcp__feishu__feishu_sheet_update_cells\` — write to sheets
-
-**Drive & Wiki browse**:
-- \`mcp__feishu__feishu_search\` — search docs/sheets/wiki across drive
-- \`mcp__feishu__feishu_drive_list\` — list files in a folder
-- \`mcp__feishu__feishu_wiki_list_spaces\` — browse wiki spaces/nodes
-
-**Images**: \`mcp__feishu__feishu_image_list\` / \`mcp__feishu__feishu_image_download\`
-
-**Reports** (汇报/weekly/daily summaries):
-- \`mcp__feishu__feishu_report_list\` — find report tasks
-- \`mcp__feishu__feishu_report_read\` — read a report task detail
-
-**Auth**: \`mcp__feishu__feishu_auth_status\` — check auth; if not logged in, tell user to login in Lumos.
-
-Rules:
-- To read any feishu.cn doc or wiki link: call \`mcp__feishu__feishu_doc_read\` with the URL directly.
-- Do not claim content before successful tool_result.
-- If API reports missing scopes, tell user which scope to enable.`;
-const DEEPSEARCH_MCP_SYSTEM_HINT = `You have access to built-in DeepSearch tools for deep web research with shared browser login state. Use them for anti-bot sites like Zhihu, WeChat public articles, Xiaohongshu, Juejin, and Twitter/X.
-
-Available DeepSearch tools (server name: \`deepsearch\`):
-- \`mcp__deepsearch__start\` — start a DeepSearch run. Required param: \`query\` (string). Optional: \`sites\` (array of site keys: zhihu, wechat, xiaohongshu, juejin, x).
-- \`mcp__deepsearch__get_result\` — poll run status and read captured snippets. Required param: \`runId\` (string returned by start).
-- \`mcp__deepsearch__pause\` / \`mcp__deepsearch__resume\` / \`mcp__deepsearch__cancel\` — control run lifecycle. Required param: \`runId\`.
-
-Workflow: call \`mcp__deepsearch__start\` → poll \`mcp__deepsearch__get_result\` until status is \`completed\` or \`partial\` → summarize results.
-
-Rules:
-- Do NOT use raw browser tools when the user wants DeepSearch — use these tools instead.
-- Prefer \`managed_page\` and \`best_effort\` by default.
-- If \`mcp__deepsearch__get_result\` returns \`waiting_login\`, tell the user to finish login in Extensions → DeepSearch, then call \`mcp__deepsearch__resume\`.
-- Never fabricate search results — only report what the tool_result actually contains.`;
 
 const SPEECH_TO_TEXT_MCP_SYSTEM_HINT = `You have access to Lumos speech-to-text tools (server name: \`speech-to-text\`) for audio transcription.
 
@@ -80,13 +39,6 @@ Rules:
 
 const MAIN_AGENT_IM_ENTRY_HINT = `This conversation is the Lumos Main Agent space and may receive messages from external IM channels like WeChat.
 Treat the user as talking to Lumos itself. If the user asks to inspect or continue another Lumos conversation, use the Lumos butler read-only tools to find or summarize it. Do not claim that you transferred execution into another conversation unless a dedicated transfer tool is available.`;
-
-function hasFeishuMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers.feishu);
-}
 
 /**
  * Remove HTML-comment directives like `<!--source:wechat-->`, `<!--files:[...]-->`,
@@ -114,13 +66,6 @@ function buildImContextHint(providerId: string, chatId: string): string {
     `If the user asks you to generate/draw/create an image in this IM conversation, call \`mcp__lumos-image__generate_image\` first. Then embed the generated image using the tool_result \`url\` field as Markdown image syntax; the IM dispatcher will convert it into a real image attachment. Do not answer with only a plain image URL.`,
     `If you already have a public image URL to send, embed it as \`![image](https://.../file.png)\` instead of plain text so the IM dispatcher can download it and send it as an image attachment when safe.`,
   ].join('\n');
-}
-
-function hasDeepSearchMcp(
-  servers: Record<string, MCPServerConfig> | undefined,
-): boolean {
-  if (!servers) return false;
-  return Boolean(servers.deepsearch);
 }
 
 function hasSpeechToTextMcp(
@@ -201,42 +146,44 @@ export class ConversationEngine {
         content: stripContentDirectives(m.content),
       }));
 
+    const activeUserId = getActiveUserId();
+    const mainAgentSession = isMainAgentSession(session);
+    const connectorContext: ConnectorContext = {
+      sessionId,
+      userId: activeUserId,
+      permissionMode: 'acceptEdits',
+      browserAutomationIntent: false,
+      visibleBrowserIntent: false,
+      legacyImageAgentPrompt: false,
+      isPrimaryMainAgentSession: mainAgentSession,
+      isDedicatedWeChatAssistantSession: isWeChatAssistantChatSession(session),
+      isWorkflowChatSession: isWorkflowChatSession(session),
+      isEcommerceAssistantChatSession: isEcommerceAssistantChatSession(session),
+      knowledgeEnabledForRequest: false,
+      selectedKnowledgeTagIds: [],
+    };
+    const capabilityPlan = buildCapabilityPlan(connectorContext);
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: session.working_directory || undefined,
       sessionId,
+      skipNames: capabilityPlan.dbMcpSkipNames,
       browserBackground: true,
     });
     const hints: string[] = [];
 
-    // In-process image gen tool. userId lets image-gen-tool bill generation
-    // against the active desktop user (Feishu bridge has no HTTP auth context).
-    const activeUserId = getActiveUserId();
-    const lumosMcpServer = createLumosMcpServer(sessionId, activeUserId);
-    const inProcessMcpServers: NonNullable<ClaudeStreamOptions['inProcessMcpServers']> = {
-      [lumosMcpServer.name]: lumosMcpServer,
-    };
-    hints.push(IMAGE_GEN_IN_PROCESS_HINT);
-    const mainAgentSession = isMainAgentSession(session);
     if (mainAgentSession) {
-      const butlerMcpServer = createLumosButlerMcpServer({
-        sessionId,
-        userId: activeUserId,
-      });
-      inProcessMcpServers[butlerMcpServer.name] = butlerMcpServer;
       hints.push(MAIN_AGENT_IM_ENTRY_HINT);
-      hints.push(LUMOS_BUTLER_MCP_SYSTEM_HINT);
     }
-    if (hasFeishuMcp(loadedMcpServers)) {
-      hints.push(FEISHU_MCP_SYSTEM_HINT);
-    }
-    if (hasDeepSearchMcp(loadedMcpServers)) {
-      hints.push(DEEPSEARCH_MCP_SYSTEM_HINT);
-    }
+    if (capabilityPlan.systemHintAppend) hints.push(capabilityPlan.systemHintAppend);
+    const dbServerHints = buildDbServerHints(
+      connectorContext,
+      new Set(Object.keys(loadedMcpServers || {})),
+    );
+    if (dbServerHints) hints.push(dbServerHints);
     if (hasSpeechToTextMcp(loadedMcpServers)) {
       hints.push(SPEECH_TO_TEXT_MCP_SYSTEM_HINT);
     }
     if (hasImToolsMcp(loadedMcpServers)) {
-      hints.push(IM_TOOLS_SYSTEM_HINT);
       if (meta?.imContext) {
         hints.push(buildImContextHint(meta.imContext.providerId, meta.imContext.chatId));
       }
@@ -263,7 +210,10 @@ export class ConversationEngine {
       permissionMode: 'acceptEdits',
       files,
       mcpServers: loadedMcpServers,
-      inProcessMcpServers,
+      inProcessMcpServers: Object.keys(capabilityPlan.inProcessServers).length > 0
+        ? capabilityPlan.inProcessServers
+        : undefined,
+      inProcessVariantKeys: capabilityPlan.inProcessVariantKeys,
       systemPrompt,
       conversationHistory,
     });
@@ -284,7 +234,7 @@ export class ConversationEngine {
         .trim();
       const nextVisible = [committedText, currentText.trim()].filter(Boolean).join('\n\n').trim();
       if (nextVisible) {
-        callbacks?.onVisibleText?.(nextVisible);
+        callbacks?.onVisibleText?.(stripLeakedToolTraceText(nextVisible));
       }
     };
 
@@ -387,12 +337,19 @@ export class ConversationEngine {
       emitVisibleText();
     }
 
-    if (contentBlocks.length > 0) {
-      const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
+    const sanitizedContentBlocks = contentBlocks
+      .map((block) => {
+        if (block.type !== 'text') return block;
+        return { ...block, text: stripLeakedToolTraceText(block.text) };
+      })
+      .filter((block) => block.type !== 'text' || block.text.trim().length > 0);
+
+    if (sanitizedContentBlocks.length > 0) {
+      const hasStructuredBlocks = sanitizedContentBlocks.some((b) => b.type !== 'text');
 
       const content = hasStructuredBlocks
-        ? JSON.stringify(contentBlocks)
-        : contentBlocks
+        ? JSON.stringify(sanitizedContentBlocks)
+        : sanitizedContentBlocks
             .filter(
               (b): b is Extract<MessageContentBlock, { type: 'text' }> =>
                 b.type === 'text',
@@ -410,7 +367,7 @@ export class ConversationEngine {
           tokenUsage ? JSON.stringify(tokenUsage) : null,
         );
 
-        visibleText = contentBlocks
+        visibleText = sanitizedContentBlocks
           .filter(
             (b): b is Extract<MessageContentBlock, { type: 'text' }> =>
               b.type === 'text',

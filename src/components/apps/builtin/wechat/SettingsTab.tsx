@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 
 import { SettingsExcludedDialog } from './SettingsExcludedDialog';
 import { SettingsPrompts } from './SettingsPrompts';
+import { SettingsGroupTags } from './SettingsGroupTags';
 import { SettingsTopicWhitelistDialog } from './SettingsTopicWhitelistDialog';
 import { displayWechatName } from './display-helpers';
 import type { PromptKey } from './default-prompts';
@@ -399,6 +400,16 @@ export function SettingsTab({
             </SelectContent>
           </Select>
         </Field>
+      </Section>
+
+      <Section
+        title="群标签"
+        description="把「工作群」等分类沉淀成可复用规则（如 工作群 = 刘总所在的群）。之后可让 AI「总结工作群」，或给每日总结按标签限定群范围。"
+      >
+        <SettingsGroupTags
+          tags={settings.groupTags}
+          onChange={(next) => onChange((prev) => ({ ...prev, groupTags: next }))}
+        />
       </Section>
 
       <SettingsExcludedDialog

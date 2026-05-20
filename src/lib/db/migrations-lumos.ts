@@ -909,12 +909,37 @@ export function migrateLumosTables(db: Database.Database): void {
       ON memory_v2_capability_events(capability_type, capability_name, occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memory_v2_cap_event_status
       ON memory_v2_capability_events(status, occurred_at DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_v2_daily_reviews (
+      id TEXT PRIMARY KEY,
+      review_day TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'ok'
+        CHECK(status IN ('ok','empty','unavailable','error')),
+      trigger_type TEXT NOT NULL DEFAULT 'daily',
+      session_count INTEGER NOT NULL DEFAULT 0,
+      truncated INTEGER NOT NULL DEFAULT 0,
+      model TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT 'null',
+      source_sessions_json TEXT NOT NULL DEFAULT '[]',
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_v2_daily_review_day
+      ON memory_v2_daily_reviews(review_day DESC);
   `);
 
   // Memory v2: semantic recall — bge-small-zh (512d) embedding as BLOB.
   const mv2Cols = db.prepare("PRAGMA table_info(memory_v2_entries)").all() as { name: string }[];
   if (!mv2Cols.some((c) => c.name === 'embedding')) {
     db.exec("ALTER TABLE memory_v2_entries ADD COLUMN embedding BLOB DEFAULT NULL");
+  }
+
+  // daily-review 来源会话列表：旧库已建表但无此列时补上（不破坏现有数据）。
+  const mv2DailyCols = db.prepare("PRAGMA table_info(memory_v2_daily_reviews)").all() as { name: string }[];
+  if (mv2DailyCols.length > 0 && !mv2DailyCols.some((c) => c.name === 'source_sessions_json')) {
+    db.exec("ALTER TABLE memory_v2_daily_reviews ADD COLUMN source_sessions_json TEXT NOT NULL DEFAULT '[]'");
   }
 
   // Auto-create or mark "Built-in" provider from the embedded default API key

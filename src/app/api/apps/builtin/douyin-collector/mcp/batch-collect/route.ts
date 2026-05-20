@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
     keywords: normalizeStringArray(body.keywords),
     links: normalizeStringArray(body.links),
     limitPerSource: body.limit_per_source,
-    autoProcess: body.auto_process ?? false,
+    // 默认开启处理（抓字幕→总结→入库）；只要元数据传 auto_process=false。
+    autoProcess: body.auto_process ?? true,
     publishToKnowledge: body.publish_to_knowledge ?? true,
   });
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });

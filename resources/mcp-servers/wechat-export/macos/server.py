@@ -73,12 +73,42 @@ mcp = FastMCP(
 _contacts_cache: dict[str, dict] | None = None
 
 
+def _contact_db_path() -> str | None:
+    """Cheaply locate the newest contact.db (no key-testing subprocess).
+
+    Used only to compare freshness against the contacts.json side cache, so
+    we deliberately skip _find_data_dir()'s sqlcipher key probing here.
+    """
+    try:
+        matches = glob.glob(os.path.expanduser(
+            "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/"
+            "xwechat_files/*/db_storage/contact/contact.db"
+        ))
+        return max(matches, key=os.path.getmtime) if matches else None
+    except OSError:
+        return None
+
+
+def _read_cached_contacts() -> dict[str, dict] | None:
+    try:
+        with open(CONTACTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _load_contacts() -> dict[str, dict]:
     """Build {wxid: {nickname, remark}} from WeChat's contact.db.
 
-    Order of precedence:
-      1. explicit CONTACTS_FILE override (mostly for tests / manual fixups)
-      2. auto-decrypt contact.db using the per-salt key in wechat_keys.json
+    contacts.json is a *side cache*, not a permanent override. It is trusted
+    only while it is newer than BOTH:
+      - contact.db  — WeChat keeps mutating it (new groups, renamed
+        chatrooms, new members, new official accounts), and
+      - this module — a change to how names are extracted (e.g. widening
+        the SELECT) must invalidate caches written by the old logic.
+    Otherwise we re-decrypt and rewrite. Only when the data source can't be
+    located (tests / no WeChat / curated fixture) is an existing file taken
+    as authoritative.
 
     Falls back to {} on any failure so the rest of the server still works
     (the AI just sees raw wxids instead of friendly names).
@@ -87,26 +117,33 @@ def _load_contacts() -> dict[str, dict]:
     if _contacts_cache is not None:
         return _contacts_cache
 
-    # 1. Manual override (used by tests, or when user wants to curate names)
-    if os.path.exists(CONTACTS_FILE):
-        try:
-            with open(CONTACTS_FILE, "r", encoding="utf-8") as f:
-                _contacts_cache = json.load(f)
-                return _contacts_cache
-        except (json.JSONDecodeError, OSError):
-            pass  # fall through to auto-load
+    src = _contact_db_path()
+    cache_fresh = os.path.exists(CONTACTS_FILE) and (
+        os.path.getmtime(CONTACTS_FILE) >= os.path.getmtime(__file__)
+    ) and (
+        src is None
+        or os.path.getmtime(CONTACTS_FILE) >= os.path.getmtime(src)
+    )
+    if cache_fresh:
+        cached = _read_cached_contacts()
+        if cached is not None:
+            _contacts_cache = cached
+            return _contacts_cache
 
-    # 2. Auto-decrypt contact.db
+    # Cache missing or stale relative to contact.db → rebuild from source.
     _contacts_cache = _load_contacts_from_db()
 
-    # Persist as side cache so future cold starts (e.g. lumos UI's per-request
-    # python subprocess) skip the contact.db decrypt entirely.
     if _contacts_cache:
         try:
             with open(CONTACTS_FILE, "w", encoding="utf-8") as fh:
                 json.dump(_contacts_cache, fh, ensure_ascii=False)
         except OSError:
             pass  # cache write failure shouldn't break runtime
+    else:
+        # Decrypt failed: a stale cache still beats raw wxids everywhere.
+        stale = _read_cached_contacts()
+        if stale is not None:
+            _contacts_cache = stale
 
     return _contacts_cache
 
@@ -139,7 +176,7 @@ def _load_contacts_from_db() -> dict[str, dict]:
             _preamble(contact_key)
             + ".headers on\n.mode csv\n"
             + "SELECT username, nick_name, remark FROM contact "
-              "WHERE username != '' AND username NOT LIKE 'gh\\_%' ESCAPE '\\';\n"
+              "WHERE username != '';\n"  # incl. gh_ official accounts so they resolve to real names
         )
         result = subprocess.run(
             [SQLCIPHER_PATH, contact_db],
@@ -334,17 +371,24 @@ def _get_message_dbs() -> list[str]:
 
 
 def _get_name2id() -> dict[str, str]:
-    """Build mapping from Msg_ table name to username/wxid."""
-    dbs = _get_message_dbs()
-    if not dbs:
-        return {}
-    rows = _query(dbs[0], "SELECT user_name FROM Name2Id;")
-    mapping = {}
-    for row in rows:
-        un = row.get("user_name", "")
-        if un:
-            h = hashlib.md5(un.encode()).hexdigest()
-            mapping[f"Msg_{h}"] = un
+    """Build mapping from Msg_ table name → username/wxid.
+
+    Name2Id is PER-SHARD: each message_N.db only lists the chats whose
+    Msg_ tables live in that shard. Reading just dbs[0] left every chat
+    housed in another shard unresolved — its messages were emitted under
+    the raw Msg_<md5> table name and never matched a session, so the chat
+    looked empty everywhere downstream. Merge Name2Id from all shards.
+    """
+    mapping: dict[str, str] = {}
+    for db_path in _get_message_dbs():
+        try:
+            rows = _query(db_path, "SELECT user_name FROM Name2Id;")
+        except Exception:  # noqa: BLE001 — a bad shard must not blank the map
+            continue
+        for row in rows:
+            un = (row.get("user_name") or "").strip()
+            if un:
+                mapping[f"Msg_{hashlib.md5(un.encode()).hexdigest()}"] = un
     return mapping
 
 

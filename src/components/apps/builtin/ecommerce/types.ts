@@ -124,6 +124,25 @@ export interface DiscoverCandidate {
   created_at?: string | null;
 }
 
+export type SelectionEvidenceStage =
+  | 'seed_terms'
+  | 'keyword_metrics'
+  | 'opportunity_candidates'
+  | 'manual_validation_notes'
+  | 'product_brief';
+
+export interface SelectionEvidence {
+  id: string;
+  research_id: string;
+  stage: SelectionEvidenceStage;
+  title: string;
+  status: 'available' | 'partial' | 'missing';
+  summary: string;
+  data_json: string;
+  updated_at?: string | null;
+  created_at?: string | null;
+}
+
 export interface StylePreset {
   id: string;
   name: string;
@@ -225,6 +244,7 @@ export interface PipelineEntry {
 export type EcommerceTab =
   | 'overview'
   | 'research'
+  | 'category-keyword'
   | 'discover'
   | 'studio'
   | 'jobs'

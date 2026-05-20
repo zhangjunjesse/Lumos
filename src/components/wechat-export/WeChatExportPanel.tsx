@@ -837,8 +837,10 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
               {env?.dataDir.wxid ? (
                 <> · 账号 <span className="font-mono">{env.dataDir.wxid}</span></>
               ) : null}
-              {status?.lastExtractedAt ? (
-                <> · 上次更新 {formatRelativeTime(status.lastExtractedAt)}</>
+              {status?.lastSyncedAt ? (
+                <> · 上次同步 {formatRelativeTime(status.lastSyncedAt)}</>
+              ) : status?.lastExtractedAt ? (
+                <> · 上次取密钥 {formatRelativeTime(status.lastExtractedAt)}</>
               ) : null}
             </p>
           </div>

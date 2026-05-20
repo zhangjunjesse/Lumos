@@ -34,7 +34,9 @@ const CREATOR_SHARE_URL = (secUid: string) =>
 
 // Desktop UA kept for hashtag pages on www.douyin.com (those still serve
 // some SSR content) but iesdouyin share endpoints must use mobile UA.
-const DESKTOP_UA =
+// Exported: the local-ASR fallback (transcribe.ts) reuses this for the
+// play_addr media download instead of duplicating the UA string a 3rd time.
+export const DESKTOP_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const MOBILE_UA =
@@ -81,7 +83,41 @@ export interface ScrapedVideoMetadata {
 
 export type ScrapeOutcome =
   | { ok: true; metadata: ScrapedVideoMetadata }
-  | { ok: false; reason: string; phase: 'http' | 'parse' | 'extract' };
+  // `risk` = douyin served a 200 generic SEO skeleton page (anti-bot
+  // rate-limit), not a real error. Distinct from `extract` (drift /
+  // deleted) so the resilient layer knows a logged-in browser retry is
+  // worth attempting instead of treating the video as gone.
+  | { ok: false; reason: string; phase: 'http' | 'parse' | 'extract' | 'risk' };
+
+// Douyin's risk-control skeleton page carries only its default site
+// slogan as <title> ("在抖音记录美好生活" — sometimes with a date
+// suffix) and nothing else. Legit pages always yield at least one of:
+// real desc title, an author (parsed from "- 昵称于YYYY发布"), a cover
+// (og:image/poster), or a play_addr. NOTE: the slogan also appears as a
+// *suffix* inside legit `description` metas ("…来抖音，记录美好生活！"),
+// so we must match the *title field itself*, not a substring of html.
+const GENERIC_SLOGAN_TITLE_RE =
+  /^\s*(在抖音记录美好生活|抖音|记录美好生活|让美好被看见|抖音 - 让每一个人看见并连接更大的世界)\s*\d*\s*$/;
+
+/**
+ * True when `metadata` is the anti-bot skeleton placeholder rather than a
+ * real (if sparse) video: no SSR data was present AND the only thing
+ * extractable was douyin's generic slogan title with no author / cover /
+ * play_addr / native subtitle. Exported so the browser-fallback layer
+ * can apply the same honest gate to browser-returned payloads.
+ */
+export function isRiskControlSkeleton(
+  metadata: ScrapedVideoMetadata | null | undefined,
+  hadRenderData: boolean,
+): boolean {
+  if (hadRenderData || !metadata) return false;
+  if (metadata.authorNickname || metadata.cover) return false;
+  if (metadata.playAddrUrls.length > 0 || metadata.nativeSubtitleUrls.length > 0) {
+    return false;
+  }
+  const title = metadata.title?.trim() ?? '';
+  return title === '' || GENERIC_SLOGAN_TITLE_RE.test(title);
+}
 
 export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome> {
   let html: string;
@@ -124,6 +160,20 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
   // / region-locked video. Treat as failure so we don't pollute the
   // library with a placeholder row that has no title, cover, or
   // play_addr (and would hard-fail any transcribe attempt).
+  // Honest gate (Fix 1): the anti-bot skeleton page has a non-empty
+  // slogan <title> so it sails past isUsableVideoMetadata and used to
+  // get persisted as a junk row that only failed — confusingly — at the
+  // transcription stage. Catch it here, before the usable gate, and
+  // report it as `risk` so the caller can retry via a logged-in browser
+  // instead of polluting the library.
+  if (isRiskControlSkeleton(metadata, Boolean(renderData))) {
+    return {
+      ok: false,
+      phase: 'risk',
+      reason:
+        '抖音 share 页被风控，返回通用骨架页（标题为默认 slogan，无作者/封面/play_addr）；稍后重试，或改用已登录的「采集浏览器」上下文重采。',
+    };
+  }
   const usable =
     metadata && isUsableVideoMetadata(metadata);
   if (!usable) {
@@ -145,7 +195,7 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
   return { ok: true, metadata };
 }
 
-function isUsableVideoMetadata(
+export function isUsableVideoMetadata(
   metadata: ScrapedVideoMetadata | null | undefined,
 ): metadata is ScrapedVideoMetadata {
   return Boolean(
@@ -154,7 +204,7 @@ function isUsableVideoMetadata(
   );
 }
 
-function mergeVideoMetadata(
+export function mergeVideoMetadata(
   primary: ScrapedVideoMetadata,
   fallback: ScrapedVideoMetadata | null,
 ): ScrapedVideoMetadata {
