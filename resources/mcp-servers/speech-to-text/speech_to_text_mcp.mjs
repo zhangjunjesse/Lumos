@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 import fs from 'fs';
+import http from 'node:http';
+import https from 'node:https';
 import os from 'os';
 import path from 'path';
 import readline from 'readline';
 import { TOOLS } from './tools.mjs';
 import { coerceArgumentsByTools } from '../shared/mcp_args.mjs';
+
+// Long-running ASR jobs (a 51-minute m4a takes 4–8 minutes on most cloud
+// providers) routinely exceed Node's default fetch headers timeout of 5 min,
+// which is hard-coded inside undici and not adjustable without importing
+// undici as a direct dep. We use node:http instead and set our own ceiling
+// long enough to cover the largest realistic recording.
+const SPEECH_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
 const LOG_FILE = path.join(os.homedir(), '.lumos', 'speech-to-text-mcp.log');
 
@@ -22,21 +31,55 @@ function getApiBase() {
 
 const API_BASE = getApiBase();
 
-async function callApi(action, args) {
-  const response = await fetch(`${API_BASE}/api/speech/${action}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(args ?? {}),
+function callApi(action, args) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(`${API_BASE}/api/speech/${action}`);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const body = JSON.stringify(args ?? {});
+    const transport = url.protocol === 'https:' ? https : http;
+    const req = transport.request({
+      method: 'POST',
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: `${url.pathname}${url.search}`,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: SPEECH_REQUEST_TIMEOUT_MS,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf-8');
+        let payload = null;
+        if (text) { try { payload = JSON.parse(text); } catch { payload = null; } }
+        const statusCode = res.statusCode ?? 0;
+        const apiSaidNo = payload && payload.ok === false;
+        if (statusCode >= 400 || apiSaidNo) {
+          const detail = payload?.message
+            || payload?.error
+            || `Speech API returned ${statusCode || 'no status'}`;
+          const msg = payload?.code ? `${payload.code}: ${detail}` : detail;
+          reject(new Error(msg));
+          return;
+        }
+        resolve(payload);
+      });
+      res.on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error(`Speech API request timed out after ${SPEECH_REQUEST_TIMEOUT_MS / 60_000} min`));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || (payload && payload.ok === false)) {
-    const detail = payload?.message
-      || payload?.error
-      || `Speech API returned ${response.status}`;
-    const msg = payload?.code ? `${payload.code}: ${detail}` : detail;
-    throw new Error(msg);
-  }
-  return payload;
 }
 
 const ACTION_FOR_TOOL = {

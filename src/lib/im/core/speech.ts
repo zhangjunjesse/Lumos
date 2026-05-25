@@ -11,6 +11,14 @@ const LONG_AUDIO_PREPROCESS_SECONDS = 10 * 60;
 const ASR_SEGMENT_SECONDS = 5 * 60;
 const ASR_FFMPEG_TIMEOUT_MS = 15 * 60 * 1000;
 const ASR_BITRATES = ['24k', '16k', '12k'];
+// How many segments to send to the cloud ASR provider in parallel. A 51-min
+// recording slices into ~11 segments; serial execution pushed total latency
+// past Node's default fetch headersTimeout (5 min) and trips upstream
+// `fetch failed` errors. With concurrency the wall-clock collapses to about
+// one segment's worth. 10 is a sane ceiling — high enough that typical
+// recordings finish in one wave, low enough not to hammer the provider's
+// per-tenant QPS.
+const ASR_SEGMENT_CONCURRENCY = 10;
 
 /** Thrown by transcribeAudioAttachment when no cloud speech provider is configured. */
 export class SpeechProviderNotConfiguredError extends Error {
@@ -141,16 +149,19 @@ export async function transcribeAudioAttachment(
       return transcribeViaCloudProxy(input.attachment, input.bytes, provider);
     }
 
-    const results: TranscribeResult[] = [];
-    for (let i = 0; i < prepared.inputs.length; i++) {
-      const input = prepared.inputs[i];
-      try {
-        results.push(await transcribeViaCloudProxy(input.attachment, input.bytes, provider));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`第 ${i + 1}/${prepared.inputs.length} 段语音转写失败：${message}`);
-      }
-    }
+    const total = prepared.inputs.length;
+    const results = await mapWithConcurrency(
+      prepared.inputs,
+      ASR_SEGMENT_CONCURRENCY,
+      async (input, idx) => {
+        try {
+          return await transcribeViaCloudProxy(input.attachment, input.bytes, provider);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`第 ${idx + 1}/${total} 段语音转写失败：${message}`);
+        }
+      },
+    );
     return combineTranscribeResults(results, provider.providerType);
   } finally {
     await prepared.cleanup?.();
@@ -160,6 +171,40 @@ export async function transcribeAudioAttachment(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// Worker-pool concurrency limiter that preserves result order. Local to this
+// module on purpose — keeping it inline avoids dragging p-queue / p-limit
+// into the speech path's import graph for one call site. If a third caller
+// shows up we lift this into src/lib/util/. Exported only so the unit test
+// can hit it directly without standing up the whole ASR mock chain.
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  let firstError: unknown = null;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (firstError === null) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      try {
+        results[idx] = await fn(items[idx], idx);
+      } catch (err) {
+        // Capture the first failure; remaining workers exit on next iteration.
+        // We still await every in-flight task to settle so the upstream
+        // `finally { cleanup() }` doesn't race in-flight network writes.
+        if (firstError === null) firstError = err;
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (firstError !== null) throw firstError;
+  return results;
+}
 
 interface PreparedCloudAudioInput {
   attachment: IMFileAttachment;
