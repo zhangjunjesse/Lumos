@@ -1,0 +1,34 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "原推快照",
+  "description": "所有任务引用的原推都进这张共用快照表。同一条推文不会重复抓，只会覆盖更新 snapshot_at。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.tweet_evidence }}",
+    "columns": [
+      { "field": "author_screen", "label": "作者", "search": true },
+      { "field": "text", "label": "正文", "search": true },
+      { "field": "like_count", "label": "点赞", "sortable": true },
+      { "field": "retweet_count", "label": "转推", "sortable": true },
+      { "field": "view_count", "label": "浏览", "sortable": true },
+      { "field": "reply_count", "label": "回复", "sortable": true },
+      { "field": "tweet_created_at", "label": "发布", "render": "date", "sortable": true },
+      { "field": "snapshot_at", "label": "快照", "render": "date", "sortable": true }
+    ]
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "id", "label": "推文 ID" },
+        { "type": "text", "name": "author_screen", "label": "作者 @" },
+        { "type": "text", "name": "author_name", "label": "昵称" },
+        { "type": "textarea", "name": "text", "label": "正文", "rows": 6 },
+        { "type": "text", "name": "url", "label": "链接" },
+        { "type": "text", "name": "conversation_id", "label": "thread 头" },
+        { "type": "textarea", "name": "photos_json", "label": "图片 URL", "rows": 3 },
+        { "type": "textarea", "name": "video_previews_json", "label": "视频预览 URL", "rows": 3 }
+      ]
+    }
+  }
+}

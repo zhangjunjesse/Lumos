@@ -1,6 +1,16 @@
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
-type ProxyEnv = NodeJS.ProcessEnv | Record<string, string | undefined>;
+export type ProxyEnv = NodeJS.ProcessEnv | Record<string, string | undefined>;
+export type NetworkProxyMode = 'system' | 'off' | 'custom';
+
+export interface NetworkProxySettings {
+  mode?: string;
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+}
+
+const DEFAULT_CUSTOM_NO_PROXY = '127.0.0.1,localhost,::1';
 
 function firstEnv(env: ProxyEnv, names: string[]): string | null {
   for (const name of names) {
@@ -78,6 +88,29 @@ export function getProxyForUrl(input: string | URL, env: ProxyEnv = process.env)
     return firstEnv(env, ['HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']);
   }
   return null;
+}
+
+export function normalizeProxyMode(mode?: string): NetworkProxyMode {
+  if (mode === 'off' || mode === 'custom') return mode;
+  return 'system';
+}
+
+export function buildProxyEnvFromSettings(
+  settings: NetworkProxySettings,
+  env: ProxyEnv = process.env,
+): ProxyEnv {
+  const mode = normalizeProxyMode(settings.mode);
+  if (mode === 'off') return {};
+  if (mode === 'system') return env;
+
+  const httpProxy = settings.httpProxy?.trim() || undefined;
+  const httpsProxy = settings.httpsProxy?.trim() || undefined;
+  const noProxy = settings.noProxy?.trim() || DEFAULT_CUSTOM_NO_PROXY;
+  return {
+    HTTP_PROXY: httpProxy,
+    HTTPS_PROXY: httpsProxy || httpProxy,
+    NO_PROXY: noProxy,
+  };
 }
 
 export function createHttpsProxyAgentForUrl(

@@ -23,7 +23,7 @@ import { listAccounts } from './accounts';
 import { findGoofishPython, buildGoofishEnv } from './env';
 import { cookieDomainForName, writeCookieRecord } from './cookie-store';
 
-const BRIDGE_CONTEXT_ID = 'embedded:default';
+const DEFAULT_BRIDGE_CONTEXT_ID = 'embedded:default';
 const BRIDGE_OWNER_ID = 'goofish-qr-login';
 const GOOFISH_HOME_URL = 'https://www.goofish.com/';
 const QR_REQUIRED_COOKIES = ['_m_h5_tk', 'unb', 'cookie2'] as const;
@@ -55,24 +55,40 @@ interface BridgeNewPageResponse extends BrowserBridgeResponse {
   pageId?: string;
 }
 
-export function resolveBuiltinBrowserQrConfig(): BrowserBridgeRuntimeConfig | null {
+export function resolveBuiltinBrowserQrConfig(
+  contextId?: string,
+): BrowserBridgeRuntimeConfig | null {
   return resolveBrowserBridgeRuntimeConfig({
-    browserContextId: BRIDGE_CONTEXT_ID,
+    browserContextId: (contextId ?? '').trim() || DEFAULT_BRIDGE_CONTEXT_ID,
     lockOwnerId: BRIDGE_OWNER_ID,
   });
 }
 
-export async function runBuiltinBrowserQrLogin(timeoutSecs: number, cookiesOut: string): Promise<void> {
-  const config = resolveBuiltinBrowserQrConfig();
+export async function runBuiltinBrowserQrLogin(
+  timeoutSecs: number,
+  cookiesOut: string,
+  browserContextId?: string,
+): Promise<void> {
+  const config = resolveBuiltinBrowserQrConfig(browserContextId);
   if (!config) {
-    throw new BuiltinBrowserQrUnavailableError('Lumos 内置浏览器不可用');
+    const label = browserContextId && browserContextId !== DEFAULT_BRIDGE_CONTEXT_ID
+      ? `所选浏览器（${browserContextId}）不可用，请到「设置 → 浏览器接入」检查是否开启并测试通过`
+      : 'Lumos 内置浏览器不可用';
+    throw new BuiltinBrowserQrUnavailableError(label);
   }
 
-  const ignoredUnbs = new Set(
-    listAccounts()
-      .filter((account) => account.hasCookies)
-      .map((account) => account.unb),
-  );
+  // 用户选了非默认浏览器（AdsPower / CDP）= 明确意图「用这个浏览器当前的登录态」，
+  // 不应该被「这个 unb 已存在」挡住——直接覆盖。
+  // 只有默认 embedded 浏览器才保留旧的「不重复保存同 unb」防呆逻辑。
+  const isExternalBrowser = Boolean(browserContextId)
+    && browserContextId !== DEFAULT_BRIDGE_CONTEXT_ID;
+  const ignoredUnbs = isExternalBrowser
+    ? new Set<string>()
+    : new Set(
+      listAccounts()
+        .filter((account) => account.hasCookies)
+        .map((account) => account.unb),
+    );
   let pageId = '';
   try {
     const health = await checkBrowserBridgeReady(config);

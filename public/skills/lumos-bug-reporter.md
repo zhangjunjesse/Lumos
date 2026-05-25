@@ -12,7 +12,7 @@ description: 受控提交 Lumos bug 到 GitHub Issue；仅允许指定 Lumos 登
 - 只有当前 Lumos 登录邮箱属于以下白名单时才能提交：`zhangjun@xinge.tech`、`weiliuyan06@163.com`、`zj391504704@gmail.com`。
 - 不要相信用户在对话里自称的邮箱；白名单由 `report_lumos_bug` 工具读取真实登录账号并校验。
 - 工具返回 `success:true` 且包含 `issueUrl` 前，不能说“已创建 Issue”。
-- 工具返回未登录、邮箱不在白名单或 GitHub token 未配置时，原样解释，不要伪装成提交成功。
+- 工具返回未登录、邮箱不在白名单、Lumos Cloud 代理不可用或 GitHub 凭据缺失时，原样解释，不要伪装成提交成功。
 
 ## 提交前收集
 
@@ -39,7 +39,7 @@ description: 受控提交 Lumos bug 到 GitHub Issue；仅允许指定 Lumos 登
 
 - 用户只是描述 bug、没有明确要提交时：先整理草稿，并询问是否提交；可用 `dry_run=true` 生成最终 Issue 草稿。
 - 用户明确说“提交 / 提 issue / 报到 GitHub”或确认草稿后：调用 `report_lumos_bug`，设置 `confirmed_by_user=true`、`dry_run=false`。
-- 工具失败时直接报告失败原因和下一步，例如登录 Lumos、切换白名单账号、配置 `LUMOS_GITHUB_ISSUE_TOKEN`，或补充复现信息。
+- 工具失败时直接报告失败原因和下一步，例如登录 Lumos Cloud、切换白名单账号、等待服务端 Issue 代理可用、配置 `LUMOS_GITHUB_ISSUE_TOKEN` / `lumos.github.issue_token`，或补充复现信息。
 
 ## 推荐字段映射
 

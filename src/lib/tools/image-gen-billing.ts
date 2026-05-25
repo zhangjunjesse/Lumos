@@ -11,7 +11,7 @@ import { getSetting } from '@/lib/db/sessions';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getRemoteImageProviderId } from '@/lib/cloud/provisioner';
 import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
-import { createHttpsProxyAgentForUrl, getProxyForUrl } from '@/lib/net/proxy';
+import { createConfiguredHttpsProxyAgentForUrl, getConfiguredProxyForUrl } from '@/lib/net/proxy-settings';
 import type { ApiProvider } from '@/types';
 import https from 'node:https';
 
@@ -55,7 +55,7 @@ function describeFetchError(err: unknown): string {
 function nodeHttpsQuotaFetch(url: string, init: QuotaFetchInit): Promise<QuotaFetchResponse> {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
-    const agent = createHttpsProxyAgentForUrl(target);
+    const agent = createConfiguredHttpsProxyAgentForUrl(target);
     const body = Buffer.from(init.body);
     let settled = false;
 
@@ -113,7 +113,7 @@ function nodeHttpsQuotaFetch(url: string, init: QuotaFetchInit): Promise<QuotaFe
 
 function quotaFetch(url: string, init: QuotaFetchInit): Promise<QuotaFetchResponse> {
   const target = new URL(url);
-  if (target.protocol === 'https:' && getProxyForUrl(target)) {
+  if (target.protocol === 'https:' && getConfiguredProxyForUrl(target)) {
     return nodeHttpsQuotaFetch(url, init);
   }
   return fetch(url, init);

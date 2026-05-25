@@ -8,7 +8,10 @@ import {
   BuiltinEcommerceCard,
   BuiltinEtsyErankCard,
   BuiltinGoofishCard,
+  BuiltinPinterestRadarCard,
   BuiltinWeChatCard,
+  BuiltinXRadarCard,
+  type BuiltinXRadarStatus,
 } from '@/components/apps/list/BuiltinAppCard';
 
 interface BuiltinWeChatStatus {
@@ -62,6 +65,7 @@ export default function AppsListPage(): React.ReactElement {
     React.useState<BuiltinDouyinCollectorStatus | null>(null);
   const [deepResearchStatus, setDeepResearchStatus] =
     React.useState<BuiltinDeepResearchStatus | null>(null);
+  const [xRadarStatus, setXRadarStatus] = React.useState<BuiltinXRadarStatus | null>(null);
   const [visibleBuiltinIds, setVisibleBuiltinIds] = React.useState<Set<string> | null>(null);
 
   React.useEffect(() => {
@@ -115,6 +119,15 @@ export default function AppsListPage(): React.ReactElement {
         if (!cancelled) setDeepResearchStatus(null);
       }
     }
+    async function loadBuiltinXRadar() {
+      try {
+        const res = await fetch('/api/apps/builtin/x-radar/status', { cache: 'no-store' });
+        const json = (await res.json()) as BuiltinXRadarStatus;
+        if (!cancelled && res.ok) setXRadarStatus(json);
+      } catch {
+        if (!cancelled) setXRadarStatus(null);
+      }
+    }
     async function loadVisibility() {
       try {
         const res = await fetch('/api/apps/builtin/visibility', { cache: 'no-store' });
@@ -153,6 +166,7 @@ export default function AppsListPage(): React.ReactElement {
     void loadBuiltinEcommerce();
     void loadBuiltinDouyinCollector();
     void loadBuiltinDeepResearch();
+    void loadBuiltinXRadar();
     void loadVisibility();
     return () => {
       cancelled = true;
@@ -197,6 +211,10 @@ export default function AppsListPage(): React.ReactElement {
               <BuiltinDeepResearchCard status={deepResearchStatus} />
             ) : null}
             {visibleBuiltinIds.has('etsy-erank') ? <BuiltinEtsyErankCard /> : null}
+            {visibleBuiltinIds.has('pinterest-radar') ? <BuiltinPinterestRadarCard /> : null}
+            {visibleBuiltinIds.has('x-radar') ? (
+              <BuiltinXRadarCard status={xRadarStatus} />
+            ) : null}
           </div>
         ) : (
           <EmptyAppsHint />

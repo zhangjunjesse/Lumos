@@ -36,7 +36,7 @@ export interface GoofishStatus {
 }
 
 export type LoginMode =
-  | { mode: 'qr'; timeoutSecs?: number }
+  | { mode: 'qr'; timeoutSecs?: number; browserContextId?: string }
   | { mode: 'browser'; browser?: string }
   | { mode: 'paste'; cookieString: string };
 

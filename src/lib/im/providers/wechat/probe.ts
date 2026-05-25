@@ -7,11 +7,12 @@
 
 import type { ProbeResult } from '../../core/types';
 import type { WechatClient } from './client';
+import { explainWechatIlinkError } from './errors';
 
 export async function probeWechat(client: WechatClient): Promise<ProbeResult> {
   const start = Date.now();
   const r = await client.verifyToken();
   const latencyMs = Date.now() - start;
   if (r.ok) return { ok: true, latencyMs };
-  return { ok: false, latencyMs, error: r.error };
+  return { ok: false, latencyMs, error: explainWechatIlinkError(r.error) };
 }

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "设置",
+  "description": "配置默认视图、通知、AI 提示词（ai_system_prompt）、自动化开关、风险边界（risk_note）和 4 个模板的默认参数。",
+  "layout": "form",
+  "form": [
+    { "type": "text", "name": "default_view", "label": "默认视图", "placeholder": "例如：任务工作台" },
+    {
+      "type": "select",
+      "name": "notification_channel",
+      "label": "通知方式",
+      "options": ["关闭", "系统通知", "微信 IM"],
+      "default": "关闭"
+    },
+    {
+      "type": "textarea",
+      "name": "ai_system_prompt",
+      "label": "AI 提示词 (ai_system_prompt)",
+      "rows": 8,
+      "placeholder": "X 雷达 AI 助手提示词：必须只读 X，禁止建议发推 / 点赞 / 回复 / 媒体上传；选题挖掘和关注摘要要标注证据来源 URL；统计报告要给原始数字，不允许 mock。"
+    },
+    {
+      "type": "switch",
+      "name": "automation_enabled",
+      "label": "启用自动化",
+      "default": false,
+      "description": "开启前必须确认所有任务的命中规则与窗口；开启后 cadence 为 hourly / daily / weekly 的任务会按计划跑。"
+    },
+    {
+      "type": "textarea",
+      "name": "risk_note",
+      "label": "风险边界 (risk_note)",
+      "rows": 4,
+      "placeholder": "X 雷达写操作只有「入库 / 推 IM / 删除产物」三类，全部需要二次确认；不发推、不回复、不点赞；cookie 失效时所有任务立即停。"
+    },
+    { "type": "number", "name": "monitor_default_window_hours", "label": "监控：默认时间窗（小时）", "default": 24 },
+    { "type": "number", "name": "monitor_default_engagement_threshold", "label": "监控：默认互动数阈值", "default": 0 },
+    { "type": "number", "name": "topic_max_fetch_per_run", "label": "选题：每次抓取上限", "default": 50 },
+    { "type": "number", "name": "topic_thread_extract_count", "label": "选题：thread 抽取条数", "default": 20 },
+    {
+      "type": "select",
+      "name": "digest_window",
+      "label": "摘要：默认窗口",
+      "options": ["daily", "weekly"],
+      "default": "daily"
+    },
+    { "type": "number", "name": "stats_sample_days", "label": "拆解：采样天数", "default": 14 },
+    { "type": "number", "name": "global_concurrency", "label": "全局并发上限", "default": 2 },
+    { "type": "text", "name": "topic_default_collection_id", "label": "选题报告默认 knowledge collection ID" },
+    { "type": "text", "name": "digest_default_collection_id", "label": "关注摘要默认 collection ID" },
+    { "type": "switch", "name": "auto_to_library", "label": "自动入库", "default": false }
+  ],
+  "submit": { "label": "保存设置", "run": "db:create:app_settings", "render": "none" }
+}

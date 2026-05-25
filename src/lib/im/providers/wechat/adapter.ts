@@ -35,6 +35,7 @@ export class WechatAdapter implements IMAdapter, IMCommandHandler {
     this.client = new WechatClient({
       baseUrl: config.baseUrl,
       token: config.token,
+      routeTag: config.routeTag,
     });
     this.monitor = new WechatMonitor(this.client, config);
   }

@@ -22,6 +22,8 @@ import { RemindersTab } from './RemindersTab';
 import { SearchTab } from './SearchTab';
 import { InboxTab } from './InboxTab';
 import { DraftsTab } from './DraftsTab';
+import { ProductsTab } from './ProductsTab';
+import { FulfillmentLogTab } from './FulfillmentLogTab';
 import { AutomationsTab } from './AutomationsTab';
 import { SettingsTab } from './SettingsTab';
 
@@ -78,6 +80,8 @@ export function GoofishAssistantApp(): React.ReactElement {
                 badge={kpi?.recentReminderCount ?? 0}
               />
               <TabPill value="search" label="搜索" />
+              <TabPill value="products" label="商品库" />
+              <TabPill value="fulfillment" label="发货记录" />
               <TabPill value="automations" label="自动化" />
               <TabPill value="settings" label="设置" />
             </TabsList>
@@ -131,6 +135,14 @@ export function GoofishAssistantApp(): React.ReactElement {
 
             <TabsContent value="search" className="m-0">
               <SearchTab />
+            </TabsContent>
+
+            <TabsContent value="products" className="m-0">
+              <ProductsTab />
+            </TabsContent>
+
+            <TabsContent value="fulfillment" className="m-0">
+              <FulfillmentLogTab />
             </TabsContent>
 
             <TabsContent value="automations" className="m-0">

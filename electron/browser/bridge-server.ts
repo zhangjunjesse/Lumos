@@ -309,6 +309,12 @@ async function evalInTab(
   return result?.result?.value;
 }
 
+function isTransientTargetNavigationError(error: unknown): boolean {
+  return /Inspected target navigated or closed|Execution context was destroyed|Cannot find context|Target closed|Session closed|No target with given id/i.test(
+    getErrorMessage(error),
+  );
+}
+
 function buildSnapshotScript(): string {
   return `(() => {
   const root = document.body || document.documentElement;
@@ -1096,11 +1102,29 @@ export class BrowserBridgeServer {
         }
 
         await ensureTabReady(manager, pageId, { background: true });
-        const value = await evalInTab(manager, pageId, script, true);
+        let value: unknown;
+        try {
+          value = await evalInTab(manager, pageId, script, true);
+        } catch (evalError) {
+          if (!isTransientTargetNavigationError(evalError)) {
+            throw evalError;
+          }
+          await waitForPageStable(manager, pageId, { timeoutMs: 12_000, background: true }).catch(() => undefined);
+          await ensureTabReady(manager, pageId, { background: true });
+          value = await evalInTab(manager, pageId, script, true);
+        }
         const currentUrl = manager.getTabs().find((tab) => tab.id === pageId)?.url || '';
         sendJson(res, 200, { ok: true, browserContextId, pageId, value, url: currentUrl });
       } catch (error) {
-        sendJson(res, 500, { ok: false, error: 'SITE_EVAL_FAILED', browserContextId, message: getErrorMessage(error) });
+        sendJson(res, 500, {
+          ok: false,
+          error: 'SITE_EVAL_FAILED',
+          browserContextId,
+          pageId,
+          message: isTransientTargetNavigationError(error)
+            ? '页面在采集脚本执行期间被抖音跳转或关闭，重试后仍未稳定；请在当前采集浏览器里手动完成验证/登录后再点「立即采集」。'
+            : getErrorMessage(error),
+        });
       }
       return;
     }

@@ -71,6 +71,22 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     defaultVisible: false,
     icon: 'radar',
   },
+  {
+    id: 'pinterest-radar',
+    name: 'Pinterest 选品雷达',
+    description:
+      'Pinterest Trends 当前 trending 词 + 90 天增长曲线 + AI 选品解读 + PDF 报告',
+    defaultVisible: false,
+    icon: 'pin',
+  },
+  {
+    id: 'x-radar',
+    name: 'X 雷达',
+    description:
+      'X (Twitter) 纯读工作台：监控雷达 / 选题挖掘 / 关注摘要 / 数据拆解 4 种任务模板共用调度与运行历史',
+    defaultVisible: true,
+    icon: 'radio',
+  },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';

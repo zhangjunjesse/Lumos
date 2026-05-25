@@ -3,6 +3,11 @@ import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { generateTextFromProvider } from '@/lib/text-generator';
 
 import { isGoofishNativeApp } from './goofish-app-sync';
+import {
+  buildFallbackDraft,
+  buildReplyDraftPrompts,
+  loadProductContextForConversation,
+} from './goofish-reply-prompt-builder';
 import type { AppManifest } from './manifest/types';
 import type { AppDataStore, AppRow } from './runtime/data-store';
 
@@ -119,11 +124,13 @@ export async function generateGoofishReplyDraft(input: {
 
   const settings = loadLatestSettings(input.store);
   const itemContext = loadItemContext(input.store, conversation);
+  const productContext = loadProductContextForConversation(input.store, conversation);
   const prompts = buildReplyDraftPrompts({
     manifest: input.manifest,
     conversation,
     settings,
     itemContext,
+    productContext,
   });
 
   let generated: { text: string; providerId?: string; model?: string } | null = null;
@@ -236,45 +243,6 @@ function loadItemContext(
   })[0] ?? null;
 }
 
-function buildReplyDraftPrompts(input: {
-  manifest: AppManifest;
-  conversation: AppRow<BuyerConversationRow>;
-  settings: AppSettingsRow;
-  itemContext: ItemMarkRow | null;
-}): { system: string; prompt: string } {
-  const riskNote = textValue(input.settings.risk_note);
-  const customPrompt = textValue(input.settings.ai_system_prompt);
-  const system = [
-    customPrompt || `你是 Lumos 应用「${input.manifest.name}」里的闲鱼回复草稿生成器。`,
-    '只输出一条回复草稿正文，不要输出解释、标题、Markdown、JSON 或动作块。',
-    '草稿必须短、礼貌、可由卖家人工审核后再发送。',
-    '不得承诺平台外交易、绕过平台规则、未核实库存、自动降价、自动发货或已经发送。',
-    riskNote ? `应用风险边界：${riskNote}` : '',
-  ].filter(Boolean).join('\n');
-
-  const conversation = input.conversation;
-  const prompt = [
-    '请根据下面闲鱼买家会话生成一条待人工确认的回复草稿。',
-    `买家：${textValue(conversation.buyer_name) || '买家'}`,
-    textValue(conversation.item_title) ? `商品：${textValue(conversation.item_title)}` : '',
-    `最近消息：${textValue(conversation.last_message)}`,
-    `未读数：${Number(conversation.unread_count ?? 0) || 0}`,
-    textValue(conversation.reply_status) ? `回复状态：${textValue(conversation.reply_status)}` : '',
-    textValue(conversation.priority) ? `优先级：${textValue(conversation.priority)}` : '',
-    textValue(conversation.notes) ? `卖家备注：${textValue(conversation.notes)}` : '',
-    input.itemContext
-      ? [
-        '商品标记：',
-        textValue(input.itemContext.status) ? `标记=${textValue(input.itemContext.status)}` : '',
-        textValue(input.itemContext.notes) ? `备注=${textValue(input.itemContext.notes)}` : '',
-      ].filter(Boolean).join(' ')
-      : '',
-    '输出要求：只输出草稿正文；不要替用户发送；不要要求买家脱离闲鱼交易。',
-  ].filter(Boolean).join('\n');
-
-  return { system, prompt };
-}
-
 async function generateDraftTextWithConfiguredProvider(input: {
   system: string;
   prompt: string;
@@ -302,32 +270,6 @@ async function generateDraftTextWithConfiguredProvider(input: {
     abortSignal: AbortSignal.timeout(120_000),
   });
   return { text, providerId: provider.id, model };
-}
-
-function buildFallbackDraft(input: {
-  buyerName: string;
-  itemTitle: string;
-  lastMessage: string;
-}): string {
-  const item = input.itemTitle ? `这件「${input.itemTitle}」` : '这个商品';
-  const concern = inferConcern(input.lastMessage);
-  switch (concern) {
-    case 'price':
-      return `您好，${item}还在的。价格我需要再确认一下可优惠空间，您可以先说下心理价位，我确认后再回复您。`;
-    case 'availability':
-      return `您好，${item}目前还在。我再确认一下商品状态和细节，确认后马上回复您。`;
-    case 'shipping':
-      return `您好，${item}可以继续沟通。运费和发货时间我需要按地址和商品情况确认一下，确认后回复您。`;
-    default:
-      return `您好，收到您的消息了。${item}的情况我先确认一下，稍后给您准确回复。`;
-  }
-}
-
-function inferConcern(message: string): 'price' | 'availability' | 'shipping' | 'general' {
-  if (/(便宜|优惠|刀|最低|价格|多少钱|包邮)/.test(message)) return 'price';
-  if (/(还在|有吗|出了没|卖了吗|库存)/.test(message)) return 'availability';
-  if (/(发货|快递|邮费|运费|几天|到哪里)/.test(message)) return 'shipping';
-  return 'general';
 }
 
 function normalizeDraftText(text: string): string {

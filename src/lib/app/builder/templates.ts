@@ -7,6 +7,7 @@ import {
 import { buildEcommerceAssistantFiles } from './template-ecommerce-assistant';
 import { buildDouyinCollectorFiles } from './template-douyin-collector';
 import { buildDeepResearchFiles } from './template-deep-research';
+import { buildXRadarFiles } from './template-x-radar';
 
 export interface AppBuilderTemplate {
   id: string;
@@ -58,6 +59,15 @@ export const APP_BUILDER_TEMPLATES: AppBuilderTemplate[] = [
     highlights: ['八阶段 SOP', '多源采集', '证据链终稿'],
   },
   {
+    id: 'x-radar',
+    name: 'X 雷达',
+    description: '基于 Lumos 现有 X 能力的纯读工作台：监控雷达 / 选题挖掘 / 关注摘要 / 数据拆解 4 种任务模板共用调度与运行历史。',
+    category: '知识采集',
+    prompt:
+      '用户选择了「X 雷达」模板。仅做只读：监控告警 / 选题报告 / 关注摘要 / 数据拆解 4 种任务模板共用 radar_tasks 表与同一套引擎。底层抓取走 src/lib/x-platform/{search,timeline,thread} 与 MCP x-platform，登录态共用「服务 → X」面板。禁止发推 / 回复 / 引用转发 / 点赞 / 收藏 / 媒体上传 / 绕反爬。X cookie 失效或风控触发时所有任务立即停并显示 needs_auth；任何模板都不能用 mock 推文冒充。topic/digest/stats 的 AI 提炼桥未接入前必须如实写入 failure_reason，不冒充 success。',
+    highlights: ['监控雷达', '选题挖掘', '关注摘要 / 数据拆解'],
+  },
+  {
     id: 'customer-tracker',
     name: '客户跟进',
     description: '客户列表、新增客户、状态和备注，适合 CRM 入门场景。',
@@ -106,6 +116,9 @@ export function inferAppBuilderTemplateId(
   if (/(深度调研|深度研究|研究报告|deep[- ]?research|多源调研)/i.test(text)) {
     return 'deep-research';
   }
+  if (/(x[- ]?雷达|x[- ]?radar|twitter[- ]?监控|twitter[- ]?摘要|推特监控|推特摘要)/i.test(text)) {
+    return 'x-radar';
+  }
   return null;
 }
 
@@ -126,6 +139,8 @@ export function buildTemplateBlueprintFiles(
       return buildDouyinCollectorFiles(session, opts);
     case 'deep-research':
       return buildDeepResearchFiles(session, opts);
+    case 'x-radar':
+      return buildXRadarFiles(session, opts);
     case 'customer-tracker':
       return buildCustomerTrackerFiles(session, opts);
     case 'weekly-report':

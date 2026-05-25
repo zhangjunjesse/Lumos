@@ -10,6 +10,7 @@ const MAP: Record<StepState, { dot: string; text: string; cls: string }> = {
   blocked: { dot: '●', text: '卡住·闸门', cls: 'text-amber-600 ring-amber-500/30 bg-amber-500/10' },
   pending: { dot: '○', text: '待跑', cls: 'text-muted-foreground ring-border bg-muted/40' },
   failed: { dot: '✗', text: '失败', cls: 'text-red-600 ring-red-500/30 bg-red-500/10' },
+  skipped: { dot: '⊝', text: '跳过', cls: 'text-muted-foreground ring-border bg-muted/30' },
 };
 
 export function StepBadge({ state }: { state: StepState }): React.ReactElement {

@@ -28,6 +28,15 @@ export interface SendAppImNotificationInput {
   providerId?: string;
   chatId?: string;
   target_label?: string;
+  /** 文件附件 — 微信 provider 已支持 sendFile。文本超 1900 字符时强烈建议改走附件。 */
+  attachments?: Array<{
+    name: string;
+    type: string;
+    size: number;
+    /** base64 / data URL 字符串。和 filePath 二选一。 */
+    data?: string;
+    filePath?: string;
+  }>;
 }
 
 export interface AppImNotificationResult {
@@ -158,6 +167,18 @@ export async function sendAppImNotification(
   const result = await send(target.providerId, {
     address: { providerId: target.providerId, chatId: target.chatId },
     text: messageText,
+    ...(input.attachments && input.attachments.length > 0
+      ? {
+          attachments: input.attachments.map((a, i) => ({
+            id: `${input.appId}-${now}-${i}`,
+            name: a.name,
+            type: a.type,
+            size: a.size,
+            data: a.data ?? '',
+            filePath: a.filePath,
+          })),
+        }
+      : {}),
   });
 
   if (!result.ok) {

@@ -13,6 +13,8 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import type { IMFileAttachment, OutboundMessage, SendResult } from '../../core/types';
 import {
   ERR_SESSION_EXPIRED,
@@ -23,8 +25,16 @@ import {
   WechatClient,
   newClientId,
 } from './client';
+import { explainWechatIlinkError } from './errors';
 
-const MAX_CHUNK = 3800; // stay under ilink ~4000 char cap
+// The protocol examples cap text_item payloads at 2000 chars. Keep a little
+// headroom for CJK/newline edge cases so accepted API responses are more likely
+// to render on the phone client.
+const MAX_CHUNK = 1900;
+const SEND_DEBUG_LOG_PATH = path.join(
+  process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'),
+  'wechat-send.log',
+);
 
 interface SendDeps {
   /** Lookup the latest context_token for a peer userId. */
@@ -75,7 +85,7 @@ export async function sendOutbound(
       return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
     }
     const result = await sendImageWithRetry(client, peer, bytes, contextToken);
-    if (!result.ok) return { ok: false, error: result.error };
+    if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
     contextToken = deps.getContextToken(peer) || contextToken;
   }
@@ -100,7 +110,7 @@ export async function sendOutbound(
     }
 
     const result = await sendFileWithRetry(client, peer, bytes, attachment.name, contextToken);
-    if (!result.ok) return { ok: false, error: result.error };
+    if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
     contextToken = deps.getContextToken(peer) || contextToken;
   }
@@ -111,17 +121,24 @@ export async function sendOutbound(
       return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
     }
     const result = await sendFileWithRetry(client, peer, bytes, attachment.name, contextToken);
-    if (!result.ok) return { ok: false, error: result.error };
+    if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
     contextToken = deps.getContextToken(peer) || contextToken;
   }
 
   if (text) {
     const chunks = splitText(text, MAX_CHUNK);
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i += 1) {
+      const chunk = chunks[i];
+      logWechatSend(`text attempt peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} chars=${chunk.length} ctx=${contextToken ? 'yes' : 'no'}`);
       const result = await sendOneWithRetry(client, peer, chunk, contextToken);
-      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.ok) {
+        const error = explainWechatIlinkError(result.error);
+        logWechatSend(`text failed peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} error="${truncateForLog(error)}"`);
+        return { ok: false, error };
+      }
       lastMessageId = result.clientId;
+      logWechatSend(`text ok peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} clientId=${lastMessageId || ''}`);
       contextToken = deps.getContextToken(peer) || contextToken;
     }
   }
@@ -264,10 +281,42 @@ async function sendOneWithRetry(
 function splitText(text: string, max: number): string[] {
   if (text.length <= max) return [text];
   const out: string[] = [];
-  for (let i = 0; i < text.length; i += max) {
-    out.push(text.slice(i, i + max));
+  let remaining = text;
+  while (remaining.length > max) {
+    let cut = remaining.lastIndexOf('\n\n', max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf('\n', max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf('。', max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf('；', max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf('，', max);
+    if (cut < Math.floor(max * 0.55)) cut = max;
+    out.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trimStart();
   }
+  if (remaining) out.push(remaining);
   return out;
+}
+
+function logWechatSend(line: string): void {
+  const stamped = `[${new Date().toISOString()}] [wechat/send] ${line}\n`;
+  try {
+    fs.appendFileSync(SEND_DEBUG_LOG_PATH, stamped);
+  } catch {
+    // best-effort diagnostic only
+  }
+}
+
+function redactPeer(peer: string): string {
+  const trimmed = peer.trim();
+  if (!trimmed) return '(empty)';
+  const at = trimmed.indexOf('@');
+  const head = at >= 0 ? trimmed.slice(0, at) : trimmed;
+  const suffix = at >= 0 ? trimmed.slice(at) : '';
+  if (head.length <= 8) return `${head}${suffix}`;
+  return `${head.slice(0, 4)}…${head.slice(-4)}${suffix}`;
+}
+
+function truncateForLog(value: string): string {
+  return value.length <= 240 ? value : `${value.slice(0, 240)}...`;
 }
 
 function delay(ms: number): Promise<void> {

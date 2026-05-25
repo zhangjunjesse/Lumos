@@ -45,6 +45,10 @@ const ACTION_DESC: Record<string, { name: string; hint: string }> = {
     name: '提醒规则检查',
     hint: '按已启用的提醒规则检查（新消息 / 回复超时 / 关键词命中 / 草稿堆积）。',
   },
+  'goofish:auto-fulfill-scan': {
+    name: '自动发货扫描',
+    hint: '扫描近 30 分钟付款类系统消息，命中商品库则自动发链接 + 提取码。开启前请先到设置阅读风险。',
+  },
 };
 
 export function AutomationsTab(): React.ReactElement {

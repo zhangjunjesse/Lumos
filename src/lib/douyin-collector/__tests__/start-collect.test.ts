@@ -4,6 +4,7 @@ const ensureKeywordForAi = jest.fn();
 const ensureCreatorForAi = jest.fn();
 const resolveAwemeInput = jest.fn();
 const createJob = jest.fn();
+const findActiveDuplicateJob = jest.fn();
 const runJob = jest.fn();
 
 jest.mock('../ai-tools', () => ({
@@ -13,6 +14,7 @@ jest.mock('../ai-tools', () => ({
 }));
 jest.mock('../jobs', () => ({
   createJob: (...a: unknown[]) => createJob(...a),
+  findActiveDuplicateJob: (...a: unknown[]) => findActiveDuplicateJob(...a),
   runJob: (...a: unknown[]) => runJob(...a),
 }));
 
@@ -21,6 +23,8 @@ beforeEach(() => {
   ensureCreatorForAi.mockReset();
   resolveAwemeInput.mockReset();
   createJob.mockReset();
+  findActiveDuplicateJob.mockReset();
+  findActiveDuplicateJob.mockReturnValue(null);
   runJob.mockReset();
 });
 
@@ -58,6 +62,24 @@ describe('startCollectJob', () => {
     const r = await startCollectJob({ kind: 'keyword', input: 'x' });
     expect(r).toEqual({ ok: false, error: '关键词不能为空。', phase: 'keyword-input' });
     expect(createJob).not.toHaveBeenCalled();
+  });
+
+  it('keyword: reuses an active duplicate job without launching another run', async () => {
+    const duplicate = { id: 'job-existing', kind: 'keyword' };
+    ensureKeywordForAi.mockReturnValue({ ok: true, keyword: { id: 'kw-duplicate' } });
+    findActiveDuplicateJob.mockReturnValue(duplicate);
+
+    const r = await startCollectJob({ kind: 'keyword', input: '电商SOP' });
+
+    expect(r).toEqual({ ok: true, job: duplicate });
+    expect(findActiveDuplicateJob).toHaveBeenCalledWith({
+      kind: 'keyword',
+      targetRef: 'kw-duplicate',
+      autoProcess: undefined,
+      publishToKnowledge: true,
+    });
+    expect(createJob).not.toHaveBeenCalled();
+    expect(runJob).not.toHaveBeenCalled();
   });
 
   it('creator: awaits ensureCreatorForAi then launches', async () => {

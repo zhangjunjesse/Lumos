@@ -26,6 +26,7 @@ import type { BuilderSession } from './app/builder/session';
 import { ensureGoofishDefaultAutomations } from './app/goofish-default-automations';
 import { ensureDouyinDefaultAutomations } from './app/douyin-default-automations';
 import { ensureDeepResearchDefaultAutomations } from './app/deep-research-default-automations';
+import { ensureXRadarDefaultAutomations } from './app/x-radar-default-automations';
 import { installApp } from './app/installer/install';
 import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
@@ -43,6 +44,9 @@ const BUILTIN_DOUYIN_COLLECTOR_VERSION = '0.0.5';
 
 const BUILTIN_DEEP_RESEARCH_APP_ID = 'deep-research';
 const BUILTIN_DEEP_RESEARCH_VERSION = '0.0.1';
+
+const BUILTIN_X_RADAR_APP_ID = 'x-radar';
+const BUILTIN_X_RADAR_VERSION = '0.1.0';
 
 const PLACEHOLDER_ICON_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
@@ -695,6 +699,87 @@ async function ensureDeepResearchInstalled(): Promise<void> {
   }
 }
 
+async function ensureXRadarInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_X_RADAR_APP_ID) as { id: string; version: string } | undefined;
+
+  if (existing && existing.version === BUILTIN_X_RADAR_VERSION) {
+    ensureXRadarDefaultAutomations(createAppDataStore(svc.db, BUILTIN_X_RADAR_APP_ID));
+    return;
+  }
+
+  const now = Date.now();
+  const session: BuilderSession = {
+    id: 'bs_builtin_x_radar',
+    status: 'installed',
+    appId: BUILTIN_X_RADAR_APP_ID,
+    appName: 'X 雷达',
+    appDescription:
+      '基于 Lumos X 能力的纯读工作台：监控 / 选题 / 摘要 / 数据拆解 4 种任务模板共用调度与运行历史。',
+    templateId: 'x-radar',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const files = buildTemplateBlueprintFiles(session, 'x-radar', { now });
+  if (!files) {
+    console.warn('[init-builtin-resources] x-radar template returned null');
+    return;
+  }
+
+  const appJson = JSON.parse(files['app.json']);
+  appJson.id = BUILTIN_X_RADAR_APP_ID;
+  appJson.version = BUILTIN_X_RADAR_VERSION;
+  files['app.json'] = `${JSON.stringify(appJson, null, 2)}\n`;
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-x-radar-builtin-'));
+  try {
+    for (const [relPath, content] of Object.entries(files)) {
+      const fullPath = path.join(stagingDir, relPath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    fs.writeFileSync(
+      path.join(stagingDir, 'icon.png'),
+      Buffer.from(PLACEHOLDER_ICON_PNG_BASE64, 'base64'),
+    );
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_X_RADAR_VERSION}`
+        : `首次安装 ${BUILTIN_X_RADAR_VERSION}`;
+      ensureXRadarDefaultAutomations(createAppDataStore(svc.db, BUILTIN_X_RADAR_APP_ID));
+      console.log(`[init-builtin-resources] x-radar ${tag}`);
+    } else {
+      const issuesSummary = (result.issues ?? [])
+        .slice(0, 8)
+        .map((i) => {
+          const r = i as { level?: string; file?: string; jsonPath?: string; message?: string };
+          return `[${r.level ?? '?'}] ${r.file ?? '?'}${r.jsonPath ?? ''}: ${r.message ?? ''}`;
+        })
+        .join('\n  ');
+      console.warn(
+        `[init-builtin-resources] x-radar install failed: ${result.message}` +
+          (issuesSummary ? `\n  ${issuesSummary}` : ''),
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
 // ==========================================
 // Main Initialization
 // ==========================================
@@ -743,6 +828,12 @@ export async function initBuiltinResources(): Promise<void> {
       await ensureDeepResearchInstalled();
     } catch (err) {
       console.error('[init-builtin-resources] deep-research install error:', err);
+    }
+
+    try {
+      await ensureXRadarInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] x-radar install error:', err);
     }
 
     try {

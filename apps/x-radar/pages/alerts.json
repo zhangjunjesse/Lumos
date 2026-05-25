@@ -1,0 +1,56 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "监控告警",
+  "description": "监控雷达任务命中后写入的告警。点击行可看完整原推；按需推 IM 走 app_notifications。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.radar_alerts }}",
+    "columns": [
+      { "field": "author_screen", "label": "作者", "search": true },
+      { "field": "tweet_text", "label": "推文", "search": true },
+      { "field": "matched_rule", "label": "命中规则", "search": true },
+      { "field": "like_count", "label": "点赞", "sortable": true },
+      { "field": "retweet_count", "label": "转推", "sortable": true },
+      { "field": "view_count", "label": "浏览", "sortable": true },
+      { "field": "tweet_url", "label": "原推链接", "render": "link" },
+      { "field": "tweet_created_at", "label": "推文时间", "render": "date", "sortable": true },
+      { "field": "hit_at", "label": "命中时间", "render": "date", "sortable": true },
+      { "field": "status", "label": "处理状态", "render": "tag" }
+    ],
+    "filter": [
+      { "field": "status", "options": ["pending", "notified", "dismissed"] }
+    ],
+    "actions": {
+      "row": [
+        {
+          "label": "推 IM",
+          "run": "im:notify",
+          "input": {
+            "title": "X 雷达手动推送告警",
+            "text": "@{{ row.author_screen }}: {{ row.tweet_text }}\n命中规则: {{ row.matched_rule }}\n互动: {{ row.like_count }}赞 {{ row.retweet_count }}转\n{{ row.tweet_url }}",
+            "target_label": "默认微信用户"
+          },
+          "confirm": "确认把这条告警推送到默认微信目标？要换目标请到「通知命令页」新建。"
+        },
+        { "label": "标记已通知", "run": "db:update:radar_alerts", "input": { "status": "notified" } },
+        { "label": "标记忽略", "run": "db:update:radar_alerts", "input": { "status": "dismissed" } }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "author_screen", "label": "作者 @" },
+        { "type": "text", "name": "author_name", "label": "昵称" },
+        { "type": "textarea", "name": "tweet_text", "label": "推文正文", "rows": 6 },
+        { "type": "text", "name": "tweet_url", "label": "原推链接" },
+        { "type": "text", "name": "matched_rule", "label": "命中规则" },
+        { "type": "text", "name": "like_count", "label": "点赞" },
+        { "type": "text", "name": "retweet_count", "label": "转推" },
+        { "type": "text", "name": "view_count", "label": "浏览" },
+        { "type": "select", "name": "status", "label": "处理状态", "options": ["pending", "notified", "dismissed"] }
+      ]
+    }
+  }
+}

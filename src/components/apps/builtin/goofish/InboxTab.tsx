@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, FileText, Loader2 } from 'lucide-react';
+import { AlertCircle, FileText, Gift, Loader2 } from 'lucide-react';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -125,10 +125,49 @@ function ChatDetailWithDraft({
   onBack: () => void;
 }): React.ReactElement {
   const [generating, setGenerating] = React.useState(false);
+  const [fulfilling, setFulfilling] = React.useState(false);
   const [feedback, setFeedback] = React.useState<{
     kind: 'ok' | 'error';
     text: string;
   } | null>(null);
+
+  const fulfillNow = React.useCallback(async () => {
+    if (typeof window !== 'undefined') {
+      const buyer = session.peer_nick || '该买家';
+      if (!window.confirm(`确认向「${buyer}」发出商品交付链接和提取码？\n系统会从商品库匹配该商品对应的发货内容。`)) {
+        return;
+      }
+    }
+    setFulfilling(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(nativeActionUrl('goofish', 'fulfill-now'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId: session.session_id }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: string;
+        message?: string;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.message ?? '自动发货失败');
+      }
+      const labelMap: Record<string, string> = {
+        sent: '已发出链接和提取码',
+        duplicate_skip: '已跳过（24 小时内已经发过）',
+      };
+      setFeedback({
+        kind: 'ok',
+        text: labelMap[json.status ?? ''] ?? (json.message ?? '已完成'),
+      });
+    } catch (err) {
+      setFeedback({ kind: 'error', text: err instanceof Error ? err.message : '自动发货失败' });
+    } finally {
+      setFulfilling(false);
+    }
+  }, [session.session_id, session.peer_nick]);
 
   const generateDraft = React.useCallback(async () => {
     setGenerating(true);
@@ -180,11 +219,27 @@ function ChatDetailWithDraft({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
         <div className="min-w-0 text-xs text-muted-foreground">
           AI 会读取此会话最近的买家消息，生成草稿后写入「草稿」Tab，等待确认才发送。
+          <span className="block">
+            「自动发货」会反查商品库匹配该商品 → 一键发链接 + 提取码。
+          </span>
         </div>
-        <Button size="sm" onClick={() => void generateDraft()} disabled={generating}>
-          {generating ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
-          生成草稿
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void fulfillNow()}
+            disabled={fulfilling || generating}
+          >
+            {fulfilling
+              ? <Loader2 className="size-3.5 animate-spin" />
+              : <Gift className="size-3.5" />}
+            自动发货
+          </Button>
+          <Button size="sm" onClick={() => void generateDraft()} disabled={generating || fulfilling}>
+            {generating ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
+            生成草稿
+          </Button>
+        </div>
       </div>
       {feedback ? (
         <Alert variant={feedback.kind === 'error' ? 'destructive' : 'default'}>

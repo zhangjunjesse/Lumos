@@ -93,6 +93,14 @@ async function buildElectron() {
       'esbuild',
       '@node-rs/jieba',
       'onnxruntime-node',
+      // @resvg/resvg-js 是 napi-rs native binding：主包 require 平台子包（含 .node 文件）。
+      // esbuild 没 .node loader，必须 external，运行时 node_modules 里 require。
+      '@resvg/resvg-js',
+      '@resvg/resvg-js-darwin-x64',
+      '@resvg/resvg-js-darwin-arm64',
+      '@resvg/resvg-js-linux-x64-gnu',
+      '@resvg/resvg-js-linux-arm64-gnu',
+      '@resvg/resvg-js-win32-x64-msvc',
     ],
     sourcemap: true,
     minify: false,

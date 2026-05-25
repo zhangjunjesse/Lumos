@@ -127,3 +127,74 @@ export function getItemsByTag(tagId: string): string[] {
   ).all(tagId) as { item_id: string }[];
   return rows.map(r => r.item_id);
 }
+
+/**
+ * Merge tag `fromId` into `toId`:
+ *  - move each kb_item_tags row from fromId to toId (skip if target already has it)
+ *  - drop kb_tags.fromId
+ *  - rebuild usage_count on toId from kb_item_tags (authoritative)
+ * Returns the number of items that ended up with the target tag added (rough "affected items").
+ */
+export function mergeTag(fromId: string, toId: string): { merged: number } {
+  if (!fromId || !toId || fromId === toId) return { merged: 0 };
+  const db = getDb();
+  const fromTag = getTag(fromId);
+  const toTag = getTag(toId);
+  if (!fromTag || !toTag) return { merged: 0 };
+
+  let merged = 0;
+  const tx = db.transaction(() => {
+    const rows = db.prepare(
+      'SELECT item_id, confidence, source, created_at FROM kb_item_tags WHERE tag_id = ?',
+    ).all(fromId) as Array<{ item_id: string; confidence: number; source: string; created_at: string }>;
+
+    const hasTarget = db.prepare(
+      'SELECT 1 FROM kb_item_tags WHERE item_id = ? AND tag_id = ? LIMIT 1',
+    );
+    const insertTarget = db.prepare(`
+      INSERT INTO kb_item_tags (item_id, tag_id, confidence, source, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const deleteSource = db.prepare(
+      'DELETE FROM kb_item_tags WHERE item_id = ? AND tag_id = ?',
+    );
+
+    for (const row of rows) {
+      const exists = Boolean(hasTarget.get(row.item_id, toId));
+      if (!exists) {
+        insertTarget.run(row.item_id, toId, row.confidence, row.source, row.created_at);
+        merged += 1;
+      }
+      deleteSource.run(row.item_id, fromId);
+    }
+
+    db.prepare('DELETE FROM kb_tags WHERE id = ?').run(fromId);
+    const count = db.prepare(
+      'SELECT COUNT(*) AS n FROM kb_item_tags WHERE tag_id = ?',
+    ).get(toId) as { n: number };
+    db.prepare('UPDATE kb_tags SET usage_count = ? WHERE id = ?').run(count.n, toId);
+  });
+  tx();
+  return { merged };
+}
+
+/** Sync item.tags JSON column from current kb_item_tags state (used after merge/rename). */
+export function rebuildItemTagsJson(itemIds: string[]): void {
+  if (itemIds.length === 0) return;
+  const db = getDb();
+  const selectNames = db.prepare(`
+    SELECT t.name FROM kb_item_tags it
+    JOIN kb_tags t ON t.id = it.tag_id
+    WHERE it.item_id = ?
+    ORDER BY it.confidence DESC, t.name ASC
+  `);
+  const updateItem = db.prepare('UPDATE kb_items SET tags = ?, updated_at = ? WHERE id = ?');
+  const ts = new Date().toISOString();
+  const tx = db.transaction(() => {
+    for (const id of itemIds) {
+      const rows = selectNames.all(id) as Array<{ name: string }>;
+      updateItem.run(JSON.stringify(rows.map(r => r.name)), ts, id);
+    }
+  });
+  tx();
+}

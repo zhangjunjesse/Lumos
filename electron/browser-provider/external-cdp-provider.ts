@@ -417,6 +417,66 @@ export class ExternalCdpAutomationSession implements BrowserAutomationSession {
     }
   }
 
+  async getCookies(filter?: Electron.CookiesGetFilter): Promise<Electron.Cookie[]> {
+    const connection = await this.getCookieJarConnection();
+    await connection.send('Network.enable').catch(() => undefined);
+    const params: Record<string, unknown> = {};
+    if (filter?.url) {
+      params.urls = [filter.url];
+    }
+    const response = await connection.send('Network.getCookies', params) as
+      | { cookies?: CdpCookie[] }
+      | undefined;
+    let cookies = response?.cookies ?? [];
+    if (filter?.domain) {
+      cookies = cookies.filter((c) => matchesCookieDomain(c.domain, filter.domain!));
+    }
+    if (filter?.name) {
+      cookies = cookies.filter((c) => c.name === filter.name);
+    }
+    if (filter?.secure !== undefined) {
+      cookies = cookies.filter((c) => c.secure === filter.secure);
+    }
+    if (filter?.session !== undefined) {
+      cookies = cookies.filter((c) => isSessionCookie(c) === filter.session);
+    }
+    return cookies.map(cdpCookieToElectronCookie);
+  }
+
+  async setCookie(cookie: Electron.CookiesSetDetails): Promise<void> {
+    const connection = await this.getCookieJarConnection();
+    await connection.send('Network.enable').catch(() => undefined);
+    const params: Record<string, unknown> = { name: cookie.name, value: cookie.value ?? '' };
+    if (cookie.url) params.url = cookie.url;
+    if (cookie.domain) params.domain = cookie.domain;
+    if (cookie.path) params.path = cookie.path;
+    if (cookie.secure !== undefined) params.secure = cookie.secure;
+    if (cookie.httpOnly !== undefined) params.httpOnly = cookie.httpOnly;
+    if (cookie.expirationDate !== undefined) params.expires = cookie.expirationDate;
+    if (cookie.sameSite) {
+      params.sameSite = cookie.sameSite === 'no_restriction'
+        ? 'None' : cookie.sameSite === 'lax' ? 'Lax' : 'Strict';
+    }
+    const result = await connection.send('Network.setCookie', params) as
+      | { success?: boolean }
+      | undefined;
+    if (result && result.success === false) {
+      throw new Error(`CDP Network.setCookie returned success=false for ${cookie.name}`);
+    }
+  }
+
+  private async getCookieJarConnection(): Promise<CdpConnection> {
+    let tabId = this.activeTabId ?? this.tabs.keys().next().value ?? null;
+    if (!tabId) {
+      await this.refreshTabs().catch(() => undefined);
+      tabId = this.activeTabId ?? this.tabs.keys().next().value ?? null;
+    }
+    if (!tabId) {
+      tabId = await this.createTab('about:blank', { background: true });
+    }
+    return this.getConnection(tabId);
+  }
+
   private async getConnection(tabId: string): Promise<CdpConnection> {
     const target = await this.ensureTarget(tabId);
     let connection = this.connections.get(tabId);
@@ -462,6 +522,47 @@ export class ExternalCdpAutomationSession implements BrowserAutomationSession {
       webSocketDebuggerUrl: target.webSocketDebuggerUrl,
     });
   }
+}
+
+interface CdpCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  size?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  session?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
+}
+
+function matchesCookieDomain(cookieDomain: string, filterDomain: string): boolean {
+  const c = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain;
+  const f = filterDomain.startsWith('.') ? filterDomain.slice(1) : filterDomain;
+  return c === f || c.endsWith(`.${f}`);
+}
+
+function isSessionCookie(cookie: CdpCookie): boolean {
+  if (cookie.session !== undefined) return cookie.session;
+  return typeof cookie.expires !== 'number' || cookie.expires <= 0;
+}
+
+function cdpCookieToElectronCookie(cookie: CdpCookie): Electron.Cookie {
+  const result: Electron.Cookie = {
+    name: cookie.name,
+    value: cookie.value ?? '',
+    domain: cookie.domain,
+    hostOnly: !cookie.domain.startsWith('.'),
+    path: cookie.path,
+    secure: cookie.secure === true,
+    httpOnly: cookie.httpOnly === true,
+    session: isSessionCookie(cookie),
+  };
+  if (typeof cookie.expires === 'number' && cookie.expires > 0) {
+    result.expirationDate = cookie.expires;
+  }
+  return result;
 }
 
 export class ExternalCdpProvider implements BrowserProvider {

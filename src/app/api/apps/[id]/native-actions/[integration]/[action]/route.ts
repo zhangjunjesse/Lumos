@@ -6,6 +6,7 @@ import {
   syncGoofishIntoApp,
 } from '@/lib/app/goofish-app-sync';
 import { rejectGoofishDraftFromApp } from '@/lib/app/goofish-draft-control';
+import { handleGoofishProductAction } from '@/lib/app/goofish-product-actions';
 import { generateGoofishReplyDraft } from '@/lib/app/goofish-reply-draft-generator';
 import { scanAndNotify } from '@/lib/app/goofish-reminder-engine';
 import { aggregateSearch, type SearchScope } from '@/lib/app/goofish-search-aggregator';
@@ -113,6 +114,14 @@ export async function POST(
       });
       return NextResponse.json(result);
     }
+    if (integration === 'goofish') {
+      const productResult = await handleGoofishProductAction({
+        manifest, appId: id, action, body,
+      });
+      if (productResult !== null) {
+        return NextResponse.json(productResult);
+      }
+    }
     if (integration === 'goofish' && action === 'reject-draft') {
       const svc = getAppPlatformService();
       const rowId = typeof body.rowId === 'string' ? body.rowId : '';
@@ -129,6 +138,26 @@ export async function POST(
         confirmed: body.confirmed === true,
       });
       return NextResponse.json(result);
+    }
+    if (integration === 'x-radar' && action === 'run-task') {
+      // 用户手动「立即跑一次」专用：跳过 cadence + enabled 检查（cadence 给定时巡更，enabled 给批量过滤）
+      const taskId = typeof body.taskId === 'string' ? body.taskId : '';
+      if (!taskId) {
+        return NextResponse.json({ ok: false, message: '缺少 taskId。' }, { status: 400 });
+      }
+      const { isXRadarNativeApp } = await import('@/lib/app/x-radar-app-id');
+      if (!isXRadarNativeApp(manifest)) {
+        return NextResponse.json({ ok: false, message: '当前应用不是 X 雷达。' }, { status: 400 });
+      }
+      const { runSingleTaskNow } = await import('@/lib/x-radar/patrol');
+      const svc = getAppPlatformService();
+      const report = await runSingleTaskNow(taskId, {
+        store: createAppDataStore(svc.db, id),
+        db: svc.db,
+        appId: id,
+        signal: req.signal, // patrol 收到这个 signal，前端断连/超时时立即停
+      });
+      return NextResponse.json({ ...report, ok: report.ok, message: report.message });
     }
     if (integration === 'app' && action === 'run-automation') {
       const svc = getAppPlatformService();
@@ -255,4 +284,8 @@ function readInstalledApp(appId: string): { manifest: AppManifest; installPath: 
 
 function numberOption(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function stringOption(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }

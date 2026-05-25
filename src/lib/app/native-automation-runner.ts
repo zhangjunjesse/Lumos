@@ -5,6 +5,7 @@ import {
   syncGoofishIntoApp,
   type GoofishAppSyncDeps,
 } from './goofish-app-sync';
+import { runAutoFulfillScan } from './goofish-auto-fulfill-scanner';
 import { scanAndReply } from './goofish-auto-reply-matcher';
 import { scanAndNotify } from './goofish-reminder-engine';
 import type { AppManifest } from './manifest/types';
@@ -40,8 +41,13 @@ export const SUPPORTED_NATIVE_AUTOMATION_ACTIONS = new Set([
   'goofish:sync',
   'goofish:auto-reply-scan',
   'goofish:check-reminders',
+  'goofish:auto-fulfill-scan',
   'douyin-collector:patrol-creators',
   'douyin-collector:patrol-keywords',
+  'x-radar:run-monitor-tasks',
+  'x-radar:run-topic-tasks',
+  'x-radar:run-digest-tasks',
+  'x-radar:run-stats-tasks',
 ]);
 
 export async function runNativeAppAutomation(input: {
@@ -163,6 +169,39 @@ export async function runNativeAppAutomation(input: {
     };
   }
 
+  if (nativeAction === 'goofish:auto-fulfill-scan') {
+    if (!isGoofishNativeApp(input.manifest)) {
+      return fail('当前应用不是闲鱼类应用，不能运行 goofish:auto-fulfill-scan。', { nativeAction });
+    }
+    const result = await runAutoFulfillScan({
+      manifest: input.manifest,
+      store: input.store,
+      now,
+    });
+    const status = result.ok ? 'success' : 'failed';
+    const runId = createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary: result.message,
+      failure_reason: result.errors > 0 ? result.message : undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: result.message,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: result.ok,
+      automationId: automation.id,
+      runId,
+      message: result.message,
+      nativeAction,
+      error: result.errors > 0 ? result.message : undefined,
+    };
+  }
+
   if (nativeAction === 'goofish:check-reminders') {
     if (!isGoofishNativeApp(input.manifest)) {
       return fail('当前应用不是闲鱼类应用，不能运行 goofish:check-reminders。', { nativeAction });
@@ -217,6 +256,42 @@ export async function runNativeAppAutomation(input: {
       nativeAction === 'douyin-collector:patrol-creators'
         ? await patrolEnabledCreators()
         : await patrolEnabledKeywords();
+    const status = report.ok ? 'success' : 'failed';
+    const runId = createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary: report.message,
+      failure_reason: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: report.message,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: report.ok,
+      automationId: automation.id,
+      runId,
+      message: report.message,
+      nativeAction,
+      error: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
+    };
+  }
+
+  if (nativeAction.startsWith('x-radar:run-')) {
+    const { isXRadarNativeApp } = await import('@/lib/app/x-radar-app-id');
+    if (!isXRadarNativeApp(input.manifest)) {
+      return fail('当前应用不是 X 雷达类应用，不能运行 x-radar 自动化。', { nativeAction });
+    }
+    const { patrolMonitorTasks, patrolTopicTasks, patrolDigestTasks, patrolStatsTasks } = await import('@/lib/x-radar/patrol');
+    const runner =
+      nativeAction === 'x-radar:run-monitor-tasks' ? patrolMonitorTasks
+      : nativeAction === 'x-radar:run-topic-tasks' ? patrolTopicTasks
+      : nativeAction === 'x-radar:run-digest-tasks' ? patrolDigestTasks
+      : patrolStatsTasks;
+    const report = await runner({ store: input.store, db: input.db, appId: input.appId, now: () => now });
     const status = report.ok ? 'success' : 'failed';
     const runId = createRunHistory(input.store, {
       title: `运行自动化：${automation.title ?? nativeAction}`,

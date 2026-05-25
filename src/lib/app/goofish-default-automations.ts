@@ -5,6 +5,8 @@ export const GOOFISH_AUTO_REPLY_AUTOMATION_ID = 'goofish-auto-reply-scan';
 export const GOOFISH_REMINDER_AUTOMATION_ID = 'goofish-check-reminders';
 export const GOOFISH_REMINDER_AUTOMATION_ACTION = 'goofish:check-reminders';
 export const GOOFISH_REMINDER_AUTOMATION_SCHEDULE = '每 5 分钟';
+export const GOOFISH_AUTO_FULFILL_AUTOMATION_ID = 'goofish-auto-fulfill-scan';
+export const GOOFISH_AUTO_FULFILL_AUTOMATION_ACTION = 'goofish:auto-fulfill-scan';
 
 export interface GoofishAutomationRow extends Record<string, unknown> {
   title?: string;
@@ -124,5 +126,18 @@ const GOOFISH_DEFAULT_AUTOMATIONS: Array<
     schedule_error: '',
     next_run_at: null,
     last_run_summary: '默认禁用。开启并同步后会按每 5 分钟扫描一次提醒规则。',
+  },
+  {
+    id: GOOFISH_AUTO_FULFILL_AUTOMATION_ID,
+    title: '自动发货扫描',
+    enabled: false,
+    schedule: '每 1 分钟',
+    native_action: GOOFISH_AUTO_FULFILL_AUTOMATION_ACTION,
+    description: '扫描近 30 分钟的付款类系统消息，命中商品库则自动发链接 + 提取码。默认禁用。',
+    last_status: 'idle',
+    schedule_status: 'not_connected',
+    schedule_error: '',
+    next_run_at: null,
+    last_run_summary: '默认禁用。开启前请到「设置 > 自动发货」阅读风险说明并选好识别策略和金额阀值。',
   },
 ];

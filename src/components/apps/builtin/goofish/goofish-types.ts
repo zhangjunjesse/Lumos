@@ -11,6 +11,8 @@ export type AppTab =
   | 'auto-reply'
   | 'reminders'
   | 'search'
+  | 'products'
+  | 'fulfillment'
   | 'automations'
   | 'settings';
 

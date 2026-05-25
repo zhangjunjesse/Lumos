@@ -6,7 +6,9 @@ import {
   ArrowUpRight,
   Compass,
   MessageCircleHeart,
+  Pin,
   Radar,
+  Radio,
   ShoppingBag,
   Sparkles,
   Video,
@@ -427,6 +429,119 @@ function deepResearchPhaseLabel(phase?: string): string {
     default:
       return '检测中';
   }
+}
+
+/**
+ * X 雷达：纯读 X(Twitter) 工作台。底层走 lib/x-platform/* 和 MCP x-platform。
+ * 这张卡片只显示「已就绪/未登录/未安装/失败」状态摘要 + 任务/产物数。
+ */
+export interface BuiltinXRadarStatus {
+  app?: { id: string; name: string; version: string };
+  install: { installed: boolean; version: string | null };
+  x: { loggedIn: boolean; screenName: string };
+  tasks: { total: number; monitor: number; topic: number; digest: number; stats: number };
+  library: { alerts: number; reports: number; digests: number; stats: number };
+  ready: boolean;
+  phase: string;
+  error: string | null;
+}
+
+export function BuiltinXRadarCard({
+  status,
+}: {
+  status: BuiltinXRadarStatus | null;
+}): React.ReactElement {
+  const ready = !!status?.ready;
+  const total = status?.tasks.total ?? 0;
+  const alerts = status?.library.alerts ?? 0;
+  const phaseLabel = status?.phase ?? '检测中';
+  return (
+    <Link
+      href="/apps/x-radar"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-indigo-500 text-white shadow-sm">
+          <Radio className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              X 雷达
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · 知识采集
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        X (Twitter) 纯读工作台：监控 / 选题 / 摘要 / 数据拆解 4 种任务，命中可推 IM
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone={ready ? 'ok' : 'warn'} />
+          <span className="text-muted-foreground">{ready ? '已就绪' : phaseLabel}</span>
+        </span>
+        {total > 0 ? (
+          <span className="text-muted-foreground tabular-nums">· {total} 个任务</span>
+        ) : null}
+        {alerts > 0 ? (
+          <span className="text-muted-foreground tabular-nums">· {alerts} 条告警</span>
+        ) : null}
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * Pinterest 选品雷达 — 抓 Pinterest Trends 当前 trending 词 + 90 天增长曲线
+ * + AI 选品解读 + PDF 报告。骨架先上,业务逻辑分步实现。
+ */
+export function BuiltinPinterestRadarCard(): React.ReactElement {
+  return (
+    <Link
+      href="/apps/pinterest-radar"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-red-500 text-white shadow-sm">
+          <Pin className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              Pinterest 选品雷达
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · 电商选品
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        Pinterest Trends 当前 trending 词 + 90 天增长曲线 + AI 选品解读 + PDF 报告
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone="warn" />
+          <span className="text-muted-foreground">骨架已就绪 · 业务接入中</span>
+        </span>
+      </div>
+    </Link>
+  );
 }
 
 /**

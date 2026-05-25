@@ -6,7 +6,7 @@ import {
   type CollectJobRow,
 } from './storage';
 import { COLLECTION_JOBS, COLLECTION_VIDEOS } from './constants';
-import type { CollectJobRecord, JobKind, JobStatus } from './types';
+import type { CollectJobRecord, CreatorCollectMode, JobKind, JobStatus } from './types';
 import { parseDouyinInput } from './parse-input';
 import {
   fetchCreatorVideos,
@@ -21,6 +21,7 @@ import { reportJobProgress } from './job-progress';
 import { parseVideoTags } from './parsers';
 import type { CreatorRecord, KeywordRecord } from './types';
 import { COLLECTION_CREATORS, COLLECTION_KEYWORDS } from './constants';
+import { getDouyinCollectorSettings } from './settings';
 
 const RUN_HISTORY_COLLECTION = 'run_history';
 
@@ -68,6 +69,10 @@ export interface CreateJobInput {
   autoProcess?: boolean;
   /** undefined=沿用全局设置；true/false=本次 job 显式入库语义。 */
   publishToKnowledge?: boolean;
+  /** 博主采集模式：recent=快速，full=长滚动尽量采全。 */
+  creatorCollectMode?: CreatorCollectMode;
+  /** 博主采集最多发现多少条视频。 */
+  maxVideos?: number;
 }
 
 export function createJob(input: CreateJobInput): CollectJobRow {
@@ -84,8 +89,33 @@ export function createJob(input: CreateJobInput): CollectJobRow {
     transcribed_count: 0,
     auto_process: input.autoProcess !== false,
     publish_to_knowledge: input.publishToKnowledge,
+    ...(input.creatorCollectMode ? { creator_collect_mode: input.creatorCollectMode } : {}),
+    ...(typeof input.maxVideos === 'number' ? { max_videos: input.maxVideos } : {}),
     updated_at: now,
   });
+}
+
+export function findActiveDuplicateJob(input: CreateJobInput): CollectJobRow | null {
+  if (!getDouyinCollectorSettings().dedupeCollect) return null;
+  const store = getDouyinCollectorStore();
+  const mode = input.creatorCollectMode ?? 'recent';
+  const maxVideos = typeof input.maxVideos === 'number' ? Math.floor(input.maxVideos) : null;
+  const autoProcess = input.autoProcess !== false;
+  const publishToKnowledge = input.publishToKnowledge;
+  const candidates = store.query<CollectJobRecord>(COLLECTION_JOBS, {
+    filter: { kind: input.kind, target_ref: input.targetRef },
+    orderBy: { field: 'updated_at', direction: 'desc' },
+    limit: 20,
+  });
+  return candidates.find((job) => {
+    if (job.status !== 'queued' && job.status !== 'running') return false;
+    if ((job.auto_process !== false) !== autoProcess) return false;
+    if (job.publish_to_knowledge !== publishToKnowledge) return false;
+    if (input.kind !== 'creator') return true;
+    const jobMode = job.creator_collect_mode ?? 'recent';
+    const jobMaxVideos = typeof job.max_videos === 'number' ? Math.floor(job.max_videos) : null;
+    return jobMode === mode && jobMaxVideos === maxVideos;
+  }) ?? null;
 }
 
 export function markJobStatus(
@@ -314,7 +344,10 @@ async function runLinkJob(
     return updated;
   }
 
-  const outcome = await fetchVideoMetadata(awemeId);
+  // 用 resilient 链而非裸 fetchVideoMetadata: anonymous fetch + pacer →
+  // risk 时 browser fetch share page → 还 risk 时浏览器 navigate /video/<id>。
+  // link 单条采集是用户最常手动触发的入口, 必须能挺过抖音风控骨架页。
+  const outcome = await fetchVideoMetadataResilient(awemeId);
   if (!outcome.ok) {
     const updated = markJobStatus(jobId, {
       status: 'failed',
@@ -349,8 +382,11 @@ async function runCreatorJob(
   const secUid = creator?.sec_uid ?? null;
 
   if (!secUid) {
-    const reason =
-      '该博主没有 sec_uid（添加时输入的是昵称或短链）。请先编辑博主条目填入主页链接 / sec_uid。';
+    // New subscriptions always resolve sec_uid up front (see
+    // resolveCreatorInput). This path only fires for legacy rows added
+    // before that gate existed — point users at the only recovery move:
+    // delete and re-add with a proper profile link.
+    const reason = '该博主缺 sec_uid（旧版残留记录）。请删除该订阅，再重新粘贴博主主页链接添加。';
     const updated = markJobStatus(jobId, { status: 'failed', failureReason: reason });
     recordRun(job, 'failed', reason);
     return updated;
@@ -358,21 +394,32 @@ async function runCreatorJob(
 
   reportJobProgress(jobId, {
     phase: 'discovering',
-    message: '正在打开博主主页，发现视频列表…',
+    message:
+      job.creator_collect_mode === 'full'
+        ? '正在长滚动博主主页，尽量发现全部视频列表…'
+        : '正在打开博主主页，发现视频列表…',
   });
   // Round 167: try the embedded BrowserManager path FIRST. iesdouyin's
   // share/user/* endpoint is JS-VM packed (Round 161); only a real
   // browser context can extract the video list. If the bridge is down
   // (e.g., running outside Electron), fall back to the legacy fetch
   // path which will surface the JS-VM signature reason honestly.
-  const browserOutcome = await fetchCreatorAwemesViaBrowser(secUid);
+  const browserOutcome = await fetchCreatorAwemesViaBrowser(secUid, {
+    mode: job.creator_collect_mode === 'full' ? 'full' : 'recent',
+    maxVideos: typeof job.max_videos === 'number' ? job.max_videos : undefined,
+  });
   if (browserOutcome.ok && browserOutcome.awemeIds && browserOutcome.awemeIds.length > 0) {
     let added = 0;
     let riskCount = 0;
     let skippedAuthorMismatch = 0;
+    let skippedExisting = 0;
+    const dedupeCollect = getDouyinCollectorSettings().dedupeCollect;
     const processVideoIds: string[] = [];
     const failures: string[] = [];
     let firstAuthorNickname: string | null = null;
+    const expectedCreatorNickname = normalizeCreatorNicknameForMatch(
+      creator && !creator.nickname.startsWith('博主 ') ? creator.nickname : null,
+    );
     const total = browserOutcome.awemeIds.length;
     let processed = 0;
     reportJobProgress(jobId, {
@@ -381,7 +428,38 @@ async function runCreatorJob(
       processed: 0,
       message: `发现 ${total} 条视频，正在补全博主视频元数据…`,
     });
+    let retranscribedExisting = 0;
     for (const awemeId of browserOutcome.awemeIds) {
+      // dedupe 分支：之前这里无条件跳过任何 existing 视频，导致用户在 UI
+      // 上点「采集」时，38 条历史里 17 条字幕失败的也不会再尝试——出现
+      // 「成功 38 / 转写 0」的静默失败。新语义：只跳过转写已成功的；其余
+      // 状态（pending/failed/null）落入下面的 fetchVideoMetadataResilient
+      // 重抓 + pipeline 重跑路径，因为旧元数据可能就是风控骨架污染版。
+      let mustRetranscribeExisting = false;
+      if (dedupeCollect) {
+        const existing = findExistingVideoByAwemeId(awemeId);
+        if (existing?.creator_ref === secUid) {
+          const needsRetranscribe =
+            job.auto_process !== false &&
+            existing.transcript_status !== 'success';
+          if (!needsRetranscribe) {
+            processed += 1;
+            skippedExisting += 1;
+            if (shouldProcessVideoForJob(false, job)) {
+              processVideoIds.push(existing.id);
+            }
+            reportJobProgress(jobId, {
+              processed,
+              added,
+              risk: riskCount,
+              skipped: skippedExisting + skippedAuthorMismatch,
+              message: '',
+            });
+            continue;
+          }
+          mustRetranscribeExisting = true;
+        }
+      }
       // Resilient back-fill: paced anonymous HTTP, with a logged-in
       // browser retry when douyin answers the rate-limit skeleton.
       const single = await fetchVideoMetadataResilient(awemeId);
@@ -400,33 +478,78 @@ async function runCreatorJob(
         skippedAuthorMismatch += 1;
         continue;
       }
+      // metadata 没 authorSecUid 时, fetchVideoMetadataResilient 拿回的多半
+      // 是抖音风控骨架页 (anti-bot 拒返真实元数据). 这条 awemeId 是从
+      // /user/<secUid> 主页 DOM 爬来的, scrape script 已经滤掉了
+      // ?source=Baiduspider 这类显式推荐链接, 因此默认归属本人——之前
+      // 严格要求 nickname 匹配才放行, 在博主作品数 >= 100+ 的场景下会被
+      // 风控扫一大片, 实测 178 条作品里 114 条因此丢失. 仅当 metadata
+      // 有 authorNickname 且明确对不上 expectedCreatorNickname 时才滤,
+      // metadata 完全空就按 page 来源信任.
+      const authorNickname = normalizeCreatorNicknameForMatch(single.metadata.authorNickname);
+      if (!single.metadata.authorSecUid && expectedCreatorNickname) {
+        if (authorNickname && authorNickname !== expectedCreatorNickname) {
+          skippedAuthorMismatch += 1;
+          continue;
+        }
+      }
+      const verifiedMetadata: ScrapedVideoMetadata = {
+        ...single.metadata,
+        authorSecUid: single.metadata.authorSecUid ?? secUid,
+      };
       // Round 176: capture the first matching video's authorNickname
       // for back-fill below. fetchCreatorAwemesViaBrowser doesn't
       // extract profile fields (nickname/avatar/follower_count); but
       // every video share-page does. Using the first scraped video's
       // metadata is the most reliable per-creator profile signal we have.
-      if (!firstAuthorNickname && single.metadata.authorNickname) {
-        firstAuthorNickname = single.metadata.authorNickname;
+      if (!firstAuthorNickname && verifiedMetadata.authorNickname) {
+        firstAuthorNickname = verifiedMetadata.authorNickname;
       }
-      const r = upsertVideoFromScrape(single.metadata);
-      if (shouldProcessVideoForJob(r.created, job)) processVideoIds.push(r.id);
-      added += 1;
+      const r = upsertVideoFromScrape(verifiedMetadata);
+      // mustRetranscribeExisting 是 dedupe 分支判定要重跑的 existing 视频；
+      // 已经在上面 fetch + upsert 刷新过元数据，直接入 pipeline 不再走
+      // shouldProcessVideoForJob 的 publish_to_knowledge 门禁（那扇门是
+      // 给「新增视频」用的，不适合「修复污染元数据」语义）。
+      if (mustRetranscribeExisting || shouldProcessVideoForJob(r.created, job)) {
+        processVideoIds.push(r.id);
+      }
+      if (mustRetranscribeExisting) {
+        retranscribedExisting += 1;
+      } else {
+        added += 1;
+      }
       reportJobProgress(jobId, { processed, added, risk: riskCount, message: '' });
     }
+    const otherCount = failures.length - riskCount;
+    const relevantCount = added + skippedExisting + retranscribedExisting;
+    const terminalStatus: 'success' | 'failed' = relevantCount > 0 ? 'success' : 'failed';
+    const finalFailureReason =
+      terminalStatus === 'failed'
+        ? creatorZeroCollectFailureReason({
+            total,
+            skippedAuthorMismatch,
+            riskCount,
+            otherCount,
+            sampleFailure: failures[0],
+          })
+        : undefined;
+    const willProcess = processVideoIds.length > 0 && job.auto_process !== false;
     reportJobProgress(jobId, {
-      phase: added > 0 ? 'processing' : 'failed',
+      phase: willProcess ? 'processing' : terminalStatus === 'success' ? 'done' : 'failed',
       processed: total,
       added,
       risk: riskCount,
-      skipped: skippedAuthorMismatch + (failures.length - riskCount),
+      skipped: skippedExisting + skippedAuthorMismatch + (failures.length - riskCount),
       message:
-        added > 0
-          ? `元数据补全完成（入库 ${added}、风控 ${riskCount}），后续抓字幕/总结/入库在后台继续…`
-          : '',
+        willProcess
+          ? `元数据补全完成（新增/更新 ${added}、重跑 ${retranscribedExisting}、已跳过 ${skippedExisting}、风控 ${riskCount}），后续抓字幕/总结/入库在后台继续…`
+          : terminalStatus === 'success'
+            ? `采集完成：新增/更新 ${added} 条，跳过 ${skippedExisting} 条已转写视频。`
+            : finalFailureReason ?? '',
     });
     if (creator) {
       const creatorPatch: Partial<CreatorRecord> = {
-        last_failure_reason: null,
+        last_failure_reason: terminalStatus === 'success' ? null : finalFailureReason,
         last_checked_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -441,20 +564,25 @@ async function runCreatorJob(
       }
       store.update<CreatorRecord>(COLLECTION_CREATORS, creator.id, creatorPatch);
     }
-    const otherCount = failures.length - riskCount;
-    const skippedSuffix = skippedAuthorMismatch > 0 ? ` · 跳过 ${skippedAuthorMismatch} 条非该博主的相关推荐` : '';
-    const summary = failures.length === 0
-      ? `已采集 ${added} 条视频（内置浏览器；secUid ${secUid.slice(0, 8)}…）${skippedSuffix}`
-      : `已采集 ${added} 条${skippedSuffix}${backfillFailureSuffix(riskCount, otherCount)}`;
+    const skippedParts: string[] = [];
+    if (skippedExisting > 0) skippedParts.push(`跳过 ${skippedExisting} 条已转写视频`);
+    if (retranscribedExisting > 0) {
+      skippedParts.push(`重跑 ${retranscribedExisting} 条之前字幕未成功的视频`);
+    }
+    if (skippedAuthorMismatch > 0) skippedParts.push(`跳过 ${skippedAuthorMismatch} 条非该博主的相关推荐`);
+    const skippedSuffix = skippedParts.length > 0 ? ` · ${skippedParts.join(' · ')}` : '';
+    const summary =
+      terminalStatus === 'success'
+        ? failures.length === 0
+          ? `已采集 ${added} 条视频（内置浏览器；secUid ${secUid.slice(0, 8)}…）${skippedSuffix}`
+          : `已采集 ${added} 条${skippedSuffix}${backfillFailureSuffix(riskCount, otherCount)}`
+        : finalFailureReason ?? '本次博主采集没有落下任何视频。';
     const updated = markJobStatus(jobId, {
-      status: failures.length === 0 || added > 0 ? 'success' : 'failed',
-      discoveredCount: added,
-      failureReason:
-        failures.length > 0 && added === 0
-          ? backfillFailureReason(riskCount, otherCount, failures[0])
-          : undefined,
+      status: terminalStatus,
+      discoveredCount: relevantCount,
+      failureReason: finalFailureReason,
     });
-    recordRun(job, failures.length === 0 || added > 0 ? 'success' : 'failed', summary);
+    recordRun(job, terminalStatus, summary);
     if (processVideoIds.length > 0) {
       await runAutoPipelineForJob(jobId, processVideoIds, {
         force: job.auto_process !== false,
@@ -469,7 +597,7 @@ async function runCreatorJob(
     // Surface BOTH why the browser path didn't take + why fetch failed,
     // so the user knows which gate is blocking them.
     const reason = browserOutcome.reason
-      ? `${outcome.reason}（同时尝试内置浏览器：${browserOutcome.reason}）`
+      ? `${browserOutcome.reason}（纯 fetch 兜底也失败：${outcome.reason}）`
       : outcome.reason;
     const updated = markJobStatus(jobId, {
       status: 'failed',
@@ -505,6 +633,24 @@ async function runCreatorJob(
   }
 
   const summary = `已采集 ${added} 条视频（博主：${outcome.profile.nickname ?? secUid.slice(0, 8) + '…'}）`;
+  if (added === 0) {
+    const reason = '纯 fetch 兜底返回了博主信息，但没有任何视频列表；抖音接口可能仍被反爬或该账号作品不可见。';
+    const updated = markJobStatus(jobId, {
+      status: 'failed',
+      discoveredCount: 0,
+      failureReason: reason,
+    });
+    if (creator) {
+      store.update<CreatorRecord>(COLLECTION_CREATORS, creator.id, {
+        last_failure_reason: reason,
+        last_checked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    recordRun(job, 'failed', reason);
+    return updated;
+  }
+
   const updated = markJobStatus(jobId, { status: 'success', discoveredCount: added });
   recordRun(job, 'success', summary);
   if (processVideoIds.length > 0) {
@@ -514,6 +660,54 @@ async function runCreatorJob(
     });
   }
   return updated;
+}
+
+function normalizeCreatorNicknameForMatch(value: string | null | undefined): string | null {
+  const normalized = value
+    ?.trim()
+    .replace(/\s+/g, '')
+    .replace(/^@+/, '');
+  return normalized || null;
+}
+
+function creatorZeroCollectFailureReason(input: {
+  total: number;
+  skippedAuthorMismatch: number;
+  riskCount: number;
+  otherCount: number;
+  sampleFailure?: string;
+}): string {
+  const parts: string[] = [];
+  if (input.skippedAuthorMismatch > 0) {
+    parts.push(`抓到 ${input.skippedAuthorMismatch} 条非该博主的相关推荐，已过滤`);
+  }
+  if (input.riskCount > 0 || input.otherCount > 0) {
+    parts.push(backfillFailureReason(input.riskCount, input.otherCount, input.sampleFailure));
+  }
+  if (parts.length > 0) {
+    return `本次没有采到目标博主作品（页面候选 ${input.total} 条，${parts.join('；')}）。请确认采集浏览器当前打开的是该博主作品页，能看到作品列表并可继续向下加载。`;
+  }
+  return `浏览器采集脚本运行完成，但没有落下任何目标博主视频（页面候选 ${input.total} 条，新增/已采集均为 0）。请确认采集浏览器当前打开的是该博主作品页，能看到作品列表并可继续向下加载。`;
+}
+
+function findExistingVideoByAwemeId(
+  awemeId: string,
+): {
+  id: string;
+  aweme_id?: string;
+  creator_ref?: string | null;
+  transcript_status?: string | null;
+} | null {
+  const store = getDouyinCollectorStore();
+  return store.query<{
+    id: string;
+    aweme_id?: string;
+    creator_ref?: string | null;
+    transcript_status?: string | null;
+  }>(COLLECTION_VIDEOS, {
+    filter: { aweme_id: awemeId },
+    limit: 1,
+  }).at(0) ?? null;
 }
 
 /**

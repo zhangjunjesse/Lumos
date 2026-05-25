@@ -103,7 +103,7 @@ export async function listAccountStatuses(): Promise<AccountStatusEntry[]> {
  *   - 'paste':  takes a raw Cookie header string from devtools.
  */
 export type GoofishLoginInput =
-  | { mode: 'qr'; timeoutSecs?: number }
+  | { mode: 'qr'; timeoutSecs?: number; browserContextId?: string }
   | { mode: 'browser'; browser?: string }
   | { mode: 'paste'; cookieString: string };
 
@@ -145,8 +145,9 @@ export async function login(input: GoofishLoginInput): Promise<AccountStatusEntr
 async function runLoginToCookiesFile(input: GoofishLoginInput, cookiesPath: string): Promise<void> {
   if (input.mode === 'qr') {
     const timeoutSecs = Math.max(60, Math.min(600, input.timeoutSecs ?? 300));
+    const browserContextId = input.browserContextId?.trim() || undefined;
     try {
-      await runBuiltinBrowserQrLogin(timeoutSecs, cookiesPath);
+      await runBuiltinBrowserQrLogin(timeoutSecs, cookiesPath, browserContextId);
       return;
     } catch (err) {
       if (err instanceof GoofishCliException && err.code === 'AUTH_FAILED') {
@@ -154,6 +155,13 @@ async function runLoginToCookiesFile(input: GoofishLoginInput, cookiesPath: stri
       }
       if (!(err instanceof BuiltinBrowserQrUnavailableError)) {
         throw err;
+      }
+      // 用户挑了非默认浏览器 → 不要静默 fallback 到 Playwright（用户期望走 AdsPower/CDP）
+      if (browserContextId && browserContextId !== 'embedded:default') {
+        throw new GoofishCliException({
+          code: 'AUTH_FAILED',
+          message: err.message,
+        });
       }
       if (isQrReady()) {
         console.warn('[goofish-auth] builtin browser QR unavailable, falling back to Playwright:', err.message);

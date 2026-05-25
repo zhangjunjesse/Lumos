@@ -1,0 +1,41 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "选题报告",
+  "description": "选题挖掘任务产出的 Markdown 报告。引用来源 URL 必须真实可点；失败时显示 failure_reason 而非伪装 success。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.topic_reports }}",
+    "columns": [
+      { "field": "topic", "label": "选题", "search": true },
+      { "field": "evidence_count", "label": "证据条数", "sortable": true },
+      { "field": "library_status", "label": "入库状态", "render": "tag" },
+      { "field": "library_collection_id", "label": "入库 collection" },
+      { "field": "failure_reason", "label": "失败原因", "search": true },
+      { "field": "created_at", "label": "生成时间", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "library_status", "options": ["unprocessed", "draft", "published", "discarded"] }
+    ],
+    "actions": {
+      "row": [
+        { "label": "标记入库草稿", "run": "db:update:topic_reports", "input": { "library_status": "draft" }, "confirm": "把 library_status 标为 draft。注意：当前版本只改本表字段，真正写入 knowledge collection 的桥还在路上 —— 标记不等于已入库。" },
+        { "label": "标记已发布", "run": "db:update:topic_reports", "input": { "library_status": "published" }, "confirm": "把 library_status 标为 published。同上，标记不等于已写 knowledge collection。" },
+        { "label": "丢弃", "run": "db:update:topic_reports", "input": { "library_status": "discarded" } }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "topic", "label": "选题" },
+        { "type": "textarea", "name": "report_md", "label": "报告（Markdown）", "rows": 16 },
+        { "type": "textarea", "name": "sources_json", "label": "来源 URL（JSON 数组）", "rows": 6 },
+        { "type": "text", "name": "evidence_count", "label": "证据条数" },
+        { "type": "select", "name": "library_status", "label": "入库状态", "options": ["unprocessed", "draft", "published", "discarded"] },
+        { "type": "text", "name": "library_collection_id", "label": "入库 collection" },
+        { "type": "textarea", "name": "failure_reason", "label": "失败原因", "rows": 3 }
+      ]
+    }
+  }
+}

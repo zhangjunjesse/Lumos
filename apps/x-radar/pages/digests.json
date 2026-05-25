@@ -1,0 +1,54 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "关注摘要",
+  "description": "关注摘要任务产出的日报 / 周报简报。摘要必须基于实际抓取，无原推时不能伪造内容。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.follow_digests }}",
+    "columns": [
+      { "field": "window_kind", "label": "窗口", "render": "tag" },
+      { "field": "window_start", "label": "起始", "render": "date", "sortable": true },
+      { "field": "window_end", "label": "结束", "render": "date", "sortable": true },
+      { "field": "account_count", "label": "账号数", "sortable": true },
+      { "field": "tweet_count", "label": "原推数", "sortable": true },
+      { "field": "library_status", "label": "入库状态", "render": "tag" },
+      { "field": "failure_reason", "label": "失败原因", "search": true },
+      { "field": "updated_at", "label": "更新", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "window_kind", "options": ["daily", "weekly"] },
+      { "field": "library_status", "options": ["unprocessed", "draft", "published", "discarded"] }
+    ],
+    "actions": {
+      "row": [
+        {
+          "label": "推 IM",
+          "run": "im:notify",
+          "input": {
+            "title": "X 雷达关注摘要",
+            "text": "窗口: {{ row.window_kind }}\n账号 {{ row.account_count }} / 原推 {{ row.tweet_count }}\n\n{{ row.summary_md }}",
+            "target_label": "默认微信用户"
+          },
+          "confirm": "确认把这份摘要推送到默认微信目标？"
+        },
+        { "label": "标记入库草稿", "run": "db:update:follow_digests", "input": { "library_status": "draft" }, "confirm": "把 library_status 标为 draft。注意：当前版本只改本表字段，真正写入 knowledge collection 的桥还在路上 —— 标记不等于已入库。" }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "select", "name": "window_kind", "label": "窗口", "options": ["daily", "weekly"] },
+        { "type": "text", "name": "window_start", "label": "起始" },
+        { "type": "text", "name": "window_end", "label": "结束" },
+        { "type": "textarea", "name": "summary_md", "label": "摘要正文", "rows": 16 },
+        { "type": "textarea", "name": "accounts_json", "label": "覆盖账号（JSON 数组）", "rows": 4 },
+        { "type": "text", "name": "account_count", "label": "账号数" },
+        { "type": "text", "name": "tweet_count", "label": "原推数" },
+        { "type": "select", "name": "library_status", "label": "入库状态", "options": ["unprocessed", "draft", "published", "discarded"] },
+        { "type": "textarea", "name": "failure_reason", "label": "失败原因", "rows": 3 }
+      ]
+    }
+  }
+}

@@ -68,6 +68,11 @@ function createConfig(phase: string): NextConfig {
       'onnxruntime-common',
       'openworkflow',
       'esbuild',
+      // @resvg/resvg-js 是 napi-rs native binding，js-binding.js 内部 try-require 所有平台子包。
+      // Next.js webpack 静态分析会试图解析每个 require — 但 npm 只装当前平台的子包，
+      // 解析其他平台子包就 fail（"could not resolve @resvg/resvg-js-darwin-x64"）。
+      // 标 server external 让 Next 运行时通过 node require 走 dynamic resolution。
+      '@resvg/resvg-js',
     ],
     env: {
       NEXT_PUBLIC_APP_VERSION: pkg.version,

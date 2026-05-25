@@ -19,6 +19,7 @@ const KEY_LIBRARY_COLLECTION_ID = 'douyin_collector_library_collection_id';
 const KEY_AUTO_PUBLISH = 'douyin_collector_auto_publish';
 const KEY_AUTO_SUMMARIZE = 'douyin_collector_auto_summarize';
 const KEY_AUTO_TRANSCRIBE = 'douyin_collector_auto_transcribe';
+const KEY_DEDUPE_COLLECT = 'douyin_collector_dedupe_collect';
 const KEY_AI_SUMMARY_PROMPT = 'douyin_collector_ai_summary_prompt';
 const KEY_AI_CHAPTERS_PROMPT = 'douyin_collector_ai_chapters_prompt';
 const KEY_AI_TAGS_PROMPT = 'douyin_collector_ai_tags_prompt';
@@ -43,6 +44,11 @@ export interface DouyinCollectorSettings {
   autoPublish: boolean;
   autoSummarize: boolean;
   autoTranscribe: boolean;
+  /**
+   * Prevent duplicate collect work. Defaults on: active duplicate jobs are
+   * reused and already-collected creator videos are skipped on reruns.
+   */
+  dedupeCollect: boolean;
   aiSummaryPrompt: string;
   aiChaptersPrompt: string;
   aiTagsPrompt: string;
@@ -79,6 +85,7 @@ export function getDouyinCollectorSettings(): DouyinCollectorSettings {
     autoPublish: (getSetting(KEY_AUTO_PUBLISH) ?? 'false') === 'true',
     autoSummarize: (getSetting(KEY_AUTO_SUMMARIZE) ?? 'false') === 'true',
     autoTranscribe: (getSetting(KEY_AUTO_TRANSCRIBE) ?? 'false') === 'true',
+    dedupeCollect: (getSetting(KEY_DEDUPE_COLLECT) ?? 'true') !== 'false',
     aiSummaryPrompt: getSetting(KEY_AI_SUMMARY_PROMPT) ?? DEFAULT_AI_SUMMARY,
     aiChaptersPrompt: getSetting(KEY_AI_CHAPTERS_PROMPT) ?? DEFAULT_AI_CHAPTERS,
     aiTagsPrompt: getSetting(KEY_AI_TAGS_PROMPT) ?? DEFAULT_AI_TAGS,
@@ -153,6 +160,9 @@ export function updateDouyinCollectorSettings(patch: Partial<DouyinCollectorSett
   }
   if (typeof patch.autoTranscribe === 'boolean') {
     setSetting(KEY_AUTO_TRANSCRIBE, patch.autoTranscribe ? 'true' : 'false');
+  }
+  if (typeof patch.dedupeCollect === 'boolean') {
+    setSetting(KEY_DEDUPE_COLLECT, patch.dedupeCollect ? 'true' : 'false');
   }
   if (typeof patch.aiSummaryPrompt === 'string') setSetting(KEY_AI_SUMMARY_PROMPT, patch.aiSummaryPrompt);
   if (typeof patch.aiChaptersPrompt === 'string') setSetting(KEY_AI_CHAPTERS_PROMPT, patch.aiChaptersPrompt);

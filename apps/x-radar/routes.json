@@ -1,0 +1,17 @@
+{
+  "$schema": "https://lumos.io/schemas/app-routes.v1.json",
+  "default": "tasks",
+  "menu": [
+    { "id": "tasks", "label": "任务工作台", "icon": "radar", "page": "pages/tasks.json" },
+    { "id": "alerts", "label": "监控告警", "icon": "bell-ring", "page": "pages/alerts.json" },
+    { "id": "reports", "label": "选题报告", "icon": "file-text", "page": "pages/reports.json" },
+    { "id": "digests", "label": "关注摘要", "icon": "newspaper", "page": "pages/digests.json" },
+    { "id": "stats", "label": "数据拆解", "icon": "bar-chart-3", "page": "pages/stats.json" },
+    { "id": "evidence", "label": "原推快照", "icon": "twitter", "page": "pages/evidence.json" },
+    { "id": "status", "label": "状态", "icon": "circle-gauge", "page": "pages/status.json" },
+    { "id": "settings", "label": "设置", "icon": "settings", "page": "pages/settings.json" },
+    { "id": "automations", "label": "自动化", "icon": "calendar-clock", "page": "pages/automations.json" },
+    { "id": "im", "label": "通知命令", "icon": "message-square", "page": "pages/im.json" },
+    { "id": "run-history", "label": "运行结果", "icon": "history", "page": "pages/run-history.json" }
+  ]
+}

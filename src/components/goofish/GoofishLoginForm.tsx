@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { GoofishBrowserPicker } from './GoofishBrowserPicker';
 import type { LoginMode } from './use-goofish-auth';
 
 const GOOFISH_HOMEPAGE = 'https://www.goofish.com';
@@ -20,6 +21,7 @@ interface Props {
  */
 export function GoofishLoginForm({ hasOtherAccounts, busy, onCancel, onLogin }: Props) {
   const [browserChoice, setBrowserChoice] = useState('auto');
+  const [contextId, setContextId] = useState('embedded:default');
 
   return (
     <div className="space-y-4">
@@ -40,16 +42,26 @@ export function GoofishLoginForm({ hasOtherAccounts, busy, onCancel, onLogin }: 
       </div>
 
       <div className="space-y-3">
+        <GoofishBrowserPicker
+          value={contextId}
+          onChange={setContextId}
+          disabled={busy !== null}
+        />
         <div>
-          <Button size="sm" onClick={() => onLogin({ mode: 'qr' })} disabled={busy !== null}>
+          <Button
+            size="sm"
+            onClick={() => onLogin({ mode: 'qr', browserContextId: contextId })}
+            disabled={busy !== null}
+          >
             {busy === 'login' || busy === 'install'
               ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               : null}
             {busy === 'install' ? '安装备用组件中…' : '扫码登录（推荐）'}
           </Button>
           <p className="text-xs text-muted-foreground mt-1">
-            会打开 Lumos 自带浏览器，最长等 5 分钟。期间你可以扫码、输密码、切账号；
-            登录完成后会自动保存当前账号。
+            {contextId === 'embedded:default'
+              ? '会在 Lumos 自带浏览器里打开闲鱼，最长等 5 分钟。扫码或输密码登录后自动保存。'
+              : '会通过所选浏览器（AdsPower / 自定义 CDP）打开闲鱼。请确保该浏览器已启动并通过测试。'}
           </p>
         </div>
 

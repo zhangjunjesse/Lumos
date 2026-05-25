@@ -1,0 +1,117 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "任务工作台",
+  "description": "在这里新建任务并挑选 4 种模板之一（监控雷达 / 选题挖掘 / 关注摘要 / 数据拆解）。任务创建后默认禁用；启用后在「自动化页」按模板触发巡更才会真跑。task 的 config_json 是手写 JSON —— 新建按钮已预填合理示例，照着改字段值即可。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.radar_tasks }}",
+    "columns": [
+      { "field": "name", "label": "任务名", "search": true },
+      { "field": "kind", "label": "模板", "render": "tag" },
+      { "field": "enabled", "label": "启用", "render": "tag" },
+      { "field": "cadence", "label": "频率", "render": "tag" },
+      { "field": "last_status", "label": "最近状态", "render": "tag" },
+      { "field": "last_summary", "label": "最近结果", "search": true },
+      { "field": "last_failure_reason", "label": "失败原因", "search": true },
+      { "field": "last_run_started_at", "label": "上次运行", "render": "date", "sortable": true },
+      { "field": "next_run_at", "label": "下次运行", "render": "date", "sortable": true },
+      { "field": "im_enabled", "label": "推 IM", "render": "tag" },
+      { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "kind", "options": ["monitor", "topic", "digest", "stats"] },
+      { "field": "last_status", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] }
+    ],
+    "actions": {
+      "toolbar": [
+        {
+          "label": "新建监控雷达",
+          "primary": true,
+          "run": "db:create:radar_tasks",
+          "input": {
+            "name": "未命名监控任务",
+            "kind": "monitor",
+            "enabled": false,
+            "cadence": "hourly",
+            "config_json": "{\"keywords\":[],\"from_handles\":[],\"exclude_keywords\":[],\"window_hours\":24,\"min_like\":0,\"min_retweet\":0,\"search_mode\":\"Latest\"}",
+            "last_status": "not_connected",
+            "last_summary": "未运行。请填命中规则后点击「立即运行」。",
+            "im_enabled": false
+          }
+        },
+        {
+          "label": "新建选题挖掘",
+          "run": "db:create:radar_tasks",
+          "input": {
+            "name": "未命名选题任务",
+            "kind": "topic",
+            "enabled": false,
+            "cadence": "daily",
+            "config_json": "{\"topic\":\"\",\"queries\":[],\"max_fetch\":50,\"thread_extract_count\":20,\"to_library\":false}",
+            "last_status": "not_connected",
+            "last_summary": "未运行。填话题/关键词后点击「立即运行」。",
+            "im_enabled": false
+          }
+        },
+        {
+          "label": "新建关注摘要",
+          "run": "db:create:radar_tasks",
+          "input": {
+            "name": "未命名摘要任务",
+            "kind": "digest",
+            "enabled": false,
+            "cadence": "daily",
+            "config_json": "{\"handles\":[],\"window_kind\":\"daily\",\"per_handle_count\":10}",
+            "last_status": "not_connected",
+            "last_summary": "未运行。填 @ 列表后点击「立即运行」。",
+            "im_enabled": false
+          }
+        },
+        {
+          "label": "新建数据拆解",
+          "run": "db:create:radar_tasks",
+          "input": {
+            "name": "未命名数据拆解任务",
+            "kind": "stats",
+            "enabled": false,
+            "cadence": "weekly",
+            "config_json": "{\"target_kind\":\"handle\",\"target\":\"\",\"sample_days\":14,\"top_threads_count\":5}",
+            "last_status": "not_connected",
+            "last_summary": "未运行。填账号或话题后点击「立即运行」。",
+            "im_enabled": false
+          }
+        }
+      ],
+      "row": [
+        {
+          "label": "切换启用",
+          "run": "db:update:radar_tasks",
+          "confirm": "切换这条任务的启用状态？启用后在「自动化页」点对应模板的「立即运行」即可纳入巡更。"
+        },
+        {
+          "label": "删除任务",
+          "run": "db:delete:radar_tasks",
+          "confirm": "确认删除这条任务？关联的告警 / 报告 / 摘要不会一并删除。"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "name", "label": "任务名", "required": true },
+        { "type": "select", "name": "kind", "label": "模板", "options": ["monitor", "topic", "digest", "stats"] },
+        { "type": "switch", "name": "enabled", "label": "启用" },
+        { "type": "select", "name": "cadence", "label": "频率", "options": ["hourly", "every_6_hours", "daily", "weekly", "manual"] },
+        { "type": "textarea", "name": "config_json", "label": "模板配置（JSON）", "rows": 8, "description": "按模板填字段：monitor / topic / digest / stats。详细字段见任务工作台新建按钮预填的 config_json。" },
+        { "type": "switch", "name": "im_enabled", "label": "推 IM" },
+        { "type": "text", "name": "im_target_label", "label": "IM 目标（target_label）" },
+        { "type": "select", "name": "last_status", "label": "最近状态", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+        { "type": "textarea", "name": "last_summary", "label": "最近结果", "rows": 3 },
+        { "type": "textarea", "name": "last_failure_reason", "label": "失败原因", "rows": 3 }
+      ],
+      "submit": { "label": "保存任务", "run": "db:update:radar_tasks" }
+    }
+  }
+}

@@ -43,6 +43,7 @@ export async function PATCH(req: NextRequest) {
     if (typeof body.autoPublish === 'boolean') patch.autoPublish = body.autoPublish;
     if (typeof body.autoSummarize === 'boolean') patch.autoSummarize = body.autoSummarize;
     if (typeof body.autoTranscribe === 'boolean') patch.autoTranscribe = body.autoTranscribe;
+    if (typeof body.dedupeCollect === 'boolean') patch.dedupeCollect = body.dedupeCollect;
     if (typeof body.aiSummaryPrompt === 'string') patch.aiSummaryPrompt = body.aiSummaryPrompt;
     if (typeof body.aiChaptersPrompt === 'string') patch.aiChaptersPrompt = body.aiChaptersPrompt;
     if (typeof body.aiTagsPrompt === 'string') patch.aiTagsPrompt = body.aiTagsPrompt;

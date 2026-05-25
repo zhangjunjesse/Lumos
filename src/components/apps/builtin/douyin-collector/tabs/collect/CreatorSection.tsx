@@ -59,11 +59,11 @@ export function CreatorSection({
     <div className="rounded-xl border border-border bg-card p-5">
       <h3 className="text-sm font-semibold tracking-tight">博主订阅</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        粘贴主页链接（v.douyin.com 短链或 www.douyin.com/user/...）或 sec_uid。
+        粘贴主页分享链接（v.douyin.com 短链或 www.douyin.com/user/...）或 sec_uid；不能只填博主昵称。
       </p>
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_180px_120px_auto]">
         <Input
-          placeholder="主页链接 / sec_uid"
+          placeholder="主页分享链接 / sec_uid"
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
@@ -98,76 +98,116 @@ export function CreatorSection({
           </p>
         ) : (
           sources.creators.map((c) => {
-            const stats = c.sec_uid ? sources.creatorStats[c.sec_uid] : undefined;
+            const secUid = typeof c.sec_uid === 'string' ? c.sec_uid : '';
+            const hasSecUid = secUid.length > 0;
+            const stats = hasSecUid ? sources.creatorStats[secUid] : undefined;
             return (
-            <div key={c.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">
-                  {c.sec_uid ? (
-                    <a
-                      href={`https://www.douyin.com/user/${c.sec_uid}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="transition-colors hover:text-foreground/70"
-                      title="在抖音打开主页"
-                    >
-                      {c.nickname}
-                    </a>
-                  ) : (
-                    c.nickname
-                  )}
-                </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
-                  <span>
-                    {c.sec_uid ? `sec_uid · ${c.sec_uid.slice(0, 18)}…` : '待解析'} ·{' '}
-                    {CADENCE_LABELS[c.cadence]}
-                  </span>
-                  {stats ? (
+              <div key={c.id} className="flex items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">
+                    {hasSecUid ? (
+                      <a
+                        href={`https://www.douyin.com/user/${secUid}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="transition-colors hover:text-foreground/70"
+                        title="在抖音打开主页"
+                      >
+                        {c.nickname}
+                      </a>
+                    ) : (
+                      c.nickname
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
                     <span>
-                      · 已采集 {stats.collected} · 已转写 {stats.transcribed} · 已入库{' '}
-                      {stats.published}
+                      {hasSecUid ? `sec_uid · ${secUid.slice(0, 18)}…` : '旧版无效订阅'} ·{' '}
+                      {CADENCE_LABELS[c.cadence]}
                     </span>
-                  ) : null}
-                  {stats ? <QualityPill stats={stats} /> : null}
-                  {c.last_failure_reason ? (
-                    <span className="text-rose-500">· 失败：{c.last_failure_reason}</span>
-                  ) : null}
+                    {!hasSecUid ? (
+                      <span className="text-rose-500">
+                        · 缺主页 ID，不能采集；请删除后粘贴博主主页链接重新添加
+                      </span>
+                    ) : null}
+                    {stats ? (
+                      <span>
+                        · 已采集 {stats.collected} · 已转写 {stats.transcribed} · 已入库{' '}
+                        {stats.published}
+                      </span>
+                    ) : null}
+                    {stats ? <QualityPill stats={stats} /> : null}
+                    {c.last_failure_reason ? (
+                      <span className="text-rose-500">· 失败：{c.last_failure_reason}</span>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {onShowVideos && c.sec_uid ? (
+                <div className="flex items-center gap-3">
+                  {onShowVideos && hasSecUid ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onShowVideos(secUid, c.nickname)}
+                      title="切到资料库，只看这位博主的视频"
+                    >
+                      <Library className="size-3.5" />
+                      查看资料
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
-                    variant="ghost"
-                    onClick={() => onShowVideos(c.sec_uid!, c.nickname)}
-                    title="切到资料库，只看这位博主的视频"
+                    variant="outline"
+                    disabled={!hasSecUid}
+                    onClick={() =>
+                      void jobs.enqueue({
+                        kind: 'creator',
+                        targetRef: c.id,
+                        creatorCollectMode: 'recent',
+                        maxVideos: 80,
+                      })
+                    }
+                    title={
+                      hasSecUid
+                        ? '立即采集该博主'
+                        : '旧版订阅缺 sec_uid，需删除后粘贴博主主页链接重新添加'
+                    }
                   >
-                    <Library className="size-3.5" />
-                    查看资料
+                    <Play className="size-3.5" />
+                    立即采集
                   </Button>
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void jobs.enqueue({ kind: 'creator', targetRef: c.id })}
-                >
-                  <Play className="size-3.5" />
-                  立即采集
-                </Button>
-                <Switch
-                  checked={c.enabled}
-                  onCheckedChange={(v) => void sources.toggleCreator(c.id, v)}
-                />
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => void sources.deleteCreator(c.id)}
-                  aria-label="删除"
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!hasSecUid}
+                    onClick={() =>
+                      void jobs.enqueue({
+                        kind: 'creator',
+                        targetRef: c.id,
+                        creatorCollectMode: 'full',
+                        maxVideos: 300,
+                      })
+                    }
+                    title={
+                      hasSecUid
+                        ? '长滚动采集该博主，最多发现 300 条视频'
+                        : '旧版订阅缺 sec_uid，需删除后粘贴博主主页链接重新添加'
+                    }
+                  >
+                    采集全部
+                  </Button>
+                  <Switch
+                    checked={c.enabled}
+                    onCheckedChange={(v) => void sources.toggleCreator(c.id, v)}
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => void sources.deleteCreator(c.id)}
+                    aria-label="删除"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
             );
           })
         )}
@@ -175,4 +215,3 @@ export function CreatorSection({
     </div>
   );
 }
-

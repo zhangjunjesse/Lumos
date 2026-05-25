@@ -29,8 +29,10 @@ import {
 } from '@/lib/browser-runtime/bridge-client';
 import {
   closeDouyinScrapePage,
+  describeDouyinChallengePage,
   DOUYIN_DOMAIN,
   DOUYIN_SITE_EVALUATE_TIMEOUT_MS,
+  focusDouyinScrapePage,
   injectDouyinCookies,
   resolveDouyinBrowserContextIds,
 } from './creator-browser-scrape';
@@ -266,6 +268,7 @@ async function fetchKeywordAwemesViaBrowserContext(
     pageId?: string;
   }
   let resp: EvalResp | null = null;
+  let keepPageOpen = false;
   try {
     resp = await postToBrowserBridge<EvalResp>(config, '/v1/site-pages/evaluate', {
       domain: DOUYIN_DOMAIN,
@@ -304,10 +307,12 @@ async function fetchKeywordAwemesViaBrowserContext(
       return { ok: false, reason: `脚本执行错误：${value?.error ?? 'no value returned'}` };
     }
     if (value.challenge) {
+      keepPageOpen = true;
+      const focused = await focusDouyinScrapePage(config, resp.pageId);
       return {
         ok: false,
         url: resp.url,
-        reason: `浏览器打开的是验证码 / 安全验证页（title: ${value.title || 'unknown'}），需要换用已登录且能正常打开抖音的指纹浏览器，或先在该浏览器里人工通过验证。`,
+        reason: describeDouyinChallengePage(value.title, focused),
       };
     }
 
@@ -329,6 +334,8 @@ async function fetchKeywordAwemesViaBrowserContext(
 
     return { ok: true, awemeIds, url: resp.url };
   } finally {
-    await closeDouyinScrapePage(config, resp.pageId);
+    if (!keepPageOpen) {
+      await closeDouyinScrapePage(config, resp.pageId);
+    }
   }
 }

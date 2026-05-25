@@ -8,8 +8,10 @@ import * as React from 'react';
 
 import {
   QUOTA_MONTHLY_CAP,
+  type EntryMode,
   type Executor,
   type ManualValidation,
+  type RadarRun,
   type StepId,
   type StepState,
   type Verdict,
@@ -20,6 +22,7 @@ import {
   QUOTA_PERIOD,
   QUOTA_USED_BEFORE,
   QUOTA_LEDGER,
+  RUNS,
   VALIDATIONS,
 } from './mock-data';
 import type { QuotaEntry } from './etsy-erank-types';
@@ -30,6 +33,7 @@ export type View = 'runs' | 'current';
 interface State {
   view: View;
   activeRunId: string;
+  runs: RadarRun[];
   executor: Executor;
   profileConfigured: boolean;
   steps: Record<StepId, StepState>;
@@ -39,6 +43,7 @@ interface State {
   pasteText: string;
   validations: Record<string, ManualValidation>;
   settingsOpen: boolean; // 右上角抽屉(配额台账 + 设置)
+  newRunOpen: boolean; // 新开一轮弹窗
 }
 
 type Action =
@@ -50,7 +55,16 @@ type Action =
   | { t: 'verify' }
   | { t: 'score' }
   | { t: 'save-validation'; id: string; patch: Partial<ManualValidation> }
-  | { t: 'toggle-settings'; v: boolean };
+  | { t: 'toggle-settings'; v: boolean }
+  | { t: 'toggle-new-run'; v: boolean }
+  | {
+      t: 'create-run';
+      v: {
+        label: string;
+        entryMode: EntryMode;
+        capabilities?: string[];
+      };
+    };
 
 const initialValidations: Record<string, ManualValidation> = Object.fromEntries(
   VALIDATIONS.map((v) => [v.candidateId, structuredClone(v)]),
@@ -59,11 +73,12 @@ const initialValidations: Record<string, ManualValidation> = Object.fromEntries(
 const initialState: State = {
   view: 'runs',
   activeRunId: ACTIVE_RUN_ID,
+  runs: [...RUNS],
   executor: 'paste',
   profileConfigured: false, // 展示 AdsPower「未配置」缺口
   steps: {
     huntground: 'done', seed: 'done', converge: 'done',
-    verify: 'blocked', score: 'pending', manual: 'pending',
+    verify: 'blocked', score: 'pending', analyze: 'pending', manual: 'pending',
   },
   quotaUsed: QUOTA_USED_BEFORE,
   ledger: [...QUOTA_LEDGER],
@@ -71,7 +86,17 @@ const initialState: State = {
   pasteText: '',
   validations: initialValidations,
   settingsOpen: false,
+  newRunOpen: false,
 };
+
+function pad2(n: number) {
+  return n.toString().padStart(2, '0');
+}
+
+function nowStamp(): string {
+  const d = new Date();
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
 
 function reducer(s: State, a: Action): State {
   switch (a.t) {
@@ -106,10 +131,10 @@ function reducer(s: State, a: Action): State {
       };
     }
     case 'score':
-      // 不跳页:机会表内联在 ⑤ 步骤下,流程顺着往下走
+      // ⑤ AI 解读完成后,⑥ 商业分析自动 done(mock 已有数据);⑦ 人工验证 blocked
       return {
         ...s,
-        steps: { ...s.steps, score: 'done', manual: 'blocked' },
+        steps: { ...s.steps, score: 'done', analyze: 'done', manual: 'blocked' },
         candidatesReady: true,
       };
     case 'save-validation': {
@@ -125,6 +150,36 @@ function reducer(s: State, a: Action): State {
     }
     case 'toggle-settings':
       return { ...s, settingsOpen: a.v };
+    case 'toggle-new-run':
+      return { ...s, newRunOpen: a.v };
+    case 'create-run': {
+      // 生成新 run,加到列表顶部,切到该轮工作区。
+      // steps 复用 demo 演示态(同样可走 ④→⑤→⑥);
+      // ① 在视图层根据 entryMode 决定 done / skipped,不依赖 steps.huntground 真值。
+      const id = `${a.v.label}-${Date.now().toString(36).slice(-4)}`;
+      const run: RadarRun = {
+        id,
+        label: a.v.label,
+        status: 'running',
+        executor: s.executor, // 沿用当前默认,执行器在 ②④ 步骤卡片里切
+        entryMode: a.v.entryMode,
+        capabilities: a.v.capabilities,
+        startedAt: nowStamp(),
+        seedCount: 38,
+        convergeCount: CONVERGE_COUNT,
+        summary:
+          a.v.entryMode === 'with_capability'
+            ? `能力:${(a.v.capabilities ?? []).join(' / ')}`
+            : '完全没想法 · 跳过 ①,② 抄市场顶部',
+      };
+      return {
+        ...s,
+        runs: [run, ...s.runs],
+        activeRunId: id,
+        view: 'current',
+        newRunOpen: false,
+      };
+    }
     default:
       return s;
   }
@@ -134,6 +189,7 @@ interface Ctx extends State {
   dispatch: React.Dispatch<Action>;
   remaining: number;
   canScore: boolean;
+  currentRun: RadarRun | undefined;
 }
 
 const EtsyErankContext = React.createContext<Ctx | null>(null);
@@ -145,6 +201,7 @@ export function EtsyErankProvider({ children }: { children: React.ReactNode }) {
     dispatch,
     remaining: QUOTA_MONTHLY_CAP - state.quotaUsed,
     canScore: state.steps.verify === 'done',
+    currentRun: state.runs.find((r) => r.id === state.activeRunId),
   };
   return <EtsyErankContext.Provider value={value}>{children}</EtsyErankContext.Provider>;
 }

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "id": "follow-digest",
+  "name": "关注摘要",
+  "description": "按 @ 列表拉每人最新推 AI 摘要，产出日报 / 周报简报并按需推 IM。简报必须基于实际抓取，账号没新推时如实显示 0。",
+  "version": 2,
+  "inputs": [
+    { "name": "task_id", "label": "任务 ID", "type": "string", "required": true },
+    { "name": "name", "label": "任务名", "type": "string", "required": true },
+    { "name": "config_json", "label": "config_json", "type": "json", "required": true, "description": "{handles[], window_kind, per_handle_count}" },
+    { "name": "ai_system_prompt", "label": "AI 提示词", "type": "text" },
+    { "name": "im_enabled", "label": "推 IM", "type": "boolean", "default": false },
+    { "name": "im_target_label", "label": "IM 目标", "type": "string" }
+  ],
+  "outputs": [
+    { "name": "digest_id", "type": "string", "label": "follow_digests.id" },
+    { "name": "tweet_count", "type": "string", "label": "覆盖原推数" },
+    { "name": "failure_reason", "type": "string", "label": "失败原因" }
+  ],
+  "steps": [
+    {
+      "id": "preflight-x-login",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "前置检查 X 登录态（同 monitor-radar.preflight）。失败立即终止并写 failure_reason。"
+    },
+    {
+      "id": "fetch-handles",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "对 config_json.handles 中的每个 @：调用 MCP x_read_user_tweets（count=config_json.per_handle_count，默认 10）；按窗口（daily=24h / weekly=168h）过滤推文。把每条 upsert 到 tweet_evidence。每个 handle 即使一条新推都没有也要保留账号项（tweet_count=0），不能省略。"
+    },
+    {
+      "id": "synthesize-digest",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "按 inputs.ai_system_prompt 出简报 Markdown：\n- 顶部：覆盖 N 个账号，原推 M 条，窗口 X→Y。\n- 每个账号一段：[@handle] N 条 / 关键点 1-3 条 / 链接到代表性推文。\n- 整体趋势 1-2 段（含未决项标记）。\n- 没新推的账号也要写「@handle 0 条 / 本期无更新」。\n禁止编造账号没发过的推文。"
+    },
+    {
+      "id": "save-digest",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "写入 follow_digests：task_ref={{ inputs.task_id }}，window_kind=config_json.window_kind，window_start/end，summary_md，accounts_json=[{handle, tweet_count}]，account_count，tweet_count。更新 radar_tasks last_*。"
+    },
+    {
+      "id": "notify-im",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "如果 inputs.im_enabled=true：通过 im:notify 把简报推送到 inputs.im_target_label，标题「X 雷达摘要 — {{ inputs.name }} — {{ window_kind }}」，正文 summary_md（截断到 IM 长度上限并附「在 X 雷达查看完整」链接）。失败时写 app_notifications.last_error，不伪装 success。"
+    }
+  ]
+}

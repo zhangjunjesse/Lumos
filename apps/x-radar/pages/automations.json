@@ -1,0 +1,111 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "自动化",
+  "description": "管理 4 个模板的定时任务、立即运行入口和最近运行状态。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.app_automations }}",
+    "columns": [
+      { "field": "title", "label": "名称", "search": true },
+      { "field": "enabled", "label": "启用", "render": "tag" },
+      { "field": "schedule", "label": "触发规则", "search": true },
+      { "field": "native_action", "label": "执行动作", "search": true },
+      { "field": "last_status", "label": "最近状态", "render": "tag" },
+      { "field": "schedule_status", "label": "调度状态", "render": "tag" },
+      { "field": "next_run_at", "label": "下次运行", "render": "date", "sortable": true },
+      { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "last_status", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+      { "field": "schedule_status", "options": ["not_connected", "scheduled", "paused", "failed"] }
+    ],
+    "actions": {
+      "toolbar": [
+        {
+          "label": "添加监控雷达巡更",
+          "primary": true,
+          "run": "db:create:app_automations",
+          "input": {
+            "title": "监控雷达巡更",
+            "enabled": false,
+            "schedule": "每小时",
+            "native_action": "x-radar:run-monitor-tasks",
+            "description": "扫描所有 kind=monitor 且 enabled=true 的任务，按 cadence 拉新推命中规则并写入 radar_alerts；命中且 im_enabled=true 时推 IM。",
+            "last_status": "not_connected",
+            "last_run_summary": "默认禁用。开启前请先在「服务 → X」登录并在任务工作台创建至少一个监控任务。"
+          }
+        },
+        {
+          "label": "添加选题挖掘巡更",
+          "run": "db:create:app_automations",
+          "input": {
+            "title": "选题挖掘巡更",
+            "enabled": false,
+            "schedule": "每天 09:00",
+            "native_action": "x-radar:run-topic-tasks",
+            "description": "扫描所有 kind=topic 且 enabled=true 的任务，按 cadence 拉新推 + thread 抽取，AI 出报告写入 topic_reports。",
+            "last_status": "not_connected",
+            "last_run_summary": "默认禁用。开启前请检查 topic_max_fetch_per_run、thread 抽取条数和入库 collection 设置。"
+          }
+        },
+        {
+          "label": "添加关注摘要巡更",
+          "run": "db:create:app_automations",
+          "input": {
+            "title": "关注摘要巡更",
+            "enabled": false,
+            "schedule": "每天 08:00",
+            "native_action": "x-radar:run-digest-tasks",
+            "description": "扫描所有 kind=digest 且 enabled=true 的任务，按窗口（daily/weekly）拉每人最新推 AI 摘要写入 follow_digests。",
+            "last_status": "not_connected",
+            "last_run_summary": "默认禁用。开启前请确认 @ 列表和摘要窗口。"
+          }
+        },
+        {
+          "label": "添加数据拆解巡更",
+          "run": "db:create:app_automations",
+          "input": {
+            "title": "数据拆解巡更",
+            "enabled": false,
+            "schedule": "每周一 10:00",
+            "native_action": "x-radar:run-stats-tasks",
+            "description": "扫描所有 kind=stats 且 enabled=true 的任务，按采样窗口拉量化数据，算互动率与发推节奏写入 stats_reports。",
+            "last_status": "not_connected",
+            "last_run_summary": "默认禁用。开启前请确认目标账号 / 话题与采样天数。"
+          }
+        }
+      ],
+      "row": [
+        {
+          "label": "立即运行",
+          "run": "native:app:run-automation",
+          "input": { "confirmed": true },
+          "confirm": "确认立即运行这条自动化？运行结果会写入「运行结果」并按任务 im_enabled 推 IM。"
+        },
+        {
+          "label": "同步定时任务",
+          "run": "native:app:sync-automation-schedule",
+          "confirm": "确认把这条自动化同步为 Lumos 定时任务？关闭自动化会暂停关联任务并同步终结 OpenWorkflow 当前 run。"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "title", "label": "名称", "required": true },
+        { "type": "switch", "name": "enabled", "label": "启用" },
+        { "type": "text", "name": "schedule", "label": "触发规则", "placeholder": "例如：每小时 / 每天 09:00 / 每周一 10:00" },
+        { "type": "text", "name": "native_action", "label": "执行动作", "placeholder": "例如：x-radar:run-monitor-tasks" },
+        { "type": "textarea", "name": "description", "label": "说明", "rows": 4 },
+        { "type": "select", "name": "last_status", "label": "最近状态", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+        { "type": "textarea", "name": "last_run_summary", "label": "最近结果", "rows": 4 },
+        { "type": "select", "name": "schedule_status", "label": "调度状态", "options": ["not_connected", "scheduled", "paused", "failed"] },
+        { "type": "text", "name": "next_run_at", "label": "下次运行时间" },
+        { "type": "textarea", "name": "schedule_error", "label": "调度失败原因", "rows": 3 }
+      ],
+      "submit": { "label": "保存自动化", "run": "db:update:app_automations" }
+    }
+  }
+}

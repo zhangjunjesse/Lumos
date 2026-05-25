@@ -1,0 +1,30 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "数据拆解",
+  "description": "数据拆解任务产出的指标与热门 thread。指标必须基于实际原推，0 也要展示 0，不允许 mock 填充。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.stats_reports }}",
+    "columns": [
+      { "field": "target", "label": "目标", "search": true },
+      { "field": "sample_start", "label": "采样起", "render": "date", "sortable": true },
+      { "field": "sample_end", "label": "采样止", "render": "date", "sortable": true },
+      { "field": "created_at", "label": "生成时间", "render": "date", "sortable": true },
+      { "field": "failure_reason", "label": "失败原因", "search": true }
+    ]
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "target", "label": "目标（账号 / 话题）" },
+        { "type": "text", "name": "sample_start", "label": "采样起始" },
+        { "type": "text", "name": "sample_end", "label": "采样结束" },
+        { "type": "textarea", "name": "metrics_json", "label": "指标 JSON", "rows": 8 },
+        { "type": "textarea", "name": "top_threads_json", "label": "热门 thread JSON", "rows": 8 },
+        { "type": "textarea", "name": "report_md", "label": "报告 Markdown", "rows": 16 },
+        { "type": "textarea", "name": "failure_reason", "label": "失败原因", "rows": 3 }
+      ]
+    }
+  }
+}

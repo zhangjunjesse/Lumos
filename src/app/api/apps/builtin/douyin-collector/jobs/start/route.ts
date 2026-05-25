@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
       dedupe_window_days?: unknown;
       auto_process?: unknown;
       publish_to_knowledge?: unknown;
+      creator_collect_mode?: unknown;
+      max_videos?: unknown;
     };
     const kind = typeof body.kind === 'string' ? body.kind : '';
     if (!(KINDS as readonly string[]).includes(kind)) {
@@ -47,6 +49,14 @@ export async function POST(req: NextRequest) {
       // 缺省 true：异步入口默认跑完整链路，对齐同步 douyin_search_keyword。
       autoProcess: body.auto_process !== false,
       publishToKnowledge: body.publish_to_knowledge !== false,
+      creatorCollectMode:
+        body.creator_collect_mode === 'full' || body.creator_collect_mode === 'recent'
+          ? body.creator_collect_mode
+          : undefined,
+      maxVideos:
+        typeof body.max_videos === 'number' && Number.isFinite(body.max_videos) && body.max_videos > 0
+          ? Math.min(Math.floor(body.max_videos), 500)
+          : undefined,
     });
     if (!result.ok) {
       return NextResponse.json(

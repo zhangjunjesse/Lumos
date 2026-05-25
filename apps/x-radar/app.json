@@ -1,0 +1,22 @@
+{
+  "$schema": "https://lumos.io/schemas/app.v1.json",
+  "id": "x-radar",
+  "name": "X 雷达",
+  "version": "0.1.0",
+  "description": "基于 Lumos 现有 X 能力的纯读监控/挖掘/摘要/数据拆解工作台：监控雷达、选题挖掘、关注摘要、数据拆解 4 种任务模板共用同一套引擎与运行历史。",
+  "icon": "./icon.png",
+  "category": "research",
+  "entry": "tasks",
+  "tags": ["x-platform", "twitter", "监控", "选题", "数据分析"],
+  "requires": {
+    "lumos": ">=1.0.0",
+    "llm": "chat",
+    "knowledge": "optional",
+    "mcp": ["x-platform"]
+  },
+  "permissions": {
+    "data": "isolated",
+    "network": { "mode": "disabled" },
+    "system": ["notification", "schedule", "im-notification"]
+  }
+}

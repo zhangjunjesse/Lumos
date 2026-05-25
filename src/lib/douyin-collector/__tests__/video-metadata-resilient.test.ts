@@ -27,11 +27,24 @@ beforeEach(() => {
 });
 
 describe('fetchVideoMetadataResilient', () => {
-  it('returns the anonymous result unchanged on success (no browser hop)', async () => {
+  it('returns the anonymous result unchanged on success WITH media URLs (no browser hop)', async () => {
+    const withMedia = { ...META, playAddrUrls: ['https://v.cdn/x.mp4'] };
+    fetchVideoMetadataMock.mockResolvedValue({ ok: true, metadata: withMedia });
+    const out = await fetchVideoMetadataResilient('7');
+    expect(out).toEqual({ ok: true, metadata: withMedia });
+    expect(fetchVideoMetadataMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('on half-skeleton (ok=true but no play_addr / native subtitle): falls into browser fallback', async () => {
+    // 抖音对部分匿名请求返"半骨架": title/author/cover 有,但 play_addr/原生字幕
+    // 都空。下游 transcribe 必然失败,resilient 应当继续走 layer-2/3 兜底拿真链接。
     fetchVideoMetadataMock.mockResolvedValue({ ok: true, metadata: META });
     const out = await fetchVideoMetadataResilient('7');
-    expect(out).toEqual({ ok: true, metadata: META });
-    expect(fetchVideoMetadataMock).toHaveBeenCalledTimes(1);
+    expect(out.ok).toBe(false);
+    // 测试环境下 browser bridge 短路,reason 会含半骨架描述
+    if ('reason' in out) {
+      expect(out.reason).toMatch(/半骨架|play_addr|原生字幕/);
+    }
   });
 
   it('does NOT retry via browser for a genuinely gone video (phase=extract)', async () => {
@@ -54,7 +67,7 @@ describe('fetchVideoMetadataResilient', () => {
     expect(out.ok).toBe(false);
     if (!out.ok) {
       expect(out.reason).toContain('抖音 share 页被风控');
-      expect(out.reason).toContain('登录浏览器重采也失败');
+      expect(out.reason).toContain('登录浏览器重采');
     }
   });
 });

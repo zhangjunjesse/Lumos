@@ -62,14 +62,20 @@ export class ContextTokenStore {
   private load(): void {
     if (this.loaded) return;
     this.loaded = true;
+    this.loadFile(tokensFile('default'));
+    if (this.accountId === 'default') return;
+    this.loadFile(tokensFile(this.accountId));
+  }
+
+  private loadFile(file: string): void {
     try {
-      const raw = fs.readFileSync(tokensFile(this.accountId), 'utf-8');
+      const raw = fs.readFileSync(file, 'utf-8');
       const parsed = JSON.parse(raw) as Record<string, string>;
       for (const [k, v] of Object.entries(parsed)) {
         if (typeof v === 'string') this.cache.set(k, v);
       }
     } catch {
-      // first run, no file yet
+      // first run, no file yet; account_id migration also has no new dir yet
     }
   }
 

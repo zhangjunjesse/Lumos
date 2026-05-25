@@ -2,16 +2,17 @@
 
 import * as React from 'react';
 
-import { QUOTA_MONTHLY_CAP } from '../etsy-erank-types';
-import { QUOTA_PERIOD } from '../mock-data';
 import { useEtsyErank } from '../use-demo-state';
 import { ExecutorToggle } from './ExecutorToggle';
+import { useEtsyErankHealth } from './HealthBanner';
 
-const PROMPTS = [
-  { id: '1', title: '① 圈猎场', body: '把「我能做/能采购的能力」映射成 3–5 个 Etsy 类目方向,每个一句话。只列方向,不编搜索数据。' },
-  { id: '3', title: '③ 收敛', body: '聚成微类目/产品假设;去重;删大词根;每簇补 3–5 长尾。总数 ≤120,输出 CSV,不给搜索量。' },
-  { id: '5', title: '⑤ 打分', body: '硬门槛任一即淘汰:月搜<100 / CTR=Unknown / 竞争>10万 / KD=100。A=月搜≥150∧竞争<5000∧KD<30∧CTR≥80%;B=竞争<5万∧KD<50∧月搜≥100∧CTR≥80%;C=需求强但竞争/KD高。只用表里数字,不许编。' },
-];
+import { PROMPT_REGISTRY } from '@/lib/etsy-erank/prompts';
+
+const KIND_META: Record<'llm' | 'rules' | 'note', { label: string; cls: string }> = {
+  llm: { label: 'LLM 提示词', cls: 'bg-sky-500/10 text-sky-700 ring-sky-500/30' },
+  rules: { label: 'Code 规则', cls: 'bg-emerald-500/10 text-emerald-700 ring-emerald-500/30' },
+  note: { label: '说明', cls: 'bg-muted text-muted-foreground ring-border' },
+};
 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -25,13 +26,11 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export function SettingsSheet(): React.ReactElement | null {
-  const { settingsOpen, profileConfigured, quotaUsed, remaining, ledger, dispatch } =
-    useEtsyErank();
-  const [profile, setProfile] = React.useState('');
+  const { settingsOpen, dispatch } = useEtsyErank();
+  const { health, loading: healthLoading, probe: reprobe } = useEtsyErankHealth();
   const [openPrompt, setOpenPrompt] = React.useState<string | null>(null);
 
   if (!settingsOpen) return null;
-  const pct = Math.round((quotaUsed / QUOTA_MONTHLY_CAP) * 100);
   const close = () => dispatch({ t: 'toggle-settings', v: false });
 
   return (
@@ -50,92 +49,87 @@ export function SettingsSheet(): React.ReactElement | null {
         </div>
 
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
-          <Block title={`配额台账 · ${QUOTA_PERIOD}`}>
-            <div className="rounded-xl bg-background p-3 ring-1 ring-border">
-              <p className="tabular-nums text-sm">
-                已用 <span className="font-semibold">{quotaUsed}</span> / {QUOTA_MONTHLY_CAP} · 余{' '}
-                <span className={remaining < 40 ? 'text-red-600' : 'text-emerald-600'}>
-                  {remaining}
-                </span>
-              </p>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full ${pct > 80 ? 'bg-red-500' : 'bg-foreground'}`}
-                  style={{ width: `${pct}%` }}
-                />
+          <Block title="环境检查(实时)">
+            <div className="space-y-2">
+              <div className="rounded-xl bg-background p-3 ring-1 ring-border text-xs">
+                <div className="mb-1 font-medium">AdsPower 指纹浏览器</div>
+                {healthLoading && !health ? (
+                  <div className="text-muted-foreground">探测中…</div>
+                ) : health?.adspower.available ? (
+                  <div className="text-emerald-700">
+                    ✓ 已连 · profile <span className="font-mono">{health.adspower.profileId}</span> · debug port <span className="font-mono">{health.adspower.debugPort}</span>
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">API: {health.adspower.apiBase}</div>
+                  </div>
+                ) : (
+                  <div className="text-amber-700">
+                    ✗ 不可用 · profile <span className="font-mono">{health?.adspower.profileId}</span>
+                    {health?.adspower.error && <div className="mt-0.5 text-[10px] opacity-90 break-all">{health.adspower.error}</div>}
+                    <div className="mt-1 text-[10px] text-muted-foreground">解决:启动 AdsPower 桌面端;通过 env <span className="font-mono">ADSPOWER_PROFILE_ID</span> 改 profile</div>
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="overflow-hidden rounded-xl bg-background ring-1 ring-border text-sm">
-              {ledger.map((e, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between gap-2 border-b px-3 py-2 tabular-nums last:border-0"
-                >
-                  <span className="truncate">{e.step}</span>
-                  <span className="shrink-0 text-red-600">-{e.debited}</span>
-                  <span className="shrink-0 text-muted-foreground">余{e.balanceAfter}</span>
-                </div>
-              ))}
-            </div>
-            <ul className="space-y-0.5 text-xs text-muted-foreground">
-              <li>· ② 采种子零配额 · ③ 硬卡 ≤120 · ④ 按词扣账</li>
-              <li>· ④ 预估 &gt; 余额 → 拒跑,不静默烧</li>
-            </ul>
-          </Block>
 
-          <Block title="AdsPower(eRank 登录态在指纹浏览器,不写死仓库)">
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={profile}
-                onChange={(e) => setProfile(e.target.value)}
-                className="rounded-lg border bg-background px-2 py-1.5 text-sm"
-              >
-                <option value="">未选择 profile</option>
-                <option value="k1ck97si">k1ck97si「内地」(登着 eRank)</option>
-                <option value="k1cjt46k">k1cjt46k(非 eRank)</option>
-              </select>
+              <div className="rounded-xl bg-background p-3 ring-1 ring-border text-xs">
+                <div className="mb-1 font-medium">LLM 服务商(用于 ⑤ 解读 + ⑥ 切入建议)</div>
+                {healthLoading && !health ? (
+                  <div className="text-muted-foreground">探测中…</div>
+                ) : health?.llm.available ? (
+                  <div className="text-emerald-700">
+                    ✓ 已连 · <span className="font-semibold">{health.llm.providerName}</span> · model {health.llm.model}
+                    <div className="mt-0.5 text-[10px] text-muted-foreground">{health.llm.baseUrl}</div>
+                  </div>
+                ) : (
+                  <div className="text-amber-700">
+                    ✗ 不可用
+                    {health?.llm.providerName && <span> · 当前选的: <span className="font-semibold">{health.llm.providerName}</span></span>}
+                    {health?.llm.error && <div className="mt-0.5 text-[10px] opacity-90 break-all">{health.llm.error}</div>}
+                    <div className="mt-1 text-[10px] text-muted-foreground">解决:在 Lumos 设置 → 服务商 切换到一个支持 text-gen 且 api_key 模式的 anthropic-compatible provider</div>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="button"
-                onClick={() => dispatch({ t: 'profile', v: profile === 'k1ck97si' })}
-                className="rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background"
+                onClick={reprobe}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium ring-1 ring-border hover:bg-muted"
               >
-                测试连接
+                重新探测
               </button>
             </div>
-            <p
-              className={`text-xs ${profileConfigured ? 'text-emerald-600' : 'text-muted-foreground'}`}
-            >
-              {profileConfigured
-                ? '✓ 已连 eRank 登录态,AdsPower 自动执行器可用'
-                : '未配置 → AdsPower 自动执行器不可用,只能用粘贴'}
-            </p>
           </Block>
 
           <Block title="执行器默认(只影响 ②④)">
             <ExecutorToggle />
           </Block>
 
-          <Block title="AI 提示词(只读 · 固化 SOP §3.4/§3.2)">
+          <Block title="AI 提示词 / Code 规则(只读 · UI 显示和实际跑的是同一份)">
             <div className="space-y-1.5">
-              {PROMPTS.map((p) => (
-                <div key={p.id} className="rounded-lg ring-1 ring-border">
-                  <button
-                    type="button"
-                    onClick={() => setOpenPrompt(openPrompt === p.id ? null : p.id)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium"
-                  >
-                    {p.title}
-                    <span className="text-xs text-muted-foreground">
-                      {openPrompt === p.id ? '收起' : '展开'}
-                    </span>
-                  </button>
-                  {openPrompt === p.id && (
-                    <p className="border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                      {p.body}
-                    </p>
-                  )}
-                </div>
-              ))}
+              {PROMPT_REGISTRY.map((p) => {
+                const km = KIND_META[p.kind];
+                return (
+                  <div key={p.id} className="rounded-lg ring-1 ring-border">
+                    <button
+                      type="button"
+                      onClick={() => setOpenPrompt(openPrompt === p.id ? null : p.id)}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm font-medium"
+                    >
+                      <span className="flex items-center gap-2">
+                        {p.title}
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] ring-1 ${km.cls}`}>{km.label}</span>
+                        <span className="text-xs font-normal text-muted-foreground">{p.subtitle}</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {openPrompt === p.id ? '收起' : '展开'}
+                      </span>
+                    </button>
+                    {openPrompt === p.id && (
+                      <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap border-t bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {p.body}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </Block>
 

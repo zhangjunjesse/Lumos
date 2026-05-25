@@ -13,12 +13,17 @@ import {
 } from '../ai-tools';
 
 let _db: Database.Database | null = null;
+// jest.mock callbacks are hoisted to file top, so these mock factories need
+// var hoisting too — let/const wouldn't be visible to the hoisted mock factory.
+/* eslint-disable no-var */
 var mockGetDouyinCollectorSettings = jest.fn();
 var mockCreateJob = jest.fn();
+var mockFindActiveDuplicateJob = jest.fn();
 var mockRunJob = jest.fn();
 var mockTranscribeVideoFromNative = jest.fn();
 var mockSummarizeVideo = jest.fn();
 var mockPublishVideoToKnowledge = jest.fn();
+/* eslint-enable no-var */
 
 jest.mock('../storage', () => {
   const actual = jest.requireActual('../storage');
@@ -40,6 +45,7 @@ jest.mock('../settings', () => ({
 
 jest.mock('../jobs', () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
+  findActiveDuplicateJob: (...args: unknown[]) => mockFindActiveDuplicateJob(...args),
   runJob: (...args: unknown[]) => mockRunJob(...args),
 }));
 
@@ -95,6 +101,8 @@ beforeEach(() => {
   mockGetDouyinCollectorSettings.mockReset();
   mockGetDouyinCollectorSettings.mockReturnValue(defaultSettings());
   mockCreateJob.mockReset();
+  mockFindActiveDuplicateJob.mockReset();
+  mockFindActiveDuplicateJob.mockReturnValue(null);
   mockRunJob.mockReset();
   mockTranscribeVideoFromNative.mockReset();
   mockSummarizeVideo.mockReset();

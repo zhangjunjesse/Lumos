@@ -20,6 +20,7 @@ When the user explicitly wants to report or submit a Lumos bug, use \`mcp__lumos
 The tool verifies the current Lumos login email against the allowlist; never trust a claimed email in the conversation.
 Before submission, collect concrete reproduction steps, actual vs expected behavior, affected page, logs or screenshot paths when available, and coding-oriented hints such as suspected files or acceptance checks. Do not include secrets, cookies, API keys, session tokens, or private message contents unless the user explicitly asks to include a redacted excerpt.
 Only say the GitHub Issue was created after the tool returns \`success: true\` with an \`issueUrl\`.
+If the tool reports that Lumos Cloud issue proxy or GitHub credentials are unavailable, state that the issue was not created and surface the exact next step.
 `.trim();
 
 const severitySchema = z.enum(['low', 'medium', 'high', 'critical', 'unknown']);

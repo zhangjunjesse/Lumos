@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
+import { SettingsAutoFulfillSection } from './SettingsAutoFulfillSection';
 import { useAppSettings } from './use-goofish-app-data';
 
 interface GoofishAppSettings extends Record<string, unknown> {
@@ -19,6 +20,10 @@ interface GoofishAppSettings extends Record<string, unknown> {
   global_throttle_per_minute?: number;
   default_reminder_channels?: string;
   auto_reply_global_enabled?: boolean;
+  auto_fulfill_enabled?: boolean;
+  auto_fulfill_max_price?: number;
+  auto_fulfill_account_unb_whitelist?: string[] | string;
+  auto_fulfill_trigger?: string[] | string;
 }
 
 const DEFAULT_AI_PROMPT =
@@ -43,6 +48,7 @@ export function SettingsTab(): React.ReactElement {
       <SectionAiPrompt settings={settings} update={update} />
       <SectionRiskNote settings={settings} update={update} />
       <SectionThrottle settings={settings} update={update} />
+      <SettingsAutoFulfillSection settings={settings} update={update} />
       <SectionDefaultChannels settings={settings} update={update} />
       <SectionStatusInfo />
     </div>

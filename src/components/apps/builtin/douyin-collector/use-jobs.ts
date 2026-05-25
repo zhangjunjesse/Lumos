@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import type { CollectJobRecord, JobKind } from '@/lib/douyin-collector/types';
+import type { CollectJobRecord, CreatorCollectMode, JobKind } from '@/lib/douyin-collector/types';
 
 export type CollectJobRow = CollectJobRecord & { id: string };
 
@@ -14,7 +14,12 @@ interface State {
 
 interface Actions {
   refresh: () => Promise<void>;
-  enqueue: (input: { kind: JobKind; targetRef: string }) => Promise<void>;
+  enqueue: (input: {
+    kind: JobKind;
+    targetRef: string;
+    creatorCollectMode?: CreatorCollectMode;
+    maxVideos?: number;
+  }) => Promise<void>;
   cancel: (id: string) => Promise<void>;
   retry: (id: string) => Promise<void>;
 }
@@ -52,7 +57,12 @@ export function useJobs(): State & Actions {
     const res = await fetch('/api/apps/builtin/douyin-collector/jobs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: input.kind, target_ref: input.targetRef }),
+      body: JSON.stringify({
+        kind: input.kind,
+        target_ref: input.targetRef,
+        ...(input.creatorCollectMode ? { creator_collect_mode: input.creatorCollectMode } : {}),
+        ...(typeof input.maxVideos === 'number' ? { max_videos: input.maxVideos } : {}),
+      }),
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };

@@ -1,10 +1,25 @@
 import Database from 'better-sqlite3';
 
-import { cancelPendingJobsForTarget, createJob, markJobStatus, runJob } from '../jobs';
+import {
+  cancelPendingJobsForTarget,
+  createJob,
+  findActiveDuplicateJob,
+  markJobStatus,
+  runJob,
+} from '../jobs';
 import { DOUYIN_COLLECTOR_APP_ID } from '../constants';
 import { createAppDataStore } from '@/lib/app/runtime/data-store';
 
 let _db: Database.Database | null = null;
+// jest.mock callbacks are hoisted to file top, so the variables they capture
+// must use `var` to be hoisted too. ESLint's no-var rule doesn't understand
+// this jest-specific pattern; suppressing for these 3 lines only.
+// eslint-disable-next-line no-var
+var _dedupeCollect = true;
+// eslint-disable-next-line no-var
+var mockFetchCreatorAwemesViaBrowser = jest.fn();
+// eslint-disable-next-line no-var
+var mockFetchVideoMetadataResilient = jest.fn();
 
 jest.mock('../storage', () => {
   const actual = jest.requireActual('../storage');
@@ -13,6 +28,39 @@ jest.mock('../storage', () => {
     getDouyinCollectorStore: () => storeForTests(),
   };
 });
+
+jest.mock('../settings', () => ({
+  getDouyinCollectorSettings: () => ({
+    cookie: '',
+    cookieCheckedAt: null,
+    cookieLastOkAt: null,
+    transcribePrefer: 'allow-asr',
+    longVideoSplitMinutes: 10,
+    transcribeConcurrency: 3,
+    libraryCollectionId: null,
+    autoPublish: false,
+    autoSummarize: false,
+    autoTranscribe: false,
+    dedupeCollect: _dedupeCollect,
+    aiSummaryPrompt: '',
+    aiChaptersPrompt: '',
+    aiTagsPrompt: '',
+    riskNote: '',
+    browserContextId: '',
+  }),
+}));
+
+jest.mock('../creator-browser-scrape', () => {
+  const actual = jest.requireActual('../creator-browser-scrape');
+  return {
+    ...actual,
+    fetchCreatorAwemesViaBrowser: (...args: unknown[]) => mockFetchCreatorAwemesViaBrowser(...args),
+  };
+});
+
+jest.mock('../video-metadata-resilient', () => ({
+  fetchVideoMetadataResilient: (...args: unknown[]) => mockFetchVideoMetadataResilient(...args),
+}));
 
 // Auto-pipeline calls into transcribe / settings — both pull in DB &
 // network. Stub them so jobs tests stay focused on the bookkeeping.
@@ -43,6 +91,10 @@ beforeEach(() => {
   };
   maybeRunAutoPipeline.mockReset();
   maybeRunAutoPipeline.mockResolvedValue(undefined);
+  _dedupeCollect = true;
+  mockFetchCreatorAwemesViaBrowser.mockReset();
+  mockFetchCreatorAwemesViaBrowser.mockResolvedValue({ ok: false, reason: '测试环境短路。' });
+  mockFetchVideoMetadataResilient.mockReset();
 });
 
 describe('createJob', () => {
@@ -78,6 +130,78 @@ describe('markJobStatus', () => {
 
   it('returns null for missing job id', () => {
     expect(markJobStatus('does-not-exist', { status: 'cancelled' })).toBeNull();
+  });
+});
+
+describe('findActiveDuplicateJob', () => {
+  it('reuses queued and running duplicate jobs for the same target', () => {
+    const queued = createJob({ kind: 'keyword', targetRef: 'kw-1' });
+    expect(findActiveDuplicateJob({ kind: 'keyword', targetRef: 'kw-1' })?.id).toBe(queued.id);
+
+    markJobStatus(queued.id, { status: 'running' });
+    expect(findActiveDuplicateJob({ kind: 'keyword', targetRef: 'kw-1' })?.id).toBe(queued.id);
+  });
+
+  it('does not reuse terminal jobs', () => {
+    const job = createJob({ kind: 'keyword', targetRef: 'kw-terminal' });
+    markJobStatus(job.id, { status: 'success' });
+
+    expect(findActiveDuplicateJob({ kind: 'keyword', targetRef: 'kw-terminal' })).toBeNull();
+  });
+
+  it('can be disabled from settings', () => {
+    const job = createJob({ kind: 'link', targetRef: '7321234567890123456' });
+    _dedupeCollect = false;
+
+    expect(findActiveDuplicateJob({ kind: 'link', targetRef: job.target_ref })).toBeNull();
+  });
+
+  it('separates creator recent/full parameters', () => {
+    const full = createJob({
+      kind: 'creator',
+      targetRef: 'creator-1',
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    });
+
+    expect(findActiveDuplicateJob({
+      kind: 'creator',
+      targetRef: 'creator-1',
+      creatorCollectMode: 'recent',
+      maxVideos: 80,
+    })).toBeNull();
+    expect(findActiveDuplicateJob({
+      kind: 'creator',
+      targetRef: 'creator-1',
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    })?.id).toBe(full.id);
+  });
+
+  it('does not reuse jobs with different processing semantics', () => {
+    const metadataOnly = createJob({
+      kind: 'link',
+      targetRef: 'metadata-only',
+      autoProcess: false,
+    });
+    const publishJob = createJob({
+      kind: 'link',
+      targetRef: 'publish-job',
+      publishToKnowledge: true,
+    });
+
+    expect(findActiveDuplicateJob({ kind: 'link', targetRef: 'metadata-only' })).toBeNull();
+    expect(findActiveDuplicateJob({
+      kind: 'link',
+      targetRef: 'metadata-only',
+      autoProcess: false,
+    })?.id).toBe(metadataOnly.id);
+    expect(findActiveDuplicateJob({ kind: 'link', targetRef: 'publish-job' })).toBeNull();
+    expect(findActiveDuplicateJob({
+      kind: 'link',
+      targetRef: 'publish-job',
+      publishToKnowledge: true,
+    })?.id).toBe(publishJob.id);
   });
 });
 
@@ -171,6 +295,200 @@ describe('runJob — creator path (uses scraper)', () => {
   it('returns null for missing job', async () => {
     expect(await runJob('does-not-exist')).toBeNull();
   });
+
+  it('does not mark success when browser candidates all belong to other creators', async () => {
+    const store = storeForTests();
+    const creator = store.create('creators', {
+      nickname: '阿球哥',
+      cadence: 'manual',
+      enabled: true,
+      sec_uid: 'target-sec-uid',
+    });
+    mockFetchCreatorAwemesViaBrowser.mockResolvedValue({
+      ok: true,
+      awemeIds: ['7629572668472737514'],
+    });
+    mockFetchVideoMetadataResilient.mockResolvedValue({
+      ok: true,
+      metadata: {
+        awemeId: '7629572668472737514',
+        title: '其他博主的视频',
+        cover: null,
+        duration: 30,
+        nativeSubtitleUrls: [],
+        playAddrUrls: [],
+        authorSecUid: 'other-sec-uid',
+        authorNickname: '其他博主',
+      },
+    });
+
+    const job = createJob({
+      kind: 'creator',
+      targetRef: creator.id,
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    });
+    const after = await runJob(job.id);
+
+    expect(after?.status).toBe('failed');
+    expect(after?.discovered_count).toBe(0);
+    expect(after?.failure_reason).toMatch(/没有采到目标博主作品/);
+    expect(after?.failure_reason).toMatch(/非该博主/);
+    expect(store.query('videos')).toHaveLength(0);
+  });
+
+  it('treats deduped existing creator videos as a successful no-new run', async () => {
+    const store = storeForTests();
+    const creator = store.create('creators', {
+      nickname: '阿球哥',
+      cadence: 'manual',
+      enabled: true,
+      sec_uid: 'target-sec-uid',
+    });
+    store.create('videos', {
+      aweme_id: '7629572668472737514',
+      creator_ref: 'target-sec-uid',
+      title: '已采集视频',
+    });
+    mockFetchCreatorAwemesViaBrowser.mockResolvedValue({
+      ok: true,
+      awemeIds: ['7629572668472737514'],
+    });
+
+    const job = createJob({
+      kind: 'creator',
+      targetRef: creator.id,
+      autoProcess: false,
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    });
+    const after = await runJob(job.id);
+
+    expect(after?.status).toBe('success');
+    expect(after?.discovered_count).toBe(1);
+    expect(after?.failure_reason).toBeFalsy();
+    expect(mockFetchVideoMetadataResilient).not.toHaveBeenCalled();
+  });
+
+  it('skips existing creator videos that already have a successful transcript (patrol-friendly)', async () => {
+    const store = storeForTests();
+    const creator = store.create('creators', {
+      nickname: '阿球哥',
+      cadence: 'manual',
+      enabled: true,
+      sec_uid: 'target-sec-uid',
+    });
+    store.create('videos', {
+      aweme_id: '7629572668472737514',
+      creator_ref: 'target-sec-uid',
+      title: '已采集视频',
+      transcript_status: 'success',
+    });
+    mockFetchCreatorAwemesViaBrowser.mockResolvedValue({
+      ok: true,
+      awemeIds: ['7629572668472737514'],
+    });
+
+    const job = createJob({
+      kind: 'creator',
+      targetRef: creator.id,
+      autoProcess: true,
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    });
+    const after = await runJob(job.id);
+
+    // 已转写成功的 existing 视频跳过；既不重抓 metadata，也不重跑 pipeline。
+    expect(after?.status).toBe('success');
+    expect(mockFetchVideoMetadataResilient).not.toHaveBeenCalled();
+    const { maybeRunAutoPipeline } = jest.requireMock('../auto-pipeline') as {
+      maybeRunAutoPipeline: jest.Mock;
+    };
+    expect(maybeRunAutoPipeline).not.toHaveBeenCalled();
+  });
+
+  it('re-transcribes existing creator videos whose previous transcript failed (UI 「采集」 default)', async () => {
+    const { maybeRunAutoPipeline } = jest.requireMock('../auto-pipeline') as {
+      maybeRunAutoPipeline: jest.Mock;
+    };
+    maybeRunAutoPipeline.mockResolvedValue({
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+      failures: [],
+      skipped: false,
+      autoSummarize: false,
+      autoPublish: false,
+      libraryCollectionId: null,
+    });
+    const store = storeForTests();
+    const creator = store.create('creators', {
+      nickname: '阿球哥',
+      cadence: 'manual',
+      enabled: true,
+      sec_uid: 'target-sec-uid',
+    });
+    // 模拟之前一波风控骨架污染的失败视频：标题是占位、play_addr 空、transcript_status=failed
+    store.create('videos', {
+      aweme_id: '7629572668472737514',
+      creator_ref: 'target-sec-uid',
+      title: '在抖音记录美好生活',
+      native_subtitle_urls: null,
+      play_addr_urls: null,
+      transcript_status: 'failed',
+      library_status: 'discarded',
+      failure_reason: '该视频既没有原生字幕，也没有抓到 play_addr URL',
+    });
+    mockFetchCreatorAwemesViaBrowser.mockResolvedValue({
+      ok: true,
+      awemeIds: ['7629572668472737514'],
+    });
+    mockFetchVideoMetadataResilient.mockResolvedValue({
+      ok: true,
+      metadata: {
+        awemeId: '7629572668472737514',
+        title: '真正的标题（重抓后）',
+        cover: 'https://example.com/cover.jpg',
+        duration: 90,
+        nativeSubtitleUrls: ['https://example.com/sub.vtt'],
+        playAddrUrls: ['https://example.com/play.mp4'],
+        authorSecUid: 'target-sec-uid',
+        authorNickname: '阿球哥',
+      },
+    });
+
+    const job = createJob({
+      kind: 'creator',
+      targetRef: creator.id,
+      autoProcess: true,
+      publishToKnowledge: true,
+      creatorCollectMode: 'full',
+      maxVideos: 300,
+    });
+    const after = await runJob(job.id);
+
+    // 必须重抓 metadata 覆盖污染版
+    expect(mockFetchVideoMetadataResilient).toHaveBeenCalledTimes(1);
+    const videos = store.query<{
+      title?: string;
+      transcript_status?: string;
+      library_status?: string;
+      native_subtitle_urls?: string | null;
+    }>('videos');
+    expect(videos[0].title).toBe('真正的标题（重抓后）');
+    expect(videos[0].native_subtitle_urls).toContain('sub.vtt');
+    // transcript_status / library_status 保留（pipeline 才负责改）
+    expect(videos[0].transcript_status).toBe('failed');
+    expect(videos[0].library_status).toBe('discarded');
+
+    // pipeline 被调用且接收到该视频 id
+    expect(maybeRunAutoPipeline).toHaveBeenCalledTimes(1);
+    const calledIds = maybeRunAutoPipeline.mock.calls[0]?.[0] as string[];
+    expect(calledIds).toHaveLength(1);
+
+    // job 状态：mock 的 pipeline 写 success → runAutoPipelineForJob 写终态 success
+    expect(after?.status).toBe('success');
+  });
 });
 
 describe('runJob — keyword path (Round 169: BrowserManager primary)', () => {
@@ -231,6 +549,11 @@ describe('runJob — link path (uses scraper)', () => {
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+    // link path 已切到 fetchVideoMetadataResilient (anonymous fetch + browser fallbacks)
+    // 但 link 测试都假设走 fetchVideoMetadata 经 globalThis.fetch mock。
+    // 让 resilient 默认透传到真 fetchVideoMetadata, 保持测试契约不变。
+    const { fetchVideoMetadata: realFetch } = jest.requireActual('../scraper');
+    mockFetchVideoMetadataResilient.mockImplementation((id: string) => realFetch(id));
   });
 
   afterEach(() => {

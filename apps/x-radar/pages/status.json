@@ -1,0 +1,32 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "X 雷达 状态",
+  "description": "查看 X 登录态、4 个模板任务数量、未接入能力和最近运行结果。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "X 登录态",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- X 登录态来源「服务 → X」面板，X 雷达不另起登录流；要重新登录请到 Lumos 主菜单的「服务 → X」tab。\n- 未登录或 cookie 失效时所有任务停止，状态进入 needs_auth。\n- 「重新运行安装自检」会调用 native:app:run-self-check，结果写入运行结果页。"
+        },
+        { "type": "button", "label": "重新运行安装自检", "run": "native:app:run-self-check", "confirm": "重新运行安装自检会写入一条新的运行结果记录，继续吗？", "primary": true },
+        { "type": "button", "label": "查看运行结果", "open": "page:run-history" }
+      ]
+    },
+    {
+      "type": "card",
+      "title": "就绪检查",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 任务：{{ db.radar_tasks.count }} 条\n- 监控告警：{{ db.radar_alerts.count }} 条\n- 选题报告：{{ db.topic_reports.count }} 条\n- 关注摘要：{{ db.follow_digests.count }} 条\n- 数据拆解：{{ db.stats_reports.count }} 条\n- 原推快照：{{ db.tweet_evidence.count }} 条\n- 设置记录：{{ db.app_settings.count }} 条\n- 自动化：{{ db.app_automations.count }} 条\n- 运行记录：{{ db.run_history.count }} 条\n- AI 对话：{{ db.assistant_messages.count }} 条\n- 通知目标：{{ db.app_notifications.count }} 条\n- IM 命令：{{ db.app_command_runs.count }} 条\n- 验收记录：{{ db.acceptance_checks.count }} 条\n- 未接入能力（如 IM 桥 / knowledge collection / 调度桥）必须在这里显示「未接入 / 需官方能力」，不能伪装成功。"
+        },
+        { "type": "button", "label": "打开任务工作台", "open": "page:tasks", "primary": true },
+        { "type": "button", "label": "打开设置", "open": "page:settings" }
+      ]
+    }
+  ]
+}

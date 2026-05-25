@@ -5,7 +5,7 @@ import {
   COLLECTION_VIDEOS,
 } from './constants';
 import { summarizeVideo } from './ai-summary';
-import { createJob, runJob } from './jobs';
+import { createJob, findActiveDuplicateJob, runJob, type CreateJobInput } from './jobs';
 import { parseDouyinInput } from './parse-input';
 import { cleanKeywordQuery, parseVideoTags } from './parsers';
 import { publishVideoToKnowledge } from './publish';
@@ -22,6 +22,12 @@ import type { TranscribePrefer } from './settings';
 import type { CreatorCadence, CreatorRecord, KeywordRecord, KeywordTimeWindow } from './types';
 
 type AiOutcome<T> = ({ ok: true } & T) | { ok: false; error: string; phase?: string };
+
+function createOrReuseJob(input: CreateJobInput): { job: CollectJobRow; deduped: boolean } {
+  const duplicate = findActiveDuplicateJob(input);
+  if (duplicate) return { job: duplicate, deduped: true };
+  return { job: createJob(input), deduped: false };
+}
 
 export interface DouyinAiVideo {
   id: string;
@@ -78,13 +84,13 @@ export async function collectVideoForAi(
   const resolved = await resolveAwemeInput(input);
   if (!resolved.ok) return resolved;
 
-  const job = createJob({
+  const { job, deduped } = createOrReuseJob({
     kind: 'link',
     targetRef: resolved.targetRef,
     autoProcess: opts.autoProcess,
     publishToKnowledge: opts.publishToKnowledge,
   });
-  const finalJob = await runJob(job.id);
+  const finalJob = deduped ? job : await runJob(job.id);
   const video = findVideoByAwemeId(resolved.awemeId);
   let process: unknown;
   if (video && opts.autoProcess) {
@@ -113,13 +119,13 @@ export async function collectCreatorForAi(
   });
   if (!creatorResult.ok) return creatorResult;
 
-  const job = createJob({
+  const { job, deduped } = createOrReuseJob({
     kind: 'creator',
     targetRef: creatorResult.creator.id,
     autoProcess: opts.autoProcess,
     publishToKnowledge: opts.publishToKnowledge,
   });
-  const finalJob = await runJob(job.id);
+  const finalJob = deduped ? job : await runJob(job.id);
   const videos = listVideosByCreator(creatorResult.creator.sec_uid ?? '', opts.limit ?? 30);
 
   let process: ProcessBatchResult | undefined;
@@ -156,13 +162,13 @@ export async function collectKeywordForAi(
   });
   if (!keywordResult.ok) return keywordResult;
 
-  const job = createJob({
+  const { job, deduped } = createOrReuseJob({
     kind: 'keyword',
     targetRef: keywordResult.keyword.id,
     autoProcess: opts.autoProcess,
     publishToKnowledge: opts.publishToKnowledge,
   });
-  const finalJob = await runJob(job.id);
+  const finalJob = deduped ? job : await runJob(job.id);
   const videos = listVideosByKeyword(keywordResult.keyword.query, opts.limit ?? 30);
 
   let process: ProcessBatchResult | undefined;

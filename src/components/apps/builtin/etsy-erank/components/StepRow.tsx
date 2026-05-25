@@ -17,6 +17,7 @@ interface Props {
 export function StepRow({ index, title, state, last, children }: Props): React.ReactElement {
   const blocked = state === 'blocked';
   const failed = state === 'failed';
+  const skipped = state === 'skipped';
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
@@ -28,7 +29,9 @@ export function StepRow({ index, title, state, last, children }: Props): React.R
                 ? 'bg-amber-500/10 text-amber-600 ring-amber-500/40'
                 : failed
                   ? 'bg-red-500/10 text-red-600 ring-red-500/40'
-                  : 'bg-muted/50 text-muted-foreground ring-border'
+                  : skipped
+                    ? 'bg-muted/30 text-muted-foreground ring-border line-through'
+                    : 'bg-muted/50 text-muted-foreground ring-border'
           }`}
         >
           {index}

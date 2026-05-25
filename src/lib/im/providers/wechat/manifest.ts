@@ -51,6 +51,13 @@ export const wechatManifest: IMProviderManifest = {
       default: '*',
       description: '逗号分隔的微信用户 ID（如 user1@im.wechat），* 表示所有',
     },
+    {
+      key: 'route_tag',
+      label: 'Route Tag',
+      type: 'string',
+      required: false,
+      description: '部分 ilink 网关分配的 SKRouteTag；扫码绑定或手动配置后会随收发请求携带',
+    },
   ],
   capabilities: {
     chatTypes: ['direct'],

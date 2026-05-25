@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Delete } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -19,6 +19,9 @@ import {
 } from "@/lib/knowledge/client";
 import type { FileTreeNode } from "@/types";
 import { LibraryContentPreview } from "@/components/knowledge/library-content-preview";
+import { TagsManageSheet } from "@/components/knowledge/TagsManageSheet";
+import { ItemTagsEditor } from "@/components/knowledge/ItemTagsEditor";
+import { LibraryBatchBar } from "@/components/knowledge/LibraryBatchBar";
 
 // 类型定义
 type PathItem = {
@@ -1087,8 +1090,12 @@ export default function LibraryDemoPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagFilterMode, setTagFilterMode] = useState<"or" | "and">("or");
   const [showTagSelector, setShowTagSelector] = useState(false);
+  const [tagSearchQuery, setTagSearchQuery] = useState("");
+  const [showTagsManage, setShowTagsManage] = useState(false);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("updated_desc");
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [batchBusyText, setBatchBusyText] = useState<string | null>(null);
 
   const [collectionId, setCollectionId] = useState<string | null>(null);
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -1254,6 +1261,96 @@ export default function LibraryDemoPage() {
       }
     });
   };
+
+  const toggleItemSelect = useCallback((id: string) => {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearItemSelection = useCallback(() => {
+    setSelectedItemIds(new Set());
+  }, []);
+
+  const runItemBatch = useCallback(
+    async (
+      label: string,
+      transform: (currentTags: string[]) => string[] | null,
+    ) => {
+      const ids = Array.from(selectedItemIds);
+      if (ids.length === 0) return;
+      let failed = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        setBatchBusyText(`${label}中 ${i + 1}/${ids.length}…`);
+        const target = allKbItems.find((it) => it.id === id);
+        const currentNames = (target?.tags || [])
+          .filter((tag) => tag.type !== "system")
+          .map((tag) => tag.label);
+        const next = transform(currentNames);
+        if (!next) continue;
+        try {
+          const res = await fetch(`/api/knowledge/items/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tags: next }),
+          });
+          if (!res.ok) failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      setBatchBusyText(failed > 0 ? `完成,${failed} 个失败` : null);
+      await loadItems({ silent: true });
+      setTimeout(() => setBatchBusyText(null), 2000);
+    },
+    [selectedItemIds, allKbItems, loadItems],
+  );
+
+  const batchAddTag = useCallback(
+    async (name: string) => {
+      const tag = name.trim().slice(0, 30);
+      if (!tag) return;
+      await runItemBatch("加标签", (current) => {
+        const lower = current.map((c) => c.toLowerCase());
+        if (lower.includes(tag.toLowerCase())) return null;
+        return [...current, tag];
+      });
+    },
+    [runItemBatch],
+  );
+
+  const batchRemoveTag = useCallback(
+    async (name: string) => {
+      const target = name.toLowerCase();
+      await runItemBatch("删标签", (current) => {
+        const next = current.filter((c) => c.toLowerCase() !== target);
+        if (next.length === current.length) return null;
+        return next;
+      });
+    },
+    [runItemBatch],
+  );
+
+  const batchCandidateRemoveTags = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of selectedItemIds) {
+      const target = allKbItems.find((it) => it.id === id);
+      if (!target) continue;
+      for (const tag of target.tags || []) {
+        if (tag.type === "system") continue;
+        const key = tag.label.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(tag.label);
+      }
+    }
+    return out.sort();
+  }, [selectedItemIds, allKbItems]);
 
   const removeTag = (tagLabel: string) => {
     setSelectedTags(prev => prev.filter(t => t !== tagLabel));
@@ -1725,11 +1822,15 @@ export default function LibraryDemoPage() {
     if (b.count !== a.count) return b.count - a.count;
     return a.label.localeCompare(b.label, "zh-Hans-CN", { sensitivity: "base" });
   });
+  const normalizedTagQuery = tagSearchQuery.trim().toLowerCase();
+  const filteredSortedTags = normalizedTagQuery
+    ? sortedTags.filter((tag) => tag.label.toLowerCase().includes(normalizedTagQuery))
+    : sortedTags;
   const tagsGroupedByCategory = TAG_CATEGORY_ORDER
     .map((category) => ({
       category,
       label: TAG_CATEGORY_LABEL[category],
-      tags: sortedTags.filter((tag) => tag.category === category),
+      tags: filteredSortedTags.filter((tag) => tag.category === category),
     }))
     .filter((entry) => entry.tags.length > 0);
   const canReindexSelected = !!selectedItem && !selectedItem.isVirtual;
@@ -1864,15 +1965,40 @@ export default function LibraryDemoPage() {
                         className="fixed inset-0 z-10"
                         onClick={() => setShowTagSelector(false)}
                       />
-                      <div className="absolute top-full left-0 z-20 mt-2 max-h-80 w-[min(24rem,calc(100vw-2rem))] overflow-auto rounded-lg border border-border bg-popover p-3 shadow-lg">
-                        <div className="space-y-3">
+                      <div className="absolute top-full left-0 z-20 mt-2 flex max-h-80 w-[min(24rem,calc(100vw-2rem))] flex-col rounded-lg border border-border bg-popover shadow-lg">
+                        <div className="space-y-2 border-b border-border p-3">
                           <div className="flex items-center justify-between px-1">
                             <span className="text-xs font-medium text-muted-foreground">选择标签</span>
-                            <span className="text-xs text-muted-foreground">{sortedTags.length} 个标签</span>
+                            <span className="text-xs text-muted-foreground">
+                              {normalizedTagQuery ? `${filteredSortedTags.length} / ${sortedTags.length}` : `${sortedTags.length} 个标签`}
+                            </span>
                           </div>
-                          <div className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-                            标签体系会在资料入库或重建索引后自动更新。
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={tagSearchQuery}
+                              onChange={(e) => setTagSearchQuery(e.target.value)}
+                              placeholder="搜索标签…"
+                              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 pr-7 text-xs outline-none focus:border-primary/50"
+                              autoFocus
+                            />
+                            {tagSearchQuery ? (
+                              <button
+                                onClick={() => setTagSearchQuery("")}
+                                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                                aria-label="清空搜索"
+                              >
+                                ×
+                              </button>
+                            ) : null}
                           </div>
+                        </div>
+                        <div className="space-y-3 overflow-auto p-3">
+                          {!normalizedTagQuery ? (
+                            <div className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                              标签体系会在资料入库或重建索引后自动更新。
+                            </div>
+                          ) : null}
                           {tagsGroupedByCategory.map((group) => (
                             <div key={group.category} className="space-y-1.5">
                               <div className="text-[11px] font-medium text-muted-foreground">{group.label}</div>
@@ -1915,9 +2041,22 @@ export default function LibraryDemoPage() {
                           ))}
                           {tagsGroupedByCategory.length === 0 ? (
                             <div className="rounded-md border border-dashed border-border px-2.5 py-3 text-center text-xs text-muted-foreground">
-                              暂无可用标签，导入资料后会自动构建标签体系
+                              {normalizedTagQuery
+                                ? `没有匹配「${tagSearchQuery}」的标签`
+                                : "暂无可用标签，导入资料后会自动构建标签体系"}
                             </div>
                           ) : null}
+                        </div>
+                        <div className="border-t border-border p-2">
+                          <button
+                            onClick={() => {
+                              setShowTagSelector(false);
+                              setShowTagsManage(true);
+                            }}
+                            className="w-full rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                          >
+                            管理标签…
+                          </button>
                         </div>
                       </div>
                     </>
@@ -2020,6 +2159,18 @@ export default function LibraryDemoPage() {
             </div>
           )}
 
+          {selectedItemIds.size > 0 ? (
+            <LibraryBatchBar
+              count={selectedItemIds.size}
+              catalog={tagCatalog}
+              candidateRemoveTags={batchCandidateRemoveTags}
+              busyText={batchBusyText}
+              onAddTag={batchAddTag}
+              onRemoveTag={batchRemoveTag}
+              onClear={clearItemSelection}
+            />
+          ) : null}
+
           {/* 内容卡片网格 */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {itemsLoading ? (
@@ -2037,6 +2188,7 @@ export default function LibraryDemoPage() {
                   && job.status !== "pending",
                 );
                 const hasRetryableErrors = Number(job?.failed_files || 0) + Number(job?.skipped_files || 0) > 0;
+                const canBatch = !item.isVirtual && !item.isDirectory && !item.id.startsWith("virtual:");
                 return (
                   <ContentCard
                     key={item.id}
@@ -2055,6 +2207,9 @@ export default function LibraryDemoPage() {
                     directoryRetrying={retryingDirectoryId === item.id}
                     directoryRetryLabel={hasRetryableErrors ? "重试失败项" : "重处理目录"}
                     onDirectoryRetry={retryDirectoryProcessing}
+                    selectable={canBatch}
+                    selected={selectedItemIds.has(item.id)}
+                    onToggleSelect={toggleItemSelect}
                   />
                 );
               })
@@ -2277,27 +2432,36 @@ export default function LibraryDemoPage() {
                 </div>
               )}
               {/* 标签 */}
-              {selectedItem.tags && selectedItem.tags.length > 0 && (
+              {selectedItem.id && !selectedItem.isVirtual && !selectedItem.isDirectory ? (
+                <div className="mt-4 mb-6 rounded-xl border border-border bg-background p-4">
+                  <ItemTagsEditor
+                    itemId={selectedItem.id}
+                    currentTags={selectedItem.tags
+                      .filter((tag) => tag.type !== "system")
+                      .map((tag) => tag.label)}
+                    catalog={tagCatalog}
+                    onChanged={() => void loadItems({ silent: true })}
+                  />
+                </div>
+              ) : selectedItem.tags && selectedItem.tags.length > 0 ? (
                 <div className="mt-4 mb-6 rounded-xl border border-border bg-background p-4">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-sm font-medium">标签</h3>
                     <span className="text-xs text-muted-foreground">{selectedItem.tags.length} 个</span>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedItem.tags.map((tag, index) => {
-                      return (
-                        <span
-                          key={index}
-                          className={`inline-flex items-center gap-2 rounded-full font-medium ${getTagStyle(tag)}`}
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                          {tag.label}
-                        </span>
-                      );
-                    })}
+                    {selectedItem.tags.map((tag, index) => (
+                      <span
+                        key={index}
+                        className={`inline-flex items-center gap-2 rounded-full font-medium ${getTagStyle(tag)}`}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                        {tag.label}
+                      </span>
+                    ))}
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* 元信息 */}
               <div className="border-t border-border pt-4">
@@ -2362,6 +2526,11 @@ export default function LibraryDemoPage() {
           </div>
         </div>
       )}
+      <TagsManageSheet
+        open={showTagsManage}
+        onOpenChange={setShowTagsManage}
+        onChanged={() => void loadItems({ silent: true })}
+      />
     </div>
   );
 }
@@ -2379,6 +2548,9 @@ function ContentCard({
   directoryRetrying = false,
   directoryRetryLabel = "重试",
   onDirectoryRetry,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
 }: {
   item: LibraryItem;
   onTagClick: (tagLabel: string) => void;
@@ -2392,6 +2564,9 @@ function ContentCard({
   directoryRetrying?: boolean;
   directoryRetryLabel?: string;
   onDirectoryRetry?: (item: LibraryItem, e: React.MouseEvent) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
   const summaryText = (item.summary || item.preview || "").trim();
   const canDelete = canRemoveLibraryItem(item);
@@ -2455,8 +2630,25 @@ function ContentCard({
   return (
     <div
       onClick={() => onClick(item)}
-      className="group relative flex h-full cursor-pointer flex-col rounded-xl border border-border bg-card p-4 transition-all hover:scale-[1.01] hover:border-primary/50 hover:shadow-md"
+      className={`group relative flex h-full cursor-pointer flex-col rounded-xl border bg-card p-4 transition-all hover:scale-[1.01] hover:shadow-md ${
+        selected ? "border-primary/70 ring-2 ring-primary/30" : "border-border hover:border-primary/50"
+      }`}
     >
+      {selectable ? (
+        <label
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute left-2 top-2 z-10 inline-flex items-center justify-center rounded-md bg-background/95 p-1 shadow-sm transition-opacity ${
+            selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect?.(item.id)}
+            className="h-3.5 w-3.5 cursor-pointer"
+          />
+        </label>
+      ) : null}
       <div className="flex h-full flex-col">
         {/* 顶部：Logo + 标题（单行）+ 操作按钮（右对齐） */}
         <div className="space-y-2.5">

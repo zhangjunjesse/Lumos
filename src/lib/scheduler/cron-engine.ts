@@ -23,6 +23,7 @@ import { validateBrowserContextId } from '@/lib/browser-provider/context-validat
 import { updateArchivedWeChatAutomationReportStatus } from '@/lib/wechat-assistant/report-archive';
 import { runDueTopicExtractions } from '@/lib/wechat-assistant/topic-extractor';
 import { runDueMemoryV2Sleep } from '@/lib/memory-v2/sleep';
+import { resolveMainAgentSession } from '@/lib/chat/main-agent-session';
 
 const TICK_INTERVAL_MS = 60_000; // 1 minute
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -68,6 +69,13 @@ async function runTick(): Promise<void> {
   runDueMemoryV2Sleep().catch((error: unknown) => {
     console.warn('[memory-v2] daily sleep tick failed:', error);
   });
+  // 主 Agent 切日兜底：跨睡眠时间后下一次 tick 自动归档旧 + 建今日。
+  // 幂等：今日已建则 noop；保证晚上没开 Lumos 的场景启动一分钟内就同步到位。
+  try {
+    resolveMainAgentSession({ createIfMissing: true });
+  } catch (error) {
+    console.warn('[main-agent] daily rollover tick failed:', error);
+  }
 }
 
 async function runSchedule(

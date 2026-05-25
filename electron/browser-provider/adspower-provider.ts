@@ -157,6 +157,14 @@ class AdsPowerAutomationSession implements BrowserAutomationSession {
     this.delegate?.markTabBackground(tabId, isBackground);
   }
 
+  async getCookies(filter?: Electron.CookiesGetFilter): Promise<Electron.Cookie[]> {
+    return (await this.ensureDelegate()).getCookies(filter);
+  }
+
+  async setCookie(cookie: Electron.CookiesSetDetails): Promise<void> {
+    return (await this.ensureDelegate()).setCookie(cookie);
+  }
+
   private async ensureDelegate(): Promise<ExternalCdpAutomationSession> {
     if (this.delegate) {
       return this.delegate;

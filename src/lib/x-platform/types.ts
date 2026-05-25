@@ -42,6 +42,23 @@ export interface XSearchResult {
   query: string;
   hits: XSearchHit[];
   cursor?: string;
+  requestedCount?: number;
+  returnedCount?: number;
+  maxSupportedCount?: number;
+  partial?: boolean;
+  timedOut?: boolean;
+  durationMs?: number;
+  error?: string;
+}
+
+export interface XCollectionMeta {
+  requestedCount: number;
+  returnedCount: number;
+  maxSupportedCount: number;
+  partial: boolean;
+  timedOut: boolean;
+  durationMs: number;
+  error?: string;
 }
 
 export interface XTweet {

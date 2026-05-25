@@ -4,7 +4,7 @@ import {
   getDouyinCollectorStore,
   listCreators,
 } from '@/lib/douyin-collector/storage';
-import { parseDouyinInput } from '@/lib/douyin-collector/parse-input';
+import { resolveCreatorInput } from '@/lib/douyin-collector/resolve-creator-input';
 import { CREATOR_CADENCES, COLLECTION_CREATORS } from '@/lib/douyin-collector/constants';
 import type { CreatorCadence, CreatorRecord } from '@/lib/douyin-collector/types';
 
@@ -30,28 +30,20 @@ export async function POST(req: NextRequest) {
     const nicknameRaw = typeof body.nickname === 'string' ? body.nickname.trim() : '';
     const cadence = normalizeCadence(body.cadence);
 
-    if (!inputRaw && !nicknameRaw) {
+    if (!inputRaw) {
       return NextResponse.json(
-        { error: '需要输入博主链接、sec_uid 或昵称。' },
+        { error: '需要输入博主主页链接或 sec_uid。' },
         { status: 400 },
       );
     }
 
-    const parsed = parseDouyinInput(inputRaw);
-    let secUid: string | null = null;
-    if (parsed.kind === 'sec_uid' || parsed.kind === 'profile-url') {
-      secUid = parsed.secUid;
-    } else if (parsed.kind === 'short-url' || parsed.kind === 'unknown') {
-      // 暂未接入解析，先保留原文，待 MCP 桥实现后补上 sec_uid。
-      secUid = null;
-    } else if (parsed.kind === 'video-url' || parsed.kind === 'aweme_id') {
-      return NextResponse.json(
-        { error: '看起来是视频链接，请改到「采集任务」按链接采集，或填博主主页链接。' },
-        { status: 400 },
-      );
+    const outcome = await resolveCreatorInput(inputRaw);
+    if (!outcome.ok) {
+      return NextResponse.json({ error: outcome.message }, { status: 400 });
     }
+    const secUid = outcome.secUid;
 
-    const nickname = nicknameRaw || (secUid ? `博主 ${secUid.slice(0, 8)}…` : `博主 ${inputRaw.slice(0, 12)}`);
+    const nickname = nicknameRaw || `博主 ${secUid.slice(0, 8)}…`;
     const now = new Date().toISOString();
     const store = getDouyinCollectorStore();
 
@@ -60,17 +52,15 @@ export async function POST(req: NextRequest) {
     // link). Returning 409 with the existing id lets the UI point the user
     // at the existing row instead of silently piling up duplicates that
     // double-fire patrols and pollute the list.
-    if (secUid) {
-      const existing = listCreators(store).find((c) => c.sec_uid === secUid);
-      if (existing) {
-        return NextResponse.json(
-          {
-            error: `该博主已订阅：${existing.nickname}`,
-            existingId: existing.id,
-          },
-          { status: 409 },
-        );
-      }
+    const existing = listCreators(store).find((c) => c.sec_uid === secUid);
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: `该博主已订阅：${existing.nickname}`,
+          existingId: existing.id,
+        },
+        { status: 409 },
+      );
     }
     const created = store.create<CreatorRecord>(COLLECTION_CREATORS, {
       sec_uid: secUid,

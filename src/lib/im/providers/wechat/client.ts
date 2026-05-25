@@ -43,7 +43,10 @@ import {
 // Re-export 常量与类型，方便 monitor / send / parse 用同一个 ./client 入口
 export * from './types';
 
-const CHANNEL_VERSION = 'lumos-wechat/1.0';
+// Keep this value aligned with the iLink bot protocol examples. Older builds
+// used a Lumos-branded value; getUpdates tolerated it, but sendmessage is more
+// sensitive on some gateway paths.
+const CHANNEL_VERSION = '1.0.0';
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BODY = 64 * 1024 * 1024; // 64MB cap

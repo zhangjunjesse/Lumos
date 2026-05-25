@@ -29,6 +29,7 @@ const config: WechatConfig = {
   baseUrl: 'https://x',
   accountId: 'acc',
   allowFrom: '*',
+  routeTag: '',
 };
 
 const fakeBufStore = (() => {
@@ -220,7 +221,11 @@ describe('wechat/monitor: ingestMessage', () => {
   });
 
   test('uses local voice transcription fallback when WeChat ASR text is missing', async () => {
-    mockTranscribeAudioAttachment.mockResolvedValueOnce('local transcript');
+    mockTranscribeAudioAttachment.mockResolvedValueOnce({
+      text: 'local transcript',
+      empty: false,
+      provider: 'mock',
+    });
     const client = new WechatClient({ baseUrl: config.baseUrl, token: config.token });
     jest.spyOn(client, 'downloadCdnMedia').mockResolvedValue(Buffer.from('RIFF fake wav bytes'));
     const m = makeMonitor(client);

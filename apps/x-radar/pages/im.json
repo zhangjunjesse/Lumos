@@ -1,0 +1,161 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "通知命令",
+  "description": "管理 X 雷达的 IM 通知目标、命令模板（含 native:app:run-command）和外部微信通用只读命令。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "接入边界",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 监控雷达命中和关注摘要可推用户自己的微信 IM；选题挖掘和数据拆解默认走「入库 + 应用内查看」，不推送。\n- 微信通知依赖用户先在微信里给 Lumos/Clawbot 发过消息完成绑定。\n- 外部微信可发以下通用只读命令查询 X 雷达：\n  - /app X 雷达 status — 查看应用就绪状态\n  - /app X 雷达 runs — 查看最近运行结果\n  - /app X 雷达 acceptance — 查看验收进度\n  - /app X 雷达 help — 查看命令说明\n- 业务写操作（触发抓取 / 入库 / 推 IM 批量）和高风险命令必须回到应用内确认，不能从微信 /app 入口直接执行。"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_notifications }}",
+      "columns": [
+        { "field": "target_label", "label": "通知目标", "search": true },
+        { "field": "channel", "label": "渠道", "render": "tag" },
+        { "field": "provider_id", "label": "服务商", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "last_error", "label": "失败原因", "search": true },
+        { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["target_label", "last_error"] },
+      "filter": [
+        { "field": "status", "options": ["not_connected", "ready", "sent", "failed"] }
+      ],
+      "actions": {
+        "toolbar": [
+          {
+            "label": "新增通知目标",
+            "primary": true,
+            "run": "db:create:app_notifications",
+            "input": {
+              "channel": "wechat_im",
+              "provider_id": "wechat",
+              "chat_id": "",
+              "target_label": "默认微信用户",
+              "title": "X 雷达告警测试",
+              "text": "这是一条 X 雷达测试通知，用户回复仍进入 Lumos 主 Agent。",
+              "status": "not_connected",
+              "last_error": "首次发送前请先在微信里给 Lumos/Clawbot 发过一条消息完成绑定。"
+            }
+          },
+          {
+            "label": "发送测试通知",
+            "run": "im:notify",
+            "input": {
+              "title": "X 雷达测试通知",
+              "text": "X 雷达通知通道测试，未触发任何任务。",
+              "target_label": "默认微信用户"
+            }
+          }
+        ],
+        "row": [
+          { "label": "发送测试通知", "run": "im:notify", "confirm": "确认发送测试通知到微信？" }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_command_runs }}",
+      "columns": [
+        { "field": "command", "label": "命令", "search": true },
+        { "field": "risk_level", "label": "风险", "render": "tag" },
+        { "field": "confirmation_required", "label": "需确认", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "result_summary", "label": "结果", "search": true },
+        { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["command", "result_summary", "failure_reason"] },
+      "filter": [
+        { "field": "risk_level", "options": ["read", "low_write", "high_risk"] },
+        { "field": "status", "options": ["not_connected", "draft", "pending_confirmation", "success", "failed", "rejected"] }
+      ],
+      "actions": {
+        "toolbar": [
+          {
+            "label": "添加状态命令",
+            "primary": true,
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar status",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看 X 雷达就绪状态、X 登录态、任务数量；外部微信也可发 /app X 雷达 status 查询。"
+            }
+          },
+          {
+            "label": "添加任务列表命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar tasks",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看所有任务的模板类型、最近运行状态和下次运行时间。"
+            }
+          },
+          {
+            "label": "添加告警列表命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar alerts",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看最新监控告警（默认最近 24 小时），含命中规则、原推链接、互动数。"
+            }
+          },
+          {
+            "label": "添加选题报告命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar report <task>",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看指定任务最近的选题报告摘要、证据条数和入库状态。"
+            }
+          },
+          {
+            "label": "添加关注摘要命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar digest <task>",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看指定任务最近的关注摘要简报（最近窗口）。"
+            }
+          },
+          {
+            "label": "添加数据拆解命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/x-radar stats <task>",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看指定任务最近的数据拆解指标和热门 thread。"
+            }
+          }
+        ],
+        "row": [
+          {
+            "label": "测试命令",
+            "run": "native:app:run-command",
+            "input": { "confirmed": true },
+            "confirm": "确认在应用内测试执行这条 IM 命令？通用只读命令也可通过微信 /app X 雷达 status|runs|acceptance|help 查询。"
+          }
+        ]
+      }
+    }
+  ]
+}

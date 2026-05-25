@@ -31,7 +31,7 @@ describe('wechat/client: getUpdates', () => {
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body);
     expect(body.get_updates_buf).toBe('');
-    expect(body.base_info.channel_version).toMatch(/lumos-wechat/);
+    expect(body.base_info.channel_version).toBe('1.0.0');
     expect(init.headers.Authorization).toBe('Bearer tk-1');
     // 关键 header — 缺了服务端会返回 "session timeout" 怪响应
     expect(init.headers.AuthorizationType).toBe('ilink_bot_token');

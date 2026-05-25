@@ -1,0 +1,57 @@
+{
+  "$schema": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "id": "monitor-radar",
+  "name": "监控雷达",
+  "description": "按关键词/账号定时扫，套命中规则（含某词/排除词/互动数阈值/来自某 @/时间窗），命中入 radar_alerts；命中且 task.im_enabled=true 时推 IM。底层走 MCP x-platform 的 x_search / x_read_user_tweets，不直接动 scraper。",
+  "version": 2,
+  "inputs": [
+    { "name": "task_id", "label": "任务 ID", "type": "string", "required": true },
+    { "name": "name", "label": "任务名", "type": "string", "required": true },
+    { "name": "config_json", "label": "config_json", "type": "json", "required": true, "description": "{keywords[], from_handles[], exclude_keywords[], window_hours, min_like, min_retweet, search_mode}" },
+    { "name": "im_enabled", "label": "推 IM", "type": "boolean", "default": false },
+    { "name": "im_target_label", "label": "IM 目标", "type": "string" }
+  ],
+  "outputs": [
+    { "name": "summary", "type": "string", "label": "执行摘要" },
+    { "name": "alerts_count", "type": "string", "label": "命中条数" },
+    { "name": "failure_reason", "type": "string", "label": "失败原因" }
+  ],
+  "steps": [
+    {
+      "id": "preflight-x-login",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "前置检查 X 登录态：调用 MCP x-platform 的 x_search 工具，q='preflight' count=1。如果返回 'X 登录已过期' 或 X_AUTH_EXPIRED，立即终止 workflow 并把 failure_reason 设为「X 登录已过期，需到「服务 → X」重新登录」；不能用 mock 数据继续。"
+    },
+    {
+      "id": "fetch-tweets",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "按任务配置 {{ inputs.config_json }} 拉新推：\n- 如果 config.keywords 非空：对每个关键词调用 x_search，mode={{ inputs.config_json.search_mode }}（默认 Latest），count=50。\n- 如果 config.from_handles 非空：对每个 handle 调用 x_search 用 from:<handle> 表达式 或 x_read_user_tweets。\n- 合并去重（按 tweet id），过滤时间窗 window_hours 内的推文。\n- 把每条推文按 tweet_evidence 字段格式打包（id / author_screen / author_name / text / tweet_created_at / 互动数 / url / conversation_id / photos / video_previews）。\n禁止编造任何推文：MCP 抓不到就返回空数组，不允许 mock。"
+    },
+    {
+      "id": "match-rules",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "对 fetch-tweets 的每条推文套命中规则（来自 config_json）：\n- exclude_keywords：任一匹配即丢弃。\n- min_like / min_retweet：低于阈值丢弃。\n- keywords：至少一个命中才算通过（已搜过的 keywords 默认命中）。\n- from_handles：作者必须在白名单内（如果非空）。\n输出命中推文列表 + 每条的 matched_rule 描述（含触发该命中的具体词/账号/阈值）。"
+    },
+    {
+      "id": "upsert-evidence",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "把命中推文 upsert 到 tweet_evidence（主键 id），覆盖更新 snapshot_at；同时把命中条目写入 radar_alerts（task_ref={{ inputs.task_id }}，status='pending'，matched_rule 写入）。"
+    },
+    {
+      "id": "notify-im",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "如果 inputs.im_enabled=true 且 alerts_count > 0：通过 im:notify 把命中告警推送到 inputs.im_target_label；标题=「X 雷达：{{ inputs.name }} 命中 N 条」，正文含每条命中推文的作者、链接、命中规则与互动数。发送成功后把对应 radar_alerts.status 改 'notified'，并把 notification_id 关联到 app_notifications 记录；失败时把 last_error 写入 app_notifications，不要伪装 success。如果 im_enabled=false，跳过本步。"
+    },
+    {
+      "id": "finalize",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "汇总结果：summary='扫描 N 条候选，命中 M 条，推送 K 条'；alerts_count=M（字符串）；failure_reason 留空（仅在任一前置步骤失败时填）。把这些写回 outputs 并更新 radar_tasks last_status / last_summary / last_failure_reason / last_run_id。任意上游步骤失败则 last_status='failed' 且 failure_reason 写实际原因。"
+    }
+  ]
+}

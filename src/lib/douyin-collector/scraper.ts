@@ -97,7 +97,7 @@ export type ScrapeOutcome =
 // *suffix* inside legit `description` metas ("…来抖音，记录美好生活！"),
 // so we must match the *title field itself*, not a substring of html.
 const GENERIC_SLOGAN_TITLE_RE =
-  /^\s*(在抖音记录美好生活|抖音|记录美好生活|让美好被看见|抖音 - 让每一个人看见并连接更大的世界)\s*\d*\s*$/;
+  /^\s*(在抖音记录美好生活|抖音|记录美好生活|让美好被看见|抖音 - 让每一个人看见并连接更大的世界|验证码中间页|安全验证|验证中间页|captcha|安全中心|登录|安全风控)\s*\d*\s*$/i;
 
 /**
  * True when `metadata` is the anti-bot skeleton placeholder rather than a
@@ -110,7 +110,14 @@ export function isRiskControlSkeleton(
   metadata: ScrapedVideoMetadata | null | undefined,
   hadRenderData: boolean,
 ): boolean {
-  if (hadRenderData || !metadata) return false;
+  // hadRenderData 仍保留作签名兼容性, 但不再短路: 抖音 anti-bot 返回的
+  // 风控骨架页也带 RENDER_DATA (壳里 item_list/aweme_detail 是空的)。
+  // 之前 hadRenderData=true 直接 return false 让 slogan-title-only 的
+  // 骨架页 sailed past, 导致 22+ 条 video 入库后 transcribe 时才发现
+  // 没 play_addr 失败。新逻辑只信"有实质内容"(author/cover/playAddr/
+  // nativeSubtitle 任一非空) 才不算 skeleton; 只剩 slogan title 还是判 skeleton。
+  void hadRenderData;
+  if (!metadata) return false;
   if (metadata.authorNickname || metadata.cover) return false;
   if (metadata.playAddrUrls.length > 0 || metadata.nativeSubtitleUrls.length > 0) {
     return false;
@@ -497,9 +504,22 @@ function getPosterImage(html: string): string | null {
 function extractPlayAddrUrlsFromHtml(html: string): string[] {
   const normalized = normalizeEmbeddedText(html);
   const urls = normalized.match(/https?:\/\/[^"'<>\s]+/g) ?? [];
-  return uniqueStrings(urls
-    .map((url) => decodeHtmlEntities(url).replace(/\\\//g, '/'))
-    .filter((url) => /(?:aweme|douyin|snssdk).*\/(?:aweme\/v1\/play|playwm|play)/i.test(url)));
+  return uniqueStrings(
+    urls
+      .map((url) => decodeHtmlEntities(url).replace(/\\\//g, '/'))
+      .filter((url) => {
+        // 加 URL 路径边界 (?, /, ! 或末尾): 否则 /play 会误吃 /player-*.js
+        // 这类 page asset, 把抖音 SPA 的 player bundle 当成视频 play_addr.
+        if (!/(?:aweme|douyin|snssdk).*\/(?:aweme\/v1\/play|playwm|play)(?=[/?]|$)/i.test(url)) {
+          return false;
+        }
+        // 黑名单: page asset / 静态资源 / 风控中间页等明显非视频流的 URL
+        if (/\.(?:js|json|css|png|jpe?g|gif|svg|html?|map)(?:\?|$)/i.test(url)) return false;
+        if (/douyin_web\/player-/i.test(url)) return false;
+        if (/douyinstatic\.com/i.test(url)) return false;
+        return true;
+      }),
+  );
 }
 
 function normalizeEmbeddedText(value: string): string {

@@ -60,13 +60,24 @@ jest.mock('@/lib/im/providers/wechat/commands', () => ({
 }));
 
 // In-memory mocks for db + wechat route-pointer (used by wechat path)
-const fakeSessions = new Map<string, { id: string; title: string; system_prompt?: string }>();
+interface MockMainAgentSession {
+  id: string;
+  title: string;
+  system_prompt?: string;
+  created_at?: string;
+  status?: 'active' | 'archived';
+}
+const fakeSessions = new Map<string, MockMainAgentSession>();
 let createSessionCounter = 0;
 let routePointer: string | null = null;
+function nowSqlUtc(): string {
+  return new Date().toISOString().replace('T', ' ').split('.')[0];
+}
 
 jest.mock('@/lib/db', () => ({
   getSession: (id: string) => fakeSessions.get(id),
   getAllSessions: () => Array.from(fakeSessions.values()),
+  getSetting: () => undefined,
   createSession: (
     _title?: string,
     _model?: string,
@@ -74,9 +85,19 @@ jest.mock('@/lib/db', () => ({
   ) => {
     createSessionCounter += 1;
     const id = `auto_${createSessionCounter}`;
-    const session = { id, title: 'New Chat', system_prompt: systemPrompt || '' };
+    const session: MockMainAgentSession = {
+      id,
+      title: 'New Chat',
+      system_prompt: systemPrompt || '',
+      created_at: nowSqlUtc(),
+      status: 'active',
+    };
     fakeSessions.set(id, session);
     return session;
+  },
+  updateSessionStatus: (id: string, status: 'active' | 'archived') => {
+    const target = fakeSessions.get(id);
+    if (target) target.status = status;
   },
 }));
 
@@ -427,6 +448,8 @@ describe('im-inbound-dispatcher', () => {
         id: 'main_1',
         title: 'Lumos 主 Agent',
         system_prompt: '__LUMOS_MAIN_AGENT__',
+        created_at: nowSqlUtc(),
+        status: 'active',
       });
       routePointer = 'preset_1';
 

@@ -4,8 +4,9 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-import { getActiveUserId } from '@/lib/auth/user-service';
+import { getActiveUserId, getActiveWebSessionToken } from '@/lib/auth/user-service';
 import { getDb } from '@/lib/db/connection';
+import { getSetting } from '@/lib/db';
 
 export const LUMOS_ISSUE_ALLOWED_EMAILS = [
   'zhangjun@xinge.tech',
@@ -15,6 +16,9 @@ export const LUMOS_ISSUE_ALLOWED_EMAILS = [
 
 const DEFAULT_GITHUB_REPO = 'zhangjunjesse/Lumos';
 const GITHUB_API_BASE = 'https://api.github.com';
+const DEFAULT_LUMOS_WEB_URL = 'https://lumos.miki.zj.cn';
+const CLOUD_ISSUE_PROXY_PATH = '/api/desktop/issues/lumos-bug';
+const CLOUD_ISSUE_TIMEOUT_MS = 20_000;
 const MAX_BODY_FIELD_LENGTH = 4_000;
 const MAX_TITLE_LENGTH = 140;
 const execFileAsync = promisify(execFile);
@@ -158,7 +162,7 @@ export async function submitLumosBugIssue(
     };
   }
 
-  const createIssue = options.createGithubIssue ?? createGithubIssueViaRest;
+  const createIssue = options.createGithubIssue ?? createGithubIssueWithBestAvailableTransport;
   const created = await createIssue({
     repository,
     title,
@@ -385,25 +389,122 @@ function parseGithubRepository(remote: string): string | null {
 }
 
 function resolveGithubRepository(environment: IssueEnvironment): string {
-  const configured = process.env.LUMOS_GITHUB_ISSUE_REPO || process.env.GITHUB_REPOSITORY || '';
+  const configured = process.env.LUMOS_GITHUB_ISSUE_REPO
+    || safeSetting('lumos.github.issue_repo')
+    || process.env.GITHUB_REPOSITORY
+    || '';
   return parseGithubRepository(configured) || configured.trim() || environment.git.repository || DEFAULT_GITHUB_REPO;
 }
 
 function resolveGithubLabels(severity: LumosIssueSeverity | undefined): string[] {
-  const configured = process.env.LUMOS_GITHUB_ISSUE_LABELS;
+  const configured = process.env.LUMOS_GITHUB_ISSUE_LABELS
+    ?? (safeSetting('lumos.github.issue_labels') || undefined);
   const base = configured == null ? ['bug'] : configured.split(',');
   const labels = base.map((label) => label.trim()).filter(Boolean);
   if (severity && severity !== 'unknown') labels.push(`severity:${severity}`);
   return [...new Set(labels)];
 }
 
-async function createGithubIssueViaRest(input: CreateGithubIssueInput): Promise<CreateGithubIssueResult> {
-  const token = process.env.LUMOS_GITHUB_ISSUE_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+async function createGithubIssueWithBestAvailableTransport(
+  input: CreateGithubIssueInput,
+): Promise<CreateGithubIssueResult> {
+  const cloudResult = await tryCreateGithubIssueViaLumosCloud(input);
+  if (cloudResult.ok) return cloudResult.result;
+
+  try {
+    return await createGithubIssueViaLocalCredential(input);
+  } catch (error) {
+    const localDetail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `GitHub Issue 自动提交失败。Lumos Cloud 代理：${cloudResult.error}；本机凭据：${localDetail}`,
+    );
+  }
+}
+
+async function createGithubIssueViaLocalCredential(input: CreateGithubIssueInput): Promise<CreateGithubIssueResult> {
+  const token = process.env.LUMOS_GITHUB_ISSUE_TOKEN
+    || safeSetting('lumos.github.issue_token')
+    || process.env.GITHUB_TOKEN
+    || process.env.GH_TOKEN
+    || '';
   if (!token.trim()) {
     return createGithubIssueViaGhCli(input);
   }
 
   return createGithubIssueWithLabels(input, token, input.labels, true);
+}
+
+async function tryCreateGithubIssueViaLumosCloud(
+  input: CreateGithubIssueInput,
+): Promise<{ ok: true; result: CreateGithubIssueResult } | { ok: false; error: string }> {
+  const token = getActiveWebSessionToken();
+  if (!token) {
+    return { ok: false, error: '当前未登录 Lumos Cloud，无法使用服务端 GitHub Issue 代理' };
+  }
+
+  const proxyUrl = resolveCloudIssueProxyUrl();
+  try {
+    const res = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        repository: input.repository,
+        title: input.title,
+        body: input.body,
+        labels: input.labels,
+      }),
+      signal: AbortSignal.timeout(CLOUD_ISSUE_TIMEOUT_MS),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) {
+      return { ok: false, error: formatCloudIssueProxyError(res.status, data) };
+    }
+    const payload = typeof data === 'object' && data && 'data' in data
+      ? (data as { data?: unknown }).data
+      : data;
+    const issueNumber = Number((payload as { issueNumber?: unknown; issue_number?: unknown })?.issueNumber
+      ?? (payload as { issueNumber?: unknown; issue_number?: unknown })?.issue_number
+      ?? 0);
+    const issueUrl = String((payload as { issueUrl?: unknown; issue_url?: unknown })?.issueUrl
+      ?? (payload as { issueUrl?: unknown; issue_url?: unknown })?.issue_url
+      ?? '');
+    if (!issueNumber || !issueUrl) {
+      return { ok: false, error: 'Lumos Cloud 代理已响应，但未返回 issueNumber / issueUrl' };
+    }
+    return {
+      ok: true,
+      result: {
+        issueNumber,
+        issueUrl,
+        repository: String((payload as { repository?: unknown })?.repository || input.repository),
+        labelsApplied: Array.isArray((payload as { labelsApplied?: unknown })?.labelsApplied)
+          ? ((payload as { labelsApplied: unknown[] }).labelsApplied.map(String))
+          : input.labels,
+      },
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `Lumos Cloud 代理请求失败：${detail}` };
+  }
+}
+
+function resolveCloudIssueProxyUrl(): string {
+  const configured = process.env.LUMOS_GITHUB_ISSUE_PROXY_URL || safeSetting('lumos.github.issue_proxy_url') || '';
+  if (configured.trim()) return configured.trim();
+  const base = (process.env.LUMOS_WEB_URL || DEFAULT_LUMOS_WEB_URL).replace(/\/+$/, '');
+  return `${base}${CLOUD_ISSUE_PROXY_PATH}`;
+}
+
+function safeSetting(key: string): string {
+  try {
+    return getSetting(key) || '';
+  } catch {
+    return '';
+  }
 }
 
 async function createGithubIssueViaGhCli(input: CreateGithubIssueInput): Promise<CreateGithubIssueResult> {
@@ -520,4 +621,22 @@ function formatGithubError(status: number, data: unknown): string {
     return `GitHub 仓库不可访问（HTTP 404）。请检查 LUMOS_GITHUB_ISSUE_REPO / token 仓库权限。${message ? ` GitHub: ${message}` : ''}`;
   }
   return `GitHub 创建 Issue 失败（HTTP ${status}）。${message ? `GitHub: ${message}` : ''}`;
+}
+
+function formatCloudIssueProxyError(status: number, data: unknown): string {
+  const message = typeof data === 'object' && data && 'error' in data
+    ? String((data as { error?: unknown }).error || '')
+    : typeof data === 'object' && data && 'message' in data
+      ? String((data as { message?: unknown }).message || '')
+      : '';
+  if (status === 404) {
+    return 'Lumos Cloud 当前版本还没有启用 GitHub Issue 代理接口';
+  }
+  if (status === 401) {
+    return `Lumos Cloud 登录已过期或未授权（HTTP 401）${message ? `：${message}` : ''}`;
+  }
+  if (status === 403) {
+    return `Lumos Cloud 拒绝提交 Issue（HTTP 403）${message ? `：${message}` : ''}`;
+  }
+  return `Lumos Cloud Issue 代理返回 HTTP ${status}${message ? `：${message}` : ''}`;
 }

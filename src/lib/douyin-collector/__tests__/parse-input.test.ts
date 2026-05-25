@@ -27,6 +27,22 @@ describe('parseDouyinInput', () => {
     if (r.kind === 'short-url') expect(r.shortToken).toBe('iAbCdEfG');
   });
 
+  it('extracts a short link from Douyin app share card text', () => {
+    const r = parseDouyinInput(
+      '9- 长按复制此条消息，打开抖音搜索，查看TA的更多作品。 https://v.douyin.com/GWZM5YWSYuY/ 0@8.com :1pm',
+    );
+    expect(r.kind).toBe('short-url');
+    if (r.kind === 'short-url') expect(r.shortToken).toBe('GWZM5YWSYuY');
+  });
+
+  it('parses iesdouyin share profile URLs', () => {
+    const r = parseDouyinInput(
+      'https://www.iesdouyin.com/share/user/MS4wLjABAAAAabcDEF1234567890ZZ?from_user_page=1',
+    );
+    expect(r.kind).toBe('profile-url');
+    if (r.kind === 'profile-url') expect(r.secUid).toBe('MS4wLjABAAAAabcDEF1234567890ZZ');
+  });
+
   it('parses bare aweme id', () => {
     const r = parseDouyinInput('7321234567890123456');
     expect(r.kind).toBe('aweme_id');

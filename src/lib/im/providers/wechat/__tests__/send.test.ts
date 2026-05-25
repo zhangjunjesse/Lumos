@@ -58,6 +58,19 @@ describe('wechat/send: sendOutbound', () => {
     expect(body.msg.item_list[0].text_item.text).toBe('hello');
   });
 
+  test('surfaces ilink session timeout as a rebind instruction', async () => {
+    fakeFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ errcode: -14, errmsg: 'session timeout' }),
+    });
+    const r = await sendOutbound(client, { address: makeAddr(), text: 'hello' }, {
+      getContextToken: () => 'ctx-1',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/重新扫码绑定/);
+    expect(r.error).toMatch(/errcode=-14/);
+  });
+
   test('uses inbound provider hint context_token before persisted store', async () => {
     fakeFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
     const r = await sendOutbound(
@@ -92,14 +105,14 @@ describe('wechat/send: sendOutbound', () => {
     expect(fakeFetch).toHaveBeenCalledTimes(1);
   });
 
-  test('splits long text into chunks', async () => {
+  test('splits long text into protocol-sized chunks', async () => {
     fakeFetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
-    const long = 'x'.repeat(8000); // > MAX_CHUNK 3800 → 3 chunks
+    const long = 'x'.repeat(8000); // > MAX_CHUNK 1900 → 5 chunks
     const r = await sendOutbound(client, { address: makeAddr(), text: long }, {
       getContextToken: () => 'ctx',
     });
     expect(r.ok).toBe(true);
-    expect(fakeFetch).toHaveBeenCalledTimes(3);
+    expect(fakeFetch).toHaveBeenCalledTimes(5);
   });
 
   test('retries once on ret=-2', async () => {

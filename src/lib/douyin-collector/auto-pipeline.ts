@@ -139,7 +139,21 @@ export async function maybeRunAutoPipeline(
         }
       } catch (err) {
         // 含超时：按失败计入并继续，绝不让一条卡死冻结整池。
-        failures.push(err instanceof Error ? err.message : String(err));
+        const reason = err instanceof Error ? err.message : String(err);
+        failures.push(reason);
+        // 关键：withTimeout reject 时 transcribeVideoFromNative 内部的 fetch
+        // 可能仍在 await（socket 没 abort，event loop 占着）。worker 这里已经
+        // 释放了，但 db 里 video 还是 transcribe.ts 一开始写的 'running'，
+        // 导致用户看到永远卡在 running、且下次重跑发现状态异常无法重置。
+        // 显式覆盖成 failed + 写明超时原因，让 UI 可观测、bulk-transcribe
+        // 的 scope='failed' 能扫到它重跑。
+        try {
+          store.update(COLLECTION_VIDEOS, videoId, {
+            transcript_status: 'failed',
+            failure_reason: reason,
+            updated_at: new Date().toISOString(),
+          });
+        } catch { /* 写 db 失败也不让 worker 中断 */ }
       } finally {
         done += 1;
         try {

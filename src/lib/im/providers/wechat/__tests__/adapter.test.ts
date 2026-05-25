@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<WechatConfig> = {}): WechatConfig {
     baseUrl: 'https://x',
     accountId: 'acc',
     allowFrom: '*',
+    routeTag: '',
     ...overrides,
   };
 }

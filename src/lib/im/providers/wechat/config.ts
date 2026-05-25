@@ -11,6 +11,7 @@ export interface WechatConfig {
   baseUrl: string;
   accountId: string;
   allowFrom: string;
+  routeTag: string;
 }
 
 function pickNonEmpty(...values: Array<string | undefined>): string {
@@ -36,6 +37,7 @@ export function parseWechatConfig(raw: Record<string, unknown>): WechatConfig {
       ) || DEFAULT_BASE_URL,
     accountId: pickNonEmpty(raw.account_id as string | undefined) || DEFAULT_ACCOUNT_ID,
     allowFrom: pickNonEmpty(raw.allow_from as string | undefined) || DEFAULT_ALLOW_FROM,
+    routeTag: pickNonEmpty(raw.route_tag as string | undefined, process.env.WECHAT_ILINK_ROUTE_TAG),
   };
 }
 

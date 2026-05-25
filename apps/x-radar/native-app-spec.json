@@ -1,0 +1,120 @@
+{
+  "$schema": "https://lumos.io/schemas/native-app-spec.v1.json",
+  "version": 1,
+  "summary": "X 雷达：基于 Lumos 现有 X 能力的纯读监控/挖掘/摘要/数据拆解工作台。用户创建任务并挑 4 种模板之一（监控雷达 / 选题挖掘 / 关注摘要 / 数据拆解），按定时或手动跑，命中告警 / 选题报告 / 关注摘要 / 数据报告落到对应栏目并按需推 IM。不发推、不回复、不点赞、不触碰任何写社交动作。",
+  "userVisibleScope": [
+    "在任务工作台新建任务并挑选 4 种模板之一；查看每个任务的模板类型、规则、最近运行状态、命中 / 产物数量、失败原因。",
+    "监控雷达：配关键词或账号 + 命中规则（含某词 / 排除词 / 互动数阈值 / 来自某 @ / 时间窗），自动按 cadence 扫，命中入告警列表并可选推 IM。",
+    "选题挖掘：配话题 / 关键词，自动 search + thread 抽取，AI 提炼成趋势 / 选题报告（Markdown），可入 knowledge collection。",
+    "关注摘要：配 @ 列表 + 摘要窗口（日报 / 周报），自动拉每人最新推 AI 摘要，产出简报并可选推 IM。",
+    "数据拆解：配账号或话题，定期拉量化数据，算互动率、发推节奏、热门 thread，产出数据报告。",
+    "在告警 / 选题报告 / 关注摘要 / 数据报告页查看产物详情，含原推快照、链接、时间戳、AI 提炼内容、可见的失败原因。",
+    "在设置页配置 4 个模板的默认参数、AI 提示词、入库目标 knowledge collection、IM 通知开关、风险边界。",
+    "在自动化页查看 4 个模板的定时任务状态、立即运行入口、同步调度入口；在通知命令页查看 /x-radar 命令模板和 /app X 雷达 status|runs|acceptance|help。",
+    "X 未登录 / cookie 失效 / DeepSearch x 站点不可用时，状态进入 needs_auth / not_connected / failed 并显示原因；任何模板都不能用 mock 数据冒充产物。"
+  ],
+  "status": {
+    "states": ["not_configured", "needs_auth", "ready", "syncing", "running", "failed", "not_connected"],
+    "readyCriteria": [
+      "应用页面可打开；设置页已保存默认模板参数、AI 提示词与风险边界。",
+      "「服务 → X」已登录且 cookie 在有效期内。",
+      "至少存在一个 enabled 状态的任务。",
+      "任意一个任务能从 running 进入 success 并产出告警 / 报告 / 摘要中的一项。",
+      "X 限流、抓取超时或 cookie 失效时必须显示 failure_reason 并停止后续 run，不能用 mock 推文冒充。"
+    ],
+    "notConnectedBehavior": "X cookie 缺失 / 失效时所有任务停止并显示「需重新登录 X」入口；缺 IM 服务 / knowledge collection 时对应入库 / 推送动作显示 not_connected 并保留原始产物，不冒充已发送。"
+  },
+  "settings": [
+    { "id": "auth", "label": "X 账号", "fields": ["登录状态", "登录名", "最近校验时间", "重新登录入口"] },
+    { "id": "templates-defaults", "label": "任务模板默认值", "fields": ["监控-默认时间窗", "监控-默认互动数阈值", "挖掘-每次抓取上限", "挖掘-thread 抽取条数", "摘要-窗口（日 / 周）", "拆解-数据采样窗口", "全局并发上限"] },
+    { "id": "ai-prompts", "label": "AI 提示词", "fields": ["选题提炼提示词", "关注摘要提示词", "数据点评提示词", "应用助手提示词"] },
+    { "id": "library", "label": "入库目标", "fields": ["选题报告默认 knowledge collection", "关注摘要默认 collection", "是否自动入库"] },
+    { "id": "risk", "label": "风险边界", "fields": ["写操作确认", "高风险不做项", "失败时保留中间产物", "推 IM 默认开关"] }
+  ],
+  "data": {
+    "entities": [
+      "radar_tasks",
+      "radar_alerts",
+      "topic_reports",
+      "follow_digests",
+      "stats_reports",
+      "task_evidence_refs",
+      "tweet_evidence",
+      "app_settings",
+      "app_automations",
+      "run_history",
+      "assistant_messages",
+      "app_notifications",
+      "app_command_runs",
+      "acceptance_checks"
+    ],
+    "reusableStores": ["settings", "run_history", "notifications", "command_runs"]
+  },
+  "ai": {
+    "enabled": true,
+    "promptSettings": true,
+    "draftBeforeWrite": true,
+    "visibleFailureHandling": true
+  },
+  "automations": {
+    "enabled": true,
+    "controls": ["enable", "pause", "run_now", "edit", "delete"],
+    "visibleRunResults": true
+  },
+  "runResults": {
+    "visible": true,
+    "states": ["running", "success", "failed", "cancelled"],
+    "failureReasons": true,
+    "retry": true
+  },
+  "im": {
+    "enabled": true,
+    "lowRiskCommands": [
+      "/x-radar status",
+      "/x-radar tasks",
+      "/x-radar alerts",
+      "/x-radar report <task>",
+      "/x-radar digest <task>",
+      "/x-radar stats <task>"
+    ],
+    "confirmationRequiredFor": [
+      "通过 IM 命令触发新一轮 X 抓取（避免在用户不知情时消耗 X 限流配额）",
+      "通过 IM 命令把报告 / 摘要写入 knowledge collection（需在应用内确认目标 collection）",
+      "通过 IM 命令一次性批量重跑多个任务（必须在应用内确认范围）"
+    ],
+    "visibleCommandResults": true
+  },
+  "risk": {
+    "writeActionsRequireConfirmation": true,
+    "highRiskActions": [
+      "触发新一轮 X 抓取（消耗 X 限流配额，可能命中反爬）",
+      "批量把报告 / 摘要入库到 knowledge collection（写知识库）",
+      "批量推 IM 通知（避免噪音轰炸用户 / 群）",
+      "批量删除已采集证据 / 报告"
+    ],
+    "outOfScope": [
+      "发推 / 回复 / 引用转发 / 点赞 / 收藏（任何 X 写社交动作）",
+      "媒体上传 / 视频下载用于再分发",
+      "绕过 X 反爬（自建 transaction-id、IP 池、模拟点击量等）",
+      "为该应用单独修改 BrowserManager / 全局浏览器基础设施",
+      "X cookie 失效或 X 风控触发时仍继续后续 run",
+      "用 mock 推文 / mock 互动数补齐报告或告警"
+    ]
+  },
+  "acceptance": [
+    { "id": "installation-self-check", "label": "安装自检", "howToVerify": "安装完成后查看安装自检结果，或在状态页点击「重新运行安装自检」；通过或失败会自动写入本验收项。" },
+    { "id": "open-tasks", "label": "打开任务工作台", "howToVerify": "能看到任务列表与新建入口；空态有引导，无 mock 任务。" },
+    { "id": "x-login-bound", "label": "X 登录态可见", "howToVerify": "状态页显示当前 X 登录名与最近校验时间；cookie 失效时显示 needs_auth 并给重新登录入口。" },
+    { "id": "monitor-hit", "label": "监控雷达跑通", "howToVerify": "创建一个监控任务（关键词 / 账号 + 命中规则），立即运行后任务 status 从 running → success，至少一条命中写入 radar_alerts，原推链接可点。" },
+    { "id": "topic-report", "label": "选题挖掘产出报告", "howToVerify": "创建一个选题挖掘任务，立即运行后产出一份 topic_reports 报告（Markdown），含来源 URL 引用；失败时 failure_reason 可见。" },
+    { "id": "follow-digest", "label": "关注摘要产出简报", "howToVerify": "创建一个关注摘要任务（≥1 个 @），立即运行后产出一份 follow_digests 简报，含每个账号最新推条数与 AI 摘要。" },
+    { "id": "stats-report", "label": "数据拆解产出报告", "howToVerify": "创建一个数据拆解任务，立即运行后产出一份 stats_reports，含互动率、发推节奏、热门 thread；指标字段非 0 且与原推一致。" },
+    { "id": "auth-failure-visible", "label": "X 登录失效可见", "howToVerify": "把 X cookie 改成无效值后启动任意任务，状态进入 needs_auth 并显示「X 登录已过期，请到「服务 → X」重新登录」；不展示 mock 推文。" },
+    { "id": "im-notify-toggle", "label": "IM 通知可控", "howToVerify": "为监控任务启用 IM 通知，命中告警后 app_notifications 出现一条 success 记录，失败时 last_error 可见；关闭开关后不再推送。" },
+    { "id": "review-automations", "label": "查看自动化", "howToVerify": "进入自动化页能看到 4 个模板的定时任务状态、上次运行和失败原因；可立即运行 / 暂停。" },
+    { "id": "review-im-commands", "label": "查看 IM 命令模板", "howToVerify": "进入通知命令页能看到 /x-radar status|tasks|alerts|report|digest|stats 命令模板；高风险命令必须回到应用内确认。" },
+    { "id": "review-run-history", "label": "查看运行结果", "howToVerify": "进入运行结果页能看到每个任务的 running/success/failed/cancelled 历史、结果摘要、失败原因和重试入口说明。" },
+    { "id": "task-lifecycle", "label": "任务生命周期闭环", "howToVerify": "对一个 running 任务点击「关闭」或「删除」，UI 显示终态；OpenWorkflow run 不再 active，scheduled_workflows 不再触发，schedule_run_history 写入 cancelled。" },
+    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页保存模板默认值、AI 提示词、入库目标 collection 与风险边界；保存后再次打开仍能看到。" }
+  ]
+}

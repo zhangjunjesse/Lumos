@@ -1,0 +1,50 @@
+{
+  "$schema": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "id": "topic-mining",
+  "name": "选题挖掘",
+  "description": "按话题 / 关键词搜 + thread 抽取，AI 提炼成趋势/选题报告（Markdown）。每条引用必须挂到具体证据 URL；证据不足时不写报告。",
+  "version": 2,
+  "inputs": [
+    { "name": "task_id", "label": "任务 ID", "type": "string", "required": true },
+    { "name": "name", "label": "任务名", "type": "string", "required": true },
+    { "name": "config_json", "label": "config_json", "type": "json", "required": true, "description": "{topic, queries[], max_fetch, thread_extract_count, to_library}" },
+    { "name": "ai_system_prompt", "label": "AI 提示词", "type": "text" }
+  ],
+  "outputs": [
+    { "name": "report_id", "type": "string", "label": "topic_reports.id" },
+    { "name": "evidence_count", "type": "string", "label": "证据条数" },
+    { "name": "failure_reason", "type": "string", "label": "失败原因" }
+  ],
+  "steps": [
+    {
+      "id": "preflight-x-login",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "前置检查 X 登录态（同 monitor-radar.preflight）。失败立即终止并写 failure_reason。"
+    },
+    {
+      "id": "search-tweets",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "按 config_json.queries 调用 MCP x-platform 的 x_search（mode=Top + mode=Latest 两轮），合计抓 ≤ config_json.max_fetch 条；按互动数（like + retweet + view）排序保留 top half。把每条按 tweet_evidence 字段打包，upsert 到 tweet_evidence。"
+    },
+    {
+      "id": "extract-threads",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "对前 N 条（N = config_json.thread_extract_count，默认 20）调用 thread 抽取（走 /api/x/thread 或 x_search conversation_id:<id>）拿完整 thread 上下文（主推 + 回复）。回复也 upsert 到 tweet_evidence。"
+    },
+    {
+      "id": "synthesize-report",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "基于 search-tweets 和 extract-threads 的全部证据，按 inputs.ai_system_prompt 生成选题报告（Markdown）：\n- 必须含「核心趋势」「典型 thread / 用户讨论」「值得跟进的话题」三段。\n- 每个论点必须挂引用：[作者 @ — 时间] (URL)。\n- 证据条数 < 5 时不写报告，直接把 failure_reason 设为「证据不足（n=X），需要扩大 queries 或调高 max_fetch」。\n- 不允许用模型常识替代未抓到的事实；任何未支撑的判断必须标 [未决]。"
+    },
+    {
+      "id": "save-report",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "把报告写入 topic_reports：task_ref={{ inputs.task_id }}，topic={{ inputs.config_json.topic }}，report_md=synthesize-report 输出，sources_json=证据 URL 数组，evidence_count=数字，library_status='unprocessed'。如果 config_json.to_library=true 且全局 auto_to_library=true：library_status='draft' 并写入对应 collection。同时更新 radar_tasks last_status/last_summary/last_run_id。"
+    }
+  ]
+}

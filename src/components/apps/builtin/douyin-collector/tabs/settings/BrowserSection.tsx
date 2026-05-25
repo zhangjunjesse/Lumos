@@ -169,7 +169,7 @@ export function BrowserSection({
       {selectedId.startsWith('adspower:') ? (
         <p className="text-[11px] text-muted-foreground">
           用 AdsPower 时，请确认 AdsPower 客户端已启动且该 Profile 能正常打开抖音、已登录；
-          否则采集会报「evaluate 调用失败 / fetch failed」。
+          如果采集遇到验证码，Lumos 会保留并切到该验证页，人工通过后再点「立即采集」。
         </p>
       ) : null}
 

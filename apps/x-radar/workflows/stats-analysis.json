@@ -1,0 +1,56 @@
+{
+  "$schema": "https://lumos.io/schemas/app-workflow-ref.v1.json",
+  "id": "stats-analysis",
+  "name": "数据拆解",
+  "description": "对指定账号或话题在采样窗口内拉量化数据，算互动率、发推节奏、热门 thread 并出报告。指标基于实际原推，0 也展示 0，不允许 mock。",
+  "version": 2,
+  "inputs": [
+    { "name": "task_id", "label": "任务 ID", "type": "string", "required": true },
+    { "name": "name", "label": "任务名", "type": "string", "required": true },
+    { "name": "config_json", "label": "config_json", "type": "json", "required": true, "description": "{target_kind: 'handle'|'topic', target, sample_days, top_threads_count}" },
+    { "name": "ai_system_prompt", "label": "AI 提示词", "type": "text" }
+  ],
+  "outputs": [
+    { "name": "report_id", "type": "string", "label": "stats_reports.id" },
+    { "name": "tweet_count", "type": "string", "label": "样本原推数" },
+    { "name": "failure_reason", "type": "string", "label": "失败原因" }
+  ],
+  "steps": [
+    {
+      "id": "preflight-x-login",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "前置检查 X 登录态（同 monitor-radar.preflight）。失败立即终止并写 failure_reason。"
+    },
+    {
+      "id": "fetch-sample",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "在窗口（最近 config_json.sample_days 天）内拉样本：\n- target_kind='handle'：x_read_user_tweets handle=config_json.target count=100（如不够，再用 x_search from:<handle> 补到 100）。\n- target_kind='topic'：x_search q=config_json.target mode=Latest count=100。\n所有推文 upsert 到 tweet_evidence。样本不足 10 条时把 failure_reason 设为「样本不足（n=X），扩大 sample_days 或目标」，不出报告。"
+    },
+    {
+      "id": "compute-metrics",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "对样本算指标，结果作为 metrics_json：\n- tweet_count: 总条数\n- avg_like / median_like / max_like\n- avg_retweet / median_retweet / max_retweet\n- avg_view / engagement_rate = (sum(like+retweet+reply) / sum(view))（view=0 跳过）\n- per_day_count[]: 每天发推数（按 sample_days 维度）\n- hour_distribution[24]: 24 小时分布（基于 tweet_created_at 本地时区）\n- top_engagement_tweets[5]: 互动数最高 5 条（id / text / 互动 / url）\n所有数字必须直接来自样本；样本里某项缺值就写 null，不要瞎补。"
+    },
+    {
+      "id": "extract-top-threads",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "对 metrics_json.top_engagement_tweets 的前 N 条（N=config_json.top_threads_count 默认 5）调用 thread 抽取拿完整对话，组装 top_threads_json：[{tweet_id, author, text, replies_count, replies_sample[3]}]。"
+    },
+    {
+      "id": "synthesize-report",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "按 inputs.ai_system_prompt 生成 Markdown 报告：\n- 标题：「X 数据拆解 — {{ inputs.config_json.target }} — 最近 N 天」\n- 章节：1. 总览（量化指标）/ 2. 发推节奏（per_day + 小时分布）/ 3. 热门 thread / 4. 结论（基于指标的事实陈述，不做超出数据的推断）\n- 所有数字必须有 metrics_json 的字段支撑；不允许添加来源外的数字或趋势词汇。\n- 数据不显著时直接说「样本不足以得出 X 结论」。"
+    },
+    {
+      "id": "save-report",
+      "type": "agent",
+      "agent": "worker",
+      "prompt": "写入 stats_reports：task_ref={{ inputs.task_id }}，target=config_json.target，metrics_json，top_threads_json，report_md，sample_start/end。更新 radar_tasks last_*。"
+    }
+  ]
+}

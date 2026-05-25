@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 
+// var hoisting needed by jest.mock factory below.
+// eslint-disable-next-line no-var
 var mockCollectKeywordForAi = jest.fn();
 
 jest.mock('@/lib/douyin-collector/ai-tools', () => ({

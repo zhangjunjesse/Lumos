@@ -23,6 +23,16 @@ interface JobRow {
   updated_at?: string;
 }
 
+interface CreatorRow {
+  id: string;
+  nickname?: string;
+}
+
+interface KeywordRow {
+  id: string;
+  query?: string;
+}
+
 interface MergedRun {
   key: string;
   title: string;
@@ -41,6 +51,14 @@ const STATUS_TONE: Record<string, string> = {
   queued: 'text-muted-foreground',
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
+  running: '运行中',
+  cancelled: '已取消',
+  queued: '排队中',
+};
+
 export function RecentRunsPanel(): React.ReactElement {
   const runs = useAppCollection<RunHistoryRow>('run_history', {
     sortKey: 'updated_at',
@@ -50,10 +68,18 @@ export function RecentRunsPanel(): React.ReactElement {
     sortKey: 'updated_at',
     sortDir: 'desc',
   });
+  const creators = useAppCollection<CreatorRow>('creators');
+  const keywords = useAppCollection<KeywordRow>('keywords');
   const [expanded, setExpanded] = React.useState(false);
   const visibleLimit = expanded ? 60 : 12;
 
   const merged = React.useMemo<MergedRun[]>(() => {
+    const creatorLabelById = new Map(
+      creators.rows.map((row) => [row.id, row.nickname || row.id] as const),
+    );
+    const keywordLabelById = new Map(
+      keywords.rows.map((row) => [row.id, row.query || row.id] as const),
+    );
     // Pull both collections at the same depth so the merged set has
     // enough candidates to fill `visibleLimit` after the chronological
     // sort. 60 covers the expanded view; with each side capped at 60
@@ -70,7 +96,7 @@ export function RecentRunsPanel(): React.ReactElement {
     }));
     const b: MergedRun[] = jobs.rows.slice(0, cap).map((j) => ({
       key: `j:${j.id}`,
-      title: `${kindLabel(j.kind)} · ${(j.target_ref ?? '').slice(0, 24)}`,
+      title: formatJobTitle(j, creatorLabelById, keywordLabelById),
       status: j.status ?? 'unknown',
       summary: '',
       failureReason: j.failure_reason ?? null,
@@ -80,9 +106,9 @@ export function RecentRunsPanel(): React.ReactElement {
     return [...a, ...b]
       .sort((x, y) => (y.at ?? '').localeCompare(x.at ?? ''))
       .slice(0, visibleLimit);
-  }, [runs.rows, jobs.rows, visibleLimit]);
+  }, [creators.rows, keywords.rows, runs.rows, jobs.rows, visibleLimit]);
 
-  if (runs.loading || jobs.loading) {
+  if (runs.loading || jobs.loading || creators.loading || keywords.loading) {
     return (
       <p className="text-xs text-muted-foreground">加载运行结果…</p>
     );
@@ -108,7 +134,7 @@ export function RecentRunsPanel(): React.ReactElement {
               ) : null}
             </div>
             {row.failureReason ? (
-              <p className="mt-0.5 truncate text-rose-500">{row.failureReason}</p>
+              <p className="mt-0.5 break-words text-rose-500">{row.failureReason}</p>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -117,16 +143,16 @@ export function RecentRunsPanel(): React.ReactElement {
                 className="text-[10px] tabular-nums text-muted-foreground"
                 title={new Date(row.at).toLocaleString('zh-CN')}
               >
-                {relativeAge(row.at).label}
+                {relativeAge(row.at).label} · {formatExactTime(row.at)}
               </span>
             ) : null}
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground">
               {row.source === 'automation' ? '自动化' : '采集'}
             </span>
             <span
-              className={`uppercase tracking-wider ${STATUS_TONE[row.status] ?? 'text-muted-foreground'}`}
+              className={STATUS_TONE[row.status] ?? 'text-muted-foreground'}
             >
-              {row.status}
+              {STATUS_LABEL[row.status] ?? row.status}
             </span>
           </div>
         </li>
@@ -148,15 +174,41 @@ export function RecentRunsPanel(): React.ReactElement {
   );
 }
 
-function kindLabel(kind?: string): string {
-  switch (kind) {
+function formatJobTitle(
+  job: JobRow,
+  creatorLabelById: Map<string, string>,
+  keywordLabelById: Map<string, string>,
+): string {
+  const target = job.target_ref ?? '';
+  switch (job.kind) {
     case 'creator':
-      return '博主';
+      return `博主 · ${creatorLabelById.get(target) || compactTarget(target)}`;
     case 'keyword':
-      return '关键词';
+      return `关键词 · ${keywordLabelById.get(target) || compactTarget(target)}`;
     case 'link':
-      return '链接';
+      return `链接 · ${compactTarget(target, 36)}`;
     default:
-      return '采集';
+      return `采集 · ${compactTarget(target)}`;
   }
+}
+
+function compactTarget(value: string, max = 24): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+}
+
+function formatExactTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
 }

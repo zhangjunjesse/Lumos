@@ -18,8 +18,9 @@ import {
   ensureKeywordForAi,
   resolveAwemeInput,
 } from './ai-tools';
-import { createJob, runJob } from './jobs';
+import { createJob, findActiveDuplicateJob, runJob, type CreateJobInput } from './jobs';
 import type { CollectJobRow } from './storage';
+import type { CreatorCollectMode } from './types';
 
 export type StartCollectKind = 'keyword' | 'creator' | 'link';
 
@@ -34,6 +35,10 @@ export interface StartCollectInput {
   autoProcess?: boolean;
   /** 是否把处理结果发布到默认资料库；缺省 true（对齐 MCP 工具文案）。 */
   publishToKnowledge?: boolean;
+  /** creator only: recent=快速，full=长滚动尽量采全。 */
+  creatorCollectMode?: CreatorCollectMode;
+  /** creator only: 最大发现视频数。 */
+  maxVideos?: number;
 }
 
 export type StartCollectResult =
@@ -52,6 +57,12 @@ function launchInBackground(jobId: string): void {
     .catch(() => undefined);
 }
 
+function createOrReuseJob(input: CreateJobInput): { job: CollectJobRow; deduped: boolean } {
+  const duplicate = findActiveDuplicateJob(input);
+  if (duplicate) return { job: duplicate, deduped: true };
+  return { job: createJob(input), deduped: false };
+}
+
 export async function startCollectJob(
   req: StartCollectInput,
 ): Promise<StartCollectResult> {
@@ -65,13 +76,13 @@ export async function startCollectJob(
       cadence: req.cadence,
     });
     if (!ensured.ok) return { ok: false, error: ensured.error, phase: ensured.phase };
-    const job = createJob({
+    const { job, deduped } = createOrReuseJob({
       kind: 'keyword',
       targetRef: ensured.keyword.id,
       autoProcess: req.autoProcess,
       publishToKnowledge: req.publishToKnowledge !== false,
     });
-    launchInBackground(job.id);
+    if (!deduped) launchInBackground(job.id);
     return { ok: true, job };
   }
 
@@ -81,25 +92,27 @@ export async function startCollectJob(
       cadence: req.cadence,
     });
     if (!ensured.ok) return { ok: false, error: ensured.error, phase: ensured.phase };
-    const job = createJob({
+    const { job, deduped } = createOrReuseJob({
       kind: 'creator',
       targetRef: ensured.creator.id,
       autoProcess: req.autoProcess,
       publishToKnowledge: req.publishToKnowledge !== false,
+      creatorCollectMode: req.creatorCollectMode,
+      maxVideos: req.maxVideos,
     });
-    launchInBackground(job.id);
+    if (!deduped) launchInBackground(job.id);
     return { ok: true, job };
   }
 
   // link
   const resolved = await resolveAwemeInput(input);
   if (!resolved.ok) return { ok: false, error: resolved.error, phase: resolved.phase };
-  const job = createJob({
+  const { job, deduped } = createOrReuseJob({
     kind: 'link',
     targetRef: resolved.targetRef,
     autoProcess: req.autoProcess,
     publishToKnowledge: req.publishToKnowledge !== false,
   });
-  launchInBackground(job.id);
+  if (!deduped) launchInBackground(job.id);
   return { ok: true, job };
 }

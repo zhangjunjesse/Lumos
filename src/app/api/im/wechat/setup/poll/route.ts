@@ -45,6 +45,13 @@ export async function GET(req: NextRequest) {
     if (status.baseurl && status.baseurl.trim()) {
       setProviderField('wechat', 'base_url', status.baseurl.trim());
     }
+    if (routeTag) {
+      setProviderField('wechat', 'route_tag', routeTag);
+    }
+    const accountId = (status.ilink_bot_id || status.ilink_user_id || '').trim();
+    if (accountId) {
+      setProviderField('wechat', 'account_id', accountId);
+    }
     return NextResponse.json({
       status: 'confirmed',
       ilinkBotId: status.ilink_bot_id,

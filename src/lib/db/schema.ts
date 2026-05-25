@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { migrateCoreTables } from './migrations';
+import { migrateEtsyErankTables } from './migrations-etsy-erank';
 import { migrateGoofishTables } from './migrations-goofish';
+import { migratePinterestRadarTables } from './migrations-pinterest-radar';
 import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateAppTables } from './migrations-app';
@@ -223,6 +225,8 @@ export function initDb(db: Database.Database): void {
     migrateAppTables(db);
     migrateGoofishTables(db);
     migrateWeChatAssistantTables(db);
+    migrateEtsyErankTables(db);
+    migratePinterestRadarTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {

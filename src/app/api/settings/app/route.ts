@@ -54,6 +54,14 @@ const ALLOWED_KEYS = [
   'claude_project_settings_enabled',
   'locale',
   'deepsearch.archive_mode',
+  'lumos.github.issue_repo',
+  'lumos.github.issue_labels',
+  'lumos.github.issue_token',
+  'lumos.github.issue_proxy_url',
+  'network.proxy.mode',
+  'network.proxy.http',
+  'network.proxy.https',
+  'network.proxy.no_proxy',
 ];
 
 const PROVIDER_SETTING_RULES: Partial<Record<string, {
@@ -125,7 +133,7 @@ export async function GET() {
       const value = getSetting(key);
       if (value !== undefined) {
         // Mask token for security (only return last 8 chars)
-        if (key === 'anthropic_auth_token' && value.length > 8) {
+        if ((key === 'anthropic_auth_token' || key === 'lumos.github.issue_token') && value.length > 8) {
           result[key] = '***' + value.slice(-8);
         } else {
           result[key] = value;
@@ -153,7 +161,7 @@ export async function PUT(request: NextRequest) {
       const strValue = validateProviderSetting(key, value);
       if (strValue) {
         // Don't overwrite token if user sent the masked version back
-        if (key === 'anthropic_auth_token' && strValue.startsWith('***')) {
+        if ((key === 'anthropic_auth_token' || key === 'lumos.github.issue_token') && strValue.startsWith('***')) {
           continue;
         }
         setSetting(key, strValue);

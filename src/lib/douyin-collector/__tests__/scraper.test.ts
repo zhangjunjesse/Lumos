@@ -203,10 +203,14 @@ describe('isRiskControlSkeleton', () => {
     expect(isRiskControlSkeleton({ ...bare, title: '' }, false)).toBe(true);
   });
 
-  it('does NOT flag when render data was present', () => {
+  it('still flags skeleton when only RENDER_DATA shell present but no real content', () => {
+    // 历史上 hadRenderData=true 会短路 return false——但抖音 anti-bot
+    // 返回的风控骨架页也带 RENDER_DATA (壳里 item_list/aweme_detail 空),
+    // 导致 slogan-title-only 骨架被误判为正常 metadata。新行为忽略
+    // hadRenderData, 只看 metadata 实质内容。
     expect(
       isRiskControlSkeleton({ ...bare, title: '在抖音记录美好生活' }, true),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('does NOT flag a real video that has an author', () => {

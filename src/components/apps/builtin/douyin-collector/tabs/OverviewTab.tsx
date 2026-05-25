@@ -93,6 +93,14 @@ export function OverviewTab({
 
   const recentJobs = jobs.jobs.slice(0, 5);
   const recentVideos = videos.slice(0, 4);
+  const creatorLabelById = React.useMemo(
+    () => new Map(sources.creators.map((row) => [row.id, row.nickname || row.id] as const)),
+    [sources.creators],
+  );
+  const keywordLabelById = React.useMemo(
+    () => new Map(sources.keywords.map((row) => [row.id, row.query || row.id] as const)),
+    [sources.keywords],
+  );
 
   const cookieHealth = deriveCookieHealth(status);
 
@@ -241,11 +249,16 @@ export function OverviewTab({
                   key={j.id}
                   className="flex items-center justify-between gap-3 py-2 text-xs"
                 >
-                  <span className="truncate">
-                    {j.kind === 'creator' ? '博主' : j.kind === 'keyword' ? '关键词' : '链接'} ·{' '}
-                    {j.target_ref.slice(0, 18)}…
-                  </span>
-                  <span className={statusTone(j.status)}>{j.status}</span>
+                  <div className="min-w-0">
+                    <p className="truncate">
+                      {formatOverviewJobTitle(j, creatorLabelById, keywordLabelById)}
+                    </p>
+                    <p className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                      {j.updated_at ? formatOverviewTime(j.updated_at) : '时间未知'}
+                      {typeof j.discovered_count === 'number' ? ` · 发现 ${j.discovered_count}` : ''}
+                    </p>
+                  </div>
+                  <span className={statusTone(j.status)}>{statusLabel(j.status)}</span>
                 </li>
               ))}
             </ul>
@@ -396,6 +409,62 @@ function HealthLine({
       </span>
     </li>
   );
+}
+
+function formatOverviewJobTitle(
+  job: { kind?: string; target_ref?: string },
+  creatorLabelById: Map<string, string>,
+  keywordLabelById: Map<string, string>,
+): string {
+  const target = job.target_ref ?? '';
+  switch (job.kind) {
+    case 'creator':
+      return `博主 · ${creatorLabelById.get(target) || compactOverviewTarget(target)}`;
+    case 'keyword':
+      return `关键词 · ${keywordLabelById.get(target) || compactOverviewTarget(target)}`;
+    case 'link':
+      return `链接 · ${compactOverviewTarget(target, 36)}`;
+    default:
+      return `采集 · ${compactOverviewTarget(target)}`;
+  }
+}
+
+function compactOverviewTarget(value: string, max = 24): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+}
+
+function formatOverviewTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'success':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'running':
+      return '运行中';
+    case 'queued':
+      return '排队中';
+    case 'cancelled':
+      return '已取消';
+    default:
+      return status;
+  }
 }
 
 function statusTone(status: string): string {

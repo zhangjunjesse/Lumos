@@ -4,6 +4,7 @@ import * as React from 'react';
 
 import { CONVERGE_COUNT } from '../mock-data';
 import { useEtsyErank } from '../use-demo-state';
+import { MetricsTable } from './MetricsTable';
 
 /** ④ Bulk 验真:配额闸 + 粘贴回灌 / AdsPower 后台 / 未配置 三态 */
 export function VerifyStep(): React.ReactElement {
@@ -13,9 +14,12 @@ export function VerifyStep(): React.ReactElement {
 
   if (done) {
     return (
-      <div className="rounded-lg bg-emerald-500/5 px-3 py-2 text-emerald-700 ring-1 ring-emerald-500/20">
-        已回灌 {CONVERGE_COUNT} 词真实数据 · 扣配额 {CONVERGE_COUNT} · 余 {remaining}。
-        下一步 ⑤ AI 打分。
+      <div className="space-y-2">
+        <div className="rounded-lg bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 ring-1 ring-emerald-500/20">
+          已回灌 {CONVERGE_COUNT} 词真实数据 · 扣配额 {CONVERGE_COUNT} · 余 {remaining}。下一步 ⑤
+          AI 打分。
+        </div>
+        <MetricsTable />
       </div>
     );
   }

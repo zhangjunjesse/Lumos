@@ -1,0 +1,37 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "运行结果",
+  "description": "查看每个任务的 running/success/failed/cancelled 历史、结果摘要、失败原因 (failure_reason) 和关联的 OpenWorkflow run。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "运行记录",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 监控雷达 / 选题挖掘 / 关注摘要 / 数据拆解 4 个模板的每次执行都会写一条 run_history。\n- 「关闭任务」/「删除任务」必须同步调用 schedule-run-control.ts 终结当前 OpenWorkflow run；这里能看到对应记录变成 cancelled。\n- failure_reason 写实际原因（如 X 登录过期 / 抓取超时 / AI 配额耗尽），不允许伪装 success。"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.run_history }}",
+      "columns": [
+        { "field": "title", "label": "运行标题", "search": true },
+        { "field": "task_kind", "label": "模板", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "summary", "label": "结果摘要", "search": true },
+        { "field": "failure_reason", "label": "失败原因 (failure_reason)", "search": true },
+        { "field": "workflow_run_id", "label": "OpenWorkflow run" },
+        { "field": "started_at", "label": "开始", "render": "date", "sortable": true },
+        { "field": "ended_at", "label": "结束", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["title", "summary", "failure_reason"] },
+      "filter": [
+        { "field": "status", "options": ["running", "success", "failed", "cancelled"] },
+        { "field": "task_kind", "options": ["monitor", "topic", "digest", "stats", "self_check"] }
+      ]
+    }
+  ]
+}

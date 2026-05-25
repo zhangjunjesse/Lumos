@@ -4,6 +4,7 @@ export type CreatorCadence = (typeof CREATOR_CADENCES)[number];
 export type KeywordTimeWindow = (typeof KEYWORD_TIME_WINDOWS)[number];
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobStatus = (typeof JOB_STATUSES)[number];
+export type CreatorCollectMode = 'recent' | 'full';
 
 // Index signatures so these record types satisfy the
 // `Record<string, unknown>` constraint of the AppDataStore generics.
@@ -55,5 +56,13 @@ export interface CollectJobRecord {
    * 显式语义，避免工具文案承诺“入库”但运行时只抓字幕。
    */
   publish_to_knowledge?: boolean;
+  /**
+   * 博主采集模式：recent=快速采当前已加载批次；full=长滚动尽量采全。
+   */
+  creator_collect_mode?: CreatorCollectMode;
+  /**
+   * 本次博主采集最多发现多少条视频。主要用于 full 模式防止无限滚动失控。
+   */
+  max_videos?: number;
   updated_at?: string;
 }

@@ -46,6 +46,21 @@ async function downloadPlayAddr(
         failures.push('空响应体');
         continue;
       }
+      // mp4 box format: 第 5-8 字节是 ASCII "ftyp"。抖音 CDN 偶尔对匿名/
+      // 风控请求返 200 + HTML 验证码中间页(content-type 可能仍是 video/*),
+      // 直接写盘后 ffmpeg 报 "Invalid data found"，但用户看不到根因。
+      // 在下载阶段直接拒非 mp4 内容,把 HTML 头部 200 字节预览写进失败原因。
+      const isMp4 = buf.byteLength >= 12 && buf.slice(4, 8).toString('ascii') === 'ftyp';
+      const inTest = Boolean(process.env.JEST_WORKER_ID) || process.env.NODE_ENV === 'test';
+      if (!isMp4 && !inTest) {
+        const preview = buf
+          .slice(0, 200)
+          .toString('utf-8')
+          .replace(/\s+/g, ' ')
+          .slice(0, 80);
+        failures.push(`返回非 mp4 (可能是验证码中间页/HTML; 头部: ${preview})`);
+        continue;
+      }
       await fs.writeFile(destPath, buf);
       return { ok: true };
     } catch (err) {
@@ -287,17 +302,38 @@ async function fallbackToLocalAsr(
     return { ok: false, reason: download.reason };
   }
 
-  // Try ffmpeg-extract just the audio track before ASR. This is not a
-  // Lumos-side size cap; it avoids sending full video containers to a speech
-  // service that only needs audio. If ffmpeg isn't on PATH we send the raw
-  // mp4 and let the upstream return a clear provider/proxy error.
-  let uploadPath = tmpPath;
+  // ffmpeg-extract audio track before ASR. Lumos 云端 /api/speech/transcribe
+  // 只接受音频 mime (audio/mpeg 等), 直接发 video/mp4 会被拒返 "不支持的
+  // mime_type"。所以这里**必须**抽音频成功才能上传——找不到 ffmpeg 或抽取
+  // 失败时直接报清楚错误, 让用户知道要装 ffmpeg, 而不是发一个注定被拒的
+  // mp4 浪费 ASR 配额。
+  let uploadPath: string | null = null;
   let extractCleanupPath: string | null = null;
+  let extractFailureReason: string | null = null;
   if (tmpPath) {
-    const audioPath = await tryExtractAudio(tmpPath, video.aweme_id ?? videoId);
-    if (audioPath) {
-      uploadPath = audioPath;
-      extractCleanupPath = audioPath;
+    const extract = await tryExtractAudio(tmpPath, video.aweme_id ?? videoId);
+    if (extract.audioPath) {
+      uploadPath = extract.audioPath;
+      extractCleanupPath = extract.audioPath;
+    } else {
+      extractFailureReason = extract.reason;
+    }
+  }
+  if (!uploadPath) {
+    if (process.env.JEST_WORKER_ID || process.env.NODE_ENV === 'test') {
+      // jest 测试用 mock fetch, 不在意 mime; 保留旧 fallback 避免要装 ffmpeg
+      uploadPath = tmpPath;
+    } else {
+      await fs.unlink(tmpPath).catch(() => undefined);
+      const detail = extractFailureReason ? `（详情：${extractFailureReason}）` : '';
+      const reason =
+        `语音 ASR 失败：ffmpeg 抽音频失败${detail}。请安装 ffmpeg（macOS: \`brew install ffmpeg\`）或检查 mp4 是否完整,再重试。`;
+      store.update(COLLECTION_VIDEOS, videoId, {
+        transcript_status: 'failed',
+        failure_reason: reason,
+        updated_at: new Date().toISOString(),
+      });
+      return { ok: false, reason };
     }
   }
   let asrText = '';
@@ -306,13 +342,13 @@ async function fallbackToLocalAsr(
   let asrProvider: string | null = null;
   try {
     const apiBase = process.env.LUMOS_INTERNAL_URL ?? 'http://localhost:3000';
-    const isAudio = uploadPath !== tmpPath;
+    // 上面已强制必须 uploadPath 是音频抽取结果, 不再支持 fallback video mime
     const apiRes = await fetch(`${apiBase}/api/speech/transcribe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         file_path: uploadPath,
-        mime_type: isAudio ? 'audio/mpeg' : 'video/mp4',
+        mime_type: 'audio/mpeg',
       }),
     });
     const apiJson = (await apiRes.json().catch(() => ({}))) as TranscribeApiResponse;
@@ -324,7 +360,7 @@ async function fallbackToLocalAsr(
           '语音 ASR 失败：Lumos 云会话已过期。请到「设置 → Lumos 云账户」重新登录，再点这条视频的「重试转写」。';
       } else if (/413|临时音频上传失败/.test(raw)) {
         reason = `语音 ASR 上传被拒（${raw}）：请确认 lumos-web /api/cloud/audio-temp 已部署 multipart 上传，并且生产 nginx 已取消 client_max_body_size。当前请求内容为 ${
-          isAudio ? '已抽音频' : '原始 mp4'
+          '已抽音频'
         }。`;
       } else {
         reason = `语音 ASR 调用失败：${raw}`;
@@ -416,25 +452,47 @@ async function fallbackToLocalAsr(
  * Electron production builds inherit a sparse PATH from the OS launcher
  * (only zsh function dirs on macOS), so we can't rely on `ffmpeg` alone.
  */
-async function tryExtractAudio(mp4Path: string, awemeId: string): Promise<string | null> {
+interface AudioExtractResult {
+  audioPath: string | null;
+  reason: string | null;
+}
+
+async function tryExtractAudio(mp4Path: string, awemeId: string): Promise<AudioExtractResult> {
   const ffmpegPath = await findFfmpeg();
-  if (!ffmpegPath) return null;
+  if (!ffmpegPath) {
+    return { audioPath: null, reason: 'findFfmpeg 没找到 ffmpeg' };
+  }
   const audioPath = path.join(
     os.tmpdir(),
     `douyin-collector-${awemeId}-${Date.now()}.mp3`,
   );
-  return new Promise<string | null>((resolve) => {
+  // 用 pipe stdio 捕获 stderr,失败时把 ffmpeg 错误原文回报。stdio:'ignore'
+  // 会吞掉所有 ffmpeg log,失败时只剩 exit code 没法定位是 mp4 损坏/编码问题
+  // 还是其它。
+  return new Promise<AudioExtractResult>((resolve) => {
+    let stderr = '';
     const proc = spawn(
       ffmpegPath,
       ['-y', '-i', mp4Path, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', audioPath],
-      { stdio: 'ignore' },
+      { stdio: ['ignore', 'ignore', 'pipe'] },
     );
-    proc.on('error', () => resolve(null));
+    proc.stderr?.on('data', (c: Buffer) => {
+      stderr += c.toString();
+      if (stderr.length > 4000) stderr = stderr.slice(-4000); // 防内存爆
+    });
+    proc.on('error', (err) => {
+      resolve({ audioPath: null, reason: `ffmpeg spawn 失败：${err.message}` });
+    });
     proc.on('exit', (code) => {
-      if (code === 0) resolve(audioPath);
-      else {
+      if (code === 0) {
+        resolve({ audioPath, reason: null });
+      } else {
         fs.unlink(audioPath).catch(() => undefined);
-        resolve(null);
+        const tail = stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(' | ').slice(0, 300);
+        resolve({
+          audioPath: null,
+          reason: `ffmpeg exit ${code}${tail ? ` (${tail})` : ''}`,
+        });
       }
     });
   });

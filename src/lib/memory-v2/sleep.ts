@@ -16,6 +16,7 @@ import { runDailyReview } from './daily-review';
 import { autoProcessSessions, AUTO_ACTION_LLM_BUDGET } from './digest-actions';
 import { summarizeNewMemoryV2CapabilityEvents } from './capability-events';
 import { runMemoryV2CapabilityDiscovery } from './capability-discovery';
+import { archivePreviousMainAgentDay } from './main-agent-archive';
 
 const ENABLED_KEY = 'memory_v2_sleep_enabled';
 const TIME_KEY = 'memory_v2_sleep_time';
@@ -57,6 +58,14 @@ export interface MemoryV2SleepReport extends MemoryV2ReflectionReport {
     capabilityEvents: { scanned: number; created: number; maxRowId: number };
     capabilityDiscovery: { scanned: number; created: number; skipped: number };
     selfImprovement: { scanned: number; created: number; totalCandidates: number };
+    mainAgentArchive: {
+      day: string;
+      sessionCount: number;
+      messageCount: number;
+      chunks: number;
+      embedded: number;
+      skipped: boolean;
+    };
   };
 }
 
@@ -322,6 +331,12 @@ export async function runMemoryV2Sleep(params: {
     const consolidation = runMemoryV2Consolidation();
     const decay = runMemoryV2Decay();
     const embeddingBackfill = await backfillMissingEmbeddings();
+    // 主 Agent 昨日会话 → 向量片段。embed 走本地 bge-small-zh，不吃 AUTO_ACTION_LLM_BUDGET；
+    // chunk 上限刹车在 archive 模块自带（MAX_CHUNKS_PER_DAY）。
+    const mainAgentArchive = await archivePreviousMainAgentDay().catch((error) => {
+      console.warn('[main-agent-archive] sleep tick archive failed:', error);
+      return { day: '', sessionCount: 0, messageCount: 0, chunks: 0, embedded: 0, skipped: true };
+    });
     const improvements = generateMemoryV2ImprovementCandidates();
     const baseReport = buildMemoryV2ReflectionReport();
 
@@ -364,6 +379,7 @@ export async function runMemoryV2Sleep(params: {
           created: improvements.created.length,
           totalCandidates: improvements.candidates.length,
         },
+        mainAgentArchive,
       },
     };
     return finish({ status: 'success', report });

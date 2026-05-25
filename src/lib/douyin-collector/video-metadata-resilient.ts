@@ -28,8 +28,10 @@ import {
 } from '@/lib/browser-runtime/bridge-client';
 import {
   closeDouyinScrapePage,
+  describeDouyinChallengePage,
   DOUYIN_DOMAIN,
   DOUYIN_SITE_EVALUATE_TIMEOUT_MS,
+  focusDouyinScrapePage,
   injectDouyinCookies,
   resolveDouyinBrowserContextIds,
 } from './creator-browser-scrape';
@@ -44,6 +46,7 @@ import {
   type ScrapeOutcome,
   type ScrapedVideoMetadata,
 } from './scraper';
+import { fetchVideoMetadataViaBrowserPage } from './video-page-browser-scrape';
 
 const IS_TEST = Boolean(process.env.JEST_WORKER_ID) || process.env.NODE_ENV === 'test';
 
@@ -207,6 +210,7 @@ export async function fetchVideoMetadataViaBrowser(
       pageId?: string;
     }
     let resp: EvalResp | null = null;
+    let keepPageOpen = false;
     try {
       resp = await postToBrowserBridge<EvalResp>(
         config,
@@ -229,14 +233,18 @@ export async function fetchVideoMetadataViaBrowser(
         continue;
       }
       if (resp.value.challenge) {
-        failures.push(`${browserContextId}: 浏览器打开的是验证码 / 安全验证页（title: ${resp.value.title || 'unknown'}）。`);
+        keepPageOpen = true;
+        const focused = await focusDouyinScrapePage(config, resp.pageId);
+        failures.push(`${browserContextId}: ${describeDouyinChallengePage(resp.value.title, focused)}`);
         continue;
       }
       const outcome = parseBrowserPayload(resp.value, awemeId);
       if (outcome.ok) return outcome;
       failures.push(`${browserContextId}: ${outcome.reason}`);
     } finally {
-      await closeDouyinScrapePage(config, resp?.pageId);
+      if (!keepPageOpen) {
+        await closeDouyinScrapePage(config, resp?.pageId);
+      }
     }
   }
   return {
@@ -248,21 +256,63 @@ export async function fetchVideoMetadataViaBrowser(
 
 /**
  * Back-fill one aweme's metadata, resilient to anti-bot rate-limiting:
- *   anonymous HTTP (paced)  →  on `risk` skeleton  →  logged-in browser.
- * A genuinely gone video (parse/extract/http) is returned as-is — the
- * browser can't recover it and retrying would only waste a navigation.
+ *   1. anonymous HTTP (paced)
+ *   2. on `risk` skeleton → logged-in browser fetch share page
+ *   3. on `risk` still → real browser tab navigate /video/<id>
+ *      (slowest, most expensive, requires renderable page — used last;
+ *       see video-page-browser-scrape.ts for the why)
+ * A genuinely gone video (parse/extract/http) is returned as-is — neither
+ * fallback can recover it and retrying would only waste a navigation.
  */
 export async function fetchVideoMetadataResilient(
   awemeId: string,
 ): Promise<ScrapeOutcome> {
   const anon = await paced(() => fetchVideoMetadata(awemeId));
-  if (anon.ok || anon.phase !== 'risk') return anon;
+  // 半骨架判定: anonymous fetch ok=true 但 metadata 既没 play_addr 也没
+  // native subtitle —— transcribe 阶段必然失败 "该视频既没原生字幕也没
+  // play_addr URL"。把它视同 risk 让 layer-2/3 兜底拿真 URL, 比直接 ok=true
+  // 浪费下游 pipeline 强。fetchVideoMetadata 自身保持原行为不改, 这里只在
+  // 链式调用入口加诚实重试。
+  const anonHasMedia =
+    anon.ok &&
+    anon.metadata &&
+    (anon.metadata.playAddrUrls.length > 0 || anon.metadata.nativeSubtitleUrls.length > 0);
+  if (anon.ok && anonHasMedia) return anon;
+  if (!anon.ok && anon.phase !== 'risk') return anon;
 
   const viaBrowser = await fetchVideoMetadataViaBrowser(awemeId);
-  if (viaBrowser.ok) return viaBrowser;
+  // 同 anon 半骨架判: layer-2 ok=true 但 metadata 空 play_addr+原生字幕 时
+  // 也继续走 layer-3 navigate detail, 否则 transcribe 必失败。
+  const viaBrowserHasMedia =
+    viaBrowser.ok &&
+    viaBrowser.metadata &&
+    (viaBrowser.metadata.playAddrUrls.length > 0 || viaBrowser.metadata.nativeSubtitleUrls.length > 0);
+  if (viaBrowser.ok && viaBrowserHasMedia) return viaBrowser;
+
+  // Layer-3 fallback: real tab navigate to /video/<id>. Slow + may trigger
+  // captcha, but on 130+-video creators where 22 share pages got hard-
+  // skeleton'd this is the only path that recovers them.
+  const viaPage = await fetchVideoMetadataViaBrowserPage(awemeId);
+  if (viaPage.ok && viaPage.metadata) {
+    return { ok: true, metadata: viaPage.metadata };
+  }
+  const anonReason = anon.ok
+    ? '匿名 fetch 半骨架（无 play_addr/原生字幕）'
+    : anon.reason;
+  const viaBrowserPhase = viaBrowser.ok ? 'risk' : viaBrowser.phase;
+  const viaBrowserReason = viaBrowser.ok
+    ? '登录浏览器拿到半骨架（无 play_addr/原生字幕）'
+    : viaBrowser.reason;
+  if (viaPage.challenge) {
+    return {
+      ok: false,
+      phase: 'risk',
+      reason: `${anonReason}（详情页打开触发验证码：${viaPage.reason}）`,
+    };
+  }
   return {
     ok: false,
-    phase: viaBrowser.phase,
-    reason: `${anon.reason}（登录浏览器重采也失败：${viaBrowser.reason}）`,
+    phase: viaBrowserPhase,
+    reason: `${anonReason}（登录浏览器重采：${viaBrowserReason}；详情页兜底：${viaPage.reason}）`,
   };
 }

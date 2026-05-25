@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useCollectorSettings } from '../use-collector-settings';
 import { CookieSection } from './settings/CookieSection';
 import { BrowserSection } from './settings/BrowserSection';
+import { CollectSection } from './settings/CollectSection';
 import { TranscribeSection } from './settings/TranscribeSection';
 import {
   LibrarySection,
@@ -60,6 +61,7 @@ export function SettingsTab(): React.ReactElement {
 
       <CookieSection settings={settings} save={save} />
       <BrowserSection settings={settings} save={save} />
+      <CollectSection settings={settings} save={save} />
       <TranscribeSection settings={settings} save={save} />
       <LibrarySection
         settings={settings}

@@ -6,6 +6,7 @@ describe('wechat/config: parseWechatConfig', () => {
     process.env = { ...originalEnv };
     delete process.env.WECHAT_ILINK_TOKEN;
     delete process.env.WECHAT_ILINK_BASE_URL;
+    delete process.env.WECHAT_ILINK_ROUTE_TAG;
   });
   afterAll(() => {
     process.env = originalEnv;
@@ -17,12 +18,14 @@ describe('wechat/config: parseWechatConfig', () => {
       base_url: 'https://example.weixin/',
       account_id: 'acc1',
       allow_from: 'a@im.wechat,b@im.wechat',
+      route_tag: 'rt-1',
     });
     expect(c).toEqual({
       token: 'tk',
       baseUrl: 'https://example.weixin',
       accountId: 'acc1',
       allowFrom: 'a@im.wechat,b@im.wechat',
+      routeTag: 'rt-1',
     });
   });
 
@@ -32,14 +35,17 @@ describe('wechat/config: parseWechatConfig', () => {
     expect(c.baseUrl).toBe('https://ilinkai.weixin.qq.com');
     expect(c.accountId).toBe('default');
     expect(c.allowFrom).toBe('*');
+    expect(c.routeTag).toBe('');
   });
 
   test('falls back to env vars', () => {
     process.env.WECHAT_ILINK_TOKEN = 'env-tk';
     process.env.WECHAT_ILINK_BASE_URL = 'https://env.weixin';
+    process.env.WECHAT_ILINK_ROUTE_TAG = 'env-rt';
     const c = parseWechatConfig({});
     expect(c.token).toBe('env-tk');
     expect(c.baseUrl).toBe('https://env.weixin');
+    expect(c.routeTag).toBe('env-rt');
   });
 
   test('strips trailing slash from base_url', () => {
@@ -53,6 +59,7 @@ describe('wechat/config: isWechatConfigValid', () => {
     baseUrl: 'https://x',
     accountId: 'd',
     allowFrom: '*',
+    routeTag: '',
   };
   test('requires token + baseUrl', () => {
     expect(isWechatConfigValid(valid)).toBe(true);
@@ -67,6 +74,7 @@ describe('wechat/config: isPeerAllowed', () => {
     baseUrl: 'https://x',
     accountId: 'd',
     allowFrom: '*',
+    routeTag: '',
   };
   test('* allows everyone', () => {
     expect(isPeerAllowed(base, 'anyone@im.wechat')).toBe(true);

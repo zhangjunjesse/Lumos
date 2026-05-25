@@ -10,7 +10,9 @@
  * 切换后这些复杂度全部转嫁给上游(2026-04 还在维护)。
  */
 
-import { Scraper } from '@the-convocation/twitter-scraper';
+import { ErrorRateLimitStrategy, Scraper } from '@the-convocation/twitter-scraper';
+import crossFetch from 'cross-fetch';
+import { createConfiguredHttpsProxyAgentForUrl } from '@/lib/net/proxy-settings';
 import {
   cookieHeader,
   hasRequiredCookies,
@@ -21,6 +23,43 @@ import { XAuthExpiredError } from './auth-error';
 
 let scraper: Scraper | null = null;
 let scraperCookieFingerprint = '';
+
+function resolveXFetchTimeoutMs(): number {
+  const raw = Number(process.env.LUMOS_X_FETCH_TIMEOUT_MS || '');
+  if (!Number.isFinite(raw) || raw <= 0) return 20_000;
+  return Math.max(1_000, Math.min(120_000, raw));
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+async function xFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = requestUrl(input);
+  const timeoutMs = resolveXFetchTimeoutMs();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`X fetch timeout after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const upstreamSignal = init?.signal;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+
+  try {
+    const agent = createConfiguredHttpsProxyAgentForUrl(url);
+    return await crossFetch(input as Parameters<typeof crossFetch>[0], {
+      ...(init as Parameters<typeof crossFetch>[1]),
+      signal: controller.signal,
+      ...(agent ? { agent } : {}),
+    });
+  } finally {
+    clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+  }
+}
 
 function fingerprint(stored: XStoredCookies | null): string {
   if (!stored) return '';
@@ -49,7 +88,10 @@ export async function ensureScraper(): Promise<Scraper> {
   const fp = fingerprint(stored);
   if (scraper && scraperCookieFingerprint === fp) return scraper;
 
-  const next = new Scraper();
+  const next = new Scraper({
+    fetch: xFetch as typeof fetch,
+    rateLimitStrategy: new ErrorRateLimitStrategy(),
+  });
   await next.setCookies(buildCookieStrings(stored));
   scraper = next;
   scraperCookieFingerprint = fp;
