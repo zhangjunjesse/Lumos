@@ -1,5 +1,38 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import fs from 'fs';
+import { resolveRuntimeResourcePath } from '@/lib/runtime-resources';
+
+// pdf-lib's built-in fonts (Helvetica et al.) use WinAnsi encoding and cannot
+// render anything outside Latin-1. The previous implementation would throw
+// `WinAnsi cannot encode "X"` the moment a single CJK character appeared in a
+// transcript or note. We bundle Noto Sans CJK SC as a fallback and embed it
+// on demand. Noto covers CJK + Latin + kana with a single TTF, so a doc that
+// contains any CJK can render the entire page from this one font without
+// having to segment per-glyph at draw time.
+const CJK_FONT_RESOURCE = 'fonts/NotoSansCJKsc-Regular.otf';
+const CJK_CHAR_REGEX = /[　-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
+
+export function containsCjk(text: string): boolean {
+  return CJK_CHAR_REGEX.test(text);
+}
+
+let cachedCjkFontBytes: Uint8Array | null | undefined;
+
+function loadCjkFontBytes(): Uint8Array | null {
+  if (cachedCjkFontBytes !== undefined) return cachedCjkFontBytes;
+  const fontPath = resolveRuntimeResourcePath(CJK_FONT_RESOURCE);
+  if (!fontPath) {
+    cachedCjkFontBytes = null;
+    return null;
+  }
+  try {
+    cachedCjkFontBytes = fs.readFileSync(fontPath);
+  } catch {
+    cachedCjkFontBytes = null;
+  }
+  return cachedCjkFontBytes;
+}
 
 export interface PdfPageInfo {
   pageNumber: number;
@@ -73,8 +106,27 @@ export async function createPdf(options: CreatePdfOptions): Promise<string> {
   if (options.title) pdf.setTitle(options.title);
   pdf.setCreator('Lumos');
 
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const needsCjk = (options.title && containsCjk(options.title))
+    || options.pages.some(p => p.blocks.some(b => containsCjk(b.text)));
+
+  let font: PDFFont;
+  let fontBold: PDFFont;
+  if (needsCjk) {
+    const cjkBytes = loadCjkFontBytes();
+    if (!cjkBytes) {
+      throw new Error('CJK content requested but Noto Sans CJK font is not bundled at resources/fonts/NotoSansCJKsc-Regular.otf');
+    }
+    pdf.registerFontkit(fontkit);
+    // Noto SC ships only Regular in this bundle; we route both regular and
+    // bold to the same face. Embedding twice would just bloat the PDF.
+    const noto = await pdf.embedFont(cjkBytes, { subset: true });
+    font = noto;
+    fontBold = noto;
+  } else {
+    font = await pdf.embedFont(StandardFonts.Helvetica);
+    fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  }
+
   const pw = options.pageSize?.width ?? 595;
   const ph = options.pageSize?.height ?? 842;
 
@@ -152,21 +204,57 @@ export async function splitPdf(
   return outputs;
 }
 
-function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, size: number, maxWidth: number): string[] {
+// Wrap text to fit `maxWidth`. We try whitespace-delimited words first (the
+// natural unit for Latin), but fall back to per-character wrapping for any
+// token that itself overflows — that's the case for CJK lines, which have no
+// inter-character spaces and would otherwise be treated as one giant "word"
+// and silently truncated.
+export function wrapText(
+  text: string,
+  font: { widthOfTextAtSize: (t: string, s: number) => number },
+  size: number,
+  maxWidth: number,
+): string[] {
   const lines: string[] = [];
+  const flush = (line: string) => { if (line) lines.push(line); };
+  const fits = (t: string) => font.widthOfTextAtSize(t, size) <= maxWidth;
+
+  const breakByChar = (token: string): { remaining: string; flushed: string[] } => {
+    const flushed: string[] = [];
+    let cur = '';
+    for (const ch of token) {
+      const candidate = cur ? `${cur}${ch}` : ch;
+      if (!fits(candidate) && cur) {
+        flushed.push(cur);
+        cur = ch;
+      } else {
+        cur = candidate;
+      }
+    }
+    return { remaining: cur, flushed };
+  };
+
   for (const paragraph of text.split('\n')) {
+    if (paragraph === '') { lines.push(''); continue; }
+
     const words = paragraph.split(' ');
     let current = '';
     for (const word of words) {
-      const test = current ? `${current} ${word}` : word;
-      if (font.widthOfTextAtSize(test, size) > maxWidth && current) {
-        lines.push(current);
+      const candidate = current ? `${current} ${word}` : word;
+      if (fits(candidate)) { current = candidate; continue; }
+
+      // candidate overflows: flush current, then try the bare word
+      if (current) flush(current);
+      if (fits(word)) {
         current = word;
       } else {
-        current = test;
+        // word itself is too wide (typically CJK) — break per-character
+        const { remaining, flushed } = breakByChar(word);
+        for (const l of flushed) flush(l);
+        current = remaining;
       }
     }
-    if (current) lines.push(current);
+    if (current) flush(current);
   }
   return lines.length > 0 ? lines : [''];
 }

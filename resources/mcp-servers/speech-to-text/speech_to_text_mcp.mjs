@@ -43,6 +43,13 @@ const ACTION_FOR_TOOL = {
   transcribe_audio: 'transcribe',
 };
 
+function omitText(obj) {
+  // Shallow clone without `text`. We intentionally do not deep-walk; the
+  // server contract puts the transcript only at the top level.
+  const { text: _omit, ...rest } = obj;
+  return rest;
+}
+
 async function handleRequest(request) {
   const { method, params, id } = request;
 
@@ -77,9 +84,17 @@ async function handleRequest(request) {
     }
     try {
       const result = await callApi(action, coerceArgumentsByTools(TOOLS, name, args));
+      // For transcribe_audio specifically: the API includes the full
+      // transcript as `text` for internal HTTP consumers, but we MUST NOT
+      // forward it to the model — that's the whole point of the path-based
+      // contract (otherwise a 30k-char transcript lands in tool_result and
+      // wipes out the agent context budget). Strip it here.
+      const forModel = name === 'transcribe_audio' && result && typeof result === 'object'
+        ? omitText(result)
+        : result;
       return {
         jsonrpc: '2.0', id,
-        result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+        result: { content: [{ type: 'text', text: JSON.stringify(forModel, null, 2) }] },
       };
     } catch (error) {
       return {

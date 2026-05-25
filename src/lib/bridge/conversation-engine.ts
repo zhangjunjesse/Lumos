@@ -30,23 +30,43 @@ const SPEECH_TO_TEXT_MCP_SYSTEM_HINT = `You have access to Lumos speech-to-text 
 Available tool:
 - \`transcribe_audio\` — transcribe wav/mp3/m4a/ogg/aac/amr/silk/flac/webm/opus audio. Prefer the \`file_path\` parameter for attached local files.
 
+How the result is shaped:
+- \`transcribe_audio\` does NOT return the transcribed text inline. It returns metadata only: \`transcript_file\` (absolute path under \`~/.lumos/transcripts/\`), \`char_count\`, \`duration_seconds\`, \`charged_amount\`, \`audio_name\`, etc.
+- To obtain the text, call the \`Read\` tool with \`file_path = transcript_file\`. For long transcripts, use \`offset\` / \`limit\` on Read to page through.
+- Downstream tools that accept a file path (e.g. office-docs Word/PDF generators, summarizers that accept a file) should be passed \`transcript_file\` directly; do not stuff the full text into their arguments.
+
 Rules:
-- When the user attaches or references an audio file and asks what it says, call \`transcribe_audio\` before summarizing.
+- When the user attaches or references an audio file and asks what it says, call \`transcribe_audio\` before doing anything else.
 - Use only \`transcribe_audio\` for ASR. Do not use Bash, ffmpeg, local whisper, or external skills as the transcription path.
 - If \`transcribe_audio\` reports a timeout or large-file error, report that exact error; do not manually split or convert the file in the agent. The MCP/runtime owns audio preprocessing.
 - If the tool reports \`SPEECH_PROVIDER_NOT_CONFIGURED\`, tell the user to open Settings → Providers → Speech.
-- If the tool returns a charge amount or duration, report it transparently.`;
+- If the tool returns a charge amount or duration, report it transparently.
+- **DEFAULT TO RETURNING THE FULL TRANSCRIPT VERBATIM.** When the user asks to transcribe / 转文字 / 录音转文字 / 帮我整理录音, Read the \`transcript_file\` and include the entire text in your reply. Do NOT replace it with a summary, executive bullets, or a "the recording discusses ABC" paragraph unless the user explicitly asked for a summary ("总结一下" / "summarize" / "概括"). If the transcript is long, send it as-is and let the IM layer split it; do not pre-shorten it.
+- After delivering the transcript, you may offer next steps (export to Word/PDF, summarize, translate) in a separate short follow-up sentence — but the transcript itself comes first and complete.`;
 
 const MAIN_AGENT_IM_ENTRY_HINT = `This conversation is the Lumos Main Agent space and may receive messages from external IM channels like WeChat.
-Treat the user as talking to Lumos itself. If the user asks to inspect or continue another Lumos conversation, use the Lumos butler read-only tools to find or summarize it. Do not claim that you transferred execution into another conversation unless a dedicated transfer tool is available.`;
+Treat the user as talking to Lumos itself. If the user asks to inspect or continue another Lumos conversation, use the Lumos butler read-only tools to find or summarize it. Do not claim that you transferred execution into another conversation unless a dedicated transfer tool is available.
+
+Conversation hygiene over IM:
+- Do not re-ask for information the user has already given in this conversation. If they said "Word, send via WeChat" once, that's the answer — go execute, do not confirm "what format? where to send?" again on the next turn.
+- Prefer doing the work over running a clarification dialog. If a request has one clearly likely interpretation, act on it and report what you did; ask only when the choices materially diverge (e.g. destructive vs. read-only).
+- When a tool fails, fix the cause yourself (correct path, retry the right tool) before bouncing the failure back to the user. Hand back only when the failure genuinely needs the user's input (missing credential, ambiguous target).`;
 
 /**
- * Remove HTML-comment directives like `<!--source:wechat-->`, `<!--files:[...]-->`,
+ * Strip routing-only HTML-comment directives like `<!--source:wechat-->` and
  * `<!--feishu_mentions:[...]-->` before feeding history back to the model.
- * They are display / routing metadata, not content the model should see.
+ *
+ * The `<!--files:[...]-->` directive is intentionally PRESERVED. It carries
+ * the on-disk path of each attachment, which the downstream history
+ * normalizer (`normalizeHistoryMessageForFallback` in claude-client) needs to
+ * surface as `[Attached file: name=..., path=...]` so a fallback turn can
+ * still operate on the original file. Stripping it here used to lose the
+ * path entirely and forced the model to hallucinate one.
  */
-function stripContentDirectives(content: string): string {
-  return content.replace(/<!--[a-zA-Z0-9_-]+:[\s\S]*?-->/g, '').trim();
+export function stripContentDirectives(content: string): string {
+  return content
+    .replace(/<!--(?!files:)[a-zA-Z0-9_-]+:[\s\S]*?-->/g, '')
+    .trim();
 }
 
 /**

@@ -43,6 +43,8 @@ import {
   recordLlmProviderFailure,
 } from '@/lib/llm-circuit-breaker';
 import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-events';
+import { buildPromptWithHistory } from './claude/history-normalizer';
+import { recordRuntimeEvent } from './claude/runtime-events';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -253,9 +255,12 @@ function writeProviderRoutingDebug(params: {
   }
 }
 
-// Unique per server process. Ensures MCP signatures never match across restarts,
-// so dead MCP processes from a previous run are never silently reused.
-const SERVER_EPOCH = Date.now().toString(36);
+// MCP signature components stay stable across process restarts on purpose:
+// any per-process salt (we used to mix in `Date.now()`) would force a fresh
+// SDK session after every HMR/restart, which then falls back to history-
+// stitching, where tool_result blocks get dropped. The composition of
+// mcpServers + on-disk dependency readiness already captures every state
+// that should invalidate resume.
 const DEFAULT_CHAT_DISALLOWED_TOOLS = [
   'Task',
   // Goofish write/privacy-sensitive MCP tools must go through product-owned
@@ -277,8 +282,6 @@ const STABLE_CLAUDE_CODE_ENV: Record<string, string> = {
 };
 const MODEL_FIRST_RESPONSE_TIMEOUT_MS = 180_000;
 const MODEL_FIRST_RESPONSE_TIMEOUT_ERROR = 'LUMOS_MODEL_FIRST_RESPONSE_TIMEOUT';
-const FALLBACK_HISTORY_MAX_CHARS = 80_000;
-const FALLBACK_HISTORY_MESSAGE_MAX_CHARS = 12_000;
 
 function mergeDisallowedTools(tools?: string[]): string[] {
   return Array.from(new Set([...DEFAULT_CHAT_DISALLOWED_TOOLS, ...(tools || [])]));
@@ -319,8 +322,7 @@ function computeMcpSignature(mcpServers?: Record<string, MCPServerConfig>): stri
     }
   }
   const payload = stableSerialize(mcpServers)
-    + (depsReady.length > 0 ? `|deps:${depsReady.join(',')}` : '')
-    + `|epoch:${SERVER_EPOCH}`;
+    + (depsReady.length > 0 ? `|deps:${depsReady.join(',')}` : '');
   return createHash('sha256').update(payload).digest('hex');
 }
 
@@ -370,36 +372,6 @@ function extractTokenUsage(msg: SDKResultMessage): TokenUsage | null {
   };
 }
 
-function truncateHistoryText(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  const omitted = text.length - maxChars;
-  return `${text.slice(0, maxChars)}\n\n[... truncated ${omitted} chars ...]`;
-}
-
-function normalizeHistoryMessageForFallback(msg: { role: 'user' | 'assistant'; content: string }): string {
-  const raw = msg.content || '';
-  if (msg.role === 'assistant' && raw.startsWith('[')) {
-    try {
-      const blocks = JSON.parse(raw);
-      if (Array.isArray(blocks)) {
-        const parts: string[] = [];
-        for (const block of blocks) {
-          if (!block || typeof block !== 'object') continue;
-          const b = block as Record<string, unknown>;
-          if (b.type === 'text' && typeof b.text === 'string') {
-            parts.push(truncateHistoryText(b.text, FALLBACK_HISTORY_MESSAGE_MAX_CHARS));
-          }
-        }
-        return truncateHistoryText(parts.join('\n'), FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
-      }
-    } catch {
-      // Not structured JSON; fall through to plain text truncation.
-    }
-  }
-
-  return truncateHistoryText(raw, FALLBACK_HISTORY_MESSAGE_MAX_CHARS);
-}
-
 interface PendingToolUseForMemory {
   name: string;
   startedAt: number;
@@ -446,55 +418,6 @@ function getUploadedFilePaths(files: FileAttachment[], workDir: string): string[
     }
   }
   return paths;
-}
-
-/**
- * Build a context-enriched prompt by prepending conversation history.
- * Used when SDK session resume is unavailable or fails.
- */
-function buildPromptWithHistory(
-  prompt: string,
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
-): string {
-  if (!history || history.length === 0) return prompt;
-
-  const lines: string[] = ['<conversation_history>'];
-  const selected: string[] = [];
-  let usedChars = 0;
-  let omittedMessages = 0;
-
-  for (let index = history.length - 1; index >= 0; index--) {
-    const msg = history[index];
-    const label = msg.role === 'user' ? 'Human' : 'Assistant';
-    const content = normalizeHistoryMessageForFallback(msg).trim();
-    if (!content) continue;
-
-    const line = `${label}: ${content}`;
-    const remainingChars = FALLBACK_HISTORY_MAX_CHARS - usedChars;
-    if (remainingChars <= 1_000) {
-      omittedMessages = index + 1;
-      break;
-    }
-
-    if (line.length > remainingChars) {
-      const contentBudget = Math.max(500, remainingChars - label.length - 4);
-      selected.push(`${label}: ${truncateHistoryText(content, contentBudget)}`);
-      omittedMessages = index;
-      break;
-    }
-
-    selected.push(line);
-    usedChars += line.length + 1;
-  }
-
-  if (omittedMessages > 0) {
-    lines.push(`[Earlier ${omittedMessages} messages omitted because fallback history is capped.]`);
-  }
-  lines.push(...selected.reverse());
-  lines.push('</conversation_history>');
-  lines.push('');
-  lines.push(prompt);
-  return lines.join('\n');
 }
 
 export function streamClaude(options: ClaudeStreamOptions): ReadableStream<string> {
@@ -710,6 +633,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         let shouldResume = !!sdkSessionId;
         if (shouldResume && forceFreshSession) {
           console.log('[claude-client] Force fresh SDK session requested');
+          recordRuntimeEvent({ sessionId, sdkSessionId, event: 'resume_dropped_force_fresh' });
           shouldResume = false;
           if (sessionId) {
             try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
@@ -717,6 +641,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
         if (shouldResume && workingDirectory && !fs.existsSync(workingDirectory)) {
           console.warn(`[claude-client] Working directory "${workingDirectory}" does not exist, skipping resume`);
+          recordRuntimeEvent({
+            sessionId, sdkSessionId,
+            event: 'resume_dropped_cwd_missing',
+            detail: { workingDirectory },
+          });
           shouldResume = false;
           if (sessionId) {
             try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
@@ -755,6 +684,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           console.log('[claude-client] MCP signature changed on resume — starting fresh CLI session', {
             stored: storedMcpSignature.slice(0, 12),
             current: currentMcpSignature.slice(0, 12),
+          });
+          recordRuntimeEvent({
+            sessionId, sdkSessionId,
+            event: 'resume_dropped_mcp_changed',
+            detail: {
+              storedSignature: storedMcpSignature.slice(0, 12),
+              currentSignature: currentMcpSignature.slice(0, 12),
+            },
           });
           shouldResume = false;
           if (sessionId) {
@@ -1121,8 +1058,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (resumeSession && sdkSessionId) {
             queryOptions.resume = sdkSessionId;
             emitStatus(controller, 'Restoring conversation context...', { phase: 'resuming' });
+            recordRuntimeEvent({ sessionId, sdkSessionId, event: 'session_resumed' });
           } else {
             delete queryOptions.resume;
+            recordRuntimeEvent({ sessionId, sdkSessionId, event: 'session_started_fresh' });
           }
 
           const nextConversation = query({
@@ -1362,6 +1301,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
           const errMsg = resumeError instanceof Error ? resumeError.message : String(resumeError);
           console.warn('[claude-client] Resume failed, retrying without resume:', errMsg);
+          recordRuntimeEvent({
+            sessionId, sdkSessionId,
+            event: 'resume_failed_at_runtime',
+            detail: { error: errMsg.slice(0, 500) },
+          });
           if (sessionId) {
             try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
           }

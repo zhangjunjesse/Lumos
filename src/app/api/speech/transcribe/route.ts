@@ -1,10 +1,41 @@
+import { randomBytes } from 'crypto';
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { transcribeAudioAttachment, SpeechProviderNotConfiguredError } from '@/lib/im/core/speech';
 import { assertSafePath } from '@/lib/office/path-guard';
 import type { IMFileAttachment } from '@/lib/im/core/types';
+
+// Where to spool the transcribed text to disk. We hand the model the file
+// path instead of inlining 30k+ chars into a tool_result — keeps the agent
+// context flat regardless of recording length, and lets the model Read only
+// the slice it needs (Word export, summary, search a quote, etc.).
+function getTranscriptsDir(): string {
+  const dataDir = process.env.LUMOS_DATA_DIR
+    || process.env.CLAUDE_GUI_DATA_DIR
+    || path.join(os.homedir(), '.lumos');
+  return path.join(dataDir, 'transcripts');
+}
+
+function safeAudioStem(name: string): string {
+  const base = path.basename(name, path.extname(name)) || 'audio';
+  // Keep human-readable CJK/letters but strip filesystem-unsafe characters.
+  return base.replace(/[\/\\:*?"<>|\s]+/g, '_').slice(0, 80) || 'audio';
+}
+
+async function persistTranscript(text: string, audioName: string): Promise<string> {
+  const dir = getTranscriptsDir();
+  await fs.mkdir(dir, { recursive: true });
+  // Timestamp alone is not enough — two ASR calls finishing in the same ms
+  // would clobber each other's transcripts silently. A 4-byte random suffix
+  // makes collisions astronomically unlikely without sacrificing readability.
+  const suffix = randomBytes(4).toString('hex');
+  const filePath = path.join(dir, `${Date.now()}-${safeAudioStem(audioName)}-${suffix}.txt`);
+  await fs.writeFile(filePath, text, 'utf-8');
+  return filePath;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,17 +60,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const attachment = await loadAttachment(body);
     const result = await transcribeAudioAttachment(attachment);
+
+    // Empty transcripts skip the spool — no file to point at, nothing to Read.
+    const transcriptFile = result.empty || !result.text
+      ? null
+      : await persistTranscript(result.text, attachment.name);
+
+    // We return BOTH `text` (inline) and `transcript_file` (path):
+    //   - Inline `text` keeps existing internal HTTP consumers working
+    //     (douyin-collector/transcribe.ts and similar non-AI pipelines that
+    //     just want the string back).
+    //   - The MCP layer strips `text` before forwarding to the model, so the
+    //     AI sees only `transcript_file` and must Read it — that's what keeps
+    //     the agent context flat regardless of recording length.
     return NextResponse.json({
       ok: true,
-      text: result.text,
+      transcript_file: transcriptFile,
+      char_count: result.text?.length ?? 0,
+      text: result.text ?? '',
       empty: result.empty,
       duration_seconds: result.duration_seconds,
       charged_amount: result.charged_amount,
       provider: result.provider,
       request_id: result.request_id,
-      bytes: attachment.size,
-      name: attachment.name,
-      mime_type: attachment.type,
+      audio_bytes: attachment.size,
+      audio_name: attachment.name,
+      audio_mime_type: attachment.type,
     });
   } catch (err) {
     if (err instanceof SpeechProviderNotConfiguredError) {
