@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { execFileSync } from 'child_process';
 import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
-import { getWindowsWeChatProcessNames, runEnvProbes } from '@/lib/wechat-export/env-check';
+import { runEnvProbes } from '@/lib/wechat-export/env-check';
 import { extractKeys, type KeyExtractionProgress } from '@/lib/wechat-export/key-extractor';
 import { getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
 
@@ -22,27 +22,6 @@ function findWeChatPid(): number | null {
   } catch {
     return null;
   }
-}
-
-function findWindowsWeChatPid(): number | null {
-  try {
-    for (const processName of getWindowsWeChatProcessNames()) {
-      const out = execFileSync('tasklist', [
-        '/FI',
-        `IMAGENAME eq ${processName}`,
-        '/FO',
-        'CSV',
-        '/NH',
-      ], { encoding: 'utf8', timeout: 3000 }).trim();
-      for (const line of out.split(/\r?\n/)) {
-        if (!line.toLowerCase().includes(processName.toLowerCase())) continue;
-        const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
-        const pid = parseInt(fields[1] || '', 10);
-        if (Number.isFinite(pid) && pid > 0) return pid;
-      }
-    }
-  } catch { /* tasklist is Windows-only */ }
-  return null;
 }
 
 /**
@@ -90,7 +69,15 @@ export async function POST(): Promise<Response> {
       message,
     }, { status: 400 });
   }
-  const pid = platform === 'win32' ? findWindowsWeChatPid() : findWeChatPid();
+  // Reuse the PID that runEnvProbes() already detected via probeWindowsWeChat
+  // (above). The previous implementation re-ran a separate, stricter tasklist
+  // probe here — by the time I extended the env-check version with path-based
+  // detection + diagnostics, this route still used the old IMAGENAME-only
+  // probe and would 400 with "未找到运行中" even when the capabilities page
+  // clearly showed "Windows 微信运行中 (PID xxx)". Single source of truth now.
+  const pid = platform === 'win32'
+    ? (('pid' in env.wechat && typeof env.wechat.pid === 'number') ? env.wechat.pid : null)
+    : findWeChatPid();
   if (!pid) {
     return NextResponse.json({
       error: 'wechat_not_running',
