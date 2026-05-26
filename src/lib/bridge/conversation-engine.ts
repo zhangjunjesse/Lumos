@@ -258,94 +258,107 @@ export class ConversationEngine {
       }
     };
 
+    // SSE parsing MUST be buffer-based across chunks. The previous
+    // implementation `value.split('\n')` per read assumed every read returned
+    // whole lines, but ReadableStream gives no such guarantee — a chunk can
+    // split a `data: {json}\n` line mid-payload. When it did, `JSON.parse`
+    // threw, the `catch {}` further down silently swallowed it, and the
+    // event vanished. Symptom: the IM main-agent path receives a user
+    // message, runs streamClaude, but ends with contentBlocks=[] and
+    // returns "No response" — looks to the user like the AI ignored them.
     const reader = stream.getReader();
+    let sseBuffer = '';
+    const processLine = (line: string) => {
+      if (!line.startsWith('data: ')) return;
+      let event: { type: string; data: string };
+      try {
+        event = JSON.parse(line.slice(6));
+      } catch (parseErr) {
+        // Last-resort log so a future malformed-frame regression doesn't
+        // become invisible. We intentionally do NOT throw — one bad frame
+        // shouldn't kill the whole stream.
+        console.warn('[conversation-engine] SSE line parse failed (frame dropped):',
+          line.slice(0, 120),
+          parseErr instanceof Error ? parseErr.message : parseErr,
+        );
+        return;
+      }
+      handleEvent(event);
+    };
+    const handleEvent = (event: { type: string; data: string }) => {
+      if (event.type === 'text') {
+        currentText += event.data;
+        emitVisibleText();
+      } else if (event.type === 'tool_use_summary') {
+        if (currentText.trim()) {
+          contentBlocks.push({ type: 'text', text: currentText });
+          currentText = '';
+          emitVisibleText();
+        }
+        try {
+          const summaryData = JSON.parse(event.data);
+          const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
+          if (summary) contentBlocks.push({ type: 'reasoning', summary });
+        } catch {
+          const summary = typeof event.data === 'string' ? event.data.trim() : '';
+          if (summary) contentBlocks.push({ type: 'reasoning', summary });
+        }
+      } else if (event.type === 'tool_use') {
+        if (currentText.trim()) {
+          contentBlocks.push({ type: 'text', text: currentText });
+          currentText = '';
+          emitVisibleText();
+        }
+        try {
+          const toolData = JSON.parse(event.data);
+          contentBlocks.push({
+            type: 'tool_use',
+            id: toolData.id,
+            name: toolData.name,
+            input: toolData.input,
+          });
+        } catch { /* ignore malformed tool_use */ }
+      } else if (event.type === 'tool_result') {
+        try {
+          const resultData = JSON.parse(event.data);
+          contentBlocks.push({
+            type: 'tool_result',
+            tool_use_id: resultData.tool_use_id,
+            content: resultData.content,
+            is_error: resultData.is_error || false,
+          });
+        } catch { /* ignore malformed tool_result */ }
+      } else if (event.type === 'status') {
+        try {
+          const statusData = JSON.parse(event.data);
+          if (statusData.session_id) updateSdkSessionId(sessionId, statusData.session_id);
+          if (statusData.model) updateSessionResolvedModel(sessionId, statusData.model);
+        } catch { /* ignore malformed status */ }
+      } else if (event.type === 'result') {
+        try {
+          const resultData = JSON.parse(event.data);
+          if (resultData.usage) tokenUsage = resultData.usage as TokenUsage;
+          if (resultData.session_id) updateSdkSessionId(sessionId, resultData.session_id);
+        } catch { /* ignore malformed result */ }
+      }
+    };
+
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        const lines = value.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === 'text') {
-                currentText += event.data;
-                emitVisibleText();
-              } else if (event.type === 'tool_use_summary') {
-                if (currentText.trim()) {
-                  contentBlocks.push({ type: 'text', text: currentText });
-                  currentText = '';
-                  emitVisibleText();
-                }
-                try {
-                  const summaryData = JSON.parse(event.data);
-                  const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
-                  if (summary) {
-                    contentBlocks.push({ type: 'reasoning', summary });
-                  }
-                } catch {
-                  const summary = typeof event.data === 'string' ? event.data.trim() : '';
-                  if (summary) {
-                    contentBlocks.push({ type: 'reasoning', summary });
-                  }
-                }
-              } else if (event.type === 'tool_use') {
-                if (currentText.trim()) {
-                  contentBlocks.push({ type: 'text', text: currentText });
-                  currentText = '';
-                  emitVisibleText();
-                }
-                try {
-                  const toolData = JSON.parse(event.data);
-                  contentBlocks.push({
-                    type: 'tool_use',
-                    id: toolData.id,
-                    name: toolData.name,
-                    input: toolData.input,
-                  });
-                } catch {
-                  // ignore malformed tool_use
-                }
-              } else if (event.type === 'tool_result') {
-                try {
-                  const resultData = JSON.parse(event.data);
-                  contentBlocks.push({
-                    type: 'tool_result',
-                    tool_use_id: resultData.tool_use_id,
-                    content: resultData.content,
-                    is_error: resultData.is_error || false,
-                  });
-                } catch {
-                  // ignore malformed tool_result
-                }
-              } else if (event.type === 'status') {
-                try {
-                  const statusData = JSON.parse(event.data);
-                  if (statusData.session_id) {
-                    updateSdkSessionId(sessionId, statusData.session_id);
-                  }
-                  if (statusData.model) {
-                    updateSessionResolvedModel(sessionId, statusData.model);
-                  }
-                } catch {
-                  // ignore malformed status
-                }
-              } else if (event.type === 'result') {
-                try {
-                  const resultData = JSON.parse(event.data);
-                  if (resultData.usage) {
-                    tokenUsage = resultData.usage as TokenUsage;
-                  }
-                  if (resultData.session_id) {
-                    updateSdkSessionId(sessionId, resultData.session_id);
-                  }
-                } catch {
-                  // ignore malformed result
-                }
-              }
-            } catch {}
-          }
+        if (done) {
+          // Flush any incomplete trailing line on stream close — SSE sends
+          // `data: ...\n\n`, but a buggy producer (or hard-closed connection)
+          // could leave us with a final line missing the trailing newline.
+          if (sseBuffer) processLine(sseBuffer);
+          break;
         }
+        sseBuffer += value;
+        const lastNewline = sseBuffer.lastIndexOf('\n');
+        if (lastNewline === -1) continue; // nothing complete yet, wait for more
+        const complete = sseBuffer.slice(0, lastNewline);
+        sseBuffer = sseBuffer.slice(lastNewline + 1);
+        for (const line of complete.split('\n')) processLine(line);
       }
     } finally {
       reader.releaseLock();
