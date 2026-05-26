@@ -452,6 +452,40 @@ def list_contacts(args: dict) -> dict:
     return {"items": items[:limit], "total": len(items)}
 
 
+def resolve_contact(args: dict) -> dict:
+    """Resolve a fuzzy name (remark / nickname / wxid fragment) to *person*
+    contact candidates. Used by the group-tag member picker so a tag rule can
+    pin the exact wxid (stable) instead of a drifting display name. Excludes
+    groups (@chatroom) and official accounts (gh_) — they aren't group
+    "members".
+
+    Mirrors the macOS implementation in macos/api.py so both platforms expose
+    the same op surface to src/app/api/apps/builtin/wechat/group-tags/resolve-
+    contact/route.ts. Without this op the Windows UI showed `unknown op:
+    'resolve_contact'` whenever the user typed a name into the picker.
+    """
+    query = (args.get("query") or "").strip().lower()
+    limit = max(1, min(int(args.get("limit") or 10), 50))
+    contacts = _load_contacts()
+    items: list[dict] = []
+    for wxid, info in contacts.items():
+        if "@chatroom" in wxid or wxid.startswith("gh_"):
+            continue
+        nick = (info.get("nickname") or "").strip()
+        remark = (info.get("remark") or "").strip()
+        if query and query not in f"{wxid} {nick} {remark}".lower():
+            continue
+        items.append({
+            "wxid": wxid,
+            "display": remark or nick or wxid,
+            "nickname": nick,
+            "remark": remark,
+            "has_remark": bool(remark),
+        })
+    items.sort(key=lambda x: (not x["has_remark"], x["display"].lower()))
+    return {"items": items[:limit], "total": len(items)}
+
+
 def list_sessions(args: dict) -> dict:
     limit = int(args.get("limit") or 100)
     contacts = _load_contacts()
@@ -1362,6 +1396,7 @@ def resolve_image(args: dict) -> dict:
 
 OPS = {
     "list_contacts": list_contacts,
+    "resolve_contact": resolve_contact,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
     "analyze_snapshot": analyze_snapshot,
