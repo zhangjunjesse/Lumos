@@ -30,7 +30,12 @@ export type RuntimeEventName =
   | 'resume_dropped_mcp_changed'
   | 'resume_failed_at_runtime'
   | 'session_started_fresh'
-  | 'session_resumed';
+  | 'session_resumed'
+  // IM inbound dispatcher events — capture cases where the agent returned
+  // no visible text so the chat looks "silent" to the user. We log the
+  // length of the visible vs raw content + a small preview so we can tell
+  // whether the LLM emitted only tool_use, or sanitizer stripped everything.
+  | 'im_inbound_empty_reply';
 
 export interface RuntimeEventInput {
   sessionId?: string;

@@ -35,6 +35,7 @@ import {
   transcribeAudioAttachment,
 } from '@/lib/im/core/speech';
 import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
+import { recordRuntimeEvent } from '@/lib/claude/runtime-events';
 
 export interface DispatchResult {
   ok: boolean;
@@ -208,6 +209,29 @@ export async function dispatchInbound(
     }
 
     if (!rawReply) {
+      // Silent empty reply — user reported "IM 显示但 AI 不响应" with no
+      // visible error. Persist enough context to claude-runtime.log to
+      // diagnose without another build cycle. visibleText could be empty
+      // because (a) AI emitted only tool_use blocks, (b) stripLeakedToolTraceText
+      // stripped everything, or (c) the LLM call legitimately returned no text.
+      const visibleLen = (response.visibleText || '').length;
+      const rawLen = (response.rawContent || '').length;
+      recordRuntimeEvent({
+        sessionId,
+        event: 'im_inbound_empty_reply',
+        detail: {
+          path: 'im_inbound_empty_reply',
+          providerId,
+          chatId: inboundMessage.address.chatId,
+          inboundChars: inboundMessage.text.length,
+          inboundAttachmentCount: inboundMessage.attachments?.length ?? 0,
+          visibleTextLength: visibleLen,
+          rawContentLength: rawLen,
+          // First 300 chars of raw content so we can tell whether AI emitted
+          // only tool_use / pure thinking text / actually-blank response.
+          rawContentPreview: (response.rawContent || '').slice(0, 300),
+        },
+      });
       return { ok: true, sessionId, reason: 'empty reply' };
     }
 

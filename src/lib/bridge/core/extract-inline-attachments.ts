@@ -100,7 +100,13 @@ function resolveLumosSandboxPath(url: string): string | null {
       try { filePath = decodeURIComponent(uploadsMatch[1]); } catch { return null; }
     }
   }
-  if (!filePath.startsWith('/')) return null;
+  // path.isAbsolute is platform-aware: recognises `/abs/foo` on POSIX and
+  // `C:\Users\...` (+ `\\server\share`) on Windows. The previous check —
+  // `filePath.startsWith('/')` — silently rejected every Windows absolute
+  // path, which is what surfaced as the "filePath not allowed" error when
+  // an IM agent tried to attach a Word/PDF generated under
+  // `C:\Users\<user>\.lumos\.lumos-uploads\`.
+  if (!path.isAbsolute(filePath)) return null;
   const resolved = path.resolve(filePath);
   if (!ALLOWED_DIRS.some((dir) => resolved.includes(`${path.sep}${dir}${path.sep}`))) {
     return null;
