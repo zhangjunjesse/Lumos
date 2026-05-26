@@ -452,6 +452,159 @@ def list_contacts(args: dict) -> dict:
     return {"items": items[:limit], "total": len(items)}
 
 
+def _parse_member_list(raw: str) -> list[str]:
+    """Split a WeChat ChatRoom user/display list. WeChat across versions has
+    used `,`, `;`, and 0x07 (^G) as separators — we accept all three so the
+    same code path works whether the snapshot came from 3.x (commonly ^G in
+    DisplayNameList, `,` in UserNameList) or 4.x (snake_case columns)."""
+    if not raw:
+        return []
+    return [piece.strip() for piece in re.split(r"[,;\x07]", raw) if piece.strip()]
+
+
+def _list_groups_via_join_table(conn, members: list[str], match_mode: str) -> dict:
+    """Mirror of the macOS schema — normalized chat_room_member join table."""
+    in_list = ",".join("?" for _ in members)
+    sql = (
+        "SELECT cr.username AS room_wxid, c.username AS member_wxid "
+        "FROM chat_room_member m "
+        "JOIN contact c ON c.id = m.member_id "
+        "JOIN chat_room cr ON cr.id = m.room_id "
+        f"WHERE c.username IN ({in_list})"
+    )
+    rows = conn.execute(sql, members).fetchall()
+    contacts = _load_contacts()
+    groups: dict[str, dict] = {}
+    for row in rows:
+        room = (row["room_wxid"] or "").strip()
+        if not room:
+            continue
+        member_wxid = (row["member_wxid"] or "").strip()
+        bucket = groups.setdefault(room, {"wxid": room, "name": "", "matched_members": []})
+        if member_wxid and member_wxid not in bucket["matched_members"]:
+            bucket["matched_members"].append(member_wxid)
+        if not bucket["name"]:
+            info = contacts.get(room, {})
+            bucket["name"] = (info.get("remark") or info.get("nickname") or "").strip()
+    member_set = set(members)
+    out: list[dict] = []
+    for bucket in groups.values():
+        if match_mode == "all" and not member_set.issubset(set(bucket["matched_members"])):
+            continue
+        out.append(bucket)
+    return {"groups": out, "total": len(out)}
+
+
+def _list_groups_via_user_list_column(
+    conn,
+    members: list[str],
+    match_mode: str,
+    *,
+    table: str,
+    room_col: str,
+    users_col: str,
+) -> dict:
+    """ChatRoom-style schemas where membership is a delimited string column."""
+    # Identifier quoting is critical here — `table` and `*_col` come from our
+    # whitelist above (not user input), but quoted defensively.
+    rows = conn.execute(
+        f'SELECT "{room_col}" AS room_wxid, "{users_col}" AS users_str FROM "{table}"'
+    ).fetchall()
+    contacts = _load_contacts()
+    member_set = set(members)
+    out: list[dict] = []
+    for row in rows:
+        room = (row["room_wxid"] or "").strip()
+        users_str = (row["users_str"] or "").strip()
+        if not room or not users_str:
+            continue
+        users_in_room = set(_parse_member_list(users_str))
+        matched = sorted(member_set & users_in_room)
+        if not matched:
+            continue
+        if match_mode == "all" and not member_set.issubset(users_in_room):
+            continue
+        info = contacts.get(room, {})
+        out.append({
+            "wxid": room,
+            "name": (info.get("remark") or info.get("nickname") or "").strip(),
+            "matched_members": matched,
+        })
+    return {"groups": out, "total": len(out)}
+
+
+def list_groups_with_member(args: dict) -> dict:
+    """Find chatrooms where members (by wxid) belong, used by group-tag
+    "members' rooms" mode. Equivalent of macOS api.py's list_groups_with_member,
+    but Windows WeChat stores membership in several different shapes depending
+    on version:
+
+      * WeChat 4.x: `chat_room` table on contact.db with `user_name_list` (and
+        often `display_name_list`) columns holding a delimited wxid string.
+      * WeChat 3.x: `ChatRoom` (PascalCase) with `UserNameList` / `DisplayNameList`.
+      * Some snapshots mirror macOS exactly: a normalized `chat_room_member`
+        join table with `room_id`, `member_id` FKs.
+
+    We probe in that order. If none of them match we return an actionable
+    diagnostic (the actual table list seen) instead of silently 0-result, so a
+    user hitting an unfamiliar layout can paste it back and we extend the
+    probe table without needing a separate diagnostics op.
+    """
+    members = [
+        w.strip() for w in (args.get("member_wxids") or [])
+        if isinstance(w, str) and w.strip()
+    ]
+    match_mode = args.get("match_mode") or "any"
+    if not members:
+        return {"groups": [], "total": 0, "warning": "member_wxids 为空"}
+
+    contact_db = _encrypted_contact_db()
+    if not os.path.exists(contact_db):
+        return {"groups": [], "total": 0, "warning": "contact.db 不存在"}
+
+    try:
+        with _connect(contact_db) as conn:
+            # 1. Normalized join table (rare on Windows; included so a future
+            # WeChat update doesn't quietly stop working if it migrates here).
+            if (
+                _table_exists(conn, "chat_room_member")
+                and _table_exists(conn, "chat_room")
+                and _table_exists(conn, "contact")
+            ):
+                return _list_groups_via_join_table(conn, members, match_mode)
+
+            # 2. WeChat 4.x snake_case
+            if _table_exists(conn, "chat_room"):
+                return _list_groups_via_user_list_column(
+                    conn, members, match_mode,
+                    table="chat_room", room_col="username", users_col="user_name_list",
+                )
+
+            # 3. WeChat 3.x PascalCase
+            if _table_exists(conn, "ChatRoom"):
+                return _list_groups_via_user_list_column(
+                    conn, members, match_mode,
+                    table="ChatRoom", room_col="ChatRoomName", users_col="UserNameList",
+                )
+
+            # Unknown layout — surface the schema so the user can report back.
+            tables = [
+                r["name"] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                ).fetchall()
+            ]
+            return {
+                "groups": [], "total": 0,
+                "warning": (
+                    "未识别到 ChatRoom 表结构。已扫描 contact.db tables: "
+                    + ", ".join(tables)
+                    + "。请把这个列表回给 Lumos 开发者以适配。"
+                ),
+            }
+    except Exception as e:  # noqa: BLE001
+        return {"groups": [], "total": 0, "warning": f"查询失败：{e}"}
+
+
 def resolve_contact(args: dict) -> dict:
     """Resolve a fuzzy name (remark / nickname / wxid fragment) to *person*
     contact candidates. Used by the group-tag member picker so a tag rule can
@@ -1397,6 +1550,7 @@ def resolve_image(args: dict) -> dict:
 OPS = {
     "list_contacts": list_contacts,
     "resolve_contact": resolve_contact,
+    "list_groups_with_member": list_groups_with_member,
     "list_sessions": list_sessions,
     "read_chat": read_chat,
     "analyze_snapshot": analyze_snapshot,
