@@ -452,14 +452,87 @@ def list_contacts(args: dict) -> dict:
     return {"items": items[:limit], "total": len(items)}
 
 
-def _parse_member_list(raw: str) -> list[str]:
-    """Split a WeChat ChatRoom user/display list. WeChat across versions has
-    used `,`, `;`, and 0x07 (^G) as separators — we accept all three so the
-    same code path works whether the snapshot came from 3.x (commonly ^G in
-    DisplayNameList, `,` in UserNameList) or 4.x (snake_case columns)."""
-    if not raw:
+def _parse_member_list(raw) -> list[str]:
+    """Split a WeChat ChatRoom user list. Membership across WeChat versions
+    has been stored as:
+      * comma-separated string ("wxid_a,wxid_b,wxid_c")           — 3.x / 4.x
+      * 0x07 (^G) separated ("wxid_a\\x07wxid_b\\x07…")             — some 3.x
+      * semicolon-separated                                        — DisplayNameList rare
+      * protobuf bytes / blob                                      — 4.x RoomData
+    We accept all three text separators. Blob input returns []; the caller
+    falls back to a different column or to the diagnostic-dump path."""
+    if raw is None:
+        return []
+    if isinstance(raw, bytes):
+        # bytes are typically protobuf — try ASCII decode for wxid-looking
+        # ASCII substrings; if nothing parses, give up and let diagnostics
+        # show the column shape.
+        try:
+            decoded = raw.decode("utf-8", errors="ignore")
+        except Exception:
+            return []
+        raw = decoded
+    if not isinstance(raw, str) or not raw:
         return []
     return [piece.strip() for piece in re.split(r"[,;\x07]", raw) if piece.strip()]
+
+
+def _gather_group_schema_diagnostic(conn, sample_row_limit: int = 1) -> str:
+    """Dump every table on the open contact.db whose name suggests group /
+    chatroom / member / contact data, with: column list, row count, and a
+    redacted preview of the first non-empty row. The point is to let the
+    developer reading the warning fix the probe in one shot — no second build
+    cycle just to discover the table layout."""
+    lines: list[str] = []
+    name_patterns = ('%room%', '%group%', '%member%', '%contact%', '%session%')
+    seen: set[str] = set()
+    for pat in name_patterns:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND LOWER(name) LIKE ? ORDER BY name",
+            (pat,),
+        ).fetchall()
+        for r in rows:
+            name = r["name"]
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                cols = [c[1] for c in conn.execute(f'PRAGMA table_info("{name}")').fetchall()]
+            except Exception as e:  # noqa: BLE001
+                lines.append(f"  - {name}: schema introspection failed ({e})")
+                continue
+            try:
+                count = conn.execute(f'SELECT COUNT(*) AS n FROM "{name}"').fetchone()["n"]
+            except Exception as e:  # noqa: BLE001
+                count = f"COUNT? ({e})"
+            sample_str = "(no rows)"
+            if isinstance(count, int) and count > 0:
+                try:
+                    sample = conn.execute(f'SELECT * FROM "{name}" LIMIT ?', (sample_row_limit,)).fetchone()
+                    if sample is not None:
+                        pairs = []
+                        for col in cols:
+                            try:
+                                val = sample[col]
+                            except (IndexError, KeyError):
+                                pairs.append(f"{col}=<missing>")
+                                continue
+                            if val is None:
+                                pairs.append(f"{col}=NULL")
+                            elif isinstance(val, bytes):
+                                pairs.append(f"{col}=<bytes len={len(val)}>")
+                            elif isinstance(val, str):
+                                safe = ''.join(c if c.isprintable() else f'\\x{ord(c):02x}' for c in val[:120])
+                                if len(val) > 120:
+                                    safe += '…'
+                                pairs.append(f'{col}="{safe}"')
+                            else:
+                                pairs.append(f"{col}={val!r}")
+                        sample_str = " | ".join(pairs)
+                except Exception as e:  # noqa: BLE001
+                    sample_str = f"(sample read failed: {e})"
+            lines.append(f"  - {name} (rows={count}) cols={cols}\n      sample: {sample_str}")
+    return "\n".join(lines) if lines else "  (no group/room/member/contact-like tables found)"
 
 
 def _list_groups_via_join_table(conn, members: list[str], match_mode: str) -> dict:
@@ -564,43 +637,61 @@ def list_groups_with_member(args: dict) -> dict:
 
     try:
         with _connect(contact_db) as conn:
+            schema_hit: str | None = None
+            result: dict | None = None
+
             # 1. Normalized join table (rare on Windows; included so a future
-            # WeChat update doesn't quietly stop working if it migrates here).
+            # WeChat schema migration doesn't silently stop matching).
             if (
                 _table_exists(conn, "chat_room_member")
                 and _table_exists(conn, "chat_room")
                 and _table_exists(conn, "contact")
             ):
-                return _list_groups_via_join_table(conn, members, match_mode)
+                schema_hit = "chat_room_member (mirror macOS join)"
+                result = _list_groups_via_join_table(conn, members, match_mode)
 
             # 2. WeChat 4.x snake_case
-            if _table_exists(conn, "chat_room"):
-                return _list_groups_via_user_list_column(
+            elif _table_exists(conn, "chat_room"):
+                schema_hit = "chat_room (snake_case)"
+                result = _list_groups_via_user_list_column(
                     conn, members, match_mode,
                     table="chat_room", room_col="username", users_col="user_name_list",
                 )
 
             # 3. WeChat 3.x PascalCase
-            if _table_exists(conn, "ChatRoom"):
-                return _list_groups_via_user_list_column(
+            elif _table_exists(conn, "ChatRoom"):
+                schema_hit = "ChatRoom (PascalCase)"
+                result = _list_groups_via_user_list_column(
                     conn, members, match_mode,
                     table="ChatRoom", room_col="ChatRoomName", users_col="UserNameList",
                 )
 
-            # Unknown layout — surface the schema so the user can report back.
-            tables = [
-                r["name"] for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                ).fetchall()
-            ]
-            return {
-                "groups": [], "total": 0,
-                "warning": (
-                    "未识别到 ChatRoom 表结构。已扫描 contact.db tables: "
-                    + ", ".join(tables)
-                    + "。请把这个列表回给 Lumos 开发者以适配。"
-                ),
-            }
+            if result is None:
+                # No probe hit — dump every plausible table so the dev
+                # adapting the probe has full information in one shot.
+                return {
+                    "groups": [], "total": 0,
+                    "warning": (
+                        "未识别到 ChatRoom 表结构。contact.db 候选表 dump:\n"
+                        + _gather_group_schema_diagnostic(conn)
+                        + "\n→ 把这段完整发给 Lumos 开发者以适配。"
+                    ),
+                }
+
+            # Probe matched a schema but the actual query returned 0 — this is
+            # the case the user just hit. Surface the same full diagnostic so
+            # the dev can tell which column / format actually holds members on
+            # this WeChat build (e.g. RoomData protobuf, different separator,
+            # wxid suffix mismatch, table empty, etc.).
+            if result["total"] == 0:
+                result["warning"] = (
+                    f"匹配到 0 群。命中 schema = {schema_hit}。\n"
+                    f"查询的 member_wxids = {members}\n"
+                    "contact.db 候选表 dump(用于排查真实字段名/分隔符/格式):\n"
+                    + _gather_group_schema_diagnostic(conn)
+                    + "\n→ 把这段完整发给 Lumos 开发者。"
+                )
+            return result
     except Exception as e:  # noqa: BLE001
         return {"groups": [], "total": 0, "warning": f"查询失败：{e}"}
 
