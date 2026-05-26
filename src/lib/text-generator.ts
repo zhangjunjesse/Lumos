@@ -22,6 +22,11 @@ import {
 } from '@/lib/llm-request-metadata';
 import { startLlmRequestLog } from '@/lib/llm-request-log';
 import { resolveProviderModelForRequest } from '@/lib/model-metadata';
+import {
+  extractContextAroundError,
+  recordLlmDebug,
+} from '@/lib/llm-debug-logger';
+import { randomUUID } from 'node:crypto';
 import type { ApiProvider } from '@/types';
 import type { ZodType } from 'zod';
 
@@ -382,12 +387,57 @@ export async function generateObjectFromProvider<T>(params: GenerateObjectParams
 /**
  * Try generateObject first; if the provider cannot produce a valid structured object,
  * fall back to plain text generation with manual JSON extraction and Zod validation.
+ *
+ * Every stage records a JSON-Lines entry to `~/.lumos/llm-debug.log` with a
+ * shared `requestId` so a post-mortem can `grep <id>` and see the entire
+ * call chain. Errors are still rethrown — the logger only captures evidence.
  */
 export async function generateObjectWithFallback<T>(params: GenerateObjectParams<T>): Promise<T> {
+  const requestId = randomUUID();
+  const baseLog = {
+    requestId,
+    providerId: params.providerId,
+    model: params.model,
+    module: params.requestMetadata?.module,
+    operation: params.requestMetadata?.operation,
+  };
+
+  recordLlmDebug({
+    ...baseLog,
+    stage: 'request_started',
+    detail: {
+      promptChars: params.prompt.length,
+      systemChars: params.system.length,
+      maxTokens: params.maxTokens,
+      temperature: params.temperature,
+      path: 'generateObject',
+    },
+  });
+
   try {
-    return await generateObjectFromProvider(params);
+    const result = await generateObjectFromProvider(params);
+    recordLlmDebug({ ...baseLog, stage: 'request_succeeded', detail: { path: 'generateObject' } });
+    return result;
   } catch (error) {
-    if (!shouldFallbackToTextObjectGeneration(error)) throw error;
+    if (!shouldFallbackToTextObjectGeneration(error)) {
+      recordLlmDebug({
+        ...baseLog,
+        stage: 'request_failed',
+        detail: {
+          path: 'generateObject',
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : undefined,
+        },
+      });
+      throw error;
+    }
+    recordLlmDebug({
+      ...baseLog,
+      stage: 'fallback_to_text',
+      detail: {
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    });
   }
 
   // Fallback: plain text → JSON extraction → Zod parse
@@ -405,11 +455,53 @@ export async function generateObjectWithFallback<T>(params: GenerateObjectParams
 
   const jsonText = extractJsonObjectText(text);
   if (!jsonText) {
+    recordLlmDebug({
+      ...baseLog,
+      stage: 'json_extract_failed',
+      detail: {
+        rawTextLength: text.length,
+        rawText: text,
+      },
+    });
     throw new Error('Model response did not contain a JSON object (text fallback)');
   }
 
-  const parsed: unknown = JSON.parse(jsonText);
-  return params.schema.parse(parsed);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (parseErr) {
+    recordLlmDebug({
+      ...baseLog,
+      stage: 'json_parse_failed',
+      detail: {
+        error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        rawTextLength: text.length,
+        extractedLength: jsonText.length,
+        // Full raw text — clip safety lives in the logger.
+        rawText: text,
+        extractedJson: jsonText,
+        // Window around the failing column so the human reader doesn't have
+        // to count characters in a 30 KB blob to find position 800.
+        contextAroundError: extractContextAroundError(jsonText, parseErr),
+      },
+    });
+    throw parseErr;
+  }
+
+  try {
+    return params.schema.parse(parsed);
+  } catch (zodErr) {
+    recordLlmDebug({
+      ...baseLog,
+      stage: 'schema_validation_failed',
+      detail: {
+        error: zodErr instanceof Error ? zodErr.message : String(zodErr),
+        // Stringify the parsed object — keeps log line a single JSON.
+        parsedJson: JSON.stringify(parsed),
+      },
+    });
+    throw zodErr;
+  }
 }
 
 function shouldFallbackToTextObjectGeneration(error: unknown): boolean {
