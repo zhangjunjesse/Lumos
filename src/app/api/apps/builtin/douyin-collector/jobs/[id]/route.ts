@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getDouyinCollectorStore } from '@/lib/douyin-collector/storage';
 import type { CollectJobRecord } from '@/lib/douyin-collector/types';
-import { COLLECTION_JOBS } from '@/lib/douyin-collector/constants';
+import { COLLECTION_JOBS, DOUYIN_COLLECTOR_APP_ID } from '@/lib/douyin-collector/constants';
 import { markJobStatus, runJob } from '@/lib/douyin-collector/jobs';
+import { markRunCancelled } from '@/lib/app/runtime/run-control';
 import { describeJobProgress, getJobProgress } from '@/lib/douyin-collector/job-progress';
 
 export const runtime = 'nodejs';
@@ -45,6 +46,10 @@ export async function POST(
     const url = new URL(req.url);
     const action = url.searchParams.get('action') ?? '';
     if (action === 'cancel') {
+      // 先 markRunCancelled: worker 循环顶部会 check 后立即退出, 不再发新
+      // 请求/打开新 tab。再标 db 状态 cancelled, UI 立刻看到终态。worker 可能
+      // 卡在 await 中(协作式取消窗口期), 终态后 runJob finally 会清理 flag。
+      markRunCancelled(DOUYIN_COLLECTOR_APP_ID, id);
       const updated = markJobStatus(id, {
         status: 'cancelled',
         failureReason: '用户手动取消。',

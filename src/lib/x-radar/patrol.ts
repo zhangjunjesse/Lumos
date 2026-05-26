@@ -10,6 +10,7 @@
  */
 
 import type { AppRow } from '@/lib/app/runtime/data-store';
+import { isRunCancelled, clearRunCancellation } from '@/lib/app/runtime/run-control';
 import { getAuthStatus } from '@/lib/x-platform/auth';
 import { isXAuthExpiredError } from '@/lib/x-platform/auth-error';
 import { runMonitor } from './patrol-monitor';
@@ -126,7 +127,9 @@ async function runQueue(
   let processed = 0;
   for (const task of tasks) {
     // patrol abort 信号检查 —— 用户主动取消 / 浏览器请求 abort 时立即跳出，不再消耗 X 配额
-    if (input.signal?.aborted) {
+    // 兼容两条入口: (1) input.signal AbortController(自动化场景显式传入)
+    // (2) lib/app/runtime/run-control 进程内 cancellation flag(用户 UI 点取消按钮)
+    if (input.signal?.aborted || isRunCancelled('x-radar', 'patrol')) {
       abortedAfter = '用户取消';
     }
     if (abortedAfter) {
@@ -149,6 +152,8 @@ async function runQueue(
       if (isFatalReason(reason)) abortedAfter = reason;
     }
   }
+  // 进入终态后清理 cancellation flag, 下次 patrol 不会被旧 flag 误杀
+  clearRunCancellation('x-radar', 'patrol');
   const failed = tasks.length - succeeded;
   const reasons = Array.from(new Set(failures)).slice(0, 3);
   const skippedSuffix = skipped > 0 ? `（cadence 未到期跳过 ${skipped}）` : '';

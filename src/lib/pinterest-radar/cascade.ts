@@ -5,6 +5,9 @@
 import { appendLog, getRun, getStep, updateRunCounters, updateStep } from './runs';
 import { registerJob, unregisterJob } from './jobs';
 import type { CascadeTarget, StepId } from './types';
+import { isRunCancelled, clearRunCancellation } from '@/lib/app/runtime/run-control';
+
+const APP_ID = 'pinterest-radar';
 
 const CASCADE_ORDER: Record<CascadeTarget, number> = {
   none: -1,
@@ -41,6 +44,14 @@ function shouldCascade(cascadeTo: CascadeTarget, nextStep: StepId): boolean {
 export function maybeCascadeNext(runId: string, finishedStep: StepId): void {
   const run = getRun(runId);
   if (!run) return;
+  // 取消短路: 用户取消后 step 可能已经走到 "done"(基于部分结果), cascade 会
+  // 触发下一 step 用新 AbortController, 不知道用户已取消继续烧配额。
+  // 在 cascade 入口 check isRunCancelled 阻止级联, 一并清理 flag。
+  if (isRunCancelled(APP_ID, runId)) {
+    appendLog(runId, finishedStep, `▶ 用户已取消, 不级联到下一步`);
+    clearRunCancellation(APP_ID, runId);
+    return;
+  }
   const next = NEXT_STEP[finishedStep];
   if (!next) return;
   if (!shouldCascade(run.config.cascadeTo, next)) {

@@ -7,6 +7,9 @@
 import { appendLog, getRun, getStep, updateStep } from './runs';
 import { registerJob, unregisterJob } from './jobs';
 import type { CascadeTarget, StepId } from './types';
+import { isRunCancelled, clearRunCancellation } from '@/lib/app/runtime/run-control';
+
+const APP_ID = 'etsy-erank';
 
 const CASCADE_ORDER: Record<CascadeTarget, number> = {
   none: -1,
@@ -45,6 +48,15 @@ function shouldCascade(cascadeTo: CascadeTarget, nextStep: StepId): boolean {
 export function maybeCascadeNext(runId: string, finishedStep: StepId): void {
   const run = getRun(runId);
   if (!run) return;
+  // 取消短路: 用户在 step A 跑到一半时点 cancel, abortJob 让 worker 跳出, 但
+  // worker 可能仍走到 step "done" 路径(基于部分结果), 然后 cascade 会触发下一 step,
+  // 新 step 创建新 AbortController 不知道用户已取消, 继续烧 X/AdsPower 配额。
+  // 在 cascade 入口 check isRunCancelled 阻止级联, 一并清理 flag(本次 run 终态)。
+  if (isRunCancelled(APP_ID, runId)) {
+    appendLog(runId, finishedStep, `▶ 用户已取消, 不级联到下一步`);
+    clearRunCancellation(APP_ID, runId);
+    return;
+  }
   const next = NEXT_STEP[finishedStep];
   if (!next || next === 'manual') return;
   if (!shouldCascade(run.config.cascadeTo, next)) {

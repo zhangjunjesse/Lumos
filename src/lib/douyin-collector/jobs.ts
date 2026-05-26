@@ -5,7 +5,8 @@ import {
   type KeywordRow,
   type CollectJobRow,
 } from './storage';
-import { COLLECTION_JOBS, COLLECTION_VIDEOS } from './constants';
+import { COLLECTION_JOBS, COLLECTION_VIDEOS, DOUYIN_COLLECTOR_APP_ID } from './constants';
+import { isRunCancelled, clearRunCancellation } from '@/lib/app/runtime/run-control';
 import type { CollectJobRecord, CreatorCollectMode, JobKind, JobStatus } from './types';
 import { parseDouyinInput } from './parse-input';
 import {
@@ -164,20 +165,26 @@ export async function runJob(jobId: string): Promise<CollectJobRow | null> {
 
   markJobStatus(jobId, { status: 'running' });
 
-  if (job.kind === 'link') {
-    return await runLinkJob(jobId, job);
-  }
-  if (job.kind === 'creator') {
-    return await runCreatorJob(jobId, job);
-  }
-  if (job.kind === 'keyword') {
-    return await runKeywordJob(jobId, job);
-  }
+  try {
+    if (job.kind === 'link') {
+      return await runLinkJob(jobId, job);
+    }
+    if (job.kind === 'creator') {
+      return await runCreatorJob(jobId, job);
+    }
+    if (job.kind === 'keyword') {
+      return await runKeywordJob(jobId, job);
+    }
 
-  const failureReason = `未知 job 类型：${String(job.kind)}`;
-  const updated = markJobStatus(jobId, { status: 'failed', failureReason });
-  recordRun(job, 'failed', failureReason);
-  return updated;
+    const failureReason = `未知 job 类型：${String(job.kind)}`;
+    const updated = markJobStatus(jobId, { status: 'failed', failureReason });
+    recordRun(job, 'failed', failureReason);
+    return updated;
+  } finally {
+    // Run 进入终态后清理 cancellation flag, 防 Set 长期堆积。下次同 id 的
+    // run(理论不应该, 但稳一点)不会被旧 flag 误杀。
+    clearRunCancellation(DOUYIN_COLLECTOR_APP_ID, jobId);
+  }
 }
 
 /**
@@ -242,6 +249,7 @@ async function runKeywordJob(
   });
   let processed = 0;
   for (const awemeId of browserOutcome.awemeIds) {
+    if (isRunCancelled(DOUYIN_COLLECTOR_APP_ID, jobId)) break;
     // Resilient back-fill: paced anonymous HTTP, with a logged-in
     // browser retry when douyin answers the rate-limit skeleton.
     const single = await fetchVideoMetadataResilient(awemeId);
@@ -430,6 +438,10 @@ async function runCreatorJob(
     });
     let retranscribedExisting = 0;
     for (const awemeId of browserOutcome.awemeIds) {
+      // 协作式取消: cancel API 调 markRunCancelled 后, 循环顶部 check 退出。
+      // 不能 abort 已经发出去的 fetch socket, 但能让 worker 立刻停下不再发新
+      // 请求, 也不再 navigate 新 tab。详见 lib/app/runtime/run-control.ts。
+      if (isRunCancelled(DOUYIN_COLLECTOR_APP_ID, jobId)) break;
       // dedupe 分支：之前这里无条件跳过任何 existing 视频，导致用户在 UI
       // 上点「采集」时，38 条历史里 17 条字幕失败的也不会再尝试——出现
       // 「成功 38 / 转写 0」的静默失败。新语义：只跳过转写已成功的；其余
