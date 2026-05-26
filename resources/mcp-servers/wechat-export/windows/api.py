@@ -536,11 +536,22 @@ def _gather_group_schema_diagnostic(conn, sample_row_limit: int = 1) -> str:
 
 
 def _list_groups_via_join_table(conn, members: list[str], match_mode: str) -> dict:
-    """Mirror of the macOS schema — normalized chat_room_member join table."""
+    """Mirror of the macOS schema — normalized chatroom_member join table.
+
+    On Windows WeChat 4.x the layout is identical to macOS:
+      chatroom_member(room_id, member_id)
+        ⇄ chat_room(id, username='<wxid>@chatroom')
+        ⇄ contact(id, username='<wxid>')
+
+    Diagnostic from a real user's contact.db confirmed:
+      chatroom_member rows=18847 cols=['room_id', 'member_id']
+      chat_room rows=514 cols=['id', 'username', 'owner', 'ext_buffer']
+      contact rows=18263 cols=['id', 'username', …]
+    """
     in_list = ",".join("?" for _ in members)
     sql = (
         "SELECT cr.username AS room_wxid, c.username AS member_wxid "
-        "FROM chat_room_member m "
+        "FROM chatroom_member m "
         "JOIN contact c ON c.id = m.member_id "
         "JOIN chat_room cr ON cr.id = m.room_id "
         f"WHERE c.username IN ({in_list})"
@@ -640,17 +651,24 @@ def list_groups_with_member(args: dict) -> dict:
             schema_hit: str | None = None
             result: dict | None = None
 
-            # 1. Normalized join table (rare on Windows; included so a future
-            # WeChat schema migration doesn't silently stop matching).
+            # 1. Normalized chatroom_member join table — this is what real
+            # Windows WeChat 4.x snapshots actually use (confirmed by the
+            # contact.db dump returned from a v0.25.57 diagnostic run). The
+            # earlier `chat_room_member` spelling was a typo on my part that
+            # never matched anything in production.
             if (
-                _table_exists(conn, "chat_room_member")
+                _table_exists(conn, "chatroom_member")
                 and _table_exists(conn, "chat_room")
                 and _table_exists(conn, "contact")
             ):
-                schema_hit = "chat_room_member (mirror macOS join)"
+                schema_hit = "chatroom_member (mirror macOS join)"
                 result = _list_groups_via_join_table(conn, members, match_mode)
 
-            # 2. WeChat 4.x snake_case
+            # 2. WeChat 4.x with a delimited user_name_list column instead of
+            # the join table (historical / alternate). On the contact.db we
+            # actually saw, `chat_room` has only id/username/owner/ext_buffer
+            # — no user_name_list — so this branch falls through to the
+            # diagnostic; it remains as a forward-compat probe.
             elif _table_exists(conn, "chat_room"):
                 schema_hit = "chat_room (snake_case)"
                 result = _list_groups_via_user_list_column(
