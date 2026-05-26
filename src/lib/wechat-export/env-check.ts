@@ -333,26 +333,82 @@ export function getWindowsWeChatProcessNames(): string[] {
   return Array.from(new Set(['WeChat.exe', 'Weixin.exe', getManualWindowsWeChatProcessName()].filter(Boolean) as string[]));
 }
 
-function findWindowsWeChatPid(): number | null {
+interface WeChatPidProbe {
+  pid: number | null;
+  diagnostic: string;
+}
+
+// Detect a running WeChat in three escalating layers:
+//   1. `tasklist /FI IMAGENAME eq Weixin.exe` (cheapest, matches the historical
+//      Lumos path — kept as the fast path).
+//   2. `Get-Process` by exact .Path equality against `targetExe`. This is the
+//      load-bearing layer for modern WeChat — WeChatAppEx, Weixin sub-helpers
+//      and `crashpad_handler.exe` all share the same install dir but only one
+//      process actually has the main exe path. Matching by path makes the
+//      detector immune to future process renames.
+//   3. PowerShell dump of every Process with .Path under Tencent/WeChat/Weixin.
+//      Only used to populate the diagnostic field when 1+2 found nothing, so
+//      the UI can surface what processes are actually live and we can tell
+//      why the first two layers missed.
+function findWindowsWeChatPid(targetExe: string | null = null): WeChatPidProbe {
   const names = getWindowsWeChatProcessNames();
-  try {
-    for (const name of names) {
+  const lines: string[] = [];
+
+  // Layer 1: tasklist by image name
+  for (const name of names) {
+    try {
       const out = execFileSync('tasklist', [
-        '/FI',
-        `IMAGENAME eq ${name}`,
-        '/FO',
-        'CSV',
-        '/NH',
+        '/FI', `IMAGENAME eq ${name}`,
+        '/FO', 'CSV', '/NH',
       ], { encoding: 'utf8', timeout: 3000 }).trim();
+      lines.push(`tasklist [${name}]: ${out || '(empty)'}`);
       for (const line of out.split(/\r?\n/)) {
         if (!line.toLowerCase().includes(name.toLowerCase())) continue;
         const fields = line.split('","').map((part) => part.replace(/^"|"$/g, ''));
         const pid = parseInt(fields[1] || '', 10);
-        if (Number.isFinite(pid) && pid > 0) return pid;
+        if (Number.isFinite(pid) && pid > 0) {
+          return { pid, diagnostic: lines.join('\n') };
+        }
       }
+    } catch (err) {
+      lines.push(`tasklist [${name}] error: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch { /* tasklist is Windows-only */ }
-  return null;
+  }
+
+  // Layer 2: PowerShell Get-Process by exact path (robust to process rename)
+  if (targetExe) {
+    try {
+      const escaped = targetExe.replace(/'/g, "''");
+      const script = `Get-Process | Where-Object { $_.Path -ieq '${escaped}' } | Select-Object -First 1 -ExpandProperty Id`;
+      const out = execFileSync('powershell.exe', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script,
+      ], { encoding: 'utf8', timeout: 5000 }).trim();
+      lines.push(`Get-Process path=${targetExe}: ${out || '(no match)'}`);
+      const pid = parseInt(out, 10);
+      if (Number.isFinite(pid) && pid > 0) {
+        return { pid, diagnostic: lines.join('\n') };
+      }
+    } catch (err) {
+      lines.push(`Get-Process path error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Layer 3: diagnostic dump — what Tencent/WeChat/Weixin processes ARE alive?
+  try {
+    const dumpScript = (
+      "Get-Process | Where-Object { $_.Path -and ($_.Path -match 'Tencent|WeChat|Weixin') }"
+      + " | Select-Object Id, ProcessName, Path"
+      + " | Format-Table -AutoSize | Out-String -Width 200"
+    );
+    const dump = execFileSync('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', dumpScript,
+    ], { encoding: 'utf8', timeout: 5000 }).trim();
+    lines.push(`Live Tencent/WeChat/Weixin processes:\n${dump || '(none)'}`);
+  } catch (err) {
+    lines.push(`process dump error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return { pid: null, diagnostic: lines.join('\n') };
 }
 
 function cleanWindowsExecutablePath(value: string | null | undefined): string | null {
@@ -423,20 +479,31 @@ function findWindowsWeChatExe(): string | null {
 }
 
 export function probeWindowsWeChat(): ProbeResult & { signed: 'not_required'; pid?: number; running: boolean } {
-  const pid = findWindowsWeChatPid();
+  // Resolve exe path first so the running-detection's path-equality layer can
+  // use it. Both directions of inference are useful: pid → running, exe →
+  // installed; we want both.
+  const exe = findWindowsWeChatExe();
+  const { pid, diagnostic } = findWindowsWeChatPid(exe);
   if (pid) {
     return { ok: true, signed: 'not_required', pid, running: true, detail: `Windows 微信运行中 (PID ${pid})` };
   }
-  const exe = findWindowsWeChatExe();
   if (exe) {
     const manual = readWindowsPathConfig().wechatExePath;
     const matchedManual = manual && path.resolve(manual) === path.resolve(exe);
+    // If diagnostic shows ANY Tencent/WeChat/Weixin processes alive, the user
+    // almost certainly thinks WeChat is running — they're just running an exe
+    // that isn't the one we found. Surface the dump in the hint so the
+    // mismatch is visible without another build.
+    const hasLiveProcs = /Id\s+ProcessName|live tencent/i.test(diagnostic);
+    const hint = hasLiveProcs
+      ? `进程检测未匹配到该 exe，但有其它微信相关进程在跑。诊断如下，把它发回开发者可以快速适配（也可以在下方手动指定微信路径）:\n${diagnostic}`
+      : '读取已提取的聊天记录不需要微信保持运行；重新提取密钥时再打开微信。';
     return {
       ok: true,
       signed: 'not_required',
       running: false,
       detail: `${matchedManual ? '已指定' : '已安装但未运行'}: ${exe}`,
-      hint: '读取已提取的聊天记录不需要微信保持运行；重新提取密钥时再打开微信。',
+      hint,
     };
   }
   return {
@@ -444,7 +511,7 @@ export function probeWindowsWeChat(): ProbeResult & { signed: 'not_required'; pi
     signed: 'not_required',
     running: false,
     detail: '未检测到 Windows 微信',
-    hint: '请先安装并打开 Windows 微信；如果你装在非默认位置，请在下方手动指定微信程序路径。',
+    hint: `请先安装并打开 Windows 微信；如果你装在非默认位置，请在下方手动指定微信程序路径。\n进程探测诊断:\n${diagnostic}`,
   };
 }
 
