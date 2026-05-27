@@ -1,0 +1,35 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "我的图库",
+  "description": "查看所有 👍 过的图。完整网格视图 + 批量操作请到主刷图界面进入。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "我的图库",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "**完整图库（网格视图 + 多选 + 批量下载 + 一键传 Printful）在主界面打开。**\n\n- 收藏的图按 [全部 / 仅原图 / 仅二创] 过滤\n- 单击进入详情/二创页\n- 多选批量下载或一键传 Printful（需先在设置页连接 Printful 账号）\n- 下载/上架时自动按 Etsy 2024 新规标 AI 生成（不标会被封店）"
+        },
+        { "type": "button", "label": "打开图库", "primary": true, "open": "/apps/etsy-forge/library" }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.etsy_forge_images }}",
+      "columns": [
+        { "field": "theme", "label": "主题", "search": true },
+        { "field": "style", "label": "风格", "render": "tag" },
+        { "field": "source_type", "label": "来源", "render": "tag" },
+        { "field": "in_library", "label": "已收藏", "render": "tag" },
+        { "field": "created_at", "label": "生成时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["theme", "style", "prompt_used"] },
+      "filter": [
+        { "field": "source_type", "options": ["generated", "remixed"] },
+        { "field": "in_library", "options": [true, false] }
+      ]
+    }
+  ]
+}

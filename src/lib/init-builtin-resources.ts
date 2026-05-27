@@ -27,6 +27,7 @@ import { ensureGoofishDefaultAutomations } from './app/goofish-default-automatio
 import { ensureDouyinDefaultAutomations } from './app/douyin-default-automations';
 import { ensureDeepResearchDefaultAutomations } from './app/deep-research-default-automations';
 import { ensureXRadarDefaultAutomations } from './app/x-radar-default-automations';
+import { ensureEtsyForgeDefaultAutomations } from './app/etsy-forge-default-automations';
 import { installApp } from './app/installer/install';
 import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
@@ -47,6 +48,9 @@ const BUILTIN_DEEP_RESEARCH_VERSION = '0.0.1';
 
 const BUILTIN_X_RADAR_APP_ID = 'x-radar';
 const BUILTIN_X_RADAR_VERSION = '0.1.0';
+
+const BUILTIN_ETSY_FORGE_APP_ID = 'etsy-forge';
+const BUILTIN_ETSY_FORGE_VERSION = '0.1.0';
 
 const PLACEHOLDER_ICON_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
@@ -780,6 +784,74 @@ async function ensureXRadarInstalled(): Promise<void> {
   }
 }
 
+async function ensureEtsyForgeInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_ETSY_FORGE_APP_ID) as { id: string; version: string } | undefined;
+
+  if (existing && existing.version === BUILTIN_ETSY_FORGE_VERSION) {
+    ensureEtsyForgeDefaultAutomations(createAppDataStore(svc.db, BUILTIN_ETSY_FORGE_APP_ID));
+    return;
+  }
+
+  // etsy-forge 不走 template — 直接从 apps/etsy-forge/ 目录拷贝
+  const sourceDir = path.join(process.cwd(), 'apps', 'etsy-forge');
+  if (!fs.existsSync(sourceDir)) {
+    console.warn(
+      `[init-builtin-resources] etsy-forge source dir not found: ${sourceDir} (生产打包时需把 apps/etsy-forge 加入 build config)`,
+    );
+    return;
+  }
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-etsy-forge-builtin-'));
+  try {
+    copyDirRecursive(sourceDir, stagingDir);
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_ETSY_FORGE_VERSION}`
+        : `首次安装 ${BUILTIN_ETSY_FORGE_VERSION}`;
+      ensureEtsyForgeDefaultAutomations(createAppDataStore(svc.db, BUILTIN_ETSY_FORGE_APP_ID));
+      console.log(`[init-builtin-resources] etsy-forge ${tag}`);
+    } else {
+      const issuesSummary = (result.issues ?? [])
+        .slice(0, 8)
+        .map((i) => {
+          const r = i as { level?: string; file?: string; jsonPath?: string; message?: string };
+          return `[${r.level ?? '?'}] ${r.file ?? '?'}${r.jsonPath ?? ''}: ${r.message ?? ''}`;
+        })
+        .join('\n  ');
+      console.warn(
+        `[init-builtin-resources] etsy-forge install failed: ${result.message}` +
+          (issuesSummary ? `\n  ${issuesSummary}` : ''),
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
+function copyDirRecursive(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) copyDirRecursive(srcPath, destPath);
+    else if (entry.isFile()) fs.copyFileSync(srcPath, destPath);
+  }
+}
+
 // ==========================================
 // Main Initialization
 // ==========================================
@@ -834,6 +906,12 @@ export async function initBuiltinResources(): Promise<void> {
       await ensureXRadarInstalled();
     } catch (err) {
       console.error('[init-builtin-resources] x-radar install error:', err);
+    }
+
+    try {
+      await ensureEtsyForgeInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] etsy-forge install error:', err);
     }
 
     try {

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "设置",
+  "description": "图片服务商（只读）、Printful 连接、危险操作。AI 提示词 (ai_system_prompt) 和风险边界 (risk_note) 在高级设置折叠区可见——不建议小白用户改动。",
+  "layout": "form",
+  "form": [
+    {
+      "type": "textarea",
+      "name": "ai_system_prompt",
+      "label": "AI 推送提示词 (ai_system_prompt) — 高级",
+      "rows": 8,
+      "placeholder": "默认值已为小白优化：英文 prompt，强制 Original artwork only，不嵌入版权角色 / 品牌 / 文字；图片为 POD 印刷优化（高对比、干净边缘）；不允许出 melting faces / extra fingers / random text。改动此项会影响所有用户的推送图质量，不建议小白改动。"
+    },
+    {
+      "type": "textarea",
+      "name": "risk_note",
+      "label": "风险边界 (risk_note)",
+      "rows": 4,
+      "placeholder": "默认风险边界：不爬同行图、不做他人图的二创、不自动上架到 Etsy；导出/上架时自动标 AI 生成（Etsy 2024 新规，不标会被封店）；清空图库 / 重置审美档案需二次确认。"
+    },
+    { "type": "number", "name": "batch_size", "label": "推送批大小（默认 50，建议不动）", "default": 50 },
+    { "type": "number", "name": "prefetch_at_index", "label": "预生成触发位（刷到第 N 张，默认 30）", "default": 30 },
+    { "type": "number", "name": "concurrency_per_batch", "label": "批内并发上限（默认 5，过高会被云端限流）", "default": 5 },
+    { "type": "number", "name": "min_signals_for_main_strategy", "label": "进入主推荐策略所需信号数（默认 50）", "default": 50 },
+    { "type": "number", "name": "min_signals_for_mixed_strategy", "label": "进入混合策略所需信号数（默认 10）", "default": 10 },
+    { "type": "number", "name": "dedup_cosine_threshold", "label": "批间去重 cosine 阈值（默认 0.85）", "default": 0.85 },
+    { "type": "text", "name": "printful_account", "label": "Printful 账号（OAuth 连接后填）" },
+    { "type": "switch", "name": "auto_tag_ai_generated", "label": "导出时自动标 AI 生成（Etsy 2024 新规，强烈建议保持开启）", "default": true }
+  ],
+  "submit": { "label": "保存设置", "run": "db:create:app_settings", "render": "none" }
+}

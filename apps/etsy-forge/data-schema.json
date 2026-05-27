@@ -1,0 +1,227 @@
+{
+  "$schema": "https://lumos.io/schemas/app-data-schema.v1.json",
+  "collections": [
+    {
+      "name": "etsy_forge_images",
+      "label": "AI 生成图",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "source_type", "type": "enum", "label": "来源", "options": ["generated", "remixed"], "default": "generated", "indexed": true },
+        { "name": "parent_image_id", "type": "string", "label": "母图 ID（仅二创）", "indexed": true },
+        { "name": "remix_action", "type": "enum", "label": "二创动作", "options": ["recolor", "restyle", "resubject", "series", "resize", "removebg", ""], "default": "" },
+        { "name": "prompt_used", "type": "text", "label": "使用的 prompt" },
+        { "name": "theme", "type": "string", "label": "主题", "indexed": true },
+        { "name": "style", "type": "string", "label": "风格", "indexed": true },
+        { "name": "palette", "type": "text", "label": "配色（JSON 数组）" },
+        { "name": "composition", "type": "string", "label": "构图" },
+        { "name": "file_path", "type": "string", "label": "本地路径", "required": true },
+        { "name": "cloud_url", "type": "string", "label": "云端镜像 URL" },
+        { "name": "thumbnail_path", "type": "string", "label": "缩略图路径" },
+        { "name": "width", "type": "integer", "label": "宽" },
+        { "name": "height", "type": "integer", "label": "高" },
+        { "name": "in_library", "type": "boolean", "label": "进图库", "default": false, "indexed": true },
+        { "name": "batch_id", "type": "string", "label": "所属批次", "indexed": true },
+        { "name": "fingerprint", "type": "string", "label": "去重指纹（hash）" },
+        { "name": "ai_generated_tag", "type": "boolean", "label": "Etsy AI 标注", "default": true },
+        { "name": "created_at", "type": "datetime", "label": "生成时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["source_type"], ["parent_image_id"], ["in_library"], ["batch_id"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_taste_signals",
+      "label": "审美信号",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "image_id", "type": "string", "label": "图片 ID", "required": true, "indexed": true },
+        { "name": "signal", "type": "integer", "label": "信号 (+1/-1)", "required": true },
+        { "name": "theme", "type": "string", "label": "图主题" },
+        { "name": "style", "type": "string", "label": "图风格" },
+        { "name": "palette", "type": "text", "label": "图配色" },
+        { "name": "created_at", "type": "datetime", "label": "时间", "indexed": true }
+      ],
+      "indexes": [["user_id"], ["image_id"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_taste_profile",
+      "label": "审美档案",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "required": true, "indexed": true },
+        { "name": "version", "type": "integer", "label": "档案版本", "default": 1 },
+        { "name": "profile_json", "type": "text", "label": "档案内容（JSON）" },
+        { "name": "signal_count", "type": "integer", "label": "累积信号数", "default": 0 },
+        { "name": "stage", "type": "enum", "label": "学习阶段", "options": ["cold_start", "mixed", "main"], "default": "cold_start", "indexed": true },
+        { "name": "last_recomputed_at", "type": "datetime", "label": "最近重算" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["stage"]]
+    },
+    {
+      "name": "etsy_forge_runs",
+      "label": "刷图批次",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "kind", "type": "enum", "label": "批次类型", "options": ["push_batch", "remix_batch", "refresh_signals", "self_check"], "default": "push_batch", "indexed": true },
+        { "name": "themes_json", "type": "text", "label": "推送主题（JSON 数组）" },
+        { "name": "strategy", "type": "enum", "label": "推送策略", "options": ["cold_start", "mixed", "main"], "default": "cold_start" },
+        { "name": "generated_count", "type": "integer", "label": "生成张数", "default": 0 },
+        { "name": "succeeded_count", "type": "integer", "label": "成功张数", "default": 0 },
+        { "name": "failed_count", "type": "integer", "label": "失败张数", "default": 0 },
+        { "name": "liked_count", "type": "integer", "label": "收藏张数", "default": 0 },
+        { "name": "quota_spent", "type": "integer", "label": "配额消耗（500000=¥1）", "default": 0 },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["running", "success", "failed", "cancelled", "partial"], "default": "running", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "started_at", "type": "datetime", "label": "开始时间", "indexed": true },
+        { "name": "ended_at", "type": "datetime", "label": "结束时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["kind"], ["status"], ["started_at"]]
+    },
+    {
+      "name": "etsy_forge_weekly_signals",
+      "label": "Etsy 周度趋势",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "rising_themes_json", "type": "text", "label": "上升主题（JSON 数组）" },
+        { "name": "color_trends_json", "type": "text", "label": "色调趋势（JSON 数组）" },
+        { "name": "composition_trends_json", "type": "text", "label": "构图趋势（JSON 数组）" },
+        { "name": "category_trends_json", "type": "text", "label": "品类趋势（JSON 数组）" },
+        { "name": "source_summary", "type": "text", "label": "数据源摘要（EHunt + eRank 抓取统计）" },
+        { "name": "fetched_at", "type": "datetime", "label": "抓取时间", "indexed": true },
+        { "name": "valid_until", "type": "datetime", "label": "有效期", "indexed": true },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["fresh", "stale", "failed"], "default": "fresh", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["fetched_at"], ["status"]]
+    },
+    {
+      "name": "app_settings",
+      "label": "应用设置",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "ai_system_prompt", "type": "text", "label": "AI 推送提示词 (ai_system_prompt)" },
+        { "name": "risk_note", "type": "text", "label": "风险边界 (risk_note)" },
+        { "name": "batch_size", "type": "integer", "label": "推送批大小", "default": 50 },
+        { "name": "prefetch_at_index", "type": "integer", "label": "预生成触发位（刷到第 N 张）", "default": 30 },
+        { "name": "concurrency_per_batch", "type": "integer", "label": "批内并发上限", "default": 5 },
+        { "name": "min_signals_for_main_strategy", "type": "integer", "label": "进入主策略的最少信号数", "default": 50 },
+        { "name": "min_signals_for_mixed_strategy", "type": "integer", "label": "进入混合策略的最少信号数", "default": 10 },
+        { "name": "dedup_cosine_threshold", "type": "number", "label": "批间去重 cosine 阈值", "default": 0.85 },
+        { "name": "printful_account", "type": "string", "label": "Printful 账号（连接后填）" },
+        { "name": "printful_oauth_token", "type": "text", "label": "Printful OAuth Token（加密存）" },
+        { "name": "auto_tag_ai_generated", "type": "boolean", "label": "导出时自动标 AI 生成", "default": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["updated_at"]]
+    },
+    {
+      "name": "app_automations",
+      "label": "自动化",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "title", "type": "string", "label": "名称", "required": true, "indexed": true },
+        { "name": "enabled", "type": "boolean", "label": "启用", "default": false, "indexed": true },
+        { "name": "schedule", "type": "string", "label": "触发规则", "default": "未设置" },
+        { "name": "native_action", "type": "string", "label": "执行动作", "default": "", "indexed": true },
+        { "name": "description", "type": "text", "label": "说明" },
+        { "name": "last_status", "type": "enum", "label": "最近状态", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"], "default": "not_connected", "indexed": true },
+        { "name": "last_run_summary", "type": "text", "label": "最近结果" },
+        { "name": "last_run_id", "type": "string", "label": "最近运行记录" },
+        { "name": "schedule_id", "type": "string", "label": "调度任务 ID" },
+        { "name": "schedule_status", "type": "enum", "label": "调度状态", "options": ["not_connected", "scheduled", "paused", "failed"], "default": "not_connected", "indexed": true },
+        { "name": "schedule_error", "type": "text", "label": "调度失败原因" },
+        { "name": "next_run_at", "type": "datetime", "label": "下次运行时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["enabled"], ["native_action"], ["last_status"], ["schedule_status"], ["updated_at"]]
+    },
+    {
+      "name": "run_history",
+      "label": "运行结果",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "title", "type": "string", "label": "运行标题", "required": true, "indexed": true },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["running", "success", "failed", "cancelled"], "default": "running", "indexed": true },
+        { "name": "summary", "type": "text", "label": "结果摘要" },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "kind", "type": "enum", "label": "运行类型", "options": ["push_batch", "remix_batch", "refresh_signals", "export", "self_check"], "indexed": true },
+        { "name": "ref_id", "type": "string", "label": "关联实体 ID（如 etsy_forge_runs.id）", "indexed": true },
+        { "name": "workflow_run_id", "type": "string", "label": "OpenWorkflow run ID" },
+        { "name": "schedule_run_history_id", "type": "string", "label": "schedule_run_history ID" },
+        { "name": "started_at", "type": "datetime", "label": "开始时间" },
+        { "name": "ended_at", "type": "datetime", "label": "结束时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["status"], ["kind"], ["ref_id"], ["updated_at"]]
+    },
+    {
+      "name": "assistant_messages",
+      "label": "AI 助手对话",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "role", "type": "enum", "label": "角色", "options": ["user", "assistant"], "required": true, "indexed": true },
+        { "name": "text", "type": "text", "label": "消息内容", "required": true },
+        { "name": "error", "type": "boolean", "label": "是否失败", "default": false },
+        { "name": "created_at", "type": "datetime", "label": "创建时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["role"], ["updated_at"]]
+    },
+    {
+      "name": "app_notifications",
+      "label": "通知目标",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "channel", "type": "enum", "label": "渠道", "options": ["system", "wechat_im"], "default": "system", "indexed": true },
+        { "name": "provider_id", "type": "string", "label": "IM 服务商", "default": "wechat" },
+        { "name": "chat_id", "type": "string", "label": "会话 ID" },
+        { "name": "target_label", "type": "string", "label": "目标", "required": true, "indexed": true },
+        { "name": "title", "type": "string", "label": "通知标题", "default": "Etsy AI 出图" },
+        { "name": "text", "type": "text", "label": "通知正文" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["not_connected", "ready", "sent", "failed"], "default": "not_connected", "indexed": true },
+        { "name": "last_error", "type": "text", "label": "失败原因" },
+        { "name": "last_message_id", "type": "string", "label": "最近消息 ID" },
+        { "name": "last_sent_at", "type": "datetime", "label": "最近发送时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["channel"], ["status"], ["updated_at"]]
+    },
+    {
+      "name": "app_command_runs",
+      "label": "IM 命令",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "command", "type": "string", "label": "命令", "required": true, "indexed": true },
+        { "name": "risk_level", "type": "enum", "label": "风险", "options": ["read", "low_write", "high_risk"], "default": "read", "indexed": true },
+        { "name": "confirmation_required", "type": "boolean", "label": "需要确认", "default": true },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["not_connected", "draft", "pending_confirmation", "success", "failed", "rejected"], "default": "not_connected", "indexed": true },
+        { "name": "result_summary", "type": "text", "label": "结果" },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "last_run_id", "type": "string", "label": "最近运行记录" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["command"], ["risk_level"], ["status"], ["updated_at"]]
+    },
+    {
+      "name": "acceptance_checks",
+      "label": "验收清单",
+      "fields": [
+        { "name": "id", "type": "string", "primary": true },
+        { "name": "acceptance_id", "type": "string", "label": "验收项 ID", "required": true, "indexed": true },
+        { "name": "done", "type": "boolean", "label": "已验收", "default": false },
+        { "name": "status", "type": "enum", "label": "验收状态", "options": ["unverified", "passed", "failed", "blocked"], "default": "unverified", "indexed": true },
+        { "name": "evidence", "type": "text", "label": "验收证据" },
+        { "name": "failure_reason", "type": "text", "label": "失败或阻塞原因" },
+        { "name": "evidence_run_id", "type": "string", "label": "关联运行记录" },
+        { "name": "completed_at", "type": "datetime", "label": "验收时间" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["acceptance_id"], ["status"], ["updated_at"]]
+    }
+  ]
+}

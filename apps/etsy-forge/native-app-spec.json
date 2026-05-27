@@ -1,0 +1,115 @@
+{
+  "$schema": "https://lumos.io/schemas/native-app-spec.v1.json",
+  "version": 1,
+  "summary": "Etsy AI 出图：小白卖家打开就刷，AI 主动推送原创设计图，喜欢的进图库，图库内可继续 AI 二创，最终一键下载或传 Printful。用户全程零输入、零配置、零决策。所有 AI 出图统一走 src/lib/tools/image-gen-tool.ts + 云端图片服务商 + 自动扣配额；趋势数据复用 EHunt + eRank 抓取。",
+  "userVisibleScope": [
+    "进入应用立即看到 AI 推送的原创设计图（基于当周 Etsy 趋势 + 个人审美档案），左右滑或键盘 ← / → 切换、点 👍 收藏进图库、点 👎 跳过。",
+    "刷到第 30 张时后台自动预生成下一批 50 张；批与批之间无缝衔接；配额不足显示充值入口；生图失败单张跳过；网络断保留进度。",
+    "在图库网格视图查看所有 👍 过的图，可按 [全部 / 仅原图 / 仅二创] 过滤；单击进入详情/二创页；多选批量下载或一键传 Printful。",
+    "在详情页通过 6 个预设按钮（换配色 / 换风格 / 换主体 / 出系列 / 改尺寸 / 去背景）对原图进行 AI 二创，每次出 4 张候选挑 1 张或全选进图库；底部显示从原图衍生的所有图链。",
+    "在设置页查看当前云端图片服务商（只读）、剩余配额 + 充值入口、Printful 账号连接、清空图库 / 重置审美档案的危险操作；AI 提示词和风险边界在「高级设置」折叠区可见。",
+    "在运行结果页查看每批刷图记录：推送主题方向、生成张数、收藏张数、配额消耗、失败原因（如有）。",
+    "在自动化页查看趋势数据周更巡更（默认每周一 03:00 跑一次 EHunt + eRank 抓取合成 weekly_etsy_signals，过期 7 天兜底）。",
+    "云端图片服务商缺失 / 配额耗尽 / EHunt 抓取失败时状态进入 needs_auth / failed 并显示原因；任何模板都不能用 mock 数据冒充产物。"
+  ],
+  "status": {
+    "states": ["not_configured", "needs_auth", "ready", "syncing", "running", "failed", "not_connected"],
+    "readyCriteria": [
+      "应用页面可打开；设置页已保存默认值。",
+      "云端图片服务商已配置（管理员在 /admin/image-providers 维护）。",
+      "用户云端配额 > 0，可拉至少一批 50 张图。",
+      "首批刷图成功跑通：用户能看到至少 1 张 AI 生成的原创图。"
+    ],
+    "notConnectedBehavior": "云端图片服务商缺失时显示「需联系管理员配置图片服务商」；配额耗尽时显示充值入口；EHunt / eRank 抓取失败时使用上次趋势数据兜底并标 stale；绝不用 mock 图冒充产物。"
+  },
+  "settings": [
+    { "id": "image-provider", "label": "图片服务商", "fields": ["当前云端服务商（只读）", "当前模型（只读）", "剩余配额", "充值入口"] },
+    { "id": "printful", "label": "Printful 账号", "fields": ["连接状态", "账号名", "授权范围", "断开入口"] },
+    { "id": "danger-zone", "label": "危险操作", "fields": ["清空图库", "重置审美档案", "重新拉取趋势数据"] },
+    { "id": "advanced", "label": "高级设置（默认折叠，不建议小白用户改动）", "fields": ["AI 推送提示词", "风险边界", "推送批大小", "并发上限"] }
+  ],
+  "data": {
+    "entities": [
+      "etsy_forge_images",
+      "etsy_forge_taste_signals",
+      "etsy_forge_taste_profile",
+      "etsy_forge_runs",
+      "etsy_forge_weekly_signals",
+      "app_settings",
+      "app_automations",
+      "run_history",
+      "assistant_messages",
+      "app_notifications",
+      "app_command_runs",
+      "acceptance_checks"
+    ],
+    "reusableStores": ["settings", "run_history", "notifications", "command_runs"]
+  },
+  "ai": {
+    "enabled": true,
+    "promptSettings": true,
+    "draftBeforeWrite": true,
+    "visibleFailureHandling": true
+  },
+  "automations": {
+    "enabled": true,
+    "controls": ["enable", "pause", "run_now", "edit", "delete"],
+    "visibleRunResults": true
+  },
+  "runResults": {
+    "visible": true,
+    "states": ["running", "success", "failed", "cancelled"],
+    "failureReasons": true,
+    "retry": true
+  },
+  "im": {
+    "enabled": true,
+    "lowRiskCommands": [
+      "/etsy-forge status",
+      "/etsy-forge runs",
+      "/etsy-forge library",
+      "/etsy-forge quota"
+    ],
+    "confirmationRequiredFor": [
+      "通过 IM 命令触发新一轮趋势数据抓取（消耗 EHunt / eRank 配额）",
+      "通过 IM 命令批量传图到 Printful（必须在应用内确认范围）",
+      "通过 IM 命令清空图库 / 重置审美档案"
+    ],
+    "visibleCommandResults": true
+  },
+  "risk": {
+    "writeActionsRequireConfirmation": true,
+    "highRiskActions": [
+      "清空全部图库（不可恢复）",
+      "重置审美档案（清空 100% 学习信号，下次推送回到冷启动）",
+      "批量传图到 Printful（消耗用户 Printful 配额）",
+      "批量下载（大量 IO + 磁盘占用）"
+    ],
+    "outOfScope": [
+      "爬同行设计师 / Etsy 卖家的图作为生产素材（DMCA 封店级风险，绝对禁止）",
+      "对他人原创图做 AI 二创（包括 inpaint / restyle / 改色），二创只允许针对用户自己的原创 AI 生成图",
+      "自动上架到 Etsy / Shopify / Printful（任何写社交 / 写商品动作都需要用户在应用内显式确认）",
+      "暴露 AI 模型选型 UI 给用户（云端 admin 在 /admin/image-providers 决策；产品定位禁止用户做模型选择）",
+      "在应用内引入任何「让用户写 prompt / 填表单 / 选利基词」的输入框（PRD 严禁，违反零输入定位）",
+      "为该应用单独修改 BrowserManager / 全局浏览器基础设施",
+      "云端配额耗尽时仍继续后续生图（必须显示充值入口并停止）",
+      "用 mock 图 / 占位图冒充生图成功"
+    ]
+  },
+  "acceptance": [
+    { "id": "installation-self-check", "label": "安装自检", "howToVerify": "安装完成后查看安装自检结果，或在状态页点击「重新运行安装自检」；通过或失败会自动写入本验收项。" },
+    { "id": "image-provider-bound", "label": "云端图片服务商可用", "howToVerify": "状态页显示当前服务商和模型；缺失时显示 needs_auth 和「请联系管理员」入口。" },
+    { "id": "first-batch", "label": "首批刷图跑通", "howToVerify": "进入主刷图入口立即看到至少 1 张原创 AI 图；50 张全部生成成功率 ≥ 90%；失败的单张明确显示「这张出炸了，跳过」并自动跳过下一张。" },
+    { "id": "swipe-and-like", "label": "刷图 + 收藏闭环", "howToVerify": "点 👍 后图片进入图库（in_library=1）；图库页能立即看到刚收藏的图；点 👎 不进图库但写入 etsy_forge_taste_signals 表。" },
+    { "id": "remix-flow", "label": "二创闭环", "howToVerify": "在详情页点 6 个预设按钮中的任意一个，10 秒内出 4 张候选图；挑 1 张进图库后，原图详情页底部「衍生链」+1。" },
+    { "id": "trend-signals-fresh", "label": "趋势数据新鲜度", "howToVerify": "运行结果页能看到最近一次 etsy-forge:refresh-weekly-signals 巡更记录；etsy_forge_weekly_signals.updated_at 在 7 天内；过期时 batch 仍能跑但 status 标 stale。" },
+    { "id": "quota-visible", "label": "配额可见 + 充值入口", "howToVerify": "设置页显示剩余配额（整数，500000 = ¥1）；配额不足拉新批时显示充值弹窗，不能静默失败。" },
+    { "id": "library-export", "label": "图库导出", "howToVerify": "图库多选 → 「打包下载」生成 zip，包含选中的所有图；「传 Printful」需 Printful 账号已连接，否则提示去设置页连接。" },
+    { "id": "compliance-ai-tag", "label": "AI 生成元数据标注", "howToVerify": "下载或传 Printful 时图片 metadata 包含 ai_generated=true（Etsy 2024 新规要求）；不标记会被封店。" },
+    { "id": "danger-zone-confirm", "label": "危险操作二次确认", "howToVerify": "点「清空图库」「重置审美档案」「重新拉取趋势数据」必须弹二次确认弹窗，未确认不执行。" },
+    { "id": "review-automations", "label": "查看自动化", "howToVerify": "自动化页能看到「趋势数据周更巡更」（默认每周一 03:00）；可立即运行 / 暂停；运行结果写入 run_history。" },
+    { "id": "review-im-commands", "label": "查看 IM 命令", "howToVerify": "通知命令页能看到 /etsy-forge status|runs|library|quota；高风险命令（如清空图库）必须回到应用内确认。" },
+    { "id": "review-run-history", "label": "查看运行结果", "howToVerify": "运行结果页能看到每批刷图记录、推送方向、生成/收藏数、配额消耗、失败原因。" },
+    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页修改高级设置（AI 提示词、推送批大小）并保存，再次打开仍能看到。" }
+  ]
+}

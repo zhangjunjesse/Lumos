@@ -1,0 +1,139 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "通知命令",
+  "description": "管理 Etsy AI 出图 的 IM 通知目标和命令模板，含 native:app:run-command 测试入口。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "接入边界",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 默认应用静默工作；用户主动 👍 / 二创时不通知。\n- 趋势数据周更巡更失败、配额耗尽时可推 IM 提醒用户处理。\n- 微信通知依赖用户先在微信里给 Lumos/Clawbot 发过消息完成绑定。\n- 外部微信可发以下通用只读命令查询应用：\n  - /app Etsy AI 出图 status — 查看应用就绪状态\n  - /app Etsy AI 出图 runs — 查看最近运行结果\n  - /app Etsy AI 出图 acceptance — 查看验收进度\n  - /app Etsy AI 出图 help — 查看命令说明\n- 业务写操作（清空图库、批量传 Printful、触发新一轮趋势抓取）必须回到应用内确认，不能从微信 /app 入口直接执行。"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_notifications }}",
+      "columns": [
+        { "field": "target_label", "label": "通知目标", "search": true },
+        { "field": "channel", "label": "渠道", "render": "tag" },
+        { "field": "provider_id", "label": "服务商", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "last_error", "label": "失败原因", "search": true },
+        { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["target_label", "last_error"] },
+      "filter": [
+        { "field": "status", "options": ["not_connected", "ready", "sent", "failed"] }
+      ],
+      "actions": {
+        "toolbar": [
+          {
+            "label": "新增通知目标",
+            "primary": true,
+            "run": "db:create:app_notifications",
+            "input": {
+              "channel": "wechat_im",
+              "provider_id": "wechat",
+              "chat_id": "",
+              "target_label": "默认微信用户",
+              "title": "Etsy AI 出图通知测试",
+              "text": "这是一条 Etsy AI 出图测试通知，用户回复仍进入 Lumos 主 Agent。",
+              "status": "not_connected",
+              "last_error": "首次发送前请先在微信里给 Lumos/Clawbot 发过一条消息完成绑定。"
+            }
+          },
+          {
+            "label": "发送测试通知",
+            "run": "im:notify",
+            "input": {
+              "title": "Etsy AI 出图 测试通知",
+              "text": "Etsy AI 出图通知通道测试，未触发任何任务。",
+              "target_label": "默认微信用户"
+            }
+          }
+        ],
+        "row": [
+          { "label": "发送测试通知", "run": "im:notify", "confirm": "确认发送测试通知到微信？" }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_command_runs }}",
+      "columns": [
+        { "field": "command", "label": "命令", "search": true },
+        { "field": "risk_level", "label": "风险", "render": "tag" },
+        { "field": "confirmation_required", "label": "需确认", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "result_summary", "label": "结果", "search": true },
+        { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["command", "result_summary", "failure_reason"] },
+      "filter": [
+        { "field": "risk_level", "options": ["read", "low_write", "high_risk"] },
+        { "field": "status", "options": ["not_connected", "draft", "pending_confirmation", "success", "failed", "rejected"] }
+      ],
+      "actions": {
+        "toolbar": [
+          {
+            "label": "添加状态命令",
+            "primary": true,
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/etsy-forge status",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看应用就绪状态、图片服务商、配额、趋势数据新鲜度；外部微信也可发 /app Etsy AI 出图 status 查询。"
+            }
+          },
+          {
+            "label": "添加最近运行命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/etsy-forge runs",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看最近 10 批刷图记录：推送方向、生成/收藏数、配额消耗、失败原因。"
+            }
+          },
+          {
+            "label": "添加图库统计命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/etsy-forge library",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看图库总图数、原图/二创占比、最近收藏的图缩略图。"
+            }
+          },
+          {
+            "label": "添加配额命令",
+            "run": "db:create:app_command_runs",
+            "input": {
+              "command": "/etsy-forge quota",
+              "risk_level": "read",
+              "confirmation_required": false,
+              "status": "draft",
+              "result_summary": "查看云端剩余配额（整数，500000 = ¥1）和充值入口链接。"
+            }
+          }
+        ],
+        "row": [
+          {
+            "label": "测试命令",
+            "run": "native:app:run-command",
+            "input": { "confirmed": true },
+            "confirm": "确认在应用内测试执行这条 IM 命令？通用只读命令也可通过微信 /app Etsy AI 出图 status|runs|acceptance|help 查询。"
+          }
+        ]
+      }
+    }
+  ]
+}

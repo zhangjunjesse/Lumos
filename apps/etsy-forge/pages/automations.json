@@ -1,0 +1,72 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "自动化",
+  "description": "管理趋势数据周更巡更：默认每周一 03:00 跑一次 EHunt + eRank 抓取，合成 weekly_etsy_signals，过期 7 天兜底并标 stale。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.app_automations }}",
+    "columns": [
+      { "field": "title", "label": "名称", "search": true },
+      { "field": "enabled", "label": "启用", "render": "tag" },
+      { "field": "schedule", "label": "触发规则", "search": true },
+      { "field": "native_action", "label": "执行动作", "search": true },
+      { "field": "last_status", "label": "最近状态", "render": "tag" },
+      { "field": "schedule_status", "label": "调度状态", "render": "tag" },
+      { "field": "next_run_at", "label": "下次运行", "render": "date", "sortable": true },
+      { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "last_status", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+      { "field": "schedule_status", "options": ["not_connected", "scheduled", "paused", "failed"] }
+    ],
+    "actions": {
+      "toolbar": [
+        {
+          "label": "添加趋势数据周更巡更",
+          "primary": true,
+          "run": "db:create:app_automations",
+          "input": {
+            "title": "趋势数据周更巡更",
+            "enabled": false,
+            "schedule": "每周一 03:00",
+            "native_action": "etsy-forge:refresh-weekly-signals",
+            "description": "跑一次 EHunt + eRank 抓取，合成 etsy_forge_weekly_signals（rising_themes / color_trends / composition_trends / category_trends）。过期 7 天时仍可用但 status 标 stale。",
+            "last_status": "not_connected",
+            "last_run_summary": "默认禁用。开启前请确认 EHunt 桥 + eRank AdsPower profile 可用；首次运行会消耗 EHunt / eRank 配额。"
+          }
+        }
+      ],
+      "row": [
+        {
+          "label": "立即运行",
+          "run": "native:app:run-automation",
+          "input": { "confirmed": true },
+          "confirm": "确认立即运行这条自动化？运行结果会写入「运行结果」。趋势抓取会消耗 EHunt / eRank 配额。"
+        },
+        {
+          "label": "同步定时任务",
+          "run": "native:app:sync-automation-schedule",
+          "confirm": "确认把这条自动化同步为 Lumos 定时任务？关闭自动化会暂停并同步终结 OpenWorkflow 当前 run。"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "title", "label": "名称", "required": true },
+        { "type": "switch", "name": "enabled", "label": "启用" },
+        { "type": "text", "name": "schedule", "label": "触发规则", "placeholder": "例如：每周一 03:00" },
+        { "type": "text", "name": "native_action", "label": "执行动作", "placeholder": "例如：etsy-forge:refresh-weekly-signals" },
+        { "type": "textarea", "name": "description", "label": "说明", "rows": 4 },
+        { "type": "select", "name": "last_status", "label": "最近状态", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+        { "type": "textarea", "name": "last_run_summary", "label": "最近结果", "rows": 4 },
+        { "type": "select", "name": "schedule_status", "label": "调度状态", "options": ["not_connected", "scheduled", "paused", "failed"] },
+        { "type": "text", "name": "next_run_at", "label": "下次运行时间" },
+        { "type": "textarea", "name": "schedule_error", "label": "调度失败原因", "rows": 3 }
+      ],
+      "submit": { "label": "保存自动化", "run": "db:update:app_automations" }
+    }
+  }
+}

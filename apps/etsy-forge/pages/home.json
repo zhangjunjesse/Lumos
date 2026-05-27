@@ -1,0 +1,30 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "刷图",
+  "description": "主刷图界面：AI 主动推送原创设计图，👍 进图库，👎 跳过。用户全程零输入、零配置。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "Etsy AI 出图 — 主刷图",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "**全屏刷图界面在专属窗口打开，按下方按钮进入。**\n\n- 进入后 AI 立即按 当周 Etsy 趋势 + 个人审美档案 推送 50 张原创设计图\n- 👍 收藏进图库；👎 跳过；左右滑或键盘 ← / → 切换\n- 刷到第 30 张时后台自动预生成下一批（无缝衔接，不等待）\n- 单张生图失败自动跳过；网络断保留进度；配额不足显示充值入口\n- 想看已收藏的图请到「我的图库」；想做二创请在图库里点击单张图进入「详情/二创」"
+        },
+        { "type": "button", "label": "进入刷图界面", "primary": true, "open": "/apps/etsy-forge" },
+        { "type": "button", "label": "打开我的图库", "open": "/apps/etsy-forge/library" }
+      ]
+    },
+    {
+      "type": "card",
+      "title": "今日数据",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 今日已刷批次：{{ db.etsy_forge_runs.count }}\n- 图库总图数：{{ db.etsy_forge_images.count }}\n- 累积审美信号：{{ db.etsy_forge_taste_signals.count }}\n- 趋势数据状态：{{ db.etsy_forge_weekly_signals.count }} 份"
+        }
+      ]
+    }
+  ]
+}

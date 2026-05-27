@@ -1,0 +1,19 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "二创详情",
+  "description": "对图库中的原图做 AI 二创：换配色 / 换风格 / 换主体 / 出系列 / 改尺寸 / 去背景。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "图片详情 + AI 二创",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "**详情/二创界面在主入口打开。**\n\n- 在主图库点击任意一张图 → 进入大图详情\n- 6 个预设按钮（换配色 / 换风格 / 换主体 / 出系列 / 改尺寸 / 去背景）\n- 每次出 4 张候选 → 挑 1 张或全选进图库\n- 底部显示「衍生链」：从原图衍生出的所有图\n- 二创全部基于你自己的原创图，完全合规、不会被 Etsy 封店"
+        },
+        { "type": "button", "label": "打开图库挑图二创", "primary": true, "open": "/apps/etsy-forge/library" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://lumos.io/schemas/app-routes.v1.json",
+  "default": "home",
+  "menu": [
+    { "id": "home", "label": "刷图", "icon": "image", "page": "pages/home.json" },
+    { "id": "library", "label": "我的图库", "icon": "library", "page": "pages/library.json" },
+    { "id": "detail", "label": "二创详情", "icon": "wand-2", "page": "pages/detail.json" },
+    { "id": "status", "label": "状态", "icon": "circle-gauge", "page": "pages/status.json" },
+    { "id": "settings", "label": "设置", "icon": "settings", "page": "pages/settings.json" },
+    { "id": "automations", "label": "自动化", "icon": "calendar-clock", "page": "pages/automations.json" },
+    { "id": "im", "label": "通知命令", "icon": "message-square", "page": "pages/im.json" },
+    { "id": "run-history", "label": "运行结果", "icon": "history", "page": "pages/run-history.json" }
+  ]
+}

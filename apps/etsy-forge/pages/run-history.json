@@ -1,0 +1,37 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "运行结果",
+  "description": "查看每批刷图、每次二创、每次趋势更新的 running/success/failed/cancelled 历史、结果摘要、失败原因 (failure_reason) 和关联的 OpenWorkflow run。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "运行记录",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "- 每批刷图（push_batch）、每次二创（remix_batch）、每次趋势更新（refresh_signals）、每次安装自检（self_check）都会写一条 run_history。\n- 「关闭」/「删除」批次必须同步调用 schedule-run-control.ts 终结当前 OpenWorkflow run；这里能看到对应记录变成 cancelled。\n- failure_reason 写实际原因（如 云端配额耗尽 / 图片服务商错误 / EHunt 桥不可用 / Printful OAuth 失效），不允许伪装 success。"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.run_history }}",
+      "columns": [
+        { "field": "title", "label": "运行标题", "search": true },
+        { "field": "kind", "label": "类型", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "summary", "label": "结果摘要", "search": true },
+        { "field": "failure_reason", "label": "失败原因 (failure_reason)", "search": true },
+        { "field": "workflow_run_id", "label": "OpenWorkflow run" },
+        { "field": "started_at", "label": "开始", "render": "date", "sortable": true },
+        { "field": "ended_at", "label": "结束", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["title", "summary", "failure_reason"] },
+      "filter": [
+        { "field": "status", "options": ["running", "success", "failed", "cancelled"] },
+        { "field": "kind", "options": ["push_batch", "remix_batch", "refresh_signals", "export", "self_check"] }
+      ]
+    }
+  ]
+}

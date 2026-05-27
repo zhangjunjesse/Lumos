@@ -87,6 +87,14 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     defaultVisible: true,
     icon: 'radio',
   },
+  {
+    id: 'etsy-forge',
+    name: 'Etsy AI 出图',
+    description:
+      'Etsy POD 小白卖家打开就刷，AI 主动推送原创设计图，喜欢的进图库，图库内可继续 AI 二创，最终一键导出。全程零输入、零配置、零决策',
+    defaultVisible: true,
+    icon: 'image',
+  },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';
