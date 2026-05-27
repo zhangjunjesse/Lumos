@@ -84,10 +84,16 @@ export async function sendOutbound(
     if (!bytes) {
       return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
     }
-    const result = await sendImageWithRetry(client, peer, bytes, contextToken);
+    const result = await sendImageWithRetry(
+      client,
+      peer,
+      bytes,
+      contextToken,
+      () => refreshContextToken(deps, peer, contextToken),
+    );
     if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
-    contextToken = deps.getContextToken(peer) || contextToken;
+    contextToken = result.contextToken || deps.getContextToken(peer) || contextToken;
   }
 
   for (const attachment of audioAttachments) {
@@ -99,20 +105,34 @@ export async function sendOutbound(
     if (shouldTryNativeVoice(attachment)) {
       const voice = describeNativeVoice(bytes, attachment);
       if (voice) {
-        const nativeResult = await sendVoiceWithRetry(client, peer, bytes, voice, contextToken);
+        const nativeResult = await sendVoiceWithRetry(
+          client,
+          peer,
+          bytes,
+          voice,
+          contextToken,
+          () => refreshContextToken(deps, peer, contextToken),
+        );
         if (nativeResult.ok) {
           lastMessageId = nativeResult.clientId;
-          contextToken = deps.getContextToken(peer) || contextToken;
+          contextToken = nativeResult.contextToken || deps.getContextToken(peer) || contextToken;
           continue;
         }
         console.warn('[wechat/send] native voice send failed; falling back to file attachment:', nativeResult.error);
       }
     }
 
-    const result = await sendFileWithRetry(client, peer, bytes, attachment.name, contextToken);
+    const result = await sendFileWithRetry(
+      client,
+      peer,
+      bytes,
+      attachment.name,
+      contextToken,
+      () => refreshContextToken(deps, peer, contextToken),
+    );
     if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
-    contextToken = deps.getContextToken(peer) || contextToken;
+    contextToken = result.contextToken || deps.getContextToken(peer) || contextToken;
   }
 
   for (const attachment of fileAttachments) {
@@ -120,10 +140,17 @@ export async function sendOutbound(
     if (!bytes) {
       return { ok: false, error: `attachment "${attachment.name}" has no readable bytes` };
     }
-    const result = await sendFileWithRetry(client, peer, bytes, attachment.name, contextToken);
+    const result = await sendFileWithRetry(
+      client,
+      peer,
+      bytes,
+      attachment.name,
+      contextToken,
+      () => refreshContextToken(deps, peer, contextToken),
+    );
     if (!result.ok) return { ok: false, error: explainWechatIlinkError(result.error) };
     lastMessageId = result.clientId;
-    contextToken = deps.getContextToken(peer) || contextToken;
+    contextToken = result.contextToken || deps.getContextToken(peer) || contextToken;
   }
 
   if (text) {
@@ -131,7 +158,13 @@ export async function sendOutbound(
     for (let i = 0; i < chunks.length; i += 1) {
       const chunk = chunks[i];
       logWechatSend(`text attempt peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} chars=${chunk.length} ctx=${contextToken ? 'yes' : 'no'}`);
-      const result = await sendOneWithRetry(client, peer, chunk, contextToken);
+      const result = await sendOneWithRetry(
+        client,
+        peer,
+        chunk,
+        contextToken,
+        () => refreshContextToken(deps, peer, contextToken),
+      );
       if (!result.ok) {
         const error = explainWechatIlinkError(result.error);
         logWechatSend(`text failed peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} error="${truncateForLog(error)}"`);
@@ -139,11 +172,16 @@ export async function sendOutbound(
       }
       lastMessageId = result.clientId;
       logWechatSend(`text ok peer=${redactPeer(peer)} chunk=${i + 1}/${chunks.length} clientId=${lastMessageId || ''}`);
-      contextToken = deps.getContextToken(peer) || contextToken;
+      contextToken = result.contextToken || deps.getContextToken(peer) || contextToken;
     }
   }
 
   return { ok: true, messageId: lastMessageId };
+}
+
+function refreshContextToken(deps: SendDeps, peer: string, currentToken: string): string {
+  const latest = deps.getContextToken(peer).trim();
+  return latest && latest !== currentToken ? latest : '';
 }
 
 function readAttachmentBytes(attachment: IMFileAttachment): Buffer | null {
@@ -167,15 +205,17 @@ async function sendImageWithRetry(
   peer: string,
   bytes: Buffer,
   contextToken: string,
+  refreshToken: () => string,
 ): Promise<SendOneResult> {
   const clientId = newClientId();
   const first = await client.sendImage({ toUserId: peer, bytes, contextToken, clientId });
-  if (first.ok) return { ok: true, clientId };
+  if (first.ok) return { ok: true, clientId, contextToken };
 
   if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
     await delay(500);
-    const second = await client.sendImage({ toUserId: peer, bytes, contextToken, clientId });
-    if (second.ok) return { ok: true, clientId };
+    const retryToken = refreshToken() || contextToken;
+    const second = await client.sendImage({ toUserId: peer, bytes, contextToken: retryToken, clientId });
+    if (second.ok) return { ok: true, clientId, contextToken: retryToken };
     return { ok: false, error: second.error || `sendImage failed (retry): ret=${second.ret}` };
   }
 
@@ -188,15 +228,17 @@ async function sendFileWithRetry(
   bytes: Buffer,
   fileName: string,
   contextToken: string,
+  refreshToken: () => string,
 ): Promise<SendOneResult> {
   const clientId = newClientId();
   const first = await client.sendFile({ toUserId: peer, bytes, fileName, contextToken, clientId });
-  if (first.ok) return { ok: true, clientId };
+  if (first.ok) return { ok: true, clientId, contextToken };
 
   if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
     await delay(500);
-    const second = await client.sendFile({ toUserId: peer, bytes, fileName, contextToken, clientId });
-    if (second.ok) return { ok: true, clientId };
+    const retryToken = refreshToken() || contextToken;
+    const second = await client.sendFile({ toUserId: peer, bytes, fileName, contextToken: retryToken, clientId });
+    if (second.ok) return { ok: true, clientId, contextToken: retryToken };
     return { ok: false, error: second.error || `sendFile failed (retry): ret=${second.ret}` };
   }
 
@@ -216,6 +258,7 @@ async function sendVoiceWithRetry(
   bytes: Buffer,
   voice: NativeVoiceDescription,
   contextToken: string,
+  refreshToken: () => string,
 ): Promise<SendOneResult> {
   const clientId = newClientId();
   const first = await client.sendVoice({
@@ -228,21 +271,22 @@ async function sendVoiceWithRetry(
     bitsPerSample: voice.bitsPerSample,
     playtime: voice.playtime,
   });
-  if (first.ok) return { ok: true, clientId };
+  if (first.ok) return { ok: true, clientId, contextToken };
 
   if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
     await delay(500);
+    const retryToken = refreshToken() || contextToken;
     const second = await client.sendVoice({
       toUserId: peer,
       bytes,
-      contextToken,
+      contextToken: retryToken,
       clientId,
       encodeType: voice.encodeType,
       sampleRate: voice.sampleRate,
       bitsPerSample: voice.bitsPerSample,
       playtime: voice.playtime,
     });
-    if (second.ok) return { ok: true, clientId };
+    if (second.ok) return { ok: true, clientId, contextToken: retryToken };
     return { ok: false, error: second.error || `sendVoice failed (retry): ret=${second.ret}` };
   }
 
@@ -253,6 +297,7 @@ interface SendOneResult {
   ok: boolean;
   error?: string;
   clientId?: string;
+  contextToken?: string;
 }
 
 async function sendOneWithRetry(
@@ -260,18 +305,21 @@ async function sendOneWithRetry(
   peer: string,
   text: string,
   contextToken: string,
+  refreshToken: () => string,
 ): Promise<SendOneResult> {
   const clientId = newClientId();
   const first = await client.sendText({ toUserId: peer, text, contextToken, clientId });
-  if (first.ok) return { ok: true, clientId };
+  if (first.ok) return { ok: true, clientId, contextToken };
 
   // ret=-2 means context_token stale; retry once with anything we have.
-  // (Caller refreshes token from store between chunks; here we just retry the same payload
-  // since this single call already used the freshest token we had.)
+  // In packaged Windows runs, inbound monitoring and reply sending happen in
+  // different processes. The user may send a newer message while the AI is
+  // still thinking, so retry with the latest token persisted by the monitor.
   if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
     await delay(500);
-    const second = await client.sendText({ toUserId: peer, text, contextToken, clientId });
-    if (second.ok) return { ok: true, clientId };
+    const retryToken = refreshToken() || contextToken;
+    const second = await client.sendText({ toUserId: peer, text, contextToken: retryToken, clientId });
+    if (second.ok) return { ok: true, clientId, contextToken: retryToken };
     return { ok: false, error: second.error || `send failed (retry): ret=${second.ret}` };
   }
 

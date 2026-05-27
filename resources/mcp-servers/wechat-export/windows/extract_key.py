@@ -1,8 +1,10 @@
 """Extract Windows WeChat database keys for Lumos.
 
-The script only reads the local WeChat.exe process selected by the user in
-Lumos. It verifies every candidate key against the user's own MicroMsg.db before
-persisting it under ~/.lumos/wechat-export.
+The script reads local WeChat/Weixin processes from the current Windows user,
+starting with the process selected by Lumos and then falling back to helper
+processes from the same desktop session. It verifies every candidate key
+against the user's own database files before persisting it under
+~/.lumos/wechat-export.
 
 Path discovery accepts both legacy WeChat Files/<wxid>/MSG layouts and newer
 xwechat_files/<wxid>/db_storage layouts, including when the user selected a
@@ -50,6 +52,9 @@ PREFERRED_KEY_MODULE_NAMES = (
     "weixin.dll",
     "wechat.dll",
     "wechatappex.exe",
+    "weixinappex.exe",
+    "wechatapp.exe",
+    "weixinapp.exe",
     "wechat.exe",
     "weixin.exe",
 )
@@ -167,6 +172,14 @@ def wechat_process_names() -> set[str]:
     names = {part.strip().lower() for part in raw.split(";") if part.strip()}
     names.add("wechat.exe")
     names.add("weixin.exe")
+    # Newer Windows WeChat/Weixin builds can keep runtime state in helper
+    # processes while the UI detector still reports the main executable PID.
+    # Keep the exact main process first in the caller, but let extraction fall
+    # through to these helpers when no verified key is found there.
+    names.add("wechatappex.exe")
+    names.add("weixinappex.exe")
+    names.add("wechatapp.exe")
+    names.add("weixinapp.exe")
     return names
 
 
@@ -186,6 +199,17 @@ def find_wechat_pids() -> list[int]:
             ok = Process32NextW(snap, ctypes.byref(entry))
     finally:
         CloseHandle(snap)
+    return pids
+
+
+def candidate_wechat_pids(primary_pid: int) -> list[int]:
+    """Return process scan order, preserving the UI-detected PID first."""
+    pids: list[int] = []
+    if primary_pid and primary_pid > 0:
+        pids.append(int(primary_pid))
+    for discovered in find_wechat_pids():
+        if discovered > 0 and discovered not in pids:
+            pids.append(discovered)
     return pids
 
 
@@ -218,7 +242,7 @@ def get_key_scan_modules(pid: int) -> list[tuple[int, int, str, str]]:
     Older Windows WeChat builds kept the useful anchors in WeChatWin.dll. Newer
     Windows WeChat/Weixin builds may expose different module names, so keep
     scanning exact known names first and then any module whose path clearly
-    belongs to WeChat. The SQLCipher4 string scan below remains the fallback
+    belongs to WeChat. The SQLCipher string scan below remains the fallback
     when no module is discoverable.
     """
     modules = list_process_modules(pid)
@@ -661,12 +685,10 @@ def _raw_key_candidates_around(block: bytes, center: int, radius: int = 96) -> l
 
 
 def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
-    """Scan readable process memory for SQLCipher4 cached key material."""
+    """Scan readable process memory for cached SQLCipher key material."""
     salt_to_records: dict[str, list[dict]] = {}
     for account in accounts:
         for rec in account.get("_db_records") or []:
-            if rec.get("mode") != "v4":
-                continue
             salt_to_records.setdefault(rec["salt"], []).append({**rec, "account": account})
     if not salt_to_records:
         return 0
@@ -676,7 +698,7 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
     seen_pairs: set[tuple[str, str | None]] = set()
     seen_raw_keys: set[tuple[str, bytes]] = set()
     regions = iter_readable_regions(handle)
-    log(f"[+] scanning memory regions={len(regions)} for SQLCipher4 key strings")
+    log(f"[+] scanning memory regions={len(regions)} for SQLCipher key strings")
     chunk_size = 4 * 1024 * 1024
     overlap = 512
 
@@ -758,7 +780,7 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
             tail = block[-overlap:]
             offset += to_read
     log(
-        "[+] SQLCipher4 memory scan "
+        "[+] SQLCipher memory scan "
         f"found={found} unique_strings={len(seen_strings)} "
         f"unique_pairs={len(seen_pairs)} raw_candidates={len(seen_raw_keys)}"
     )
@@ -795,7 +817,14 @@ def merge_accounts(existing: list[dict], recovered: list[dict]) -> list[dict]:
                 keys.update(previous["keys"])
             if isinstance(item.get("keys"), dict):
                 keys.update(item["keys"])
+            key_sources = {}
+            if isinstance(previous.get("key_sources"), dict):
+                key_sources.update(previous["key_sources"])
+            if isinstance(item.get("key_sources"), dict):
+                key_sources.update(item["key_sources"])
             merged = {**previous, **item, "keys": keys}
+            if key_sources:
+                merged["key_sources"] = key_sources
             if not merged.get("key"):
                 merged["key"] = next(iter(keys.values()), "")
             by_wxid[wxid] = merged
@@ -803,30 +832,14 @@ def merge_accounts(existing: list[dict], recovered: list[dict]) -> list[dict]:
 
 
 def extract(pid: int, accounts_out: str, key_out: str) -> int:
-    if not pid:
-        pids = find_wechat_pids()
-        pid = pids[0] if pids else 0
-    if not pid:
+    pids = candidate_wechat_pids(pid)
+    if not pids:
         raise RuntimeError("未找到运行中的 WeChat.exe / Weixin.exe")
+    log(f"[+] candidate pids={','.join(str(item) for item in pids)} primary={pid or 'auto'}")
 
     accounts = find_accounts()
     if not accounts:
         raise RuntimeError("未找到 Windows 微信数据目录")
-
-    modules = get_key_scan_modules(pid)
-    module_path = modules[0][2] if modules else ""
-    ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
-    log(f"[+] attaching pid={pid}")
-    if modules:
-        names = ", ".join(module[3] for module in modules[:8])
-        suffix = " ..." if len(modules) > 8 else ""
-        log(f"[+] key scan modules={len(modules)} names={names}{suffix}")
-    else:
-        log("[!] 未找到 WeChatWin.dll/Weixin.dll 等微信模块，将跳过旧版指针扫描并尝试全进程 SQLCipher4 字符串扫描")
-
-    handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
-    if not handle:
-        raise RuntimeError("无法读取微信进程。请用当前 Windows 用户运行 Lumos，并确认微信已打开。")
 
     for account in accounts:
         db_records = []
@@ -852,8 +865,11 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     recovered_by_wxid: dict[str, dict] = {}
     recovered_salts: set[str] = set()
     total_records = sum(len(account.get("_db_records") or []) for account in accounts)
+    ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
+    scan_summaries: list[dict] = []
+    total_pointer_keys_seen = 0
 
-    def mark_key(account: dict, record: dict, key_hex: str) -> bool:
+    def mark_key(account: dict, record: dict, key_hex: str, source_pid: int, source_module_path: str) -> bool:
         wxid = account["wxid"]
         item = recovered_by_wxid.setdefault(wxid, {
             "wxid": wxid,
@@ -863,54 +879,102 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
             "mode": account.get("mode"),
             "key": "",
             "keys": {},
-            "pid": pid,
-            "module_path": module_path,
+            "key_sources": {},
+            "pid": source_pid,
+            "module_path": source_module_path,
             "extracted_at": int(time.time() * 1000),
         })
         salt = record["salt"]
         if salt in item["keys"]:
             return False
         item["keys"][salt] = key_hex
+        item.setdefault("key_sources", {})[salt] = {
+            "pid": source_pid,
+            "module_path": source_module_path,
+            "db": _record_label(record),
+        }
         recovered_salts.add(salt)
         if not item["key"]:
             item["key"] = key_hex
+            item["pid"] = source_pid
+            item["module_path"] = source_module_path
         label = _record_label(record)
         if len(item["keys"]) == 1:
-            log(f"[FOUND] wxid={wxid} db={label} salt={salt[:8]}… key=<redacted>")
+            log(f"[FOUND] wxid={wxid} pid={source_pid} db={label} salt={salt[:8]}… key=<redacted>")
         else:
-            log(f"[FOUND] wxid={wxid} db={label} salt={salt[:8]}… key=<redacted> (extra db)")
+            log(f"[FOUND] wxid={wxid} pid={source_pid} db={label} salt={salt[:8]}… key=<redacted> (extra db)")
         return True
 
-    try:
-        seen_keys: set[bytes] = set()
+    for index, scan_pid in enumerate(pids, start=1):
+        if total_records and len(recovered_salts) >= total_records:
+            break
+
+        modules = get_key_scan_modules(scan_pid)
+        module_path = modules[0][2] if modules else ""
+        summary = {
+            "pid": scan_pid,
+            "opened": False,
+            "modules": len(modules),
+            "pointer_keys": 0,
+            "hex_found": 0,
+            "error": "",
+        }
+        scan_summaries.append(summary)
+
+        log(f"[+] attaching pid={scan_pid} ({index}/{len(pids)})")
         if modules:
-            for ptr_size in ptr_sizes:
-                log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
-                for base, size, module_path_candidate, module_name in modules:
-                    log(f"[+] scanning module {module_name} base=0x{base:x} size={size} path={module_path_candidate}")
-                    for key in candidate_keys(handle, base, size, ptr_size):
-                        if key in seen_keys:
-                            continue
-                        seen_keys.add(key)
-                        key_hex = key.hex()
-                        for account in accounts:
-                            for record in account.get("_db_records") or []:
-                                salt = record["salt"]
-                                if salt in recovered_salts:
-                                    continue
-                                if verify_db_key(key, record["path"], record["mode"]):
-                                    mark_key(account, record, key_hex)
+            names = ", ".join(module[3] for module in modules[:8])
+            suffix = " ..." if len(modules) > 8 else ""
+            log(f"[+] key scan modules={len(modules)} names={names}{suffix}")
+        else:
+            log("[!] 未找到 WeChatWin.dll/Weixin.dll 等微信模块，将跳过旧版指针扫描并尝试全进程 SQLCipher 字符串扫描")
+
+        handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, scan_pid)
+        if not handle:
+            last_error = ctypes.get_last_error()
+            summary["error"] = f"open_failed:{last_error}"
+            log(f"[!] unable to open pid={scan_pid} last_error={last_error}")
+            continue
+
+        summary["opened"] = True
+        seen_keys: set[bytes] = set()
+        try:
+            if modules:
+                for ptr_size in ptr_sizes:
+                    log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
+                    for base, size, module_path_candidate, module_name in modules:
+                        log(f"[+] scanning module {module_name} base=0x{base:x} size={size} path={module_path_candidate}")
+                        for key in candidate_keys(handle, base, size, ptr_size):
+                            if key in seen_keys:
+                                continue
+                            seen_keys.add(key)
+                            key_hex = key.hex()
+                            for account in accounts:
+                                for record in account.get("_db_records") or []:
+                                    salt = record["salt"]
+                                    if salt in recovered_salts:
+                                        continue
+                                    if verify_db_key(key, record["path"], record["mode"]):
+                                        mark_key(account, record, key_hex, scan_pid, module_path_candidate)
+                            if total_records and len(recovered_salts) >= total_records:
+                                break
                         if total_records and len(recovered_salts) >= total_records:
                             break
                     if total_records and len(recovered_salts) >= total_records:
                         break
-                if total_records and len(recovered_salts) >= total_records:
-                    break
 
-        if total_records and len(recovered_salts) < total_records:
-            scan_hex_key_strings(handle, accounts, mark_key)
-    finally:
-        CloseHandle(handle)
+            if total_records and len(recovered_salts) < total_records:
+                def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
+                    return mark_key(account, record, key_hex, scan_pid, module_path)
+
+                summary["hex_found"] = scan_hex_key_strings(handle, accounts, mark_scanned_key)
+        except Exception as err:  # noqa: BLE001
+            summary["error"] = str(err)
+            log(f"[!] scan pid={scan_pid} failed: {err}")
+        finally:
+            summary["pointer_keys"] = len(seen_keys)
+            total_pointer_keys_seen += len(seen_keys)
+            CloseHandle(handle)
 
     recovered = sorted(recovered_by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
     if not recovered:
@@ -922,9 +986,18 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         log(
             f"[DIAG] accounts={len(accounts)} "
             f"total_records={total_records} "
-            f"candidate_pointer_keys_seen={len(seen_keys)} "
-            f"modules_scanned={len(modules) if modules else 0}"
+            f"candidate_pointer_keys_seen={total_pointer_keys_seen} "
+            f"candidate_pids={','.join(str(item) for item in pids)}"
         )
+        for item in scan_summaries:
+            log(
+                "[DIAG] pid "
+                f"{item.get('pid')} opened={item.get('opened')} "
+                f"modules={item.get('modules')} "
+                f"pointer_keys={item.get('pointer_keys')} "
+                f"hex_found={item.get('hex_found')} "
+                f"error={item.get('error') or '-'}"
+            )
         for account in accounts:
             recs = account.get("_db_records") or []
             log(
@@ -938,12 +1011,9 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                     f"salt={(rec.get('salt') or '')[:8]}… "
                     f"mode={rec.get('mode')}"
                 )
-        if modules:
-            sample = ", ".join(m[3] for m in modules[:8])
-            extra = "" if len(modules) <= 8 else f" (+{len(modules) - 8} more)"
-            log(f"[DIAG] modules sample: {sample}{extra}")
-        else:
-            log("[DIAG] modules list empty — no WeChatWin.dll/Weixin.dll matched; only hex-string scan ran")
+        if not any(item.get("opened") for item in scan_summaries):
+            log("[DIAG] no candidate process could be opened for PROCESS_VM_READ")
+            raise RuntimeError("无法读取微信进程。请用当前 Windows 用户运行 Lumos，并确认微信已打开。")
         log("[DIAG] possible causes: WeChat build uses non-standard KDF iter / "
             "memory hardening prevents pointer scan / db on disk is older snapshot than memory key. "
             "Forward this log to the Lumos developer to extend the probe.")

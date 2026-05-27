@@ -2,7 +2,7 @@
  * Drive the platform-specific `extract_key.py` and stream progress to the UI.
  *
  * macOS uses lldb's Python module via PYTHONPATH=$(lldb -P). Windows uses the
- * Lumos managed Python runtime and reads WeChat.exe with Win32 APIs.
+ * Lumos managed Python runtime and reads WeChat/Weixin processes with Win32 APIs.
  */
 import { spawn } from 'child_process';
 import { execFileSync } from 'child_process';

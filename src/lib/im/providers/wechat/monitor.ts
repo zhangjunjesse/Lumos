@@ -235,8 +235,9 @@ export class WechatMonitor {
     if (!from) return;
     if (!isPeerAllowed(this.config, from)) return;
 
-    if (m.context_token && m.context_token.trim()) {
-      this.tokens.set(from, m.context_token.trim());
+    const contextToken = getInboundContextToken(m);
+    if (contextToken) {
+      this.tokens.set(from, contextToken);
     }
 
     const messageId = String(m.message_id ?? `${from}:${m.create_time_ms ?? Date.now()}`);
@@ -419,4 +420,11 @@ export class WechatMonitor {
       };
     });
   }
+}
+
+function getInboundContextToken(m: WeixinInboundMsg): string {
+  const snake = typeof m.context_token === 'string' ? m.context_token.trim() : '';
+  if (snake) return snake;
+  const camel = (m as { contextToken?: unknown }).contextToken;
+  return typeof camel === 'string' ? camel.trim() : '';
 }

@@ -56,4 +56,26 @@ describe('wechat/state: ContextTokenStore', () => {
 
     expect(store.get('alice@im.wechat')).toBe('fresh-token');
   });
+
+  test('reloads token file updates written by another process', () => {
+    const accountDir = path.join(tempDir, 'im-wechat', 'bot-account@im.bot');
+    const tokenFile = path.join(accountDir, 'context-tokens.json');
+    fs.mkdirSync(accountDir, { recursive: true });
+    fs.writeFileSync(
+      tokenFile,
+      JSON.stringify({ 'alice@im.wechat': 'token-a' }),
+      'utf8',
+    );
+
+    const store = new ContextTokenStore('bot-account@im.bot');
+    expect(store.get('alice@im.wechat')).toBe('token-a');
+
+    fs.writeFileSync(
+      tokenFile,
+      JSON.stringify({ 'alice@im.wechat': 'token-b-longer' }),
+      'utf8',
+    );
+
+    expect(store.get('alice@im.wechat')).toBe('token-b-longer');
+  });
 });

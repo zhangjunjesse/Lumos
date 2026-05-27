@@ -32,7 +32,13 @@ import {
  * The ImageProviderSection stays separate because its management surface
  * (per-provider edit / delete) is unique to image providers.
  */
-export function ModuleOverrideSection() {
+interface Props {
+  /** When true, hide the "添加服务" button. Users can still switch between
+   *  existing system providers — only custom provider creation is blocked. */
+  readOnly?: boolean;
+}
+
+export function ModuleOverrideSection({ readOnly = false }: Props = {}) {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -146,7 +152,13 @@ export function ModuleOverrideSection() {
         </div>
       )}
       {TEXT_MODULE_CONFIGS.map((config, index) => {
-        const eligible = providers.filter((p) => providerEligibleForModule(p, config));
+        const eligible = providers.filter((p) => {
+          if (!providerEligibleForModule(p, config)) return false;
+          // pro 版无 chat 自定义权限时,resolver 会忽略 custom-origin override
+          // 并落回 Lumos Cloud,所以这里直接从下拉里剔除避免 silent fail。
+          if (readOnly && p.provider_origin !== 'system') return false;
+          return true;
+        });
         const currentId = overrides[config.key] || '';
         const currentProvider = currentId ? providerMap.get(currentId) || null : null;
         const currentValid = !currentId || eligible.some((p) => p.id === currentId);
@@ -204,14 +216,16 @@ export function ModuleOverrideSection() {
                         </SelectContent>
                       </Select>
                     )}
-                    <Button
-                      variant="outline" size="sm"
-                      className="w-full justify-center gap-1.5 text-xs"
-                      onClick={() => setCreateTarget(config)}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      添加服务
-                    </Button>
+                    {!readOnly && (
+                      <Button
+                        variant="outline" size="sm"
+                        className="w-full justify-center gap-1.5 text-xs"
+                        onClick={() => setCreateTarget(config)}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        添加服务
+                      </Button>
+                    )}
                   </div>
                 </div>
 

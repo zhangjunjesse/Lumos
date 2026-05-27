@@ -385,8 +385,22 @@ function withInboundProviderHints(
 
 function extractWechatContextToken(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return '';
-  const value = (raw as { context_token?: unknown }).context_token;
-  return typeof value === 'string' ? value.trim() : '';
+  const record = raw as {
+    context_token?: unknown;
+    contextToken?: unknown;
+    msg?: { context_token?: unknown; contextToken?: unknown };
+  };
+  for (const value of [
+    record.context_token,
+    record.contextToken,
+    record.msg?.context_token,
+    record.msg?.contextToken,
+  ]) {
+    if (typeof value !== 'string') continue;
+    const token = value.trim();
+    if (token) return token;
+  }
+  return '';
 }
 
 function isWechatVoicePlaceholderText(text: string): boolean {

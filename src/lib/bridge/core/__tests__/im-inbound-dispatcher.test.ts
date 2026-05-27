@@ -543,6 +543,19 @@ describe('im-inbound-dispatcher', () => {
       expect(sentArgs.providerHints?.wechat?.contextToken).toBe('ctx-from-current-message');
     });
 
+    test('passes camelCase inbound contextToken to WeChat reply send', async () => {
+      const r = await dispatchInbound('wechat', {
+        ...wechatMsg(),
+        raw: { contextToken: 'ctx-from-camel-message' },
+      });
+
+      expect(r.ok).toBe(true);
+      const sentArgs = sendToProvider.mock.calls[0][1] as {
+        providerHints?: { wechat?: { contextToken?: string } };
+      };
+      expect(sentArgs.providerHints?.wechat?.contextToken).toBe('ctx-from-camel-message');
+    });
+
     test('slash command reply reports send failure', async () => {
       const commands = jest.requireMock('@/lib/im/providers/wechat/commands') as {
         handleWechatCommand: jest.Mock;

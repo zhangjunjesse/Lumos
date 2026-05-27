@@ -178,10 +178,10 @@ interface ProvidersSectionProps {
  *
  * - Pro edition baseline: Lumos Cloud card.
  * - chat category: always shown in pro so the user can see admin-provisioned
- *   system providers and switch between them. When `allowChat=false` the
- *   ChatProvidersCard renders read-only (no add/edit/delete buttons) and
- *   ModuleOverrideSection (text-gen module routing) is hidden because custom
- *   routing requires custom providers.
+ *   system providers and switch between them. When `allowChat=false` both
+ *   ChatProvidersCard and ModuleOverrideSection render read-only — the user
+ *   can still pick a knowledge/workflow provider from the system pool, just
+ *   can't add a custom one.
  * - media category: always shown in pro so the user can see and switch between
  *   admin-provisioned system image providers. When `allowMedia=false` the
  *   ImageProviderSection renders read-only (no add/edit/delete buttons) and
@@ -191,9 +191,7 @@ function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
   const cards: Array<{ key: string; node: React.ReactNode }> = [];
   if (isPro()) cards.push({ key: 'cloud', node: <LumosCloudSection /> });
   cards.push({ key: 'chat', node: <ChatProvidersCard readOnly={!allowChat} /> });
-  if (allowChat) {
-    cards.push({ key: 'text-modules', node: <ModuleOverrideSection /> });
-  }
+  cards.push({ key: 'text-modules', node: <ModuleOverrideSection readOnly={!allowChat} /> });
   cards.push({ key: 'image', node: <ImageProviderSection readOnly={!allowMedia} /> });
   cards.push({ key: 'speech', node: <SpeechProviderSection /> });
 

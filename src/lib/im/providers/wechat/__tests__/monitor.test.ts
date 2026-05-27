@@ -137,6 +137,17 @@ describe('wechat/monitor: ingestMessage', () => {
     await m.stop();
   });
 
+  test('persists camelCase contextToken from platform variants', async () => {
+    const m = makeMonitor();
+    m.start();
+    m.ingestMessage({
+      ...userMsg({ context_token: undefined }),
+      contextToken: 'token-camel',
+    } as WeixinInboundMsg & { contextToken: string });
+    expect(m.getContextToken('alice@im.wechat')).toBe('token-camel');
+    await m.stop();
+  });
+
   test('ignores bot self-messages (message_type=2)', async () => {
     const m = makeMonitor();
     m.start();

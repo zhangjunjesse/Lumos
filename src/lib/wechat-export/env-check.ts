@@ -330,7 +330,15 @@ function getManualWindowsWeChatProcessName(): string | null {
 }
 
 export function getWindowsWeChatProcessNames(): string[] {
-  return Array.from(new Set(['WeChat.exe', 'Weixin.exe', getManualWindowsWeChatProcessName()].filter(Boolean) as string[]));
+  return Array.from(new Set([
+    'WeChat.exe',
+    'Weixin.exe',
+    getManualWindowsWeChatProcessName(),
+    'WeChatAppEx.exe',
+    'WeixinAppEx.exe',
+    'WeChatApp.exe',
+    'WeixinApp.exe',
+  ].filter(Boolean) as string[]));
 }
 
 interface WeChatPidProbe {
@@ -339,8 +347,9 @@ interface WeChatPidProbe {
 }
 
 // Detect a running WeChat in three escalating layers:
-//   1. `tasklist /FI IMAGENAME eq Weixin.exe` (cheapest, matches the historical
-//      Lumos path — kept as the fast path).
+//   1. `tasklist /FI IMAGENAME eq Weixin.exe` and known helper process names
+//      (cheapest, matches the historical Lumos path while covering modern
+//      Windows WeChat builds).
 //   2. `Get-Process` by exact .Path equality against `targetExe`. This is the
 //      load-bearing layer for modern WeChat — WeChatAppEx, Weixin sub-helpers
 //      and `crashpad_handler.exe` all share the same install dir but only one

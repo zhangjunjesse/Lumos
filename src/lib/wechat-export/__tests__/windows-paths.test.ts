@@ -132,7 +132,14 @@ describe('Windows WeChat manual path resolution', () => {
     });
   });
 
-  it('recognizes both Windows WeChat executable names by default', () => {
-    expect(getWindowsWeChatProcessNames()).toEqual(expect.arrayContaining(['WeChat.exe', 'Weixin.exe']));
+  it('recognizes Windows WeChat main and helper executable names by default', () => {
+    expect(getWindowsWeChatProcessNames()).toEqual(expect.arrayContaining([
+      'WeChat.exe',
+      'Weixin.exe',
+      'WeChatAppEx.exe',
+      'WeixinAppEx.exe',
+      'WeChatApp.exe',
+      'WeixinApp.exe',
+    ]));
   });
 });

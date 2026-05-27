@@ -56,46 +56,86 @@ const tokensFile = (account: string) => path.join(stateDir(account), 'context-to
 export class ContextTokenStore {
   private cache = new Map<string, string>();
   private loaded = false;
+  private fileSignatures = new Map<string, string>();
 
   constructor(private readonly accountId: string) {}
 
-  private load(): void {
-    if (this.loaded) return;
-    this.loaded = true;
-    this.loadFile(tokensFile('default'));
-    if (this.accountId === 'default') return;
-    this.loadFile(tokensFile(this.accountId));
+  private tokenFiles(): string[] {
+    const files = [tokensFile('default')];
+    if (this.accountId !== 'default') files.push(tokensFile(this.accountId));
+    return files;
   }
 
-  private loadFile(file: string): void {
+  private signature(file: string): string {
     try {
-      const raw = fs.readFileSync(file, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, string>;
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string') this.cache.set(k, v);
-      }
+      const stat = fs.statSync(file);
+      return `${stat.mtimeMs}:${stat.size}`;
     } catch {
-      // first run, no file yet; account_id migration also has no new dir yet
+      return '';
+    }
+  }
+
+  private load(force = false): void {
+    if (this.loaded && !force) return;
+    const nextCache = new Map<string, string>();
+    const nextSignatures = new Map<string, string>();
+
+    for (const file of this.tokenFiles()) {
+      const sig = this.signature(file);
+      nextSignatures.set(file, sig);
+      if (!sig) continue;
+      try {
+        const raw = fs.readFileSync(file, 'utf-8');
+        const parsed = JSON.parse(raw) as Record<string, string>;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === 'string') nextCache.set(k, v);
+        }
+      } catch {
+        // Another process may be writing the small JSON file right now. Keep the
+        // previous in-memory view and retry on the next get() instead of
+        // replacing it with an empty cache.
+        if (!this.loaded) this.loaded = true;
+        return;
+      }
+    }
+
+    this.cache = nextCache;
+    this.fileSignatures = nextSignatures;
+    this.loaded = true;
+  }
+
+  private refreshIfChanged(): void {
+    if (!this.loaded) {
+      this.load();
+      return;
+    }
+    for (const file of this.tokenFiles()) {
+      if (this.fileSignatures.get(file) !== this.signature(file)) {
+        this.load(true);
+        return;
+      }
     }
   }
 
   get(peer: string): string {
-    this.load();
+    this.refreshIfChanged();
     return this.cache.get(peer) || '';
   }
 
   set(peer: string, token: string): void {
-    this.load();
+    this.refreshIfChanged();
     if (!token.trim()) return;
     if (this.cache.get(peer) === token) return;
     this.cache.set(peer, token);
     try {
       ensureDir(stateDir(this.accountId));
+      const file = tokensFile(this.accountId);
       fs.writeFileSync(
-        tokensFile(this.accountId),
+        file,
         JSON.stringify(Object.fromEntries(this.cache), null, 2),
         'utf-8',
       );
+      this.fileSignatures.set(file, this.signature(file));
     } catch (err) {
       console.warn('[wechat/state] failed to persist context token:', err);
     }

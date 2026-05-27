@@ -126,6 +126,29 @@ describe('wechat/send: sendOutbound', () => {
     expect(fakeFetch).toHaveBeenCalledTimes(2);
   });
 
+  test('retries stale inbound context_token with latest persisted token', async () => {
+    fakeFetch
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: -2, errmsg: 'expired' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+
+    const r = await sendOutbound(
+      client,
+      {
+        address: makeAddr(),
+        text: 'hi',
+        providerHints: { wechat: { contextToken: 'ctx-old' } },
+      },
+      { getContextToken: () => 'ctx-new' },
+    );
+
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(fakeFetch.mock.calls[0][1].body);
+    const secondBody = JSON.parse(fakeFetch.mock.calls[1][1].body);
+    expect(firstBody.msg.context_token).toBe('ctx-old');
+    expect(secondBody.msg.context_token).toBe('ctx-new');
+  });
+
   test('file attachment: getuploadurl → CDN upload → sendmessage with file_item', async () => {
     const fakeDocBytes = Buffer.from('PK\x03\x04 fake docx zip header');
 
