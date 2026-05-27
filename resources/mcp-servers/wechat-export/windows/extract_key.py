@@ -183,34 +183,95 @@ def wechat_process_names() -> set[str]:
     return names
 
 
-def find_wechat_pids() -> list[int]:
-    process_names = wechat_process_names()
+def list_process_entries() -> list[dict]:
     snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snap == INVALID_HANDLE_VALUE:
         return []
     entry = PROCESSENTRY32()
     entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
-    pids: list[int] = []
+    processes: list[dict] = []
     try:
         ok = Process32FirstW(snap, ctypes.byref(entry))
         while ok:
-            if entry.szExeFile.lower() in process_names:
-                pids.append(int(entry.th32ProcessID))
+            name = str(entry.szExeFile or "").strip()
+            pid = int(entry.th32ProcessID)
+            parent_pid = int(entry.th32ParentProcessID)
+            if pid > 0 and name:
+                processes.append({
+                    "pid": pid,
+                    "parent_pid": parent_pid,
+                    "name": name,
+                })
             ok = Process32NextW(snap, ctypes.byref(entry))
     finally:
         CloseHandle(snap)
-    return pids
+    return processes
+
+
+def find_wechat_pids() -> list[int]:
+    process_names = wechat_process_names()
+    return [
+        item["pid"]
+        for item in list_process_entries()
+        if str(item.get("name") or "").lower() in process_names
+    ]
 
 
 def candidate_wechat_pids(primary_pid: int) -> list[int]:
-    """Return process scan order, preserving the UI-detected PID first."""
+    """Return process scan order, preserving the UI-detected PID first.
+
+    Newer Windows WeChat/Weixin builds fan work out into WeChatAppEx and
+    xwechat helper processes. Include exact-name matches plus direct children
+    of any matched process, so a main-process detector cannot accidentally scan
+    only Weixin.exe while the key material lives in a helper.
+    """
+    process_names = wechat_process_names()
+    entries = list_process_entries()
+    children_by_parent: dict[int, list[int]] = {}
+    for item in entries:
+        children_by_parent.setdefault(int(item["parent_pid"]), []).append(int(item["pid"]))
+
     pids: list[int] = []
+    frontier: list[int] = []
+
+    def add(pid: int) -> None:
+        if pid > 0 and pid not in pids:
+            pids.append(pid)
+            frontier.append(pid)
+
     if primary_pid and primary_pid > 0:
-        pids.append(int(primary_pid))
-    for discovered in find_wechat_pids():
-        if discovered > 0 and discovered not in pids:
-            pids.append(discovered)
-    return pids
+        add(int(primary_pid))
+    for item in entries:
+        name = str(item.get("name") or "").lower()
+        if name in process_names or "wechat" in name or "weixin" in name or "xwechat" in name:
+            add(int(item["pid"]))
+
+    # Pull in a shallow child tree. This is intentionally bounded so unrelated
+    # browser/helper process families do not make extraction unbounded.
+    seen_frontier = set(frontier)
+    for _depth in range(2):
+        current = list(frontier)
+        frontier.clear()
+        for parent in current:
+            for child in children_by_parent.get(parent, []):
+                if child in seen_frontier:
+                    continue
+                seen_frontier.add(child)
+                add(child)
+
+    return pids[:64]
+
+
+def describe_candidate_pids(pids: list[int]) -> str:
+    by_pid = {int(item["pid"]): item for item in list_process_entries()}
+    labels = []
+    for pid in pids:
+        item = by_pid.get(int(pid))
+        if item:
+            labels.append(f"{pid}:{item.get('name')}<ppid={item.get('parent_pid')}>")
+        else:
+            labels.append(str(pid))
+    return ", ".join(labels)
 
 
 def list_process_modules(pid: int) -> list[tuple[int, int, str, str]]:
@@ -835,7 +896,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     pids = candidate_wechat_pids(pid)
     if not pids:
         raise RuntimeError("未找到运行中的 WeChat.exe / Weixin.exe")
-    log(f"[+] candidate pids={','.join(str(item) for item in pids)} primary={pid or 'auto'}")
+    log(f"[+] candidate pids={describe_candidate_pids(pids)} primary={pid or 'auto'}")
 
     accounts = find_accounts()
     if not accounts:

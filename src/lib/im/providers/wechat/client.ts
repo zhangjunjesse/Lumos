@@ -48,7 +48,10 @@ export * from './types';
 // sensitive on some gateway paths.
 const CHANNEL_VERSION = '1.0.0';
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
-const DEFAULT_API_TIMEOUT_MS = 15_000;
+// Windows packaged runs can occasionally see iLink sendmessage take longer
+// than 15s even though the later retry succeeds. Keep ordinary bot API calls
+// below a minute, but do not abort a slow send too aggressively.
+const DEFAULT_API_TIMEOUT_MS = 45_000;
 const MAX_RESPONSE_BODY = 64 * 1024 * 1024; // 64MB cap
 
 export interface ClientOptions {

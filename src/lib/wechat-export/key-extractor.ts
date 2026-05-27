@@ -79,6 +79,10 @@ export interface KeyExtractionResult {
   logPath?: string;
 }
 
+export interface KeyExtractionOptions {
+  signal?: AbortSignal;
+}
+
 function redactKeyMaterial(line: string): string {
   return line.replace(/\bkey=([0-9a-fA-F]{64})\b/g, 'key=<redacted>');
 }
@@ -93,17 +97,22 @@ function extractPythonError(log: string): string | null {
   return null;
 }
 
-function persistExtractionLog(log: string): string | undefined {
+function beginExtractionLog(): { path?: string; append: (text: string) => void } {
   try {
     ensureFeatureDir();
     const header = [
       '',
       `===== ${new Date().toISOString()} wechat-export extract-key =====`,
     ].join('\n');
-    fs.appendFileSync(SETUP_LOG_FILE, `${header}\n${log.trim()}\n`, { encoding: 'utf8', mode: 0o600 });
-    return SETUP_LOG_FILE;
+    fs.appendFileSync(SETUP_LOG_FILE, `${header}\n`, { encoding: 'utf8', mode: 0o600 });
+    return {
+      path: SETUP_LOG_FILE,
+      append: (text: string) => {
+        fs.appendFileSync(SETUP_LOG_FILE, text, { encoding: 'utf8', mode: 0o600 });
+      },
+    };
   } catch {
-    return undefined;
+    return { append: () => undefined };
   }
 }
 
@@ -115,6 +124,7 @@ function persistExtractionLog(log: string): string | undefined {
 export async function extractKeys(
   pid: number,
   onProgress?: (p: KeyExtractionProgress) => void,
+  options: KeyExtractionOptions = {},
 ): Promise<KeyExtractionResult> {
   ensureFeatureDir();
   const platform = getWeChatExportPlatform();
@@ -173,11 +183,42 @@ export async function extractKeys(
   }
 
   return new Promise<KeyExtractionResult>((resolve) => {
+    const liveLog = beginExtractionLog();
     const child = spawn(py, args, { env });
 
     let stdoutBuf = '';
     let stderrBuf = '';
     let extractionLog = '';
+    let settled = false;
+    let aborted = false;
+
+    const finish = (result: KeyExtractionResult) => {
+      if (settled) return;
+      settled = true;
+      if (options.signal) options.signal.removeEventListener('abort', abortChild);
+      resolve(result);
+    };
+
+    const appendLogLine = (line: string) => {
+      const safe = redactKeyMaterial(line);
+      extractionLog += `${safe}\n`;
+      liveLog.append(`${safe}\n`);
+    };
+
+    const abortChild = () => {
+      aborted = true;
+      liveLog.append('[CANCEL] extraction request aborted; terminating extract_key.py\n');
+      try { child.kill(); } catch { /* ignore */ }
+      const killTimer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      }, 2000);
+      killTimer.unref?.();
+    };
+    if (options.signal?.aborted) {
+      abortChild();
+    } else if (options.signal) {
+      options.signal.addEventListener('abort', abortChild, { once: true });
+    }
 
     const handleLine = (line: string) => {
       if (!line) return;
@@ -215,7 +256,7 @@ export async function extractKeys(
       const lines = buf.split(/\r?\n/);
       const tail = lines.pop() ?? '';
       for (const line of lines) {
-        extractionLog += `${redactKeyMaterial(line)}\n`;
+        appendLogLine(line);
         handleLine(line.trim());
       }
       return tail;
@@ -231,24 +272,44 @@ export async function extractKeys(
     });
 
     child.on('error', (err) => {
-      resolve({
+      liveLog.append(`[ERROR] process start failed: ${redactKeyMaterial(err.message)}\n`);
+      finish({
         success: false,
         keysFound: 0,
         error: `进程启动失败: ${err.message}`,
         log: extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf),
+        logPath: liveLog.path,
       });
     });
 
     child.on('close', (code) => {
       const log = extractionLog + redactKeyMaterial(stdoutBuf + stderrBuf);
-      const logPath = persistExtractionLog(log);
+      if (stdoutBuf) {
+        liveLog.append(redactKeyMaterial(stdoutBuf));
+        stdoutBuf = '';
+      }
+      if (stderrBuf) {
+        liveLog.append(redactKeyMaterial(stderrBuf));
+        stderrBuf = '';
+      }
+      const logPath = liveLog.path;
+      if (aborted) {
+        finish({
+          success: false,
+          keysFound: 0,
+          error: '已取消微信密钥提取。',
+          log,
+          logPath,
+        });
+        return;
+      }
       if (code !== 0) {
         const message = extractPythonError(log) || `extract_key.py 退出 code ${code}`;
         onProgress?.({
           phase: 'error',
           message,
         });
-        resolve({
+        finish({
           success: false,
           keysFound: 0,
           error: message,
@@ -276,7 +337,7 @@ export async function extractKeys(
           keysFound = Object.keys(map).length;
         }
       } catch { /* ignore */ }
-      resolve({
+      finish({
         success: keysFound > 0,
         keysFound,
         keysJsonPath: KEYS_JSON_FILE,

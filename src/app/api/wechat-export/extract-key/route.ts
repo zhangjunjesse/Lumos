@@ -37,7 +37,7 @@ function findWeChatPid(): number | null {
  *   - WeChat is currently signed adhoc (we resigned it)
  *   - WeChat process is live
  */
-export async function POST(): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
   const platform = getWeChatExportPlatform();
   if (!platform) {
     return NextResponse.json({ error: 'unsupported_platform' }, { status: 400 });
@@ -90,13 +90,23 @@ export async function POST(): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
+      let streamClosed = false;
       const send = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        if (streamClosed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          streamClosed = true;
+        }
       };
       send('start', { pid });
-      const result = await extractKeys(pid, (p: KeyExtractionProgress) => {
-        send('progress', p);
-      });
+      const result = await extractKeys(
+        pid,
+        (p: KeyExtractionProgress) => {
+          send('progress', p);
+        },
+        { signal: request.signal },
+      );
       if (result.success) {
         send('done', {
           keysFound: result.keysFound,
@@ -112,7 +122,10 @@ export async function POST(): Promise<Response> {
           logPath: result.logPath,
         });
       }
-      controller.close();
+      if (!streamClosed) {
+        try { controller.close(); } catch { /* client already disconnected */ }
+        streamClosed = true;
+      }
     },
   });
 

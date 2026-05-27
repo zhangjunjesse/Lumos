@@ -315,7 +315,7 @@ async function sendOneWithRetry(
   // In packaged Windows runs, inbound monitoring and reply sending happen in
   // different processes. The user may send a newer message while the AI is
   // still thinking, so retry with the latest token persisted by the monitor.
-  if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED) {
+  if (first.ret === -2 || first.ret === ERR_SESSION_EXPIRED || isRetryableSendError(first.error)) {
     await delay(500);
     const retryToken = refreshToken() || contextToken;
     const second = await client.sendText({ toUserId: peer, text, contextToken: retryToken, clientId });
@@ -324,6 +324,11 @@ async function sendOneWithRetry(
   }
 
   return { ok: false, error: first.error || `send failed: ret=${first.ret}` };
+}
+
+function isRetryableSendError(error: string | undefined): boolean {
+  if (!error) return false;
+  return /(?:operation was aborted|abort|timed out|fetch failed|ECONNRESET|ETIMEDOUT|UND_ERR)/i.test(error);
 }
 
 function splitText(text: string, max: number): string[] {

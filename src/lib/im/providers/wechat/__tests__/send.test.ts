@@ -126,6 +126,17 @@ describe('wechat/send: sendOutbound', () => {
     expect(fakeFetch).toHaveBeenCalledTimes(2);
   });
 
+  test('retries once when sendmessage is aborted by timeout', async () => {
+    fakeFetch
+      .mockRejectedValueOnce(new Error('This operation was aborted'))
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: 0 }) });
+    const r = await sendOutbound(client, { address: makeAddr(), text: 'hi' }, {
+      getContextToken: () => 'ctx',
+    });
+    expect(r.ok).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+  });
+
   test('retries stale inbound context_token with latest persisted token', async () => {
     fakeFetch
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ret: -2, errmsg: 'expired' }) })
