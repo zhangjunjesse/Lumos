@@ -582,10 +582,15 @@ def _record_label(record: dict) -> str:
 
 
 def verify_db_key(key: bytes, db_path: str, mode: str) -> bool:
+    """Mode is detected from the on-disk layout (MSG/ vs db_storage/) but
+    that's only a heuristic — a WeChat build could ship a v4 cipher inside
+    a 3.x-shaped data directory or vice-versa. If the strict-mode verifier
+    fails, fall back to the other algorithm before giving up. Both verifiers
+    re-read page 1 of the db and compare HMACs; they're cheap and safe."""
     if mode == "v4":
-        return _verify_key_v4(key, db_path)
+        return _verify_key_v4(key, db_path) or _verify_key_v3(key, db_path)
     if mode == "v3":
-        return _verify_key_v3(key, db_path)
+        return _verify_key_v3(key, db_path) or _verify_key_v4(key, db_path)
     return verify_key(key, db_path)
 
 
@@ -909,6 +914,39 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
 
     recovered = sorted(recovered_by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
     if not recovered:
+        # Dump everything we tried so the failure is diagnosable from a single
+        # extraction attempt without another packaging cycle. The API route
+        # echoes the last 2 KB of this log back to the UI; user can also
+        # forward the full logPath if the tail is truncated.
+        log("[DIAG] ===== extraction failed: NO verified keys =====")
+        log(
+            f"[DIAG] accounts={len(accounts)} "
+            f"total_records={total_records} "
+            f"candidate_pointer_keys_seen={len(seen_keys)} "
+            f"modules_scanned={len(modules) if modules else 0}"
+        )
+        for account in accounts:
+            recs = account.get("_db_records") or []
+            log(
+                f"[DIAG] account wxid={account.get('wxid')} "
+                f"mode={account.get('mode')} "
+                f"dbs={len(recs)}"
+            )
+            for rec in recs:
+                log(
+                    f"[DIAG]   db={_record_label(rec)} "
+                    f"salt={(rec.get('salt') or '')[:8]}… "
+                    f"mode={rec.get('mode')}"
+                )
+        if modules:
+            sample = ", ".join(m[3] for m in modules[:8])
+            extra = "" if len(modules) <= 8 else f" (+{len(modules) - 8} more)"
+            log(f"[DIAG] modules sample: {sample}{extra}")
+        else:
+            log("[DIAG] modules list empty — no WeChatWin.dll/Weixin.dll matched; only hex-string scan ran")
+        log("[DIAG] possible causes: WeChat build uses non-standard KDF iter / "
+            "memory hardening prevents pointer scan / db on disk is older snapshot than memory key. "
+            "Forward this log to the Lumos developer to extend the probe.")
         raise RuntimeError("未找到可验证的数据库密钥。请确认 Windows 微信已登录到主界面后重试。")
 
     for account in accounts:
