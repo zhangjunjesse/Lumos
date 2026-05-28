@@ -7,6 +7,7 @@ import {
   BuiltinDouyinCollectorCard,
   BuiltinEcommerceCard,
   BuiltinEtsyErankCard,
+  BuiltinEtsyForgeCard,
   BuiltinGoofishCard,
   BuiltinPinterestRadarCard,
   BuiltinWeChatCard,
@@ -215,6 +216,7 @@ export default function AppsListPage(): React.ReactElement {
             {visibleBuiltinIds.has('x-radar') ? (
               <BuiltinXRadarCard status={xRadarStatus} />
             ) : null}
+            {visibleBuiltinIds.has('etsy-forge') ? <BuiltinEtsyForgeCard /> : null}
           </div>
         ) : (
           <EmptyAppsHint />

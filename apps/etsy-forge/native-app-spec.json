@@ -1,40 +1,39 @@
 {
   "$schema": "https://lumos.io/schemas/native-app-spec.v1.json",
   "version": 1,
-  "summary": "Etsy AI 出图：小白卖家打开就刷，AI 主动推送原创设计图，喜欢的进图库，图库内可继续 AI 二创，最终一键下载或传 Printful。用户全程零输入、零配置、零决策。所有 AI 出图统一走 src/lib/tools/image-gen-tool.ts + 云端图片服务商 + 自动扣配额；趋势数据复用 EHunt + eRank 抓取。",
+  "summary": "Etsy 选品采集：用关键词爬 Etsy 商品列表（主图 + EHunt 插件全部指标）→ 用户勾选感兴趣的商品 → 爬这些商品详情页的所有详情图入图库。全程走浏览器爬取（复用 Lumos EHunt / web-research 能力），不调任何图片生成服务商、不烧 AI 配额。EHunt 指标依赖用户浏览器环境（AdsPower profile + 已装 EHunt 扩展 + 已登录 Etsy）。",
   "userVisibleScope": [
-    "进入应用立即看到 AI 推送的原创设计图（基于当周 Etsy 趋势 + 个人审美档案），左右滑或键盘 ← / → 切换、点 👍 收藏进图库、点 👎 跳过。",
-    "刷到第 30 张时后台自动预生成下一批 50 张；批与批之间无缝衔接；配额不足显示充值入口；生图失败单张跳过；网络断保留进度。",
-    "在图库网格视图查看所有 👍 过的图，可按 [全部 / 仅原图 / 仅二创] 过滤；单击进入详情/二创页；多选批量下载或一键传 Printful。",
-    "在详情页通过 6 个预设按钮（换配色 / 换风格 / 换主体 / 出系列 / 改尺寸 / 去背景）对原图进行 AI 二创，每次出 4 张候选挑 1 张或全选进图库；底部显示从原图衍生的所有图链。",
-    "在设置页查看当前云端图片服务商（只读）、剩余配额 + 充值入口、Printful 账号连接、清空图库 / 重置审美档案的危险操作；AI 提示词和风险边界在「高级设置」折叠区可见。",
-    "在运行结果页查看每批刷图记录：推送主题方向、生成张数、收藏张数、配额消耗、失败原因（如有）。",
-    "在自动化页查看趋势数据周更巡更（默认每周一 03:00 跑一次 EHunt + eRank 抓取合成 weekly_etsy_signals，过期 7 天兜底）。",
-    "云端图片服务商缺失 / 配额耗尽 / EHunt 抓取失败时状态进入 needs_auth / failed 并显示原因；任何模板都不能用 mock 数据冒充产物。"
+    "在「采集任务」页用关键词新建采集任务，点「立即爬」走浏览器抓 Etsy 搜索结果：每个商品拿主图 + 标题 + 价格 + EHunt 注入的销量/收藏/上架日期等指标，落到「商品列表」。",
+    "在「商品列表」页看到爬到的商品卡（主图 + EHunt 数据），勾选感兴趣的，点「爬选中商品的详情图」走浏览器进每个商品详情页采集全部详情图。",
+    "在「图库」页查看采集到的所有详情图（按商品/关键词分组），多选批量下载到本地。",
+    "在「设置」页选采集用的浏览器上下文（内置 / AdsPower）、默认每次爬商品数、详情图是否下载到本地；并查看 EHunt 接入前提说明。",
+    "在「运行结果」页查看每次列表采集 / 详情采集的批次记录：关键词、找到商品数、EHunt 命中数、采集详情图数、失败原因。",
+    "EHunt 指标只有在 AdsPower 上下文 + 页面检测到 EHunt 时才有；缺 AdsPower / 缺扩展 / 未登录 Etsy / Browser Bridge 未连时，采集状态如实显示 not_adspower / no_ehunt / bridge_unavailable / needs_login，绝不用 mock 数据冒充。",
+    "采集到的商品图仅作选品研究参考，应用不提供把它们直接上架到 Etsy/Shopify 的能力（避免 DMCA 侵权）。",
+    "自动化页可开启「关键词采集巡更」，按调度对 enabled 的关键词任务定时跑列表采集。"
   ],
   "status": {
     "states": ["not_configured", "needs_auth", "ready", "syncing", "running", "failed", "not_connected"],
     "readyCriteria": [
-      "应用页面可打开；设置页已保存默认值。",
-      "云端图片服务商已配置（管理员在 /admin/image-providers 维护）。",
-      "用户云端配额 > 0，可拉至少一批 50 张图。",
-      "首批刷图成功跑通：用户能看到至少 1 张 AI 生成的原创图。"
+      "应用页面可打开；设置页已选好采集用浏览器上下文。",
+      "至少创建了一个关键词采集任务。",
+      "Browser Bridge 已连接（Lumos 桌面浏览器运行时已启动）。",
+      "一次列表采集能跑通：商品列表里出现至少 1 个带主图的商品。"
     ],
-    "notConnectedBehavior": "云端图片服务商缺失时显示「需联系管理员配置图片服务商」；配额耗尽时显示充值入口；EHunt / eRank 抓取失败时使用上次趋势数据兜底并标 stale；绝不用 mock 图冒充产物。"
+    "notConnectedBehavior": "Browser Bridge 未连时显示 not_connected 和「请确认 Lumos 桌面浏览器运行时已启动」；非 AdsPower 上下文 / 未装 EHunt 时商品的 ehunt_status 显示 not_adspower / no_ehunt（仍可拿主图，只是没 EHunt 指标）；Etsy 未登录时详情采集显示 needs_login。任何环节失败都显示真实 reason，绝不 mock。"
   },
   "settings": [
-    { "id": "image-provider", "label": "图片服务商", "fields": ["当前云端服务商（只读）", "当前模型（只读）", "剩余配额", "充值入口"] },
-    { "id": "printful", "label": "Printful 账号", "fields": ["连接状态", "账号名", "授权范围", "断开入口"] },
-    { "id": "danger-zone", "label": "危险操作", "fields": ["清空图库", "重置审美档案", "重新拉取趋势数据"] },
-    { "id": "advanced", "label": "高级设置（默认折叠，不建议小白用户改动）", "fields": ["AI 推送提示词", "风险边界", "推送批大小", "并发上限"] }
+    { "id": "browser", "label": "采集浏览器", "fields": ["浏览器上下文（内置 / AdsPower）", "EHunt 接入前提说明"] },
+    { "id": "collect", "label": "采集参数", "fields": ["默认每次爬商品数", "详情图是否下载到本地"] },
+    { "id": "danger-zone", "label": "危险操作", "fields": ["清空图库", "清空商品列表"] },
+    { "id": "advanced", "label": "高级（采集说明 / 风险边界）", "fields": ["采集说明 (ai_system_prompt)", "风险边界 (risk_note)"] }
   ],
   "data": {
     "entities": [
+      "etsy_forge_collection_tasks",
+      "etsy_forge_products",
       "etsy_forge_images",
-      "etsy_forge_taste_signals",
-      "etsy_forge_taste_profile",
       "etsy_forge_runs",
-      "etsy_forge_weekly_signals",
       "app_settings",
       "app_automations",
       "run_history",
@@ -46,7 +45,7 @@
     "reusableStores": ["settings", "run_history", "notifications", "command_runs"]
   },
   "ai": {
-    "enabled": true,
+    "enabled": false,
     "promptSettings": true,
     "draftBeforeWrite": true,
     "visibleFailureHandling": true
@@ -67,13 +66,13 @@
     "lowRiskCommands": [
       "/etsy-forge status",
       "/etsy-forge runs",
-      "/etsy-forge library",
-      "/etsy-forge quota"
+      "/etsy-forge products",
+      "/etsy-forge library"
     ],
     "confirmationRequiredFor": [
-      "通过 IM 命令触发新一轮趋势数据抓取（消耗 EHunt / eRank 配额）",
-      "通过 IM 命令批量传图到 Printful（必须在应用内确认范围）",
-      "通过 IM 命令清空图库 / 重置审美档案"
+      "通过 IM 命令触发新一轮关键词采集（消耗浏览器抓取资源 / 可能触发 Etsy 反爬）",
+      "通过 IM 命令批量爬详情图（必须在应用内确认勾选范围）",
+      "通过 IM 命令清空图库 / 清空商品列表"
     ],
     "visibleCommandResults": true
   },
@@ -81,35 +80,32 @@
     "writeActionsRequireConfirmation": true,
     "highRiskActions": [
       "清空全部图库（不可恢复）",
-      "重置审美档案（清空 100% 学习信号，下次推送回到冷启动）",
-      "批量传图到 Printful（消耗用户 Printful 配额）",
-      "批量下载（大量 IO + 磁盘占用）"
+      "清空全部商品列表（不可恢复）",
+      "对大量勾选商品批量爬详情图（耗时 + 可能触发 Etsy 反爬）"
     ],
     "outOfScope": [
-      "爬同行设计师 / Etsy 卖家的图作为生产素材（DMCA 封店级风险，绝对禁止）",
-      "对他人原创图做 AI 二创（包括 inpaint / restyle / 改色），二创只允许针对用户自己的原创 AI 生成图",
-      "自动上架到 Etsy / Shopify / Printful（任何写社交 / 写商品动作都需要用户在应用内显式确认）",
-      "暴露 AI 模型选型 UI 给用户（云端 admin 在 /admin/image-providers 决策；产品定位禁止用户做模型选择）",
-      "在应用内引入任何「让用户写 prompt / 填表单 / 选利基词」的输入框（PRD 严禁，违反零输入定位）",
-      "为该应用单独修改 BrowserManager / 全局浏览器基础设施",
-      "云端配额耗尽时仍继续后续生图（必须显示充值入口并停止）",
-      "用 mock 图 / 占位图冒充生图成功"
+      "把采集到的同行商品图直接上架到 Etsy / Shopify / Printful 售卖（DMCA 侵权，绝对禁止；采集图仅作选品研究参考）",
+      "对采集到的同行图做二次创作再售卖（洗稿型二创，封店级风险）",
+      "绕过 Etsy 反爬（自建 transaction-id / IP 池 / 模拟点击）",
+      "为该应用单独修改 BrowserManager / 全局浏览器基础设施（必须走 browser-provider）",
+      "Browser Bridge 未连 / 非 AdsPower / 未装 EHunt 时用 mock 数据冒充采集成功",
+      "调用任何图片生成服务商烧 AI 配额（本应用是纯爬取工具，不生图）"
     ]
   },
   "acceptance": [
-    { "id": "installation-self-check", "label": "安装自检", "howToVerify": "安装完成后查看安装自检结果，或在状态页点击「重新运行安装自检」；通过或失败会自动写入本验收项。" },
-    { "id": "image-provider-bound", "label": "云端图片服务商可用", "howToVerify": "状态页显示当前服务商和模型；缺失时显示 needs_auth 和「请联系管理员」入口。" },
-    { "id": "first-batch", "label": "首批刷图跑通", "howToVerify": "进入主刷图入口立即看到至少 1 张原创 AI 图；50 张全部生成成功率 ≥ 90%；失败的单张明确显示「这张出炸了，跳过」并自动跳过下一张。" },
-    { "id": "swipe-and-like", "label": "刷图 + 收藏闭环", "howToVerify": "点 👍 后图片进入图库（in_library=1）；图库页能立即看到刚收藏的图；点 👎 不进图库但写入 etsy_forge_taste_signals 表。" },
-    { "id": "remix-flow", "label": "二创闭环", "howToVerify": "在详情页点 6 个预设按钮中的任意一个，10 秒内出 4 张候选图；挑 1 张进图库后，原图详情页底部「衍生链」+1。" },
-    { "id": "trend-signals-fresh", "label": "趋势数据新鲜度", "howToVerify": "运行结果页能看到最近一次 etsy-forge:refresh-weekly-signals 巡更记录；etsy_forge_weekly_signals.updated_at 在 7 天内；过期时 batch 仍能跑但 status 标 stale。" },
-    { "id": "quota-visible", "label": "配额可见 + 充值入口", "howToVerify": "设置页显示剩余配额（整数，500000 = ¥1）；配额不足拉新批时显示充值弹窗，不能静默失败。" },
-    { "id": "library-export", "label": "图库导出", "howToVerify": "图库多选 → 「打包下载」生成 zip，包含选中的所有图；「传 Printful」需 Printful 账号已连接，否则提示去设置页连接。" },
-    { "id": "compliance-ai-tag", "label": "AI 生成元数据标注", "howToVerify": "下载或传 Printful 时图片 metadata 包含 ai_generated=true（Etsy 2024 新规要求）；不标记会被封店。" },
-    { "id": "danger-zone-confirm", "label": "危险操作二次确认", "howToVerify": "点「清空图库」「重置审美档案」「重新拉取趋势数据」必须弹二次确认弹窗，未确认不执行。" },
-    { "id": "review-automations", "label": "查看自动化", "howToVerify": "自动化页能看到「趋势数据周更巡更」（默认每周一 03:00）；可立即运行 / 暂停；运行结果写入 run_history。" },
-    { "id": "review-im-commands", "label": "查看 IM 命令", "howToVerify": "通知命令页能看到 /etsy-forge status|runs|library|quota；高风险命令（如清空图库）必须回到应用内确认。" },
-    { "id": "review-run-history", "label": "查看运行结果", "howToVerify": "运行结果页能看到每批刷图记录、推送方向、生成/收藏数、配额消耗、失败原因。" },
-    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页修改高级设置（AI 提示词、推送批大小）并保存，再次打开仍能看到。" }
+    { "id": "installation-self-check", "label": "安装自检", "howToVerify": "安装完成后查看安装自检结果，或在状态页点「重新运行安装自检」；通过或失败自动写入本验收项。" },
+    { "id": "browser-bridge-ready", "label": "Browser Bridge 可用", "howToVerify": "状态页显示 Browser Bridge 连接状态；未连时显示 not_connected 和启动提示。" },
+    { "id": "create-keyword-task", "label": "创建关键词任务", "howToVerify": "在采集任务页输入关键词新建任务，列表出现该任务，状态 idle。" },
+    { "id": "list-collect", "label": "列表采集跑通（爬主图 + EHunt）", "howToVerify": "对一个关键词任务点「立即爬」，商品列表出现带主图的商品；AdsPower + EHunt 环境下 ehunt_status=ok 且能看到销量/收藏指标；非 AdsPower 时如实显示 not_adspower，仍有主图。" },
+    { "id": "select-products", "label": "勾选商品", "howToVerify": "在商品列表勾选若干商品，selected 置位；可全选 / 清空。" },
+    { "id": "detail-collect", "label": "详情图采集入库", "howToVerify": "对勾选商品点「爬选中商品的详情图」，走浏览器进详情页采集 galleryImageUrls 入 etsy_forge_images；商品 detail_status=success 且 detail_image_count>0；图库出现这些详情图。" },
+    { "id": "ehunt-status-honest", "label": "EHunt 状态如实", "howToVerify": "在非 AdsPower 上下文采集，商品 ehunt_status 显示 not_adspower 且 ehunt 指标为空，不 mock；Browser Bridge 未连显示 bridge_unavailable。" },
+    { "id": "library-download", "label": "图库下载", "howToVerify": "图库多选详情图 → 打包下载到本地。" },
+    { "id": "no-image-gen", "label": "不调图片服务商", "howToVerify": "全流程（列表采集 + 详情采集）不产生任何图片生成服务商调用、不扣 AI 配额；余额不因采集变化。" },
+    { "id": "danger-zone-confirm", "label": "危险操作二次确认", "howToVerify": "点「清空图库」「清空商品列表」必须弹二次确认，未确认不执行。" },
+    { "id": "review-automations", "label": "查看自动化", "howToVerify": "自动化页能看到「关键词采集巡更」；可立即运行 / 暂停；结果写入 run_history。" },
+    { "id": "review-im-commands", "label": "查看 IM 命令", "howToVerify": "通知命令页能看到 /etsy-forge status|runs|products|library；高风险命令（清空 / 批量爬）回到应用内确认。" },
+    { "id": "review-run-history", "label": "查看运行结果", "howToVerify": "运行结果页能看到每次列表 / 详情采集批次：关键词、商品数、EHunt 命中数、详情图数、失败原因。" },
+    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页改采集浏览器 / 默认爬取数 / 详情图下载开关并保存，再次打开仍在。" }
   ]
 }

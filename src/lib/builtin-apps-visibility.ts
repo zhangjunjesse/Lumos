@@ -89,9 +89,9 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
   },
   {
     id: 'etsy-forge',
-    name: 'Etsy AI 出图',
+    name: 'Etsy 选品采集',
     description:
-      'Etsy POD 小白卖家打开就刷，AI 主动推送原创设计图，喜欢的进图库，图库内可继续 AI 二创，最终一键导出。全程零输入、零配置、零决策',
+      '关键词爬 Etsy 商品（主图 + EHunt 插件全部指标）→ 勾选感兴趣的 → 爬详情页所有详情图入图库。全程走浏览器爬取，不调图片服务商、不烧 AI 配额',
     defaultVisible: true,
     icon: 'image',
   },

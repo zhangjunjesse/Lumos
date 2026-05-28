@@ -114,14 +114,14 @@
             }
           },
           {
-            "label": "添加配额命令",
+            "label": "添加商品列表命令",
             "run": "db:create:app_command_runs",
             "input": {
-              "command": "/etsy-forge quota",
+              "command": "/etsy-forge products",
               "risk_level": "read",
               "confirmation_required": false,
               "status": "draft",
-              "result_summary": "查看云端剩余配额（整数，500000 = ¥1）和充值入口链接。"
+              "result_summary": "查看已采集商品数、已勾选数、已爬详情图的商品数。"
             }
           }
         ],

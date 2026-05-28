@@ -3,6 +3,7 @@
   "default": "home",
   "menu": [
     { "id": "home", "label": "刷图", "icon": "image", "page": "pages/home.json" },
+    { "id": "tasks", "label": "采集任务", "icon": "radar", "page": "pages/tasks.json" },
     { "id": "library", "label": "我的图库", "icon": "library", "page": "pages/library.json" },
     { "id": "detail", "label": "二创详情", "icon": "wand-2", "page": "pages/detail.json" },
     { "id": "status", "label": "状态", "icon": "circle-gauge", "page": "pages/status.json" },

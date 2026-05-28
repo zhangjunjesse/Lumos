@@ -1,0 +1,115 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "采集任务",
+  "description": "管理后台采集方向：每个任务按调度（manual/hourly/daily/weekly）跑，扣云端配额生原创图入池子。用户刷图时只查池子不调生图。完整管理界面在主应用打开。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.etsy_forge_collection_tasks }}",
+    "columns": [
+      { "field": "label", "label": "方向", "search": true },
+      { "field": "kind", "label": "模板", "render": "tag" },
+      { "field": "enabled", "label": "启用", "render": "tag" },
+      { "field": "schedule", "label": "频率", "render": "tag" },
+      { "field": "batch_size_per_run", "label": "每次张数" },
+      { "field": "total_collected", "label": "累积入池" },
+      { "field": "last_status", "label": "最近状态", "render": "tag" },
+      { "field": "last_failure_reason", "label": "失败原因", "search": true },
+      { "field": "last_run_at", "label": "上次运行", "render": "date", "sortable": true },
+      { "field": "next_run_at", "label": "下次运行", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "enabled", "options": [true, false] },
+      { "field": "kind", "options": ["evergreen", "pet", "festival", "vintage", "minimalist", "typography", "seasonal"] },
+      { "field": "last_status", "options": ["idle", "running", "success", "failed", "partial", "cancelled"] }
+    ],
+    "actions": {
+      "toolbar": [
+        {
+          "label": "进入完整任务管理",
+          "primary": true,
+          "open": "/apps/etsy-forge/tasks"
+        },
+        {
+          "label": "添加 Evergreen 通用",
+          "run": "db:create:etsy_forge_collection_tasks",
+          "input": {
+            "kind": "evergreen",
+            "label": "Etsy POD 通用 evergreen",
+            "enabled": true,
+            "schedule": "daily",
+            "batch_size_per_run": 10,
+            "total_collected": 0,
+            "last_status": "idle"
+          }
+        },
+        {
+          "label": "添加宠物主题",
+          "run": "db:create:etsy_forge_collection_tasks",
+          "input": {
+            "kind": "pet",
+            "label": "宠物主题",
+            "enabled": true,
+            "schedule": "daily",
+            "batch_size_per_run": 10,
+            "total_collected": 0,
+            "last_status": "idle"
+          }
+        },
+        {
+          "label": "添加节日礼物",
+          "run": "db:create:etsy_forge_collection_tasks",
+          "input": {
+            "kind": "festival",
+            "label": "节日礼物",
+            "enabled": true,
+            "schedule": "weekly",
+            "batch_size_per_run": 15,
+            "total_collected": 0,
+            "last_status": "idle"
+          }
+        },
+        {
+          "label": "添加极简风",
+          "run": "db:create:etsy_forge_collection_tasks",
+          "input": {
+            "kind": "minimalist",
+            "label": "极简风",
+            "enabled": true,
+            "schedule": "daily",
+            "batch_size_per_run": 10,
+            "total_collected": 0,
+            "last_status": "idle"
+          }
+        }
+      ],
+      "row": [
+        {
+          "label": "切换启用",
+          "run": "db:update:etsy_forge_collection_tasks",
+          "confirm": "切换这条任务的启用状态？禁用后下次巡更会跳过，但已入池的图仍可刷。"
+        },
+        {
+          "label": "删除任务",
+          "run": "db:delete:etsy_forge_collection_tasks",
+          "confirm": "确认删除这条任务？已经生成入池的图不会被删除。"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "label", "label": "方向显示名", "required": true },
+        { "type": "select", "name": "kind", "label": "模板类型", "options": ["evergreen", "pet", "festival", "vintage", "minimalist", "typography", "seasonal"] },
+        { "type": "switch", "name": "enabled", "label": "启用" },
+        { "type": "select", "name": "schedule", "label": "调度频率", "options": ["manual", "hourly", "daily", "weekly"] },
+        { "type": "number", "name": "batch_size_per_run", "label": "每次产出张数（建议 5-30，太多浪费配额）" },
+        { "type": "select", "name": "last_status", "label": "最近状态", "options": ["idle", "running", "success", "failed", "partial", "cancelled"] },
+        { "type": "textarea", "name": "last_failure_reason", "label": "失败原因", "rows": 3 },
+        { "type": "text", "name": "next_run_at", "label": "下次运行时间" }
+      ],
+      "submit": { "label": "保存任务", "run": "db:update:etsy_forge_collection_tasks" }
+    }
+  }
+}

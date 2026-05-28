@@ -48,6 +48,7 @@ export const SUPPORTED_NATIVE_AUTOMATION_ACTIONS = new Set([
   'x-radar:run-topic-tasks',
   'x-radar:run-digest-tasks',
   'x-radar:run-stats-tasks',
+  'etsy-forge:run-collection-tasks',
 ]);
 
 export async function runNativeAppAutomation(input: {
@@ -314,6 +315,41 @@ export async function runNativeAppAutomation(input: {
       nativeAction,
       error: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
     };
+  }
+
+  if (nativeAction === 'etsy-forge:run-collection-tasks') {
+    const { isEtsyForgeNativeApp } = await import('@/lib/app/etsy-forge-app-id');
+    if (!isEtsyForgeNativeApp(input.manifest)) {
+      return fail('当前应用不是 Etsy 选品采集类应用。', { nativeAction });
+    }
+    const { runAllEnabledListCollects } = await import('@/lib/etsy-forge/list-collect');
+    const settingsRow = input.store.query('app_settings', { limit: 1 })[0] as
+      | { browser_context_id?: string }
+      | undefined;
+    const browserContextId = (settingsRow?.browser_context_id ?? '').trim() || 'embedded:default';
+    const result = await runAllEnabledListCollects(input.store, browserContextId);
+    const isSuccessLike = (result.failed === 0 && result.ran > 0) || (result.ran === 0 && result.skipped > 0);
+    const status: 'success' | 'failed' = isSuccessLike ? 'success' : 'failed';
+    const message =
+      result.ran === 0 && result.skipped === 0
+        ? '没有启用的关键词采集任务。请到「采集任务」页建关键词任务并启用。'
+        : result.ran === 0
+          ? `${result.skipped} 个任务都没到调度时间（schedule + last_run_at 判断），本轮跳过。`
+          : `跑了 ${result.ran} 个关键词任务（跳过 ${result.skipped}）：成功 ${result.succeeded}，失败 ${result.failed}，共采集 ${result.totalProducts} 个商品。`;
+    const runId = createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary: message,
+      failure_reason: status === 'failed' ? message : undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: message,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return { ok: status === 'success', automationId: automation.id, runId, message, nativeAction };
   }
 
   return fail(`当前应用自动化运行桥尚未接入动作：${nativeAction}`, { nativeAction });

@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Compass,
   MessageCircleHeart,
+  Palette,
   Pin,
   Radar,
   Radio,
@@ -538,6 +539,51 @@ export function BuiltinPinterestRadarCard(): React.ReactElement {
         <span className="inline-flex items-center gap-1.5">
           <StatusDot tone="warn" />
           <span className="text-muted-foreground">骨架已就绪 · 业务接入中</span>
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * Etsy AI 出图 — 内置应用入口卡片。
+ * 主链已打通：UI/lib/API/注册全部就绪，进入即开始刷图。
+ * 状态如实标：趋势抓取桥（EHunt + eRank）未接入时走 evergreen 兜底，不假装完整完成。
+ */
+export function BuiltinEtsyForgeCard(): React.ReactElement {
+  return (
+    <Link
+      href="/apps/etsy-forge"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-fuchsia-500 text-white shadow-sm">
+          <Palette className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              Etsy 选品采集
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · Etsy 爬取
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        关键词爬 Etsy 商品（主图 + EHunt 指标）→ 勾选 → 爬详情图入图库。全程浏览器爬取，不烧 AI 配额
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone="ok" />
+          <span className="text-muted-foreground">两步采集已接通 · EHunt 指标需 AdsPower + 扩展</span>
         </span>
       </div>
     </Link>
