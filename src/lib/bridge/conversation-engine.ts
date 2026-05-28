@@ -104,6 +104,8 @@ interface ConversationStreamingCallbacks {
   onVisibleText?: (text: string) => void;
 }
 
+const IM_TOOL_TIMEOUT_SECONDS = 900;
+
 export class ConversationEngine {
   private sessions = new Map<string, { id: string; createdAt: string }>();
 
@@ -221,6 +223,7 @@ export class ConversationEngine {
     }
     const systemPrompt = hints.length > 0 ? hints.join('\n\n') : undefined;
 
+    const abortController = new AbortController();
     const stream = streamClaude({
       prompt: text,
       sessionId,
@@ -236,6 +239,8 @@ export class ConversationEngine {
       inProcessVariantKeys: capabilityPlan.inProcessVariantKeys,
       systemPrompt,
       conversationHistory,
+      abortController,
+      toolTimeoutSeconds: IM_TOOL_TIMEOUT_SECONDS,
     });
 
     const contentBlocks: MessageContentBlock[] = [];
@@ -328,6 +333,29 @@ export class ConversationEngine {
             is_error: resultData.is_error || false,
           });
         } catch { /* ignore malformed tool_result */ }
+      } else if (event.type === 'tool_timeout') {
+        try {
+          const timeoutData = JSON.parse(event.data);
+          const toolName = typeof timeoutData.tool_name === 'string' ? timeoutData.tool_name : '工具';
+          const elapsed = Number(timeoutData.elapsed_seconds);
+          const elapsedText = Number.isFinite(elapsed) ? `${elapsed} 秒` : '较长时间';
+          contentBlocks.push({
+            type: 'text',
+            text: `${toolName} 执行超过 ${elapsedText}，本轮已自动停止。`,
+          });
+        } catch {
+          contentBlocks.push({ type: 'text', text: '工具执行超时，本轮已自动停止。' });
+        }
+      } else if (event.type === 'error') {
+        const errorText = typeof event.data === 'string' ? event.data.trim() : '';
+        if (errorText) {
+          if (currentText.trim()) {
+            contentBlocks.push({ type: 'text', text: currentText });
+            currentText = '';
+          }
+          contentBlocks.push({ type: 'text', text: errorText });
+          emitVisibleText();
+        }
       } else if (event.type === 'status') {
         try {
           const statusData = JSON.parse(event.data);

@@ -10,10 +10,11 @@
 ## 0. 固定假设（与桌面端 spec 保持一致）
 
 1. 计费按秒 PAYG，DB 存 `NUMERIC(10,6)` 元/秒，UI 显示「元/分钟」（× 60 换算）
-2. 火山使用**新版控制台**单 header `X-Api-Key`
-3. 临时音频上传 URL 用 HMAC token 签名，30 分钟 TTL，火山首次拉取后立即标记可清理
-4. 余额预扣按 30 秒 × price 预估，最终用 `audio_info.duration` 真实结算多退少补
-5. 所有调用走 lumos-web 代理，密钥不下发桌面端
+2. 火山 ASR 使用控制台 `App ID + Access Token`，分别写入 `X-Api-App-Key / X-Api-Access-Key`
+3. 默认语音服务切到火山大模型录音闲时版：`resource_id = volc.bigasr.auc_idle`
+4. 临时音频上传 URL 用 HMAC token 签名；闲时版可能排队到 24h，TTL 默认需覆盖 24h（当前后台默认 26h，可用 `LUMOS_AUDIO_TEMP_TTL_SECONDS` 调整）
+5. 余额预扣按 30 秒 × price 预估，最终用 `audio_info.duration` 真实结算多退少补
+6. 所有调用走 lumos-web 代理，密钥不下发桌面端
 
 ---
 
@@ -25,7 +26,7 @@ CREATE TABLE lumos_speech_providers (
   name          VARCHAR(64) NOT NULL,
   provider_type VARCHAR(32) NOT NULL,         -- 'volcengine-asr-v2'
   api_key       TEXT NOT NULL,                 -- 加密（沿用现有 vault）
-  resource_id   VARCHAR(64),                   -- volc.bigasr.auc / volc.seedasr.auc
+  resource_id   VARCHAR(64),                   -- volc.bigasr.auc_idle / volc.bigasr.auc / volc.seedasr.auc
   base_url      VARCHAR(255) DEFAULT 'https://openspeech.bytedance.com',
   model         VARCHAR(64) DEFAULT 'bigmodel',
   capabilities  JSON,                          -- ["speech"]
@@ -58,8 +59,8 @@ INSERT INTO lumos_speech_providers
   (name, provider_type, api_key, resource_id, base_url, model, capabilities,
    price_per_second, min_charge_seconds, is_default, enabled)
 VALUES
-  ('火山引擎 - 录音文件识别 2.0', 'volcengine-asr-v2',
-   '<填火山 API Key>', 'volc.seedasr.auc',
+  ('火山引擎 - 大模型录音闲时版', 'volcengine-asr-v1',
+   '<填火山 Access Token>', 'volc.bigasr.auc_idle',
    'https://openspeech.bytedance.com', 'bigmodel', '["speech"]',
    0.000400, 1, TRUE, TRUE);
 -- 0.000400 元/秒 = 0.024 元/分钟（参考火山官网价，按实际更新）
@@ -73,7 +74,7 @@ VALUES
 
 - **列表页**：分页表格（name / provider_type / price / is_default / enabled / 操作）
 - **新增 / 编辑 dialog**：
-  - name、provider_type（dropdown：volcengine-asr-v2）、resource_id（dropdown：volc.bigasr.auc / volc.seedasr.auc）、base_url、model、api_key（半遮蔽编辑，保存才完整覆盖）
+  - name、provider_type（dropdown：volcengine-asr-v1 / volcengine-asr-v2）、resource_id（dropdown：volc.bigasr.auc_idle / volc.bigasr.auc / volc.bigasr.auc_turbo / volc.seedasr.auc）、base_url、model、App ID、Access Token（半遮蔽编辑，保存才完整覆盖）
   - **price_per_minute** 数字输入框（用户视角是分钟价），DB 存时 ÷ 60 写入 price_per_second；读取展示时 × 60 反算
   - min_charge_seconds（默认 1）
   - is_default switch（设置 true 时把其他记录的 is_default 设为 false，强制单选）
@@ -93,9 +94,9 @@ VALUES
       "id": "1",
       "is_default": true,
       "name": "火山引擎 - 录音文件识别 2.0",
-      "provider_type": "volcengine-asr-v2",
+      "provider_type": "volcengine-asr-v1",
       "price_per_second": 0.0004,
-      "resource_id": "volc.seedasr.auc",
+      "resource_id": "volc.bigasr.auc_idle",
       "default_model": "bigmodel"
     }
   ]
@@ -135,29 +136,30 @@ VALUES
    ```
 4. **submit 任务到火山**：
    ```http
-   POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit
-   X-Api-Key: <provider.api_key>
-   X-Api-Resource-Id: <provider.resource_id>
+   POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/idle/submit
+   X-Api-App-Key: <provider.app_id>
+   X-Api-Access-Key: <provider.access_token>
+   X-Api-Resource-Id: volc.bigasr.auc_idle
    X-Api-Request-Id: <uuid>
    X-Api-Sequence: -1
    Content-Type: application/json
 
    {
      "user": { "uid": "<lumos_user_id>" },
-     "audio": { "format": "wav", "url": "<audio_url>" },
+     "audio": { "url": "<audio_url>" },
      "request": {
-       "model_name": "bigmodel",
-       "enable_itn": true,
-       "enable_punc": true
+       "model_name": "bigmodel"
      }
    }
    ```
-5. **轮询 query**（每 2 秒，最多 5 分钟）：
+5. **轮询 query**（闲时版每 5 秒，最多按 24h+ 缓冲等待；当前后台默认 25h，可用 `VOLC_ASR_IDLE_MAX_POLL_MS` 调整）：
    ```http
-   POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/query
-   X-Api-Key: <provider.api_key>
-   X-Api-Resource-Id: <provider.resource_id>
+   POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/idle/query
+   X-Api-App-Key: <provider.app_id>
+   X-Api-Access-Key: <provider.access_token>
+   X-Api-Resource-Id: volc.bigasr.auc_idle
    X-Api-Request-Id: <same uuid>
+   X-Tt-Logid: <submit response X-Tt-Logid>
    ```
    响应 header `X-Api-Status-Code`：
    - `20000000` → 完成，body 含 result + audio_info.duration
@@ -180,7 +182,8 @@ VALUES
      "duration_seconds": 4.2,
      "charged_amount": 0.0017,
      "request_id": "67ee89ba-...",
-     "provider_type": "volcengine-asr-v2"
+     "provider_type": "volcengine-asr-v1",
+     "resource_id": "volc.bigasr.auc_idle"
    }
    ```
    静音：`{ "ok": true, "text": "", "duration_seconds": 0, "charged_amount": 0, "status": "silent" }`
@@ -199,12 +202,12 @@ VALUES
 **处理**：
 1. 登录验证
 2. 写到 `/var/lumos-web/uploads/audio/{uuid}.{ext}`，权限 0600
-3. 生成 HMAC token：`hmac_sha256(secret = LUMOS_AUDIO_TEMP_SECRET, message = uuid + expire_ts).hex().slice(0, 32)`
+3. 生成 HMAC token：`hmac_sha256(secret = LUMOS_AUDIO_TEMP_SECRET, message = uuid + ':' + expire_ts).hex()`
 4. 返回：
    ```json
    {
      "url": "https://lumos-web.example.com/api/cloud/audio-temp/{uuid}?token=<hmac>&exp=<unix_ts>",
-     "expires_in": 1800
+     "expires_in": 93600
    }
    ```
 
@@ -214,7 +217,7 @@ VALUES
 1. 校验 query token + exp（HMAC 校验 + 时间窗内）
 2. 校验文件存在
 3. **stream** 文件返回（不能 readFileSync 全量加载，火山可能要拉大文件）
-4. 成功 200 后**立即标记可清理**：把文件 mtime 设到 `now - 30min`，让 cron 立刻收走
+4. 成功 200 后**立即标记可清理**：把文件 mtime 设到 `now - ttlSeconds()` 之前，让 cron 尽快收走
 
 不需要鉴权 user session（火山的服务器没法带 user cookie），靠 HMAC + TTL 保护。
 
@@ -222,15 +225,37 @@ VALUES
 
 每 10 分钟跑：
 ```bash
-find /var/lumos-web/uploads/audio -type f -mmin +30 -delete
+find /var/lumos-web/uploads/audio -type f -mmin +1560 -delete
 ```
 
 或 Node 任务：
 
 ```ts
 import { schedule } from 'node-cron';
-schedule('*/10 * * * *', () => cleanupExpiredAudio('/var/lumos-web/uploads/audio', 30 * 60 * 1000));
+schedule('*/10 * * * *', () => cleanupExpiredAudio('/var/lumos-web/uploads/audio', 26 * 60 * 60 * 1000));
 ```
+
+### Nginx 代理超时
+
+闲时版 query 可能超过默认 60 秒上游读取超时。生产 Nginx 需要给转写接口单独设置长超时，避免“后台继续处理并最终扣费，但桌面端已收到 504”：
+
+```nginx
+location = /api/cloud/speech/transcribe {
+  proxy_pass http://127.0.0.1:3001;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_buffering off;
+  proxy_request_buffering off;
+  proxy_read_timeout 90000s;
+  proxy_send_timeout 90000s;
+  send_timeout 90000s;
+}
+```
+
+这只是止血配置；最终仍应把闲时版 ASR 改为服务端异步任务 + 客户端查询状态，而不是要求用户界面等一个 24 小时 HTTP 长连接。
 
 ---
 
@@ -257,11 +282,11 @@ schedule('*/10 * * * *', () => cleanupExpiredAudio('/var/lumos-web/uploads/audio
 | C4 | 桌面端登录后 `lumos_cloud_speech_providers_map` 写入 | sqlite3 ~/.lumos/lumos.db |
 | C5 | `/api/cloud/audio-temp` 上传 + `/api/cloud/audio-temp/{uuid}?token=...` 取回，stream 完整 | 端到端 curl |
 | C6 | HMAC token 错误 / 过期 → 返回 403 | 改 token 试 |
-| C7 | `/api/cloud/speech/transcribe` 真把火山 result 转成 text 返回 | 真音频 e2e |
+| C7 | `/api/cloud/speech/transcribe` 真把火山闲时版 result 转成 text 返回 | 真音频 e2e，覆盖排队 / 处理中 / 成功 |
 | C8 | 余额不足直接 INSUFFICIENT_BALANCE 不上报火山 | 测试账号置 0 |
 | C9 | 静音音频 status=silent + amount=0 | 上传纯静音 wav |
 | C10 | speech_billing_log 每次调用都写一行 | 调用后 SELECT |
-| C11 | 30 分钟过期后 cron 删除上传文件 | 等 30min 看 /var/lumos-web/uploads/audio |
+| C11 | 26 小时过期后 cron 删除上传文件；火山成功拉取后应提前可清理 | 等过期窗口或用短 TTL 测试 |
 
 ---
 

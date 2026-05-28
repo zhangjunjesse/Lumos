@@ -49,6 +49,11 @@ jest.mock('@/lib/tools/lumos-butler-mcp-server', () => ({
   LUMOS_BUTLER_MCP_SYSTEM_HINT: 'BUTLER_HINT_TEXT',
 }));
 
+jest.mock('@/lib/tools/lumos-issue-reporter-mcp-server', () => ({
+  createLumosIssueReporterMcpServer: () => ({ name: 'lumos-issue-reporter' }),
+  LUMOS_ISSUE_REPORTER_MCP_SYSTEM_HINT: 'ISSUE_REPORTER_HINT_TEXT',
+}));
+
 jest.mock('@/lib/tools/workflow-mcp-server', () => ({
   createWorkflowMcpServer: () => ({ name: 'workflow-runner' }),
 }));
@@ -71,6 +76,16 @@ import { ConversationEngine } from '../conversation-engine';
 
 function streamText(text: string): ReadableStream<string> {
   const chunk = `data: ${JSON.stringify({ type: 'text', data: text })}\n\n`;
+  return new ReadableStream<string>({
+    start(controller) {
+      controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}
+
+function streamEvent(type: string, data: string): ReadableStream<string> {
+  const chunk = `data: ${JSON.stringify({ type, data })}\n\n`;
   return new ReadableStream<string>({
     start(controller) {
       controller.enqueue(chunk);
@@ -127,6 +142,8 @@ describe('ConversationEngine capability injection', () => {
     const streamOptions = mockStreamClaude.mock.calls[0][0] as {
       inProcessMcpServers: Record<string, { readOnly?: boolean }>;
       systemPrompt?: string;
+      abortController?: AbortController;
+      toolTimeoutSeconds?: number;
     };
     expect(Object.keys(streamOptions.inProcessMcpServers)).toEqual(
       expect.arrayContaining(['lumos-wechat-assistant', 'lumos-butler', 'lumos-image']),
@@ -135,7 +152,32 @@ describe('ConversationEngine capability injection', () => {
     expect(streamOptions.systemPrompt).toContain('WECHAT_RO_HINT');
     expect(streamOptions.systemPrompt).toContain('BUTLER_HINT_TEXT');
     expect(streamOptions.systemPrompt).toContain('Active IM context');
+    expect(streamOptions.abortController).toBeInstanceOf(AbortController);
+    expect(streamOptions.toolTimeoutSeconds).toBe(900);
     expect(response.visibleText).toBe('已读到。');
+  });
+
+  test('surfaces Claude error SSE as visible IM text', async () => {
+    mockGetSession.mockReturnValue({
+      id: 'main-err',
+      system_prompt: '__LUMOS_MAIN_AGENT__',
+      working_directory: '/tmp/lumos-main',
+      sdk_session_id: null,
+      requested_model: null,
+      model: null,
+    });
+    mockStreamClaude.mockReturnValue(streamEvent('error', '模型在 180 秒内没有返回首个内容。'));
+
+    const response = await new ConversationEngine().sendMessage(
+      'main-err',
+      '你好',
+      undefined,
+      { source: 'wechat', imContext: { providerId: 'wechat', chatId: 'wx-chat-1' } },
+    );
+
+    expect(response.visibleText).toBe('模型在 180 秒内没有返回首个内容。');
+    const assistantWrite = mockAddMessage.mock.calls.find((call) => call[1] === 'assistant');
+    expect(assistantWrite?.[2]).toBe('模型在 180 秒内没有返回首个内容。');
   });
 
   test('keeps dedicated WeChat Assistant sessions on the full WeChat tool contract', async () => {
