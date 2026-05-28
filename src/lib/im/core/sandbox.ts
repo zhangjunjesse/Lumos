@@ -8,6 +8,7 @@
  */
 
 import path from 'node:path';
+import os from 'node:os';
 
 const ALLOWED_DIRS = [
   '.lumos-media',
@@ -20,16 +21,34 @@ const ALLOWED_DIRS = [
 
 /**
  * Resolve a user / agent-supplied path to an absolute path inside the lumos
- * sandbox. Returns null if the path is relative, traverses outside sandbox,
- * or doesn't include any allowed directory segment.
+ * sandbox. Returns null if relative, outside sandbox, or missing an allowed dir.
+ *
+ * Uses path.isAbsolute (not a `/`-prefix test) so Windows `C:\...` paths pass,
+ * and expands a leading `~`. pathImpl/homeDir are injected only so both
+ * platforms can be unit-tested on a single OS.
  */
-export function resolveLumosSandboxPath(input: string): string | null {
-  if (!input || !input.startsWith('/')) return null;
-  const resolved = path.resolve(input);
-  if (!ALLOWED_DIRS.some((dir) => resolved.includes(`${path.sep}${dir}${path.sep}`))) {
+export function resolveLumosSandboxPath(
+  input: string,
+  opts: { pathImpl?: typeof path; homeDir?: string } = {},
+): string | null {
+  if (!input) return null;
+  const p = opts.pathImpl ?? path;
+  const home = opts.homeDir ?? os.homedir();
+  const expanded = expandTilde(input, p, home);
+  if (!p.isAbsolute(expanded)) return null;
+  const resolved = p.resolve(expanded);
+  if (!ALLOWED_DIRS.some((dir) => resolved.includes(`${p.sep}${dir}${p.sep}`))) {
     return null;
   }
   return resolved;
+}
+
+function expandTilde(input: string, p: typeof path, homeDir: string): string {
+  if (input === '~') return homeDir;
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return p.join(homeDir, input.slice(2));
+  }
+  return input;
 }
 
 const EXT_MIME: Record<string, string> = {

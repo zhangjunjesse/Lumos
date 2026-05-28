@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { mimeFromPath, resolveLumosSandboxPath } from '../sandbox';
 
 describe('resolveLumosSandboxPath', () => {
@@ -32,6 +33,42 @@ describe('resolveLumosSandboxPath', () => {
 
   test('ignores prefix-only matches like .lumos-mediax', () => {
     expect(resolveLumosSandboxPath('/tmp/.lumos-mediax/foo.png')).toBeNull();
+  });
+
+  test('accepts a Windows absolute path inside an allowed dir', () => {
+    expect(
+      resolveLumosSandboxPath('C:\\Users\\Admin\\.lumos\\.lumos-uploads\\report.docx', {
+        pathImpl: path.win32,
+        homeDir: 'C:\\Users\\Admin',
+      }),
+    ).toBe('C:\\Users\\Admin\\.lumos\\.lumos-uploads\\report.docx');
+  });
+
+  test('expands a leading ~ on Windows', () => {
+    expect(
+      resolveLumosSandboxPath('~\\.lumos\\.lumos-uploads\\report.docx', {
+        pathImpl: path.win32,
+        homeDir: 'C:\\Users\\Admin',
+      }),
+    ).toBe('C:\\Users\\Admin\\.lumos\\.lumos-uploads\\report.docx');
+  });
+
+  test('expands a leading ~ on POSIX', () => {
+    expect(
+      resolveLumosSandboxPath('~/.lumos/.lumos-uploads/report.docx', {
+        pathImpl: path.posix,
+        homeDir: '/Users/me',
+      }),
+    ).toBe('/Users/me/.lumos/.lumos-uploads/report.docx');
+  });
+
+  test('rejects a Windows absolute path outside allowed dirs', () => {
+    expect(
+      resolveLumosSandboxPath('C:\\Users\\Admin\\Documents\\secret.docx', {
+        pathImpl: path.win32,
+        homeDir: 'C:\\Users\\Admin',
+      }),
+    ).toBeNull();
   });
 });
 
