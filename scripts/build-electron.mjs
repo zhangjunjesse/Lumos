@@ -93,6 +93,12 @@ async function buildElectron() {
       'esbuild',
       '@node-rs/jieba',
       'onnxruntime-node',
+      // playwright 是重型 node 运行时模块（CDP 接管浏览器，选品采集/x-radar 等用）：
+      // 运行时从 node_modules require，绝不 bundle 进 electron 主进程；其内部按需 require
+      // chromium-bidi，一并 external。与 better-sqlite3 / onnxruntime 同类。
+      'playwright',
+      'playwright-core',
+      'chromium-bidi',
       // @resvg/resvg-js 是 napi-rs native binding：主包 require 平台子包（含 .node 文件）。
       // esbuild 没 .node loader，必须 external，运行时 node_modules 里 require。
       '@resvg/resvg-js',
