@@ -30,40 +30,68 @@ const API_BASE = getApiBase();
 export const TOOLS = [
   {
     name: 'generate_workflow',
-    description: 'Validate and compile Workflow DSL v1 into a workflow factory module',
+    description: [
+      'Validate and compile a Workflow DSL v3 spec into a runnable workflow factory module.',
+      'v3 is a directed graph: `nodes` are the steps, `edges` define execution order — node array order is irrelevant, only edges decide what runs next.',
+      'Edge kinds: "next" (sequential / parallel branch), "then"/"else" (out of an if-else node), "body" (into a for-each/while loop body), "on-error".',
+      'Node types: agent, notification, capability, wait, if-else, for-each, while, parallel (pair with join), join, approval.',
+      'Returns { code, manifest, validation }. On invalid input it does NOT throw — validation.valid=false with errors.',
+      'Minimal example: {"version":"v3","name":"demo","nodes":[{"id":"a","type":"agent","input":{"prompt":"hi"}},{"id":"b","type":"agent","input":{"prompt":"{{ steps.a.output.text }}"}}],"edges":[{"from":"a","to":"b","kind":"next"}]}',
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         spec: {
           type: 'object',
           properties: {
-            version: { const: 'v1' },
+            version: { const: 'v3' },
             name: { type: 'string' },
-            steps: {
+            description: { type: 'string' },
+            nodes: {
               type: 'array',
               minItems: 1,
-              maxItems: 20,
               items: {
                 type: 'object',
                 properties: {
                   id: { type: 'string' },
                   type: {
                     type: 'string',
-                    enum: ['agent', 'browser', 'notification'],
+                    enum: [
+                      'agent', 'notification', 'capability', 'wait', 'if-else',
+                      'for-each', 'while', 'parallel', 'join', 'approval',
+                    ],
                   },
-                  dependsOn: {
-                    type: 'array',
-                    items: { type: 'string' },
+                  input: {
+                    type: 'object',
+                    description: 'Node input; shape depends on type (agent:{prompt}, wait:{durationMs}, if-else:{condition}, for-each:{collection,itemVar}, while:{condition}, approval:{prompt,approvers}). join input is optional.',
                   },
-                  when: { type: 'object' },
-                  input: { type: 'object' },
+                  outputContract: { type: 'object' },
                   policy: { type: 'object' },
+                  onError: { type: 'object' },
+                  metadata: { type: 'object' },
                 },
                 required: ['id', 'type'],
               },
             },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: { type: 'string' },
+                  to: { type: 'string' },
+                  kind: {
+                    type: 'string',
+                    enum: ['next', 'then', 'else', 'body', 'on-error'],
+                  },
+                  branchIndex: { type: 'number' },
+                },
+                required: ['from', 'to', 'kind'],
+              },
+            },
+            maxDurationMs: { type: 'number' },
           },
-          required: ['version', 'name', 'steps'],
+          required: ['version', 'name', 'nodes', 'edges'],
         },
       },
       required: ['spec'],

@@ -47,15 +47,22 @@ export function buildCompiledWorkflowManifest(
     ? spec.maxDurationMs
     : undefined;
 
+  // This runs on the INVALID-spec path too (compiler.ts returns a manifest
+  // alongside validation errors), so `nodes` may be missing/malformed — e.g. a
+  // stale v1 spec carrying `steps` instead of `nodes`. Never assume it's an
+  // array, or `.map` throws "Cannot read properties of undefined" and the clean
+  // validation error never reaches the caller.
+  const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
+
   return {
     dslVersion: 'v3',
     artifactKind: 'workflow-factory-module',
     exportedSymbol: 'buildWorkflow',
     workflowName: spec.name,
     workflowVersion,
-    stepIds: spec.nodes.map((n) => n.id),
-    stepTypes: spec.nodes.map((n) => n.type),
-    stepTimeoutsMs: spec.nodes.map((n) => {
+    stepIds: nodes.map((n) => n.id),
+    stepTypes: nodes.map((n) => n.type),
+    stepTimeoutsMs: nodes.map((n) => {
       const step: WorkflowStep = {
         id: n.id,
         type: n.type as WorkflowStepType,
