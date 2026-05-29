@@ -104,7 +104,7 @@ jobs:
         run: npm ci
 
       - name: Download runtime assets and build Next.js
-        run: node scripts/download-node.mjs && node scripts/download-python-runtime.mjs && node scripts/download-git-bash.mjs && npm run build
+        run: node scripts/download-node.mjs && node scripts/download-python-runtime.mjs && node scripts/download-git-bash.mjs && node scripts/download-ffmpeg.mjs && npm run build
 
       - name: Rebuild better-sqlite3 for Electron
         run: npx electron-rebuild -f -o better-sqlite3
@@ -191,6 +191,8 @@ jobs:
         run: |
           npm_config_arch=x64 node scripts/download-node.mjs
           npm_config_arch=arm64 node scripts/download-node.mjs
+          npm_config_arch=x64 node scripts/download-ffmpeg.mjs
+          npm_config_arch=arm64 node scripts/download-ffmpeg.mjs
 
       - name: Build Next.js (standalone bundle)
         run: npm run build

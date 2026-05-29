@@ -15,6 +15,7 @@ import { publishVideoToKnowledge } from './publish';
 import { getDouyinCollectorSettings, type TranscribePrefer } from './settings';
 import { summarizeVideo } from './ai-summary';
 import { DESKTOP_UA } from './scraper';
+import { findMediaBinary } from '@/lib/media/ffmpeg-locator';
 
 // 抖音媒体 CDN（douyinvod / snssdk play_addr）拒绝裸匿名请求：必须带
 // Referer + 真实 UA，否则 403/404。裸 fetch(playUrls[0]) 正是「音频下载
@@ -447,10 +448,8 @@ async function fallbackToLocalAsr(
    * blows past that on a 3-min clip, while 32 kbps fits a ~4-min clip.
    * Longer videos still need server-side nginx tuning or chunked upload.
  *
- * ffmpeg discovery: tries the system PATH, then common install paths
- * (Homebrew on Apple Silicon / Intel, anaconda, Linux /usr/bin).
- * Electron production builds inherit a sparse PATH from the OS launcher
- * (only zsh function dirs on macOS), so we can't rely on `ffmpeg` alone.
+ * ffmpeg discovery (bundled binary / env override / PATH / install dirs)
+ * lives in the shared src/lib/media/ffmpeg-locator.ts; see findMediaBinary.
  */
 interface AudioExtractResult {
   audioPath: string | null;
@@ -458,9 +457,9 @@ interface AudioExtractResult {
 }
 
 async function tryExtractAudio(mp4Path: string, awemeId: string): Promise<AudioExtractResult> {
-  const ffmpegPath = await findFfmpeg();
+  const ffmpegPath = await findMediaBinary('ffmpeg');
   if (!ffmpegPath) {
-    return { audioPath: null, reason: 'findFfmpeg 没找到 ffmpeg' };
+    return { audioPath: null, reason: 'findMediaBinary 没找到 ffmpeg（PATH/安装目录/内置均未命中）' };
   }
   const audioPath = path.join(
     os.tmpdir(),
@@ -498,37 +497,3 @@ async function tryExtractAudio(mp4Path: string, awemeId: string): Promise<AudioE
   });
 }
 
-let cachedFfmpegPath: string | null | undefined;
-async function findFfmpeg(): Promise<string | null> {
-  if (cachedFfmpegPath !== undefined) return cachedFfmpegPath;
-  // Try system PATH first via spawn — fastest, and what most dev shells
-  // expect. If that fails (Electron prod often has no real PATH), walk
-  // common install locations.
-  const probe = await new Promise<boolean>((resolve) => {
-    const p = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
-    p.on('error', () => resolve(false));
-    p.on('exit', (code) => resolve(code === 0));
-  });
-  if (probe) {
-    cachedFfmpegPath = 'ffmpeg';
-    return cachedFfmpegPath;
-  }
-  const candidates = [
-    '/opt/homebrew/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/usr/bin/ffmpeg',
-    `${process.env.HOME ?? ''}/anaconda3/bin/ffmpeg`,
-    `${process.env.HOME ?? ''}/miniconda3/bin/ffmpeg`,
-  ];
-  for (const c of candidates) {
-    try {
-      await fs.access(c);
-      cachedFfmpegPath = c;
-      return cachedFfmpegPath;
-    } catch {
-      /* continue */
-    }
-  }
-  cachedFfmpegPath = null;
-  return null;
-}

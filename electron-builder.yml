@@ -101,6 +101,12 @@ extraResources:
   - from: resources/git-bash/
     to: git-bash/
     filter: ["**/*"]
+  # Static ffmpeg + ffprobe (scripts/download-ffmpeg.mjs). Douyin ASR and the
+  # IM voice pipeline need them; Windows / sparse-PATH installs have no system
+  # ffmpeg. Resolved at runtime by src/lib/media/ffmpeg-locator.ts.
+  - from: resources/ffmpeg/
+    to: ffmpeg/
+    filter: ["**/*"]
   # CJK PDF rendering needs Noto Sans CJK at runtime; see
   # src/lib/office/pdf-handler.ts. Without this the packaged app falls back to
   # WinAnsi-only fonts and any 中文/日本語 PDF request throws.

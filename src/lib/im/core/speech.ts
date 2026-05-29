@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { IMFileAttachment } from './types';
+import { findMediaBinary } from '@/lib/media/ffmpeg-locator';
 
 const MAX_TTS_CHARS = 1800;
 const LARGE_AUDIO_PREPROCESS_BYTES = 8 * 1024 * 1024;
@@ -390,32 +391,6 @@ async function listGeneratedSegments(tmpDir: string): Promise<string[]> {
 async function removeGeneratedSegments(tmpDir: string): Promise<void> {
   const segmentFiles = await listGeneratedSegments(tmpDir);
   await Promise.all(segmentFiles.map((file) => fs.unlink(file).catch(() => undefined)));
-}
-
-const mediaBinaryCache = new Map<string, string | null>();
-
-async function findMediaBinary(binary: 'ffmpeg' | 'ffprobe'): Promise<string | null> {
-  if (mediaBinaryCache.has(binary)) return mediaBinaryCache.get(binary) || null;
-  const candidates = [
-    binary,
-    `/opt/homebrew/bin/${binary}`,
-    `/usr/local/bin/${binary}`,
-    `/usr/bin/${binary}`,
-    `${process.env.HOME ?? ''}/anaconda3/bin/${binary}`,
-    `${process.env.HOME ?? ''}/miniconda3/bin/${binary}`,
-  ];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      await execFileAsync(candidate, ['-version'], 3_000);
-      mediaBinaryCache.set(binary, candidate);
-      return candidate;
-    } catch {
-      // continue
-    }
-  }
-  mediaBinaryCache.set(binary, null);
-  return null;
 }
 
 async function synthesizeWithWindowsSapi(tmpDir: string, textPath: string): Promise<string> {

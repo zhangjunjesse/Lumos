@@ -62,6 +62,7 @@ resources/feishu-mcp-server/node_modules/
 resources/git-bash/
 resources/node-runtime/
 resources/python-runtime/
+resources/ffmpeg/
 /tasks
 /node_modules_incomplete_201
 
