@@ -193,6 +193,30 @@ function buildUrlReferenceHint(refs: UrlReferenceChip[]): string {
   return lines.join('\n');
 }
 
+interface CreationTextRef {
+  id: string;
+  label: string;
+  text: string;
+}
+
+// 创作图片引用：素材/详情图/仓库图"加入对话"。chip 显示缩略(previewUrl)，发送时 fetch 转附件。
+// 本地图给 path(→/api/media/serve)，直链图给 url。
+interface CreationImageRef {
+  id: string;
+  label: string;
+  filePath?: string;
+  previewUrl: string;
+}
+
+// 创作引用：标题/评论/评论分析等"加入对话"的文字。发送时合并进消息体(AI 能看到)，
+// 输入框上方用 chip 预览、用户气泡保持干净(走 displayOverride)。
+function buildCreationTextHint(refs: CreationTextRef[]): string {
+  if (refs.length === 0) return '';
+  const lines = ['', '[引用资料]'];
+  for (const r of refs) lines.push(`【${r.label}】${r.text}`);
+  return lines.join('\n');
+}
+
 function readStorageValue(key: string): string {
   if (typeof window === 'undefined') return '';
   return localStorage.getItem(key)?.trim() || '';
@@ -464,6 +488,8 @@ export function MessageInput({
   // removed by user, and are appended as a structured "[参考网页]" section in
   // the outgoing message body so the AI sees them but the input stays clean.
   const [urlReferences, setUrlReferences] = useState<UrlReferenceChip[]>([]);
+  const [creationTextRefs, setCreationTextRefs] = useState<CreationTextRef[]>([]);
+  const [creationImageRefs, setCreationImageRefs] = useState<CreationImageRef[]>([]);
   const [providerGroups, setProviderGroups] = useState<ProviderModelGroup[]>([]);
   const [defaultProviderId, setDefaultProviderId] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
@@ -517,6 +543,35 @@ export function MessageInput({
     window.addEventListener('provider-changed', handler);
     return () => window.removeEventListener('provider-changed', handler);
   }, [fetchProviderModels]);
+
+  // 外部"加入对话"：标题/评论/评论分析作为引用 chip(上方预览 + 可删)，发送时合并进消息体、不糊输入框。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<{ text?: string; label?: string }>).detail;
+      const text = d?.text?.trim();
+      if (!text) return;
+      setCreationTextRefs((cur) => [...cur, { id: nanoid(), label: d?.label?.trim() || '引用', text }]);
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+    window.addEventListener('insert-text-to-chat', handler);
+    return () => window.removeEventListener('insert-text-to-chat', handler);
+  }, []);
+
+  // 外部"加入对话"(图)：素材/详情图作为带缩略的引用 chip，发送时读本地文件转附件。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<{ path?: string; url?: string; label?: string }>).detail;
+      const filePath = d?.path?.trim();
+      const previewUrl = d?.url?.trim() || (filePath ? `/api/media/serve?path=${encodeURIComponent(filePath)}` : '');
+      if (!previewUrl) return;
+      setCreationImageRefs((cur) => {
+        if (cur.some((r) => r.previewUrl === previewUrl)) return cur;
+        return [...cur, { id: nanoid(), label: d?.label?.trim() || '图片', filePath, previewUrl }];
+      });
+    };
+    window.addEventListener('attach-image-ref-to-chat', handler);
+    return () => window.removeEventListener('attach-image-ref-to-chat', handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1076,6 +1131,38 @@ export function MessageInput({
 	      return attachments;
 	    };
 
+    // 创作图片引用 → 附件：发送时读本地文件(media/serve)转 base64，并进 onSend 的 files。
+    const convertCreationImageRefs = async (): Promise<FileAttachment[]> => {
+      const out: FileAttachment[] = [];
+      for (const ref of creationImageRefs) {
+        try {
+          const res = await fetch(ref.previewUrl);
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const dataUrl = reader.result as string;
+              resolve(dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          out.push({
+            id: nanoid(),
+            name: ref.label || 'image.png',
+            type: blob.type || 'image/png',
+            size: blob.size,
+            data: base64,
+            filePath: ref.filePath,
+          });
+        } catch {
+          /* 跳过读不出的图 */
+        }
+      }
+      return out;
+    };
+
     // If Image Agent toggle is on and no badge, send via normal LLM with systemPromptAppend
     // If badge is active, expand the command/skill and send
     if (badge && !isStreaming) {
@@ -1107,7 +1194,7 @@ export function MessageInput({
         ? `${expandedPrompt}\n\nUser context: ${content}`
         : expandedPrompt || badge.command;
 
-      const files = await convertFiles();
+      const files = [...(await convertFiles()), ...(await convertCreationImageRefs())];
       const knowledgeOptions: ChatKnowledgeOptions = {
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
@@ -1122,27 +1209,31 @@ export function MessageInput({
         return;
       }
       const urlHint = buildUrlReferenceHint(urlReferences);
-      const finalPromptWithRefs = urlHint ? `${finalPrompt}${urlHint}` : finalPrompt;
+      const textHint = buildCreationTextHint(creationTextRefs);
+      const refsHint = `${urlHint}${textHint}`;
+      const finalPromptWithRefs = refsHint ? `${finalPrompt}${refsHint}` : finalPrompt;
       setBadge(null);
       setInputValue('');
       setUrlReferences([]);
-      // displayOverride keeps the user bubble clean of the [参考网页] hint —
+      setCreationTextRefs([]);
+      setCreationImageRefs([]);
+      // displayOverride keeps the user bubble clean of the hint —
       // AI gets the full text via `content`, but user only sees their input.
       onSend(
         finalPromptWithRefs,
         files.length > 0 ? files : undefined,
         imageOverridePrompt,
-        urlHint ? finalPrompt : undefined,
+        refsHint ? finalPrompt : undefined,
         knowledgeOptions,
       );
       return;
     }
 
-    const files = await convertFiles();
+    const files = [...(await convertFiles()), ...(await convertCreationImageRefs())];
     const hasFiles = files.length > 0;
 
     const hasContent = content.length > 0;
-    const hasUrlRefsForGuard = urlReferences.length > 0;
+    const hasUrlRefsForGuard = urlReferences.length > 0 || creationTextRefs.length > 0;
     if ((!hasContent && !hasFiles && !hasUrlRefsForGuard) || disabled || isStreaming || !hasProviders) return;
 
     // Check if it's a direct slash command typed in the input
@@ -1190,22 +1281,27 @@ export function MessageInput({
 
     const hasAudioFiles = files.some((file) => isAudioFileLike({ name: file.name, type: file.type }));
     const hasUrlRefs = urlReferences.length > 0;
+    const hasTextRefs = creationTextRefs.length > 0;
     const fallback = hasAudioFiles
       ? '帮我转写并总结下面的音频。'
       : hasUrlRefs
         ? '帮我看看下面的网页。'
-        : 'Please review the attached file(s).';
+        : hasTextRefs
+          ? '帮我参考下面的资料创作。'
+          : 'Please review the attached file(s).';
     const baseContent = content || fallback;
     const urlHint = buildUrlReferenceHint(urlReferences);
-    const finalContent = urlHint ? `${baseContent}${urlHint}` : baseContent;
+    const textHint = buildCreationTextHint(creationTextRefs);
+    const refsHint = `${urlHint}${textHint}`;
+    const finalContent = refsHint ? `${baseContent}${refsHint}` : baseContent;
 
     onSend(
       finalContent,
       files.length > 0 ? files : undefined,
       imageOverridePrompt,
-      // displayOverride keeps the user bubble clean of the [参考网页] hint —
+      // displayOverride keeps the user bubble clean of the hint —
       // AI gets the full text via `content`, but user only sees what they typed.
-      urlHint ? baseContent : undefined,
+      refsHint ? baseContent : undefined,
       {
         enabled: knowledgeEnabled,
         tagIds: selectedKnowledgeTagIds,
@@ -1214,6 +1310,8 @@ export function MessageInput({
     );
     setInputValue('');
     setUrlReferences([]);
+    setCreationTextRefs([]);
+    setCreationImageRefs([]);
   }, [
     badge,
     buildImageOverridePrompt,
@@ -1228,6 +1326,8 @@ export function MessageInput({
     onSend,
     selectedKnowledgeTagIds,
     urlReferences,
+    creationTextRefs,
+    creationImageRefs,
     workingDirectory,
   ]);
 
@@ -1670,6 +1770,51 @@ export function MessageInput({
                       type="button"
                       onClick={() => setUrlReferences((current) => current.filter((r) => r.id !== ref.id))}
                       className="ml-0.5 rounded-full p-0.5 hover:bg-sky-500/20 transition-colors"
+                    >
+                      <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* 创作引用 chip：商品标题/评论/评论分析等"加入对话"的内容，发送时合并进消息 */}
+            {creationTextRefs.length > 0 && (
+              <div className="flex w-full flex-wrap items-center gap-1.5 px-3 pt-2 pb-0 order-first">
+                {creationTextRefs.map((ref) => (
+                  <span
+                    key={ref.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/20 bg-violet-500/10 py-0.5 pl-2 pr-1 text-xs font-medium text-violet-600 dark:text-violet-400"
+                    title={ref.text}
+                  >
+                    <span className="rounded bg-violet-500/20 px-1 text-[9px]">{ref.label}</span>
+                    <span className="max-w-[160px] truncate text-[11px]">{ref.text}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCreationTextRefs((current) => current.filter((r) => r.id !== ref.id))}
+                      className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-violet-500/20"
+                    >
+                      <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* 创作图片引用 chip：带缩略图，发送时转附件 */}
+            {creationImageRefs.length > 0 && (
+              <div className="flex w-full flex-wrap items-center gap-1.5 px-3 pt-2 pb-0 order-first">
+                {creationImageRefs.map((ref) => (
+                  <span
+                    key={ref.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/20 bg-violet-500/10 py-0.5 pl-1 pr-1 text-xs font-medium text-violet-600 dark:text-violet-400"
+                    title={ref.label}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={ref.previewUrl} alt={ref.label} className="h-5 w-5 rounded object-cover" />
+                    <span className="max-w-[120px] truncate text-[11px]">{ref.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCreationImageRefs((current) => current.filter((r) => r.id !== ref.id))}
+                      className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-violet-500/20"
                     >
                       <HugeiconsIcon icon={Cancel} className="h-3 w-3" />
                     </button>

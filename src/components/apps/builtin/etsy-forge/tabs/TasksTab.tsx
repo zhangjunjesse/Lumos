@@ -1,40 +1,26 @@
 'use client';
 
-// 采集任务 tab —— 关键词新建任务 + 立即爬（爬 Etsy 列表入商品库）+ 启用/调度/删除。
+// 采集任务 tab —— 关键词新建任务 + 立即爬（爬 Etsy 列表入商品库）+ 启用/调度/门槛/删除。
 // 「采集」= 关键词爬 Etsy 商品列表（主图 + EHunt 指标），不调图片服务商。
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { etsyForgeApi, type KeywordTask, type TaskSchedule } from '../api-client';
-
-const SCHEDULE_LABELS: Record<TaskSchedule, string> = {
-  manual: '仅手动',
-  hourly: '每小时',
-  daily: '每天',
-  weekly: '每周',
-};
-const STATUS_LABELS: Record<string, string> = {
-  idle: '待运行',
-  running: '运行中',
-  success: '成功',
-  partial: '部分成功',
-  failed: '失败',
-  cancelled: '已取消',
-};
+import { etsyForgeApi, type KeywordTask } from '../api-client';
+import { TaskCard, MAX_CAP, clampMax, clampPriceField, clampPagesField, type TaskPatch } from './TaskCard';
 
 export function TasksTab({ onCollected }: { onCollected?: () => void }) {
   const [tasks, setTasks] = useState<KeywordTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newKeyword, setNewKeyword] = useState('');
+  const [newMax, setNewMax] = useState(48);
+  const [newMinSales, setNewMinSales] = useState(0);
+  const [newMinFavorites, setNewMinFavorites] = useState(0);
+  const [newMinPrice, setNewMinPrice] = useState(0);
+  const [newMaxPrice, setNewMaxPrice] = useState(0);
+  const [newMaxPages, setNewMaxPages] = useState(40);
   const [running, setRunning] = useState<Set<string>>(new Set());
+  const [runMsg, setRunMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,7 +44,14 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
     if (!kw) return;
     setError(null);
     try {
-      await etsyForgeApi.createTask(kw);
+      await etsyForgeApi.createTask(kw, {
+        maxProducts: clampMax(newMax),
+        minSales: Math.max(0, Math.floor(newMinSales) || 0),
+        minFavorites: Math.max(0, Math.floor(newMinFavorites) || 0),
+        minPrice: clampPriceField(newMinPrice),
+        maxPrice: clampPriceField(newMaxPrice),
+        maxPages: clampPagesField(newMaxPages),
+      });
       setNewKeyword('');
       await load();
     } catch (err) {
@@ -68,6 +61,7 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
 
   const runNow = async (id: string) => {
     setError(null);
+    setRunMsg(null);
     setRunning((s) => new Set(s).add(id));
     try {
       const r = await etsyForgeApi.runTaskNow(id);
@@ -75,6 +69,12 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
       onCollected?.();
       if (r.productsFound === 0) {
         setError(`没爬到商品：${r.warning ?? '未知原因（可能选择器/反爬/登录墙）'}`);
+      } else {
+        setRunMsg(
+          `本次执行爬到 ${r.productsFound} 个商品（单独成一批，去「已采集商品」看这一批）` +
+            (r.ehuntHitCount > 0 ? ` · EHunt 命中 ${r.ehuntHitCount}` : ' · 无 EHunt 指标') +
+            (r.warning ? ` · ${r.warning}` : ''),
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -87,7 +87,7 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
     }
   };
 
-  const patch = async (id: string, p: { enabled?: boolean; schedule?: TaskSchedule }) => {
+  const patch = async (id: string, p: TaskPatch) => {
     try {
       await etsyForgeApi.updateTask(id, p);
       await load();
@@ -109,10 +109,10 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
   return (
     <div className="mx-auto max-w-3xl">
       <p className="mb-4 text-sm text-muted-foreground">
-        输入关键词建采集任务，点「立即爬」走浏览器抓 Etsy 搜索结果（主图 + EHunt 指标）入商品列表。EHunt 指标需设置里选 AdsPower 浏览器。
+        输入关键词建采集任务，点「立即爬」走浏览器抓 Etsy 搜索结果（主图 + EHunt 指标）入「已采集商品」。EHunt 指标需设置里选 AdsPower 浏览器。
       </p>
 
-      <div className="mb-6 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <input
           value={newKeyword}
           onChange={(e) => setNewKeyword(e.target.value)}
@@ -120,13 +120,93 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
             if (e.key === 'Enter') void addTask();
           }}
           placeholder="关键词，例如 vintage dog tshirt"
-          className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+          className="h-9 min-w-48 flex-1 rounded-md border border-input bg-background px-3 text-sm"
         />
+        <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          数量
+          <input
+            type="number"
+            min={1}
+            max={MAX_CAP}
+            value={newMax}
+            onChange={(e) => setNewMax(Number(e.target.value))}
+            title="想爬多少个商品（自动翻页，上限 500）"
+            className="h-9 w-20 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-sm text-muted-foreground">
+          翻页
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={newMaxPages}
+            onChange={(e) => setNewMaxPages(Number(e.target.value))}
+            title="最大翻页数（往深里翻多少页找达标新品，默认 40，上限 100）"
+            className="h-9 w-16 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </label>
         <Button disabled={!newKeyword.trim()} onClick={() => void addTask()}>
           + 建任务
         </Button>
       </div>
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        采集门槛
+        <label className="flex items-center gap-1">
+          销量≥
+          <input
+            type="number"
+            min={0}
+            value={newMinSales}
+            onChange={(e) => setNewMinSales(Number(e.target.value))}
+            title="销量低于此值不采（0=不过滤）"
+            className="h-9 w-24 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          收藏≥
+          <input
+            type="number"
+            min={0}
+            value={newMinFavorites}
+            onChange={(e) => setNewMinFavorites(Number(e.target.value))}
+            title="收藏低于此值不采（0=不过滤）"
+            className="h-9 w-24 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          价格
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={newMinPrice}
+            onChange={(e) => setNewMinPrice(Number(e.target.value))}
+            title="价格低于此值不采（0=不限，按商品标价）"
+            className="h-9 w-20 rounded-md border border-input bg-background px-3 text-sm"
+          />
+          –
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={newMaxPrice}
+            onChange={(e) => setNewMaxPrice(Number(e.target.value))}
+            title="价格高于此值不采（0=不限，按商品标价）"
+            className="h-9 w-20 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </label>
+        <span className="text-xs">0=不过滤 · 销量/收藏需 EHunt(AdsPower)，价格按标价</span>
+      </div>
+      <p className="mb-6 text-xs text-muted-foreground">
+        想爬多少个自己填（上限 500）。设了门槛只采达标的，靠 EHunt 指标；非 AdsPower 拿不到指标会按 0 计、被全过滤。同一任务每次执行单独成一批，「已采集商品」按批次分开展示。
+      </p>
 
+      {runMsg && (
+        <div className="mb-4 rounded-md border border-emerald-600/40 bg-emerald-600/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">
+          {runMsg}
+        </div>
+      )}
       {error && (
         <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
@@ -142,65 +222,16 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
 
       {!loading && tasks.length > 0 && (
         <div className="space-y-3">
-          {tasks.map((t) => {
-            const isRunning = running.has(t.id) || t.last_status === 'running';
-            return (
-              <div key={t.id} className="rounded-lg border bg-card p-4">
-                <div className="mb-3 flex items-start justify-between">
-                  <div className="min-w-0">
-                    <h3 className="text-base font-medium">{t.keyword}</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      累积采集 {t.total_collected} 个商品 ·{' '}
-                      {t.last_run_at ? new Date(t.last_run_at).toLocaleString() : '从未运行'}
-                    </p>
-                  </div>
-                  <span
-                    className={
-                      'rounded border px-2 py-0.5 text-[10px] ' +
-                      (t.last_status === 'success'
-                        ? 'border-emerald-600/40 text-emerald-600 dark:text-emerald-400'
-                        : t.last_status === 'failed'
-                          ? 'border-destructive/40 text-destructive'
-                          : t.last_status === 'running'
-                            ? 'border-amber-600/40 text-amber-600 dark:text-amber-400'
-                            : 'border-border text-muted-foreground')
-                    }
-                  >
-                    {STATUS_LABELS[t.last_status] ?? t.last_status}
-                  </span>
-                </div>
-                {t.last_status === 'failed' && t.last_failure_reason && (
-                  <p className="mb-3 break-words rounded bg-destructive/10 p-2 text-xs text-destructive">
-                    {t.last_failure_reason}
-                  </p>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" disabled={isRunning} onClick={() => void runNow(t.id)}>
-                    {isRunning ? '爬取中…' : `立即爬（${t.max_products} 个）`}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void patch(t.id, { enabled: !t.enabled })}>
-                    {t.enabled ? '禁用' : '启用'}
-                  </Button>
-                  <Select value={t.schedule} onValueChange={(v) => void patch(t.id, { schedule: v as TaskSchedule })}>
-                    <SelectTrigger className="h-8 w-28 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(SCHEDULE_LABELS) as TaskSchedule[]).map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {SCHEDULE_LABELS[s]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex-1" />
-                  <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => void remove(t)}>
-                    删除
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
+          {tasks.map((t) => (
+            <TaskCard
+              key={t.id}
+              task={t}
+              running={running.has(t.id)}
+              onRun={() => void runNow(t.id)}
+              onPatch={(p) => void patch(t.id, p)}
+              onRemove={() => void remove(t)}
+            />
+          ))}
         </div>
       )}
     </div>

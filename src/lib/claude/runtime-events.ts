@@ -29,6 +29,8 @@ export type RuntimeEventName =
   | 'resume_dropped_cwd_missing'
   | 'resume_dropped_mcp_changed'
   | 'resume_failed_at_runtime'
+  | 'stream_context_prepared'
+  | 'model_first_response_timeout'
   | 'session_started_fresh'
   | 'session_resumed'
   // IM inbound dispatcher events — capture cases where the agent returned

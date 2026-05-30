@@ -9,6 +9,8 @@
 //   - 不调 AdsPower stop;profile 已启动直接复用,未启动才 start
 //   - 不缓存 port;AdsPower 每次重启会变,每次抓前 fetch 一次
 
+import { chromium, type Browser } from 'playwright';
+
 const ADSPOWER_API = process.env.ADSPOWER_API_BASE ?? 'http://127.0.0.1:50325';
 const DEFAULT_PROFILE = process.env.ADSPOWER_PROFILE_ID ?? 'k1ck97si';
 
@@ -96,4 +98,35 @@ export function resolveAdsPowerProfileFromContext(browserContextId?: string | nu
 /** 通过 Lumos browser context id 启动 AdsPower。 */
 export async function startAdsPowerForContext(browserContextId?: string | null): Promise<AdsPowerHandle> {
   return startAdsPower(resolveAdsPowerProfileFromContext(browserContextId));
+}
+
+/**
+ * 用 Playwright 连 AdsPower CDP。Playwright 连接时要 attach 浏览器里**所有**标签页/worker,
+ * 页一多(尤其重型内容页 + 广告追踪 iframe)attach 会卡死直至超时。
+ * 失败时查当前网页标签数,抛出可操作的中文提示(让用户手动关多余标签),不擅自关用户的页。
+ * 超时设 20s:正常连接(页少)仅百毫秒级,卡死则远超,足够区分且不让用户干等满 30s。
+ */
+export async function connectBrowserOverCDP(
+  handle: AdsPowerHandle,
+  timeoutMs = 20_000,
+): Promise<Browser> {
+  try {
+    return await chromium.connectOverCDP(handle.wsEndpoint, { timeout: timeoutMs });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/timeout/i.test(msg)) throw err;
+    const pages = await countOpenHttpPages(handle).catch(() => null);
+    const where = pages != null ? `当前开了 ${pages} 个网页标签` : '标签页可能过多';
+    throw new Error(
+      `连接采集浏览器超时（${where}）。连接时需要接管浏览器里所有标签页，页一多就会卡死。` +
+        `请在该浏览器里手动关掉多余的标签页（只留一个空白页）后，再重试采集。`,
+    );
+  }
+}
+
+/** 原生 CDP 查当前打开的 http(s) 网页标签数(用于连接超时时的诊断提示)。 */
+async function countOpenHttpPages(handle: AdsPowerHandle): Promise<number> {
+  const res = await fetch(`${handle.wsEndpoint}/json`, { signal: AbortSignal.timeout(5_000) });
+  const targets = (await res.json()) as Array<{ type?: string; url?: string }>;
+  return targets.filter((t) => t.type === 'page' && /^https?:/i.test(t.url ?? '')).length;
 }

@@ -1,13 +1,19 @@
 import {
   addMessage,
   dataDir,
+  getSetting,
   getMessages,
   getSession,
   updateSdkSessionId,
+  updateSessionModel,
+  updateSessionProvider,
+  updateSessionProviderId,
   updateSessionResolvedModel,
 } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import { streamClaude } from '@/lib/claude-client';
+import { resolveProviderForCapability } from '@/lib/provider-resolver';
+import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
 import {
   buildCapabilityPlan,
   buildDbServerHints,
@@ -170,6 +176,32 @@ export class ConversationEngine {
 
     const activeUserId = getActiveUserId();
     const mainAgentSession = isMainAgentSession(session);
+    const resolvedProvider = resolveProviderForCapability({
+      moduleKey: 'chat',
+      capability: 'agent-chat',
+      preferredProviderId: session.provider_id?.trim() || undefined,
+    });
+    if (!resolvedProvider) {
+      throw new Error('未配置可用的主聊天服务商，请先到设置中选择一个支持 Agent Chat 的 provider。');
+    }
+    if (resolvedProvider.name !== (session.provider_name || '')) {
+      updateSessionProvider(sessionId, resolvedProvider.name);
+    }
+    if (!session.provider_id?.trim()) {
+      updateSessionProviderId(sessionId, resolvedProvider.id);
+    }
+    const effectiveModel = session.requested_model
+      || session.model
+      || getProviderEffectiveDefaultModel(resolvedProvider)
+      || getSetting('default_model')
+      || undefined;
+    if (effectiveModel && effectiveModel !== (session.requested_model || session.model)) {
+      updateSessionModel(sessionId, effectiveModel);
+    }
+    const resolvedWorkingDirectory = session.sdk_cwd
+      || session.working_directory
+      || (mainAgentSession ? dataDir : undefined);
+
     const connectorContext: ConnectorContext = {
       sessionId,
       userId: activeUserId,
@@ -186,7 +218,7 @@ export class ConversationEngine {
     };
     const capabilityPlan = buildCapabilityPlan(connectorContext);
     const loadedMcpServers = resolveEnabledMcpServers({
-      sessionWorkingDirectory: session.working_directory || undefined,
+      sessionWorkingDirectory: resolvedWorkingDirectory,
       sessionId,
       skipNames: capabilityPlan.dbMcpSkipNames,
       browserBackground: true,
@@ -228,8 +260,8 @@ export class ConversationEngine {
       prompt: text,
       sessionId,
       sdkSessionId: session.sdk_session_id || undefined,
-      model: session.requested_model || session.model || undefined,
-      workingDirectory: session.working_directory || undefined,
+      model: effectiveModel,
+      workingDirectory: resolvedWorkingDirectory,
       permissionMode: 'acceptEdits',
       files,
       mcpServers: loadedMcpServers,
@@ -241,6 +273,7 @@ export class ConversationEngine {
       conversationHistory,
       abortController,
       toolTimeoutSeconds: IM_TOOL_TIMEOUT_SECONDS,
+      provider: resolvedProvider,
     });
 
     const contentBlocks: MessageContentBlock[] = [];

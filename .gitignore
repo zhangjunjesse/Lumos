@@ -88,3 +88,6 @@ resources/ffmpeg/
 /verify-*.mjs
 /repro-*.mjs
 public/etsy-images/
+
+# local scratch / collected data (erank exports, autocomplete dumps, etc.)
+/tmp/

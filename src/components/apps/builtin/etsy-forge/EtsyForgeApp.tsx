@@ -9,10 +9,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TasksTab } from './tabs/TasksTab';
 import { ProductsTab } from './tabs/ProductsTab';
 import { LibraryTab } from './tabs/LibraryTab';
+import { AssetsTab } from './tabs/AssetsTab';
+import { WarehouseTab } from './tabs/WarehouseTab';
+import { CreationDock } from './CreationDock';
 import { CrawlTestTab } from './tabs/CrawlTestTab';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type TabValue = 'tasks' | 'products' | 'library' | 'crawl' | 'settings';
+type TabValue = 'tasks' | 'products' | 'library' | 'assets' | 'warehouse' | 'crawl' | 'settings';
 
 export function EtsyForgeApp(): React.ReactElement {
   const [tab, setTab] = React.useState<TabValue>('tasks');
@@ -20,7 +23,7 @@ export function EtsyForgeApp(): React.ReactElement {
   const refresh = React.useCallback(() => setRefreshKey((k) => k + 1), []);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="relative flex h-full flex-col overflow-hidden bg-background">
       <header className="border-b bg-card px-9 py-6">
         <div className="flex items-start gap-4">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-fuchsia-500 text-white shadow-sm">
@@ -42,10 +45,16 @@ export function EtsyForgeApp(): React.ReactElement {
               采集任务
             </TabsTrigger>
             <TabsTrigger value="products" className="data-[state=active]:bg-background">
-              商品列表
+              已采集商品
             </TabsTrigger>
             <TabsTrigger value="library" className="data-[state=active]:bg-background">
+              我关注的商品
+            </TabsTrigger>
+            <TabsTrigger value="assets" className="data-[state=active]:bg-background">
               我的图库
+            </TabsTrigger>
+            <TabsTrigger value="warehouse" className="data-[state=active]:bg-background">
+              灵感
             </TabsTrigger>
             <TabsTrigger value="crawl" className="data-[state=active]:bg-background">
               试爬验证
@@ -66,6 +75,12 @@ export function EtsyForgeApp(): React.ReactElement {
           <TabsContent value="library" className="m-0 px-9 py-6">
             <LibraryTab key={`l-${refreshKey}`} />
           </TabsContent>
+          <TabsContent value="assets" className="m-0 px-9 py-6">
+            <AssetsTab key={`a-${refreshKey}`} />
+          </TabsContent>
+          <TabsContent value="warehouse" className="m-0 px-9 py-6">
+            <WarehouseTab />
+          </TabsContent>
           <TabsContent value="crawl" className="m-0 px-9 py-6">
             <CrawlTestTab />
           </TabsContent>
@@ -74,6 +89,8 @@ export function EtsyForgeApp(): React.ReactElement {
           </TabsContent>
         </div>
       </Tabs>
+
+      <CreationDock />
     </div>
   );
 }

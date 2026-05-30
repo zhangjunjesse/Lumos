@@ -514,6 +514,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         modelFirstResponseTimer = setTimeout(() => {
           if (modelActivityReceived) return;
           modelFirstResponseTimedOut = true;
+          recordRuntimeEvent({
+            sessionId,
+            sdkSessionId,
+            event: 'model_first_response_timeout',
+            detail: {
+              timeoutMs: MODEL_FIRST_RESPONSE_TIMEOUT_MS,
+              providerId: activeProvider?.id,
+              providerName: activeProvider?.name,
+              requestedModel: model || '',
+              resolvedModel: runtimeContext.resolvedModel || '',
+            },
+          });
           abortController?.abort();
         }, MODEL_FIRST_RESPONSE_TIMEOUT_MS);
       };
@@ -672,6 +684,30 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const mcpSignatureChanged = !!sessionId
           && storedMcpSignature !== ''
           && currentMcpSignature !== storedMcpSignature;
+        recordRuntimeEvent({
+          sessionId,
+          sdkSessionId,
+          event: 'stream_context_prepared',
+          detail: {
+            providerId: activeProvider?.id,
+            providerName: activeProvider?.name,
+            apiProtocol: activeProvider?.api_protocol,
+            requestedModel: model || '',
+            resolvedModel: runtimeContext.resolvedModel || '',
+            workingDirectory: queryOptions.cwd,
+            conversationHistoryTurns: conversationHistory?.length ?? 0,
+            conversationHistoryChars: conversationHistory
+              ? conversationHistory.reduce((sum, item) => sum + item.content.length, 0)
+              : 0,
+            mcpServerNames: Object.keys(mcpServers || {}).sort(),
+            inProcessMcpServerNames: Object.keys(inProcessMcpServers || {}).sort(),
+            inProcessVariantKeys: Object.keys(inProcessVariantKeys || {}).sort(),
+            currentMcpSignature: currentMcpSignature.slice(0, 12),
+            storedMcpSignature: storedMcpSignature ? storedMcpSignature.slice(0, 12) : '',
+            mcpSignatureChanged,
+            shouldResumeBeforeMcpCheck: shouldResume,
+          },
+        });
 
         // If the MCP set changed since last resume (e.g. user just enabled a new
         // built-in MCP like wechat-export), the resumed CLI session will not

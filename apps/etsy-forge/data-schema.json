@@ -12,6 +12,11 @@
         { "name": "enabled", "type": "boolean", "label": "启用", "default": true, "indexed": true },
         { "name": "schedule", "type": "enum", "label": "调度频率", "options": ["manual", "hourly", "daily", "weekly"], "default": "manual", "indexed": true },
         { "name": "max_products", "type": "integer", "label": "每次爬商品数", "default": 24 },
+        { "name": "min_sales", "type": "integer", "label": "采集门槛·最低销量（0=不限，需 EHunt）", "default": 0 },
+        { "name": "min_favorites", "type": "integer", "label": "采集门槛·最低收藏（0=不限，需 EHunt）", "default": 0 },
+        { "name": "min_price", "type": "number", "label": "采集门槛·最低价格（0=不限，按标价）", "default": 0 },
+        { "name": "max_price", "type": "number", "label": "采集门槛·最高价格（0=不限，按标价）", "default": 0 },
+        { "name": "max_pages", "type": "integer", "label": "最大翻页数（默认 40，上限 100）", "default": 40 },
         { "name": "total_collected", "type": "integer", "label": "累积商品数", "default": 0 },
         { "name": "last_run_id", "type": "string", "label": "最近运行记录" },
         { "name": "last_run_at", "type": "datetime", "label": "最近运行时间", "indexed": true },
@@ -47,6 +52,14 @@
         { "name": "detail_status", "type": "enum", "label": "详情图采集状态", "options": ["idle", "running", "success", "failed"], "default": "idle", "indexed": true },
         { "name": "detail_image_count", "type": "integer", "label": "已采集详情图数", "default": 0 },
         { "name": "detail_failure_reason", "type": "text", "label": "详情采集失败原因" },
+        { "name": "tags", "type": "json", "label": "用户标签", "default": [] },
+        { "name": "review_count", "type": "integer", "label": "已抓评论数", "default": 0 },
+        { "name": "review_analysis", "type": "json", "label": "AI 评论分析（缓存）" },
+        { "name": "review_analyzed_at", "type": "datetime", "label": "评论分析时间" },
+        { "name": "cutout_status", "type": "enum", "label": "抠图状态", "options": ["idle", "running", "success", "partial", "failed"], "default": "idle", "indexed": true },
+        { "name": "cutout_count", "type": "integer", "label": "已抠图数", "default": 0 },
+        { "name": "asset_status", "type": "enum", "label": "素材分析状态", "options": ["idle", "running", "success", "partial", "failed"], "default": "idle", "indexed": true },
+        { "name": "pose_status", "type": "enum", "label": "抠模特姿势状态", "options": ["idle", "running", "success", "partial", "failed"], "default": "idle", "indexed": true },
         { "name": "created_at", "type": "datetime", "label": "采集时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
@@ -69,6 +82,73 @@
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
       "indexes": [["user_id"], ["product_id"], ["listing_id"], ["keyword"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_reviews",
+      "label": "商品评论",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "product_id", "type": "string", "label": "所属商品", "required": true, "indexed": true },
+        { "name": "listing_id", "type": "string", "label": "Etsy listing ID", "indexed": true },
+        { "name": "author", "type": "string", "label": "评论人" },
+        { "name": "rating", "type": "string", "label": "评分" },
+        { "name": "date", "type": "string", "label": "评论日期" },
+        { "name": "region", "type": "string", "label": "地区" },
+        { "name": "text", "type": "text", "label": "评论内容", "required": true },
+        { "name": "created_at", "type": "datetime", "label": "采集时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["product_id"], ["listing_id"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_cutouts",
+      "label": "抠图结果",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "product_id", "type": "string", "label": "所属商品", "required": true, "indexed": true },
+        { "name": "source_count", "type": "integer", "label": "抠图用了几张图", "default": 0 },
+        { "name": "cutout_path", "type": "string", "label": "抠图结果本地路径" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "created_at", "type": "datetime", "label": "抠图时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["product_id"], ["status"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_prompts",
+      "label": "提示词库",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "category", "type": "enum", "label": "分类", "options": ["cutout", "scene", "model", "product", "pose"], "default": "cutout", "indexed": true },
+        { "name": "name", "type": "string", "label": "名称", "required": true },
+        { "name": "content", "type": "text", "label": "提示词内容", "required": true },
+        { "name": "is_default", "type": "boolean", "label": "当前生效", "default": false },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["category"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_assets",
+      "label": "素材库（场景/模特/产品/模特姿势）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "category", "type": "enum", "label": "类别", "options": ["scene", "model", "product", "pose"], "indexed": true },
+        { "name": "product_id", "type": "string", "label": "来源商品", "indexed": true },
+        { "name": "source_image_ids", "type": "json", "label": "来源原始图 ID", "default": [] },
+        { "name": "description", "type": "text", "label": "AI 看图描述" },
+        { "name": "image_path", "type": "string", "label": "素材图本地路径" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["category"], ["product_id"], ["status"], ["created_at"]]
     },
     {
       "name": "etsy_forge_runs",
@@ -97,6 +177,8 @@
         { "name": "ai_system_prompt", "type": "text", "label": "采集说明 / 提示词 (ai_system_prompt)" },
         { "name": "risk_note", "type": "text", "label": "风险边界 (risk_note)" },
         { "name": "browser_context_id", "type": "string", "label": "采集用浏览器上下文", "default": "embedded:default" },
+        { "name": "ai_provider_id", "type": "string", "label": "AI 分析服务商（评论分析用，留空=全局默认）" },
+        { "name": "ai_model", "type": "string", "label": "AI 分析模型（留空=该服务商首个模型）" },
         { "name": "default_max_products", "type": "integer", "label": "默认每次爬商品数", "default": 24 },
         { "name": "download_detail_images", "type": "boolean", "label": "详情图下载到本地（否则仅存 URL）", "default": false },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }

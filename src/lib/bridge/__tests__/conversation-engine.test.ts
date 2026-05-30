@@ -2,11 +2,17 @@ const mockAddMessage = jest.fn();
 const mockGetMessages = jest.fn();
 const mockGetSession = jest.fn();
 const mockGetMcpServerByNameAndScope = jest.fn();
+const mockGetSetting = jest.fn();
 const mockUpdateSdkSessionId = jest.fn();
+const mockUpdateSessionModel = jest.fn();
+const mockUpdateSessionProvider = jest.fn();
+const mockUpdateSessionProviderId = jest.fn();
 const mockUpdateSessionResolvedModel = jest.fn();
 const mockResolveEnabledMcpServers = jest.fn();
 const mockStreamClaude = jest.fn();
 const mockCreateWeChatAssistantMcpServer = jest.fn();
+const mockResolveProviderForCapability = jest.fn();
+const mockGetProviderEffectiveDefaultModel = jest.fn();
 
 jest.mock('@/lib/db', () => ({
   dataDir: '/tmp/lumos-test-data',
@@ -14,12 +20,24 @@ jest.mock('@/lib/db', () => ({
   getMessages: (...args: unknown[]) => mockGetMessages(...args),
   getSession: (...args: unknown[]) => mockGetSession(...args),
   getMcpServerByNameAndScope: (...args: unknown[]) => mockGetMcpServerByNameAndScope(...args),
+  getSetting: (...args: unknown[]) => mockGetSetting(...args),
   updateSdkSessionId: (...args: unknown[]) => mockUpdateSdkSessionId(...args),
+  updateSessionModel: (...args: unknown[]) => mockUpdateSessionModel(...args),
+  updateSessionProvider: (...args: unknown[]) => mockUpdateSessionProvider(...args),
+  updateSessionProviderId: (...args: unknown[]) => mockUpdateSessionProviderId(...args),
   updateSessionResolvedModel: (...args: unknown[]) => mockUpdateSessionResolvedModel(...args),
 }));
 
 jest.mock('@/lib/mcp-resolver', () => ({
   resolveEnabledMcpServers: (...args: unknown[]) => mockResolveEnabledMcpServers(...args),
+}));
+
+jest.mock('@/lib/provider-resolver', () => ({
+  resolveProviderForCapability: (...args: unknown[]) => mockResolveProviderForCapability(...args),
+}));
+
+jest.mock('@/lib/claude/provider-env', () => ({
+  getProviderEffectiveDefaultModel: (...args: unknown[]) => mockGetProviderEffectiveDefaultModel(...args),
 }));
 
 jest.mock('@/lib/claude-client', () => ({
@@ -108,6 +126,14 @@ describe('ConversationEngine capability injection', () => {
       deepsearch: {},
       'speech-to-text': {},
     });
+    mockResolveProviderForCapability.mockReturnValue({
+      id: 'provider-main',
+      name: 'Main Provider',
+      default_model: '',
+      extra_env: '',
+    });
+    mockGetProviderEffectiveDefaultModel.mockReturnValue('claude-sonnet-test');
+    mockGetSetting.mockReturnValue('');
     mockStreamClaude.mockReturnValue(streamText('已读到。'));
     mockGetMessages.mockReturnValue({
       messages: [
@@ -121,10 +147,13 @@ describe('ConversationEngine capability injection', () => {
     mockGetSession.mockReturnValue({
       id: 'main-1',
       system_prompt: '__LUMOS_MAIN_AGENT__',
-      working_directory: '/tmp/lumos-main',
+      working_directory: '',
       sdk_session_id: null,
       requested_model: null,
       model: null,
+      provider_id: '',
+      provider_name: '',
+      sdk_cwd: '',
     });
 
     const response = await new ConversationEngine().sendMessage(
@@ -136,14 +165,19 @@ describe('ConversationEngine capability injection', () => {
 
     const resolverOptions = mockResolveEnabledMcpServers.mock.calls[0][0] as {
       skipNames: Set<string>;
+      sessionWorkingDirectory?: string;
     };
     expect([...resolverOptions.skipNames]).toContain('wechat-export');
+    expect(resolverOptions.sessionWorkingDirectory).toBe('/tmp/lumos-test-data');
 
     const streamOptions = mockStreamClaude.mock.calls[0][0] as {
       inProcessMcpServers: Record<string, { readOnly?: boolean }>;
       systemPrompt?: string;
       abortController?: AbortController;
       toolTimeoutSeconds?: number;
+      provider?: { id: string };
+      model?: string;
+      workingDirectory?: string;
     };
     expect(Object.keys(streamOptions.inProcessMcpServers)).toEqual(
       expect.arrayContaining(['lumos-wechat-assistant', 'lumos-butler', 'lumos-image']),
@@ -154,6 +188,12 @@ describe('ConversationEngine capability injection', () => {
     expect(streamOptions.systemPrompt).toContain('Active IM context');
     expect(streamOptions.abortController).toBeInstanceOf(AbortController);
     expect(streamOptions.toolTimeoutSeconds).toBe(900);
+    expect(streamOptions.provider?.id).toBe('provider-main');
+    expect(streamOptions.model).toBe('claude-sonnet-test');
+    expect(streamOptions.workingDirectory).toBe('/tmp/lumos-test-data');
+    expect(mockUpdateSessionProvider).toHaveBeenCalledWith('main-1', 'Main Provider');
+    expect(mockUpdateSessionProviderId).toHaveBeenCalledWith('main-1', 'provider-main');
+    expect(mockUpdateSessionModel).toHaveBeenCalledWith('main-1', 'claude-sonnet-test');
     expect(response.visibleText).toBe('已读到。');
   });
 
@@ -165,6 +205,9 @@ describe('ConversationEngine capability injection', () => {
       sdk_session_id: null,
       requested_model: null,
       model: null,
+      provider_id: 'provider-main',
+      provider_name: 'Main Provider',
+      sdk_cwd: '/tmp/lumos-main',
     });
     mockStreamClaude.mockReturnValue(streamEvent('error', '模型在 180 秒内没有返回首个内容。'));
 
@@ -189,6 +232,9 @@ describe('ConversationEngine capability injection', () => {
       sdk_session_id: null,
       requested_model: null,
       model: null,
+      provider_id: 'provider-main',
+      provider_name: 'Main Provider',
+      sdk_cwd: '/tmp/lumos-wechat',
     });
 
     await new ConversationEngine().sendMessage('wechat-1', '列出微信自动化');
@@ -210,6 +256,9 @@ describe('ConversationEngine capability injection', () => {
       sdk_session_id: null,
       requested_model: null,
       model: null,
+      provider_id: 'provider-main',
+      provider_name: 'Main Provider',
+      sdk_cwd: '/tmp/lumos-main',
     });
     mockStreamClaude.mockReturnValue(streamText(
       '我先采集这个视频。 [Used tool: mcp__douyin-collector__douyin_collect_video] [Tool result: {"ok":true,"tags":["眼镜"]}] 采集完成。',

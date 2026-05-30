@@ -9,12 +9,30 @@ import {
 } from './types';
 
 export const DEFAULT_MAX_PRODUCTS = 24;
+export const DEFAULT_MAX_PAGES = 40;
+export const MAX_PAGES_CAP = 100;
+
+/** 价格门槛归一化：非负、保留两位小数。0 = 不限。 */
+export function clampPrice(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+/** 最大翻页数归一化：整数，夹在 [1, MAX_PAGES_CAP]。 */
+export function clampPages(n: number): number {
+  return Math.max(1, Math.min(MAX_PAGES_CAP, Math.floor(n) || DEFAULT_MAX_PAGES));
+}
 
 export interface CreateTaskInput {
   userId: string;
   keyword: string;
   schedule?: TaskSchedule;
   maxProducts?: number;
+  minSales?: number;
+  minFavorites?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  maxPages?: number;
   enabled?: boolean;
 }
 
@@ -27,6 +45,11 @@ export function createTask(store: AppDataStore, input: CreateTaskInput): Keyword
     enabled: input.enabled ?? true,
     schedule: input.schedule ?? 'manual',
     max_products: input.maxProducts ?? DEFAULT_MAX_PRODUCTS,
+    min_sales: input.minSales ?? 0,
+    min_favorites: input.minFavorites ?? 0,
+    min_price: input.minPrice ?? 0,
+    max_price: input.maxPrice ?? 0,
+    max_pages: input.maxPages ?? DEFAULT_MAX_PAGES,
     total_collected: 0,
     last_status: 'idle',
     last_collected_count: 0,

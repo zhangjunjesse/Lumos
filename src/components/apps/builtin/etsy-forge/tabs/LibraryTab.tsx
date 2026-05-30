@@ -1,26 +1,44 @@
 'use client';
 
-// 图库 tab —— 采集到的详情图（第二步产物）。网格 + 多选下载。
+// 图库 tab —— 商品维度展示（一行一商品，按入库倒序）。选择模式可批量打标签/删除/抠图/分析素材/抠姿势，点图弹大图。
+// 批量动作逻辑集中在 useLibraryActions hook。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { etsyForgeApi, type LibImage } from '../api-client';
+import { etsyForgeApi, type LibProduct } from '../api-client';
+import { LibraryProductRow } from './LibraryProductRow';
+import { LibraryBatchBar } from './LibraryBatchBar';
+import { LibraryTagFilter } from './LibraryTagFilter';
+import { ImageLightbox } from './ImageLightbox';
+import { ReviewModal } from './ReviewModal';
+import { CutoutModal } from './CutoutModal';
+import { useLibraryActions } from './use-library-actions';
 
 export function LibraryTab() {
-  const [images, setImages] = useState<LibImage[]>([]);
+  const [products, setProducts] = useState<LibProduct[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ productId: string; index: number } | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ productId: string; title: string } | null>(null);
+  const [cutoutTarget, setCutoutTarget] = useState<{ productId: string; title: string } | null>(null);
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selProducts, setSelProducts] = useState<Set<string>>(new Set());
+  const [selImages, setSelImages] = useState<Set<string>>(new Set());
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const res = await etsyForgeApi.listLibrary();
-      setImages(res.images);
-      setSelected(new Set());
+      setProducts(res.products);
+      setAllTags(res.allTags);
+      setTotal(res.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -30,37 +48,80 @@ export function LibraryTab() {
     void load();
   }, [load]);
 
-  const toggle = (id: string) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+  // 有商品在「素材分析」或「抠姿势」中就每 5s 自动刷新，看后台进度；全跑完自动停。
+  useEffect(() => {
+    if (!products.some((p) => p.asset_status === 'running' || p.pose_status === 'running')) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [products, load]);
 
-  const downloadSelected = () => {
-    const targets = selected.size > 0 ? images.filter((i) => selected.has(i.id)) : images;
-    for (const img of targets) {
-      const a = document.createElement('a');
-      a.href = img.url;
-      a.download = `${img.listing_id}-${img.position}.jpg`;
-      a.target = '_blank';
-      a.click();
-    }
+  const clearSelection = useCallback(() => {
+    setSelProducts(new Set());
+    setSelImages(new Set());
+  }, []);
+  const exitSelect = () => {
+    setSelectMode(false);
+    clearSelection();
   };
+  const toggleIn = (set: Set<string>, id: string) => {
+    const n = new Set(set);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  };
+
+  const actions = useLibraryActions({ products, selProducts, selImages, setProducts, clearSelection, reload: load });
+
+  const visibleProducts = useMemo(
+    () => (activeTags.size === 0 ? products : products.filter((p) => p.tags.some((t) => activeTags.has(t)))),
+    [products, activeTags],
+  );
+  const lightboxProduct = useMemo(
+    () => (lightbox ? (products.find((p) => p.product_id === lightbox.productId) ?? null) : null),
+    [lightbox, products],
+  );
+  const error = actions.error ?? loadError;
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted-foreground">
-          {images.length} 张详情图{selected.size > 0 ? ` · 已选 ${selected.size}` : ''}
+          {products.length} 个商品 · {total} 张详情图 · 按入库时间倒序
         </span>
         <div className="flex-1" />
-        <Button size="sm" onClick={downloadSelected} disabled={images.length === 0}>
-          {selected.size > 0 ? `下载选中 ${selected.size} 张` : '下载全部'}
+        <Button
+          size="sm"
+          variant={selectMode ? 'default' : 'outline'}
+          onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+          disabled={products.length === 0}
+        >
+          {selectMode ? '退出选择' : '选择'}
         </Button>
       </div>
 
+      <LibraryTagFilter
+        allTags={allTags}
+        activeTags={activeTags}
+        onToggle={(t) => setActiveTags((s) => toggleIn(s, t))}
+        onClear={() => setActiveTags(new Set())}
+      />
+
+      {selectMode && (
+        <LibraryBatchBar
+          selectedProductCount={selProducts.size}
+          selectedImageCount={selImages.size}
+          allTags={allTags}
+          busy={actions.busy}
+          onAddTag={actions.addTag}
+          onRemoveTag={actions.removeTag}
+          onCutout={actions.cutoutSelected}
+          onPipeline={actions.runPipeline}
+          onDelete={actions.deleteSelected}
+          onClear={exitSelect}
+        />
+      )}
+
+      {actions.msg && <p className="mb-3 rounded-md bg-muted p-2 text-xs text-muted-foreground">{actions.msg}</p>}
       {error && (
         <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
@@ -68,36 +129,51 @@ export function LibraryTab() {
       )}
       {loading && <p className="text-sm text-muted-foreground">加载中…</p>}
 
-      {!loading && images.length === 0 && (
+      {!loading && products.length === 0 && (
         <div className="rounded-md border border-dashed p-12 text-center text-sm text-muted-foreground">
-          图库还是空的。去「商品列表」勾选商品，点「爬选中详情图」把详情图采进来。
+          图库还是空的。去「已采集商品」勾选商品，点「爬选中详情图」把详情图采进来。
+        </div>
+      )}
+      {!loading && products.length > 0 && visibleProducts.length === 0 && (
+        <div className="rounded-md border border-dashed p-12 text-center text-sm text-muted-foreground">
+          没有带所选标签的商品，换个标签或清除筛选。
         </div>
       )}
 
-      {!loading && images.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {images.map((img) => (
-            <div
-              key={img.id}
-              className={`relative aspect-square overflow-hidden rounded-md border ${selected.has(img.id) ? 'border-foreground ring-1 ring-foreground' : 'border-border'}`}
-            >
-              <button type="button" onClick={() => toggle(img.id)} className="block h-full w-full">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={img.keyword} className="h-full w-full object-cover" />
-                {selected.has(img.id) && (
-                  <span className="absolute left-1.5 top-1.5 flex size-5 items-center justify-center rounded bg-foreground text-xs text-background">
-                    ✓
-                  </span>
-                )}
-                {img.is_main && (
-                  <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
-                    主图
-                  </span>
-                )}
-              </button>
-            </div>
+      {!loading && visibleProducts.length > 0 && (
+        <div className="space-y-3">
+          {visibleProducts.map((p) => (
+            <LibraryProductRow
+              key={p.product_id}
+              product={p}
+              selectMode={selectMode}
+              productSelected={selProducts.has(p.product_id)}
+              onToggleProduct={() => setSelProducts((s) => toggleIn(s, p.product_id))}
+              selectedImageIds={selImages}
+              onToggleImage={(id) => setSelImages((s) => toggleIn(s, id))}
+              onOpenImage={(index) => setLightbox({ productId: p.product_id, index })}
+              onViewReviews={() => setReviewTarget({ productId: p.product_id, title: p.title })}
+              onViewCutouts={() => setCutoutTarget({ productId: p.product_id, title: p.title })}
+            />
           ))}
         </div>
+      )}
+
+      {lightboxProduct && lightbox && (
+        <ImageLightbox
+          images={lightboxProduct.images.map((i) => ({ url: i.url, title: lightboxProduct.title }))}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox({ productId: lightbox.productId, index })}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {reviewTarget && (
+        <ReviewModal productId={reviewTarget.productId} title={reviewTarget.title} onClose={() => setReviewTarget(null)} />
+      )}
+
+      {cutoutTarget && (
+        <CutoutModal productId={cutoutTarget.productId} title={cutoutTarget.title} onClose={() => setCutoutTarget(null)} />
       )}
     </div>
   );

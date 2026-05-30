@@ -4,12 +4,7 @@
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { finishTask, setTaskRunning } from './collection-task';
 import { collectEtsyListings } from './product-collector';
-import {
-  COLLECTIONS,
-  type KeywordTaskRow,
-  type ProductRow,
-  type RunStatus,
-} from './types';
+import { COLLECTIONS, type KeywordTaskRow, type ProductRow, type RunStatus } from './types';
 
 export interface RunListCollectInput {
   browserContextId?: string;
@@ -46,23 +41,37 @@ export async function runListCollect(
   setTaskRunning(store, task.id);
 
   try {
+    // 跨执行去重：这个关键词历史上采过的 listing_id 全排除，本次只攒没采过的新品。
+    const prior = store.query<ProductRow>(COLLECTIONS.PRODUCTS, {
+      filter: { user_id: task.user_id, keyword: task.keyword },
+      limit: 5000,
+    });
+    const excludeListingIds = new Set(prior.map((p) => p.listing_id));
+
     const result = await collectEtsyListings({
       keyword: task.keyword,
       maxProducts: input.maxProductsOverride ?? task.max_products,
+      excludeListingIds,
+      minSales: task.min_sales ?? 0,
+      minFavorites: task.min_favorites ?? 0,
+      minPrice: task.min_price ?? 0,
+      maxPrice: task.max_price ?? 0,
+      maxPages: task.max_pages ?? 40,
       browserContextId: input.browserContextId,
       isAborted: input.isAborted,
       appendLog: input.appendLog,
     });
 
+    // 每次执行是独立批次：本次爬到的商品全部入库（带 run_id/run_at）。
+    // 同一次执行内已由 collector 按 listing_id 去重；不跨执行合并——
+    // 反复跑同一关键词时每次执行各成一批快照，供按批次区分/对比。
     let inserted = 0;
     for (const p of result.products) {
-      const existing = store.query<ProductRow>(COLLECTIONS.PRODUCTS, {
-        filter: { user_id: task.user_id, listing_id: p.listingId },
-        limit: 1,
-      })[0];
-      const payload = {
+      store.create(COLLECTIONS.PRODUCTS, {
         user_id: task.user_id,
         task_id: task.id,
+        run_id: run.id,
+        run_at: startedAt,
         keyword: task.keyword,
         source: 'etsy' as const,
         listing_id: p.listingId,
@@ -70,19 +79,16 @@ export async function runListCollect(
         url: p.url,
         main_image_url: p.mainImageUrl,
         price: p.price ?? undefined,
+        rating: p.rating ?? undefined,
+        reviews: p.reviews ?? undefined,
         ehunt_json: p.ehunt ? JSON.stringify(p.ehunt) : undefined,
         ehunt_status: result.ehuntStatus,
-        selected: existing?.selected ?? false,
-        detail_status: existing?.detail_status ?? 'idle',
-        detail_image_count: existing?.detail_image_count ?? 0,
-        created_at: existing?.created_at ?? new Date().toISOString(),
-      };
-      if (existing) {
-        store.update(COLLECTIONS.PRODUCTS, existing.id, payload);
-      } else {
-        store.create(COLLECTIONS.PRODUCTS, payload);
-        inserted++;
-      }
+        selected: false,
+        detail_status: 'idle',
+        detail_image_count: 0,
+        created_at: new Date().toISOString(),
+      });
+      inserted++;
     }
 
     const status: RunStatus = result.products.length > 0 ? 'success' : 'failed';
