@@ -91,6 +91,7 @@ export interface AssetRow extends Record<string, unknown> {
   failure_reason?: string;
   quality_flag?: 'good' | 'weak'; // 二创质量闸门结果:weak=有硬伤(白底框/多余文字/糊…)
   quality_note?: string; // weak 的原因
+  series_of?: string; // playbook Step11 系列化:本张是哪个达标母版素材扩展出来的(空=普通二创)
   created_at: string;
 }
 

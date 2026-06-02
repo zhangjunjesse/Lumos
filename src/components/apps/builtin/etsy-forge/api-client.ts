@@ -214,11 +214,17 @@ export const etsyForgeApi = {
   retryAsset: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/assets/retry`, { method: 'POST', body: JSON.stringify({ asset_id: id }) }),
 
-  // ⑤ 自动二创：基于抠出的印花 + 标题 + 评论卖点 → 生成 5 个变体印花(异步，前端轮询 listAssets('remix'))。
-  remixProduct: (productId: string) =>
+  // ⑤ 二创：按选中的方向矩阵(A/B/C/D,可多选;留空=默认 B)× 钩子轮转生成变体印花(异步,轮询 listAssets('remix'))。
+  remixProduct: (productId: string, directions?: string[]) =>
     jf<{ ok: boolean; started: boolean }>(`${BASE}/remix`, {
       method: 'POST',
-      body: JSON.stringify({ product_id: productId }),
+      body: JSON.stringify({ product_id: productId, directions }),
+    }),
+  // Step11 系列化：对一张达标的二创印花(母版)扩展 5-10 张同系列新印花(异步,轮询 listAssets('remix'))。
+  remixSeries: (productId: string, baseAssetId: string, count?: number) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/remix/series`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId, base_asset_id: baseAssetId, count }),
     }),
 
   // 产品合成：印花 × 产品图 → inpaint → 带印花平铺 T(异步，前端轮询 listMockups)。

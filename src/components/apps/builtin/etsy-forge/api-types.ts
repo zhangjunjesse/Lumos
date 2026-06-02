@@ -106,6 +106,7 @@ export interface AssetItem {
   source_image_urls: string[];
   quality_flag: 'good' | 'weak' | null; // 二创质检结果(其它类为 null)
   quality_note: string | null;
+  series_of: string | null; // Step11 系列化:本张是哪个达标母版扩展出来的(普通二创为 null)
   created_at: string;
 }
 

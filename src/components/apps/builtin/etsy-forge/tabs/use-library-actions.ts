@@ -108,15 +108,14 @@ export function useLibraryActions({ products, selProducts, selImages, setProduct
     void Promise.allSettled(tasks).then(() => void reload());
   };
 
-  // ⑤ 二创：对勾选商品逐个发起二创(基于抠出的印花 + 标题/卖点出 5 个变体)。需先抠印花。后台跑，不阻塞。
-  const remixSelected = () => {
+  // ⑤ 二创：对勾选商品按选中的方向矩阵(A/B/C/D,可多选)出变体。需先抠印花。后台跑，不阻塞。
+  const remixSelected = (directions: string[]) => {
     const productIds = [...selProducts];
     if (!productIds.length) return;
-    if (!confirm(`对 ${productIds.length} 个商品二创（每个基于抠出的印花 + 标题/卖点出 5 个变体印花）？需先抠印花，没印花的会失败(看日志)。后台跑。`)) return;
     clearSelection();
     setError(null);
     setMsg(`已发起二创（${productIds.length} 个商品，后台跑）。完成去「我的图库 → 二创印花」看。`);
-    void Promise.allSettled(productIds.map((id) => etsyForgeApi.remixProduct(id))).then(() => void reload());
+    void Promise.allSettled(productIds.map((id) => etsyForgeApi.remixProduct(id, directions))).then(() => void reload());
   };
 
   // ②b 详情图分类:对该商品详情图 AI 分类(走 vision,逐图有限并发)。

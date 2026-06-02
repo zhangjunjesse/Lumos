@@ -12,9 +12,12 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { product_id?: string };
+    const body = (await req.json()) as { product_id?: string; directions?: string[] };
     const productId = (body.product_id ?? '').trim();
     if (!productId) return NextResponse.json({ error: 'product_id 必填' }, { status: 400 });
+    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is 'A' | 'B' | 'C' | 'D' =>
+      ['A', 'B', 'C', 'D'].includes(d),
+    );
 
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
@@ -28,7 +31,7 @@ export async function POST(req: NextRequest) {
     if (!cutout) return NextResponse.json({ error: '该商品还没有抠出的印花,先「抠印花」再二创' }, { status: 400 });
 
     // fire-and-forget:5 张二创慢,请求秒返回,后台跑完落库(assets/remix),前端轮询「我的图库」看。
-    void runRemix(store, { userId, productId }).catch(() => {});
+    void runRemix(store, { userId, productId, directions: directions.length ? directions : undefined }).catch(() => {});
     return NextResponse.json({ ok: true, started: true });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

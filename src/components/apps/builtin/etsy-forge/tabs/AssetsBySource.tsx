@@ -19,6 +19,7 @@ export function AssetsBySource({
   onViewOrig,
   onRemove,
   onRetry,
+  onSeries,
 }: {
   products: LibProduct[];
   assets: AssetItem[];
@@ -26,6 +27,7 @@ export function AssetsBySource({
   onViewOrig: (url: string) => void;
   onRemove: (id: string) => void;
   onRetry?: (id: string) => Promise<void>;
+  onSeries?: (asset: AssetItem) => void;
 }) {
   const withAssets = new Set(assets.map((a) => a.source_product_id).filter((x): x is string => !!x));
   const rows = products.filter(
@@ -75,7 +77,7 @@ export function AssetsBySource({
             {its.length > 0 ? (
               <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-7">
                 {its.map((a) => (
-                  <AssetCard key={a.id} asset={a} showSource={false} onView={onView} onViewOrig={onViewOrig} onRemove={onRemove} onRetry={onRetry} />
+                  <AssetCard key={a.id} asset={a} showSource={false} onView={onView} onViewOrig={onViewOrig} onRemove={onRemove} onRetry={onRetry} onSeries={onSeries} />
                 ))}
               </div>
             ) : (

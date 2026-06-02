@@ -97,6 +97,20 @@ export function AssetsTab() {
     }
   };
 
+  // Step11 系列化：以一张达标二创印花为母版，后台扩展 5-10 张同系列新印花，轮询刷新看结果。
+  const series = async (a: AssetItem) => {
+    if (!a.source_product_id) return;
+    if (!confirm(`以这张达标印花为母版，扩展一组同系列新印花（固定风格/配色/受众，变主体/身份/节日/道具/文案/场景）？后台跑。`)) return;
+    setError(null);
+    try {
+      await etsyForgeApi.remixSeries(a.source_product_id, a.id);
+      setMsg('系列化中，后台生成（最长 10 分钟），结果会自动刷新…');
+      setRetryPoll(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const tabBtn = (v: 'type' | 'source', label: string) => (
     <button
       type="button"
@@ -129,7 +143,7 @@ export function AssetsTab() {
       {loading && <p className="text-sm text-muted-foreground">加载中…</p>}
 
       {!loading && view === 'source' && (
-        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} />
+        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} />
       )}
 
       {!loading &&
@@ -149,7 +163,7 @@ export function AssetsTab() {
               ) : (
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
                   {items.map((a) => (
-                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} />
+                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} />
                   ))}
                 </div>
               )}

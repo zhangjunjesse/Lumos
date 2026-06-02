@@ -1,62 +1,143 @@
-// 二创·拆解(vision):调图片服务商 chat 端点看参考印花,产出 JSON —— 类型(图案/文字款)+ 设计简报(含 KEEP/FREE)+ 5 个量身变体方向。
-// 本地印花用 base64 data URL 喂。解析 JSON;失败抛错,由 runRemix 决定降级(不 mock)。
+// 二创·拆解(vision,严格对齐 playbook Step1-3 / 6 / 7):看参考印花,产出结构化 JSON ——
+//   type/layout/ownership/ip_risk + facts(原图事实) + semantics(语义抽象) + niches(3-5 候选) + hooks(图像定制创意钩子) + palettes(2-3 配色方案)。
+// 本地印花用 base64 喂;解析尽量宽容,缺的字段降级,由 runRemix 兜底(不 mock,失败如实记)。
 
 import type { FetchedImage } from './image-fetch';
 import { visionChat } from './vision-chat';
 import type { VisionEndpoint } from './vision-provider';
 
-const ANALYZE_TIMEOUT_MS = 90_000;
-
-export interface RemixDirection {
-  text: string;
-  useReference: boolean; // true=贴近原图(喂参考图辅助) / false=发散(纯文字生成、更原创)
-}
+const ANALYZE_TIMEOUT_MS = 120_000; // 大 JSON,给足时间
 
 export type RemixType = 'graphic' | 'text' | 'combo';
 export type RemixLayout = 'single-hero' | 'pattern' | 'typographic' | 'badge';
+export type Ownership = 'owned' | 'licensed' | 'unsure' | 'not-owned';
 
-export interface RemixBrief {
+export interface NicheHypothesis {
+  buyer: string;
+  useCase: string;
+  emotion: string;
+  visualTheme: string;
+  searchIntent: string;
+  searchTerms: string;
+  match: string; // 与原图匹配度
+  potential: string; // 商业潜力
+  risk: string;
+}
+export interface CreativeHook {
+  operator: string; // 用了哪个算子
+  keep: string;
+  change: string;
+  buyerEmotion: string;
+  threeSec: string; // 3 秒识别点
+}
+export interface PaletteSolution {
+  name: string;
+  colors: string; // 主色/辅色/对比色
+  shirtColor: string; // 适合的衣服底色
+  note: string;
+}
+
+export interface RemixAnalysis {
   type: RemixType;
   layout: RemixLayout;
-  ipRisk: string; // 侵权风险元素描述(空=无)
-  brief: string;
-  directions: RemixDirection[]; // 量身方向(可能 <5,runRemix 用固定轴补齐)
+  ownership: Ownership;
+  ipRisk: string;
+  facts: Record<string, string>; // Step1
+  semantics: Record<string, string>; // Step2
+  niches: NicheHypothesis[]; // Step3
+  hooks: CreativeHook[]; // Step6
+  palettes: PaletteSolution[]; // Step7
 }
 
 const TYPES: RemixType[] = ['graphic', 'text', 'combo'];
 const LAYOUTS: RemixLayout[] = ['single-hero', 'pattern', 'typographic', 'badge'];
+const OWNERSHIPS: Ownership[] = ['owned', 'licensed', 'unsure', 'not-owned'];
+const S = (v: unknown): string => (v == null ? '' : String(v).trim());
 
-// 方向既兼容旧的纯字符串,也兼容 {text, keepReference} 对象。
-function toDirection(d: unknown): RemixDirection | null {
-  if (typeof d === 'string') return d.trim() ? { text: d.trim(), useReference: true } : null;
-  if (d && typeof d === 'object') {
-    const o = d as { text?: unknown; keepReference?: unknown };
-    const text = String(o.text ?? '').trim();
-    if (!text) return null;
-    return { text, useReference: o.keepReference !== false };
-  }
-  return null;
-}
-
-function parseRemixJson(raw: string): RemixBrief {
-  const m = raw.match(/\{[\s\S]*\}/); // 去掉可能的 code fence / 前后赘述,取第一个 JSON 对象
+function parse(raw: string): RemixAnalysis {
+  const m = raw.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('拆解未返回 JSON');
-  const j = JSON.parse(m[0]) as { type?: string; layout?: string; ip_risk?: string; brief?: string; directions?: unknown };
-  const directions = Array.isArray(j.directions)
-    ? j.directions.map(toDirection).filter((d): d is RemixDirection => d !== null)
-    : [];
+  const j = JSON.parse(m[0]) as Record<string, unknown>;
+  const obj = (v: unknown): Record<string, string> => {
+    const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(o).map(([k, val]) => [k, S(val)]));
+  };
+  const arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
   return {
     type: TYPES.includes(j.type as RemixType) ? (j.type as RemixType) : 'graphic',
     layout: LAYOUTS.includes(j.layout as RemixLayout) ? (j.layout as RemixLayout) : 'single-hero',
-    ipRisk: String(j.ip_risk ?? '').trim(),
-    brief: String(j.brief ?? '').trim(),
-    directions,
+    ownership: OWNERSHIPS.includes(j.ownership as Ownership) ? (j.ownership as Ownership) : 'not-owned',
+    ipRisk: S(j.ip_risk),
+    facts: obj(j.facts),
+    semantics: obj(j.semantics),
+    niches: arr(j.niches).map((n) => ({
+      buyer: S(n.buyer), useCase: S(n.use_case), emotion: S(n.emotion), visualTheme: S(n.visual_theme),
+      searchIntent: S(n.search_intent), searchTerms: S(n.search_terms), match: S(n.match), potential: S(n.potential), risk: S(n.risk),
+    })).filter((n) => n.buyer || n.visualTheme),
+    hooks: arr(j.hooks).map((h) => ({
+      operator: S(h.operator), keep: S(h.keep), change: S(h.change), buyerEmotion: S(h.buyer_emotion), threeSec: S(h.three_sec),
+    })).filter((h) => h.change || h.operator),
+    palettes: arr(j.palettes).map((p) => ({ name: S(p.name), colors: S(p.colors), shirtColor: S(p.shirt_color), note: S(p.note) }))
+      .filter((p) => p.colors),
   };
 }
 
-export async function analyzeForRemix(ep: VisionEndpoint, designImg: FetchedImage, prompt: string): Promise<RemixBrief> {
-  const content = await visionChat(ep, designImg, prompt, 700, ANALYZE_TIMEOUT_MS);
-  const parsed = parseRemixJson(content);
-  if (!parsed.brief) throw new Error('拆解 JSON 缺 brief');
-  return parsed;
+export async function analyzeForRemix(ep: VisionEndpoint, designImg: FetchedImage, prompt: string): Promise<RemixAnalysis> {
+  const content = await visionChat(ep, designImg, prompt, 2200, ANALYZE_TIMEOUT_MS);
+  const a = parse(content);
+  if (Object.keys(a.facts).length === 0 && a.niches.length === 0) throw new Error('拆解 JSON 缺少 facts/niches');
+  return a;
+}
+
+// 把 facts + semantics 拼成稳定的简报文本(喂变体 {brief});niche/hook/palette 逐张单独注入。
+export function factsBriefText(a: RemixAnalysis): string {
+  const lines: string[] = ['--- visual facts ---'];
+  for (const [k, v] of Object.entries(a.facts)) if (v) lines.push(`${k.toUpperCase()}: ${v}`);
+  lines.push('--- commercial meaning ---');
+  for (const [k, v] of Object.entries(a.semantics)) if (v) lines.push(`${k.toUpperCase()}: ${v}`);
+  return lines.join('\n');
+}
+
+// 单个 niche 假设 → 注入 {niche} 的文本(playbook Step3)。
+export function nicheText(n: NicheHypothesis): string {
+  return [
+    `BUYER: ${n.buyer}`,
+    n.useCase && `USE CASE: ${n.useCase}`,
+    n.emotion && `EMOTION: ${n.emotion}`,
+    n.visualTheme && `VISUAL THEME: ${n.visualTheme}`,
+    n.searchIntent && `SEARCH INTENT: ${n.searchIntent}`,
+  ].filter(Boolean).join('\n');
+}
+
+// 图像定制的创意钩子 → 注入 {hook} 的指令文本(playbook Step6)。
+export function hookText(h: CreativeHook): string {
+  return [
+    `Creative hook — ${h.operator || 'remix'}:`,
+    h.keep && `keep ${h.keep};`,
+    h.change && `change ${h.change};`,
+    h.buyerEmotion && `buyer emotion: ${h.buyerEmotion};`,
+    h.threeSec && `3-second read: ${h.threeSec}.`,
+  ].filter(Boolean).join(' ');
+}
+
+// 配色方案 → 注入 {palette} 的文本(playbook Step7)。
+export function paletteText(p: PaletteSolution): string {
+  return [p.name && `[${p.name}]`, p.colors, p.shirtColor && `on a ${p.shirtColor} shirt`, p.note && `— ${p.note}`]
+    .filter(Boolean)
+    .join(' ');
+}
+
+// 拆解失败时的兜底:用商品标题拼一个最小可用的 analysis(不 mock,如实标注降级)。
+export function fallbackAnalysis(title: string): RemixAnalysis {
+  return {
+    type: 'graphic',
+    layout: 'single-hero',
+    ownership: 'not-owned',
+    ipRisk: '',
+    facts: { subject: `based on product title "${title || '(none)'}"`, line_render: 'match the reference image style' },
+    semantics: {},
+    niches: [],
+    hooks: [],
+    palettes: [],
+  };
 }

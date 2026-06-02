@@ -148,6 +148,7 @@
         { "name": "failure_reason", "type": "text", "label": "失败原因" },
         { "name": "quality_flag", "type": "enum", "label": "质量", "options": ["good", "weak"], "indexed": true },
         { "name": "quality_note", "type": "text", "label": "质量备注" },
+        { "name": "series_of", "type": "string", "label": "系列化母版素材", "indexed": true },
         { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],

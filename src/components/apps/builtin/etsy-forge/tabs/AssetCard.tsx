@@ -16,6 +16,7 @@ export function AssetCard({
   onViewOrig,
   onRemove,
   onRetry,
+  onSeries,
 }: {
   asset: AssetItem;
   showSource?: boolean;
@@ -23,8 +24,11 @@ export function AssetCard({
   onViewOrig: (url: string) => void;
   onRemove: (id: string) => void;
   onRetry?: (id: string) => Promise<void>;
+  onSeries?: (asset: AssetItem) => void; // Step11 系列化:仅达标的二创母版可扩展系列
 }) {
   const [retrying, setRetrying] = useState(false);
+  // 系列化入口:成功的二创印花、质检非 weak、且本身不是系列衍生图(避免系列套系列)。
+  const canSeries = !!onSeries && a.category === 'remix' && a.status === 'success' && a.quality_flag !== 'weak' && !a.series_of && !!a.source_product_id;
   return (
     <div className="group overflow-hidden rounded-md border">
       <div className="relative">
@@ -37,6 +41,11 @@ export function AssetCard({
             title={a.quality_note || '质检:有硬伤(白底框/多余文字/糊…)'}
           >
             弱
+          </span>
+        )}
+        {a.series_of && (
+          <span className="absolute left-1 top-6 z-10 rounded bg-sky-600/90 px-1.5 py-0.5 text-[9px] font-medium text-white" title="系列化衍生图">
+            系列
           </span>
         )}
         {a.status === 'success' && a.url && a.path && (
@@ -84,13 +93,21 @@ export function AssetCard({
               图库管理
             </span>
           ) : (
-            <button
-              type="button"
-              onClick={() => onRemove(a.id)}
-              className="shrink-0 text-[10px] text-destructive hover:underline"
-            >
-              删
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {canSeries && (
+                <button
+                  type="button"
+                  onClick={() => onSeries?.(a)}
+                  title="以这张达标印花为母版,扩展 5-10 张同系列新印花(Step11 系列化)"
+                  className="text-[10px] text-sky-600 hover:underline"
+                >
+                  系列化
+                </button>
+              )}
+              <button type="button" onClick={() => onRemove(a.id)} className="text-[10px] text-destructive hover:underline">
+                删
+              </button>
+            </div>
           )}
         </div>
         {showSource && a.source_image_urls.length > 0 && (

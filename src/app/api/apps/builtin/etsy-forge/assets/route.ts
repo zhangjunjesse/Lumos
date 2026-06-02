@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
         : [],
       quality_flag: (r.quality_flag as 'good' | 'weak' | undefined) ?? null,
       quality_note: (r.quality_note as string | undefined) ?? null,
+      series_of: (r.series_of as string | undefined) ?? null,
       created_at: (r.created_at as string) ?? '',
     }));
 
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest) {
               source_image_urls: [] as string[],
               quality_flag: null,
               quality_note: null,
+              series_of: null,
               created_at: (c.created_at as string) ?? '',
             }))
         : [];
