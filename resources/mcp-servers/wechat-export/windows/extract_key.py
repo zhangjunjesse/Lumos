@@ -32,9 +32,11 @@ TH32CS_SNAPMODULE = 0x00000008
 TH32CS_SNAPMODULE32 = 0x00000010
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 MEM_COMMIT = 0x1000
+MEM_PRIVATE = 0x20000
 PAGE_NOACCESS = 0x01
 PAGE_GUARD = 0x100
 READABLE_PROTECT = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80
+WRITABLE_PROTECT = 0x04 | 0x08 | 0x40 | 0x80
 
 MAX_PATH = 260
 MAX_MODULE_NAME32 = 255
@@ -218,48 +220,65 @@ def find_wechat_pids() -> list[int]:
 
 
 def candidate_wechat_pids(primary_pid: int) -> list[int]:
-    """Return process scan order, preserving the UI-detected PID first.
+    """Return process scan order, preferring the real Weixin/WeChat process.
 
-    Newer Windows WeChat/Weixin builds fan work out into WeChatAppEx and
-    xwechat helper processes. Include exact-name matches plus direct children
-    of any matched process, so a main-process detector cannot accidentally scan
-    only Weixin.exe while the key material lives in a helper.
+    Windows WeChat 4.x stores the v4 SQLCipher key in Weixin.exe memory, not in
+    WeChatAppEx.exe. If Lumos passes an AppEx PID from UI detection, correct the
+    order here so the main Weixin process and its children are scanned first.
     """
     process_names = wechat_process_names()
     entries = list_process_entries()
+    by_pid = {int(item["pid"]): item for item in entries}
     children_by_parent: dict[int, list[int]] = {}
     for item in entries:
         children_by_parent.setdefault(int(item["parent_pid"]), []).append(int(item["pid"]))
 
-    pids: list[int] = []
-    frontier: list[int] = []
+    main_pid_set = {
+        int(item["pid"])
+        for item in entries
+        if str(item.get("name") or "").lower() in {"weixin.exe", "wechat.exe"}
+    }
+    main_pids = sorted(
+        main_pid_set,
+        key=lambda pid: (
+            int(by_pid.get(pid, {}).get("parent_pid") or 0) in main_pid_set,
+            pid,
+        ),
+    )
+    main_child_pids = [
+        int(item["pid"])
+        for item in entries
+        if int(item.get("parent_pid") or 0) in set(main_pids)
+        and str(item.get("name") or "").lower() not in {"wechatappex.exe", "weixinappex.exe"}
+    ]
+    app_helper_pids = [
+        int(item["pid"])
+        for item in entries
+        if str(item.get("name") or "").lower() in process_names
+        and str(item.get("name") or "").lower() not in {"wechatappex.exe", "weixinappex.exe"}
+        and int(item["pid"]) not in set(main_pids + main_child_pids)
+    ]
+
+    ordered: list[int] = []
 
     def add(pid: int) -> None:
-        if pid > 0 and pid not in pids:
-            pids.append(pid)
-            frontier.append(pid)
+        if pid > 0 and pid not in ordered:
+            ordered.append(pid)
 
+    for pid in main_pids + main_child_pids:
+        add(pid)
     if primary_pid and primary_pid > 0:
-        add(int(primary_pid))
-    for item in entries:
-        name = str(item.get("name") or "").lower()
-        if name in process_names or "wechat" in name or "weixin" in name or "xwechat" in name:
-            add(int(item["pid"]))
-
-    # Pull in a shallow child tree. This is intentionally bounded so unrelated
-    # browser/helper process families do not make extraction unbounded.
-    seen_frontier = set(frontier)
-    for _depth in range(2):
-        current = list(frontier)
-        frontier.clear()
-        for parent in current:
-            for child in children_by_parent.get(parent, []):
-                if child in seen_frontier:
-                    continue
-                seen_frontier.add(child)
+        name = str(by_pid.get(int(primary_pid), {}).get("name") or "").lower()
+        if name not in {"wechatappex.exe", "weixinappex.exe"}:
+            add(int(primary_pid))
+    for pid in app_helper_pids:
+        add(pid)
+    for parent in list(ordered):
+        for child in children_by_parent.get(parent, []):
+            name = str(by_pid.get(child, {}).get("name") or "").lower()
+            if name not in {"wechatappex.exe", "weixinappex.exe"}:
                 add(child)
-
-    return pids[:64]
+    return ordered[:64]
 
 
 def describe_candidate_pids(pids: list[int]) -> str:
@@ -848,6 +867,110 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
     return found
 
 
+def iter_writable_private_regions(handle: int) -> list[tuple[int, int, int]]:
+    regions: list[tuple[int, int, int]] = []
+    mbi = MEMORY_BASIC_INFORMATION()
+    address = 0
+    max_address = 0x7FFFFFFFFFFF if sys.maxsize > 2**32 else 0x7FFFFFFF
+    while address < max_address:
+        result = VirtualQueryEx(handle, ctypes.c_void_p(address), ctypes.byref(mbi), ctypes.sizeof(mbi))
+        if not result:
+            address += 0x10000
+            continue
+        base = int(mbi.BaseAddress or 0)
+        size = int(mbi.RegionSize or 0)
+        protect = int(mbi.Protect)
+        if (
+            size > 0
+            and mbi.State == MEM_COMMIT
+            and int(mbi.Type) == MEM_PRIVATE
+            and (protect & PAGE_GUARD) == 0
+            and (protect & PAGE_NOACCESS) == 0
+            and (protect & WRITABLE_PROTECT)
+            and size < 500 * 1024 * 1024
+        ):
+            regions.append((base, size, protect))
+        next_address = base + size
+        address = next_address if next_address > address else address + 0x1000
+    return regions
+
+
+def high_entropy_key_candidate(key: bytes) -> bool:
+    return len(key) == KEY_SIZE and key.count(0) < 8 and len(set(key)) > 16
+
+
+def is_core_v4_db(path: str) -> bool:
+    name = os.path.basename(path).lower()
+    return name in {"contact.db", "session.db"} or name.startswith("message_")
+
+
+def v4_records_by_account(accounts: list[dict]) -> list[tuple[dict, list[dict]]]:
+    grouped: list[tuple[dict, list[dict]]] = []
+    for account in accounts:
+        if account.get("mode") != "v4":
+            continue
+        records = [rec for rec in account.get("_db_records") or [] if rec.get("mode") == "v4"]
+        core = [rec for rec in records if is_core_v4_db(rec.get("path") or "")]
+        if core:
+            grouped.append((account, core))
+        elif records:
+            grouped.append((account, records))
+    return grouped
+
+
+def verify_and_mark_v4_key(key: bytes, grouped: list[tuple[dict, list[dict]]], mark_key) -> int:
+    added = 0
+    key_hex = key.hex()
+    for account, records in grouped:
+        if not any(_verify_key_v4(key, rec["path"]) for rec in records):
+            continue
+        # Windows WeChat 4.x uses one raw SQLCipher key for all v4 dbs in the
+        # account. Once a core db verifies, record that key for every v4 salt so
+        # later decryptors can pick it by salt without re-scanning memory.
+        all_records = [rec for rec in account.get("_db_records") or [] if rec.get("mode") == "v4"]
+        for record in all_records:
+            added += int(bool(mark_key(account, record, key_hex)))
+    return added
+
+
+def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
+    grouped = v4_records_by_account(accounts)
+    if not grouped:
+        return 0
+    regions = iter_writable_private_regions(handle)
+    log(f"[+] scanning v4 raw heap regions={len(regions)}")
+    found = candidates = scanned = failures = 0
+    chunk_size = 4 * 1024 * 1024
+    for region_index, (base, size, protect) in enumerate(regions, 1):
+        offset = 0
+        tail = b""
+        while offset < size:
+            to_read = min(chunk_size, size - offset)
+            data = read_mem(handle, base + offset, to_read)
+            if not data:
+                failures += 1
+                offset += to_read
+                tail = b""
+                continue
+            block = tail + data
+            block_base = base + offset - len(tail)
+            for pos in range(0, max(0, len(block) - KEY_SIZE + 1), 8):
+                key = block[pos:pos + KEY_SIZE]
+                if high_entropy_key_candidate(key):
+                    candidates += 1
+                    found += verify_and_mark_v4_key(key, grouped, mark_key)
+                    if found:
+                        log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
+                        return found
+            scanned += len(data)
+            tail = block[-31:]
+            offset += to_read
+        if region_index % 25 == 0:
+            log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
+    log(f"[+] v4 raw heap scan found={found} candidates={candidates} scanned_mb={scanned // 1048576} read_failures={failures}")
+    return found
+
+
 def load_existing_accounts(accounts_out: str) -> list[dict]:
     try:
         with open(accounts_out, "r", encoding="utf-8") as fh:
@@ -926,6 +1049,17 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     recovered_by_wxid: dict[str, dict] = {}
     recovered_salts: set[str] = set()
     total_records = sum(len(account.get("_db_records") or []) for account in accounts)
+    v4_salts = {
+        rec["salt"]
+        for account in accounts
+        for rec in account.get("_db_records") or []
+        if rec.get("mode") == "v4"
+    }
+    target_salts = v4_salts or {
+        rec["salt"]
+        for account in accounts
+        for rec in account.get("_db_records") or []
+    }
     ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
     scan_summaries: list[dict] = []
     total_pointer_keys_seen = 0
@@ -967,7 +1101,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         return True
 
     for index, scan_pid in enumerate(pids, start=1):
-        if total_records and len(recovered_salts) >= total_records:
+        if target_salts and target_salts.issubset(recovered_salts):
             break
 
         modules = get_key_scan_modules(scan_pid)
@@ -977,6 +1111,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
             "opened": False,
             "modules": len(modules),
             "pointer_keys": 0,
+            "v4_heap_found": 0,
             "hex_found": 0,
             "error": "",
         }
@@ -1000,7 +1135,13 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         summary["opened"] = True
         seen_keys: set[bytes] = set()
         try:
-            if modules:
+            if target_salts and not target_salts.issubset(recovered_salts):
+                def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
+                    return mark_key(account, record, key_hex, scan_pid, module_path)
+
+                summary["v4_heap_found"] = scan_v4_raw_heap_keys(handle, accounts, mark_scanned_key)
+
+            if modules and target_salts and not target_salts.issubset(recovered_salts):
                 for ptr_size in ptr_sizes:
                     log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
                     for base, size, module_path_candidate, module_name in modules:
@@ -1017,14 +1158,14 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                                         continue
                                     if verify_db_key(key, record["path"], record["mode"]):
                                         mark_key(account, record, key_hex, scan_pid, module_path_candidate)
-                            if total_records and len(recovered_salts) >= total_records:
+                            if target_salts and target_salts.issubset(recovered_salts):
                                 break
-                        if total_records and len(recovered_salts) >= total_records:
+                        if target_salts and target_salts.issubset(recovered_salts):
                             break
-                    if total_records and len(recovered_salts) >= total_records:
+                    if target_salts and target_salts.issubset(recovered_salts):
                         break
 
-            if total_records and len(recovered_salts) < total_records:
+            if target_salts and not target_salts.issubset(recovered_salts):
                 def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
                     return mark_key(account, record, key_hex, scan_pid, module_path)
 
@@ -1056,6 +1197,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                 f"{item.get('pid')} opened={item.get('opened')} "
                 f"modules={item.get('modules')} "
                 f"pointer_keys={item.get('pointer_keys')} "
+                f"v4_heap_found={item.get('v4_heap_found')} "
                 f"hex_found={item.get('hex_found')} "
                 f"error={item.get('error') or '-'}"
             )

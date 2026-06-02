@@ -233,6 +233,8 @@ export async function extractKeys(
         || line.includes('scanning module')
         || line.includes('scanning candidate pointers')
         || line.includes('key scan modules=')
+        || line.includes('v4 raw heap')
+        || line.includes('v4 heap progress')
       ) {
         onProgress?.({ phase: 'scanning', message: safeLine });
         return;
