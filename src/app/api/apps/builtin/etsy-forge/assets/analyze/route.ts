@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runAnalyzeAssets } from '@/lib/etsy-forge/asset-analyze';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
 import { COLLECTIONS, type ProductRow } from '@/lib/etsy-forge/types';
+import { getImageConcurrency, mapLimit } from '@/lib/etsy-forge/concurrency';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
     // fire-and-forget：Electron/Next 常驻进程，请求返回后任务继续在进程内串行跑。
     void (async () => {
-      for (const pid of productIds) {
+      await mapLimit(productIds, getImageConcurrency(store), async (pid) => {
         try {
           const r = await runAnalyzeAssets(store, { userId, productId: pid, imageIds });
           store.update<ProductRow>(COLLECTIONS.PRODUCTS, pid, {
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
         } catch {
           store.update<ProductRow>(COLLECTIONS.PRODUCTS, pid, { asset_status: 'failed' });
         }
-      }
+      });
     })();
 
     return NextResponse.json({ ok: true, started: productIds.length });

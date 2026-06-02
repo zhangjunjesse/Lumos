@@ -17,7 +17,8 @@ You have access to the `office-docs` MCP tools for processing Office documents. 
 - **create_document** — Create .docx with headings (h1/h2/h3), paragraphs (bold, italic, alignment), and tables
 
 ### PDF
-- **read_pdf** — Read PDF metadata: pages, dimensions, title, author
+- **read_pdf** — Read PDF metadata: pages, dimensions, title, author (tolerates malformed fields → warnings)
+- **extract_pdf_text** — Extract page text. Small PDFs return `text` inline; large PDFs return `textFile` (a multi-line .txt) + `preview` — open it with `Read`/`Grep`. Returns `isScanned: true` + a `nextAction` when the PDF is scanned/image-only (no text layer) — render pages to images and OCR via `image-reader.read_image`
 - **create_pdf** — Create PDF with text blocks (font size, bold, color, positioning)
 - **merge_pdfs** — Merge multiple PDFs into one
 - **split_pdf** — Split PDF by page ranges
@@ -29,4 +30,4 @@ You have access to the `office-docs` MCP tools for processing Office documents. 
 1. Always use absolute file paths
 2. For Excel formulas, use standard Excel syntax (e.g. `=SUM(A1:A10)`, `=VLOOKUP(E2,A:B,2,FALSE)`)
 3. When reading large spreadsheets, use `maxRows` to limit data
-4. For PDF text extraction, note that pdf-lib reads metadata only — use `read_document` for Word content extraction
+4. For PDF text, use `extract_pdf_text` (not `read_pdf`, which is metadata only). If it reports `isScanned`, render the pages and OCR them with `image-reader.read_image`

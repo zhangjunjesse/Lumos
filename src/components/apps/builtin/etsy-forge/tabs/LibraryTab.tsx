@@ -116,6 +116,7 @@ export function LibraryTab() {
           onRemoveTag={actions.removeTag}
           onCutout={actions.cutoutSelected}
           onPipeline={actions.runPipeline}
+          onRemix={actions.remixSelected}
           onDelete={actions.deleteSelected}
           onClear={exitSelect}
         />
@@ -154,6 +155,8 @@ export function LibraryTab() {
               onOpenImage={(index) => setLightbox({ productId: p.product_id, index })}
               onViewReviews={() => setReviewTarget({ productId: p.product_id, title: p.title })}
               onViewCutouts={() => setCutoutTarget({ productId: p.product_id, title: p.title })}
+              onClassify={() => actions.classifyProduct(p.product_id)}
+              onSetImageType={actions.setImageType}
             />
           ))}
         </div>

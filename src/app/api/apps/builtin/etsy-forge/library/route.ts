@@ -17,6 +17,7 @@ interface LibImageOut {
   id: string;
   url: string;
   path: string | null;
+  image_type: string | null;
   is_main: boolean;
   position: number;
   created_at: string;
@@ -109,6 +110,7 @@ export async function GET(req: NextRequest) {
         id: img.id,
         url: img.image_url,
         path: img.local_path ?? null,
+        image_type: img.image_type ?? null,
         is_main: img.is_main,
         position: img.position,
         created_at: img.created_at,

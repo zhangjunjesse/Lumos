@@ -10,7 +10,7 @@ import { generateImagesWithRetry } from './image-gen-retry';
 import { loadImageAsBase64 } from './image-fetch';
 import { COLLECTIONS, type AssetRow, type DetailImageRow, type ProductRow } from './types';
 
-const POSE_TIMEOUT_MS = 180_000;
+const POSE_TIMEOUT_MS = 600_000; // 10min：中转链路长、单张可能慢，给足时间避免本地提前 abort
 
 export interface RunPoseResult {
   ok: boolean;
@@ -61,11 +61,12 @@ export async function runPoseExtract(
     const now = new Date().toISOString();
     try {
       const ref = await loadImageAsBase64({ localPath: img.local_path, url: img.image_url });
-      const res = await generateImagesWithRetry({
-        prompt,
-        referenceImages: [ref],
-        abortSignal: AbortSignal.timeout(POSE_TIMEOUT_MS),
-      });
+      const res = await generateImagesWithRetry(
+        { prompt, referenceImages: [ref], abortSignal: AbortSignal.timeout(POSE_TIMEOUT_MS) },
+        3,
+        '抠姿势',
+        { product: product.title || input.productId, sources: [img.image_url] },
+      );
       const out = res.images[0];
       if (!out?.localPath) throw new Error('图片服务商未返回抠图结果（可能该模型不支持图像编辑）');
       store.create(COLLECTIONS.ASSETS, {

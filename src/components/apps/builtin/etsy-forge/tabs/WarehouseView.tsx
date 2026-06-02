@@ -4,53 +4,14 @@
 // 生成图有两种落地：①assistant 文本里的 ```image-gen-result``` 代码块(localPath)
 //                  ②generate_image 工具结果 block(path/url)。两种都扫，覆盖所有情况。
 
-import { useMemo, useState } from 'react';
-import { parseMessageContent, type Message } from '@/types';
-import { unwrapToolResult } from '@/lib/tool-result-parser';
+import { useEffect, useMemo, useState } from 'react';
+import { type Message } from '@/types';
+import { etsyForgeApi } from '../api-client';
+import { extractCreationImages, type CreationImage } from './creation-images';
 import { ImageLightbox } from './ImageLightbox';
 import { QuickAddChat } from './QuickAddChat';
 
-const RESULT_RE = /```image-gen-result\s*\n?([\s\S]*?)\n?\s*```/g;
-const serve = (p: string) => `/api/media/serve?path=${encodeURIComponent(p)}`;
-
-interface WhImage {
-  url: string;
-  prompt: string;
-  createdAt: string;
-}
-
-function extractImages(messages: Message[]): WhImage[] {
-  const out: WhImage[] = [];
-  for (const m of messages) {
-    for (const b of parseMessageContent(m.content)) {
-      if (b.type === 'text') {
-        RESULT_RE.lastIndex = 0;
-        let mt: RegExpExecArray | null;
-        while ((mt = RESULT_RE.exec(b.text))) {
-          try {
-            const json = JSON.parse(mt[1]) as { prompt?: string; images?: Array<{ localPath?: string }> };
-            for (const img of json.images ?? []) {
-              if (img.localPath) out.push({ url: serve(img.localPath), prompt: json.prompt ?? '', createdAt: m.created_at });
-            }
-          } catch {
-            /* 跳过坏块 */
-          }
-        }
-      } else if (b.type === 'tool_result') {
-        const r = unwrapToolResult(b.content);
-        const imgs = r && Array.isArray(r.images) ? (r.images as Array<Record<string, unknown>>) : [];
-        const prompt = typeof r?.prompt === 'string' ? r.prompt : '';
-        for (const img of imgs) {
-          const url = img.url ? String(img.url) : img.path ? serve(String(img.path)) : '';
-          if (url) out.push({ url, prompt, createdAt: m.created_at });
-        }
-      }
-    }
-  }
-  // 去重(同图只留一张) + 新产出排前面
-  const seen = new Set<string>();
-  return out.filter((i) => (seen.has(i.url) ? false : seen.add(i.url))).reverse();
-}
+type WhImage = CreationImage;
 
 function hourLabel(iso: string): string {
   const d = new Date(iso);
@@ -77,7 +38,26 @@ function groupByHour(images: WhImage[]): { label: string; items: { im: WhImage; 
 }
 
 export function WarehouseView({ messages }: { messages: Message[] }) {
-  const images = useMemo(() => extractImages(messages), [messages]);
+  const chatImages = useMemo(() => extractCreationImages(messages), [messages]);
+  // 二创印花(assets/remix)也归集进灵感:存哪不变(SOP⑥仍从图库取),这里只是多读一个来源展示。
+  const [remixImages, setRemixImages] = useState<WhImage[]>([]);
+  useEffect(() => {
+    void etsyForgeApi
+      .listAssets('remix')
+      .then((r) =>
+        setRemixImages(
+          r.assets
+            .filter((a) => a.status === 'success' && a.url)
+            .map((a) => ({ url: a.url as string, prompt: a.source_product_title ? `二创·${a.source_product_title}` : '二创', createdAt: a.created_at })),
+        ),
+      )
+      .catch(() => {});
+  }, [messages]);
+  // 合并后按时间倒序(新在前),再按小时分组。
+  const images = useMemo(
+    () => [...chatImages, ...remixImages].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+    [chatImages, remixImages],
+  );
   const groups = useMemo(() => groupByHour(images), [images]);
   const [idx, setIdx] = useState(-1);
 

@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTask } from '@/lib/etsy-forge/collection-task';
 import { runListCollect } from '@/lib/etsy-forge/list-collect';
+import { registerRun, unregisterRun, isAbortRequested } from '@/lib/etsy-forge/run-registry';
 import { getBrowserContextId, getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
 
 export const runtime = 'nodejs';
@@ -28,11 +29,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? Math.floor(body.max_products)
         : undefined;
 
-    const result = await runListCollect(store, task, {
-      browserContextId: getBrowserContextId(store),
-      maxProductsOverride,
-    });
-    return NextResponse.json(result);
+    registerRun(task.id);
+    try {
+      const result = await runListCollect(store, task, {
+        browserContextId: getBrowserContextId(store),
+        maxProductsOverride,
+        isAborted: () => isAbortRequested(task.id),
+      });
+      return NextResponse.json(result);
+    } finally {
+      unregisterRun(task.id);
+    }
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

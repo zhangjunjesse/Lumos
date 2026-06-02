@@ -16,5 +16,11 @@ export type { DocParagraph, DocTable, DocSection, WriteWordOptions } from './wor
 export { readPdfInfo, createPdf, mergePdfs, splitPdf } from './pdf-handler';
 export type { ReadPdfResult, PdfTextBlock, PdfPageContent, CreatePdfOptions } from './pdf-handler';
 
+export { extractPdfText } from './pdf-text';
+export type { ExtractPdfTextResult, PdfTextMethod } from './pdf-text';
+
+export { extractPdfTextForAgent } from './pdf-text-tool';
+export type { PdfTextToolResult } from './pdf-text-tool';
+
 export { createPpt } from './ppt-writer';
 export type { SlideContent, CreatePptOptions, SlideTextItem, SlideTableData } from './ppt-writer';

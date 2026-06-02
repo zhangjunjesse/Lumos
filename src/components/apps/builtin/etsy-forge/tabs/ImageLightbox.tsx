@@ -45,8 +45,38 @@ export function ImageLightbox({
   const navBtn =
     'absolute top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-2xl text-white hover:bg-white/20';
 
+  // 下载当前图:抓成 blob 再存,远程图(跨域)也能强制下载、不会变成新开网页。
+  const download = async (url: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = obj;
+      a.download = (url.split('/').pop()?.split('?')[0] || 'image') + (blob.type.includes('png') ? '.png' : '.jpg');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(obj);
+    } catch {
+      window.open(url, '_blank'); // 兜底:抓不到就新开
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6" onClick={onClose}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void download(current.url);
+        }}
+        aria-label="下载"
+        title="下载这张"
+        className="absolute right-16 top-4 flex size-9 items-center justify-center rounded-full bg-white/10 text-lg text-white hover:bg-white/20"
+      >
+        ⬇
+      </button>
       <button
         type="button"
         onClick={onClose}

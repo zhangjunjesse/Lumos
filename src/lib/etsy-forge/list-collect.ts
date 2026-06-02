@@ -91,18 +91,20 @@ export async function runListCollect(
       inserted++;
     }
 
-    const status: RunStatus = result.products.length > 0 ? 'success' : 'failed';
+    // 用户中途停止 → 终态记为 cancelled(已爬到的已入库);否则按有无产物定 success/failed。
+    const status: RunStatus = result.aborted ? 'cancelled' : result.products.length > 0 ? 'success' : 'failed';
+    const failureReason = result.aborted || result.products.length === 0 ? result.warning : undefined;
     store.update(COLLECTIONS.RUNS, run.id, {
       products_found: result.products.length,
       ehunt_ok_count: result.ehuntHitCount,
       status,
-      failure_reason: result.products.length === 0 ? result.warning : undefined,
+      failure_reason: failureReason,
       ended_at: new Date().toISOString(),
     });
     finishTask(store, task.id, {
       status,
       collectedCount: inserted,
-      failureReason: result.products.length === 0 ? result.warning : undefined,
+      failureReason,
       runId: run.id,
     });
 

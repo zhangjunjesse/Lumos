@@ -6,7 +6,7 @@
 // 点了立即返回 + 乐观标状态，进度看商品行；接口回来后整体刷新拿真实结果。
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { etsyForgeApi, type LibProduct } from '../api-client';
+import { etsyForgeApi, type ImageType, type LibProduct } from '../api-client';
 
 export interface PipelineSteps {
   analyze: boolean;
@@ -108,6 +108,30 @@ export function useLibraryActions({ products, selProducts, selImages, setProduct
     void Promise.allSettled(tasks).then(() => void reload());
   };
 
+  // ⑤ 二创：对勾选商品逐个发起二创(基于抠出的印花 + 标题/卖点出 5 个变体)。需先抠印花。后台跑，不阻塞。
+  const remixSelected = () => {
+    const productIds = [...selProducts];
+    if (!productIds.length) return;
+    if (!confirm(`对 ${productIds.length} 个商品二创（每个基于抠出的印花 + 标题/卖点出 5 个变体印花）？需先抠印花，没印花的会失败(看日志)。后台跑。`)) return;
+    clearSelection();
+    setError(null);
+    setMsg(`已发起二创（${productIds.length} 个商品，后台跑）。完成去「我的图库 → 二创印花」看。`);
+    void Promise.allSettled(productIds.map((id) => etsyForgeApi.remixProduct(id))).then(() => void reload());
+  };
+
+  // ②b 详情图分类:对该商品详情图 AI 分类(走 vision,逐图有限并发)。
+  const classifyProduct = (productId: string) =>
+    void runOp('分类详情图中（走 vision，稍候）…', async () => {
+      const r = await etsyForgeApi.classifyImages(productId);
+      return `分类完成:${r.classified} 张成功${r.failed ? `、${r.failed} 张失败` : ''}`;
+    });
+  // 人工纠正单张图类型
+  const setImageType = (imageId: string, imageType: ImageType) =>
+    void runOp('更新图类型…', async () => {
+      await etsyForgeApi.setImageType(imageId, imageType);
+      return '已更新图类型';
+    });
+
   const deleteSelected = () => {
     const np = selProducts.size;
     const ni = selImages.size;
@@ -120,5 +144,5 @@ export function useLibraryActions({ products, selProducts, selImages, setProduct
     });
   };
 
-  return { busy, msg, error, addTag, removeTag, cutoutSelected, runPipeline, deleteSelected };
+  return { busy, msg, error, addTag, removeTag, cutoutSelected, runPipeline, remixSelected, classifyProduct, setImageType, deleteSelected };
 }

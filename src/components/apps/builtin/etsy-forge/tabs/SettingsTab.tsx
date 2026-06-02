@@ -3,7 +3,6 @@
 // 设置 tab —— 采集用浏览器（要 EHunt 选 AdsPower）+ 危险操作（清空图库 / 清空已采集商品）。
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -13,17 +12,14 @@ import {
 } from '@/components/ui/select';
 import { etsyForgeApi, type AiProviderOption } from '../api-client';
 import { PromptManager } from './PromptManager';
+import { ProviderPickerRow } from './ProviderPickerRow';
+import { NumberSelectRow } from './NumberSelectRow';
+import { DangerZoneSection } from './DangerZoneSection';
+import { PROMPT_CATS } from './prompt-cats';
 import type { BrowserProviderConfigView, BrowserProvidersResponse } from '@/types';
 
 const DEFAULT_BROWSER = 'embedded:default';
 
-const PROMPT_CATS: { key: string; label: string }[] = [
-  { key: 'cutout', label: '抠印花' },
-  { key: 'scene', label: '场景图' },
-  { key: 'model', label: '模特图' },
-  { key: 'product', label: '产品图' },
-  { key: 'pose', label: '抠姿势' },
-];
 
 export function SettingsTab() {
   const [browserOptions, setBrowserOptions] = useState<Array<{ id: string; label: string }>>([
@@ -31,7 +27,7 @@ export function SettingsTab() {
   ]);
   const [browserCtx, setBrowserCtx] = useState(DEFAULT_BROWSER);
   const [browserMsg, setBrowserMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'clear-library' | 'clear-products' | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   // AI 分析服务商 / 模型（服务端筛好：text-gen 且非 local_auth）
@@ -41,6 +37,11 @@ export function SettingsTab() {
   const [aiLocked, setAiLocked] = useState(false);
   const [aiMsg, setAiMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [promptCat, setPromptCat] = useState('cutout');
+  const [imageConcurrency, setImageConcurrency] = useState(5);
+  const [maxPose, setMaxPose] = useState(3);
+  const [visionProviderId, setVisionProviderId] = useState('');
+  const [visionModel, setVisionModel] = useState('');
+  const [visionMsg, setVisionMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -50,6 +51,10 @@ export function SettingsTab() {
       setAiModel(s.ai_model ?? '');
       setAiProviders(s.ai_providers ?? []);
       setAiLocked(Boolean(s.ai_locked));
+      setImageConcurrency(s.image_concurrency ?? 5);
+      setMaxPose(s.max_pose ?? 3);
+      setVisionProviderId(s.vision_provider_id ?? '');
+      setVisionModel(s.vision_model ?? '');
     } catch {
       /* ignore */
     }
@@ -117,6 +122,24 @@ export function SettingsTab() {
     void saveAi(pid, firstModel);
   };
 
+  const saveVision = async (providerId: string, model: string) => {
+    setVisionMsg(null);
+    try {
+      await etsyForgeApi.updateSettings({ vision_provider_id: providerId, vision_model: model });
+      const pName = aiProviders.find((p) => p.id === providerId)?.name ?? '图片服务商兜底';
+      setVisionMsg({ ok: true, text: `已保存：${providerId ? pName : '图片服务商兜底(gemini)'}${model ? ` · ${model}` : ''}` });
+    } catch (err) {
+      setVisionMsg({ ok: false, text: `保存失败：${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
+
+  const onPickVision = (pid: string) => {
+    setVisionProviderId(pid);
+    const firstModel = aiProviders.find((p) => p.id === pid)?.models[0]?.value ?? '';
+    setVisionModel(firstModel);
+    void saveVision(pid, firstModel);
+  };
+
   const danger = async (action: 'clear-library' | 'clear-products', confirmText: string) => {
     if (!confirm(confirmText)) return;
     setBusy(action);
@@ -164,53 +187,74 @@ export function SettingsTab() {
         </a>
       </section>
 
-      <section className="rounded-lg border bg-card p-5">
-        <h2 className="mb-1 text-sm font-medium">AI 评论分析服务商</h2>
-        <p className="mb-3 text-xs text-muted-foreground">
-          图库「评论分析」用这个服务商 + 模型。<span className="text-foreground">留空=用全局默认</span>。
-          {aiLocked
-            ? '后台已锁定自定义服务商，只能用 Lumos 托管的（system）服务商。'
-            : '建议选直连的（如阿里云通义千问），又快又稳。'}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Select value={aiProviderId || '__default__'} onValueChange={(v) => onPickProvider(v === '__default__' ? '' : v)}>
-            <SelectTrigger className="h-9 w-56 text-sm">
-              <SelectValue placeholder="选服务商" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__default__">全局默认（不推荐）</SelectItem>
-              {aiProviders.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                  {p.isDefault ? '（全局默认）' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {aiProviderId && (
-            <Select value={aiModel} onValueChange={(v) => { setAiModel(v); void saveAi(aiProviderId, v); }}>
-              <SelectTrigger className="h-9 w-48 text-sm">
-                <SelectValue placeholder="选模型" />
-              </SelectTrigger>
-              <SelectContent>
-                {(aiProviders.find((p) => p.id === aiProviderId)?.models ?? []).map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-        {aiMsg && (
-          <p className={`mt-2 text-xs ${aiMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
-            {aiMsg.text}
-          </p>
-        )}
-        <a href="/settings" className="mt-2 block text-xs text-primary hover:underline">
-          管理服务商 / 加新服务商 ↗
-        </a>
-      </section>
+      <ProviderPickerRow
+        title="AI 评论分析服务商"
+        desc={
+          <>
+            图库「评论分析」用这个服务商 + 模型。<span className="text-foreground">留空=用全局默认</span>。
+            {aiLocked ? '后台已锁定自定义服务商，只能用 Lumos 托管的（system）服务商。' : '建议选直连的（如阿里云通义千问），又快又稳。'}
+          </>
+        }
+        providers={aiProviders}
+        providerId={aiProviderId}
+        model={aiModel}
+        defaultLabel="全局默认（不推荐）"
+        msg={aiMsg}
+        footer={
+          <a href="/settings" className="mt-2 block text-xs text-primary hover:underline">
+            管理服务商 / 加新服务商 ↗
+          </a>
+        }
+        onPick={onPickProvider}
+        onModelChange={(v) => {
+          setAiModel(v);
+          void saveAi(aiProviderId, v);
+        }}
+      />
+
+      <ProviderPickerRow
+        title="AI 识图服务商"
+        desc={
+          <>
+            「图片分类 / 二创拆解 / 二创质检」用这个服务商 + 模型(需支持视觉/识图,如 GPT-5.5)。
+            <span className="text-foreground">留空=用图片服务商兜底(gemini-2.5-flash)</span>。换个更稳的视觉模型能减少「分类无返回内容」。
+          </>
+        }
+        providers={aiProviders}
+        providerId={visionProviderId}
+        model={visionModel}
+        defaultLabel="图片服务商兜底（gemini）"
+        msg={visionMsg}
+        onPick={onPickVision}
+        onModelChange={(v) => {
+          setVisionModel(v);
+          void saveVision(visionProviderId, v);
+        }}
+      />
+
+      <NumberSelectRow
+        title="图片生成并发"
+        desc="批量「抠印花 / 分析素材 / 抠姿势 / 产品合成」时同时跑几个图片生成。默认 5；太高可能被中转站限流。"
+        value={imageConcurrency}
+        options={[1, 2, 3, 5, 8, 10, 15, 20]}
+        unit="个"
+        onChange={(n) => {
+          setImageConcurrency(n);
+          void etsyForgeApi.updateSettings({ image_concurrency: n }).catch(() => {});
+        }}
+      />
+
+      <NumberSelectRow
+        title="每商品抠姿势上限"
+        desc="一键出品时,抠姿势是逐张商品图出的 —— 图多的商品会出很多姿势、烧很多额度。这里限每商品最多抠几张姿势。默认 3。（场景/模特/产品图各只出 1 张,不受影响)"
+        value={maxPose}
+        options={[1, 2, 3, 5, 8, 10]}
+        unit="张"
+        onChange={(n) => {
+          setMaxPose(n);
+          void etsyForgeApi.updateSettings({ max_pose: n }).catch(() => {});
+        }}
+      />
 
       <section className="rounded-lg border bg-card p-5">
         <h2 className="mb-1 text-sm font-medium">提示词管理</h2>
@@ -239,30 +283,7 @@ export function SettingsTab() {
         </p>
       </section>
 
-      <section className="rounded-lg border border-destructive/30 bg-card p-5">
-        <h2 className="mb-3 text-sm font-medium text-destructive">危险操作</h2>
-        {msg && <p className="mb-3 rounded bg-muted p-2 text-xs text-muted-foreground">{msg}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy !== null}
-            onClick={() => void danger('clear-library', '确认清空图库？所有采集的详情图记录删除，不可恢复。')}
-          >
-            {busy === 'clear-library' ? '清空中…' : '清空图库'}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy !== null}
-            onClick={() =>
-              void danger('clear-products', '确认清空已采集商品？所有采集的商品 + 其详情图全部删除，不可恢复。')
-            }
-          >
-            {busy === 'clear-products' ? '清空中…' : '清空已采集商品'}
-          </Button>
-        </div>
-      </section>
+      <DangerZoneSection busy={busy} msg={msg} onClear={(a, t) => void danger(a, t)} />
     </div>
   );
 }

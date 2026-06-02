@@ -14,6 +14,7 @@ const CAT_LABEL: Record<AssetItem['category'], string> = {
   model: '模特',
   product: '产品',
   pose: '姿势',
+  remix: '二创',
 };
 
 export function MaterialPicker({ onClose }: { onClose: () => void }) {

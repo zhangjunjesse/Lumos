@@ -93,13 +93,17 @@ function NumberField({
 export function TaskCard({
   task: t,
   running,
+  stopping,
   onRun,
+  onStop,
   onPatch,
   onRemove,
 }: {
   task: KeywordTask;
   running: boolean;
+  stopping: boolean;
   onRun: () => void;
+  onStop: () => void;
   onPatch: (p: TaskPatch) => void;
   onRemove: () => void;
 }) {
@@ -124,9 +128,22 @@ export function TaskCard({
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={isRunning} onClick={onRun}>
-          {isRunning ? '爬取中…' : `立即爬（${t.max_products} 个）`}
-        </Button>
+        {isRunning ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10"
+            disabled={stopping}
+            title="翻完手头这页就收手，已爬到的保留入库"
+            onClick={onStop}
+          >
+            {stopping ? '停止中…' : '停止'}
+          </Button>
+        ) : (
+          <Button size="sm" onClick={onRun}>
+            {`立即爬（${t.max_products} 个）`}
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={() => onPatch({ enabled: !t.enabled })}>
           {t.enabled ? '禁用' : '启用'}
         </Button>

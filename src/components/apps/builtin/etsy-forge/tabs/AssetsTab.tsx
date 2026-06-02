@@ -18,6 +18,7 @@ const SECTIONS: { key: AssetItem['category']; label: string; hint: string }[] = 
   { key: 'model', label: '模特图', hint: '模特人物（空白 T）' },
   { key: 'product', label: '产品图', hint: '空白载体（光板 T 恤…）' },
   { key: 'pose', label: '模特姿势', hint: '从原图抠的真实模特' },
+  { key: 'remix', label: '二创印花', hint: '基于原印花 + 标题/卖点生成的变体（SOP⑤）' },
 ];
 
 export function AssetsTab() {
@@ -28,6 +29,8 @@ export function AssetsTab() {
   const [view, setView] = useState<'type' | 'source'>('source');
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [origView, setOrigView] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [retryPoll, setRetryPoll] = useState(0);
 
   const viewable = assets.filter((a) => a.status === 'success' && a.url);
   const lightboxIndex = lightboxId ? viewable.findIndex((a) => a.id === lightboxId) : -1;
@@ -67,6 +70,33 @@ export function AssetsTab() {
     }
   };
 
+  // 重试后台单跑(最长 10min)，开轮询看结果冒出来，全完自动停。
+  useEffect(() => {
+    if (!retryPoll) return;
+    const t = setInterval(() => void load(), 8000);
+    const stop = setTimeout(() => {
+      clearInterval(t);
+      setRetryPoll(0);
+      setMsg(null);
+    }, 10 * 60 * 1000);
+    return () => {
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+  }, [retryPoll, load]);
+
+  // 单张失败素材重试：后台单跑(不和别的生成并发)，请求秒返回，轮询刷新看结果。
+  const retry = async (id: string) => {
+    setError(null);
+    try {
+      await etsyForgeApi.retryAsset(id);
+      setMsg('重试中，后台生成（最长 10 分钟），结果会自动刷新…');
+      setRetryPoll(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const tabBtn = (v: 'type' | 'source', label: string) => (
     <button
       type="button"
@@ -90,6 +120,7 @@ export function AssetsTab() {
           刷新
         </Button>
       </div>
+      {msg && <p className="mb-3 rounded-md bg-muted p-2 text-xs text-muted-foreground">{msg}</p>}
       {error && (
         <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
@@ -98,7 +129,7 @@ export function AssetsTab() {
       {loading && <p className="text-sm text-muted-foreground">加载中…</p>}
 
       {!loading && view === 'source' && (
-        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} />
+        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} />
       )}
 
       {!loading &&
@@ -118,7 +149,7 @@ export function AssetsTab() {
               ) : (
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
                   {items.map((a) => (
-                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} />
+                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} />
                   ))}
                 </div>
               )}

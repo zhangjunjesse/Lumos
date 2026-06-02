@@ -5,8 +5,11 @@
 // 选择模式下：商品行可勾选、点图=选中图（平时点图=放大）；用于批量打标签/删除。
 
 import { useState } from 'react';
-import type { LibProduct } from '../api-client';
+import type { ImageType, LibProduct } from '../api-client';
 import { QuickAddChat } from './QuickAddChat';
+
+const TYPE_LABEL: Record<ImageType, string> = { model_scene: '商品', product: '产品', size: '尺码', color: '颜色', other: '其他' };
+const TYPE_CYCLE: ImageType[] = ['model_scene', 'product', 'size', 'color', 'other'];
 
 export function LibraryProductRow({
   product: p,
@@ -18,6 +21,8 @@ export function LibraryProductRow({
   onOpenImage,
   onViewReviews,
   onViewCutouts,
+  onClassify,
+  onSetImageType,
 }: {
   product: LibProduct;
   selectMode: boolean;
@@ -28,6 +33,8 @@ export function LibraryProductRow({
   onOpenImage: (index: number) => void;
   onViewReviews: () => void;
   onViewCutouts: () => void;
+  onClassify: () => void;
+  onSetImageType: (imageId: string, type: ImageType) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -110,6 +117,9 @@ export function LibraryProductRow({
           >
             评论分析{p.review_count > 0 ? `（${p.review_count}）` : ''}
           </button>
+          <button type="button" onClick={onClassify} title="AI 给详情图分类(商品图/产品图/尺码/颜色/其他)" className="text-primary hover:underline">
+            分类图
+          </button>
           {p.analyzed && (
             <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
               已分析
@@ -183,6 +193,20 @@ export function LibraryProductRow({
                 )}
               </button>
               <QuickAddChat path={img.path} refLabel="详情图" className="absolute bottom-0.5 right-0.5" label="图加到创作助手" />
+              {img.image_type && (
+                <button
+                  type="button"
+                  title="点击切换类型(人工纠正)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const next = TYPE_CYCLE[(TYPE_CYCLE.indexOf(img.image_type as ImageType) + 1) % TYPE_CYCLE.length];
+                    onSetImageType(img.id, next);
+                  }}
+                  className="absolute bottom-0.5 left-0.5 rounded bg-black/70 px-1 text-[9px] text-white hover:bg-black/90"
+                >
+                  {TYPE_LABEL[img.image_type]}
+                </button>
+              )}
             </div>
           );
         })}

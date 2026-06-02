@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runPoseExtract } from '@/lib/etsy-forge/pose-extract';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
 import { COLLECTIONS, type ProductRow } from '@/lib/etsy-forge/types';
+import { getImageConcurrency, mapLimit } from '@/lib/etsy-forge/concurrency';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,9 +25,9 @@ export async function POST(req: NextRequest) {
       if (p && p.user_id === userId) store.update<ProductRow>(COLLECTIONS.PRODUCTS, pid, { pose_status: 'running' });
     }
 
-    // fire-and-forget：Electron/Next 常驻进程，请求返回后任务继续在进程内串行跑。
+    // fire-and-forget：常驻进程，请求返回后继续在进程内跑；商品间有限并发(并发度来自设置)。
     void (async () => {
-      for (const pid of productIds) {
+      await mapLimit(productIds, getImageConcurrency(store), async (pid) => {
         try {
           const r = await runPoseExtract(store, { userId, productId: pid, imageIds });
           store.update<ProductRow>(COLLECTIONS.PRODUCTS, pid, {
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
         } catch {
           store.update<ProductRow>(COLLECTIONS.PRODUCTS, pid, { pose_status: 'failed' });
         }
-      }
+      });
     })();
 
     return NextResponse.json({ ok: true, started: productIds.length });

@@ -147,7 +147,28 @@ export const TOOLS = [
   },
   {
     name: 'read_pdf',
-    description: 'Read PDF metadata only: page count, page dimensions, title, author, dates. Does NOT extract text content from pages.',
+    description: 'Read PDF metadata only: page count, page dimensions, title, author, dates. Does NOT extract text content — use extract_pdf_text for the actual page text. Tolerates malformed metadata (a bad field comes back null with a warning instead of failing).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Absolute path to the .pdf file' },
+      },
+      required: ['filePath'],
+    },
+  },
+  {
+    name: 'extract_pdf_text',
+    description: [
+      'Extract the text content of a PDF (the actual page text, not just metadata).',
+      'Returns { pageCount, charCount, isScanned, method, title?, nextAction?, and either text OR textFile+preview+note }.',
+      'Small PDFs: the full text is inline in `text`.',
+      'Large PDFs: the full text is written to a multi-line .txt file and returned as `textFile`',
+      '(with a `preview` of the start) — open it with Read or Grep that file directly; the bulk',
+      'is intentionally NOT inlined so it stays navigable by line/offset.',
+      'If isScanned is true the PDF is scanned / image-only and has NO text layer:',
+      'text is empty and nextAction tells you to render pages to images and OCR them with the',
+      'image-reader read_image tool. Do not report such a PDF as empty.',
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {

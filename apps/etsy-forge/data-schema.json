@@ -76,6 +76,7 @@
         { "name": "keyword", "type": "string", "label": "来源关键词", "indexed": true },
         { "name": "image_url", "type": "string", "label": "详情图 URL", "required": true },
         { "name": "local_path", "type": "string", "label": "下载后本地路径" },
+        { "name": "image_type", "type": "enum", "label": "图类型(AI分类)", "options": ["model_scene", "product", "size", "color", "other"], "indexed": true },
         { "name": "is_main", "type": "boolean", "label": "是否主图", "default": false },
         { "name": "position", "type": "integer", "label": "在详情页顺序", "default": 0 },
         { "name": "created_at", "type": "datetime", "label": "采集时间", "indexed": true },
@@ -123,7 +124,7 @@
       "fields": [
         { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
         { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
-        { "name": "category", "type": "enum", "label": "分类", "options": ["cutout", "scene", "model", "product", "pose"], "default": "cutout", "indexed": true },
+        { "name": "category", "type": "enum", "label": "分类", "options": ["cutout", "scene", "model", "product", "pose", "product-merge", "remix-analyze", "remix-variant"], "default": "cutout", "indexed": true },
         { "name": "name", "type": "string", "label": "名称", "required": true },
         { "name": "content", "type": "text", "label": "提示词内容", "required": true },
         { "name": "is_default", "type": "boolean", "label": "当前生效", "default": false },
@@ -138,17 +139,88 @@
       "fields": [
         { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
         { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
-        { "name": "category", "type": "enum", "label": "类别", "options": ["scene", "model", "product", "pose"], "indexed": true },
+        { "name": "category", "type": "enum", "label": "类别", "options": ["scene", "model", "product", "pose", "remix"], "indexed": true },
         { "name": "product_id", "type": "string", "label": "来源商品", "indexed": true },
         { "name": "source_image_ids", "type": "json", "label": "来源原始图 ID", "default": [] },
         { "name": "description", "type": "text", "label": "AI 看图描述" },
         { "name": "image_path", "type": "string", "label": "素材图本地路径" },
         { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
         { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "quality_flag", "type": "enum", "label": "质量", "options": ["good", "weak"], "indexed": true },
+        { "name": "quality_note", "type": "text", "label": "质量备注" },
         { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
       "indexes": [["user_id"], ["category"], ["product_id"], ["status"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_mockups",
+      "label": "产品合成（带印花平铺 T）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "design_label", "type": "string", "label": "印花来源描述" },
+        { "name": "design_ref", "type": "string", "label": "印花来源(path/url，追溯用)" },
+        { "name": "source_product_id", "type": "string", "label": "原始采集商品 id", "indexed": true },
+        { "name": "product_asset_id", "type": "string", "label": "产品图素材 id", "indexed": true },
+        { "name": "image_path", "type": "string", "label": "带印花 T 本地路径" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["product_asset_id"], ["status"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_sop_runs",
+      "label": "SOP 运行（一键出品）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "sop_key", "type": "string", "label": "SOP 标识", "default": "one-click", "indexed": true },
+        { "name": "product_ids", "type": "json", "label": "商品 ids" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["running", "success", "partial", "failed", "cancelled"], "default": "running", "indexed": true },
+        { "name": "total", "type": "number", "label": "商品数", "default": 0 },
+        { "name": "started_at", "type": "datetime", "label": "开始时间", "indexed": true },
+        { "name": "ended_at", "type": "datetime", "label": "结束时间" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "auto": "now" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["status"], ["started_at"]]
+    },
+    {
+      "name": "etsy_forge_sop_steps",
+      "label": "SOP 步骤状态",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "run_id", "type": "string", "label": "运行 id", "indexed": true },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "product_id", "type": "string", "label": "商品 id", "indexed": true },
+        { "name": "product_title", "type": "string", "label": "商品标题" },
+        { "name": "step_key", "type": "enum", "label": "步骤", "options": ["detail", "review", "classify", "cutout", "assets", "remix", "mockup"], "indexed": true },
+        { "name": "step_order", "type": "number", "label": "步骤序", "default": 0 },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["pending", "running", "success", "failed", "skipped"], "default": "pending", "indexed": true },
+        { "name": "summary", "type": "string", "label": "成功摘要" },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "auto": "now" },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["run_id"], ["user_id"], ["product_id"], ["status"]]
+    },
+    {
+      "name": "etsy_forge_logs",
+      "label": "运行日志（排查图片生成成败）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "level", "type": "enum", "label": "级别", "options": ["info", "warn", "error"], "default": "info", "indexed": true },
+        { "name": "scope", "type": "string", "label": "操作域" },
+        { "name": "product", "type": "string", "label": "处理的商品" },
+        { "name": "images", "type": "json", "label": "输入图预览" },
+        { "name": "message", "type": "text", "label": "内容" },
+        { "name": "created_at", "type": "datetime", "label": "时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["level"], ["created_at"]]
     },
     {
       "name": "etsy_forge_runs",
@@ -179,6 +251,10 @@
         { "name": "browser_context_id", "type": "string", "label": "采集用浏览器上下文", "default": "embedded:default" },
         { "name": "ai_provider_id", "type": "string", "label": "AI 分析服务商（评论分析用，留空=全局默认）" },
         { "name": "ai_model", "type": "string", "label": "AI 分析模型（留空=该服务商首个模型）" },
+        { "name": "vision_provider_id", "type": "string", "label": "识图服务商（图片分类/二创拆解/质检用，留空=图片服务商兜底）" },
+        { "name": "vision_model", "type": "string", "label": "识图模型（留空=默认 gemini）" },
+        { "name": "image_concurrency", "type": "integer", "label": "图片生成并发度（默认 5）", "default": 5 },
+        { "name": "max_pose", "type": "integer", "label": "每商品抠姿势上限（默认 3）", "default": 3 },
         { "name": "default_max_products", "type": "integer", "label": "默认每次爬商品数", "default": 24 },
         { "name": "download_detail_images", "type": "boolean", "label": "详情图下载到本地（否则仅存 URL）", "default": false },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }

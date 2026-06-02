@@ -22,6 +22,7 @@ export function LibraryBatchBar({
   onRemoveTag,
   onCutout,
   onPipeline,
+  onRemix,
   onDelete,
   onClear,
 }: {
@@ -33,6 +34,7 @@ export function LibraryBatchBar({
   onRemoveTag: (tag: string) => void;
   onCutout: () => void;
   onPipeline: (steps: PipelineSteps) => void;
+  onRemix: () => void;
   onDelete: () => void;
   onClear: () => void;
 }) {
@@ -94,6 +96,16 @@ export function LibraryBatchBar({
           onClick={onCutout}
         >
           抠印花
+        </Button>
+
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || selectedProductCount === 0}
+          title="基于该商品抠出的印花 + 标题/卖点，二创出 5 个变体印花(SOP⑤)。需先抠印花。"
+          onClick={onRemix}
+        >
+          二创
         </Button>
 
         <div className="relative">

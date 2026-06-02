@@ -20,6 +20,7 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
   const [newMaxPrice, setNewMaxPrice] = useState(0);
   const [newMaxPages, setNewMaxPages] = useState(40);
   const [running, setRunning] = useState<Set<string>>(new Set());
+  const [stopping, setStopping] = useState<Set<string>>(new Set());
   const [runMsg, setRunMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -38,6 +39,14 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 有任务在跑(本地发起的 or DB 残留 running)时轮询刷新,让停止收尾/终态及时反映,跨刷新也不丢。
+  const anyRunning = running.size > 0 || stopping.size > 0 || tasks.some((t) => t.last_status === 'running');
+  useEffect(() => {
+    if (!anyRunning) return;
+    const id = setInterval(() => void load(), 3000);
+    return () => clearInterval(id);
+  }, [anyRunning, load]);
 
   const addTask = async () => {
     const kw = newKeyword.trim();
@@ -80,6 +89,24 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunning((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  };
+
+  const stopTask = async (id: string) => {
+    setError(null);
+    setStopping((s) => new Set(s).add(id));
+    try {
+      const r = await etsyForgeApi.stopTask(id);
+      setRunMsg(r.stopping ? '已请求停止，翻完手头这页就收手（已爬到的保留入库）…' : '任务已收尾。');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopping((s) => {
         const n = new Set(s);
         n.delete(id);
         return n;
@@ -227,7 +254,9 @@ export function TasksTab({ onCollected }: { onCollected?: () => void }) {
               key={t.id}
               task={t}
               running={running.has(t.id)}
+              stopping={stopping.has(t.id)}
               onRun={() => void runNow(t.id)}
+              onStop={() => void stopTask(t.id)}
               onPatch={(p) => void patch(t.id, p)}
               onRemove={() => void remove(t)}
             />

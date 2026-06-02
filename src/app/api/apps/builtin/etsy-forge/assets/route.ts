@@ -43,6 +43,9 @@ export async function GET(req: NextRequest) {
       source_image_urls: Array.isArray(r.source_image_ids)
         ? r.source_image_ids.map((id) => imageUrl.get(id)).filter((u): u is string => !!u)
         : [],
+      quality_flag: (r.quality_flag as 'good' | 'weak' | undefined) ?? null,
+      quality_note: (r.quality_note as string | undefined) ?? null,
+      created_at: (r.created_at as string) ?? '',
     }));
 
     // 印花(design)：抠印花结果(CUTOUTS，成功的)作为素材库的一类一起展示。
@@ -66,6 +69,9 @@ export async function GET(req: NextRequest) {
               source_product_id: c.product_id ?? null,
               source_product_title: c.product_id ? (productTitle.get(c.product_id) ?? null) : null,
               source_image_urls: [] as string[],
+              quality_flag: null,
+              quality_note: null,
+              created_at: (c.created_at as string) ?? '',
             }))
         : [];
 

@@ -53,6 +53,8 @@ export interface ReadPdfResult {
     creationDate?: string;
     modificationDate?: string;
   };
+  /** Per-field problems (e.g. a malformed date). Present only when something was unreadable. */
+  warnings?: string[];
 }
 
 export interface PdfTextBlock {
@@ -85,19 +87,34 @@ export async function readPdfInfo(filePath: string): Promise<ReadPdfResult> {
     height: page.getHeight(),
   }));
 
+  // pdf-lib throws (e.g. InvalidPDFDateStringError) the moment any info field is
+  // malformed — a non-standard CreationDate would otherwise sink the entire read
+  // and lose page count + dimensions. Isolate each field so one bad value becomes
+  // a warning instead of a hard failure.
+  const warnings: string[] = [];
+  const safeMeta = <T>(field: string, read: () => T | undefined): T | undefined => {
+    try {
+      return read();
+    } catch (err) {
+      warnings.push(`metadata.${field}: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  };
+
   return {
     fileName: filePath.split('/').pop() || filePath,
     pageCount: pdf.getPageCount(),
     pages,
     metadata: {
-      title: pdf.getTitle(),
-      author: pdf.getAuthor(),
-      subject: pdf.getSubject(),
-      creator: pdf.getCreator(),
-      producer: pdf.getProducer(),
-      creationDate: pdf.getCreationDate()?.toISOString(),
-      modificationDate: pdf.getModificationDate()?.toISOString(),
+      title: safeMeta('title', () => pdf.getTitle()),
+      author: safeMeta('author', () => pdf.getAuthor()),
+      subject: safeMeta('subject', () => pdf.getSubject()),
+      creator: safeMeta('creator', () => pdf.getCreator()),
+      producer: safeMeta('producer', () => pdf.getProducer()),
+      creationDate: safeMeta('creationDate', () => pdf.getCreationDate()?.toISOString()),
+      modificationDate: safeMeta('modificationDate', () => pdf.getModificationDate()?.toISOString()),
     },
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 

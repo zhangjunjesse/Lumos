@@ -35,6 +35,7 @@ export interface CollectListResult {
   ehuntHitCount: number;
   searchUrl: string;
   warning?: string;
+  aborted?: boolean; // 用户中途点了「停止」：翻完手头这页就收手，已爬到的照常返回。
   // 诊断：翻了几页、累计抓到多少商品卡（去重前每页和），方便看有没有漏 / 翻页有没有推进。
   pagesExamined: number;
   rawSeen: number;
@@ -100,13 +101,17 @@ export async function collectEtsyListings(opts: CollectListOptions): Promise<Col
   let rawSeen = 0; // 累计抓到的商品卡数（每页去重后求和）
   let pagesExamined = 0;
   let noFreshStreak = 0;
+  let aborted = false;
 
   try {
     // 一直翻页直到凑够 maxProducts，或翻到底（连续两页没带出任何没采过的新 listing）/ 到页数上限。
     // 关键：设了门槛时，「整页都被过滤掉」≠「到底了」——只要本页还带出没采过的新货就继续往后翻。
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       if (collected.length >= maxProducts) break;
-      if (opts.isAborted?.()) throw new Error('aborted');
+      if (opts.isAborted?.()) {
+        aborted = true; // 优雅停：跳出翻页循环，已爬到的照常入库
+        break;
+      }
 
       const url = buildEtsySearchUrl(keyword, pageNum);
       log(`▶ 打开 Etsy 搜索第 ${pageNum} 页：${url}`);
@@ -173,7 +178,9 @@ export async function collectEtsyListings(opts: CollectListOptions): Promise<Col
     const diag = `翻了 ${pagesExamined}/${maxPages} 页、共抓到 ${rawSeen} 个商品卡（没采过 ${freshTotal}、已采过 ${skippedKnown}、不达标 ${skippedFilter}、达标 ${products.length}）`;
 
     let warning: string | undefined;
-    if (ehuntFiltering && ehuntStatus === 'not_adspower') {
+    if (aborted) {
+      warning = `已手动停止：${diag}。已爬到的 ${products.length} 个达标新品已保留入库。`;
+    } else if (ehuntFiltering && ehuntStatus === 'not_adspower') {
       warning = `设了销量/收藏门槛，但当前不是 AdsPower、拿不到 EHunt 指标，没法过滤。去设置选 AdsPower，或把门槛设 0。（${diag}）`;
     } else if (products.length === 0) {
       if (skippedFilter > 0) {
@@ -194,9 +201,8 @@ export async function collectEtsyListings(opts: CollectListOptions): Promise<Col
         : '未检测到 EHunt 注入（确认 AdsPower profile 已装 EHunt 扩展且登录 Etsy）。';
     }
 
-    return { products, ehuntStatus, ehuntHitCount, searchUrl: firstUrl, warning, pagesExamined, rawSeen };
+    return { products, ehuntStatus, ehuntHitCount, searchUrl: firstUrl, warning, aborted, pagesExamined, rawSeen };
   } catch (err) {
-    if (err instanceof Error && err.message === 'aborted') throw err;
     return emptyResult(firstUrl, 'failed', `采集失败：${err instanceof Error ? err.message : String(err)}`, pagesExamined, rawSeen);
   } finally {
     await page.close().catch(() => {});

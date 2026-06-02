@@ -3,7 +3,7 @@ import {
   readExcel, writeExcel,
   evalFormulas, getSupportedFunctions,
   readWord, writeWord,
-  readPdfInfo, createPdf, mergePdfs, splitPdf,
+  readPdfInfo, extractPdfTextForAgent, createPdf, mergePdfs, splitPdf,
   createPpt,
 } from '@/lib/office';
 import { assertSafePath } from '@/lib/office/path-guard';
@@ -61,6 +61,10 @@ const ACTIONS: Record<string, ActionHandler> = {
 
   read_pdf: async (body) => {
     return readPdfInfo(safePath(body, 'filePath'));
+  },
+
+  extract_pdf_text: async (body) => {
+    return extractPdfTextForAgent(safePath(body, 'filePath'));
   },
 
   create_pdf: async (body) => {

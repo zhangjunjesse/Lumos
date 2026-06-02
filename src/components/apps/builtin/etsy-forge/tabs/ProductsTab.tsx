@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { etsyForgeApi, type Product } from '../api-client';
 import { ProductCard } from './ProductCard';
+import { useOneClickSop } from './use-one-click-sop';
 import { type SortBy, salesOf, favsOf, buildRunGroups } from './product-sort';
 
 export function ProductsTab({ onCollectedDetails }: { onCollectedDetails?: () => void }) {
@@ -20,6 +21,7 @@ export function ProductsTab({ onCollectedDetails }: { onCollectedDetails?: () =>
   const [sortBy, setSortBy] = useState<SortBy>('default');
   const [minSales, setMinSales] = useState(0);
   const [minFavs, setMinFavs] = useState(0);
+  const { sopStarting, startSop } = useOneClickSop();
 
   const toggleCollapse = (runId: string) =>
     setCollapsed((s) => {
@@ -93,6 +95,15 @@ export function ProductsTab({ onCollectedDetails }: { onCollectedDetails?: () =>
     }
   };
 
+  // 一键出品 SOP：对选中商品逐个走完整链(采集→评论→分类→抠印花→素材+姿势→二创→出产品图)。
+  const startOneClick = async () => {
+    setMsg(null);
+    setError(null);
+    const err = await startSop([...selectedIds]);
+    if (err) setError(err);
+    else setMsg('已发起「一键出品」，进度去右下角「任务」按钮看。');
+  };
+
   const deleteSelected = async () => {
     if (selectedIds.length === 0) return;
     if (!confirm(`确认删除选中的 ${selectedIds.length} 个商品？连带其已采详情图一起删，不可恢复。`)) return;
@@ -159,8 +170,11 @@ export function ProductsTab({ onCollectedDetails }: { onCollectedDetails?: () =>
         >
           {deleting ? '删除中…' : `删除选中 ${selectedIds.length} 个`}
         </Button>
-        <Button size="sm" onClick={() => void collectDetails()} disabled={collecting || selectedIds.length === 0}>
+        <Button size="sm" variant="outline" onClick={() => void collectDetails()} disabled={collecting || selectedIds.length === 0}>
           {collecting ? '爬详情图中…' : `爬选中 ${selectedIds.length} 个的详情图`}
+        </Button>
+        <Button size="sm" onClick={() => void startOneClick()} disabled={sopStarting || selectedIds.length === 0}>
+          {sopStarting ? '启动中…' : `一键出品（${selectedIds.length}）`}
         </Button>
       </div>
 

@@ -6,18 +6,19 @@
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { COLLECTIONS, type PromptCategory, type PromptRow } from './types';
 
-// 抠印花：从 T 恤照片里提取印花/刺绣图案本身，丢掉 T 恤和背景。
+// 抠印花：从衣服照片"重绘"出干净的印花图案文件(无损抠图做不到,改成忠实高保真重画同款同风格)。
 const CUTOUT = [
-  'You are a graphic-extraction specialist for apparel. From the provided T-shirt photos, extract ONLY the printed/embroidered DESIGN (the graphic artwork) that sits on the shirt — NOT the shirt itself. Use ALL images only as references to read the artwork clearly.',
+  'You are a print-design recreation specialist. The reference photos show a printed/embroidered design ON a t-shirt (often worn or wrinkled). Read the design from them and RE-RENDER it as ONE clean, flat, standalone print artwork file — as if you had the original print-ready art.',
+  'This is a faithful re-creation, not a photo cut-out: render it crisply and at high detail, but keep it TRUE to the original.',
+  'Faithfully reproduce ALL of these from the reference:',
+  '- The complete design and every element (each character/letter, animal, flower, leaf, line, shape) with the SAME composition, layout and internal proportions — nothing added, nothing dropped.',
+  '- The EXACT art style and texture: if it is a woodcut / hand-printed / distressed / broken-stroke / sketch / halftone look, recreate that grain, broken edges, hatching and the open negative space INSIDE shapes. Do NOT smooth it into flat solid silhouettes or clean vector shapes.',
+  '- The exact colors and color count (e.g. a red + blue 2-color print stays red + blue), including faded/ink-press variation.',
   'Output:',
-  '- ONLY the design/artwork itself. Do NOT include the T-shirt, fabric, garment, collar, sleeves, wrinkles, folds, model, hands, hanger, or background.',
-  '- Place the isolated artwork on a fully transparent background (PNG); use pure white (#FFFFFF) only if transparency is unavailable.',
-  '- If the design sits on curved or wrinkled fabric, flatten and straighten it into a clean, front-facing flat graphic.',
-  'Preserve exactly — do not simplify, re-draw, smooth, recolor, or add anything:',
-  '- The complete design: every flower, leaf, line, letter, shape and color of the print/embroidery, with exact colors, color layering and gradients.',
-  '- Embroidery stitch texture / print texture and fine detail at original resolution.',
-  '- The full artwork with nothing cropped; keep its internal proportions and layout.',
-  '- Do NOT add any new element, text, watermark, drop shadow, or fabric/garment texture — output just the clean isolated artwork.',
+  '- ONLY the artwork. NO t-shirt, fabric, garment, collar, sleeves, wrinkles, folds, model, hands, hanger or background.',
+  '- Flatten any curvature/perspective from the worn fabric into a clean, front-facing flat graphic.',
+  '- Fully transparent background (PNG); pure white (#FFFFFF) only if transparency is unavailable.',
+  '- Do NOT add any new element, text, watermark, drop shadow, or fabric/garment texture.',
 ].join('\n');
 
 // 场景图：读懂爆款原图场景的"门道"再生成一个空场景(去人去产品),把优点沿用过来。
@@ -61,15 +62,87 @@ const POSE = [
   '- Do NOT add text, watermark, shadow, or any new element. If the photo contains no person, return nothing usable.',
 ].join('\n');
 
+// 产品合成：把印花 inpaint 到确定颜色的空白 T 上，T 恤颜色/款式绝不改，印花贴合布料。
+const PRODUCT_MERGE = [
+  'You are a t-shirt mockup compositor. You receive two reference images: (1) a blank t-shirt product photo, (2) a printed design/graphic.',
+  'Print the design (2) onto the FRONT CHEST of the t-shirt (1): centered, natural print size, following the fabric surface so it warps slightly with the folds and looks truly printed-on (NOT a flat floating sticker).',
+  'The design (2) may come on a white/solid background — treat that background as TRANSPARENT: print ONLY the actual graphic motif onto the shirt. NEVER print a white (or any solid) rectangle/box/panel behind the design; the shirt fabric must show through all around and between the graphic shapes.',
+  'ABSOLUTE constraints — do not violate:',
+  '- Keep the t-shirt EXACTLY as in reference (1): same COLOR (do not recolor or shift the shirt color at all), same style, neckline, sleeves, fabric, folds and background.',
+  '- Change NOTHING except adding the printed design on the chest. No new objects, no text, no watermark, no relighting of the shirt.',
+  '- Output the same t-shirt, now with the design printed on the chest, with NO background box around the print.',
+].join('\n');
+
+// 二创·拆解(vision)：看参考印花,输出 STRICT JSON —— type(图案/文字/组合) + layout(版式) + ip_risk(侵权元素) +
+// 复刻级 brief(含 KEEP/FREE) + 5 个量身变体方向(各带 keepReference)。代码解析 JSON;失败时 runRemix 降级到固定变体轴。
+const REMIX_ANALYZE = [
+  'You are a t-shirt print-design analyst. Study the reference print and return STRICT JSON only — no prose, no markdown, no code fences. The reference may be an imperfect cut-out: describe the INTENDED clean artwork and IGNORE any fabric remnants, rough edges, or extraction artifacts. Shape:',
+  '{',
+  '  "type": "graphic" | "text" | "combo",  // graphic=artwork only, no words; text=words/slogan/typography only; combo=artwork + slogan together (most common)',
+  '  "layout": "single-hero" | "pattern" | "typographic" | "badge",  // single-hero=one central subject; pattern=scattered/repeated motifs filling the space; typographic=text-driven layout; badge=circular crest/emblem lockup',
+  '  "ip_risk": "",  // if the design shows a recognizable brand, licensed character, sports/team mark, or copyrighted wording, name it here; otherwise empty string',
+  '  "brief": "Compact brief, ONE item per line, concrete and specific to THIS image (detailed enough to redraw it from text alone):',
+  '    SUBJECT: main subject/character and what it is doing',
+  '    MOTIFS: the specific elements present (e.g. wildflowers, moon & stars, cat, vines, sacred geometry)',
+  '    MEDIUM: technique — flat vector / clean line art / watercolor / halftone retro / hand-drawn / embroidery look / digital painting',
+  '    LINE_DETAIL: line weight, clean vs distressed, detail density (minimal vs intricate)',
+  '    PALETTE: the 2-5 dominant colors (name them) + treatment (flat / gradient / faded-vintage / high-saturation)',
+  '    COMPOSITION: how elements are arranged (centered hero / scattered mini-pattern / arched text / symmetrical / repeated)',
+  "    TYPOGRAPHY: if there is text, the lettering character (serif / handwritten script / bold sans / vintage); else 'none'",
+  '    MOOD_ERA: overall vibe / era (vintage 80s / minimalist / celestial dreamy / playful cartoon / boho)',
+  "    THEME: one line — the theme + roughly who it's for (used only to choose variant directions; keep short)",
+  '    KEEP: the core that makes this design what it is — must be preserved or it stops being this design',
+  '    FREE: purely decorative elements safe to change a lot",',
+  '  "directions": [ exactly 5 objects {"text": "<a tailored remix direction for THIS design that FITS its type and layout; changes ONE main thing; preserves KEEP; yields a sellable ORIGINAL variant>", "keepReference": true|false} ]',
+  "    // Spread the 5 across different levers that SUIT this design (swap motif/subject · recolor · change medium/style · change composition · shift mood/era). For a text design use slogan-angle / font / layout levers, NOT 'recolor the illustration'. Never make all five recolors.",
+  '    // keepReference=true if the variant stays visually close (recolor, restyle) so the reference image helps; false if it departs a lot (new motif, new composition) and should be redrawn fresh from the brief.',
+  '}',
+  'Be concrete and specific to this image; no generic answers. "directions" must be an array of exactly 5 objects.',
+].join('\n');
+
+// 二创·变体(生成模板)：占位 {brief} 简报 / {direction} 本次方向 / {title} 标题 / {textRule}(代码按 type 注入) / {ipRule}(代码按 ip_risk 注入)。
+// 构图与颜色遵从简报(不再写死单主角/2-4色),让图案款/文字款/富色款都不被一刀切。
+const REMIX_VARIANT = [
+  'You are an Etsy print-design remixer creating ONE original variant inspired by a reference print.',
+  '',
+  'Reference design brief:',
+  '{brief}',
+  '',
+  'Source product title: {title}',
+  '',
+  'Apply THIS specific remix direction:',
+  '{direction}',
+  '',
+  "Keep the brief's KEEP items (core equity, theme, art style, target-audience feel) so it stays on-trend; freely change the FREE items. The result MUST be a clearly different, original design listable on its own.",
+  'Use the reference image ONLY as a loose style/color guide — redraw from scratch; do NOT trace or reproduce its exact shapes, poses or layout; do NOT copy it pixel-for-pixel.',
+  '',
+  'Follow the brief, do NOT override it:',
+  "- Keep the SAME KIND of composition/layout as the brief's COMPOSITION (if it is a scattered pattern, a badge/emblem, or a text layout, STAY that kind — do NOT force a single centered subject) unless the direction above explicitly changes it.",
+  "- Keep roughly the same color complexity as the brief's PALETTE (do NOT flatten a rich/gradient/vintage palette down to a few flat colors) unless the direction changes it.",
+  '- Keep the design\'s natural aspect ratio; do NOT crop the artwork to fit a square.',
+  '',
+  '{textRule}',
+  '{ipRule}',
+  '',
+  'Print-ready requirements (hard):',
+  '- ONLY the standalone print artwork — NO t-shirt, NO model, NO background scene, NO mockup.',
+  '- Transparent background (PNG); pure white only if transparency is unavailable.',
+  '- Clean, crisp edges; generous negative space; print-quality detail.',
+  '- NO watermark, NO signature.',
+].join('\n');
+
 export const DEFAULT_PROMPTS: Record<PromptCategory, string> = {
   cutout: CUTOUT,
   scene: SCENE,
   model: MODEL,
   product: PRODUCT,
   pose: POSE,
+  'product-merge': PRODUCT_MERGE,
+  'remix-analyze': REMIX_ANALYZE,
+  'remix-variant': REMIX_VARIANT,
 };
 
-export const PROMPT_CATEGORIES: PromptCategory[] = ['cutout', 'scene', 'model', 'product', 'pose'];
+export const PROMPT_CATEGORIES: PromptCategory[] = ['cutout', 'scene', 'model', 'product', 'pose', 'product-merge', 'remix-analyze', 'remix-variant'];
 
 // 取某分类「当前生效」的提示词内容：用户标记的 is_default 那条 → 否则该类第一条 → 否则内置默认。
 export function getEffectivePrompt(store: AppDataStore, userId: string, category: PromptCategory): string {

@@ -73,10 +73,11 @@ export interface ProductRow extends Record<string, unknown> {
   created_at: string;
 }
 
-// 素材库：四类素材——
-//   生成类(看商品图生成)：场景图(环境)/模特图(空白T的人)/产品图(空白载体)
-//   抠取类(从原图抠)：pose=模特姿势(从含模特的原图抠出真实模特,保留姿势和衣服)
-export type AssetCategory = 'scene' | 'model' | 'product' | 'pose';
+// 素材库：
+//   生成类：场景图/模特图(空白T的人)/产品图(空白载体)
+//   抠取类：pose=模特姿势(从原图抠真实模特)
+//   二创类：remix=印花二创变体(基于抠出的印花+标题/卖点生成的新印花,SOP⑤产出,给⑥做产品图)
+export type AssetCategory = 'scene' | 'model' | 'product' | 'pose' | 'remix';
 
 export interface AssetRow extends Record<string, unknown> {
   id: string;
@@ -88,13 +89,17 @@ export interface AssetRow extends Record<string, unknown> {
   image_path?: string; // 生成的素材图本地路径（经 /api/media/serve 显示）
   status: 'success' | 'failed';
   failure_reason?: string;
+  quality_flag?: 'good' | 'weak'; // 二创质量闸门结果:weak=有硬伤(白底框/多余文字/糊…)
+  quality_note?: string; // weak 的原因
   created_at: string;
 }
 
 // 提示词库：按分类(category)存提示词。每类可存多条，其中一条 is_default=true 为「当前生效」，
 // 自动任务(抠印花/分析素材/抠姿势)读生效那条；用户没自定义时回退到 prompt-defaults 的内置默认。
 //   cutout=抠印花 / scene=场景图生成 / model=模特图生成 / product=产品图生成 / pose=抠模特姿势
-export type PromptCategory = 'cutout' | 'scene' | 'model' | 'product' | 'pose';
+// product-merge=产品合成(把印花 inpaint 到确定颜色的空白 T 上，锁色)
+// 二创两段式:remix-analyze=看参考印花出结构化设计简报(vision)；remix-variant=按简报+变体轴生成一张原创变体(模板)
+export type PromptCategory = 'cutout' | 'scene' | 'model' | 'product' | 'pose' | 'product-merge' | 'remix-analyze' | 'remix-variant';
 
 export interface PromptRow extends Record<string, unknown> {
   id: string;
@@ -112,6 +117,20 @@ export interface CutoutRow extends Record<string, unknown> {
   product_id: string; // 一个产品一条抠图结果
   source_count: number; // 抠图用了该产品几张图
   cutout_path?: string; // 抠图结果本地路径（~/.lumos/.lumos-media/，前端经 /api/media/serve 显示）
+  status: 'success' | 'failed';
+  failure_reason?: string;
+  created_at: string;
+}
+
+// 产品合成结果：印花 inpaint 到某张确定颜色空白 T 上得到的「带印花平铺 T」。
+export interface MockupRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  design_label?: string; // 印花来源描述(印花/二创图)
+  design_ref?: string; // 印花来源(本地 path 或 url，记录追溯用)
+  source_product_id?: string; // 血缘:这印花最初来自哪个采集的 Etsy 商品(经抠印花/二创追溯)
+  product_asset_id?: string; // 用的哪张产品图(素材库 product 类)
+  image_path?: string; // 生成的带印花 T 本地路径
   status: 'success' | 'failed';
   failure_reason?: string;
   created_at: string;
@@ -152,6 +171,9 @@ export interface ReviewAnalysis {
   motivations: ReviewTopic[];
 }
 
+// 详情图类型(②b AI 分类,可人工纠正):model_scene=商品图(带模特/场景) / product=产品图(只产品) / size=尺码图 / color=颜色图 / other=其他
+export type ImageType = 'model_scene' | 'product' | 'size' | 'color' | 'other';
+
 export interface DetailImageRow extends Record<string, unknown> {
   id: string;
   user_id: string;
@@ -160,6 +182,7 @@ export interface DetailImageRow extends Record<string, unknown> {
   keyword: string;
   image_url: string;
   local_path?: string;
+  image_type?: ImageType; // ②b 分类结果
   is_main: boolean;
   position: number;
   created_at: string;
@@ -177,6 +200,50 @@ export interface RunRow extends Record<string, unknown> {
   failure_reason?: string;
   started_at: string;
   ended_at?: string;
+}
+
+// 运行日志：排查用，重点记图片生成(抠图/分析素材/抠姿势/产品合成/重试)的成功/失败明细。
+export type LogLevel = 'info' | 'warn' | 'error';
+
+export interface LogRow extends Record<string, unknown> {
+  id: string;
+  level: LogLevel;
+  scope: string; // 操作域，如「分析素材(场景)」「产品合成」「抠姿势」
+  product?: string; // 处理的是哪个商品(标题),便于对应
+  images?: string[]; // 输入图预览 URL(出图用了哪些图),日志里渲染成缩略图
+  message: string;
+  created_at: string;
+}
+
+// SOP「一键出品」编排：对 N 个商品逐商品独立走链(①采集→②a评论→②b分类→③抠印花→④素材+姿势→⑤二创→⑥产品图)。
+// 一个 run 一条 SopRunRow，每商品每步一条 SopStepRow(可见状态/失败原因/可单步重试)。
+export type SopStepKey = 'detail' | 'review' | 'classify' | 'cutout' | 'assets' | 'remix' | 'mockup';
+export type SopStepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+export type SopRunStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled';
+
+export interface SopRunRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  sop_key: string; // 'one-click'
+  product_ids: string[];
+  status: SopRunStatus;
+  total: number;
+  started_at: string;
+  ended_at?: string;
+}
+
+export interface SopStepRow extends Record<string, unknown> {
+  id: string;
+  run_id: string;
+  user_id: string;
+  product_id: string;
+  product_title?: string;
+  step_key: SopStepKey;
+  step_order: number; // 链中顺序，便于排序展示
+  status: SopStepStatus;
+  summary?: string; // 成功摘要，如「分类 8 张」「二创 5 个」
+  failure_reason?: string;
+  updated_at: string;
 }
 
 export interface AppSettings extends Record<string, unknown> {
@@ -205,6 +272,10 @@ export const COLLECTIONS = {
   CUTOUTS: 'etsy_forge_cutouts',
   PROMPTS: 'etsy_forge_prompts',
   ASSETS: 'etsy_forge_assets',
+  MOCKUPS: 'etsy_forge_mockups',
+  SOP_RUNS: 'etsy_forge_sop_runs',
+  SOP_STEPS: 'etsy_forge_sop_steps',
+  LOGS: 'etsy_forge_logs',
   RUNS: 'etsy_forge_runs',
   APP_SETTINGS: 'app_settings',
   RUN_HISTORY: 'run_history',

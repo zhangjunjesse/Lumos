@@ -1,208 +1,28 @@
 // Etsy 选品采集 — 前端 API client。纯爬取，无任何图片生成调用。
-
-export type TaskSchedule = 'manual' | 'hourly' | 'daily' | 'weekly';
-export type TaskStatus = 'idle' | 'running' | 'success' | 'failed' | 'partial' | 'cancelled';
-export type ProductEhuntStatus = 'ok' | 'no_ehunt' | 'not_adspower' | 'bridge_unavailable' | 'failed';
-export type DetailStatus = 'idle' | 'running' | 'success' | 'failed';
-
-export interface KeywordTask {
-  id: string;
-  keyword: string;
-  source: 'etsy';
-  enabled: boolean;
-  schedule: TaskSchedule;
-  max_products: number;
-  min_sales?: number;
-  min_favorites?: number;
-  min_price?: number;
-  max_price?: number;
-  max_pages?: number;
-  total_collected: number;
-  last_run_at?: string;
-  last_status: TaskStatus;
-  last_failure_reason?: string;
-  last_collected_count: number;
-}
-
-export interface ProductEhunt {
-  salesTotal: number | null;
-  salesRecent: number | null;
-  favorites: number | null;
-  listedDate: string | null;
-  raw: string;
-}
-
-export interface Product {
-  id: string;
-  listing_id: string;
-  run_id?: string;
-  run_at?: string;
-  keyword: string;
-  title: string;
-  url: string;
-  main_image_url: string;
-  price?: string;
-  rating?: string;
-  reviews?: string;
-  ehunt_status: ProductEhuntStatus;
-  ehunt: ProductEhunt | null;
-  selected: boolean;
-  detail_status: DetailStatus;
-  detail_image_count: number;
-  detail_failure_reason?: string;
-  created_at: string;
-}
-
-export interface LibImage {
-  id: string;
-  url: string;
-  path: string | null; // 本地路径，加入创作助手作附件用（没下载到本地则为 null）
-  is_main: boolean;
-  position: number;
-  created_at: string;
-}
-
-// 图库按商品维度：一个商品一组，附商品信息 + 该商品的详情图。
-export interface LibProduct {
-  product_id: string;
-  listing_id: string;
-  keyword: string;
-  title: string;
-  url: string;
-  price?: string;
-  rating?: string;
-  reviews?: string;
-  sales: number | null;
-  sales_recent: number | null;
-  favorites: number | null;
-  listed_date: string | null;
-  ehunt_status?: string;
-  tags: string[];
-  review_count: number;
-  analyzed: boolean;
-  cutout_status: string;
-  cutout_count: number;
-  asset_status: string;
-  pose_status: string;
-  latest_at: string;
-  images: LibImage[];
-}
-
-export interface AssetItem {
-  id: string;
-  // design=印花(来自抠印花结果,只读展示,删除/重抠在图库「查看抠图」)
-  category: 'scene' | 'model' | 'product' | 'pose' | 'design';
-  description: string;
-  url: string | null;
-  path: string | null; // 本地绝对路径，创作区选作参考图时派发给 ChatView 附件用
-  status: 'success' | 'failed';
-  failure_reason: string | null;
-  source_product_id: string | null;
-  source_product_title: string | null;
-  source_image_urls: string[];
-}
-
-export interface PromptItem {
-  id: string;
-  category: string;
-  name: string;
-  content: string;
-  is_default: boolean;
-}
-
-export interface Cutout {
-  id: string;
-  source_count: number;
-  cutout_url: string | null;
-  status: 'success' | 'failed';
-  failure_reason: string | null;
-}
-
-export interface AiProviderOption {
-  id: string;
-  name: string;
-  isDefault: boolean;
-  models: { value: string; label: string }[];
-}
-
-export interface Review {
-  id: string;
-  author: string | null;
-  rating: string | null;
-  date: string | null;
-  region: string | null;
-  text: string;
-}
-
-export interface ReviewTopic {
-  topic: string;
-  reason: string;
-}
-
-export interface ReviewAnalysis {
-  reviewsAnalyzed: number;
-  customerProfile: {
-    genderMalePct: number;
-    genderFemalePct: number;
-    who: string;
-    when: string;
-    where: string;
-    what: string;
-  };
-  pros: ReviewTopic[];
-  cons: ReviewTopic[];
-  expectations: ReviewTopic[];
-  motivations: ReviewTopic[];
-}
-
-export interface RunItem {
-  id: string;
-  kind: 'list_collect' | 'detail_collect' | 'self_check';
-  keyword?: string;
-  products_found: number;
-  ehunt_ok_count: number;
-  images_collected: number;
-  status: string;
-  failure_reason?: string;
-  started_at: string;
-  ended_at?: string;
-}
-
-export interface RunListResult {
-  runId: string;
-  productsFound: number;
-  inserted: number;
-  ehuntStatus: string;
-  ehuntHitCount: number;
-  warning?: string;
-}
-
-export interface RunDetailResult {
-  runId: string;
-  okProducts: number;
-  failProducts: number;
-  totalImages: number;
-  error?: string;
-}
-
-export interface PreviewResult {
-  products: Array<{
-    listingId: string;
-    title: string;
-    url: string;
-    mainImageUrl: string;
-    price: string | null;
-    rating: string | null;
-    reviews: string | null;
-    ehunt: ProductEhunt | null;
-  }>;
-  ehuntStatus: ProductEhuntStatus;
-  ehuntHitCount: number;
-  searchUrl: string;
-  warning?: string;
-  browserContextId: string;
-  hint: string;
-}
+// 类型定义见 ./api-types(为满足单文件≤300行拆出),此处 re-export 保持现有 import 路径不变。
+export * from './api-types';
+import type {
+  TaskSchedule,
+  KeywordTask,
+  Product,
+  ImageType,
+  LibProduct,
+  AssetItem,
+  PromptItem,
+  MockupItem,
+  Cutout,
+  LogItem,
+  SopStepDef,
+  SopRun,
+  SopStep,
+  AiProviderOption,
+  Review,
+  ReviewAnalysis,
+  RunItem,
+  RunListResult,
+  RunDetailResult,
+  PreviewResult
+} from './api-types';
 
 const BASE = '/api/apps/builtin/etsy-forge';
 
@@ -277,6 +97,9 @@ export const etsyForgeApi = {
       method: 'POST',
       body: JSON.stringify({ max_products: maxProducts }),
     }),
+  // 停止正在跑的采集:翻完手头这页收手,已爬到的保留入库,终态记 cancelled。
+  stopTask: (id: string) =>
+    jf<{ ok: boolean; stopping: boolean; recovered?: boolean }>(`${BASE}/tasks/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
 
   // 商品列表
   listProducts: (opts: { keyword?: string; onlySelected?: boolean } = {}) => {
@@ -310,6 +133,18 @@ export const etsyForgeApi = {
     jf<{ ok: boolean; updated: number }>(`${BASE}/library/tags`, {
       method: 'POST',
       body: JSON.stringify({ product_ids: productIds, add: opts.add, remove: opts.remove }),
+    }),
+  // ②b 详情图分类：对一个商品的详情图 AI 分类(model_scene/product/size/color/other)
+  classifyImages: (productId: string) =>
+    jf<{ ok: boolean; classified: number; failed: number }>(`${BASE}/images/classify`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId }),
+    }),
+  // 人工纠正单张图类型
+  setImageType: (imageId: string, imageType: ImageType) =>
+    jf<{ ok: boolean }>(`${BASE}/images/classify`, {
+      method: 'PATCH',
+      body: JSON.stringify({ image_id: imageId, image_type: imageType }),
     }),
   // 批量删除：商品（连带其图）/ 单张图
   deleteLibrary: (opts: { productIds?: string[]; imageIds?: string[] }) =>
@@ -375,6 +210,48 @@ export const etsyForgeApi = {
     jf<{ assets: AssetItem[] }>(`${BASE}/assets${category ? `?category=${encodeURIComponent(category)}` : ''}`),
   deleteAsset: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/assets?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // 单张失败素材重试：用原来源图 + 该类生效 prompt 重新生成
+  retryAsset: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/assets/retry`, { method: 'POST', body: JSON.stringify({ asset_id: id }) }),
+
+  // ⑤ 自动二创：基于抠出的印花 + 标题 + 评论卖点 → 生成 5 个变体印花(异步，前端轮询 listAssets('remix'))。
+  remixProduct: (productId: string) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/remix`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId }),
+    }),
+
+  // 产品合成：印花 × 产品图 → inpaint → 带印花平铺 T(异步，前端轮询 listMockups)。
+  generateMockups: (design: { path?: string; url?: string; label?: string; source_product_id?: string }, productAssetIds: string[]) =>
+    jf<{ ok: boolean; started: number }>(`${BASE}/mockups`, {
+      method: 'POST',
+      body: JSON.stringify({ design, product_asset_ids: productAssetIds }),
+    }),
+  // 继续二创:针对某原商品,选底图 + 写要求 → 生成新产品图(异步,前端轮询 listMockups)
+  remixMore: (productId: string, baseUrl: string, instruction: string) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/remix-more`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId, base_url: baseUrl, instruction }),
+    }),
+  listMockups: () => jf<{ mockups: MockupItem[] }>(`${BASE}/mockups`),
+  deleteMockup: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/mockups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试
+  startSop: (productIds: string[]) =>
+    jf<{ ok: boolean; runId: string }>(`${BASE}/sop`, { method: 'POST', body: JSON.stringify({ product_ids: productIds }) }),
+  listSopRuns: () => jf<{ runs: SopRun[]; stepDefs: SopStepDef[] }>(`${BASE}/sop`),
+  getSopRun: (runId: string) =>
+    jf<{ run: SopRun; steps: SopStep[]; stepDefs: SopStepDef[] }>(`${BASE}/sop?run_id=${encodeURIComponent(runId)}`),
+  retrySopStep: (runId: string, productId: string, stepKey: string) =>
+    jf<{ ok: boolean }>(`${BASE}/sop/retry`, {
+      method: 'POST',
+      body: JSON.stringify({ run_id: runId, product_id: productId, step_key: stepKey }),
+    }),
+
+  // 运行日志（排查图片生成成败）
+  listLogs: () => jf<{ logs: LogItem[] }>(`${BASE}/logs`),
+  clearLogs: () => jf<{ ok: boolean; deleted: number }>(`${BASE}/logs`, { method: 'DELETE' }),
 
   // 运行结果 / 设置 / 危险
   listRuns: (kind?: string) => jf<{ runs: RunItem[] }>(`${BASE}/runs${kind ? `?kind=${kind}` : ''}`),
@@ -385,13 +262,21 @@ export const etsyForgeApi = {
       download_detail_images?: boolean;
       ai_provider_id?: string;
       ai_model?: string;
+      vision_provider_id?: string;
+      vision_model?: string;
       ai_providers?: AiProviderOption[];
       ai_locked?: boolean;
+      image_concurrency?: number;
+      max_pose?: number;
     }>(`${BASE}/settings`),
   updateSettings: (patch: {
     browser_context_id?: string;
     ai_provider_id?: string;
     ai_model?: string;
+    vision_provider_id?: string;
+    vision_model?: string;
+    image_concurrency?: number;
+    max_pose?: number;
   }) =>
     jf<{ ok: boolean }>(`${BASE}/settings`, { method: 'PUT', body: JSON.stringify(patch) }),
   danger: (action: 'clear-library' | 'clear-products') =>

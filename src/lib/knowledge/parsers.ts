@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
+import { extractPdfText } from '../office/pdf-text';
 import type { ParsedDocument, DocumentMetadata } from './types';
 
 const MIME_MAP: Record<string, string> = {
@@ -539,11 +540,6 @@ function extractWithStrings(filePath: string): string {
   return normalizeExtractedText(lines.join('\n'));
 }
 
-function extractWithPdftotext(filePath: string): string {
-  const output = runCommand('pdftotext', ['-layout', filePath, '-'], { timeoutMs: 90_000 });
-  return normalizeExtractedText(output);
-}
-
 function extractWithTextutil(filePath: string): string {
   if (process.platform !== 'darwin') return '';
   const output = runCommand('/usr/bin/textutil', ['-convert', 'txt', '-stdout', filePath]);
@@ -985,55 +981,13 @@ async function parseExcel(filePath: string, baseName: string): Promise<ParseResu
 }
 
 async function parsePdf(filePath: string, baseName: string): Promise<ParseResult> {
-  const pdftotextContent = extractWithPdftotext(filePath);
-  if (pdftotextContent) {
-    return {
-      title: baseName,
-      content: pdftotextContent,
-      extra: {},
-    };
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = await import('pdf-parse' as any);
-  const buf = fs.readFileSync(filePath);
-
-  // v2 API: `new PDFParse({ data }).getText()`
-  const PDFParseCtor = mod?.PDFParse || mod?.default?.PDFParse;
-  if (typeof PDFParseCtor === 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parser = new PDFParseCtor({ data: new Uint8Array(buf) }) as any;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await parser.getText() as any;
-      return {
-        title: result?.info?.Title || baseName,
-        content: typeof result?.text === 'string' ? result.text : '',
-        extra: { pageCount: Number(result?.total ?? result?.numpages ?? 0) || undefined },
-      };
-    } finally {
-      try {
-        if (typeof parser?.destroy === 'function') await parser.destroy();
-      } catch {
-        // ignore parser cleanup errors
-      }
-    }
-  }
-
-  // Backward compatibility for v1 function API.
-  const candidate = mod?.default ?? mod;
-  const pdfParse = typeof candidate === 'function'
-    ? candidate
-    : (candidate?.default ?? candidate);
-  if (typeof pdfParse === 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await pdfParse(buf) as any;
-    return {
-      title: data?.info?.Title || baseName,
-      content: typeof data?.text === 'string' ? data.text : '',
-      extra: { pageCount: Number(data?.numpages ?? 0) || undefined },
-    };
-  }
-
-  throw new Error('pdf_parse_unavailable');
+  // Shared extractor (pdftotext → pdf-parse) is the single source of truth; see
+  // src/lib/office/pdf-text.ts. A scanned/image-only PDF returns empty text with
+  // isScanned=true — for KB ingestion that simply means no text layer to index.
+  const { text, pageCount, title } = await extractPdfText(filePath);
+  return {
+    title: title || baseName,
+    content: normalizeExtractedText(text),
+    extra: { pageCount: pageCount || undefined },
+  };
 }
