@@ -55,8 +55,11 @@ export function ProviderRow({
   // provisioner 下发,本地改会被同步覆盖 → 编辑/删除按钮锁。
   const canModify = !readOnly && !system;
   // default_model 是用户偏好,user 选了立刻覆盖 admin 设的;留空 = 用 admin
-  // 下发的默认(从 extra_env.LUMOS_DEFAULT_MODEL 读)。
-  const canEditDefaultModel = !readOnly && meta.models.length > 0;
+  // 下发的默认(从 extra_env.LUMOS_DEFAULT_MODEL 读)。即使 readOnly(管理员关闭了
+  // 自定义服务商),也允许在系统服务商已下发的模型里挑默认 —— 后端 PUT 只放行
+  // default_model 单字段、provisioner 不写这一列,新会话经
+  // getProviderEffectiveDefaultModel 优先采用。锁的是"能否自建服务商",不是"选模型"。
+  const canEditDefaultModel = meta.models.length > 0;
   const adminDefaultModel = getAdminDefaultModelFromExtraEnv(
     (() => { try { return JSON.parse(config.extra_env || '{}'); } catch { return {}; } })(),
   );
