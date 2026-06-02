@@ -44,6 +44,7 @@ import {
 } from '@/lib/llm-circuit-breaker';
 import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-events';
 import { buildPromptWithHistory } from './claude/history-normalizer';
+import { extractHistoryImages } from './claude/history-images';
 import { recordRuntimeEvent } from './claude/runtime-events';
 
 /**
@@ -978,17 +979,22 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Build the prompt with file attachments and optional conversation history.
         // When resuming, the SDK has full context so we send the raw prompt.
-        // When NOT resuming (fresh or fallback), prepend DB history for context.
+        // When NOT resuming (fresh or fallback), prepend DB history for context —
+        // including images the model already read via image-reader, re-attached as
+        // real multimodal blocks (text fallback alone drops them to a truncated
+        // base64 smear the model reads as "[Unsupported Image]").
         function buildFinalPrompt(useHistory: boolean): string | AsyncIterable<SDKUserMessage> {
           const basePrompt = useHistory
             ? buildPromptWithHistory(prompt, conversationHistory)
             : prompt;
+          const historyImages = useHistory ? extractHistoryImages(conversationHistory) : [];
 
-          if (!files || files.length === 0) return basePrompt;
+          if ((!files || files.length === 0) && historyImages.length === 0) return basePrompt;
 
-          const imageFiles = files.filter(f => isImageFile(f.type));
-          const audioFiles = files.filter(f => !isImageFile(f.type) && isAudioFileLike({ name: f.name, type: f.type }));
-          const nonImageFiles = files.filter(f => !isImageFile(f.type) && !isAudioFileLike({ name: f.name, type: f.type }));
+          const attachments = files ?? [];
+          const imageFiles = attachments.filter(f => isImageFile(f.type));
+          const audioFiles = attachments.filter(f => !isImageFile(f.type) && isAudioFileLike({ name: f.name, type: f.type }));
+          const nonImageFiles = attachments.filter(f => !isImageFile(f.type) && !isAudioFileLike({ name: f.name, type: f.type }));
 
           let textPrompt = basePrompt;
           if (audioFiles.length > 0) {
@@ -1011,50 +1017,64 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             textPrompt = `${fileReferences}\n\nPlease read the attached file(s) above using your Read tool, then respond to the user's message:\n\n${textPrompt}`;
           }
 
+          // No image on either side → plain text (audio/file refs already folded in).
+          if (imageFiles.length === 0 && historyImages.length === 0) {
+            return textPrompt;
+          }
+
+          let leadingText = textPrompt;
           if (imageFiles.length > 0) {
-            // Append image disk paths to the text prompt so Claude knows where
-            // the files are on disk (enables skills to reference them by path).
+            // Append image disk paths so Claude knows where the files are on disk
+            // (enables skills to reference them by path).
             const workDir = workingDirectory || os.homedir();
             const imagePaths = getUploadedFilePaths(imageFiles, workDir);
             const imageReferences = imagePaths
               .map((p, i) => `[User attached image: ${p} (${imageFiles[i].name})]`)
               .join('\n');
-            const textWithImageRefs = `${imageReferences}\n\n${textPrompt}`;
-
-            const contentBlocks: Array<
-              | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
-              | { type: 'text'; text: string }
-            > = [];
-
-            for (const img of imageFiles) {
-              contentBlocks.push({
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: img.type || 'image/png',
-                  data: img.data,
-                },
-              });
-            }
-
-            contentBlocks.push({ type: 'text', text: textWithImageRefs });
-
-            const userMessage: SDKUserMessage = {
-              type: 'user',
-              message: {
-                role: 'user',
-                content: contentBlocks,
-              },
-              parent_tool_use_id: null,
-              session_id: sdkSessionId || '',
-            };
-
-            return (async function* () {
-              yield userMessage;
-            })();
+            leadingText = `${imageReferences}\n\n${textPrompt}`;
           }
 
-          return textPrompt;
+          const contentBlocks: Array<
+            | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+            | { type: 'text'; text: string }
+          > = [];
+
+          // Replayed history images first, with a note so the model treats them as
+          // prior read_image results rather than the user's new upload.
+          if (historyImages.length > 0) {
+            contentBlocks.push({
+              type: 'text',
+              text: `[以下 ${historyImages.length} 张图片来自本次对话中已执行的 read_image，按时间顺序附上，供你继续查看与分析]`,
+            });
+            for (const img of historyImages) contentBlocks.push(img);
+          }
+
+          for (const img of imageFiles) {
+            contentBlocks.push({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: img.type || 'image/png',
+                data: img.data,
+              },
+            });
+          }
+
+          contentBlocks.push({ type: 'text', text: leadingText });
+
+          const userMessage: SDKUserMessage = {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: contentBlocks,
+            },
+            parent_tool_use_id: null,
+            session_id: sdkSessionId || '',
+          };
+
+          return (async function* () {
+            yield userMessage;
+          })();
         }
 
         const finalPrompt = buildFinalPrompt(!shouldResume);

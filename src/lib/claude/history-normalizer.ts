@@ -45,7 +45,13 @@ export function truncateHistoryText(text: string, maxChars: number): string {
 // the substance without parsing SDK block shapes.
 export function extractToolResultText(content: unknown): string {
   if (content == null) return '';
-  if (typeof content === 'string') return content;
+  if (typeof content === 'string') {
+    // image-reader 等工具的 tool_result.content 是序列化的 content-blocks 数组
+    // 字符串,内含巨大的 base64 image block。原样返回会把 base64 当正文塞进
+    // fallback prompt 再被截断成乱码(模型看到的 [Unsupported Image] 即源于此)。
+    // 识别这种形态时压成简短摘要;图片本体由 extractHistoryImages 单独回放。
+    return summarizeImageContentBlocks(content) ?? content;
+  }
   if (Array.isArray(content)) {
     const parts: string[] = [];
     for (const block of content) {
@@ -54,10 +60,40 @@ export function extractToolResultText(content: unknown): string {
       if (typeof block !== 'object') continue;
       const b = block as Record<string, unknown>;
       if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+      else if (b.type === 'image') parts.push(imageBlockMarker(b));
     }
     return parts.join('\n');
   }
   try { return JSON.stringify(content); } catch { return ''; }
+}
+
+// 把序列化的 content-blocks 字符串压成文本摘要:text 块保留文字,image 块换成
+// [图片 …] 标记。仅当解析出数组且确含 image 块时才接管(返回 null = 不接管,
+// 让调用方原样使用该字符串),从而不影响普通 JSON / 纯文本 tool_result 的输出。
+function summarizeImageContentBlocks(raw: string): string | null {
+  const text = raw.trim();
+  if (!text.startsWith('[')) return null;
+  let arr: unknown;
+  try { arr = JSON.parse(text); } catch { return null; }
+  if (!Array.isArray(arr)) return null;
+  const hasImage = arr.some(
+    (b) => !!b && typeof b === 'object' && (b as Record<string, unknown>).type === 'image',
+  );
+  if (!hasImage) return null;
+  const parts: string[] = [];
+  for (const block of arr) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+    else if (b.type === 'image') parts.push(imageBlockMarker(b));
+  }
+  return parts.join('\n');
+}
+
+function imageBlockMarker(block: Record<string, unknown>): string {
+  const source = block.source as Record<string, unknown> | undefined;
+  const mediaType = source && typeof source.media_type === 'string' ? source.media_type : 'image';
+  return `[图片 ${mediaType}（视觉内容已随历史回放单独附带）]`;
 }
 
 export function previewToolInput(input: unknown, maxChars = 400): string {

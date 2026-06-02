@@ -45,6 +45,26 @@ describe('extractToolResultText', () => {
     expect(extractToolResultText(null)).toBe('');
     expect(extractToolResultText(undefined)).toBe('');
   });
+
+  it('summarizes serialized image content-blocks instead of echoing base64', () => {
+    const serialized = JSON.stringify([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'BASE64DATA' } },
+      { type: 'text', text: 'Loaded x.png (image/png, 1KB).' },
+    ]);
+    const out = extractToolResultText(serialized);
+    expect(out).not.toContain('BASE64DATA');
+    expect(out).toContain('Loaded x.png');
+    expect(out).toContain('image/png');
+  });
+
+  it('marks inline image blocks in array content', () => {
+    const out = extractToolResultText([
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'XX' } },
+      { type: 'text', text: 'hi' },
+    ]);
+    expect(out).not.toContain('XX');
+    expect(out).toContain('hi');
+  });
 });
 
 describe('previewToolInput', () => {
