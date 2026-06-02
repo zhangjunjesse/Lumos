@@ -6,6 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import { initAutoUpdater, setUpdaterWindow, registerUpdaterHandlers } from './updater';
+import { installCrashObserver, attachWindowCrashObserver } from './crash-observer';
 import { BrowserManager } from './browser/browser-manager';
 import { setupBrowserIPC } from './ipc/browser-handlers';
 import { BrowserBridgeServer } from './browser/bridge-server';
@@ -61,6 +62,11 @@ function configureUserDataPath(): void {
 }
 
 configureUserDataPath();
+
+// Install crash observability before anything else can throw. Records main
+// crashes / renderer-gone / native minidumps so a vanished window leaves a
+// stack instead of nothing. Purely additive — preserves existing behavior.
+installCrashObserver();
 
 // Register `lumos-app://` as a privileged scheme. Must run before
 // app.whenReady() — Electron requires scheme privileges to be declared during
@@ -689,6 +695,7 @@ function createWindow(port: number) {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  attachWindowCrashObserver(mainWindow);
 
   appOriginPrefix = `http://127.0.0.1:${port}`;
   mainWindow.webContents.setWindowOpenHandler((details) => {
