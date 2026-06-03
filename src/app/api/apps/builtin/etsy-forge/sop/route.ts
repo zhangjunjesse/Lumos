@@ -13,16 +13,19 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { product_ids?: string[] };
+    const body = (await req.json()) as { product_ids?: string[]; directions?: string[] };
     const productIds = (body.product_ids ?? []).filter(Boolean);
     if (productIds.length === 0) return NextResponse.json({ error: '请先选中商品' }, { status: 400 });
+    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is 'A' | 'B' | 'C' | 'D' =>
+      ['A', 'B', 'C', 'D'].includes(d),
+    );
 
     const provider = resolveProviderForCapability({ moduleKey: 'image', capability: 'image-gen', allowDefault: false });
     if (!provider) return NextResponse.json({ error: '未配置图片服务商(去「设置 → 图片生成」选一个)' }, { status: 400 });
 
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
-    const { runId } = createSopRun(store, { userId, productIds });
+    const { runId } = createSopRun(store, { userId, productIds, directions: directions.length ? directions : undefined });
     // fire-and-forget:整条链很慢(每商品 7 步、含多次图片生成),请求秒返回,前端轮询 GET 看进度。
     void executeSopRun(store, userId, runId).catch(() => {});
     return NextResponse.json({ ok: true, runId });

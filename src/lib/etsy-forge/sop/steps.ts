@@ -13,6 +13,7 @@ import { prepareMerge, mergeOneProduct } from '../product-merge';
 import { getBrowserContextId } from '../store';
 import { getImageConcurrency, mapLimit } from '../concurrency';
 import { withLock } from '@/lib/async-lock';
+import type { SopStepCtx } from './engine';
 import { COLLECTIONS, type AssetRow, type DetailImageRow, type ImageType, type ProductRow, type SopStepKey } from '../types';
 
 const serve = (p: string) => `/api/media/serve?path=${encodeURIComponent(p)}`;
@@ -105,7 +106,7 @@ async function execMockup(store: AppDataStore, userId: string, productId: string
   return `产品图 ${ok}/${remixes.length}`;
 }
 
-export async function execStep(store: AppDataStore, userId: string, productId: string, key: SopStepKey): Promise<string> {
+export async function execStep(store: AppDataStore, userId: string, productId: string, key: SopStepKey, ctx?: SopStepCtx): Promise<string> {
   switch (key) {
     case 'detail':
       return execDetail(store, userId, productId);
@@ -126,7 +127,8 @@ export async function execStep(store: AppDataStore, userId: string, productId: s
     case 'assets':
       return execAssets(store, userId, productId);
     case 'remix': {
-      const r = await runRemix(store, { userId, productId });
+      // 一键出品选的方向矩阵(可多选)随 ctx 下传;空 → runRemix 兜底默认 B。
+      const r = await runRemix(store, { userId, productId, directions: ctx?.directions });
       if (!r.ok) throw new Error(r.error || `二创全部失败(${r.failed} 个)`);
       return `二创 ${r.created} 个`;
     }

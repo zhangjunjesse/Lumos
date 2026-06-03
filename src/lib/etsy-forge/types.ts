@@ -227,6 +227,7 @@ export interface SopRunRow extends Record<string, unknown> {
   user_id: string;
   sop_key: string; // 'one-click'
   product_ids: string[];
+  directions?: ('A' | 'B' | 'C' | 'D')[]; // 一键出品选的二创方向矩阵(可多选;空=默认 B)
   status: SopRunStatus;
   total: number;
   started_at: string;

@@ -6,10 +6,16 @@ import { getImageConcurrency, mapLimit } from '../concurrency';
 import { logEvent } from '../log';
 import { execStep } from './steps';
 import { SOP_STEPS, SOP_ONE_CLICK } from './defs';
-import { COLLECTIONS, type ProductRow, type SopRunStatus, type SopStepRow } from '../types';
+import { COLLECTIONS, type ProductRow, type SopRunRow, type SopRunStatus, type SopStepRow } from '../types';
+import type { RemixDirectionKey } from '../remix-axes';
+
+// 步骤执行上下文:run 级配置(目前只有二创方向矩阵),随链下传给需要的步骤(remix)。
+export interface SopStepCtx {
+  directions?: RemixDirectionKey[];
+}
 
 // 单步执行器签名:成功返回摘要、失败 throw。默认绑定真实 execStep;测试可注入 stub 验证编排契约。
-export type StepExecutor = (store: AppDataStore, userId: string, productId: string, stepKey: SopStepRow['step_key']) => Promise<string>;
+export type StepExecutor = (store: AppDataStore, userId: string, productId: string, stepKey: SopStepRow['step_key'], ctx?: SopStepCtx) => Promise<string>;
 
 const nowIso = () => new Date().toISOString();
 
@@ -25,6 +31,7 @@ async function runChainFrom(
   stepRows: SopStepRow[],
   fromOrder: number,
   exec: StepExecutor,
+  ctx: SopStepCtx = {},
 ): Promise<void> {
   const ordered = [...stepRows].sort((a, b) => a.step_order - b.step_order);
   const title = ordered[0]?.product_title || productId; // 日志注明哪个商品(标题优先,回退 id)
@@ -32,7 +39,7 @@ async function runChainFrom(
     if (sr.step_order < fromOrder) continue;
     setStep(store, sr.id, { status: 'running', failure_reason: '', summary: '' });
     try {
-      const summary = await exec(store, userId, productId, sr.step_key);
+      const summary = await exec(store, userId, productId, sr.step_key, ctx);
       setStep(store, sr.id, { status: 'success', summary });
       logEvent(`SOP/${sr.step_key}`, 'info', summary || '成功', title); // 成功也记
     } catch (err) {
@@ -73,15 +80,29 @@ function finalizeRun(store: AppDataStore, runId: string): void {
   store.update(COLLECTIONS.SOP_RUNS, runId, { status, ended_at: nowIso() });
 }
 
+const VALID_DIRS: RemixDirectionKey[] = ['A', 'B', 'C', 'D'];
+// 读 run 上存的二创方向矩阵(过滤非法值);空 → 由 runRemix 兜底默认 B。
+function runCtx(run: SopRunRow | null | undefined): SopStepCtx {
+  const dirs = (Array.isArray(run?.directions) ? run!.directions : []).filter((d): d is RemixDirectionKey =>
+    VALID_DIRS.includes(d as RemixDirectionKey),
+  );
+  return { directions: dirs.length ? dirs : undefined };
+}
+
 // 同步建 run + 预建每商品每步 step rows(pending),让 route 立刻拿到 runId、UI 立刻展示完整网格。
-export function createSopRun(store: AppDataStore, input: { userId: string; productIds: string[] }): { runId: string } {
+export function createSopRun(
+  store: AppDataStore,
+  input: { userId: string; productIds: string[]; directions?: RemixDirectionKey[] },
+): { runId: string } {
   const productIds = [...new Set(input.productIds)].filter(Boolean);
   if (!productIds.length) throw new Error('没有选中商品');
+  const directions = (input.directions ?? []).filter((d) => VALID_DIRS.includes(d));
 
   const run = store.create(COLLECTIONS.SOP_RUNS, {
     user_id: input.userId,
     sop_key: SOP_ONE_CLICK,
     product_ids: productIds,
+    directions,
     status: 'running',
     total: productIds.length,
     started_at: nowIso(),
@@ -107,6 +128,7 @@ export function createSopRun(store: AppDataStore, input: { userId: string; produ
 
 // 后台执行整个 run:逐商品并发(图片并发度),每商品独立按链跑,结尾汇总终态。
 export async function executeSopRun(store: AppDataStore, userId: string, runId: string, exec: StepExecutor = execStep): Promise<void> {
+  const ctx = runCtx(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId));
   const steps = store.query<SopStepRow>(COLLECTIONS.SOP_STEPS, { filter: { run_id: runId }, limit: 5000 });
   const byProduct = new Map<string, SopStepRow[]>();
   for (const s of steps) {
@@ -116,7 +138,7 @@ export async function executeSopRun(store: AppDataStore, userId: string, runId: 
   }
   const productIds = [...byProduct.keys()];
   await mapLimit(productIds, getImageConcurrency(store), async (pid) => {
-    await runChainFrom(store, userId, pid, byProduct.get(pid)!, 0, exec);
+    await runChainFrom(store, userId, pid, byProduct.get(pid)!, 0, exec, ctx);
   });
   finalizeRun(store, runId);
 }
@@ -134,7 +156,8 @@ export async function retryStep(
   if (rows.length === 0) throw new Error('找不到该 SOP 步骤');
   const target = rows.find((r) => r.step_key === input.stepKey);
   if (!target) throw new Error('找不到该步');
+  const ctx = runCtx(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, input.runId));
   store.update(COLLECTIONS.SOP_RUNS, input.runId, { status: 'running', ended_at: '' });
-  await runChainFrom(store, input.userId, input.productId, rows, target.step_order, exec);
+  await runChainFrom(store, input.userId, input.productId, rows, target.step_order, exec, ctx);
   finalizeRun(store, input.runId);
 }

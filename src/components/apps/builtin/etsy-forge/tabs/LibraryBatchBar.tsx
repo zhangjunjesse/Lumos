@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { PipelineSteps } from './use-library-actions';
-import { REMIX_DIRECTIONS } from '@/lib/etsy-forge/remix-axes';
+import { RemixDirectionMenu } from './RemixDirectionMenu';
 
 const STEP_DEFS: { key: keyof PipelineSteps; label: string; hint: string }[] = [
   { key: 'analyze', label: '分析素材', hint: '生成场景/模特/产品图' },
@@ -42,8 +42,6 @@ export function LibraryBatchBar({
   const [tag, setTag] = useState('');
   const [open, setOpen] = useState(false);
   const [steps, setSteps] = useState<PipelineSteps>({ analyze: true, pose: false });
-  const [remixOpen, setRemixOpen] = useState(false);
-  const [remixDirs, setRemixDirs] = useState<Set<string>>(new Set(['B'])); // 二创方向矩阵,默认 B
   const nothingSelected = selectedProductCount === 0 && selectedImageCount === 0;
   const tagValue = tag.trim();
   const anyStep = steps.analyze || steps.pose;
@@ -101,57 +99,15 @@ export function LibraryBatchBar({
           抠印花
         </Button>
 
-        <div className="relative">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || selectedProductCount === 0}
-            title="按二创方向矩阵(可多选)对选中商品出变体印花。需先抠印花。"
-            onClick={() => setRemixOpen((v) => !v)}
-          >
-            二创{remixDirs.size > 0 ? `（${remixDirs.size} 方向）` : ''} ▾
-          </Button>
-          {remixOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setRemixOpen(false)} />
-              <div className="absolute right-0 z-20 mt-1 w-64 rounded-md border bg-popover p-2 text-popover-foreground shadow-md">
-                <p className="mb-1.5 px-1 text-[11px] text-muted-foreground">选二创方向(可多选,默认 B)</p>
-                {REMIX_DIRECTIONS.map((d) => (
-                  <label key={d.key} className="flex cursor-pointer items-start gap-2 rounded px-1 py-1 hover:bg-muted">
-                    <input
-                      type="checkbox"
-                      checked={remixDirs.has(d.key)}
-                      onChange={() =>
-                        setRemixDirs((s) => {
-                          const n = new Set(s);
-                          if (n.has(d.key)) n.delete(d.key);
-                          else n.add(d.key);
-                          return n;
-                        })
-                      }
-                      className="mt-0.5 size-3.5 shrink-0 accent-foreground"
-                    />
-                    <span className="text-xs leading-tight">
-                      {d.key} · {d.label}
-                      <span className="ml-1 text-[10px] text-muted-foreground">{d.desc}</span>
-                    </span>
-                  </label>
-                ))}
-                <Button
-                  size="sm"
-                  className="mt-2 w-full"
-                  disabled={remixDirs.size === 0}
-                  onClick={() => {
-                    onRemix([...remixDirs]);
-                    setRemixOpen(false);
-                  }}
-                >
-                  开始二创
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
+        <RemixDirectionMenu
+          triggerLabel="二创"
+          confirmLabel="开始二创"
+          variant="outline"
+          busy={busy}
+          disabled={selectedProductCount === 0}
+          title="按二创方向矩阵(可多选)对选中商品出变体印花。需先抠印花。"
+          onConfirm={onRemix}
+        />
 
         <div className="relative">
           <Button size="sm" disabled={busy || nothingSelected} onClick={() => setOpen((v) => !v)}>

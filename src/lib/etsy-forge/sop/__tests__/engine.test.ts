@@ -129,4 +129,41 @@ describe('SOP 编排引擎', () => {
 
     expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.status).toBe('running');
   });
+
+  it('一键出品选的二创方向(directions)存到 run、执行时透传到 remix 步的 ctx', async () => {
+    const store = setupStore();
+    const a = seedProduct(store, '商品A');
+    const { runId } = createSopRun(store, { userId: USER, productIds: [a], directions: ['A', 'C'] });
+    // 存到了 run 上
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.directions).toEqual(['A', 'C']);
+
+    // 执行时 remix 步应拿到 ctx.directions=['A','C'],其余步 ctx 不影响
+    let remixDirs: string[] | undefined = undefined;
+    const capture: StepExecutor = async (_s, _u, _p, key, ctx) => {
+      if (key === 'remix') remixDirs = ctx?.directions;
+      return `ok:${key}`;
+    };
+    await executeSopRun(store, USER, runId, capture);
+    expect(remixDirs).toEqual(['A', 'C']);
+  });
+
+  it('一键出品不选方向 → run.directions 为空、remix 步 ctx.directions=undefined(由 runRemix 兜底 B)', async () => {
+    const store = setupStore();
+    const a = seedProduct(store, '商品A');
+    const { runId } = createSopRun(store, { userId: USER, productIds: [a] });
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.directions).toEqual([]);
+
+    let remixCtxSeen = true as boolean;
+    let remixDirs: string[] | undefined = ['sentinel'];
+    const capture: StepExecutor = async (_s, _u, _p, key, ctx) => {
+      if (key === 'remix') {
+        remixCtxSeen = ctx !== undefined;
+        remixDirs = ctx?.directions;
+      }
+      return `ok:${key}`;
+    };
+    await executeSopRun(store, USER, runId, capture);
+    expect(remixCtxSeen).toBe(true);
+    expect(remixDirs).toBeUndefined();
+  });
 });

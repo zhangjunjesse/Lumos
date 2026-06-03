@@ -180,6 +180,7 @@
         { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
         { "name": "sop_key", "type": "string", "label": "SOP 标识", "default": "one-click", "indexed": true },
         { "name": "product_ids", "type": "json", "label": "商品 ids" },
+        { "name": "directions", "type": "json", "label": "二创方向矩阵", "default": [] },
         { "name": "status", "type": "enum", "label": "状态", "options": ["running", "success", "partial", "failed", "cancelled"], "default": "running", "indexed": true },
         { "name": "total", "type": "number", "label": "商品数", "default": 0 },
         { "name": "started_at", "type": "datetime", "label": "开始时间", "indexed": true },

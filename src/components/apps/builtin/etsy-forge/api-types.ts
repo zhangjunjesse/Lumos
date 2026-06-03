@@ -164,6 +164,7 @@ export interface SopRun {
   id: string;
   sop_key: string;
   product_ids: string[];
+  directions?: ('A' | 'B' | 'C' | 'D')[]; // 一键出品选的二创方向矩阵
   status: SopStatus;
   total: number;
   started_at: string;

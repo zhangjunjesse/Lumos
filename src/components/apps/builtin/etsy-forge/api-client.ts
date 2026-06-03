@@ -244,8 +244,8 @@ export const etsyForgeApi = {
     jf<{ ok: boolean }>(`${BASE}/mockups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试
-  startSop: (productIds: string[]) =>
-    jf<{ ok: boolean; runId: string }>(`${BASE}/sop`, { method: 'POST', body: JSON.stringify({ product_ids: productIds }) }),
+  startSop: (productIds: string[], directions?: string[]) =>
+    jf<{ ok: boolean; runId: string }>(`${BASE}/sop`, { method: 'POST', body: JSON.stringify({ product_ids: productIds, directions }) }),
   listSopRuns: () => jf<{ runs: SopRun[]; stepDefs: SopStepDef[] }>(`${BASE}/sop`),
   getSopRun: (runId: string) =>
     jf<{ run: SopRun; steps: SopStep[]; stepDefs: SopStepDef[] }>(`${BASE}/sop?run_id=${encodeURIComponent(runId)}`),
