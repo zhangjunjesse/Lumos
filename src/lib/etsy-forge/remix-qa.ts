@@ -54,8 +54,8 @@ export async function judgeRemix(ep: VisionEndpoint, image: FetchedImage, type: 
     const score = DIM_KEYS.reduce((s, k) => s + dims[k], 0);
     const baseNote = typeof j.note === 'string' ? j.note.trim() : '';
     // 合格线:4 个核心维度全 ≥4 且侵权安全 ≥3。任一不达标 → weak。
-    const fail = (['thumbnail', 'print_fit', 'originality', 'niche_fit'] as const).filter((k) => dims[k] < CORE_PASS);
-    if (dims.ip_safe < IP_PASS) fail.push('ip_safe' as never);
+    const fail: string[] = ['thumbnail', 'print_fit', 'originality', 'niche_fit'].filter((k) => dims[k] < CORE_PASS);
+    if (dims.ip_safe < IP_PASS) fail.push('ip_safe');
     const weak = fail.length > 0;
     const note = weak
       ? [`评分 ${score}/25`, `未达标:${fail.join('/')}`, baseNote].filter(Boolean).join(' · ')

@@ -88,7 +88,7 @@ export async function runRemixSeries(
         ? await judgeRemix(
             vision.ep,
             await loadImageAsBase64({ localPath: out.localPath, url: `/api/media/serve?path=${encodeURIComponent(out.localPath)}` }),
-            'graphic',
+            'combo', // 系列母版的图文类型未知,用 combo(对文字宽容),避免把合法文字系列误判 weak
           ).catch(() => ({ flag: 'good' as const, note: '' }))
         : { flag: 'good' as const, note: '' };
       store.create(COLLECTIONS.ASSETS, {

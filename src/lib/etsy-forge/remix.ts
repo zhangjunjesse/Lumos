@@ -72,15 +72,18 @@ function buildVariantPrompt(
   template: string,
   parts: { brief: string; title: string; dir: RemixDirection; hook: string; niche: string; palette: string; textRule: string; ipRule: string },
 ): string {
-  return template
-    .replace('{brief}', parts.brief)
-    .replace('{title}', parts.title || '(none)')
-    .replace('{direction}', parts.dir.profile)
-    .replace('{hook}', parts.hook)
-    .replace('{niche}', parts.niche)
-    .replace('{palette}', parts.palette)
-    .replace('{textRule}', parts.textRule)
-    .replace('{ipRule}', parts.ipRule);
+  // 单遍替换:AI/用户文本里可能含 `$`(replace 字符串形式会把 $& / $1 当特殊),也避免注入值里出现 {token} 被下一遍误替换。
+  const map: Record<string, string> = {
+    brief: parts.brief,
+    title: parts.title || '(none)',
+    direction: parts.dir.profile,
+    hook: parts.hook,
+    niche: parts.niche,
+    palette: parts.palette,
+    textRule: parts.textRule,
+    ipRule: parts.ipRule,
+  };
+  return template.replace(/\{(brief|title|direction|hook|niche|palette|textRule|ipRule)\}/g, (_, k: string) => map[k] ?? '');
 }
 
 export async function runRemix(
