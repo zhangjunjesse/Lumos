@@ -149,6 +149,8 @@
         { "name": "quality_flag", "type": "enum", "label": "质量", "options": ["good", "weak"], "indexed": true },
         { "name": "quality_note", "type": "text", "label": "质量备注" },
         { "name": "series_of", "type": "string", "label": "系列化母版素材", "indexed": true },
+        { "name": "fission_run", "type": "string", "label": "裂变运行 id", "indexed": true },
+        { "name": "fission_stage", "type": "string", "label": "裂变阶段(preview/finalize/iterate)" },
         { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
@@ -165,12 +167,79 @@
         { "name": "source_product_id", "type": "string", "label": "原始采集商品 id", "indexed": true },
         { "name": "product_asset_id", "type": "string", "label": "产品图素材 id", "indexed": true },
         { "name": "image_path", "type": "string", "label": "带印花 T 本地路径" },
+        { "name": "prompt", "type": "text", "label": "内联生成的提示词(composer)" },
+        { "name": "ref_images", "type": "json", "label": "内联生成用的参考图(path/url 列表)", "default": [] },
         { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
         { "name": "failure_reason", "type": "text", "label": "失败原因" },
         { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
       "indexes": [["user_id"], ["product_asset_id"], ["status"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_manual_products",
+      "label": "手攒产品（用户内联生成,无 Etsy 采集来源）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "name", "type": "string", "label": "产品名" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_fission_runs",
+      "label": "裂变运行状态（供原图显示「裂变中」）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "run_id", "type": "string", "label": "裂变运行 id", "indexed": true },
+        { "name": "product_id", "type": "string", "label": "目标产品", "indexed": true },
+        { "name": "base_asset_id", "type": "string", "label": "母版图素材 id", "indexed": true },
+        { "name": "stage", "type": "string", "label": "阶段(preview/finalize/iterate)" },
+        { "name": "expected", "type": "number", "label": "预计张数", "default": 0 },
+        { "name": "created", "type": "number", "label": "已出张数", "default": 0 },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["running", "done", "failed"], "default": "running", "indexed": true },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["base_asset_id"], ["status"]]
+    },
+    {
+      "name": "etsy_forge_fission_diagnoses",
+      "label": "裂变诊断缓存（同图不重复分析,除非手动重诊断）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "base_asset_id", "type": "string", "label": "母版图素材 id", "indexed": true },
+        { "name": "strengths", "type": "text", "label": "强项" },
+        { "name": "weaknesses", "type": "json", "label": "80分综合征", "default": [] },
+        { "name": "recommend", "type": "json", "label": "建议方向 code", "default": [] },
+        { "name": "note", "type": "text", "label": "点评" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["base_asset_id"]]
+    },
+    {
+      "name": "etsy_forge_remix_directions",
+      "label": "裂变·方向库（动态,可增删改）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "axis", "type": "string", "label": "轴(A-H)", "indexed": true },
+        { "name": "axis_name", "type": "string", "label": "轴名" },
+        { "name": "code", "type": "string", "label": "方向编码(A1)" },
+        { "name": "label", "type": "string", "label": "方向名" },
+        { "name": "hint", "type": "text", "label": "作用说明" },
+        { "name": "prompt_fragment", "type": "text", "label": "出图指令片段(英文)" },
+        { "name": "sort", "type": "number", "label": "排序", "default": 0 },
+        { "name": "enabled", "type": "boolean", "label": "启用", "default": true, "indexed": true },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["axis"], ["enabled"]]
     },
     {
       "name": "etsy_forge_sop_runs",

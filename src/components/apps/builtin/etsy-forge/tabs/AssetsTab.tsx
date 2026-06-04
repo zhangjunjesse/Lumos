@@ -11,6 +11,7 @@ import { etsyForgeApi, type AssetItem, type LibProduct } from '../api-client';
 import { AssetCard } from './AssetCard';
 import { AssetsBySource } from './AssetsBySource';
 import { ImageLightbox } from './ImageLightbox';
+import { FissionPanel } from './FissionPanel';
 
 const SECTIONS: { key: AssetItem['category']; label: string; hint: string }[] = [
   { key: 'design', label: '印花', hint: '从 T 恤抠出的印花图案（融合主角）' },
@@ -31,6 +32,8 @@ export function AssetsTab() {
   const [origView, setOrigView] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [retryPoll, setRetryPoll] = useState(0);
+  const [fission, setFission] = useState<{ productId: string; baseRef: string; baseTitle: string | null; baseAssetId: string } | null>(null);
+  const [fissioningIds, setFissioningIds] = useState<Set<string>>(new Set()); // 正在裂变的母版图 id(显示「裂变中」)
 
   const viewable = assets.filter((a) => a.status === 'success' && a.url);
   const lightboxIndex = lightboxId ? viewable.findIndex((a) => a.id === lightboxId) : -1;
@@ -59,6 +62,25 @@ export function AssetsTab() {
     const t = setInterval(() => void load(), 6000);
     return () => clearInterval(t);
   }, [analyzing, load]);
+
+  // 每 6s 轮询裂变活跃运行 → 哪些母版图正在「裂变中」;运行变少(有跑完)就刷新素材,让新图冒出来。
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const { runs } = await etsyForgeApi.listFissionRuns();
+        const next = new Set(runs.map((r) => r.base_asset_id).filter(Boolean));
+        setFissioningIds((prev) => {
+          if (prev.size > 0 && next.size < prev.size) void load(); // 有运行结束 → 刷新
+          return next;
+        });
+      } catch {
+        /* 轮询抖动忽略 */
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 6000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const remove = async (id: string) => {
     if (!confirm('删除这张素材？')) return;
@@ -111,6 +133,26 @@ export function AssetsTab() {
     }
   };
 
+  // 二创：基于这张印花对它所属商品出变体（默认方向 B），后台跑、轮询刷新看结果。
+  const remix = async (a: AssetItem) => {
+    if (!a.source_product_id) return;
+    if (!confirm('基于这张印花二创，给它所属商品出一组变体印花？后台跑。')) return;
+    setError(null);
+    try {
+      await etsyForgeApi.remixProduct(a.source_product_id);
+      setMsg('二创中，后台生成（最长 10 分钟），结果会自动刷新…');
+      setRetryPoll(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // 裂变：打开方向库精修工作台（诊断→选方向→对比→定稿→迭代）。母版=这张图,目标产品=它所属商品。
+  const openFission = (a: AssetItem) => {
+    if (!a.source_product_id || !a.url) return;
+    setFission({ productId: a.source_product_id, baseRef: a.url, baseTitle: a.source_product_title, baseAssetId: a.id });
+  };
+
   const tabBtn = (v: 'type' | 'source', label: string) => (
     <button
       type="button"
@@ -143,7 +185,7 @@ export function AssetsTab() {
       {loading && <p className="text-sm text-muted-foreground">加载中…</p>}
 
       {!loading && view === 'source' && (
-        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} />
+        <AssetsBySource products={products} assets={assets} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} onRemix={remix} onFission={openFission} fissioningIds={fissioningIds} />
       )}
 
       {!loading &&
@@ -163,7 +205,7 @@ export function AssetsTab() {
               ) : (
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7">
                   {items.map((a) => (
-                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} />
+                    <AssetCard key={a.id} asset={a} onView={setLightboxId} onViewOrig={setOrigView} onRemove={remove} onRetry={retry} onSeries={series} onRemix={remix} onFission={openFission} fissioning={fissioningIds.has(a.id)} />
                   ))}
                 </div>
               )}
@@ -181,6 +223,19 @@ export function AssetsTab() {
       )}
       {origView && (
         <ImageLightbox images={[{ url: origView, title: '来源原图' }]} index={0} onIndexChange={() => {}} onClose={() => setOrigView(null)} />
+      )}
+      {fission && (
+        <FissionPanel
+          productId={fission.productId}
+          baseRef={fission.baseRef}
+          baseAssetId={fission.baseAssetId}
+          baseTitle={fission.baseTitle}
+          onZoom={setOrigView}
+          onClose={() => {
+            setFission(null);
+            void load(); // 裂变出图都落进 remix 素材,关闭时刷新一下
+          }}
+        />
       )}
     </div>
   );

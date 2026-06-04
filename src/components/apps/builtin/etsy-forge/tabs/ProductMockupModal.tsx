@@ -12,6 +12,8 @@ export function ProductMockupModal({
   index,
   onIndexChange,
   keyboardEnabled = true,
+  retryingIds,
+  onRetry,
   onZoom,
   onClose,
 }: {
@@ -19,6 +21,8 @@ export function ProductMockupModal({
   index: number;
   onIndexChange: (i: number) => void;
   keyboardEnabled?: boolean;
+  retryingIds?: Set<string>; // 正在重合成的 mockup id 集合(支持同时多张)
+  onRetry?: (id: string) => void; // 用当前图片服务商重新合成、覆盖
   onZoom: (url: string) => void;
   onClose: () => void;
 }) {
@@ -45,6 +49,7 @@ export function ProductMockupModal({
   const mockup = mockups[index];
   if (!mockup) return null;
   const navBtn = 'flex size-8 items-center justify-center rounded-full border bg-card text-lg hover:bg-muted disabled:opacity-30';
+  const retrying = !!retryingIds?.has(mockup.id);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -55,6 +60,17 @@ export function ProductMockupModal({
             {count > 1 && <span className="text-xs text-muted-foreground">{index + 1} / {count} · ←/→ 切换</span>}
           </div>
           <div className="flex items-center gap-1.5">
+            {onRetry && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={retrying}
+                title="用当前「设置→图片生成」的服务商重新合成这张,覆盖原图"
+                onClick={() => onRetry(mockup.id)}
+              >
+                {retrying ? '合成中…' : '重试合成'}
+              </Button>
+            )}
             {count > 1 && (
               <>
                 <button type="button" aria-label="上一张" onClick={() => go(-1)} className={navBtn}>
@@ -73,12 +89,15 @@ export function ProductMockupModal({
 
         <div className="grid gap-4 overflow-y-auto p-4 sm:grid-cols-[1.4fr_1fr]">
           {/* 成品大图 */}
-          <button type="button" onClick={() => mockup.url && onZoom(mockup.url)} title="点击放大" className="block overflow-hidden rounded-md border">
+          <button type="button" onClick={() => mockup.url && onZoom(mockup.url)} title="点击放大" className="relative block overflow-hidden rounded-md border">
             {mockup.url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={mockup.url} alt="带印花 T" className="aspect-square w-full object-cover" />
             ) : (
               <div className="flex aspect-square items-center justify-center bg-destructive/5 text-xs text-destructive">{mockup.failure_reason || '失败'}</div>
+            )}
+            {retrying && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm text-white">重新合成中…(最长 10 分钟)</div>
             )}
           </button>
 

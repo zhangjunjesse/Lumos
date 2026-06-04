@@ -107,7 +107,32 @@ export interface AssetItem {
   quality_flag: 'good' | 'weak' | null; // 二创质检结果(其它类为 null)
   quality_note: string | null;
   series_of: string | null; // Step11 系列化:本张是哪个达标母版扩展出来的(普通二创为 null)
+  fission_run: string | null; // 裂变:属于哪次裂变运行
+  fission_stage: string | null; // 裂变阶段 preview/finalize/iterate
   created_at: string;
+}
+
+// 裂变·方向库一条方向
+export interface RemixDirection {
+  id: string;
+  axis: string;
+  axis_name: string;
+  code: string;
+  label: string;
+  hint: string;
+  prompt_fragment: string;
+  sort: number;
+  enabled: boolean;
+}
+
+// 裂变·诊断结果
+export interface FissionDiagnosis {
+  ok: boolean;
+  strengths: string;
+  weaknesses: string[];
+  recommendCodes: string[];
+  note: string;
+  error?: string;
 }
 
 export interface PromptItem {
@@ -128,8 +153,16 @@ export interface MockupItem {
   source_product_title: string | null;
   source_product_image: string | null; // 原始商品主图
   source_product_url: string | null; // 原始商品 Etsy 链接
+  prompt: string | null; // 内联生成(composer)的提示词
   status: 'success' | 'failed';
   failure_reason: string | null;
+  created_at: string;
+}
+
+// 手攒产品:用户手动新建的产品组(无 Etsy 采集来源)
+export interface ManualProduct {
+  id: string;
+  name: string;
   created_at: string;
 }
 

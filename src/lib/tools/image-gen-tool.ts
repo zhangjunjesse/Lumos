@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
+import { coerceStringArray, coerceJsonArray } from './image-gen-arg-coerce';
 import {
   consumeRemoteQuota,
   refundRemoteQuota,
@@ -30,9 +31,10 @@ const inputSchema = {
     .describe('Resolution. 1K=1024px, 2K=2048px, 4K=4096px (pro model only). Defaults to 1K.'),
   count: z.number().int().min(1).max(4).optional()
     .describe('Number of images to generate (1-4). Defaults to 1. Use with enable_sequential for consistent multi-image sets.'),
-  reference_image_paths: z.array(z.string()).optional()
+  reference_image_paths: z.preprocess(coerceStringArray, z.array(z.string()).optional())
     .describe(
       'Local file paths of reference images (absolute paths, .jpg/.png/.webp/.gif/.bmp). '
+      + 'Pass as a JSON array of strings. '
       + 'Use for editing, style transfer, multi-reference composition, or any time the task '
       + 'refers to specific local images. '
       + 'REQUIRED whenever the task mentions absolute image paths — the paths go HERE, not in `prompt`.',
@@ -41,7 +43,7 @@ const inputSchema = {
     .describe('Enable sequential group mode for character/style-consistent multi-image generation. Set count>1 when using this.'),
   color_palette: z.string().optional()
     .describe("Hex color palette to control image colors, e.g. '#FF5733,#33FF57,#3357FF'."),
-  region_edit_bbox: z.array(z.array(z.number())).optional()
+  region_edit_bbox: z.preprocess(coerceJsonArray, z.array(z.array(z.number())).optional())
     .describe('Bounding boxes for region editing: [[x1,y1,x2,y2], ...]. Only modify specified regions of the reference image.'),
   thinking_mode: z.boolean().optional()
     .describe('Enable thinking mode for better prompt understanding and creative quality. Defaults to true. (DashScope only)'),
@@ -148,6 +150,7 @@ async function runGeneration(
     media_generation_id: result.mediaGenerationId,
     model: result.model,
     provider: result.providerName,
+    created_at: new Date().toISOString(), // 真实生成时间(灵感库按它分组/排序,别用消息时间)
     images: result.images.map(img => ({
       path: img.localPath,
       url: `/api/media/serve?path=${encodeURIComponent(img.localPath)}`,

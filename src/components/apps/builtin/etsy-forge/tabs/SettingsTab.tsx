@@ -15,6 +15,7 @@ import { PromptManager } from './PromptManager';
 import { ProviderPickerRow } from './ProviderPickerRow';
 import { NumberSelectRow } from './NumberSelectRow';
 import { DangerZoneSection } from './DangerZoneSection';
+import { DirectionLibraryManager } from './DirectionLibraryManager';
 import { PROMPT_CATS } from './prompt-cats';
 import type { BrowserProviderConfigView, BrowserProvidersResponse } from '@/types';
 
@@ -275,6 +276,8 @@ export function SettingsTab() {
         </div>
         <PromptManager category={promptCat} />
       </section>
+
+      <DirectionLibraryManager />
 
       <section className="rounded-lg border bg-card p-5">
         <h2 className="mb-1 text-sm font-medium">合规</h2>

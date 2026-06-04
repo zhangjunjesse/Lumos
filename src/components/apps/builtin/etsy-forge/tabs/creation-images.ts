@@ -24,9 +24,11 @@ export function extractCreationImages(messages: Message[]): CreationImage[] {
         let mt: RegExpExecArray | null;
         while ((mt = RESULT_RE.exec(b.text))) {
           try {
-            const json = JSON.parse(mt[1]) as { prompt?: string; images?: Array<{ localPath?: string }> };
+            const json = JSON.parse(mt[1]) as { prompt?: string; created_at?: string; images?: Array<{ localPath?: string }> };
+            // 优先用图片真实生成时间;没有才退回消息时间(否则刚生成的图会被错排到老消息那一刻)。
+            const createdAt = typeof json.created_at === 'string' ? json.created_at : m.created_at;
             for (const img of json.images ?? []) {
-              if (img.localPath) out.push({ url: serve(img.localPath), prompt: json.prompt ?? '', createdAt: m.created_at });
+              if (img.localPath) out.push({ url: serve(img.localPath), prompt: json.prompt ?? '', createdAt });
             }
           } catch {
             /* 跳过坏块 */
@@ -36,9 +38,10 @@ export function extractCreationImages(messages: Message[]): CreationImage[] {
         const r = unwrapToolResult(b.content);
         const imgs = r && Array.isArray(r.images) ? (r.images as Array<Record<string, unknown>>) : [];
         const prompt = typeof r?.prompt === 'string' ? r.prompt : '';
+        const createdAt = typeof r?.created_at === 'string' ? r.created_at : m.created_at; // 优先图片生成时间
         for (const img of imgs) {
           const url = img.url ? String(img.url) : img.path ? serve(String(img.path)) : '';
-          if (url) out.push({ url, prompt, createdAt: m.created_at });
+          if (url) out.push({ url, prompt, createdAt });
         }
       }
     }

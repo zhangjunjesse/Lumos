@@ -22,15 +22,19 @@ const STATUS_COLOR: Record<SopRun['status'], string> = {
   cancelled: 'text-muted-foreground',
 };
 
+type FissionRun = { run_id: string; title: string; stage_cn: string; expected: number; started_at: string };
+
 export function SopTaskDock() {
   const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<SopRun[]>([]);
+  const [fissionRuns, setFissionRuns] = useState<FissionRun[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const r = await etsyForgeApi.listSopRuns();
+      const [r, f] = await Promise.all([etsyForgeApi.listSopRuns(), etsyForgeApi.listFissionRuns()]);
       setRuns(r.runs);
+      setFissionRuns(f.runs);
     } catch {
       /* 忽略:列表拉取失败不打扰 */
     }
@@ -46,8 +50,8 @@ export function SopTaskDock() {
     return () => window.removeEventListener('etsy-sop-started', onStarted);
   }, [load]);
 
-  // 有运行中任务时轮询,跑完自动降频(无运行也每 15s 兜底刷新一次)。
-  const runningCount = runs.filter((r) => r.status === 'running').length;
+  // 有运行中任务时轮询,跑完自动降频(无运行也每 15s 兜底刷新一次)。裂变运行全是 running。
+  const runningCount = runs.filter((r) => r.status === 'running').length + fissionRuns.length;
   useEffect(() => {
     const t = setInterval(() => void load(), runningCount > 0 ? 3000 : 15000);
     return () => clearInterval(t);
@@ -87,10 +91,20 @@ export function SopTaskDock() {
           <div className="flex-1 overflow-auto p-3">
             {selected && selectedRun ? (
               <SopRunGrid runId={selected} />
-            ) : runs.length === 0 ? (
-              <p className="py-10 text-center text-xs text-muted-foreground">还没有任务。去「已采集商品」选商品点「一键出品」。</p>
+            ) : runs.length === 0 && fissionRuns.length === 0 ? (
+              <p className="py-10 text-center text-xs text-muted-foreground">还没有任务。去「已采集商品」选商品点「一键出品」，或在图库点「裂变」。</p>
             ) : (
               <ul className="space-y-1.5">
+                {fissionRuns.map((f) => (
+                  <li key={f.run_id}>
+                    <div className="flex w-full items-center justify-between rounded-md border border-violet-300 px-3 py-2 text-left text-xs">
+                      <span className="line-clamp-1 text-muted-foreground" title={f.title}>
+                        裂变 · {f.title} · {f.stage_cn} {f.expected} 张 · {new Date(f.started_at).toLocaleString()}
+                      </span>
+                      <span className="shrink-0 font-medium text-violet-600">生成中 …</span>
+                    </div>
+                  </li>
+                ))}
                 {runs.map((r) => (
                   <li key={r.id}>
                     <button

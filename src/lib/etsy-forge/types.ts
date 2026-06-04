@@ -92,6 +92,8 @@ export interface AssetRow extends Record<string, unknown> {
   quality_flag?: 'good' | 'weak'; // 二创质量闸门结果:weak=有硬伤(白底框/多余文字/糊…)
   quality_note?: string; // weak 的原因
   series_of?: string; // playbook Step11 系列化:本张是哪个达标母版素材扩展出来的(空=普通二创)
+  fission_run?: string; // 裂变:本张属于哪次裂变运行(供多轮面板按轮拉取)
+  fission_stage?: string; // 裂变阶段:preview / finalize / iterate
   created_at: string;
 }
 
@@ -130,10 +132,61 @@ export interface MockupRow extends Record<string, unknown> {
   design_label?: string; // 印花来源描述(印花/二创图)
   design_ref?: string; // 印花来源(本地 path 或 url，记录追溯用)
   source_product_id?: string; // 血缘:这印花最初来自哪个采集的 Etsy 商品(经抠印花/二创追溯)
-  product_asset_id?: string; // 用的哪张产品图(素材库 product 类)
+  product_asset_id?: string; // 用的哪张产品图(素材库 product 类);内联生成(composer)的为空
   image_path?: string; // 生成的带印花 T 本地路径
+  prompt?: string; // 内联生成(composer)的提示词
+  ref_images?: string[]; // 内联生成用的参考图(path/url 列表),重试时复用
   status: 'success' | 'failed';
   failure_reason?: string;
+  created_at: string;
+}
+
+// 手攒产品:用户在「我的产品」内联生成出来的产品组,无 Etsy 采集来源(不写进采集商品表)。
+export interface ManualProductRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  name: string;
+  created_at: string;
+}
+
+// 裂变运行状态:供原图卡片显示「裂变中」。
+export interface FissionRunRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  run_id: string; // 客户端生成的本次运行 id(也打在产出素材的 fission_run 上)
+  product_id: string;
+  base_asset_id: string; // 从哪张图发起的(原图卡片按它显示状态)
+  stage: string;
+  expected: number;
+  created: number;
+  status: 'running' | 'done' | 'failed';
+  created_at: string;
+}
+
+// 裂变诊断缓存:同一张图诊断过就存下来,再开面板直接用,不重复调 vision(除非手动重诊断)。
+export interface FissionDiagnosisRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  base_asset_id: string;
+  strengths: string;
+  weaknesses: string[];
+  recommend: string[];
+  note: string;
+  created_at: string;
+}
+
+// 裂变·方向库一条方向(动态、可编辑)。axis A-H 用于规则判定 叠加/平行/矩阵。
+export interface RemixDirectionRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  axis: string; // A-H
+  axis_name: string; // 轴中文名
+  code: string; // A1...
+  label: string; // 中文方向名
+  hint: string; // 一句话作用
+  prompt_fragment: string; // 注入出图 prompt 的英文片段
+  sort: number;
+  enabled: boolean;
   created_at: string;
 }
 
@@ -275,6 +328,10 @@ export const COLLECTIONS = {
   PROMPTS: 'etsy_forge_prompts',
   ASSETS: 'etsy_forge_assets',
   MOCKUPS: 'etsy_forge_mockups',
+  MANUAL_PRODUCTS: 'etsy_forge_manual_products',
+  REMIX_DIRECTIONS: 'etsy_forge_remix_directions',
+  FISSION_RUNS: 'etsy_forge_fission_runs',
+  FISSION_DIAGNOSES: 'etsy_forge_fission_diagnoses',
   SOP_RUNS: 'etsy_forge_sop_runs',
   SOP_STEPS: 'etsy_forge_sop_steps',
   LOGS: 'etsy_forge_logs',

@@ -41,10 +41,11 @@ export async function runListCollect(
   setTaskRunning(store, task.id);
 
   try {
-    // 跨执行去重：这个关键词历史上采过的 listing_id 全排除，本次只攒没采过的新品。
+    // 跨任务去重：这个用户**任何关键词/任何任务**历史上采过的 listing_id 全排除,本次只攒从没采过的新品。
+    // (同一商品不该因为换了关键词/换了采集任务被重复采集。)
     const prior = store.query<ProductRow>(COLLECTIONS.PRODUCTS, {
-      filter: { user_id: task.user_id, keyword: task.keyword },
-      limit: 5000,
+      filter: { user_id: task.user_id },
+      limit: 20000,
     });
     const excludeListingIds = new Set(prior.map((p) => p.listing_id));
 

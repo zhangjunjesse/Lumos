@@ -1,7 +1,7 @@
 // 二创的零件库(对齐 playbook SOP):
 //  1) REMIX_DIRECTIONS —— 二创方向矩阵 A/B/C/D(每个方向 = 一套"保留/改变"相似度策略)。可多选;默认 B。
 //  2) HOOK_OPERATORS —— 创意钩子算子(放大/换主体/反差/场景迁移/符号重组/情绪转向/简化),让每张变体系统化拉差异。
-//  3) TEXT_RULE_* / buildIpRule —— 文字款规则 + IP 规避。
+//  3) TEXT_RULE_* —— 文字款规则(IP 规避已挪到 remix-analyze.ts 的 buildRiskRule,含完整风险表)。
 // 生成时:对每个选中的方向 × 轮流取一个钩子,组装变体 prompt(注入 {direction} 和 {hook})。
 
 export type RemixDirectionKey = 'A' | 'B' | 'C' | 'D';
@@ -81,10 +81,3 @@ export const TEXT_RULE_TEXT =
   'This is a TYPOGRAPHY/slogan design: the hero is an ORIGINAL short slogan in natural, idiomatic US English with the same vibe as the reference — do NOT reuse the reference exact wording. Strong, clean, well-composed lettering.';
 export const TEXT_RULE_COMBO =
   'This is a graphic + slogan design: keep BOTH an illustration AND a short slogan, in the same image/text balance as the reference. Write an ORIGINAL slogan in natural, idiomatic US English (same vibe; do NOT copy the exact wording).';
-
-// 按拆解 ip_risk 注入 {ipRule}:空=不加;非空=明确不复刻该受保护元素。
-export function buildIpRule(ipRisk: string): string {
-  const r = ipRisk.trim();
-  if (!r) return '';
-  return `Do NOT reproduce this protected element from the reference: ${r}. Replace it with an original, non-infringing element that serves the same role.`;
-}

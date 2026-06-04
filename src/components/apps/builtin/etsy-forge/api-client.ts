@@ -10,6 +10,9 @@ import type {
   AssetItem,
   PromptItem,
   MockupItem,
+  ManualProduct,
+  RemixDirection,
+  FissionDiagnosis,
   Cutout,
   LogItem,
   SopStepDef,
@@ -233,15 +236,52 @@ export const etsyForgeApi = {
       method: 'POST',
       body: JSON.stringify({ design, product_asset_ids: productAssetIds }),
     }),
-  // 继续二创:针对某原商品,选底图 + 写要求 → 生成新产品图(异步,前端轮询 listMockups)
-  remixMore: (productId: string, baseUrl: string, instruction: string) =>
-    jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/remix-more`, {
+  // 内联生成(MidJourney 式):选参考图(任意,可跨产品/图库) + 提示词 → 新图,挂到目标产品下(异步,轮询 listMockups)
+  composeProduct: (productId: string, references: string[], prompt: string) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/compose`, {
       method: 'POST',
-      body: JSON.stringify({ product_id: productId, base_url: baseUrl, instruction }),
+      body: JSON.stringify({ product_id: productId, references, prompt }),
     }),
+  // 手攒产品(无 Etsy 来源):列 / 新建(增加产品) / 删除(连带名下生成图)
+  listManualProducts: () => jf<{ products: ManualProduct[] }>(`${BASE}/manual-products`),
+  createManualProduct: (name?: string) =>
+    jf<{ ok: boolean; product: ManualProduct }>(`${BASE}/manual-products`, { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteManualProduct: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/manual-products?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // 裂变·方向库(动态 CRUD)
+  listDirections: () => jf<{ directions: RemixDirection[] }>(`${BASE}/remix-directions`),
+  createDirection: (d: Partial<RemixDirection>) =>
+    jf<{ ok: boolean; direction: RemixDirection }>(`${BASE}/remix-directions`, { method: 'POST', body: JSON.stringify(d) }),
+  updateDirection: (id: string, patch: Partial<RemixDirection>) =>
+    jf<{ ok: boolean }>(`${BASE}/remix-directions`, { method: 'PUT', body: JSON.stringify({ id, ...patch }) }),
+  deleteDirection: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/remix-directions?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // 裂变·诊断(同图有缓存直接用;force=true 才重诊断)
+  fissionDiagnose: (baseRef: string, baseAssetId: string, force = false) =>
+    jf<{ diagnosis: FissionDiagnosis }>(`${BASE}/fission/diagnose`, { method: 'POST', body: JSON.stringify({ base_ref: baseRef, base_asset_id: baseAssetId, force }) }),
+  // 裂变·出图(按配方×张数,标 fission_run/stage + 写运行状态,前端按 run 轮询 listAssets)
+  fissionGenerate: (input: { productId: string; baseRef: string; baseAssetId: string; recipes: string[][]; variantsPerRecipe: number; stage: 'preview' | 'finalize' | 'iterate'; fissionRun: string }) =>
+    jf<{ ok: boolean; started: number }>(`${BASE}/fission/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        product_id: input.productId,
+        base_ref: input.baseRef,
+        base_asset_id: input.baseAssetId,
+        recipes: input.recipes,
+        variants_per_recipe: input.variantsPerRecipe,
+        stage: input.stage,
+        fission_run: input.fissionRun,
+      }),
+    }),
+  // 裂变·活跃运行(供原图显示「裂变中」+ 右下角任务 dock)
+  listFissionRuns: () =>
+    jf<{ runs: { run_id: string; base_asset_id: string; product_id: string; title: string; stage: string; stage_cn: string; expected: number; started_at: string }[] }>(`${BASE}/fission/runs`),
   listMockups: () => jf<{ mockups: MockupItem[] }>(`${BASE}/mockups`),
   deleteMockup: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/mockups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // 重试合成:用当前图片服务商对这张 mockup 重新合成、覆盖原图(异步,前端轮询 listMockups 看换图)
+  retryMockup: (mockupId: string) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/retry`, { method: 'POST', body: JSON.stringify({ mockup_id: mockupId }) }),
 
   // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试
   startSop: (productIds: string[], directions?: string[]) =>

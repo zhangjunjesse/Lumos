@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prepareMerge, mergeOneProduct } from '@/lib/etsy-forge/product-merge';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
-import { COLLECTIONS, type MockupRow, type ProductRow } from '@/lib/etsy-forge/types';
+import { COLLECTIONS, type ManualProductRow, type MockupRow, type ProductRow } from '@/lib/etsy-forge/types';
 import { getImageConcurrency, mapLimit } from '@/lib/etsy-forge/concurrency';
 
 export const runtime = 'nodejs';
@@ -67,17 +67,19 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({
       mockups: rows.map((r) => {
-        // 溯源:这张带印花 T 用的印花(design_ref) + 它最初来自哪个采集的 Etsy 商品(source_product_id → 主图+标题)。
+        // 溯源:这张带印花 T 用的印花(design_ref) + 它来自哪个产品组(采集商品 → 主图+标题;手攒产品 → 名字)。
         const srcProduct = r.source_product_id ? store.get<ProductRow>(COLLECTIONS.PRODUCTS, r.source_product_id) : null;
+        const manual = !srcProduct && r.source_product_id ? store.get<ManualProductRow>(COLLECTIONS.MANUAL_PRODUCTS, r.source_product_id) : null;
         return {
           id: r.id,
           url: r.image_path ? `/api/media/serve?path=${encodeURIComponent(r.image_path)}` : null,
           design_label: r.design_label ?? '',
           design_url: toServable(typeof r.design_ref === 'string' ? r.design_ref : undefined),
           source_product_id: r.source_product_id ?? null,
-          source_product_title: srcProduct?.title ?? null,
+          source_product_title: srcProduct?.title ?? manual?.name ?? null,
           source_product_image: srcProduct?.main_image_url ?? null,
           source_product_url: srcProduct?.url ?? null,
+          prompt: typeof r.prompt === 'string' ? r.prompt : null,
           status: r.status,
           failure_reason: r.failure_reason ?? null,
           created_at: r.created_at,
