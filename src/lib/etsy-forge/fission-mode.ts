@@ -49,3 +49,33 @@ export function planFission(selected: { code: string; axis: string }[]): Fission
 export function modeLabel(m: FissionMode): string {
   return MODE_CN[m];
 }
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 随机生成(纯代码,AI 零参与):优先「每类随机抽 1 个、类不重复」铺满不同大类;
+// n 超过大类数(8)时,再从各类剩余方向里随机补抽不重复方向,凑够 n(上限=库内方向总数)。
+export function pickRandomCodes(dirs: { code: string; axis: string }[], n = 3): string[] {
+  const byAxis = new Map<string, string[]>();
+  for (const d of dirs) {
+    const arr = byAxis.get(d.axis) ?? [];
+    arr.push(d.code);
+    byAxis.set(d.axis, arr);
+  }
+  const picked: string[] = [];
+  const leftover: string[] = [];
+  for (const ax of shuffle([...byAxis.keys()])) {
+    const codes = shuffle(byAxis.get(ax)!);
+    picked.push(codes[0]); // 每类先抽 1 个(分属不同类)
+    leftover.push(...codes.slice(1)); // 类内其余方向留作补抽池
+  }
+  if (picked.length >= n) return picked.slice(0, n);
+  // 不同类不够 n:从剩余方向随机补,直到凑够 n(都是不重复的具体方向)
+  return [...picked, ...shuffle(leftover).slice(0, n - picked.length)];
+}

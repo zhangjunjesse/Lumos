@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { etsyForgeApi, type AssetItem, type FissionDiagnosis, type RemixDirection } from '../api-client';
-import { planFission, modeLabel, type FissionStage } from '@/lib/etsy-forge/fission-mode';
+import { planFission, modeLabel, pickRandomCodes, type FissionStage } from '@/lib/etsy-forge/fission-mode';
 import { DirectionLibrary } from './DirectionLibrary';
 
 const DEPTHS: { key: 'quick' | 'standard' | 'fine'; label: string; n: number }[] = [
@@ -39,6 +39,7 @@ export function FissionPanel({
   const [diagnosing, setDiagnosing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [depth, setDepth] = useState(1); // DEPTHS 下标,默认标准
+  const [randomCount, setRandomCount] = useState(3); // 随机生成张数,默认 3、最大 10
   const [run, setRun] = useState<{ id: string; stage: FissionStage; expected: number } | null>(null);
   const [roundAssets, setRoundAssets] = useState<AssetItem[]>([]);
   const [chosenRecipe, setChosenRecipe] = useState<string[] | null>(null);
@@ -123,7 +124,15 @@ export function FissionPanel({
     if (recipe.length > 0) setChosenRecipe(recipe);
   };
   const onFinalize = () => chosenRecipe && fire('finalize', [chosenRecipe], DEPTHS[depth].n);
-  const onIterate = () => fire('iterate', [[...selected]], 2);
+  const onIterate = () => fire('iterate', [selected.size ? [...selected] : (chosenRecipe ?? [])], 2);
+  // 随机生成(纯代码,AI 零参与):随机抽 3 个不同大类各 1 个方向,每个各出 1 张 = 共 3 张。
+  const onRandom = () => {
+    const codes = pickRandomCodes(directions.filter((d) => d.enabled).map((d) => ({ code: d.code, axis: d.axis })), randomCount);
+    if (codes.length === 0) return;
+    setSelected(new Set(codes));
+    setChosenRecipe(null);
+    fire('preview', codes.map((c) => [c]), 1);
+  };
 
   const busy = !!run && run.expected !== -1;
   const stageCn = run?.stage === 'finalize' ? '定稿' : run?.stage === 'iterate' ? '迭代' : '预览';
@@ -169,8 +178,17 @@ export function FissionPanel({
 
             {/* 预览阶段:张数由模式决定(各方向各 1 张),这里只显示模式+预览张数,不放定稿张数选择器(免误导)。 */}
             <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs">
-              <span className="text-muted-foreground">{selected.size === 0 ? '先选方向' : `【${modeLabel(plan.mode)}】${plan.note}`}</span>
+              <span className="text-muted-foreground">{selected.size === 0 ? '选方向手动出，或直接🎲随机' : `【${modeLabel(plan.mode)}】${plan.note}`}</span>
               <div className="flex-1" />
+              <span className="text-muted-foreground">随机张数</span>
+              <div className="flex items-center overflow-hidden rounded border">
+                <button type="button" disabled={randomCount <= 1} onClick={() => setRandomCount((n) => Math.max(1, n - 1))} className="px-1.5 hover:bg-muted disabled:opacity-30">−</button>
+                <span className="min-w-[1.4rem] text-center">{randomCount}</span>
+                <button type="button" disabled={randomCount >= 10} onClick={() => setRandomCount((n) => Math.min(10, n + 1))} className="px-1.5 hover:bg-muted disabled:opacity-30">+</button>
+              </div>
+              <Button size="sm" variant="outline" disabled={busy || directions.length === 0} onClick={onRandom} title="纯随机抽 N 个不同方向各出 1 张,AI 不参与挑选">
+                🎲 随机生成 {randomCount} 张
+              </Button>
               <Button size="sm" disabled={selected.size === 0 || busy} onClick={onPreview}>
                 {busy && run?.stage === 'preview' ? '出预览中…' : `出预览 · ${plan.recipes.length} 张`}
               </Button>

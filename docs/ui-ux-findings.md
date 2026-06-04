@@ -701,3 +701,16 @@
 
 ### 骨架屏:同第 4 轮,不重复
 - `Skeleton` 仅 4 文件用(第 4 轮已记 skeleton 闲置)。"形状是否贴合内容"在 skeleton 几乎没用的前提下是伪命题——先解决第 4 轮"加载态约定:列表首屏用 skeleton",再谈贴合。
+
+---
+
+## 第 41 轮 — 错误 toast 持久度 + 空搜索 vs 无数据(后者正面)
+
+### P2-71 错误 toast 与成功同样 3s 自动消失,重要错误一闪即逝
+- `ui/toast.tsx` 默认 `duration = 3000`,且 `duration > 0` 就自动关——**对 `error`/`warning` 同样适用**。
+- 虽有 `type: error` + `aria-live="assertive"`(读屏会读)、也有手动 onClose,但默认行为**不按严重度区分**:用户没盯着屏幕时,3 秒后错误消失,而错误恰恰是第 18 轮那种需要细读的技术信息。
+- **建议**:`error/warning` toast 持久(`duration=0`,必须手动关)或 ≥8s;仅 `success/info` 快速自动消失。并入第 25 轮全局 toast 系统时一并定"按 type 决定持久度"。
+
+### 正面记录:空搜索结果 vs 无数据,区分得好
+- 22 文件区分"有 query 无匹配"与"本就无数据"。范例 `goofish/GoofishChatList:218`:`{query ? '没有匹配 "${query}" 的会话' : '暂无会话'}`——回显关键词、引导明确。`BrowserProviderSection` 等同样有"没有匹配的…"。
+- **引申**:第 4 轮的共享 `EmptyState` 应内建 `query` 维度(传了搜索词→"无匹配 X,换个词";否则→"还没有,去新建"),把这个好习惯固化下来。
