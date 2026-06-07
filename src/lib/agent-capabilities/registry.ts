@@ -183,7 +183,6 @@ const NEUTRAL_CONTEXT: ConnectorContext = {
   permissionMode: 'acceptEdits',
   browserAutomationIntent: false,
   visibleBrowserIntent: false,
-  legacyImageAgentPrompt: false,
   isPrimaryMainAgentSession: false,
   isDedicatedWeChatAssistantSession: false,
   isWorkflowChatSession: false,

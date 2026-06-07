@@ -208,7 +208,6 @@ export class ConversationEngine {
       permissionMode: 'acceptEdits',
       browserAutomationIntent: false,
       visibleBrowserIntent: false,
-      legacyImageAgentPrompt: false,
       isPrimaryMainAgentSession: mainAgentSession,
       isDedicatedWeChatAssistantSession: isWeChatAssistantChatSession(session),
       isWorkflowChatSession: isWorkflowChatSession(session),

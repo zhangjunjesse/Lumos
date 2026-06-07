@@ -31,7 +31,6 @@ export interface ConnectorContext {
   // —— 硬结构事实（R1 允许 appliesTo 读取的全集）——
   browserAutomationIntent: boolean;
   visibleBrowserIntent: boolean;
-  legacyImageAgentPrompt: boolean;
   isPrimaryMainAgentSession: boolean;
   isDedicatedWeChatAssistantSession: boolean;
   isWorkflowChatSession: boolean;
