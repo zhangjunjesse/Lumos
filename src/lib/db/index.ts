@@ -47,7 +47,6 @@ export {
   getMessages,
   addMessage,
   updateMessageContent,
-  updateMessageBySessionAndHint,
   clearSessionMessages,
   getSetting,
   setSetting,

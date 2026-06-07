@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addMessage, updateMessageContent, updateMessageBySessionAndHint, getSession } from '@/lib/db';
+import { addMessage, getSession } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -38,60 +38,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * PUT /api/chat/messages
- * Update the content of an existing message.
- * Used to replace image-gen-request with image-gen-result after generation.
- *
- * Tries message_id first. If no rows updated (temp ID), falls back to
- * searching by session_id + prompt_hint for the real DB message.
- */
-export async function PUT(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { message_id, content, session_id, prompt_hint } = body as {
-      message_id: string;
-      content: string;
-      session_id?: string;
-      prompt_hint?: string;
-    };
-
-    if (!content) {
-      return NextResponse.json(
-        { error: 'content is required' },
-        { status: 400 },
-      );
-    }
-
-    // Try direct update by message_id
-    let changes = 0;
-    let updatedMessageId = message_id;
-    let fallbackUsed = false;
-
-    if (message_id) {
-      changes = updateMessageContent(message_id, content);
-    }
-
-    // Fallback: search by session + prompt hint
-    if (changes === 0 && session_id && prompt_hint) {
-      const result = updateMessageBySessionAndHint(session_id, prompt_hint, content);
-      changes = result.changes;
-      if (result.messageId) {
-        updatedMessageId = result.messageId;
-        fallbackUsed = true;
-      }
-    }
-
-    if (changes === 0) {
-      return NextResponse.json(
-        { error: 'Message not found' },
-        { status: 404 },
-      );
-    }
-
-    return NextResponse.json({ ok: true, updated_message_id: updatedMessageId, fallback_used: fallbackUsed });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Failed to update message';
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
-}

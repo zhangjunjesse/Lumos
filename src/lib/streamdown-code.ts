@@ -13,9 +13,6 @@ const SUPPORTED_LANGUAGES = new Set(
 const PLAIN_TEXT_LANGUAGE = "text" as BundledLanguage;
 
 const LANGUAGE_ALIASES: Record<string, BundledLanguage> = {
-  "batch-plan": "json",
-  "image-gen-request": "json",
-  "image-gen-result": "json",
   "lumos-extension-plan": "json",
   "lumos-team-plan": "json",
   plaintext: PLAIN_TEXT_LANGUAGE,
