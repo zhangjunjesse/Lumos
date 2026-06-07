@@ -43,7 +43,6 @@ export function DirectionLibraryManager() {
     await etsyForgeApi.deleteDirection(id).catch(() => {});
     await load();
   };
-
   const byAxis = new Map<string, RemixDirection[]>();
   for (const r of rows) {
     const arr = byAxis.get(r.axis) ?? [];
@@ -87,7 +86,9 @@ export function DirectionLibraryManager() {
                 </div>
               ))
           )}
-          <Button size="sm" variant="outline" onClick={() => void add()}>＋ 新增方向</Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void add()}>＋ 新增方向</Button>
+          </div>
         </div>
       )}
     </section>

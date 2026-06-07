@@ -10,8 +10,10 @@ import type {
   AssetItem,
   PromptItem,
   MockupItem,
+  MockupJob,
   ManualProduct,
   RemixDirection,
+  RemixStrategy,
   FissionDiagnosis,
   Cutout,
   LogItem,
@@ -217,7 +219,16 @@ export const etsyForgeApi = {
   retryAsset: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/assets/retry`, { method: 'POST', body: JSON.stringify({ asset_id: id }) }),
 
-  // ⑤ 二创：按选中的方向矩阵(A/B/C/D,可多选;留空=默认 B)× 钩子轮转生成变体印花(异步,轮询 listAssets('remix'))。
+  // 二创方向矩阵策略(动态 CRUD,设置可增删改;二创菜单/一键出品读它)
+  listStrategies: () => jf<{ strategies: RemixStrategy[] }>(`${BASE}/remix-strategies`),
+  createStrategy: (s: Partial<RemixStrategy>) =>
+    jf<{ ok: boolean; strategy: RemixStrategy }>(`${BASE}/remix-strategies`, { method: 'POST', body: JSON.stringify(s) }),
+  updateStrategy: (id: string, patch: Partial<RemixStrategy>) =>
+    jf<{ ok: boolean }>(`${BASE}/remix-strategies`, { method: 'PUT', body: JSON.stringify({ id, ...patch }) }),
+  deleteStrategy: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/remix-strategies?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // ⑤ 二创：按选中的方向矩阵策略(可多选;留空=默认)× 钩子轮转生成变体印花(异步,轮询 listAssets('remix'))。
   remixProduct: (productId: string, directions?: string[]) =>
     jf<{ ok: boolean; started: boolean }>(`${BASE}/remix`, {
       method: 'POST',
@@ -241,6 +252,12 @@ export const etsyForgeApi = {
     jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/compose`, {
       method: 'POST',
       body: JSON.stringify({ product_id: productId, references, prompt }),
+    }),
+  // 按方向出图:选 1 个方向 + 选 1 张底图(baseRef 不传=默认原始印花)→ 按方向改图 + 出 T 产品图,挂到该商品下(异步,轮询 listMockups)
+  composeByDirection: (productId: string, direction: string, baseRef?: string) =>
+    jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/by-direction`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId, direction, base_ref: baseRef }),
     }),
   // 手攒产品(无 Etsy 来源):列 / 新建(增加产品) / 删除(连带名下生成图)
   listManualProducts: () => jf<{ products: ManualProduct[] }>(`${BASE}/manual-products`),
@@ -277,6 +294,11 @@ export const etsyForgeApi = {
   listFissionRuns: () =>
     jf<{ runs: { run_id: string; base_asset_id: string; product_id: string; title: string; stage: string; stage_cn: string; expected: number; started_at: string }[] }>(`${BASE}/fission/runs`),
   listMockups: () => jf<{ mockups: MockupItem[] }>(`${BASE}/mockups`),
+  // 给一张产品图打分(1-10;0=清除)
+  scoreMockup: (id: string, score: number) =>
+    jf<{ ok: boolean; score: number }>(`${BASE}/mockups`, { method: 'PATCH', body: JSON.stringify({ id, score }) }),
+  // 单发出图运行记录(微调 / 按方向出图),供右下角「任务」浮层统一展示
+  listMockupJobs: () => jf<{ jobs: MockupJob[] }>(`${BASE}/mockups/jobs`),
   deleteMockup: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/mockups?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // 重试合成:用当前图片服务商对这张 mockup 重新合成、覆盖原图(异步,前端轮询 listMockups 看换图)

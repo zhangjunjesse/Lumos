@@ -136,9 +136,23 @@ export interface MockupRow extends Record<string, unknown> {
   image_path?: string; // 生成的带印花 T 本地路径
   prompt?: string; // 内联生成(composer)的提示词
   ref_images?: string[]; // 内联生成用的参考图(path/url 列表),重试时复用
+  score?: number; // 用户给这张产品图打的分(1-10;0/无=未打分),用于挑变体排序/筛选
   status: 'success' | 'failed';
   failure_reason?: string;
   created_at: string;
+}
+
+// 单发出图运行记录:「微调」「按方向出图」这类挂到产品下的单张生成,记 running→success/failed,供右下角「任务」浮层统一展示。
+export interface MockupJobRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  kind: 'compose' | 'direction'; // compose=微调(自由提示词) / direction=按方向出图
+  product_id: string; // 目标产品(采集 id / 手攒 id),浮层据此显示标题
+  label?: string; // 展示细节:方向名(简约)或提示词片段
+  status: 'running' | 'success' | 'failed';
+  failure_reason?: string;
+  created_at: string;
+  finished_at?: string;
 }
 
 // 手攒产品:用户在「我的产品」内联生成出来的产品组,无 Etsy 采集来源(不写进采集商品表)。
@@ -172,6 +186,22 @@ export interface FissionDiagnosisRow extends Record<string, unknown> {
   weaknesses: string[];
   recommend: string[];
   note: string;
+  created_at: string;
+}
+
+// 二创方向矩阵策略(A/B/C/D 等,动态、设置可增删改)。一键出品/图库二创按 code 选用。
+export interface RemixStrategyRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  code: string; // A/B/C/D 或用户自定义
+  label: string; // 中文方向名
+  hint: string; // 一句话说明
+  profile: string; // 英文,注入 {direction} 的"保留/改变/相似度目标"
+  use_reference: boolean; // 是否喂参考图(贴近原图=true)
+  high_similarity: boolean; // 高相似策略(非自有图红线:不做高相似复刻 → 跳过)
+  is_default: boolean; // 没选时默认用它
+  sort: number;
+  enabled: boolean;
   created_at: string;
 }
 
@@ -280,7 +310,7 @@ export interface SopRunRow extends Record<string, unknown> {
   user_id: string;
   sop_key: string; // 'one-click'
   product_ids: string[];
-  directions?: ('A' | 'B' | 'C' | 'D')[]; // 一键出品选的二创方向矩阵(可多选;空=默认 B)
+  directions?: string[]; // 一键出品选的二创方向(策略 code,可多选;空=默认策略)
   status: SopRunStatus;
   total: number;
   started_at: string;
@@ -328,8 +358,10 @@ export const COLLECTIONS = {
   PROMPTS: 'etsy_forge_prompts',
   ASSETS: 'etsy_forge_assets',
   MOCKUPS: 'etsy_forge_mockups',
+  MOCKUP_JOBS: 'etsy_forge_mockup_jobs',
   MANUAL_PRODUCTS: 'etsy_forge_manual_products',
   REMIX_DIRECTIONS: 'etsy_forge_remix_directions',
+  REMIX_STRATEGIES: 'etsy_forge_remix_strategies',
   FISSION_RUNS: 'etsy_forge_fission_runs',
   FISSION_DIAGNOSES: 'etsy_forge_fission_diagnoses',
   SOP_RUNS: 'etsy_forge_sop_runs',

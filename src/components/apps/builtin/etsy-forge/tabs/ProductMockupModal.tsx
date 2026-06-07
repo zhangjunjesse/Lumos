@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { ScoreBar } from './ScoreBar';
 import type { MockupItem } from '../api-client';
 
 export function ProductMockupModal({
@@ -14,6 +15,7 @@ export function ProductMockupModal({
   keyboardEnabled = true,
   retryingIds,
   onRetry,
+  onScore,
   onZoom,
   onClose,
 }: {
@@ -23,6 +25,7 @@ export function ProductMockupModal({
   keyboardEnabled?: boolean;
   retryingIds?: Set<string>; // 正在重合成的 mockup id 集合(支持同时多张)
   onRetry?: (id: string) => void; // 用当前图片服务商重新合成、覆盖
+  onScore?: (id: string, score: number) => void; // 打分 1-10(0=清除)
   onZoom: (url: string) => void;
   onClose: () => void;
 }) {
@@ -41,10 +44,18 @@ export function ProductMockupModal({
       if (e.key === 'Escape') onClose();
       else if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'ArrowRight') go(1);
+      else if (onScore) {
+        // 快速打分:1-9 → 1-9 分,0 → 10 分,Backspace → 清除。
+        const cur = mockups[index];
+        if (!cur) return;
+        if (e.key >= '1' && e.key <= '9') onScore(cur.id, Number(e.key));
+        else if (e.key === '0') onScore(cur.id, 10);
+        else if (e.key === 'Backspace') onScore(cur.id, 0);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, onClose, keyboardEnabled]);
+  }, [go, onClose, keyboardEnabled, onScore, mockups, index]);
 
   const mockup = mockups[index];
   if (!mockup) return null;
@@ -88,18 +99,29 @@ export function ProductMockupModal({
         </div>
 
         <div className="grid gap-4 overflow-y-auto p-4 sm:grid-cols-[1.4fr_1fr]">
-          {/* 成品大图 */}
-          <button type="button" onClick={() => mockup.url && onZoom(mockup.url)} title="点击放大" className="relative block overflow-hidden rounded-md border">
-            {mockup.url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={mockup.url} alt="带印花 T" className="aspect-square w-full object-cover" />
-            ) : (
-              <div className="flex aspect-square items-center justify-center bg-destructive/5 text-xs text-destructive">{mockup.failure_reason || '失败'}</div>
+          {/* 成品大图 + 评分 */}
+          <div className="space-y-2">
+            <button type="button" onClick={() => mockup.url && onZoom(mockup.url)} title="点击放大" className="relative block w-full overflow-hidden rounded-md border">
+              {mockup.url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={mockup.url} alt="带印花 T" className="aspect-square w-full object-cover" />
+              ) : (
+                <div className="flex aspect-square items-center justify-center bg-destructive/5 text-xs text-destructive">{mockup.failure_reason || '失败'}</div>
+              )}
+              {retrying && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm text-white">重新合成中…(最长 10 分钟)</div>
+              )}
+            </button>
+            {onScore && mockup.status === 'success' && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">评分{mockup.score > 0 ? ` · ${mockup.score}` : ''}</span>
+                  <span className="text-[10px] text-muted-foreground">键盘 1-9 · 0=10 · ⌫清除</span>
+                </div>
+                <ScoreBar value={mockup.score} onPick={(n) => onScore(mockup.id, n)} />
+              </div>
             )}
-            {retrying && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm text-white">重新合成中…(最长 10 分钟)</div>
-            )}
-          </button>
+          </div>
 
           {/* 血缘:印花 + 原始商品 */}
           <div className="space-y-4 text-sm">

@@ -7,9 +7,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { etsyForgeApi, type AssetItem, type ManualProduct, type MockupItem } from '../api-client';
 import { ImageLightbox } from './ImageLightbox';
-import { QuickAddChat } from './QuickAddChat';
+import { ProductImageCard } from './ProductImageCard';
 import { ProductMockupModal } from './ProductMockupModal';
 import { ProductComposer, type RefImage } from './ProductComposer';
+import { DirectionShotButton, type DirectionSource } from './DirectionShotButton';
 import { useMockupRetry } from './use-mockup-retry';
 import { SrcThumb } from './SrcThumb';
 
@@ -37,6 +38,8 @@ export function ProductTab() {
   const [detailIdx, setDetailIdx] = useState(-1);
   const [sizeIdx, setSizeIdx] = useState(1);
   const [composerFor, setComposerFor] = useState<string | null>(null); // 哪一行展开了生成条
+  const [minScore, setMinScore] = useState(0); // 筛选:只看 ≥N 分(0=全部)
+  const [scoreSort, setScoreSort] = useState(false); // 排序:按分高→低
 
   const load = useCallback(async () => {
     try {
@@ -72,7 +75,22 @@ export function ProductTab() {
   const { retryingIds, retry: retryMockup } = useMockupRetry(mockups, setMockups, setMsg, setError);
 
   const designs = assets.filter((a) => a.category === 'design' && a.status === 'success' && a.url);
-  const viewable = useMemo(() => mockups.filter((m) => m.status === 'success' && m.url), [mockups]);
+
+  // 评分筛选/排序:只看 ≥minScore;scoreSort 时按分高→低。inline 缩略图和大图模态共用同一可见集。
+  const applyView = useCallback(
+    (list: MockupItem[]) => {
+      const r = list.filter((m) => (m.score ?? 0) >= minScore);
+      return scoreSort ? [...r].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)) : r;
+    },
+    [minScore, scoreSort],
+  );
+  const viewable = useMemo(() => applyView(mockups.filter((m) => m.status === 'success' && m.url)), [mockups, applyView]);
+
+  // 打分:乐观更新本地 + 落库(失败回滚刷新)。
+  const rate = (id: string, score: number) => {
+    setMockups((arr) => arr.map((x) => (x.id === id ? { ...x, score } : x)));
+    etsyForgeApi.scoreMockup(id, score).catch(() => void load());
+  };
 
   // 全部图(跨产品/图库)供「＋加图」挑:素材(印花/二创/产品…) + 已有产品图,按 url 去重。
   const libraryRefs = useMemo<RefImage[]>(() => {
@@ -111,6 +129,7 @@ export function ProductTab() {
     setMsg('已发起生成，后台跑，稍等出现在这一行。');
     setError(null);
     setPending((p) => p + 1);
+    window.dispatchEvent(new Event('etsy-mockup-started')); // 通知右下角「任务」浮层立即刷新
   };
 
   const addManualProduct = async () => {
@@ -139,6 +158,14 @@ export function ProductTab() {
     ...g.items.filter((m) => m.url).map((m) => ({ url: m.url as string, label: '产品图' })),
   ];
 
+  // 「按方向出图」可选源印花(两步法从印花出发):原始印花(默认,配原商品图)+ 该商品已生成的二创印花(各配它生成的产品图)。
+  const basesForDirection = (g: Group, originDesign: string | null): DirectionSource[] => [
+    ...(originDesign ? [{ design: originDesign, product: g.productImage, label: '印花' }] : []),
+    ...assets
+      .filter((a) => a.category === 'remix' && a.source_product_id === g.productId && a.status === 'success' && a.url)
+      .map((a) => ({ design: a.url as string, product: mockups.find((m) => m.design_url === a.url)?.url ?? null, label: '二创印花' })),
+  ];
+
   return (
     <div className="mx-auto max-w-7xl space-y-4">
       <div className="mb-2 flex items-center gap-3">
@@ -146,6 +173,31 @@ export function ProductTab() {
           我的产品（{mockups.length}）{pending > 0 && <span className="ml-1 text-xs text-amber-600">· {pending} 张生成中…</span>}
         </h3>
         <div className="flex-1" />
+        {/* 评分:按分排序 + 只看 ≥N 分 */}
+        <button
+          type="button"
+          onClick={() => setScoreSort((v) => !v)}
+          title="按评分 高→低 排序"
+          className={`h-7 rounded-md border px-2 text-xs ${scoreSort ? 'bg-foreground text-background' : 'hover:bg-muted'}`}
+        >
+          按分排序{scoreSort ? ' ✓' : ''}
+        </button>
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          只看
+          <select
+            value={minScore}
+            onChange={(e) => setMinScore(Number(e.target.value))}
+            className="h-7 rounded-md border border-input bg-background px-1 text-xs"
+            title="只看评分 ≥N 分的产品图"
+          >
+            <option value={0}>全部</option>
+            {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                ≥{n} 分
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-center overflow-hidden rounded-md border">
           <button type="button" disabled={sizeIdx === 0} onClick={() => setSizeIdx((i) => Math.max(0, i - 1))} className="px-2 py-1 text-sm hover:bg-muted disabled:opacity-30" title="缩小">
             −
@@ -168,6 +220,7 @@ export function ProductTab() {
           {groups.map((g) => {
             const originDesign = !g.isManual ? designs.find((d) => d.source_product_id && d.source_product_id === g.productId)?.url ?? null : null;
             const open = composerFor === g.key;
+            const items = applyView(g.items); // 应用评分筛选/排序
             return (
               <div key={g.key} className="p-3">
                 <div className="flex items-start gap-3">
@@ -197,38 +250,29 @@ export function ProductTab() {
                     >
                       {open ? '收起' : '微调 ▾'}
                     </Button>
+                    {!g.isManual && g.productId && originDesign && (
+                      <DirectionShotButton productId={g.productId} bases={basesForDirection(g, originDesign)} onStarted={onStarted} onError={setError} />
+                    )}
                   </div>
                   <div className="w-px shrink-0 self-stretch bg-border" />
                   <div className="flex flex-1 flex-wrap gap-2">
-                    {g.items.length === 0 && <p className="self-center text-xs text-muted-foreground">还没有图，用右下生成条做第一张。</p>}
-                    {g.items.map((m) => (
-                      <div
-                        key={m.id}
-                        style={{ width: THUMB_SIZES[sizeIdx], height: THUMB_SIZES[sizeIdx] }}
-                        className={`group relative shrink-0 overflow-hidden rounded border bg-card ${retryingIds.has(m.id) ? 'ring-2 ring-amber-500' : ''}`}
-                      >
-                        {retryingIds.has(m.id) && (
-                          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 bg-amber-500/35">
-                            <span className="size-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                            <span className="rounded bg-amber-600 px-1.5 py-0.5 text-[9px] font-medium text-white">重试中…</span>
-                          </div>
-                        )}
-                        {m.status === 'success' && m.url ? (
-                          <>
-                            <button type="button" onClick={() => setDetailIdx(viewable.findIndex((v) => v.id === m.id))} title="点击看溯源" className="block size-full">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={m.url} alt={m.design_label} className="size-full object-cover" />
-                            </button>
-                            <QuickAddChat imageUrl={m.url} refLabel="带印花T" className="absolute right-0.5 top-0.5" />
-                          </>
-                        ) : (
-                          <div className="flex size-full items-center justify-center bg-destructive/5 p-1 text-center text-[8px] text-destructive">{m.failure_reason || '失败'}</div>
-                        )}
-                        <button type="button" onClick={() => void removeMockup(m.id)} className="absolute left-0.5 top-0.5 rounded bg-black/50 px-1 text-[8px] text-white opacity-0 transition group-hover:opacity-100">
-                          删
-                        </button>
-                      </div>
-                    ))}
+                    {g.items.length === 0 ? (
+                      <p className="self-center text-xs text-muted-foreground">还没有图，用右下生成条做第一张。</p>
+                    ) : items.length === 0 ? (
+                      <p className="self-center text-xs text-muted-foreground">本组没有 ≥{minScore} 分的图。</p>
+                    ) : (
+                      items.map((m) => (
+                        <ProductImageCard
+                          key={m.id}
+                          m={m}
+                          size={THUMB_SIZES[sizeIdx]}
+                          retrying={retryingIds.has(m.id)}
+                          onOpen={() => setDetailIdx(viewable.findIndex((v) => v.id === m.id))}
+                          onDelete={() => void removeMockup(m.id)}
+                          onScore={(n) => rate(m.id, n)}
+                        />
+                      ))
+                    )}
                   </div>
                 </div>
                 {open && g.productId && (
@@ -241,7 +285,7 @@ export function ProductTab() {
       )}
 
       {detailIdx >= 0 && (
-        <ProductMockupModal mockups={viewable} index={detailIdx} onIndexChange={setDetailIdx} keyboardEnabled={!zoom} retryingIds={retryingIds} onRetry={retryMockup} onZoom={setZoom} onClose={() => setDetailIdx(-1)} />
+        <ProductMockupModal mockups={viewable} index={detailIdx} onIndexChange={setDetailIdx} keyboardEnabled={!zoom} retryingIds={retryingIds} onRetry={retryMockup} onScore={rate} onZoom={setZoom} onClose={() => setDetailIdx(-1)} />
       )}
       {zoom && <ImageLightbox images={[{ url: zoom, title: '' }]} index={0} onIndexChange={() => {}} onClose={() => setZoom(null)} />}
     </div>

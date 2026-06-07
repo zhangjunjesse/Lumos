@@ -112,6 +112,20 @@ export interface AssetItem {
   created_at: string;
 }
 
+// 二创方向矩阵策略(A/B/C/D 等,动态可增删改)
+export interface RemixStrategy {
+  id: string;
+  code: string;
+  label: string;
+  hint: string;
+  profile: string;
+  use_reference: boolean;
+  high_similarity: boolean;
+  is_default: boolean;
+  sort: number;
+  enabled: boolean;
+}
+
 // 裂变·方向库一条方向
 export interface RemixDirection {
   id: string;
@@ -154,9 +168,22 @@ export interface MockupItem {
   source_product_image: string | null; // 原始商品主图
   source_product_url: string | null; // 原始商品 Etsy 链接
   prompt: string | null; // 内联生成(composer)的提示词
+  score: number; // 用户评分 1-10(0=未打分)
   status: 'success' | 'failed';
   failure_reason: string | null;
   created_at: string;
+}
+
+// 单发出图运行记录(微调 / 按方向出图),供右下角「任务」浮层统一展示。
+export interface MockupJob {
+  id: string;
+  kind: 'compose' | 'direction';
+  kind_cn: string; // 微调 / 按方向出图
+  title: string; // 目标产品标题
+  label: string; // 方向名 / 提示词片段
+  status: 'running' | 'success' | 'failed';
+  started_at: string;
+  failure_reason?: string;
 }
 
 // 手攒产品:用户手动新建的产品组(无 Etsy 采集来源)
@@ -197,7 +224,7 @@ export interface SopRun {
   id: string;
   sop_key: string;
   product_ids: string[];
-  directions?: ('A' | 'B' | 'C' | 'D')[]; // 一键出品选的二创方向矩阵
+  directions?: string[]; // 一键出品选的二创方向(策略 code,可自定义)
   status: SopStatus;
   total: number;
   started_at: string;

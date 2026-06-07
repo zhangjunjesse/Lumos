@@ -16,9 +16,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as { product_ids?: string[]; directions?: string[] };
     const productIds = (body.product_ids ?? []).filter(Boolean);
     if (productIds.length === 0) return NextResponse.json({ error: '请先选中商品' }, { status: 400 });
-    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is 'A' | 'B' | 'C' | 'D' =>
-      ['A', 'B', 'C', 'D'].includes(d),
-    );
+    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is string => typeof d === 'string' && !!d);
 
     const provider = resolveProviderForCapability({ moduleKey: 'image', capability: 'image-gen', allowDefault: false });
     if (!provider) return NextResponse.json({ error: '未配置图片服务商(去「设置 → 图片生成」选一个)' }, { status: 400 });

@@ -80,12 +80,9 @@ function finalizeRun(store: AppDataStore, runId: string): void {
   store.update(COLLECTIONS.SOP_RUNS, runId, { status, ended_at: nowIso() });
 }
 
-const VALID_DIRS: RemixDirectionKey[] = ['A', 'B', 'C', 'D'];
-// 读 run 上存的二创方向矩阵(过滤非法值);空 → 由 runRemix 兜底默认 B。
+// 读 run 上存的二创方向 code(任意非空字符串,策略动态);空 → 由 runRemix 用默认策略。
 function runCtx(run: SopRunRow | null | undefined): SopStepCtx {
-  const dirs = (Array.isArray(run?.directions) ? run!.directions : []).filter((d): d is RemixDirectionKey =>
-    VALID_DIRS.includes(d as RemixDirectionKey),
-  );
+  const dirs = (Array.isArray(run?.directions) ? run!.directions : []).filter((d): d is string => typeof d === 'string' && !!d);
   return { directions: dirs.length ? dirs : undefined };
 }
 
@@ -96,7 +93,7 @@ export function createSopRun(
 ): { runId: string } {
   const productIds = [...new Set(input.productIds)].filter(Boolean);
   if (!productIds.length) throw new Error('没有选中商品');
-  const directions = (input.directions ?? []).filter((d) => VALID_DIRS.includes(d));
+  const directions = (input.directions ?? []).filter((d) => typeof d === 'string' && !!d);
 
   const run = store.create(COLLECTIONS.SOP_RUNS, {
     user_id: input.userId,

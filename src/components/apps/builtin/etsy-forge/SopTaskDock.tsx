@@ -4,7 +4,7 @@
 // 有运行中任务显红点计数;点开是任务列表 → 选一个看分步进度(SopRunGrid)。轮询保持状态新鲜。
 
 import { useCallback, useEffect, useState } from 'react';
-import { etsyForgeApi, type SopRun } from './api-client';
+import { etsyForgeApi, type SopRun, type MockupJob } from './api-client';
 import { SopRunGrid } from './tabs/SopRunGrid';
 
 const STATUS_LABEL: Record<SopRun['status'], string> = {
@@ -21,6 +21,9 @@ const STATUS_COLOR: Record<SopRun['status'], string> = {
   failed: 'text-destructive',
   cancelled: 'text-muted-foreground',
 };
+// 单发出图(微调 / 按方向出图)状态:生成中 → 完成/失败
+const MJOB_LABEL: Record<MockupJob['status'], string> = { running: '生成中', success: '完成', failed: '失败' };
+const MJOB_COLOR: Record<MockupJob['status'], string> = { running: 'text-blue-600', success: 'text-emerald-600', failed: 'text-destructive' };
 
 type FissionRun = { run_id: string; title: string; stage_cn: string; expected: number; started_at: string };
 
@@ -28,30 +31,37 @@ export function SopTaskDock() {
   const [open, setOpen] = useState(false);
   const [runs, setRuns] = useState<SopRun[]>([]);
   const [fissionRuns, setFissionRuns] = useState<FissionRun[]>([]);
+  const [mockupJobs, setMockupJobs] = useState<MockupJob[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [r, f] = await Promise.all([etsyForgeApi.listSopRuns(), etsyForgeApi.listFissionRuns()]);
+      const [r, f, m] = await Promise.all([etsyForgeApi.listSopRuns(), etsyForgeApi.listFissionRuns(), etsyForgeApi.listMockupJobs()]);
       setRuns(r.runs);
       setFissionRuns(f.runs);
+      setMockupJobs(m.jobs);
     } catch {
       /* 忽略:列表拉取失败不打扰 */
     }
   }, []);
 
-  // 一键出品发起时刷新列表(不自动弹框,只让红点/列表更新)。
+  // 一键出品 / 单发出图发起时刷新列表(不自动弹框,只让红点/列表更新)。
   useEffect(() => {
     // load 内 await 后才 setState(微任务、非同步级联渲染)。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     const onStarted = () => void load();
     window.addEventListener('etsy-sop-started', onStarted);
-    return () => window.removeEventListener('etsy-sop-started', onStarted);
+    window.addEventListener('etsy-mockup-started', onStarted);
+    return () => {
+      window.removeEventListener('etsy-sop-started', onStarted);
+      window.removeEventListener('etsy-mockup-started', onStarted);
+    };
   }, [load]);
 
   // 有运行中任务时轮询,跑完自动降频(无运行也每 15s 兜底刷新一次)。裂变运行全是 running。
-  const runningCount = runs.filter((r) => r.status === 'running').length + fissionRuns.length;
+  const runningCount =
+    runs.filter((r) => r.status === 'running').length + fissionRuns.length + mockupJobs.filter((j) => j.status === 'running').length;
   useEffect(() => {
     const t = setInterval(() => void load(), runningCount > 0 ? 3000 : 15000);
     return () => clearInterval(t);
@@ -91,10 +101,24 @@ export function SopTaskDock() {
           <div className="flex-1 overflow-auto p-3">
             {selected && selectedRun ? (
               <SopRunGrid runId={selected} />
-            ) : runs.length === 0 && fissionRuns.length === 0 ? (
-              <p className="py-10 text-center text-xs text-muted-foreground">还没有任务。去「已采集商品」选商品点「一键出品」，或在图库点「裂变」。</p>
+            ) : runs.length === 0 && fissionRuns.length === 0 && mockupJobs.length === 0 ? (
+              <p className="py-10 text-center text-xs text-muted-foreground">还没有任务。去「已采集商品」选商品点「一键出品」，或在「我的产品」点「微调 / 按方向出图」。</p>
             ) : (
               <ul className="space-y-1.5">
+                {mockupJobs.map((j) => (
+                  <li key={j.id}>
+                    <div className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs" title={j.failure_reason || undefined}>
+                      <span className="line-clamp-1 text-muted-foreground">
+                        {j.kind_cn} · {j.title}
+                        {j.label ? ` · ${j.label}` : ''} · {new Date(j.started_at).toLocaleString()}
+                      </span>
+                      <span className={`shrink-0 font-medium ${MJOB_COLOR[j.status]}`}>
+                        {MJOB_LABEL[j.status]}
+                        {j.status === 'running' && ' …'}
+                      </span>
+                    </div>
+                  </li>
+                ))}
                 {fissionRuns.map((f) => (
                   <li key={f.run_id}>
                     <div className="flex w-full items-center justify-between rounded-md border border-violet-300 px-3 py-2 text-left text-xs">

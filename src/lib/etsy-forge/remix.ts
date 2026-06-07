@@ -24,8 +24,8 @@ import {
 } from './remix-analyze';
 import { judgeRemix } from './remix-qa';
 import { resolveVisionEndpoint } from './vision-provider';
+import { resolveDirections } from './remix-strategies';
 import {
-  getDirection,
   HOOK_OPERATORS,
   TEXT_RULE_GRAPHIC,
   TEXT_RULE_TEXT,
@@ -152,16 +152,13 @@ export async function runRemix(
   const old = store.query<AssetRow>(COLLECTIONS.ASSETS, { filter: { user_id: input.userId, product_id: input.productId, category: 'remix' }, limit: 200 });
   for (const o of old) if (!o.series_of) store.delete(COLLECTIONS.ASSETS, o.id);
 
-  // B 变体:选中方向(默认 B)× 钩子 × niche × 配色 逐张轮转,共 n 张。
-  // playbook 红线:非自有图不做高相似复刻 → 去掉高相似的 A 方向(若只剩空则退回 B)。
-  let dirKeys = input.directions?.length ? input.directions : (['B'] as RemixDirectionKey[]);
-  if (analysis.ownership === 'not-owned' && dirKeys.includes('A')) {
-    const filtered = dirKeys.filter((k) => k !== 'A');
-    dirKeys = filtered.length ? filtered : (['B'] as RemixDirectionKey[]);
-    logEvent('二创', 'warn', `非自有图不做高相似复刻,已跳过 A 方向(${product.title || input.productId})`, product.title);
-  }
-  const dirs = dirKeys.map(getDirection);
-  const n = Math.max(1, Math.min(12, input.count ?? VARIANT_COUNT));
+  // 变体:选中方向(没选用默认策略)× 钩子 × niche × 配色 逐张轮转,共 n 张。策略来自 DB(设置可增删改)。
+  // playbook 红线:非自有图不做高相似复刻 → resolveDirections 内部跳过 high_similarity 策略。
+  const dirs = resolveDirections(store, input.userId, input.directions, analysis.ownership === 'not-owned');
+  if (dirs.length === 0) return { ok: false, created: 0, failed: 0, error: '没有可用的二创方向策略(去「设置→二创方向矩阵」加一个)' };
+  // 选了几个方向就保证每个方向至少出一张;只用默认(1 个方向)时仍出 VARIANT_COUNT 张变体。
+  const baseN = Math.max(1, Math.min(12, input.count ?? VARIANT_COUNT));
+  const n = Math.max(baseN, dirs.length);
   const plan = Array.from({ length: n }, (_, i) => ({
     dir: dirs[i % dirs.length],
     hook: hooks[i % hooks.length],

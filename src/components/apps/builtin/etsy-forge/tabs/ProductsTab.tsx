@@ -45,9 +45,23 @@ export function ProductsTab({ onCollectedDetails }: { onCollectedDetails?: () =>
     }
   }, []);
 
+  // 进入「已采集商品」时清空之前残留的选中(选中是持久化在 DB 的,换 tab 回来会残留)。挂载时清一次。
   useEffect(() => {
-    void load();
-  }, [load]);
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await etsyForgeApi.listProducts();
+        const sel = res.products.filter((p) => p.selected).map((p) => p.id);
+        if (sel.length) await etsyForgeApi.setSelected(sel, false).catch(() => {});
+        setProducts(res.products.map((p) => (p.selected ? { ...p, selected: false } : p)));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const selectedIds = products.filter((p) => p.selected).map((p) => p.id);
 

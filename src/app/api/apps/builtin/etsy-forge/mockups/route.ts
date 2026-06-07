@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prepareMerge, mergeOneProduct } from '@/lib/etsy-forge/product-merge';
+import { setMockupScore } from '@/lib/etsy-forge/mockup-score';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
 import { COLLECTIONS, type ManualProductRow, type MockupRow, type ProductRow } from '@/lib/etsy-forge/types';
 import { getImageConcurrency, mapLimit } from '@/lib/etsy-forge/concurrency';
@@ -80,12 +81,27 @@ export async function GET(req: NextRequest) {
           source_product_image: srcProduct?.main_image_url ?? null,
           source_product_url: srcProduct?.url ?? null,
           prompt: typeof r.prompt === 'string' ? r.prompt : null,
+          score: typeof r.score === 'number' ? r.score : 0,
           status: r.status,
           failure_reason: r.failure_reason ?? null,
           created_at: r.created_at,
         };
       }),
     });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+}
+
+// 给一张产品图打分(1-10;0=清除)。
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = (await req.json()) as { id?: string; score?: number };
+    const id = (body.id ?? '').trim();
+    if (!id) return NextResponse.json({ error: 'id 必填' }, { status: 400 });
+    const r = setMockupScore(getEtsyForgeStore(), getStorageUserId(req), id, body.score);
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 404 });
+    return NextResponse.json({ ok: true, score: r.score });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

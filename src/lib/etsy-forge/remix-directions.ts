@@ -39,6 +39,11 @@ export const DIRECTION_SEED: DirectionSeed[] = [
   { axis: 'E', axisName: '创意钩子', code: 'E1', label: '不常见设定', hint: '意料之外但能懂', fragment: 'an uncommon, unexpected-but-understandable concept' },
   { axis: 'E', axisName: '创意钩子', code: 'E2', label: '反差', hint: '暗黑+甜美/可爱+摆烂/凶猛+温柔', fragment: 'a strong contrast (dark+sweet / cute+slacker / sacred+funny / fierce+gentle)' },
   { axis: 'E', axisName: '创意钩子', code: 'E3', label: '情绪转向', hint: '甜美→讽刺/复古→现代梗', fragment: 'a mood shift (sweet→sarcastic / cute→slacker / vintage→modern-meme / dark→healing)' },
+  { axis: 'E', axisName: '创意钩子', code: 'E4', label: '有意义/纪念', hint: '升级成 keepsake：里程碑/致敬/in honor of，值得留存', fragment: 'elevate into a MEANINGFUL KEEPSAKE: keep the core subject and style but add quiet symbolic depth and a heartfelt short line, so it commemorates a milestone / tribute / "in honor of" moment — warm, sentimental, worth keeping not just worn' },
+  { axis: 'E', axisName: '创意钩子', code: 'E5', label: '身份共鸣', hint: '"这说的就是我"，绑定买家身份/角色/处境', fragment: 'reframe around ONE specific buyer identity or life moment so the wearer instantly feels "this is SO me": sharpen the subject and any text to express a single clear identity, role or relatable feeling that makes the buyer feel seen' },
+  { axis: 'E', axisName: '创意钩子', code: 'E6', label: '专属/独有感', hint: '限量/手作/别处买不到的稀缺与高级', fragment: 'make it feel SPECIAL and EXCLUSIVE — limited, hand-crafted, "you won\'t find this anywhere else": keep the style family but add refined, distinctive craft details that signal premium and rare, a clear cut above mass-market designs' },
+  { axis: 'E', axisName: '创意钩子', code: 'E7', label: '送礼场景', hint: '为某段关系而设计：for mom/best friend/the [role]', fragment: 'reframe as a HEARTFELT GIFT for a specific relationship (for mom / best friend / partner / the [role]): bake in the relationship and a warm reason-to-give, with optional short relationship text, so the buyer thinks "this is perfect for ___"' },
+  { axis: 'E', axisName: '创意钩子', code: 'E8', label: '个性化定制', hint: '预留 name/date/initial/pet name 槽位,可加字定制', fragment: 'build it to be PERSONALIZED: leave a clear, natural slot for a custom name / date / initial / pet name, integrated INTO the composition (not slapped on top), so "your name here" feels native to the design' },
   { axis: 'F', axisName: '主体/内容', code: 'F1', label: '减少主体数', hint: '去拥挤', fragment: 'reduce the number of subjects to de-clutter' },
   { axis: 'F', axisName: '主体/内容', code: 'F2', label: '放大单一主体', hint: '做强中心', fragment: 'enlarge a single subject to make a strong center' },
   { axis: 'F', axisName: '主体/内容', code: 'F3', label: '主配角拉层级', hint: '主体大、配角小', fragment: 'establish hierarchy: big hero subject, smaller secondary elements' },
@@ -53,11 +58,20 @@ export const DIRECTION_SEED: DirectionSeed[] = [
 
 const now = () => new Date().toISOString();
 
-// 首次访问自动播种(库为空时把 35 个预置写进 DB);已有则不动,保留用户的增删改。
-export function seedDirectionsIfEmpty(store: AppDataStore, userId: string): void {
-  const existing = store.query<RemixDirectionRow>(COLLECTIONS.REMIX_DIRECTIONS, { filter: { user_id: userId }, limit: 1 });
-  if (existing.length > 0) return;
+function rawDirections(store: AppDataStore, userId: string): RemixDirectionRow[] {
+  return store
+    .query<RemixDirectionRow>(COLLECTIONS.REMIX_DIRECTIONS, { filter: { user_id: userId }, limit: 500 })
+    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
+}
+
+// 把种子里「当前库还没有的 code」补进去(不删、不改已有,保留用户自定义)。返回新增条数。
+// 空库时一次补齐全部 = 首播种;库已有旧版时,内置新增的方向(如 E4-E8)也会被补上。
+export function topUpBuiltins(store: AppDataStore, userId: string): number {
+  const have = new Set(rawDirections(store, userId).map((d) => d.code));
+  const fresh = have.size === 0;
+  let added = 0;
   DIRECTION_SEED.forEach((d, i) => {
+    if (have.has(d.code)) return;
     store.create(COLLECTIONS.REMIX_DIRECTIONS, {
       user_id: userId,
       axis: d.axis,
@@ -66,18 +80,19 @@ export function seedDirectionsIfEmpty(store: AppDataStore, userId: string): void
       label: d.label,
       hint: d.hint,
       prompt_fragment: d.fragment,
-      sort: i,
+      sort: fresh ? i : 1000 + i, // 首播种按序;补缺排到后面,不打乱已有顺序
       enabled: true,
       created_at: now(),
     });
+    added++;
   });
+  return added;
 }
 
+// 读取即补缺:每次列出都确保内置 code 全在(如新增 E4-E8),用户自定义/编辑/排序不动。
 export function listDirections(store: AppDataStore, userId: string): RemixDirectionRow[] {
-  seedDirectionsIfEmpty(store, userId);
-  return store
-    .query<RemixDirectionRow>(COLLECTIONS.REMIX_DIRECTIONS, { filter: { user_id: userId }, limit: 500 })
-    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
+  topUpBuiltins(store, userId);
+  return rawDirections(store, userId);
 }
 
 export function createDirection(store: AppDataStore, userId: string, input: Partial<RemixDirectionRow>): RemixDirectionRow {

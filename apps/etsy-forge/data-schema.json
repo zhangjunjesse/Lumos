@@ -169,12 +169,29 @@
         { "name": "image_path", "type": "string", "label": "带印花 T 本地路径" },
         { "name": "prompt", "type": "text", "label": "内联生成的提示词(composer)" },
         { "name": "ref_images", "type": "json", "label": "内联生成用的参考图(path/url 列表)", "default": [] },
+        { "name": "score", "type": "number", "label": "用户评分(1-10,0=未打分)", "default": 0, "indexed": true },
         { "name": "status", "type": "enum", "label": "状态", "options": ["success", "failed"], "default": "failed", "indexed": true },
         { "name": "failure_reason", "type": "text", "label": "失败原因" },
         { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
       "indexes": [["user_id"], ["product_asset_id"], ["status"], ["created_at"]]
+    },
+    {
+      "name": "etsy_forge_mockup_jobs",
+      "label": "单发出图运行记录（微调 / 按方向出图，供「任务」浮层统一展示）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "kind", "type": "enum", "label": "类型", "options": ["compose", "direction"], "default": "compose" },
+        { "name": "product_id", "type": "string", "label": "目标产品 id", "indexed": true },
+        { "name": "label", "type": "string", "label": "展示细节(方向名/提示词片段)" },
+        { "name": "status", "type": "enum", "label": "状态", "options": ["running", "success", "failed"], "default": "running", "indexed": true },
+        { "name": "failure_reason", "type": "text", "label": "失败原因" },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "finished_at", "type": "datetime", "label": "完成时间" }
+      ],
+      "indexes": [["user_id"], ["status"], ["created_at"]]
     },
     {
       "name": "etsy_forge_manual_products",
@@ -221,6 +238,26 @@
         { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
       ],
       "indexes": [["user_id"], ["base_asset_id"]]
+    },
+    {
+      "name": "etsy_forge_remix_strategies",
+      "label": "二创方向矩阵策略（A/B/C/D 等,动态可增删改）",
+      "fields": [
+        { "name": "id", "type": "uuid", "primary": true, "auto": "uuid" },
+        { "name": "user_id", "type": "string", "label": "用户", "indexed": true },
+        { "name": "code", "type": "string", "label": "方向编码" },
+        { "name": "label", "type": "string", "label": "方向名" },
+        { "name": "hint", "type": "text", "label": "说明" },
+        { "name": "profile", "type": "text", "label": "保留/改变/相似度目标(英文)" },
+        { "name": "use_reference", "type": "boolean", "label": "喂参考图", "default": true },
+        { "name": "high_similarity", "type": "boolean", "label": "高相似策略", "default": false },
+        { "name": "is_default", "type": "boolean", "label": "默认", "default": false, "indexed": true },
+        { "name": "sort", "type": "number", "label": "排序", "default": 0 },
+        { "name": "enabled", "type": "boolean", "label": "启用", "default": true, "indexed": true },
+        { "name": "created_at", "type": "datetime", "label": "创建时间", "indexed": true },
+        { "name": "updated_at", "type": "datetime", "label": "更新时间", "auto": "now" }
+      ],
+      "indexes": [["user_id"], ["enabled"]]
     },
     {
       "name": "etsy_forge_remix_directions",

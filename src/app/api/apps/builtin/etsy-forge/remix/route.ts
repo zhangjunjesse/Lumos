@@ -15,9 +15,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as { product_id?: string; directions?: string[] };
     const productId = (body.product_id ?? '').trim();
     if (!productId) return NextResponse.json({ error: 'product_id 必填' }, { status: 400 });
-    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is 'A' | 'B' | 'C' | 'D' =>
-      ['A', 'B', 'C', 'D'].includes(d),
-    );
+    const directions = (Array.isArray(body.directions) ? body.directions : []).filter((d): d is string => typeof d === 'string' && !!d);
 
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
