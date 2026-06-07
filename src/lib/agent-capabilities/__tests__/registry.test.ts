@@ -64,7 +64,6 @@ function ctx(overrides: Partial<ConnectorContext> = {}): ConnectorContext {
     permissionMode: 'acceptEdits',
     browserAutomationIntent: false,
     visibleBrowserIntent: false,
-    legacyImageAgentPrompt: false,
     isPrimaryMainAgentSession: false,
     isDedicatedWeChatAssistantSession: false,
     isWorkflowChatSession: false,
@@ -135,10 +134,11 @@ describe('R2 权限模式不删读/消息能力与广告', () => {
     expect(hint).toContain('Do not infer or simulate transcript content');
   });
 
-  test('lumos-image 写类在 default 模式不暴露属既定策略(非回归)', () => {
+  test('lumos-image 在普通聊天(default)也直接暴露(重构:替代老「图片助手」暗号协议)', () => {
+    // 旧策略是 default 模式藏生图工具;重构后普通聊天/主 agent 都直接给 generate_image,让 AI 自己调。
     expect(
       Object.keys(buildCapabilityPlan(ctx({ permissionMode: 'default' })).inProcessServers),
-    ).not.toContain('lumos-image');
+    ).toContain('lumos-image');
     expect(
       Object.keys(buildCapabilityPlan(ctx({ permissionMode: 'acceptEdits' })).inProcessServers),
     ).toContain('lumos-image');
