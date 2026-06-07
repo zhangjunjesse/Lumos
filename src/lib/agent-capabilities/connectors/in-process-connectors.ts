@@ -18,6 +18,7 @@ import {
 } from '@/lib/tools/lumos-issue-reporter-mcp-server';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
+import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import {
   createChatKnowledgeMcpServer,
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT,
@@ -26,17 +27,24 @@ import type { ConnectorContext, ConnectorDefinition } from '../types';
 
 const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
 
-/** 图像生成（写/exec 类）——default/ask 文本模式不暴露属既定策略。 */
+/**
+ * 图像生成（写/exec 类）。
+ *
+ * 重构（去掉老「图片助手」文字协议）：不再按 permissionMode 把生图工具藏起来——
+ * 普通聊天/主 agent 都直接暴露 `generate_image` 工具,让 AI 自己调(替代老的
+ * 「图片参数 + image-gen-request 暗号 + 前端解析」那一套)。仍排除:浏览器自动化意图、
+ * 以及老图片助手模式（过渡期老会话仍可能带 legacyImageAgentPrompt,避免新旧工具并存打架）。
+ *
+ * 门禁单一来源：广告(buildHint)随工具同源注入,删掉了 chat/route 里那段重复的 hint 门禁。
+ */
 const lumosImageConnector: ConnectorDefinition = {
   id: 'lumos-image',
   label: '图像生成',
-  appliesTo: (ctx) =>
-    ctx.permissionMode !== 'default' &&
-    !ctx.browserAutomationIntent &&
-    !ctx.legacyImageAgentPrompt,
+  appliesTo: (ctx) => !ctx.browserAutomationIntent && !ctx.legacyImageAgentPrompt,
   resolve: (ctx) => ({
     inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId),
   }),
+  buildHint: () => IMAGE_GEN_IN_PROCESS_HINT,
 };
 
 /** 知识库（读类）——条件为结构事实，与 permissionMode 无关。 */

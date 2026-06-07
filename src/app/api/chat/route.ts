@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { validateSession } from '@/lib/auth/session';
-import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import {
   buildCapabilityPlan,
   buildDbServerHints,
@@ -874,10 +873,8 @@ export async function POST(request: NextRequest) {
     if (hasLumosBugIssueIntent) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUG_ISSUE_REQUEST_HINT;
     }
-    // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
-    if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
-      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + IMAGE_GEN_IN_PROCESS_HINT;
-    }
+    // 生图工具的广告已随工具同源,从 lumosImageConnector.buildHint 走下面 capabilityPlan.systemHintAppend。
+    // (删掉了这里按 permissionMode 重复判断的 hint 门禁——与连接器 appliesTo 抄两份且已漂移。)
     // 连接器自身广告（phase 1，模式无关）：微信/知识库/管家等 in-process 连接器 hint。
     if (capabilityPlan.systemHintAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + capabilityPlan.systemHintAppend;
