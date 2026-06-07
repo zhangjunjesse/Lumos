@@ -244,25 +244,6 @@ export function updateMessageContent(messageId: string, content: string): number
   return result.changes;
 }
 
-/**
- * Find the most recent assistant message in a session that contains a given text snippet,
- * update its content, and return the real message ID.
- */
-export function updateMessageBySessionAndHint(
-  sessionId: string,
-  promptHint: string,
-  content: string,
-): { changes: number; messageId?: string } {
-  const db = getDb();
-  const row = db.prepare(
-    "SELECT id FROM messages WHERE session_id = ? AND role = 'assistant' AND content LIKE '%image-gen-request%' AND content LIKE ? ORDER BY created_at DESC LIMIT 1"
-  ).get(sessionId, `%${promptHint.slice(0, 60)}%`) as { id: string } | undefined;
-
-  if (!row) return { changes: 0 };
-
-  const result = db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, row.id);
-  return { changes: result.changes, messageId: row.id };
-}
 
 export function clearSessionMessages(sessionId: string): void {
   const db = getDb();
