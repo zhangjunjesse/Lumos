@@ -23,84 +23,11 @@ import {
   ConfirmationAction,
 } from '@/components/ai-elements/confirmation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
-import { ImageGenConfirmation } from './ImageGenConfirmation';
-import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
-import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
 import type { ToolUIPart } from 'ai';
-import type { PermissionRequestEvent, PlannerOutput } from '@/types';
+import type { PermissionRequestEvent } from '@/types';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
 import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
-
-interface ImageGenRequest {
-  prompt: string;
-  aspectRatio: string;
-  resolution: string;
-  referenceImages?: string[];
-  useLastGenerated?: boolean;
-}
-
-function parseImageGenRequest(text: string): { beforeText: string; request: ImageGenRequest; afterText: string } | null {
-  const regex = /```image-gen-request\s*\n?([\s\S]*?)\n?\s*```/;
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    let raw = match[1].trim();
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      // Attempt to fix common model output issues: unescaped quotes in values
-      raw = raw.replace(/"prompt"\s*:\s*"([\s\S]*?)"\s*([,}])/g, (_m, val, tail) => {
-        const escaped = val.replace(/(?<!\\)"/g, '\\"');
-        return `"prompt": "${escaped}"${tail}`;
-      });
-      json = JSON.parse(raw);
-    }
-    const beforeText = text.slice(0, match.index).trim();
-    const afterText = text.slice((match.index || 0) + match[0].length).trim();
-    return {
-      beforeText,
-      request: {
-        prompt: String(json.prompt || ''),
-        aspectRatio: String(json.aspectRatio || '1:1'),
-        resolution: String(json.resolution || '1K'),
-        referenceImages: Array.isArray(json.referenceImages) ? json.referenceImages : undefined,
-        useLastGenerated: json.useLastGenerated === true,
-      },
-      afterText,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseBatchPlan(text: string): { beforeText: string; plan: PlannerOutput; afterText: string } | null {
-  const regex = /```batch-plan\s*\n?([\s\S]*?)\n?\s*```/;
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    const json = JSON.parse(match[1]);
-    const beforeText = text.slice(0, match.index).trim();
-    const afterText = text.slice((match.index || 0) + match[0].length).trim();
-    return {
-      beforeText,
-      plan: {
-        summary: json.summary || '',
-        items: Array.isArray(json.items) ? json.items.map((item: Record<string, unknown>) => ({
-          prompt: String(item.prompt || ''),
-          aspectRatio: String(item.aspectRatio || '1:1'),
-          resolution: String(item.resolution || '1K'),
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          sourceRefs: Array.isArray(item.sourceRefs) ? item.sourceRefs : [],
-        })) : [],
-      },
-      afterText,
-    };
-  } catch {
-    return null;
-  }
-}
 
 interface ToolUseInfo {
   id: string;
@@ -557,59 +484,7 @@ export function StreamingMessage({
         )}
 
         {/* Streaming text content rendered via Streamdown */}
-        {displayContent && (() => {
-          // Try batch-plan first (Image Agent batch mode)
-          const batchPlanResult = parseBatchPlan(displayContent);
-          if (batchPlanResult) {
-            return (
-              <>
-                {batchPlanResult.beforeText && <MessageResponse>{batchPlanResult.beforeText}</MessageResponse>}
-                <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId="streaming-batch-plan" />
-                {batchPlanResult.afterText && <MessageResponse>{batchPlanResult.afterText}</MessageResponse>}
-              </>
-            );
-          }
-
-          // Try image-gen-request
-          const parsed = parseImageGenRequest(displayContent);
-          if (parsed) {
-            const refs = buildReferenceImages(
-              PENDING_KEY,
-              parsed.request.useLastGenerated || false,
-              parsed.request.referenceImages,
-            );
-            return (
-              <>
-                {parsed.beforeText && <MessageResponse>{parsed.beforeText}</MessageResponse>}
-                <ImageGenConfirmation
-                  initialPrompt={parsed.request.prompt}
-                  initialAspectRatio={parsed.request.aspectRatio}
-                  initialResolution={parsed.request.resolution}
-                  referenceImages={refs.length > 0 ? refs : undefined}
-                />
-                {parsed.afterText && <MessageResponse>{parsed.afterText}</MessageResponse>}
-              </>
-            );
-          }
-          // Strip partial or unparseable code fence blocks to avoid Shiki errors
-          if (isStreaming) {
-            const hasImageGenBlock = /```image-gen-request/.test(displayContent);
-            const hasBatchPlanBlock = /```batch-plan/.test(displayContent);
-            const stripped = displayContent
-              .replace(/```image-gen-request[\s\S]*$/, '')
-              .replace(/```batch-plan[\s\S]*$/, '')
-              .trim();
-            if (stripped) return <MessageResponse>{stripped}</MessageResponse>;
-            // Show shimmer while the structured block is being streamed
-            if (hasImageGenBlock || hasBatchPlanBlock) return <Shimmer>{t('streaming.thinking')}</Shimmer>;
-            return null;
-          }
-          const stripped = displayContent
-            .replace(/```image-gen-request[\s\S]*?```/g, '')
-            .replace(/```batch-plan[\s\S]*?```/g, '')
-            .trim();
-          return stripped ? <MessageResponse>{stripped}</MessageResponse> : null;
-        })()}
+        {displayContent && <MessageResponse>{displayContent}</MessageResponse>}
 
         {/* Loading indicator when no content yet */}
         {isStreaming && !content && toolUses.length === 0 && !pendingPermission && (

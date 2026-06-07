@@ -16,7 +16,6 @@ import { usePanel } from '@/hooks/usePanel';
 import { useContentPanelStore } from '@/stores/content-panel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
-import { BatchExecutionDashboard, BatchContextSync } from './batch-image-gen';
 import { setLastGeneratedImages, transferPendingToMessage } from '@/lib/image-ref-store';
 import { Button } from '@/components/ui/button';
 import type { BrowserPanelTabData } from '@/types/browser';
@@ -1619,8 +1618,6 @@ export function ChatView({
               fullWidth={fullWidth}
               hideEmptyState={hideEmptyState}
             />
-            <BatchExecutionDashboard />
-            <BatchContextSync />
           </>
         ) : null}
       </div>
