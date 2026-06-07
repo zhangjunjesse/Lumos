@@ -40,8 +40,13 @@ export function getCloudUserId(req: NextRequest): string | undefined {
  *
  * `req` 参数保留用于将来扩展（按 chat history / per-team / per-edition 等维度隔离），现在不读。
  */
-export function getStorageUserId(_req: NextRequest): string {
+// 业务隔离 userId(桌面单机恒 'local',见上决策)。没有 request 的场景(agent 工具/连接器)用这个。
+export function getEtsyForgeUserId(): string {
   return 'local';
+}
+
+export function getStorageUserId(_req: NextRequest): string {
+  return getEtsyForgeUserId();
 }
 
 /** 采集用浏览器上下文（设置→采集浏览器选）。默认内置浏览器；要 EHunt 选 adspower:xxx。 */

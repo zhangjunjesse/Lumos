@@ -18,6 +18,7 @@ import {
 } from '@/lib/tools/lumos-issue-reporter-mcp-server';
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
+import { createEtsyForgeMcpServer, ETSY_FORGE_MCP_SYSTEM_HINT } from '@/lib/tools/etsy-forge-mcp-server';
 import {
   createChatKnowledgeMcpServer,
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT,
@@ -108,6 +109,15 @@ const ecommerceConnector: ConnectorDefinition = {
   resolve: () => ({ inProcess: () => createEcommerceAssistantMcpServer() }),
 };
 
+/** Etsy 出图——主 agent 会话常驻(微信发图/商品链接 → 二创产品图落「我的产品」)。 */
+const etsyForgeConnector: ConnectorDefinition = {
+  id: 'etsy-forge',
+  label: 'Etsy 出图',
+  appliesTo: (ctx) => ctx.isPrimaryMainAgentSession && !ctx.browserAutomationIntent,
+  resolve: () => ({ inProcess: () => createEtsyForgeMcpServer() }),
+  buildHint: () => ETSY_FORGE_MCP_SYSTEM_HINT,
+};
+
 export const inProcessConnectors: ConnectorDefinition[] = [
   lumosImageConnector,
   knowledgeConnector,
@@ -115,4 +125,5 @@ export const inProcessConnectors: ConnectorDefinition[] = [
   issueReporterConnector,
   workflowConnector,
   ecommerceConnector,
+  etsyForgeConnector,
 ];

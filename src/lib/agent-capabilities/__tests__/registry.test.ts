@@ -37,6 +37,10 @@ jest.mock('@/lib/tools/workflow-mcp-server', () => ({
 jest.mock('@/lib/tools/ecommerce-assistant-mcp-server', () => ({
   createEcommerceAssistantMcpServer: () => ({ name: 'ecommerce-assistant' }),
 }));
+jest.mock('@/lib/tools/etsy-forge-mcp-server', () => ({
+  createEtsyForgeMcpServer: () => ({ name: 'lumos-etsy-forge' }),
+  ETSY_FORGE_MCP_SYSTEM_HINT: 'ETSY_FORGE_HINT_TEXT',
+}));
 jest.mock('@/lib/knowledge/chat-knowledge-mcp', () => ({
   createChatKnowledgeMcpServer: jest.fn(() => ({ name: 'chat-knowledge' })),
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT: 'KNOWLEDGE_HINT_TEXT',
@@ -142,6 +146,15 @@ describe('R2 权限模式不删读/消息能力与广告', () => {
     expect(
       Object.keys(buildCapabilityPlan(ctx({ permissionMode: 'acceptEdits' })).inProcessServers),
     ).toContain('lumos-image');
+  });
+
+  test('etsy-forge 在主 agent 会话暴露(微信发图→二创产品),非主 agent 不暴露', () => {
+    expect(
+      Object.keys(buildCapabilityPlan(ctx({ isPrimaryMainAgentSession: true })).inProcessServers),
+    ).toContain('lumos-etsy-forge');
+    expect(
+      Object.keys(buildCapabilityPlan(ctx({ isPrimaryMainAgentSession: false })).inProcessServers),
+    ).not.toContain('lumos-etsy-forge');
   });
 });
 
