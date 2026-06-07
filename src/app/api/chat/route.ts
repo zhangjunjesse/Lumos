@@ -199,12 +199,6 @@ function resolveChatBrowserContextId(params: {
   return pickNonEmpty(headerContextId, sessionContextId, 'embedded:default');
 }
 
-function isLegacyImageAgentPrompt(systemPromptAppend?: string): boolean {
-  if (!systemPromptAppend) return false;
-  const prompt = systemPromptAppend.toLowerCase();
-  return prompt.includes('image-gen-request') || prompt.includes('batch-plan');
-}
-
 function toFeishuDisplayText(rawContent: string): string {
   const blocks = parseMessageContent(rawContent);
   const parts: string[] = [];
@@ -832,7 +826,6 @@ export async function POST(request: NextRequest) {
       permissionMode: permissionMode as ConnectorContext['permissionMode'],
       browserAutomationIntent,
       visibleBrowserIntent,
-      legacyImageAgentPrompt: isLegacyImageAgentPrompt(systemPromptAppend),
       isPrimaryMainAgentSession,
       isDedicatedWeChatAssistantSession,
       isWorkflowChatSession: isWorkflowChatSession(session),
