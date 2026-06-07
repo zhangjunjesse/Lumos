@@ -18,125 +18,15 @@ import { Copy, Tick, ArrowDown01, ArrowUp01 } from "@hugeicons/core-free-icons";
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ImageGenConfirmation } from './ImageGenConfirmation';
 import { ImageGenCard } from './ImageGenCard';
 import { ArtifactReferencePreview } from './ArtifactReferencePreview';
-import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview';
-import { buildReferenceImages } from '@/lib/image-ref-store';
 import { parseDBDate } from '@/lib/utils';
-import type { PlannerOutput } from '@/types';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
 import { filterSystemPrompt } from '@/lib/filter-system-prompt';
 import { DeepSearchSourcesCard, extractDeepSearchSources } from './DeepSearchSourcesCard';
 import { DeepSearchLoginCard, extractDeepSearchError } from './DeepSearchLoginCard';
 import { unwrapToolResult } from '@/lib/tool-result-parser';
 import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
-
-interface ImageGenRequest {
-  prompt: string;
-  aspectRatio: string;
-  resolution: string;
-  referenceImages?: string[];
-  useLastGenerated?: boolean;
-}
-
-function parseImageGenRequest(text: string): { beforeText: string; request: ImageGenRequest; afterText: string } | null {
-  const regex = /```image-gen-request\s*\n?([\s\S]*?)\n?\s*```/;
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    let raw = match[1].trim();
-    let json: Record<string, unknown>;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      // Attempt to fix common model output issues: unescaped quotes in values
-      raw = raw.replace(/"prompt"\s*:\s*"([\s\S]*?)"\s*([,}])/g, (_m, val, tail) => {
-        const escaped = val.replace(/(?<!\\)"/g, '\\"');
-        return `"prompt": "${escaped}"${tail}`;
-      });
-      json = JSON.parse(raw);
-    }
-    const beforeText = text.slice(0, match.index).trim();
-    const afterText = text.slice((match.index || 0) + match[0].length).trim();
-    return {
-      beforeText,
-      request: {
-        prompt: String(json.prompt || ''),
-        aspectRatio: String(json.aspectRatio || '1:1'),
-        resolution: String(json.resolution || '1K'),
-        referenceImages: Array.isArray(json.referenceImages) ? json.referenceImages : undefined,
-        useLastGenerated: json.useLastGenerated === true,
-      },
-      afterText,
-    };
-  } catch {
-    return null;
-  }
-}
-
-interface ImageGenResultData {
-  status: 'generating' | 'completed' | 'error';
-  prompt: string;
-  aspectRatio?: string;
-  resolution?: string;
-  model?: string;
-  images?: Array<{ mimeType: string; localPath?: string; data?: string }>;
-  error?: string;
-}
-
-function parseImageGenResult(text: string): { beforeText: string; result: ImageGenResultData; afterText: string } | null {
-  const regex = /```image-gen-result\s*\n?([\s\S]*?)\n?\s*```/;
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    const json = JSON.parse(match[1]);
-    const beforeText = text.slice(0, match.index).trim();
-    const afterText = text.slice((match.index || 0) + match[0].length).trim();
-    return {
-      beforeText,
-      result: {
-        status: json.status || 'completed',
-        prompt: String(json.prompt || ''),
-        aspectRatio: json.aspectRatio,
-        resolution: json.resolution,
-        model: json.model,
-        images: Array.isArray(json.images) ? json.images : undefined,
-        error: json.error,
-      },
-      afterText,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseBatchPlan(text: string): { beforeText: string; plan: PlannerOutput; afterText: string } | null {
-  const regex = /```batch-plan\s*\n?([\s\S]*?)\n?\s*```/;
-  const match = text.match(regex);
-  if (!match) return null;
-  try {
-    const json = JSON.parse(match[1]);
-    const beforeText = text.slice(0, match.index).trim();
-    const afterText = text.slice((match.index || 0) + match[0].length).trim();
-    return {
-      beforeText,
-      plan: {
-        summary: json.summary || '',
-        items: Array.isArray(json.items) ? json.items.map((item: Record<string, unknown>) => ({
-          prompt: String(item.prompt || ''),
-          aspectRatio: String(item.aspectRatio || '1:1'),
-          resolution: String(item.resolution || '1K'),
-          tags: Array.isArray(item.tags) ? item.tags : [],
-          sourceRefs: Array.isArray(item.sourceRefs) ? item.sourceRefs : [],
-        })) : [],
-      },
-      afterText,
-    };
-  } catch {
-    return null;
-  }
-}
 
 type ExtensionPlan = {
   type?: string;
@@ -584,18 +474,6 @@ export function MessageItem({ message }: MessageItemProps) {
               )}
             </div>
           ) : (() => {
-            // Try batch-plan first (Image Agent batch mode)
-            const batchPlanResult = parseBatchPlan(displayText);
-            if (batchPlanResult) {
-              return (
-                <>
-                  {batchPlanResult.beforeText && <MessageResponse>{batchPlanResult.beforeText}</MessageResponse>}
-                  <BatchPlanInlinePreview plan={batchPlanResult.plan} messageId={message.id} />
-                  {batchPlanResult.afterText && <MessageResponse>{batchPlanResult.afterText}</MessageResponse>}
-                </>
-              );
-            }
-
             const extensionPlanResult = parseExtensionPlan(displayText);
             if (extensionPlanResult) {
               return (
@@ -607,76 +485,8 @@ export function MessageItem({ message }: MessageItemProps) {
               );
             }
 
-            // Try image-gen-result first (new direct-call format)
-            const genResult = parseImageGenResult(displayText);
-            if (genResult) {
-              const { result } = genResult;
-              if (result.status === 'generating') {
-                return (
-                  <>
-                    {genResult.beforeText && <MessageResponse>{genResult.beforeText}</MessageResponse>}
-                    <div className="flex items-center gap-2 py-3">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                      <span className="text-sm text-muted-foreground">Generating image...</span>
-                    </div>
-                    {genResult.afterText && <MessageResponse>{genResult.afterText}</MessageResponse>}
-                  </>
-                );
-              }
-              if (result.status === 'error') {
-                return (
-                  <>
-                    {genResult.beforeText && <MessageResponse>{genResult.beforeText}</MessageResponse>}
-                    <div className="rounded-md border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-3">
-                      <p className="text-sm text-red-600 dark:text-red-400">{result.error || 'Image generation failed'}</p>
-                    </div>
-                    {genResult.afterText && <MessageResponse>{genResult.afterText}</MessageResponse>}
-                  </>
-                );
-              }
-              if (result.status === 'completed' && result.images && result.images.length > 0) {
-                return (
-                  <>
-                    {genResult.beforeText && <MessageResponse>{genResult.beforeText}</MessageResponse>}
-                    <ImageGenCard
-                      images={result.images.map(img => ({
-                        data: img.data || '',
-                        mimeType: img.mimeType,
-                        localPath: img.localPath,
-                      }))}
-                      prompt={result.prompt}
-                      aspectRatio={result.aspectRatio}
-                      imageSize={result.resolution}
-                      model={result.model}
-                    />
-                    {genResult.afterText && <MessageResponse>{genResult.afterText}</MessageResponse>}
-                  </>
-                );
-              }
-            }
-
-            // Legacy: image-gen-request (model-dependent format, for old messages)
-            const parsed = parseImageGenRequest(displayText);
-            if (parsed) {
-              const refs = buildReferenceImages(
-                message.id,
-                parsed.request.useLastGenerated || false,
-                parsed.request.referenceImages,
-              );
-              return (
-                <>
-                  {parsed.beforeText && <MessageResponse>{parsed.beforeText}</MessageResponse>}
-                  <ImageGenConfirmation
-                    messageId={message.id}
-                    initialPrompt={parsed.request.prompt}
-                    initialAspectRatio={parsed.request.aspectRatio}
-                    initialResolution={parsed.request.resolution}
-                    referenceImages={refs.length > 0 ? refs : undefined}
-                  />
-                  {parsed.afterText && <MessageResponse>{parsed.afterText}</MessageResponse>}
-                </>
-              );
-            }
+            // 老「图片助手」暗号(image-gen-result / image-gen-request)的特殊渲染已拆。
+            // 新工具 generate_image 的出图走上面 tool_result 分支(ImageGenCard);老历史消息里的暗号块由下面 stripped 去掉、只留文字。
             const stripped = displayText
               .replace(/```image-gen-request[\s\S]*?```/g, '')
               .replace(/```image-gen-result[\s\S]*?```/g, '')
