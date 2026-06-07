@@ -12,6 +12,7 @@ export const LUMOS_ISSUE_ALLOWED_EMAILS = [
   'zhangjun@xinge.tech',
   'weiliuyan06@163.com',
   'zj391504704@gmail.com',
+  '402119493@qq.com',
 ] as const;
 
 const DEFAULT_GITHUB_REPO = 'zhangjunjesse/Lumos';

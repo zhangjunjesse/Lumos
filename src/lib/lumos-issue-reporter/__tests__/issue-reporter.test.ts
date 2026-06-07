@@ -35,6 +35,7 @@ describe('lumos issue reporter', () => {
   test('checks allowlisted emails case-insensitively', () => {
     expect(isAllowedIssueReporterEmail(' ZHANGJUN@XINGE.TECH ')).toBe(true);
     expect(isAllowedIssueReporterEmail('weiliuyan06@163.com')).toBe(true);
+    expect(isAllowedIssueReporterEmail('402119493@qq.com')).toBe(true);
     expect(isAllowedIssueReporterEmail('someone@example.com')).toBe(false);
   });
 
