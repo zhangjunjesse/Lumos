@@ -130,6 +130,45 @@ describe('SOP 编排引擎', () => {
     expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.status).toBe('running');
   });
 
+  it('可选步(采店铺)失败 → 不断链:后续步照常 success、run=success', async () => {
+    const store = setupStore();
+    const a = seedProduct(store, '商品A');
+    const { runId } = createSopRun(store, { userId: USER, productIds: [a] });
+
+    await executeSopRun(store, USER, runId, failAt(a, 'shop')); // shop(order=1)失败
+
+    const shop = findStep(store, runId, a, 'shop');
+    expect(shop?.status).toBe('failed');
+    expect(shop?.failure_reason).toContain('stub 失败:shop');
+    // 后续步没被 shop 失败中断:照常跑完
+    expect(findStep(store, runId, a, 'cutout')?.status).toBe('success');
+    expect(findStep(store, runId, a, 'mockup')?.status).toBe('success');
+    // 可选步失败不算链断 → 整单 success(不是 partial/failed)
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.status).toBe('success');
+  });
+
+  it('重试可选步(采店铺)只重跑它自己,不级联下游(不会重生成出图)', async () => {
+    const store = setupStore();
+    const a = seedProduct(store, '商品A');
+    const { runId } = createSopRun(store, { userId: USER, productIds: [a] });
+    await executeSopRun(store, USER, runId, failAt(a, 'shop'));
+
+    // 给 mockup 打哨兵:若重试 shop 级联重跑了下游,这个 summary 会被覆盖。
+    const mockup = findStep(store, runId, a, 'mockup')!;
+    store.update(COLLECTIONS.SOP_STEPS, mockup.id, { summary: 'SENTINEL' });
+
+    const calls: string[] = [];
+    await retryStep(store, { userId: USER, runId, productId: a, stepKey: 'shop' }, async (_s, _u, _p, key) => {
+      calls.push(key);
+      return `ok:${key}`;
+    });
+
+    expect(calls).toEqual(['shop']); // 只调了 shop,没碰下游
+    expect(findStep(store, runId, a, 'shop')?.status).toBe('success');
+    expect(findStep(store, runId, a, 'mockup')?.summary).toBe('SENTINEL'); // 下游未被重跑
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.status).toBe('success');
+  });
+
   it('一键出品选的二创方向(directions)存到 run、执行时透传到 remix 步的 ctx', async () => {
     const store = setupStore();
     const a = seedProduct(store, '商品A');

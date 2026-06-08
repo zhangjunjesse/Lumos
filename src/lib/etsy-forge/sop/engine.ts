@@ -5,7 +5,7 @@ import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { getImageConcurrency, mapLimit } from '../concurrency';
 import { logEvent } from '../log';
 import { execStep } from './steps';
-import { SOP_STEPS, SOP_ONE_CLICK } from './defs';
+import { SOP_STEPS, SOP_ONE_CLICK, isOptionalStep } from './defs';
 import { COLLECTIONS, type ProductRow, type SopRunRow, type SopRunStatus, type SopStepRow } from '../types';
 import type { RemixDirectionKey } from '../remix-axes';
 
@@ -23,7 +23,31 @@ function setStep(store: AppDataStore, stepRowId: string, patch: Partial<SopStepR
   store.update(COLLECTIONS.SOP_STEPS, stepRowId, { ...patch, updated_at: nowIso() });
 }
 
-// 跑一个商品从指定 order 起的后续链;遇失败中断(后续步依赖前步产物)。
+// 跑单个步骤:状态落库 + 调执行器。返回是否继续后续链(成功=继续;失败时可选步=继续、必需步=中断)。
+async function runOneStep(
+  store: AppDataStore,
+  userId: string,
+  productId: string,
+  sr: SopStepRow,
+  exec: StepExecutor,
+  ctx: SopStepCtx,
+  title: string,
+): Promise<boolean> {
+  setStep(store, sr.id, { status: 'running', failure_reason: '', summary: '' });
+  try {
+    const summary = await exec(store, userId, productId, sr.step_key, ctx);
+    setStep(store, sr.id, { status: 'success', summary });
+    logEvent(`SOP/${sr.step_key}`, 'info', summary || '成功', title); // 成功也记
+    return true;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    setStep(store, sr.id, { status: 'failed', failure_reason: reason });
+    logEvent(`SOP/${sr.step_key}`, 'error', reason, title);
+    return isOptionalStep(sr.step_key); // 可选步(采店铺)失败:不断链;必需步失败:中断
+  }
+}
+
+// 跑一个商品从指定 order 起的后续链;必需步失败则中断(后续步依赖前步产物),可选步失败继续。
 async function runChainFrom(
   store: AppDataStore,
   userId: string,
@@ -37,23 +61,14 @@ async function runChainFrom(
   const title = ordered[0]?.product_title || productId; // 日志注明哪个商品(标题优先,回退 id)
   for (const sr of ordered) {
     if (sr.step_order < fromOrder) continue;
-    setStep(store, sr.id, { status: 'running', failure_reason: '', summary: '' });
-    try {
-      const summary = await exec(store, userId, productId, sr.step_key, ctx);
-      setStep(store, sr.id, { status: 'success', summary });
-      logEvent(`SOP/${sr.step_key}`, 'info', summary || '成功', title); // 成功也记
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      setStep(store, sr.id, { status: 'failed', failure_reason: reason });
-      logEvent(`SOP/${sr.step_key}`, 'error', reason, title);
-      return; // 链中断
-    }
+    if (!(await runOneStep(store, userId, productId, sr, exec, ctx, title))) return;
   }
 }
 
-// 一个商品的链是否已到终态:某步失败(链断)= 终态;末步 mockup 成功(跑完)= 终态;否则还在进行中。
+// 一个商品的链是否已到终态:必需步失败(链断)= 终态;末步 mockup 成功(跑完)= 终态;否则还在进行中。
+// 可选步(采店铺)失败不算链断——它失败时链会继续走到 mockup,故只看必需步的失败。
 function productTerminal(steps: SopStepRow[]): { terminal: boolean; done: boolean } {
-  if (steps.some((s) => s.status === 'failed')) return { terminal: true, done: false };
+  if (steps.some((s) => s.status === 'failed' && !isOptionalStep(s.step_key))) return { terminal: true, done: false };
   const mockup = steps.find((s) => s.step_key === 'mockup');
   const done = mockup?.status === 'success';
   return { terminal: done, done };
@@ -155,6 +170,12 @@ export async function retryStep(
   if (!target) throw new Error('找不到该步');
   const ctx = runCtx(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, input.runId));
   store.update(COLLECTIONS.SOP_RUNS, input.runId, { status: 'running', ended_at: '' });
-  await runChainFrom(store, input.userId, input.productId, rows, target.step_order, exec, ctx);
+  if (isOptionalStep(target.step_key)) {
+    // 可选步(采店铺)独立于主链:只重跑它自己,不级联下游(否则会白白重生成抠图/二创/产品图)。
+    const title = rows[0]?.product_title || input.productId;
+    await runOneStep(store, input.userId, input.productId, target, exec, ctx, title);
+  } else {
+    await runChainFrom(store, input.userId, input.productId, rows, target.step_order, exec, ctx);
+  }
   finalizeRun(store, input.runId);
 }

@@ -37,6 +37,14 @@ export async function downloadImageToLocal(url: string, opts: { timeoutMs?: numb
   return filePath;
 }
 
+/** 把内存图 buffer(如整店首页截图)落地到 .lumos-media，返回本地绝对路径。 */
+export async function saveImageBufferToLocal(buf: Buffer, ext = '.png'): Promise<string> {
+  await fs.mkdir(MEDIA_DIR, { recursive: true });
+  const filePath = path.join(MEDIA_DIR, `etsy-shop-${randomUUID()}${ext}`);
+  await fs.writeFile(filePath, buf);
+  return filePath;
+}
+
 /** 读取一张图为 base64：有本地文件优先读本地，否则带重试下 URL。 */
 export async function loadImageAsBase64(
   ref: { localPath?: string | null; url: string },

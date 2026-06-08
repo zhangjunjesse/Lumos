@@ -3,6 +3,7 @@
 
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { runDetailCollect } from '../detail-collect';
+import { runShopCollect } from '../shop-collect';
 import { analyzeProductReviews } from '../review-analysis';
 import { classifyImages } from '../classify-image';
 import { runCutout } from '../cutout-collect';
@@ -110,6 +111,9 @@ export async function execStep(store: AppDataStore, userId: string, productId: s
   switch (key) {
     case 'detail':
       return execDetail(store, userId, productId);
+    case 'shop':
+      // 采店铺也驱动浏览器(AdsPower/CDP),复用详情串行锁避免并发抢/关连接。可选步:失败由 engine 记录但不断链。
+      return withLock(BROWSER_STEP_LOCK, () => runShopCollect(store, userId, productId));
     case 'review': {
       // 没评论不算失败:软跳过让链继续(二创不强依赖评论卖点)。有评论才分析。
       const hasReview = store.query(COLLECTIONS.REVIEWS, { filter: { product_id: productId }, limit: 1 }).length > 0;

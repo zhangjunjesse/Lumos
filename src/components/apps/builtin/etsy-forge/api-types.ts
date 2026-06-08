@@ -219,6 +219,7 @@ export interface SopStepDef {
   order: number;
   label: string;
   hint: string;
+  optional?: boolean; // 可选步(采集店铺):失败不挡主链
 }
 export interface SopRun {
   id: string;
@@ -327,4 +328,27 @@ export interface PreviewResult {
   warning?: string;
   browserContextId: string;
   hint: string;
+}
+
+// 关注的店铺(一键出品「采集店铺」步产出)。ehuntStatus=unavailable 表示 EHunt 在店铺页未接入(不编数)。
+export interface Shop {
+  id: string;
+  shop_name: string;
+  url: string;
+  avatar_url: string | null;
+  location: string | null;
+  total_sales: string | null;
+  review_count: string | null;
+  review_rating: string | null;
+  since_year: string | null;
+  announcement: string | null;
+  banner: string | null; // 装修:banner(已转 /api/media/serve)
+  rep_listings: string[]; // 装修:代表 listing 图
+  screenshot: string | null; // 装修:整店首页截图
+  ehunt_status: 'idle' | 'success' | 'failed' | 'unavailable';
+  ehunt: { raw?: string } | null;
+  collect_status: 'idle' | 'running' | 'success' | 'partial' | 'failed';
+  failure_reason: string | null;
+  product_count: number;
+  collected_at: string | null;
 }

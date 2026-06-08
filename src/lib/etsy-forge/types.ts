@@ -6,6 +6,8 @@ export type TaskStatus = 'idle' | 'running' | 'success' | 'failed' | 'partial' |
 export type ProductEhuntStatus = 'ok' | 'no_ehunt' | 'not_adspower' | 'bridge_unavailable' | 'failed';
 export type DetailStatus = 'idle' | 'running' | 'success' | 'failed';
 export type CutoutStatus = 'idle' | 'running' | 'success' | 'partial' | 'failed';
+export type ShopCollectStatus = 'idle' | 'running' | 'success' | 'partial' | 'failed';
+export type ShopEhuntStatus = 'idle' | 'success' | 'failed' | 'unavailable'; // unavailable=EHunt 在店铺页没注入(未接入,不编数)
 export type RunKind = 'list_collect' | 'detail_collect' | 'self_check';
 export type RunStatus = 'running' | 'success' | 'failed' | 'cancelled' | 'partial';
 
@@ -62,6 +64,8 @@ export interface ProductRow extends Record<string, unknown> {
   detail_status: DetailStatus;
   detail_image_count: number;
   detail_failure_reason?: string;
+  shop_name?: string; // 店铺名(采详情时从 listing 页抓)
+  shop_url?: string; // 店铺主页 URL(etsy.com/shop/XXX),「采集店铺」步据此开店铺页
   tags?: string[]; // 用户在图库里给商品打的标签
   review_count?: number; // 采详情时抓到的评论数
   review_analysis?: ReviewAnalysis; // AI 评论分析结果（缓存）
@@ -153,6 +157,33 @@ export interface MockupJobRow extends Record<string, unknown> {
   failure_reason?: string;
   created_at: string;
   finished_at?: string;
+}
+
+// 关注的店铺:一键出品时顺手采集商品对应店铺(按 shop_key 去重,多个商品同店聚合到一条)。
+// 装修 = banner + 公告 + 代表 listing 图 + 整店首页截图。ehunt_status=unavailable 表示 EHunt 在店铺页未注入(未接入,不编数)。
+export interface ShopRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  shop_key: string; // 去重键:店铺 slug(etsy.com/shop/<slug>)
+  shop_name: string;
+  url: string; // 店铺主页
+  avatar_url?: string; // 头像(外链)
+  location?: string; // 地点
+  total_sales?: string; // 总销量(Etsy 自带)
+  review_count?: string; // 评价数
+  review_rating?: string; // 店铺综合评分
+  since_year?: string; // 开店年份(On Etsy since)
+  announcement?: string; // 公告/about 文案
+  banner_path?: string; // 装修:banner 图(本地)
+  rep_listing_paths?: string[]; // 装修:代表 listing 缩略图(本地)
+  homepage_screenshot_path?: string; // 装修:整店首页截图(本地)
+  ehunt_json?: string; // 店铺级 EHunt 原始(抓到才有)
+  ehunt_status: ShopEhuntStatus; // unavailable=未接入
+  collect_status: ShopCollectStatus;
+  failure_reason?: string;
+  source_product_ids?: string[]; // 哪些商品指向这家店
+  collected_at?: string;
+  created_at: string;
 }
 
 // 手攒产品:用户在「我的产品」内联生成出来的产品组,无 Etsy 采集来源(不写进采集商品表)。
@@ -301,7 +332,7 @@ export interface LogRow extends Record<string, unknown> {
 
 // SOP「一键出品」编排：对 N 个商品逐商品独立走链(①采集→②a评论→②b分类→③抠印花→④素材+姿势→⑤二创→⑥产品图)。
 // 一个 run 一条 SopRunRow，每商品每步一条 SopStepRow(可见状态/失败原因/可单步重试)。
-export type SopStepKey = 'detail' | 'review' | 'classify' | 'cutout' | 'assets' | 'remix' | 'mockup';
+export type SopStepKey = 'detail' | 'shop' | 'review' | 'classify' | 'cutout' | 'assets' | 'remix' | 'mockup';
 export type SopStepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
 export type SopRunStatus = 'running' | 'success' | 'partial' | 'failed' | 'cancelled';
 
@@ -360,6 +391,7 @@ export const COLLECTIONS = {
   MOCKUPS: 'etsy_forge_mockups',
   MOCKUP_JOBS: 'etsy_forge_mockup_jobs',
   MANUAL_PRODUCTS: 'etsy_forge_manual_products',
+  SHOPS: 'etsy_forge_shops',
   REMIX_DIRECTIONS: 'etsy_forge_remix_directions',
   REMIX_STRATEGIES: 'etsy_forge_remix_strategies',
   FISSION_RUNS: 'etsy_forge_fission_runs',

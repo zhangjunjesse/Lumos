@@ -1,5 +1,6 @@
 // SOP「一键出品」步骤定义。链顺序即数组顺序;每商品独立按此链跑(步间依赖前步成功)。
-// ①采集详情 ②a评论分析 ②b图片分类 ③抠印花 ④分析素材+抠姿势 ⑤二创 ⑥出产品图(终点)。
+// ①采集详情 ②采集店铺(可选) ③评论分析 ④图片分类 ⑤抠印花 ⑥分析素材+抠姿势 ⑦二创 ⑧出产品图(终点)。
+// optional 步失败只记录、不中断后续(出图不依赖它);见 engine.runChainFrom / productTerminal。
 
 import type { SopStepKey } from '../types';
 
@@ -8,16 +9,23 @@ export interface SopStepDef {
   order: number;
   label: string;
   hint: string;
+  optional?: boolean; // 可选步:失败不断主链(店铺信息是参考,不是出图主线)
 }
 
 export const SOP_STEPS: SopStepDef[] = [
   { key: 'detail', order: 0, label: '采集详情', hint: '爬详情图 + 评论(已采则跳过)' },
-  { key: 'review', order: 1, label: '评论分析', hint: '客户画像 / 卖点 / 痛点 / 动机' },
-  { key: 'classify', order: 2, label: '图片分类', hint: 'AI 给每张详情图打类型' },
-  { key: 'cutout', order: 3, label: '抠印花', hint: '商品/产品图合出 1 个印花' },
-  { key: 'assets', order: 4, label: '素材+姿势', hint: '场景/模特/产品(空白T)/姿势' },
-  { key: 'remix', order: 5, label: '二创', hint: '印花×标题/卖点 → 5 个变体' },
-  { key: 'mockup', order: 6, label: '出产品图', hint: '5 个二创印花 × 空白T → 5 个产品图' },
+  { key: 'shop', order: 1, label: '采集店铺', hint: '采商品对应店铺:头像/基本信息/装修/EHunt(失败不挡出图)', optional: true },
+  { key: 'review', order: 2, label: '评论分析', hint: '客户画像 / 卖点 / 痛点 / 动机' },
+  { key: 'classify', order: 3, label: '图片分类', hint: 'AI 给每张详情图打类型' },
+  { key: 'cutout', order: 4, label: '抠印花', hint: '商品/产品图合出 1 个印花' },
+  { key: 'assets', order: 5, label: '素材+姿势', hint: '场景/模特/产品(空白T)/姿势' },
+  { key: 'remix', order: 6, label: '二创', hint: '印花×标题/卖点 → 5 个变体' },
+  { key: 'mockup', order: 7, label: '出产品图', hint: '5 个二创印花 × 空白T → 5 个产品图' },
 ];
+
+// 可选步:失败不中断该商品后续链(供 engine 判定是否断链 / 是否算终态失败)。
+export function isOptionalStep(key: SopStepKey): boolean {
+  return SOP_STEPS.find((s) => s.key === key)?.optional === true;
+}
 
 export const SOP_ONE_CLICK = 'one-click';

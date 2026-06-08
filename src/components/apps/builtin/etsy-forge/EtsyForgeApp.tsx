@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TasksTab } from './tabs/TasksTab';
 import { ProductsTab } from './tabs/ProductsTab';
 import { LibraryTab } from './tabs/LibraryTab';
+import { ShopsTab } from './tabs/ShopsTab';
 import { AssetsTab } from './tabs/AssetsTab';
 import { ProductTab } from './tabs/ProductTab';
 import { WarehouseTab } from './tabs/WarehouseTab';
@@ -17,7 +18,7 @@ import { SopTaskDock } from './SopTaskDock';
 import { LogsTab } from './tabs/LogsTab';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type TabValue = 'tasks' | 'products' | 'library' | 'assets' | 'product' | 'warehouse' | 'logs' | 'settings';
+type TabValue = 'tasks' | 'products' | 'library' | 'shops' | 'assets' | 'product' | 'warehouse' | 'logs' | 'settings';
 
 export function EtsyForgeApp(): React.ReactElement {
   const [tab, setTab] = React.useState<TabValue>('tasks');
@@ -52,6 +53,9 @@ export function EtsyForgeApp(): React.ReactElement {
             <TabsTrigger value="library" className="data-[state=active]:bg-background">
               我关注的商品
             </TabsTrigger>
+            <TabsTrigger value="shops" className="data-[state=active]:bg-background">
+              我关注的店铺
+            </TabsTrigger>
             <TabsTrigger value="assets" className="data-[state=active]:bg-background">
               我的图库
             </TabsTrigger>
@@ -79,6 +83,9 @@ export function EtsyForgeApp(): React.ReactElement {
           </TabsContent>
           <TabsContent value="library" className="m-0 px-9 py-6">
             <LibraryTab key={`l-${refreshKey}`} />
+          </TabsContent>
+          <TabsContent value="shops" className="m-0 px-9 py-6">
+            <ShopsTab key={`s-${refreshKey}`} />
           </TabsContent>
           <TabsContent value="assets" className="m-0 px-9 py-6">
             <AssetsTab key={`a-${refreshKey}`} />

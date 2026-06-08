@@ -116,6 +116,7 @@ export async function runDetailCollect(
           detail_image_count: result.images.length,
           detail_failure_reason: undefined,
           ...(result.reviews.length > 0 ? { review_count: result.reviews.length } : {}),
+          ...(result.shopUrl ? { shop_name: result.shopName, shop_url: result.shopUrl } : {}),
         });
         totalImages += result.images.length;
         okProducts++;

@@ -18,6 +18,8 @@ export interface CollectDetailResult {
   url: string;
   images: DetailImage[];
   reviews: CollectedReview[];
+  shopName?: string; // listing 页抓到的店铺名(供「采集店铺」步)
+  shopUrl?: string; // 店铺主页 URL
   ok: boolean;
   failureReason?: string;
 }
@@ -77,13 +79,16 @@ export async function collectProductDetailImages(
       const images: DetailImage[] = urls.map((u, i) => ({ imageUrl: u, position: i, isMain: i === 0 }));
       log(`▶ 抓到 ${images.length} 张详情图`);
 
+      const shop = await scrapeShopRef(page); // 顺手抓店铺链接(失败不影响详情)
+      if (shop) log(`▶ 店铺：${shop.shopName}`);
+
       let reviews: CollectedReview[] = [];
       if (maxReviews > 0 && !opts.isAborted?.()) {
         log(`▶ 抓评论（上限 ${maxReviews}）…`);
         reviews = await scrapeReviewsFromPage(page, maxReviews, log).catch(() => []);
         log(`▶ 抓到 ${reviews.length} 条评论`);
       }
-      return { ...base, images, reviews, ok: true };
+      return { ...base, images, reviews, shopName: shop?.shopName, shopUrl: shop?.shopUrl, ok: true };
     } finally {
       await page.close().catch(() => {});
     }
@@ -94,6 +99,23 @@ export async function collectProductDetailImages(
     if (browser) await browser.close().catch(() => {});
     log('▶ disconnect CDP · 浏览器窗口保留');
   }
+}
+
+/** 从 listing 页抓店铺引用：取首个 /shop/<slug> 链接 → 店名 + 规范店铺主页 URL。抓不到返回 null。 */
+function scrapeShopRef(page: import('playwright').Page): Promise<{ shopName: string; shopUrl: string } | null> {
+  return page
+    .evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a[href*="/shop/"]')) as HTMLAnchorElement[];
+      for (const a of links) {
+        const m = a.href.match(/\/shop\/([^/?#]+)/);
+        if (!m) continue;
+        const slug = m[1];
+        const name = (a.textContent || '').trim().replace(/\s+/g, ' ') || decodeURIComponent(slug);
+        return { shopName: name.slice(0, 120), shopUrl: `https://www.etsy.com/shop/${slug}` };
+      }
+      return null;
+    })
+    .catch(() => null);
 }
 
 /**

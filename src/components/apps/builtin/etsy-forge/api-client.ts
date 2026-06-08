@@ -12,6 +12,7 @@ import type {
   MockupItem,
   MockupJob,
   ManualProduct,
+  Shop,
   RemixDirection,
   RemixStrategy,
   FissionDiagnosis,
@@ -265,6 +266,11 @@ export const etsyForgeApi = {
     jf<{ ok: boolean; product: ManualProduct }>(`${BASE}/manual-products`, { method: 'POST', body: JSON.stringify({ name }) }),
   deleteManualProduct: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/manual-products?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // 关注的店铺(一键出品采集):列 / 删除
+  listShops: () => jf<{ total: number; shops: Shop[] }>(`${BASE}/shops`),
+  deleteShop: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/shops?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // 裂变·方向库(动态 CRUD)
   listDirections: () => jf<{ directions: RemixDirection[] }>(`${BASE}/remix-directions`),
   createDirection: (d: Partial<RemixDirection>) =>
