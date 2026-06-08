@@ -52,52 +52,75 @@ export async function scrapeShopPage(page: import('playwright').Page): Promise<S
     ) as HTMLImageElement | null;
     const avatarUrl = avatarEl?.src || null;
 
-    // banner:封面 img,没有再试背景图。
-    const bannerEl = document.querySelector(
-      '.shop-banner img, [data-shop-banner] img, .shop-cover img, .banner img',
-    ) as HTMLImageElement | null;
-    let bannerUrl = bannerEl?.src || null;
+    // 店铺 banner(招牌横幅,如那条 "XXX.COM" 彩虹长条):页面顶部 DOM 靠前、又宽又扁的大图。
+    // 先试已知选择器,没有再按"宽高比≥2.2 且足够宽"的启发式在前 40 张图里找(banner 通常 ~4:1,商品图近方形会被排除)。
+    let bannerUrl: string | null =
+      (document.querySelector('.shop-banner img, [data-shop-banner] img, .shop-cover img, .banner img') as HTMLImageElement | null)?.src ||
+      null;
     if (!bannerUrl) {
-      const bg = document.querySelector('.shop-banner, [data-shop-banner], .shop-cover') as HTMLElement | null;
-      const m = bg && getComputedStyle(bg).backgroundImage.match(/url\(["']?(.*?)["']?\)/);
-      bannerUrl = m ? m[1] : null;
-    }
-
-    // 店铺头部摘要行:取含 "sales" 且 "on Etsy" 的最小元素(避免在整页里抓到评论区 "5 stars"、页脚年份之类垃圾)。
-    let header = '';
-    for (const el of Array.from(document.querySelectorAll('header,section,div,span,p'))) {
-      const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (t.length <= 160 && /\bsales\b/i.test(t) && /on Etsy/i.test(t)) {
-        header = t;
-        break;
+      for (const img of Array.from(document.querySelectorAll('img')).slice(0, 40)) {
+        const r = img.getBoundingClientRect();
+        const w = img.naturalWidth || r.width;
+        const h = img.naturalHeight || r.height;
+        if (w >= 600 && h > 0 && w / h >= 2.2) {
+          bannerUrl = (img as HTMLImageElement).currentSrc || (img as HTMLImageElement).src || null;
+          break;
+        }
       }
     }
-    const scope = header || bodyText;
 
-    // 评分 + 评价数:Etsy 头部格式是 "4.9 (637)"。
-    const rr = scope.match(/(\d(?:\.\d)?)\s*\(([\d,]+)\)/);
-    const reviewRating = rr ? rr[1] : null;
-    const reviewCount = rr ? rr[2].replace(/,/g, '') : null;
+    // 店铺头部各字段按节点精确匹配(Etsy 把 "4.9 (637) · 2.9k sales · 5 years on Etsy" 拆成各自独立小节点)。
+    // 在小节点(≤40 字)里找,排除 listing 卡内,避免抓到评论区/商品标题/页脚的垃圾。各项取首个命中。
+    let reviewRating: string | null = null;
+    let reviewCount: string | null = null;
+    let sinceYear: string | null = null;
+    let location: string | null = null;
+
+    // 评分/评价数优先从 JSON-LD 结构化数据取(Etsy 为 SEO 内嵌 aggregateRating,最可靠)。
+    for (const s of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
+      try {
+        const items = JSON.parse(s.textContent || '');
+        for (const o of Array.isArray(items) ? items : [items]) {
+          const ar = o && typeof o === 'object' ? o.aggregateRating : null;
+          if (!ar) continue;
+          if (!reviewRating && ar.ratingValue != null) reviewRating = String(ar.ratingValue);
+          const cnt = ar.reviewCount ?? ar.ratingCount;
+          if (!reviewCount && cnt != null) reviewCount = String(cnt).replace(/[^\d]/g, '') || null;
+        }
+      } catch {
+        /* 忽略坏 JSON */
+      }
+    }
+
+    for (const el of Array.from(document.querySelectorAll('span,div,p,a'))) {
+      if (el.closest('a[href*="/listing/"]')) continue;
+      const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 40) continue;
+      if (!reviewRating) {
+        const m = t.match(/(\d(?:\.\d)?)\s*\(([\d,]+)\)/); // "4.9 (637)"
+        if (m) {
+          reviewRating = m[1];
+          reviewCount = m[2].replace(/,/g, '');
+          continue;
+        }
+      }
+      if (!sinceYear) {
+        const m = t.match(/(\d+)\s*years?\s+on Etsy/i); // "5 years on Etsy"
+        if (m) {
+          sinceYear = `${m[1]}年`;
+          continue;
+        }
+      }
+      if (!location && !/\d/.test(t) && /^[A-Z][A-Za-z.'\- ]+,\s*[A-Z][A-Za-z.'\- ]+$/.test(t)) {
+        location = t; // "Estero, Florida"
+        continue;
+      }
+    }
 
     // 总销量:优先精确 "2,886 sales",否则 "2.9k sales"。
     const salesExact = bodyText.match(/([\d,]{2,})\s*sales/i);
-    const salesK = scope.match(/([\d.]+\s*[kKmM])\s*sales/i);
+    const salesK = bodyText.match(/([\d.]+\s*[kKmM])\s*sales/i);
     const totalSales = salesExact ? salesExact[1].replace(/,/g, '') : salesK ? salesK[1].replace(/\s/g, '') : null;
-
-    // 开店时长:"5 years on Etsy"。
-    const yrM = scope.match(/(\d+)\s*years?\s*on Etsy/i);
-    const sinceYear = yrM ? `${yrM[1]}年` : null;
-
-    // 地点:正好是一个 "City, Region" 的小节点("Estero, Florida"),不含数字、不在 listing 卡内,避开日期/商品标题。
-    let location: string | null = null;
-    for (const el of Array.from(document.querySelectorAll('span,div,p,a'))) {
-      if (el.closest('a[href*="/listing/"]')) continue;
-      const t = (el.textContent || '').trim();
-      if (t.length <= 40 && !/\d/.test(t) && /^[A-Z][A-Za-z.'\- ]+,\s*[A-Z][A-Za-z.'\- ]+$/.test(t)) {
-        location = t;
-        break;
-      }
-    }
 
     const announcement =
       txt(

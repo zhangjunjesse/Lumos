@@ -87,7 +87,7 @@ export function ShopCard({
   onRecollect: () => void;
   recollecting: boolean;
 }) {
-  const hasDeco = shop.banner || shop.screenshot || shop.rep_listings.length > 0;
+  const hasDeco = shop.screenshot || shop.rep_listings.length > 0; // banner 已单独展示,不算装修
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="flex items-start gap-3">
@@ -138,6 +138,18 @@ export function ShopCard({
         <div className="mt-2 rounded bg-destructive/5 px-2 py-1 text-xs text-destructive">采集失败：{shop.failure_reason ?? '未知'}</div>
       )}
 
+      {shop.banner && (
+        <button
+          type="button"
+          onClick={() => onZoom(shop.banner as string)}
+          title="店铺横幅(点击放大)"
+          className="mt-3 block w-full overflow-hidden rounded-md border hover:ring-1 hover:ring-foreground"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={shop.banner} alt="店铺横幅" className="w-full object-cover" />
+        </button>
+      )}
+
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Chip label="总销量" value={shop.total_sales} />
         <Chip label="评价数" value={shop.review_count} />
@@ -155,7 +167,6 @@ export function ShopCard({
         <div className="mt-3">
           <div className="mb-1 text-[10px] font-medium text-muted-foreground">装修</div>
           <div className="flex flex-wrap gap-2">
-            {shop.banner && <Deco url={shop.banner} label="banner" onZoom={onZoom} />}
             {shop.screenshot && <Deco url={shop.screenshot} label="整店首页" onZoom={onZoom} />}
             {shop.rep_listings.map((u, i) => (
               <Deco key={i} url={u} label={`代表图${i + 1}`} onZoom={onZoom} />
