@@ -24,6 +24,7 @@ interface Group {
   productImage: string | null;
   productTitle: string | null;
   productUrl: string | null;
+  createdAt: string; // 排序用:手攒=创建时间,采集=最新产品图时间(不再置顶手攒)
   items: MockupItem[];
 }
 
@@ -107,22 +108,23 @@ export function ProductTab() {
     return out;
   }, [assets, mockups]);
 
-  // 分组:手攒产品在前(含空占位行),再并入采集商品的生成图组。
+  // 分组:手攒产品 + 采集商品各成一组,按创建时间倒序排(手攒不再置顶,和采集混排)。
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, Group>();
     for (const mp of manualProducts) {
-      map.set(mp.id, { key: mp.id, productId: mp.id, isManual: true, productImage: null, productTitle: mp.name, productUrl: null, items: [] });
+      map.set(mp.id, { key: mp.id, productId: mp.id, isManual: true, productImage: null, productTitle: mp.name, productUrl: null, createdAt: mp.created_at, items: [] });
     }
     for (const m of mockups) {
       const pid = m.source_product_id || m.source_product_title || '其他来源';
       let g = map.get(pid);
       if (!g) {
-        g = { key: pid, productId: m.source_product_id, isManual: false, productImage: m.source_product_image, productTitle: m.source_product_title, productUrl: m.source_product_url, items: [] };
+        g = { key: pid, productId: m.source_product_id, isManual: false, productImage: m.source_product_image, productTitle: m.source_product_title, productUrl: m.source_product_url, createdAt: m.created_at, items: [] };
         map.set(pid, g);
       }
       g.items.push(m);
+      if (m.created_at > g.createdAt) g.createdAt = m.created_at; // 组时间取最新一张图
     }
-    return [...map.values()];
+    return [...map.values()].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [mockups, manualProducts]);
 
   const onStarted = () => {
@@ -221,24 +223,15 @@ export function ProductTab() {
             const originDesign = !g.isManual ? designs.find((d) => d.source_product_id && d.source_product_id === g.productId)?.url ?? null : null;
             const open = composerFor === g.key;
             const items = applyView(g.items); // 应用评分筛选/排序
+            const bases = g.productId ? basesForDirection(g, originDesign) : []; // 可用底图(印花/二创印花),手攒产品也算
             return (
               <div key={g.key} className="p-3">
                 <div className="flex items-start gap-3">
                   <div className="flex shrink-0 flex-col items-start gap-1.5">
+                    {/* 手攒 / 采集统一用 SrcThumb;手攒没有原商品/印花 → 显「无」占位 */}
                     <div className="flex items-start gap-2">
-                      {g.isManual ? (
-                        <div className="flex size-20 flex-col items-center justify-center rounded-md border border-dashed text-center text-[10px] text-muted-foreground">
-                          <span className="line-clamp-2 px-1">{g.productTitle || '手攒产品'}</span>
-                          <button type="button" onClick={() => void removeManualProduct(g.key)} className="mt-0.5 text-destructive hover:underline">
-                            删除
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <SrcThumb label="原商品" url={g.productImage} caption={g.productTitle} href={g.productUrl} onZoom={setZoom} />
-                          <SrcThumb label="印花" url={originDesign} onZoom={setZoom} />
-                        </>
-                      )}
+                      <SrcThumb label="原商品" url={g.productImage} caption={g.productTitle} href={g.productUrl} placeholder={g.isManual ? g.productTitle || '手攒产品' : undefined} onZoom={setZoom} />
+                      <SrcThumb label="印花" url={originDesign} caption={g.isManual ? g.productTitle : undefined} onZoom={setZoom} />
                     </div>
                     <Button
                       size="sm"
@@ -250,8 +243,13 @@ export function ProductTab() {
                     >
                       {open ? '收起' : '微调 ▾'}
                     </Button>
-                    {!g.isManual && g.productId && originDesign && (
-                      <DirectionShotButton productId={g.productId} bases={basesForDirection(g, originDesign)} onStarted={onStarted} onError={setError} />
+                    {g.productId && bases.length > 0 && (
+                      <DirectionShotButton productId={g.productId} bases={bases} onStarted={onStarted} onError={setError} />
+                    )}
+                    {g.isManual && (
+                      <button type="button" onClick={() => void removeManualProduct(g.key)} className="text-[11px] text-destructive hover:underline">
+                        删除产品
+                      </button>
                     )}
                   </div>
                   <div className="w-px shrink-0 self-stretch bg-border" />

@@ -2,12 +2,12 @@
 
 // 来源缩略图:点图统一放大;有外链(原商品 Etsy)时角上放个 ↗ 单独跳。缺图显示占位。
 
-export function SrcThumb({ label, url, caption, href, onZoom }: { label: string; url: string | null; caption?: string | null; href?: string | null; onZoom: (u: string) => void }) {
+export function SrcThumb({ label, url, caption, href, placeholder, onZoom }: { label: string; url: string | null; caption?: string | null; href?: string | null; placeholder?: string; onZoom: (u: string) => void }) {
   const inner = url ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={url} alt={label} className="h-full w-full object-cover" />
   ) : (
-    <span className="flex h-full w-full items-center justify-center text-[9px] text-muted-foreground">无</span>
+    <span className="line-clamp-3 flex h-full w-full items-center justify-center p-1 text-center text-[9px] leading-tight text-muted-foreground">{placeholder || '无'}</span>
   );
   return (
     <div className="w-16 shrink-0 text-center">
