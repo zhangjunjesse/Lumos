@@ -12,6 +12,7 @@ export function ShopsTab(): React.ReactElement {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [zoom, setZoom] = React.useState<string | null>(null);
+  const [recollectingId, setRecollectingId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -34,6 +35,18 @@ export function ShopsTab(): React.ReactElement {
     if (!window.confirm('删除这家店铺记录?')) return;
     await etsyForgeApi.deleteShop(id).catch(() => {});
     setShops((s) => s.filter((x) => x.id !== id));
+  };
+
+  const recollect = async (id: string) => {
+    setRecollectingId(id);
+    try {
+      await etsyForgeApi.recollectShop(id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRecollectingId(null);
+    }
   };
 
   return (
@@ -62,7 +75,14 @@ export function ShopsTab(): React.ReactElement {
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {shops.map((s) => (
-            <ShopCard key={s.id} shop={s} onZoom={setZoom} onDelete={() => void remove(s.id)} />
+            <ShopCard
+              key={s.id}
+              shop={s}
+              onZoom={setZoom}
+              onDelete={() => void remove(s.id)}
+              onRecollect={() => void recollect(s.id)}
+              recollecting={recollectingId === s.id}
+            />
           ))}
         </div>
       )}

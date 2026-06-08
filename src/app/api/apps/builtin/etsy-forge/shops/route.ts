@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
+import { recollectShopById } from '@/lib/etsy-forge/shop-collect';
 import { COLLECTIONS, type ShopRow } from '@/lib/etsy-forge/types';
 
 export const runtime = 'nodejs';
@@ -35,12 +36,26 @@ export async function GET(req: NextRequest) {
         screenshot: serve(s.homepage_screenshot_path),
         ehunt_status: s.ehunt_status,
         ehunt: s.ehunt_json ? safeParse(s.ehunt_json) : null,
+        ehunt_bar: serve(s.ehunt_bar_path),
         collect_status: s.collect_status,
         failure_reason: s.failure_reason ?? null,
         product_count: (s.source_product_ids ?? []).length,
         collected_at: s.collected_at ?? null,
       })),
     });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+}
+
+// 重采:按已存 shop.url 重新采(同步等结果,~10-20s)。驱动 AdsPower 自动化浏览器,不动用户可见页。
+export async function POST(req: NextRequest) {
+  try {
+    const { id } = (await req.json()) as { id?: string };
+    if (!id) return NextResponse.json({ error: 'id 必填' }, { status: 400 });
+    const r = await recollectShopById(getEtsyForgeStore(), getStorageUserId(req), id);
+    if (!r.ok) return NextResponse.json({ error: r.error || '重采失败' }, { status: 400 });
+    return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

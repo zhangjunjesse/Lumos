@@ -54,3 +54,6 @@ export function getBrowserContextId(store: AppDataStore): string {
   const row = store.query<{ browser_context_id?: string }>('app_settings', { limit: 1 })[0];
   return (row?.browser_context_id ?? '').trim() || 'embedded:default';
 }
+
+// 浏览器步全局串行锁键:采详情 / 采店铺 / 重采店铺都驱动同一个 AdsPower 连接,必须串行,否则并发会互相关连接。
+export const BROWSER_STEP_LOCK = 'etsy-forge:detail-browser';

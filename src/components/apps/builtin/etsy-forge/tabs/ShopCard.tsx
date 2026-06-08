@@ -2,7 +2,7 @@
 
 // 单个关注店铺卡:头像 + 基本信息 + EHunt 指标(或未接入) + 装修(banner/整店截图/代表图,点放大)。
 
-import { Trash2, ExternalLink, Store } from 'lucide-react';
+import { Trash2, ExternalLink, Store, RefreshCw, Loader2 } from 'lucide-react';
 import type { Shop } from '../api-types';
 
 function Chip({ label, value }: { label: string; value: string | null }) {
@@ -14,8 +14,21 @@ function Chip({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-// EHunt 区:抓到=显示原文;未接入/失败/采集中=明确状态(不编数)。
-function EhuntBlock({ shop }: { shop: Shop }) {
+// EHunt 区:优先直接展示注入的原始 bar 截图;没截到才退回原文;都没有=明确状态(不编数)。
+function EhuntBlock({ shop, onZoom }: { shop: Shop; onZoom: (u: string) => void }) {
+  if (shop.ehunt_bar) {
+    return (
+      <button
+        type="button"
+        onClick={() => onZoom(shop.ehunt_bar as string)}
+        title="EHunt 店铺 bar(点击放大)"
+        className="block w-full overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={shop.ehunt_bar} alt="EHunt 店铺指标" className="w-full object-contain" />
+      </button>
+    );
+  }
   if (shop.ehunt_status === 'success' && shop.ehunt?.raw) {
     return (
       <div className="rounded border bg-muted/20 p-2">
@@ -53,10 +66,14 @@ export function ShopCard({
   shop,
   onZoom,
   onDelete,
+  onRecollect,
+  recollecting,
 }: {
   shop: Shop;
   onZoom: (url: string) => void;
   onDelete: () => void;
+  onRecollect: () => void;
+  recollecting: boolean;
 }) {
   const hasDeco = shop.banner || shop.screenshot || shop.rep_listings.length > 0;
   return (
@@ -87,10 +104,23 @@ export function ShopCard({
             {shop.location ?? '地点未知'} · {shop.product_count} 个关联商品
           </div>
         </div>
-        <button type="button" onClick={onDelete} title="删除" className="shrink-0 text-muted-foreground hover:text-destructive">
-          <Trash2 className="size-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onRecollect}
+            disabled={recollecting}
+            title="重新采集这家店(刷新基本信息/装修/EHunt bar)"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {recollecting ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+          </button>
+          <button type="button" onClick={onDelete} title="删除" className="text-muted-foreground hover:text-destructive">
+            <Trash2 className="size-4" />
+          </button>
+        </div>
       </div>
+
+      {recollecting && <div className="mt-2 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">重采中…开浏览器抓店铺页,约 10–20 秒</div>}
 
       {shop.collect_status === 'failed' && (
         <div className="mt-2 rounded bg-destructive/5 px-2 py-1 text-xs text-destructive">采集失败：{shop.failure_reason ?? '未知'}</div>
@@ -104,7 +134,7 @@ export function ShopCard({
       </div>
 
       <div className="mt-3">
-        <EhuntBlock shop={shop} />
+        <EhuntBlock shop={shop} onZoom={onZoom} />
       </div>
 
       {shop.announcement && <p className="mt-3 line-clamp-3 text-xs text-muted-foreground">{shop.announcement}</p>}

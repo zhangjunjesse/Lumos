@@ -11,16 +11,15 @@ import { runAnalyzeAssets } from '../asset-analyze';
 import { runPoseExtract } from '../pose-extract';
 import { runRemix } from '../remix';
 import { prepareMerge, mergeOneProduct } from '../product-merge';
-import { getBrowserContextId } from '../store';
+import { getBrowserContextId, BROWSER_STEP_LOCK } from '../store';
 import { getImageConcurrency, mapLimit } from '../concurrency';
 import { withLock } from '@/lib/async-lock';
 import type { SopStepCtx } from './engine';
 import { COLLECTIONS, type AssetRow, type DetailImageRow, type ImageType, type ProductRow, type SopStepKey } from '../types';
 
 const serve = (p: string) => `/api/media/serve?path=${encodeURIComponent(p)}`;
-// ①采集详情串行锁:多商品并发跑链时,详情采集要驱动同一个浏览器(AdsPower/CDP)、且跑完会 browser.close(),
-// 并发会互相把连接关掉 → 全失败。这一步全局串行(同一时刻只一个商品碰浏览器),后续图片步仍并发。
-const BROWSER_STEP_LOCK = 'etsy-forge:detail-browser';
+// 采集详情/店铺串行锁(BROWSER_STEP_LOCK,定义在 ../store):并发跑链时这些步驱动同一个 AdsPower/CDP 连接、
+// 跑完会 browser.close(),并发会互相把连接关掉 → 全失败。这些步全局串行,后续图片步仍并发。
 
 // 按 ②b 分类挑图:取指定 type 的图,并**按 types 的顺序优先**(靠前的 type 优先选)。
 // 该商品还没分类(都没 type)就退回全部图(降级不阻断)。max 限制张数(③抠印花只需 2~3 张参考)。

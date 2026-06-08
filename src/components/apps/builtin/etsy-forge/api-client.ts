@@ -269,6 +269,7 @@ export const etsyForgeApi = {
 
   // 关注的店铺(一键出品采集):列 / 删除
   listShops: () => jf<{ total: number; shops: Shop[] }>(`${BASE}/shops`),
+  recollectShop: (id: string) => jf<{ ok: boolean }>(`${BASE}/shops`, { method: 'POST', body: JSON.stringify({ id }) }),
   deleteShop: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/shops?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // 裂变·方向库(动态 CRUD)
