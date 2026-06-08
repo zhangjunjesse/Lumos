@@ -28,8 +28,21 @@ function parseEhuntBar(raw: string): { label: string; value: string }[] {
   return out;
 }
 
-// EHunt 区:抓到原文 → 解析成干净的绿字深底 bar(EHunt 招牌样式);没原文 → 明确状态(不编数)。
-function EhuntBlock({ shop }: { shop: Shop }) {
+// EHunt 区:优先展示注入的原始长 bar 截图(用户要的就是这条长图);没截到才退回解析文本;再没有=明确状态(不编)。
+function EhuntBlock({ shop, onZoom }: { shop: Shop; onZoom: (u: string) => void }) {
+  if (shop.ehunt_bar) {
+    return (
+      <button
+        type="button"
+        onClick={() => onZoom(shop.ehunt_bar as string)}
+        title="EHunt 店铺 bar(点击放大)"
+        className="block w-full overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={shop.ehunt_bar} alt="EHunt 店铺指标" className="w-full object-contain" />
+      </button>
+    );
+  }
   const raw = shop.ehunt_status === 'success' ? shop.ehunt?.raw ?? '' : '';
   if (raw) {
     const fields = parseEhuntBar(raw);
@@ -146,7 +159,7 @@ export function ShopCard({
       </div>
 
       <div className="mt-3">
-        <EhuntBlock shop={shop} />
+        <EhuntBlock shop={shop} onZoom={onZoom} />
       </div>
 
       {shop.announcement && <p className="mt-3 line-clamp-3 text-xs text-muted-foreground">{shop.announcement}</p>}

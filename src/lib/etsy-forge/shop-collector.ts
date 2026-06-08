@@ -6,13 +6,44 @@ import { connectBrowserOverCDP, startAdsPowerForContext } from '@/lib/browser-ru
 import { downloadImageToLocal, saveImageBufferToLocal } from './image-fetch';
 import { scrapeShopPage, type ShopPageData } from './shop-collector-page';
 
+// EHunt 在店铺页注入的 bar 元素:从宽到窄试,截第一条可见的当原始 bar 长图。
+const EH_BAR_SELECTORS = ['.eh-shop-analysis', '.eh-shop-info', '.eh-mask-info', '.eh-mask-info-fetched-item'];
+
 export interface ShopCollectResult {
   ok: boolean;
   data?: ShopPageData;
   bannerPath?: string;
   repListingPaths?: string[];
   screenshotPath?: string; // 整店首页截图(装修存档)
+  ehuntBarPath?: string; // EHunt 注入 bar 元素截图(直接展示这条原始长 bar)
   failureReason?: string;
+}
+
+// 截 EHunt 注入的那条 bar 长图。EHunt overlay 背景透明、压在 listing 产品图上 → 直接截会透出产品照,
+// 先给这个元素铺不透明深底 + 隐藏其内部/背后的图片,只留绿字,再截。注入了才有,没有返回 undefined。
+async function captureEhuntBar(page: import('playwright').Page): Promise<string | undefined> {
+  for (const sel of EH_BAR_SELECTORS) {
+    const el = await page.$(sel).catch(() => null);
+    if (!el) continue;
+    await el
+      .evaluate((node: HTMLElement) => {
+        node.style.setProperty('background-color', '#0b0e11', 'important');
+        node.style.setProperty('background-image', 'none', 'important');
+        node.querySelectorAll('img, picture, video, svg').forEach((c) => {
+          (c as HTMLElement).style.setProperty('visibility', 'hidden', 'important');
+        });
+        node.querySelectorAll('*').forEach((c) => {
+          (c as HTMLElement).style.setProperty('background-image', 'none', 'important');
+        });
+      })
+      .catch(() => {});
+    const path = await el
+      .screenshot()
+      .then((b) => saveImageBufferToLocal(b, '.png'))
+      .catch(() => undefined);
+    if (path) return path;
+  }
+  return undefined;
 }
 
 export interface ShopCollectOptions {
@@ -45,6 +76,7 @@ export async function collectShop(opts: ShopCollectOptions): Promise<ShopCollect
       const data = await scrapeShopPage(page);
       log(`▶ 店铺：${data.shopName ?? '(无名)'} · 销量 ${data.totalSales ?? '?'} · EHunt ${data.ehuntRaw ? '有' : '未接入'}`);
 
+      const ehuntBarPath = await captureEhuntBar(page); // EHunt 原始 bar 长图(铺深底盖产品照)
       const screenshotPath = await page
         .screenshot({ fullPage: true })
         .then((buf) => saveImageBufferToLocal(buf, '.png'))
@@ -54,7 +86,7 @@ export async function collectShop(opts: ShopCollectOptions): Promise<ShopCollect
         await Promise.all(data.repListingUrls.map((u) => downloadImageToLocal(u).catch(() => undefined)))
       ).filter((p): p is string => !!p);
 
-      return { ok: true, data, bannerPath, repListingPaths, screenshotPath };
+      return { ok: true, data, bannerPath, repListingPaths, screenshotPath, ehuntBarPath };
     } finally {
       await page.close().catch(() => {});
     }
