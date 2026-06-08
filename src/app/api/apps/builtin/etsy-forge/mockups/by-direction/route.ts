@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runDirectionMockup } from '@/lib/etsy-forge/composer';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
-import { COLLECTIONS, type ProductRow } from '@/lib/etsy-forge/types';
+import { COLLECTIONS, type ManualProductRow, type ProductRow } from '@/lib/etsy-forge/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,8 +21,10 @@ export async function POST(req: NextRequest) {
 
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
-    const product = store.get<ProductRow>(COLLECTIONS.PRODUCTS, productId);
-    if (!product || product.user_id !== userId) return NextResponse.json({ error: '商品不存在' }, { status: 404 });
+    // 采集商品或手攒产品都可,只校验归属。
+    const isCollected = store.get<ProductRow>(COLLECTIONS.PRODUCTS, productId)?.user_id === userId;
+    const isManual = store.get<ManualProductRow>(COLLECTIONS.MANUAL_PRODUCTS, productId)?.user_id === userId;
+    if (!isCollected && !isManual) return NextResponse.json({ error: '商品不存在' }, { status: 404 });
     if (!resolveProviderForCapability({ moduleKey: 'image', capability: 'image-gen', allowDefault: false })) {
       return NextResponse.json({ error: '未配置图片服务商(去「设置 → 图片生成」选一个)' }, { status: 400 });
     }

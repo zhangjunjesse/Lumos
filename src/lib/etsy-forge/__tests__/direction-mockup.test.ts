@@ -37,6 +37,10 @@ function addCutout(store: AppDataStore, productId: string, path: string): void {
 function addRemixDesign(store: AppDataStore, productId: string, path: string): void {
   store.create(COLLECTIONS.ASSETS, { user_id: U, category: 'remix', product_id: productId, image_path: path, status: 'success', created_at: new Date().toISOString() });
 }
+function makeManualProduct(store: AppDataStore): string {
+  const p = store.create(COLLECTIONS.MANUAL_PRODUCTS, { user_id: U, name: '手攒产品', created_at: new Date().toISOString() });
+  return p.id as string;
+}
 
 describe('resolveDirectionBase（选源印花）', () => {
   it('没印花、没设计、没传 → null', () => {
@@ -104,5 +108,14 @@ describe('runDirectionMockup（守卫)', () => {
     const r = await runDirectionMockup(store, { userId: 'someone-else', productId: makeProduct(store), directionCode: 'B' });
     expect(r.ok).toBe(false);
     expect(r.error).toContain('商品不存在');
+  });
+
+  it('手攒产品(MANUAL_PRODUCTS)也认归属——不报「商品不存在」', async () => {
+    const store = setup();
+    // 用不存在的方向,归属过了就该卡在方向校验,而不是「商品不存在」。
+    const r = await runDirectionMockup(store, { userId: U, productId: makeManualProduct(store), directionCode: 'ZZZ' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('不存在');
+    expect(r.error).not.toContain('商品');
   });
 });

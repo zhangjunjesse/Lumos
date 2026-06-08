@@ -9,7 +9,7 @@ import { loadImageAsBase64, type FetchedImage } from './image-fetch';
 import { listStrategies } from './remix-strategies';
 import { startMockupJob, finishMockupJob } from './mockup-jobs';
 import { prepareMerge, mergeOneProduct } from './product-merge';
-import { COLLECTIONS, type AssetRow, type CutoutRow, type MockupRow, type ProductRow } from './types';
+import { COLLECTIONS, type AssetRow, type CutoutRow, type ManualProductRow, type MockupRow, type ProductRow } from './types';
 
 const TIMEOUT_MS = 600_000;
 
@@ -163,8 +163,10 @@ export async function runDirectionMockup(
   store: AppDataStore,
   input: { userId: string; productId: string; directionCode: string; baseRef?: string },
 ): Promise<{ ok: boolean; error?: string }> {
-  const product = store.get<ProductRow>(COLLECTIONS.PRODUCTS, input.productId);
-  if (!product || product.user_id !== input.userId) return { ok: false, error: '商品不存在' };
+  // 采集商品(PRODUCTS)或手攒产品(MANUAL_PRODUCTS)都可,只校验归属。
+  const isCollected = store.get<ProductRow>(COLLECTIONS.PRODUCTS, input.productId)?.user_id === input.userId;
+  const isManual = store.get<ManualProductRow>(COLLECTIONS.MANUAL_PRODUCTS, input.productId)?.user_id === input.userId;
+  if (!isCollected && !isManual) return { ok: false, error: '商品不存在' };
 
   const dir = listStrategies(store, input.userId).find((s) => s.code === input.directionCode && s.enabled);
   if (!dir) return { ok: false, error: `方向「${input.directionCode}」不存在或已停用` };
