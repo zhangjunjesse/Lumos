@@ -177,8 +177,7 @@ export interface ShopRow extends Record<string, unknown> {
   banner_path?: string; // 装修:banner 图(本地)
   rep_listing_paths?: string[]; // 装修:代表 listing 缩略图(本地)
   homepage_screenshot_path?: string; // 装修:整店首页截图(本地)
-  ehunt_json?: string; // 店铺级 EHunt 原始文本(抓到才有)
-  ehunt_bar_path?: string; // 店铺级 EHunt:注入 bar 元素截图(本地),直接展示这条原始长 bar
+  ehunt_json?: string; // 店铺级 EHunt 原始文本(抓到才有),前端解析成干净的指标 bar
   ehunt_status: ShopEhuntStatus; // unavailable=未接入
   collect_status: ShopCollectStatus;
   failure_reason?: string;

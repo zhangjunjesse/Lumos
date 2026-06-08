@@ -19,12 +19,24 @@ export interface ShopPageData {
 }
 
 export async function scrapeShopPage(page: import('playwright').Page): Promise<ShopPageData> {
-  // EHunt 若在店铺页注入,和搜索页一样是异步的:先等元素出现(没有就算了,标未接入),
-  // 出现后 EHunt 还会逐个补字段(销量→收藏→周销→上架),再多等一下,避免读早了只读到前两个。
+  // EHunt 若在店铺页注入,和搜索页一样是异步的:先等元素出现(没有就算了,标未接入)。
   await page
     .waitForFunction(() => document.querySelectorAll('.eh-mask-info-fetched-item').length > 0, { timeout: 8_000 })
     .catch(() => {});
-  await page.waitForTimeout(2_500);
+  // EHunt 出现后还会逐个补字段(销量→收藏→周销→上架):轮询到文本稳定(连续 3 次不变)再读,确保四个字段填全。
+  await page
+    .evaluate(async () => {
+      const read = () => (document.querySelector('.eh-mask-info-fetched-item')?.textContent || '').trim();
+      let prev = '';
+      let same = 0;
+      for (let i = 0; i < 25 && same < 3; i++) {
+        await new Promise((r) => setTimeout(r, 400));
+        const cur = read();
+        same = cur && cur === prev ? same + 1 : 0;
+        prev = cur;
+      }
+    })
+    .catch(() => {});
 
   return page.evaluate((cap: number): ShopPageData => {
     const txt = (el: Element | null) => (el?.textContent || '').trim().replace(/\s+/g, ' ');
@@ -104,8 +116,13 @@ export async function scrapeShopPage(page: import('playwright').Page): Promise<S
       if (repListingUrls.length >= cap) break;
     }
 
-    const eh = document.querySelector('.eh-mask-info-fetched-item');
-    const ehuntRaw = eh ? (eh.textContent || '').trim().slice(0, 600) || null : null;
+    // EHunt 文本:取含数据(销量/收藏)且最长的那个注入元素,防字段分散在多个节点只读到一半。
+    let ehBest = '';
+    for (const el of Array.from(document.querySelectorAll('.eh-mask-info-fetched-item, [class*="eh-mask"], [class*="eh-shop"]'))) {
+      const t = (el.textContent || '').trim();
+      if (/sales|favorit|listed|销量|收藏|上架/i.test(t) && t.length > ehBest.length) ehBest = t;
+    }
+    const ehuntRaw = ehBest ? ehBest.slice(0, 600) : null;
 
     return {
       shopName,
