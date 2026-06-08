@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { etsyForgeApi, type AssetItem, type ManualProduct, type MockupItem } from '../api-client';
 import { ImageLightbox } from './ImageLightbox';
-import { ProductImageCard } from './ProductImageCard';
+import { ProductImageCard, ProductCardSkeleton } from './ProductImageCard';
 import { ProductMockupModal } from './ProductMockupModal';
 import { ProductComposer, type RefImage } from './ProductComposer';
 import { DirectionShotButton, type DirectionSource } from './DirectionShotButton';
@@ -33,6 +33,7 @@ export function ProductTab() {
   const [mockups, setMockups] = useState<MockupItem[]>([]);
   const [manualProducts, setManualProducts] = useState<ManualProduct[]>([]);
   const [pending, setPending] = useState(0);
+  const [pendingByProduct, setPendingByProduct] = useState<Record<string, number>>({}); // 每个产品在途生成数 → 行内占位格子
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
@@ -66,6 +67,7 @@ export function ProductTab() {
       const n = await load();
       if (n >= baseline + pending) {
         setPending(0);
+        setPendingByProduct({}); // 全部落库 → 清掉占位格子
         setMsg(`完成，新出 ${pending} 张`);
       }
     }, 5000);
@@ -127,10 +129,11 @@ export function ProductTab() {
     return [...map.values()].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [mockups, manualProducts]);
 
-  const onStarted = () => {
+  const onStarted = (productId?: string) => {
     setMsg('已发起生成，后台跑，稍等出现在这一行。');
     setError(null);
     setPending((p) => p + 1);
+    if (productId) setPendingByProduct((m) => ({ ...m, [productId]: (m[productId] || 0) + 1 }));
     window.dispatchEvent(new Event('etsy-mockup-started')); // 通知右下角「任务」浮层立即刷新
   };
 
@@ -224,6 +227,7 @@ export function ProductTab() {
             const open = composerFor === g.key;
             const items = applyView(g.items); // 应用评分筛选/排序
             const bases = g.productId ? basesForDirection(g, originDesign) : []; // 可用底图(印花/二创印花),手攒产品也算
+            const ph = g.productId ? pendingByProduct[g.productId] || 0 : 0; // 在途生成数 → 行内占位格子
             return (
               <div key={g.key} className="p-3">
                 <div className="flex items-start gap-3">
@@ -244,7 +248,7 @@ export function ProductTab() {
                       {open ? '收起' : '微调 ▾'}
                     </Button>
                     {g.productId && bases.length > 0 && (
-                      <DirectionShotButton productId={g.productId} bases={bases} onStarted={onStarted} onError={setError} />
+                      <DirectionShotButton productId={g.productId} bases={bases} onStarted={() => onStarted(g.productId ?? undefined)} onError={setError} />
                     )}
                     {g.isManual && (
                       <button type="button" onClick={() => void removeManualProduct(g.key)} className="text-[11px] text-destructive hover:underline">
@@ -254,27 +258,32 @@ export function ProductTab() {
                   </div>
                   <div className="w-px shrink-0 self-stretch bg-border" />
                   <div className="flex flex-1 flex-wrap gap-2">
-                    {g.items.length === 0 ? (
+                    {g.items.length === 0 && ph === 0 ? (
                       <p className="self-center text-xs text-muted-foreground">还没有图，用右下生成条做第一张。</p>
-                    ) : items.length === 0 ? (
+                    ) : items.length === 0 && ph === 0 ? (
                       <p className="self-center text-xs text-muted-foreground">本组没有 ≥{minScore} 分的图。</p>
                     ) : (
-                      items.map((m) => (
-                        <ProductImageCard
-                          key={m.id}
-                          m={m}
-                          size={THUMB_SIZES[sizeIdx]}
-                          retrying={retryingIds.has(m.id)}
-                          onOpen={() => setDetailIdx(viewable.findIndex((v) => v.id === m.id))}
-                          onDelete={() => void removeMockup(m.id)}
-                          onScore={(n) => rate(m.id, n)}
-                        />
-                      ))
+                      <>
+                        {items.map((m) => (
+                          <ProductImageCard
+                            key={m.id}
+                            m={m}
+                            size={THUMB_SIZES[sizeIdx]}
+                            retrying={retryingIds.has(m.id)}
+                            onOpen={() => setDetailIdx(viewable.findIndex((v) => v.id === m.id))}
+                            onDelete={() => void removeMockup(m.id)}
+                            onScore={(n) => rate(m.id, n)}
+                          />
+                        ))}
+                        {Array.from({ length: ph }).map((_, i) => (
+                          <ProductCardSkeleton key={`ph-${i}`} size={THUMB_SIZES[sizeIdx]} />
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
                 {open && g.productId && (
-                  <ProductComposer productId={g.productId} defaultRefs={refsForGroup(g, originDesign)} libraryRefs={libraryRefs} onStarted={onStarted} onError={setError} onZoom={setZoom} />
+                  <ProductComposer productId={g.productId} defaultRefs={refsForGroup(g, originDesign)} libraryRefs={libraryRefs} onStarted={() => onStarted(g.productId ?? undefined)} onError={setError} onZoom={setZoom} />
                 )}
               </div>
             );

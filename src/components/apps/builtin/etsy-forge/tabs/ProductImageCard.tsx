@@ -56,3 +56,15 @@ export function ProductImageCard({
     </div>
   );
 }
+
+// 生成中的占位骨架格子(尺寸与 ProductImageCard 一致)。
+export function ProductCardSkeleton({ size }: { size: number }) {
+  return (
+    <div
+      style={{ width: size, height: size }}
+      className="flex shrink-0 animate-pulse items-center justify-center rounded border border-dashed bg-muted/40 text-[10px] text-muted-foreground"
+    >
+      生成中…
+    </div>
+  );
+}
