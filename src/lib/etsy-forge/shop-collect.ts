@@ -33,8 +33,7 @@ function applyShopData(store: AppDataStore, shopId: string, prev: ShopRow, r: Sh
     rep_listing_paths: r.repListingPaths,
     homepage_screenshot_path: r.screenshotPath,
     ehunt_json: d.ehuntRaw ? JSON.stringify({ raw: d.ehuntRaw }) : undefined,
-    ehunt_bar_path: r.ehuntBarPath,
-    ehunt_status: d.ehuntRaw || r.ehuntBarPath ? 'success' : 'unavailable',
+    ehunt_status: d.ehuntRaw ? 'success' : 'unavailable',
     collect_status: 'success',
     failure_reason: '',
     source_product_ids: ids,
@@ -76,7 +75,7 @@ export async function runShopCollect(store: AppDataStore, userId: string, produc
     throw new Error(r.failureReason || '店铺采集失败');
   }
   applyShopData(store, row.id, row, r, productId);
-  return `店铺「${r.data.shopName ?? key}」已采 · EHunt ${r.data.ehuntRaw || r.ehuntBarPath ? '✓' : '未接入'}`;
+  return `店铺「${r.data.shopName ?? key}」已采 · EHunt ${r.data.ehuntRaw ? '✓' : '未接入'}`;
 }
 
 /** 店铺卡「重采」:按已存 shop.url 重新采(刷新基本信息/装修/EHunt bar),不经商品。 */

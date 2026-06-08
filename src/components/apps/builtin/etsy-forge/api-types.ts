@@ -347,7 +347,6 @@ export interface Shop {
   screenshot: string | null; // 装修:整店首页截图
   ehunt_status: 'idle' | 'success' | 'failed' | 'unavailable';
   ehunt: { raw?: string } | null;
-  ehunt_bar: string | null; // EHunt 原始 bar 截图(已转 /api/media/serve),优先展示这个
   collect_status: 'idle' | 'running' | 'success' | 'partial' | 'failed';
   failure_reason: string | null;
   product_count: number;

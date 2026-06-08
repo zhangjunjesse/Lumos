@@ -14,26 +14,38 @@ function Chip({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-// EHunt 区:优先直接展示注入的原始 bar 截图;没截到才退回原文;都没有=明确状态(不编数)。
-function EhuntBlock({ shop, onZoom }: { shop: Shop; onZoom: (u: string) => void }) {
-  if (shop.ehunt_bar) {
+// EHunt 原始文本解析成字段(中英兼容);识别不出就整段保留。
+function parseEhuntBar(raw: string): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  const sales = raw.match(/(?:total sales|sales|总销量|销量)[:：\s]*([\d,]+)\s*(?:\(([\d,]+)\))?/i);
+  if (sales) out.push({ label: 'Sales', value: sales[1] + (sales[2] ? `(${sales[2]})` : '') });
+  const fav = raw.match(/(?:favorit[a-z]*|收藏量?)[:：\s]*([\d.,]+\s*[kKmM]?)/i);
+  if (fav) out.push({ label: 'Favorites', value: fav[1].trim() });
+  const weekly = raw.match(/(?:store\s*)?weekly sales[:：\s]*([\d,]+)/i) ?? raw.match(/周销量?[:：\s]*([\d,]+)/);
+  if (weekly) out.push({ label: '周销', value: weekly[1] });
+  const listed = raw.match(/(?:listed|上架(?:日期|时间)?)[:：\s]*([\d/.\-]+)/i);
+  if (listed) out.push({ label: '上架', value: listed[1] });
+  return out;
+}
+
+// EHunt 区:抓到原文 → 解析成干净的绿字深底 bar(EHunt 招牌样式);没原文 → 明确状态(不编数)。
+function EhuntBlock({ shop }: { shop: Shop }) {
+  const raw = shop.ehunt_status === 'success' ? shop.ehunt?.raw ?? '' : '';
+  if (raw) {
+    const fields = parseEhuntBar(raw);
     return (
-      <button
-        type="button"
-        onClick={() => onZoom(shop.ehunt_bar as string)}
-        title="EHunt 店铺 bar(点击放大)"
-        className="block w-full overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={shop.ehunt_bar} alt="EHunt 店铺指标" className="w-full object-contain" />
-      </button>
-    );
-  }
-  if (shop.ehunt_status === 'success' && shop.ehunt?.raw) {
-    return (
-      <div className="rounded border bg-muted/20 p-2">
-        <div className="mb-1 text-[10px] font-medium text-muted-foreground">EHunt 店铺指标</div>
-        <pre className="whitespace-pre-wrap break-words text-xs leading-snug">{shop.ehunt.raw}</pre>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-neutral-900 px-3 py-2">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-lime-400/60">EHunt</span>
+        {fields.length > 0 ? (
+          fields.map((f) => (
+            <span key={f.label} className="text-sm text-lime-400">
+              <span className="text-lime-400/60">{f.label} </span>
+              <span className="font-semibold tabular-nums">{f.value}</span>
+            </span>
+          ))
+        ) : (
+          <span className="text-sm text-lime-400">{raw}</span>
+        )}
       </div>
     );
   }
@@ -134,7 +146,7 @@ export function ShopCard({
       </div>
 
       <div className="mt-3">
-        <EhuntBlock shop={shop} onZoom={onZoom} />
+        <EhuntBlock shop={shop} />
       </div>
 
       {shop.announcement && <p className="mt-3 line-clamp-3 text-xs text-muted-foreground">{shop.announcement}</p>}

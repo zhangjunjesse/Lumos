@@ -19,10 +19,12 @@ export interface ShopPageData {
 }
 
 export async function scrapeShopPage(page: import('playwright').Page): Promise<ShopPageData> {
-  // EHunt 若在店铺页注入,和搜索页一样是异步的:给一小段时间等(没有就算了,标未接入)。
+  // EHunt 若在店铺页注入,和搜索页一样是异步的:先等元素出现(没有就算了,标未接入),
+  // 出现后 EHunt 还会逐个补字段(销量→收藏→周销→上架),再多等一下,避免读早了只读到前两个。
   await page
     .waitForFunction(() => document.querySelectorAll('.eh-mask-info-fetched-item').length > 0, { timeout: 8_000 })
     .catch(() => {});
+  await page.waitForTimeout(2_500);
 
   return page.evaluate((cap: number): ShopPageData => {
     const txt = (el: Element | null) => (el?.textContent || '').trim().replace(/\s+/g, ' ');
