@@ -142,7 +142,7 @@ export function ShopCard({
         <Chip label="总销量" value={shop.total_sales} />
         <Chip label="评价数" value={shop.review_count} />
         <Chip label="评分" value={shop.review_rating} />
-        <Chip label="开店年份" value={shop.since_year} />
+        <Chip label="开店时长" value={shop.since_year} />
       </div>
 
       <div className="mt-3">

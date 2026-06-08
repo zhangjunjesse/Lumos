@@ -51,20 +51,41 @@ export async function scrapeShopPage(page: import('playwright').Page): Promise<S
       bannerUrl = m ? m[1] : null;
     }
 
-    const salesM =
-      bodyText.match(/([\d,]+)\s*(?:Sales|sales)/) || bodyText.match(/(?:销量|Sales)[:：\s]*([\d,]+)/);
-    const totalSales = salesM ? salesM[1].replace(/,/g, '') : null;
+    // 店铺头部摘要行:取含 "sales" 且 "on Etsy" 的最小元素(避免在整页里抓到评论区 "5 stars"、页脚年份之类垃圾)。
+    let header = '';
+    for (const el of Array.from(document.querySelectorAll('header,section,div,span,p'))) {
+      const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t.length <= 160 && /\bsales\b/i.test(t) && /on Etsy/i.test(t)) {
+        header = t;
+        break;
+      }
+    }
+    const scope = header || bodyText;
 
-    const revM = bodyText.match(/([\d,]+)\s*reviews?/i) || bodyText.match(/(?:评价|评论)[:：\s]*([\d,]+)/);
-    const reviewCount = revM ? revM[1].replace(/,/g, '') : null;
-    const rateM = bodyText.match(/([\d.]+)\s*(?:out of 5|\/\s*5|stars)/i);
-    const reviewRating = rateM ? rateM[1] : null;
+    // 评分 + 评价数:Etsy 头部格式是 "4.9 (637)"。
+    const rr = scope.match(/(\d(?:\.\d)?)\s*\(([\d,]+)\)/);
+    const reviewRating = rr ? rr[1] : null;
+    const reviewCount = rr ? rr[2].replace(/,/g, '') : null;
 
-    const sinceM = bodyText.match(/(?:On Etsy since|since|开店于|自)\s*(\d{4})/i);
-    const sinceYear = sinceM ? sinceM[1] : null;
+    // 总销量:优先精确 "2,886 sales",否则 "2.9k sales"。
+    const salesExact = bodyText.match(/([\d,]{2,})\s*sales/i);
+    const salesK = scope.match(/([\d.]+\s*[kKmM])\s*sales/i);
+    const totalSales = salesExact ? salesExact[1].replace(/,/g, '') : salesK ? salesK[1].replace(/\s/g, '') : null;
 
-    const locM = bodyText.match(/(?:Located in|Ships from|位于)\s*([A-Za-z .,'-]{2,60})/);
-    const location = locM ? locM[1].trim() : null;
+    // 开店时长:"5 years on Etsy"。
+    const yrM = scope.match(/(\d+)\s*years?\s*on Etsy/i);
+    const sinceYear = yrM ? `${yrM[1]}年` : null;
+
+    // 地点:正好是一个 "City, Region" 的小节点("Estero, Florida"),不含数字、不在 listing 卡内,避开日期/商品标题。
+    let location: string | null = null;
+    for (const el of Array.from(document.querySelectorAll('span,div,p,a'))) {
+      if (el.closest('a[href*="/listing/"]')) continue;
+      const t = (el.textContent || '').trim();
+      if (t.length <= 40 && !/\d/.test(t) && /^[A-Z][A-Za-z.'\- ]+,\s*[A-Z][A-Za-z.'\- ]+$/.test(t)) {
+        location = t;
+        break;
+      }
+    }
 
     const announcement =
       txt(
