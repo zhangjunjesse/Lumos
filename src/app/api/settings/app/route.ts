@@ -52,6 +52,7 @@ const ALLOWED_KEYS = [
   'model_override:agent',
   'model_override:image',
   'claude_project_settings_enabled',
+  'main_agent_browser_context',
   'locale',
   'deepsearch.archive_mode',
   'lumos.github.issue_repo',

@@ -25,6 +25,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { formatAdsPowerProfileNotes, getAdsPowerProfileGroup, getAdsPowerProfileSerialNumber } from "@/lib/browser-provider/adspower-metadata";
+import { MainAgentBrowserSelect } from "./MainAgentBrowserSelect";
 import { Check, Edit2, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import type {
   BrowserProfileSummary,
@@ -667,6 +668,8 @@ export function BrowserProviderSection() {
                 </div>
               </div>
             </div>
+
+            <MainAgentBrowserSelect configs={configs} />
 
             {error && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">

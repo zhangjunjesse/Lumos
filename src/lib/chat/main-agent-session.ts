@@ -1,4 +1,5 @@
-import { createSession, getAllSessions, updateSessionStatus, getSetting } from '@/lib/db';
+import { createSession, getAllSessions, updateSessionStatus, getSetting, updateSessionBrowserContext } from '@/lib/db';
+import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { isMainAgentSession, withSessionEntryMarker } from './session-entry';
 import { localDayKey, resolveTimezone } from '@/lib/memory-v2/day-window';
 import type { ChatSession } from '@/types';
@@ -78,6 +79,20 @@ export function archiveOldActiveMainAgentSessions(beforeDay: string): string[] {
   return archived;
 }
 
+const MAIN_AGENT_BROWSER_KEY = 'main_agent_browser_context';
+
+// 主 Agent 每日新建会话时套用的默认浏览器 context。
+// 未配置 / 选了内置 / 配置已失效（profile 删了或停用）→ 返回空，走内置浏览器，向后兼容。
+function resolveMainAgentDefaultBrowserContext(): string {
+  const raw = (getSetting(MAIN_AGENT_BROWSER_KEY) || '').trim();
+  if (!raw || raw === 'embedded:default') return '';
+  try {
+    return validateBrowserContextId(raw);
+  } catch {
+    return '';
+  }
+}
+
 export function resolveMainAgentSession(
   options: { createIfMissing?: boolean } = {},
 ): ChatSession | null {
@@ -87,9 +102,15 @@ export function resolveMainAgentSession(
   if (!options.createIfMissing) return null;
   // 一次切日：先归档所有旧的 active 主 agent session，再建今天的（标题=日期）。
   archiveOldActiveMainAgentSessions(today);
-  return createSession(
+  const session = createSession(
     today,
     undefined,
     withSessionEntryMarker(undefined, 'main-agent'),
   );
+  // 主 Agent 自动建会话、自动运行，没人手动选浏览器；新会话套用用户配置的默认浏览器。
+  const browserContext = resolveMainAgentDefaultBrowserContext();
+  if (browserContext) {
+    updateSessionBrowserContext(session.id, browserContext);
+  }
+  return session;
 }
