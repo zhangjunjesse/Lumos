@@ -33,7 +33,8 @@ async function loadRef(ref: string): Promise<FetchedImage> {
 }
 
 // 生成核心:参考图(可空=纯文生图) + 提示词 → 一张图,返回本地路径(失败抛)。
-async function generateFromRefs(prompt: string, references: string[]): Promise<string> {
+// 导出复用:产品开发「图片」子 tab 的按角色生成也走这条核心(与产品解耦)。
+export async function generateFromRefs(prompt: string, references: string[]): Promise<string> {
   const refs: FetchedImage[] = [];
   for (const r of references) {
     try {

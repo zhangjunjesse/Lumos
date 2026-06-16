@@ -10,7 +10,12 @@
     "在「运行结果」页查看每次列表采集 / 详情采集的批次记录：关键词、找到商品数、EHunt 命中数、采集详情图数、失败原因。",
     "EHunt 指标只有在 AdsPower 上下文 + 页面检测到 EHunt 时才有；缺 AdsPower / 缺扩展 / 未登录 Etsy / Browser Bridge 未连时，采集状态如实显示 not_adspower / no_ehunt / bridge_unavailable / needs_login，绝不用 mock 数据冒充。",
     "采集到的商品图仅作选品研究参考，应用不提供把它们直接上架到 Etsy/Shopify 的能力（避免 DMCA 侵权）。",
-    "自动化页可开启「关键词采集巡更」，按调度对 enabled 的关键词任务定时跑列表采集。"
+    "自动化页可开启「关键词采集巡更」，按调度对 enabled 的关键词任务定时跑列表采集。",
+    "在「产品开发」页把已出图的产品装配成完整可上架 listing：用 table 管理在研产品(状态/完整度)，进详情按子 tab 维护 Etsy 全量属性(文案/按角色配图/价格变体/类目属性/物流)。",
+    "在产品开发的「图片」子 tab，按权威 SOP(etsy_product_mockup_sop)批量出商品图：印花是唯一进 reference 的真图，模特/场景/姿势只「读图→文字方向」由 AI 生成全新人/景(合规不抄袭)；用户(分 tab)选 T 恤颜色集 + 风格(手机随拍/专业棚拍/复古/极简等单选)+ 输出类型 + 可选方向参考(来源含图库素材与采集的原始商品图，均只读图取方向不抄像素)；prompt 强制印花随褶皱变形受光、线色随衣深浅、多色不克隆。结果进商品图结果库，可逐张精修(按指令再出一张)、设主图、删除，也可挑已有自有图或上传(尺码图/包装图)。右下浮层看进度，成功追加进结果库、失败显示真实原因。",
+    "产品开发的 listing 图只能选用户自有生成图(产品图/自有素材)，采集来的同行图与同行印花/模特抠图在选图器里不可选(DMCA)。",
+    "在文案子 tab 可一键生成 AI 文案草稿(看本产品自有主图 + 已采同行关键词/评论情报)，草稿落暂存，用户「采用」才写入正式字段，绝不自动提交、绝不照搬同行原文。",
+    "产品开发的终点是完整度门禁 + 逐字段复制 / 导出 JSON·CSV，由用户手动到 Etsy 上架；应用不调用任何 Etsy 写接口、不自动发布。"
   ],
   "status": {
     "states": ["not_configured", "needs_auth", "ready", "syncing", "running", "failed", "not_connected"],
@@ -34,6 +39,9 @@
       "etsy_forge_products",
       "etsy_forge_images",
       "etsy_forge_runs",
+      "etsy_forge_listings",
+      "etsy_forge_listing_photo_jobs",
+      "etsy_forge_extra_prompts",
       "app_settings",
       "app_automations",
       "run_history",
@@ -45,10 +53,11 @@
     "reusableStores": ["settings", "run_history", "notifications", "command_runs"]
   },
   "ai": {
-    "enabled": false,
+    "enabled": true,
     "promptSettings": true,
     "draftBeforeWrite": true,
-    "visibleFailureHandling": true
+    "visibleFailureHandling": true,
+    "usage": "采集本身不用 AI；产品开发的「AI 文案草稿」用识图+文本服务商，基于本产品自有图与选品情报生成 title/description/tags/materials 草稿，草稿优先(落 copy_draft，用户采用才写正式字段)，失败如实显示原因不 mock。"
   },
   "automations": {
     "enabled": true,
@@ -89,7 +98,9 @@
       "绕过 Etsy 反爬（自建 transaction-id / IP 池 / 模拟点击）",
       "为该应用单独修改 BrowserManager / 全局浏览器基础设施（必须走 browser-provider）",
       "Browser Bridge 未连 / 非 AdsPower / 未装 EHunt 时用 mock 数据冒充采集成功",
-      "调用任何图片生成服务商烧 AI 配额（本应用是纯爬取工具，不生图）"
+      "在产品开发里用采集来的同行图 / 同行印花·模特抠图作为自己 listing 的图（DMCA 侵权；选图器只允许用户自有生成图）",
+      "替用户自动上架到 Etsy / 调用 Etsy 写接口发布（产品开发只做装配 + 导出 / 复制，上架由用户手动完成）",
+      "把 AI 文案草稿自动写入正式字段或照搬同行 listing 原文（草稿优先，用户采用才生效）"
     ]
   },
   "acceptance": [
@@ -106,6 +117,19 @@
     { "id": "review-automations", "label": "查看自动化", "howToVerify": "自动化页能看到「关键词采集巡更」；可立即运行 / 暂停；结果写入 run_history。" },
     { "id": "review-im-commands", "label": "查看 IM 命令", "howToVerify": "通知命令页能看到 /etsy-forge status|runs|products|library；高风险命令（清空 / 批量爬）回到应用内确认。" },
     { "id": "review-run-history", "label": "查看运行结果", "howToVerify": "运行结果页能看到每次列表 / 详情采集批次：关键词、商品数、EHunt 命中数、详情图数、失败原因。" },
-    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页改采集浏览器 / 默认爬取数 / 详情图下载开关并保存，再次打开仍在。" }
+    { "id": "save-settings", "label": "保存设置", "howToVerify": "在设置页改采集浏览器 / 默认爬取数 / 详情图下载开关并保存，再次打开仍在。" },
+    { "id": "dev-create-listing", "label": "产品开发：新建/导入产品", "howToVerify": "产品开发页能「新建空白产品」与「从产品图新建」(挑一张已出图的产品图，预填该图为主图 + 它的印花为细节图，不塞别的产品)，列表 table 出现该产品，显示状态 / 完整度 / 图数 / 变体 / 价格。" },
+    { "id": "dev-edit-attributes", "label": "产品开发：维护 Etsy 全量属性", "howToVerify": "进详情 7 子 tab(概览/文案/图片/价格变体/类目属性/物流/导出)逐项编辑并自动落库；刷新后内容仍在。" },
+    { "id": "dev-photos-own-only", "label": "产品开发：listing 图仅自有(DMCA)", "howToVerify": "图片子 tab 的选图器只列用户自有生成图(产品图/自有素材)，采集同行图与同行印花·模特抠图不出现，并有 DMCA 说明。" },
+    { "id": "dev-photo-batch", "label": "产品开发：按 SOP 批量出商品图", "howToVerify": "图片子 tab 选 T 恤颜色集 + 输出类型(模特上身[张数可调,默认4,SOP §2 要 3-4]/场景氛围/设计特写/平铺主图)，点「生成这批」异步起一批任务、右下浮层显示进度，完成后图追加进结果库；没印花 / 没选颜色 / 没选输出 都给出提示；没配图片服务商显示真实失败原因不 mock。" },
+    { "id": "dev-photo-sop-method", "label": "产品开发：图片生成对齐 SOP 四铁律", "howToVerify": "① 每张只用印花当 reference(单图单参考)，不喂模特/场景像素；② 模特/场景/姿势方向参考走 vision「读图→文字」注入 prompt(没识图服务商则用内置多样化默认)；③ prompt 含印花随褶皱变形受光约束(防贴纸感)；④ 多色每张换人换景不克隆；线色深衣白/浅衣深。对照 SOP 文档 §1-§4 核对。" },
+    { "id": "dev-photo-direction-refs", "label": "产品开发：方向参考(图库+采集原图,只读不抄)", "howToVerify": "方向参考 tab 的模特/场景/姿势可从「图库 AI 素材」与「采集的原始商品图」里挑；选中的图只进 vision「读图→文字方向」注入 prompt，绝不进 reference_image_paths、绝不出现在结果像素里(SOP 铁律2)；设印花仍只用自有图(只有印花进 reference)。" },
+    { "id": "dev-photo-style", "label": "产品开发：风格可选", "howToVerify": "风格 tab 单选(手机随拍/专业棚拍/复古/户外/居家/极简/暗调/街头)，所选风格 fragment 注入模特/场景图 prompt；平铺主图与设计特写不受风格影响保持干净。" },
+    { "id": "dev-photo-extra", "label": "产品开发：额外要求自由输入+常用库", "howToVerify": "额外要求 tab 输入自由文本(如「模特戴渔夫帽」)，生成时追加进模特/场景/特写/平铺每张图的提示词;留空则不加。可「保存为常用」存入常用库(同文本去重),常用项以 chip 列出，点击载入到输入框、× 删除;刷新后仍在(落 etsy_forge_extra_prompts)。" },
+    { "id": "dev-photo-refine", "label": "产品开发：逐张精修", "howToVerify": "商品图结果库每张可「精修」：给一句修改指令，对该图 img2img 再出一张(作为新图进库、原图保留)；可设主图/删除/挑图/上传补图。" },
+    { "id": "dev-photo-zoom-chat", "label": "产品开发：放大 + 加到创作助手 + 回流", "howToVerify": "商品图点击放大(lightbox);商品图与方向参考图(含采集原图)都能「＋加到创作助手」;创作助手出的图会出现在「挑图」置顶,并由图库上方横幅一键「全部加入」回流;批量生成的图自动进结果库。" },
+    { "id": "dev-ai-draft", "label": "产品开发：AI 文案草稿(草稿优先)", "howToVerify": "文案子 tab 点「生成草稿」落 copy_draft 并展示；只有点「采用」才写入正式字段；无主图 / 无识图服务商时显示真实失败原因，不 mock。" },
+    { "id": "dev-ready-gate", "label": "产品开发：待上架门禁", "howToVerify": "必填项缺时「标记待上架」禁用并列出缺项；填齐后可转 ready；完整度百分比随填写变化。" },
+    { "id": "dev-export-manual-list", "label": "产品开发：导出 / 手动上架", "howToVerify": "导出子 tab 可逐字段复制、导出 JSON·CSV；填 Etsy 链接后可「标记已上架」转 listed；全程不调用任何 Etsy 写接口。" }
   ]
 }

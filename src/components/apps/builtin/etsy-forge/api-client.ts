@@ -30,9 +30,10 @@ import type {
   PreviewResult
 } from './api-types';
 
-const BASE = '/api/apps/builtin/etsy-forge';
+// 导出给拆分出去的子客户端复用(如 develop/listing-api.ts),避免重复 fetch 样板。
+export const BASE = '/api/apps/builtin/etsy-forge';
 
-async function jf<T>(url: string, init?: RequestInit): Promise<T> {
+export async function jf<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },

@@ -12,13 +12,14 @@ import { LibraryTab } from './tabs/LibraryTab';
 import { ShopsTab } from './tabs/ShopsTab';
 import { AssetsTab } from './tabs/AssetsTab';
 import { ProductTab } from './tabs/ProductTab';
+import { DevelopTab } from './tabs/DevelopTab';
 import { WarehouseTab } from './tabs/WarehouseTab';
 import { CreationDock } from './CreationDock';
 import { SopTaskDock } from './SopTaskDock';
 import { LogsTab } from './tabs/LogsTab';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type TabValue = 'tasks' | 'products' | 'library' | 'shops' | 'assets' | 'product' | 'warehouse' | 'logs' | 'settings';
+type TabValue = 'tasks' | 'products' | 'library' | 'shops' | 'assets' | 'product' | 'develop' | 'warehouse' | 'logs' | 'settings';
 
 export function EtsyForgeApp(): React.ReactElement {
   const [tab, setTab] = React.useState<TabValue>('tasks');
@@ -65,6 +66,9 @@ export function EtsyForgeApp(): React.ReactElement {
             <TabsTrigger value="product" className="data-[state=active]:bg-background">
               我的产品
             </TabsTrigger>
+            <TabsTrigger value="develop" className="data-[state=active]:bg-background">
+              产品开发
+            </TabsTrigger>
             <TabsTrigger value="logs" className="data-[state=active]:bg-background">
               日志
             </TabsTrigger>
@@ -95,6 +99,9 @@ export function EtsyForgeApp(): React.ReactElement {
           </TabsContent>
           <TabsContent value="product" className="m-0 px-9 py-6">
             <ProductTab />
+          </TabsContent>
+          <TabsContent value="develop" className="m-0 px-9 py-6">
+            <DevelopTab />
           </TabsContent>
           <TabsContent value="logs" className="m-0 px-9 py-6">
             <LogsTab />

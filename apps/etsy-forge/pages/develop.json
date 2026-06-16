@@ -1,0 +1,34 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "产品开发",
+  "description": "把已出图的产品装配成完整可上架的 Etsy listing：table 管理在研产品(状态/完整度)，进详情按子 tab 维护 Etsy 全量属性，最终导出/复制由用户手动上架。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "card",
+      "title": "产品开发 — 装配可上架 listing",
+      "children": [
+        {
+          "type": "markdown",
+          "content": "**完整的产品开发工作台在主界面「产品开发」tab 打开。**\n\n- 「新建空白产品」从零开始，或「从出图导入」拿已出图的产品来装配\n- 详情 7 子 tab：概览 / 文案 / 图片(按角色) / 价格与变体 / 类目与属性 / 物流 / 导出\n- listing 图只能用你自有的生成图；采集来的同行图不可作自己 listing 图（DMCA）\n- 文案可一键生成 AI 草稿（草稿优先，你采用才生效）\n- 必填项齐了才能标记「待上架」；导出 JSON·CSV / 逐字段复制，自己手动到 Etsy 上架"
+        },
+        { "type": "button", "label": "打开产品开发", "primary": true, "open": "/apps/etsy-forge" }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.etsy_forge_listings }}",
+      "columns": [
+        { "field": "internal_name", "label": "产品名", "search": true },
+        { "field": "title", "label": "标题", "search": true },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "price", "label": "价格", "sortable": true },
+        { "field": "updated_at", "label": "更新时间", "render": "date", "sortable": true }
+      ],
+      "search": { "fields": ["internal_name", "title"] },
+      "filter": [
+        { "field": "status", "options": ["draft", "developing", "ready", "listed", "archived"] }
+      ]
+    }
+  ]
+}
