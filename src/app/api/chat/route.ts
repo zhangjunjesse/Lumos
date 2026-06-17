@@ -8,7 +8,7 @@ import {
   buildAskModeAllowance,
   type ConnectorContext,
 } from '@/lib/agent-capabilities';
-import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs } from '@/lib/db';
+import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs, scheduleSessionAutoContinue, stopSessionAutoContinue } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
@@ -34,6 +34,9 @@ import {
   prefersVisibleBrowserAction,
 } from '@/lib/browser-provider/chat-intent';
 import { isExplicitLumosBugIssueRequest } from '@/lib/lumos-issue-reporter/intent';
+import { AUTO_CONTINUE_SYSTEM_HINT, parseAutoContinueDirective, stripAutoContinueDirective } from '@/lib/chat/auto-continue-control';
+import { initSessionAutoContinueRunner } from '@/lib/chat/session-auto-continue-runner';
+import { registerSessionAutoContinueAbort, unregisterSessionAutoContinueAbort } from '@/lib/chat/session-auto-continue-abort';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -539,8 +542,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
+  initSessionAutoContinueRunner();
   let activeSessionId: string | undefined;
   let activeLockId: string | undefined;
+  let activeAutoContinueAbortController: AbortController | undefined;
 
   try {
     const body: SendMessageRequest & {
@@ -562,6 +567,7 @@ export async function POST(request: NextRequest) {
       knowledge_tag_ids,
       knowledge_overrides,
     } = body;
+    const isAutoContinueRequest = request.headers.get('x-lumos-auto-continue') === '1';
     const knowledgeEnabledForRequest = knowledge_enabled === true;
     const selectedKnowledgeTagIds = Array.isArray(knowledge_tag_ids)
       ? knowledge_tag_ids.map((tagId) => String(tagId).trim()).filter(Boolean)
@@ -660,33 +666,40 @@ export async function POST(request: NextRequest) {
       });
       savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
     }
-    const userMessageId = addMessage(session_id, 'user', savedContent).id;
-
-    try {
-      capturedActionMemory = captureExplicitMemoryV2FromUserInput({
-        sessionId: session_id,
-        projectPath: session.sdk_cwd || session.working_directory || undefined,
-        messageId: userMessageId,
-        userInput: content,
-      });
-      if (capturedActionMemory) {
-        console.log('[memory-v2] captured action memory:', {
-          id: capturedActionMemory.id,
-          kind: capturedActionMemory.kind,
-          scope: `${capturedActionMemory.scope_type}:${capturedActionMemory.scope_key}`,
-          sensitivity: capturedActionMemory.sensitivity,
-        });
-      }
-    } catch (error) {
-      console.warn('[memory-v2] Failed to capture action memory from user input:', error);
+    let userMessageId: string | undefined;
+    if (!isAutoContinueRequest) {
+      userMessageId = addMessage(session_id, 'user', savedContent).id;
     }
 
-    syncMessageToFeishu(session_id, 'user', content).catch(err =>
-      console.error('[Sync] User message sync failed:', err)
-    );
+    if (!isAutoContinueRequest && userMessageId) {
+      try {
+        capturedActionMemory = captureExplicitMemoryV2FromUserInput({
+          sessionId: session_id,
+          projectPath: session.sdk_cwd || session.working_directory || undefined,
+          messageId: userMessageId,
+          userInput: content,
+        });
+        if (capturedActionMemory) {
+          console.log('[memory-v2] captured action memory:', {
+            id: capturedActionMemory.id,
+            kind: capturedActionMemory.kind,
+            scope: `${capturedActionMemory.scope_type}:${capturedActionMemory.scope_key}`,
+            sensitivity: capturedActionMemory.sensitivity,
+          });
+        }
+      } catch (error) {
+        console.warn('[memory-v2] Failed to capture action memory from user input:', error);
+      }
+    }
+
+    if (!isAutoContinueRequest) {
+      syncMessageToFeishu(session_id, 'user', content).catch(err =>
+        console.error('[Sync] User message sync failed:', err)
+      );
+    }
 
     // Auto-generate title from first message if still default
-    if (session.title === 'New Chat') {
+    if (!isAutoContinueRequest && session.title === 'New Chat') {
       const title = content.slice(0, 50) + (content.length > 50 ? '...' : '');
       updateSessionTitle(session_id, title);
       // Best-effort: sync auto-title to Feishu group name
@@ -787,6 +800,11 @@ export async function POST(request: NextRequest) {
       abortController.abort();
     });
 
+    if (isAutoContinueRequest) {
+      registerSessionAutoContinueAbort(session_id, abortController);
+      activeAutoContinueAbortController = abortController;
+    }
+
     // Convert file attachments to the format expected by streamClaude.
     // Include filePath from the already-saved files so claude-client can
     // reference the on-disk copies instead of writing them again.
@@ -858,8 +876,13 @@ export async function POST(request: NextRequest) {
     }
     console.timeEnd('[perf] MCP servers loading');
 
+    const shouldAllowAutoContinue = isAutoContinueRequest || session.auto_continue_enabled === 1;
+
     // Append per-request system prompt (e.g. skill injection for image generation)
     let finalSystemPrompt = systemPromptOverride || sessionSystemPrompt || undefined;
+    if (shouldAllowAutoContinue) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + AUTO_CONTINUE_SYSTEM_HINT;
+    }
     // R4 第三通道：Ask 模式工具许可由注册中心统一裁决（含微信只读工具），
     // 紧接 Ask 指令之后，与 MCP 注入/Skills 清单同源——杜绝微信再被漏。
     if (effectiveMode === 'ask') {
@@ -915,8 +938,10 @@ export async function POST(request: NextRequest) {
     // This is used when SDK session resume is unavailable or fails,
     // so the model still has conversation context.
     const { messages: recentMsgs } = getMessages(session_id, { limit: 50 });
-    // Exclude the user message we just saved (last in the list) — it's already the prompt
-    const historyMsgs = recentMsgs.slice(0, -1).map(m => ({
+    const historySource = isAutoContinueRequest ? recentMsgs : recentMsgs.slice(0, -1);
+    // Exclude the user message we just saved for normal sends — it's already the prompt.
+    // Auto-continue does not persist its internal prompt, so keep the full history.
+    const historyMsgs = historySource.map(m => ({
       role: m.role as 'user' | 'assistant',
       content: stripFeishuDirectives(m.content),
     }));
@@ -938,7 +963,7 @@ export async function POST(request: NextRequest) {
 
     const claudeStream = streamClaude({
       prompt: promptForModel,
-      rawPrompt: content,
+      rawPrompt: isAutoContinueRequest ? undefined : content,
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
@@ -978,6 +1003,7 @@ export async function POST(request: NextRequest) {
       sessionId: session_id,
       sourceUserMessageId: userMessageId,
       onComplete: () => {
+        unregisterSessionAutoContinueAbort(session_id, abortController);
         releaseSessionLock(session_id, lockId);
         setSessionRuntimeStatus(session_id, 'idle');
       },
@@ -994,6 +1020,9 @@ export async function POST(request: NextRequest) {
     // Release lock and reset status on error (only if lock was acquired)
     if (activeSessionId && activeLockId) {
       try {
+        if (activeAutoContinueAbortController) {
+          unregisterSessionAutoContinueAbort(activeSessionId, activeAutoContinueAbortController);
+        }
         releaseSessionLock(activeSessionId, activeLockId);
         setSessionRuntimeStatus(activeSessionId, 'idle', error instanceof Error ? error.message : 'Unknown error');
       } catch { /* best effort */ }
@@ -1127,13 +1156,23 @@ async function collectStreamResponse(
       // If it contains tool calls, store as structured JSON.
       const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
 
+      const textOnlyContent = contentBlocks
+        .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+        .trim();
+      const directive = parseAutoContinueDirective(textOnlyContent);
+
       const content = hasStructuredBlocks
-        ? JSON.stringify(contentBlocks)
-        : contentBlocks
-            .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
-            .map((b) => b.text)
-            .join('')
-            .trim();
+        ? JSON.stringify(
+            contentBlocks.map((block) => (
+              block.type === 'text'
+                ? { ...block, text: stripAutoContinueDirective(block.text) }
+                : block
+            )),
+          )
+        : stripAutoContinueDirective(textOnlyContent);
+
 
       if (content) {
         const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
@@ -1150,6 +1189,13 @@ async function collectStreamResponse(
           console.error('[Sync] Assistant message sync failed:', err),
         );
       }
+      if (directive) {
+        if (directive.continue) {
+          scheduleSessionAutoContinue(sessionId, directive.delaySeconds ?? 60, directive.summary || '等待下一轮自动续跑');
+        } else {
+          stopSessionAutoContinue(sessionId, directive.summary || 'AI requested stop');
+        }
+      }
     }
   } catch {
     // Stream reading error - best effort save
@@ -1158,13 +1204,22 @@ async function collectStreamResponse(
     }
     if (contentBlocks.length > 0) {
       const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
+      const textOnlyContent = contentBlocks
+        .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+        .trim();
+      const directive = parseAutoContinueDirective(textOnlyContent);
       const content = hasStructuredBlocks
-        ? JSON.stringify(contentBlocks)
-        : contentBlocks
-            .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
-            .map((b) => b.text)
-            .join('')
-            .trim();
+        ? JSON.stringify(
+            contentBlocks.map((block) => (
+              block.type === 'text'
+                ? { ...block, text: stripAutoContinueDirective(block.text) }
+                : block
+            )),
+          )
+        : stripAutoContinueDirective(textOnlyContent);
+
       if (content) {
         const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
         if (storedContent) {
@@ -1174,6 +1229,13 @@ async function collectStreamResponse(
           console.error('[Sync] Assistant message sync failed:', err),
         );
 
+      }
+      if (directive) {
+        if (directive.continue) {
+          scheduleSessionAutoContinue(sessionId, directive.delaySeconds ?? 60, directive.summary || '等待下一轮自动续跑');
+        } else {
+          stopSessionAutoContinue(sessionId, directive.summary || 'AI requested stop');
+        }
       }
     }
   } finally {

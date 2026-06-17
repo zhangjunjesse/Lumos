@@ -30,6 +30,7 @@ interface MessageListProps {
   messages: Message[];
   streamingContent: string;
   isStreaming: boolean;
+  pinStreamingStart?: boolean;
   reasoningSummaries?: string[];
   toolUses?: ToolUseInfo[];
   toolResults?: ToolResultInfo[];
@@ -50,6 +51,7 @@ export function MessageList({
   messages,
   streamingContent,
   isStreaming,
+  pinStreamingStart = false,
   reasoningSummaries = [],
   toolUses = [],
   toolResults = [],
@@ -69,6 +71,8 @@ export function MessageList({
   // Scroll anchor: preserve position when older messages are prepended
   const anchorIdRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(messages.length);
+  const latestUserMessageRef = useRef<HTMLDivElement | null>(null);
+  const wasStreamingRef = useRef(isStreaming);
 
   // Before loading more, record the first visible message ID
   const handleLoadMore = () => {
@@ -90,6 +94,15 @@ export function MessageList({
     prevMessageCountRef.current = messages.length;
   }, [messages]);
 
+  useEffect(() => {
+    if (pinStreamingStart && isStreaming && !wasStreamingRef.current) {
+      window.requestAnimationFrame(() => {
+        latestUserMessageRef.current?.scrollIntoView({ block: 'start' });
+      });
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming, pinStreamingStart]);
+
   if (messages.length === 0 && !isStreaming) {
     if (hideEmptyState) {
       return <div className="flex-1" />;
@@ -103,6 +116,14 @@ export function MessageList({
         />
       </div>
     );
+  }
+
+  let latestUserMessageId: string | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      latestUserMessageId = messages[index].id;
+      break;
+    }
   }
 
   return (
@@ -119,27 +140,36 @@ export function MessageList({
             </button>
           </div>
         )}
-        {messages.map((message) => (
-          <div key={message.id} id={`msg-${message.id}`}>
-            <MessageItem message={message} />
-            <MessageMemoryTag messageId={message.id} />
-          </div>
-        ))}
+        {messages.map((message) => {
+          const isLatestUserMessage = message.id === latestUserMessageId;
+          return (
+            <div
+              key={message.id}
+              id={`msg-${message.id}`}
+              ref={isLatestUserMessage ? latestUserMessageRef : undefined}
+            >
+              <MessageItem message={message} />
+              <MessageMemoryTag messageId={message.id} />
+            </div>
+          );
+        })}
 
         {isStreaming && (
-          <StreamingMessage
-            content={streamingContent}
-            isStreaming={isStreaming}
-            reasoningSummaries={reasoningSummaries}
-            toolUses={toolUses}
-            toolResults={toolResults}
-            streamingToolOutput={streamingToolOutput}
-            statusText={statusText}
-            pendingPermission={pendingPermission}
-            onPermissionResponse={onPermissionResponse}
-            permissionResolved={permissionResolved}
-            onForceStop={onForceStop}
-          />
+          <div>
+            <StreamingMessage
+              content={streamingContent}
+              isStreaming={isStreaming}
+              reasoningSummaries={reasoningSummaries}
+              toolUses={toolUses}
+              toolResults={toolResults}
+              streamingToolOutput={streamingToolOutput}
+              statusText={statusText}
+              pendingPermission={pendingPermission}
+              onPermissionResponse={onPermissionResponse}
+              permissionResolved={permissionResolved}
+              onForceStop={onForceStop}
+            />
+          </div>
         )}
       </ConversationContent>
       <ConversationScrollButton />

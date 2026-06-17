@@ -3,6 +3,9 @@ import fs from 'fs';
 
 const repoRoot = process.cwd();
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmOptions = process.platform === 'win32'
+  ? { cwd: repoRoot, stdio: 'inherit', shell: true }
+  : { cwd: repoRoot, stdio: 'inherit' };
 const lintableExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
 
 function getStagedFiles() {
@@ -35,5 +38,5 @@ execFileSync(
   // 真 bug, warnings 只是建议——允许 warnings, 仅 fail on errors 即可。这样
   // 工作树里历史 lint 债不阻塞发版, 但 bug 引入仍被挡住。
   ['run', 'lint', '--', '--no-warn-ignored', ...stagedFiles],
-  { cwd: repoRoot, stdio: 'inherit' },
+  npmOptions,
 );

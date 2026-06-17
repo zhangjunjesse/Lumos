@@ -90,6 +90,17 @@ interface ChatBrowserPageContext {
   captureError?: string;
 }
 
+interface AutoContinueState {
+  enabled: boolean;
+  status: 'idle' | 'waiting' | 'running' | 'paused' | 'stopped' | 'failed';
+  next_run_at: string | null;
+  delay_seconds: number;
+  round: number;
+  max_rounds: number;
+  last_summary: string;
+  last_error: string;
+}
+
 const EMPTY_MESSAGES: Message[] = [];
 const BROWSER_PAGE_TEXT_LIMIT = 12_000;
 const BROWSER_SELECTED_TEXT_LIMIT = 2_000;
@@ -312,6 +323,31 @@ function haveSameMessageSequence(a: Message[], b: Message[]): boolean {
   return true;
 }
 
+function formatAutoContinueStatus(state: AutoContinueState): string {
+  switch (state.status) {
+    case 'waiting':
+      return '等待下一轮';
+    case 'running':
+      return '运行中';
+    case 'failed':
+      return '失败';
+    case 'stopped':
+      return '已停止';
+    case 'paused':
+      return '已暂停';
+    default:
+      return '空闲';
+  }
+}
+
+function formatAutoContinueTime(value: string | null): string {
+  if (!value) return '';
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString();
+}
+
 export function ChatView({
   sessionId,
   initialMessages = EMPTY_MESSAGES,
@@ -387,6 +423,8 @@ export function ChatView({
   const [streamingToolOutput, setStreamingToolOutput] = useState(() => cachedStreamingState?.streamingToolOutput || '');
   const [browserConflict, setBrowserConflict] = useState<BrowserContextConflictState | null>(null);
   const [browserConflictAction, setBrowserConflictAction] = useState<'release' | 'retry' | 'embedded' | null>(null);
+  const [autoContinue, setAutoContinue] = useState<AutoContinueState | null>(null);
+  const [stoppingAutoContinue, setStoppingAutoContinue] = useState(false);
   const mode = 'code';
 
   const messagesRef = useRef<Message[]>(sourceMessages);
@@ -436,6 +474,35 @@ export function ChatView({
     }
   }, [sessionId]);
 
+  const refreshAutoContinue = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/chat/sessions/${sessionId}/auto-continue`, {
+        cache: 'no-store',
+      });
+      if (!response.ok) return;
+      const data = await response.json() as { auto_continue?: AutoContinueState | null };
+      setAutoContinue(data.auto_continue || null);
+    } catch {
+      // Best effort only.
+    }
+  }, [sessionId]);
+
+  const stopAutoContinue = useCallback(async () => {
+    if (!sessionId || stoppingAutoContinue) return;
+    setStoppingAutoContinue(true);
+    try {
+      const response = await fetch(`/api/chat/sessions/${sessionId}/auto-continue`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        const data = await response.json() as { auto_continue?: AutoContinueState | null };
+        setAutoContinue(data.auto_continue || null);
+      }
+    } finally {
+      setStoppingAutoContinue(false);
+    }
+  }, [sessionId, stoppingAutoContinue]);
+
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
@@ -447,6 +514,10 @@ export function ChatView({
   useEffect(() => {
     isStreamingRef.current = isStreaming;
   }, [isStreaming]);
+
+  useEffect(() => {
+    void refreshAutoContinue();
+  }, [refreshAutoContinue]);
 
   const appendMessage = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -911,11 +982,13 @@ export function ChatView({
     }
     const onTaskUpdated = () => {
       void refreshLatestMessages();
+      void refreshAutoContinue();
     };
     // Server pushes a `hello` on connect — use it to align with any writes that
     // landed between SSR/initial-load and SSE connect.
     const onHello = () => {
       void refreshLatestMessages();
+      void refreshAutoContinue();
     };
     es.addEventListener('task:updated', onTaskUpdated);
     es.addEventListener('hello', onHello);
@@ -924,7 +997,7 @@ export function ChatView({
       es?.removeEventListener('hello', onHello);
       es?.close();
     };
-  }, [sessionId, refreshLatestMessages]);
+  }, [sessionId, refreshLatestMessages, refreshAutoContinue]);
 
   const stopStreaming = useCallback(() => {
     const aborted = abortChatStream(sessionId);
@@ -1604,6 +1677,7 @@ export function ChatView({
               messages={messages}
               streamingContent={streamingContent}
               isStreaming={isStreaming}
+              pinStreamingStart
               toolUses={toolUses}
               toolResults={toolResults}
               reasoningSummaries={reasoningSummaries}
@@ -1681,6 +1755,35 @@ export function ChatView({
                 关闭
               </Button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {autoContinue && (autoContinue.enabled || autoContinue.status !== 'idle') ? (
+        <div className="border-t border-sky-500/20 bg-sky-500/10 px-4 py-3">
+          <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-sky-950 dark:text-sky-100">
+                自动续跑：{formatAutoContinueStatus(autoContinue)}
+              </p>
+              <p className="mt-0.5 truncate text-xs text-sky-950/70 dark:text-sky-100/70">
+                已执行 {autoContinue.round}/{autoContinue.max_rounds} 轮
+                {autoContinue.next_run_at ? ` · 下次 ${formatAutoContinueTime(autoContinue.next_run_at)}` : ''}
+                {autoContinue.last_summary ? ` · ${autoContinue.last_summary}` : ''}
+                {autoContinue.last_error ? ` · ${autoContinue.last_error}` : ''}
+              </p>
+            </div>
+            {autoContinue.enabled ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={stopAutoContinue}
+                disabled={stoppingAutoContinue}
+              >
+                {stoppingAutoContinue ? '停止中' : '停止自动续跑'}
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}

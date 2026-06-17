@@ -52,6 +52,16 @@ export function migrateCoreTables(db: Database.Database): void {
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_updated_at TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_error TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_enabled INTEGER NOT NULL DEFAULT 0");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_status TEXT NOT NULL DEFAULT 'idle'");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_next_run_at TEXT DEFAULT NULL");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_delay_seconds INTEGER NOT NULL DEFAULT 0");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_round INTEGER NOT NULL DEFAULT 0");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_max_rounds INTEGER NOT NULL DEFAULT 100");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_fail_count INTEGER NOT NULL DEFAULT 0");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_last_summary TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_last_error TEXT NOT NULL DEFAULT ''");
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN auto_continue_stop_requested INTEGER NOT NULL DEFAULT 0");
   db.exec(`
     UPDATE chat_sessions
     SET requested_model = CASE
@@ -74,6 +84,7 @@ export function migrateCoreTables(db: Database.Database): void {
     WHERE resolved_model = ''
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_runtime_status ON chat_sessions(runtime_status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_auto_continue_due ON chat_sessions(auto_continue_enabled, auto_continue_status, auto_continue_next_run_at)");
 
   // Migrate is_active provider to default_provider_id setting
   const defaultProviderSetting = db.prepare("SELECT value FROM settings WHERE key = 'default_provider_id'").get() as { value: string } | undefined;

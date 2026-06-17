@@ -28,6 +28,16 @@ export interface ChatSession {
   runtime_updated_at: string;
   runtime_error: string;
   folder: string;
+  auto_continue_enabled: number;
+  auto_continue_status: string;
+  auto_continue_next_run_at: string | null;
+  auto_continue_delay_seconds: number;
+  auto_continue_round: number;
+  auto_continue_max_rounds: number;
+  auto_continue_fail_count: number;
+  auto_continue_last_summary: string;
+  auto_continue_last_error: string;
+  auto_continue_stop_requested: number;
 }
 
 // ==========================================

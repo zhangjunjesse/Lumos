@@ -138,6 +138,17 @@ export {
   releaseSessionLock,
   setSessionRuntimeStatus,
 } from './runtime';
+export {
+  getSessionAutoContinue,
+  enableSessionAutoContinue,
+  scheduleSessionAutoContinue,
+  markSessionAutoContinueRunning,
+  stopSessionAutoContinue,
+  recordSessionAutoContinueFailure,
+  listDueSessionAutoContinues,
+  type SessionAutoContinueState,
+  type SessionAutoContinueStatus,
+} from './session-auto-continue';
 
 // Permissions
 export {
