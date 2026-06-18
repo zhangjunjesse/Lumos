@@ -84,9 +84,23 @@ export function migrateMeshTables(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS mesh_run (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','stopped')),
+      rounds INTEGER NOT NULL DEFAULT 0,
+      interval_ms INTEGER NOT NULL DEFAULT 0,
+      last_run_id TEXT DEFAULT NULL,
+      last_error TEXT DEFAULT NULL,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      stopped_at TEXT DEFAULT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_mesh_blackboard_run_key ON mesh_blackboard(run_id, key, version DESC);
     CREATE INDEX IF NOT EXISTS idx_mesh_ticket_run ON mesh_order_ticket(run_id, status);
     CREATE INDEX IF NOT EXISTS idx_mesh_message_run ON mesh_message(run_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_mesh_delivery_sub ON mesh_message_delivery(subscriber_id, status);
+    CREATE INDEX IF NOT EXISTS idx_mesh_run_status ON mesh_run(status, account_id);
   `);
 }

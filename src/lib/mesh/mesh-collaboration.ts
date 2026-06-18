@@ -29,7 +29,7 @@ export function buildStockParticipants(): MeshParticipant[] {
 
 export function runStockCollaboration(
   snapshot: unknown,
-  options: { sessionId?: string } = {},
+  options: { sessionId?: string; accountId?: string; abortController?: AbortController } = {},
 ): Promise<CollaborationResult> {
   const config = getTeamConfig()
   const riskRules = {
@@ -46,7 +46,8 @@ export function runStockCollaboration(
       riskRules,
       mode: config.mode,
       focus: config.focus,
+      accountId: options.accountId,
     },
-    options,
+    { sessionId: options.sessionId, abortController: options.abortController },
   )
 }

@@ -1,0 +1,52 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- jest.mock 工厂内须用 require：顶部 import 会被 hoist 到 factory 之前导致 TDZ */
+jest.mock('@/lib/db/connection', () => {
+  const Database = require('better-sqlite3')
+  const { migrateMeshTables } = require('@/lib/db/migrations-mesh')
+  const mem = new Database(':memory:')
+  migrateMeshTables(mem)
+  return { getDb: () => mem }
+})
+
+import { createRun, getRun, getRunningRun, listRunningRuns, recordRound, recordError, markStopped } from '../mesh-run'
+
+describe('mesh-run DAO', () => {
+  it('create → running，getRunningRun 命中', () => {
+    const r = createRun('a1', 5000)
+    expect(r.status).toBe('running')
+    expect(r.intervalMs).toBe(5000)
+    expect(r.rounds).toBe(0)
+    expect(getRunningRun('a1')?.id).toBe(r.id)
+  })
+
+  it('recordRound 累加 rounds + lastRunId', () => {
+    const r = createRun('a2', 1000)
+    recordRound(r.id, 'mrun_x')
+    recordRound(r.id, 'mrun_y')
+    const got = getRun(r.id)!
+    expect(got.rounds).toBe(2)
+    expect(got.lastRunId).toBe('mrun_y')
+  })
+
+  it('markStopped 终态，getRunningRun 不再命中', () => {
+    const r = createRun('a3', 1000)
+    markStopped(r.id)
+    expect(getRun(r.id)?.status).toBe('stopped')
+    expect(getRun(r.id)?.stoppedAt).not.toBeNull()
+    expect(getRunningRun('a3')).toBeNull()
+  })
+
+  it('listRunningRuns 只列 running', () => {
+    const r1 = createRun('a4', 1000)
+    createRun('a5', 1000)
+    markStopped(r1.id)
+    const running = listRunningRuns().map((x) => x.accountId)
+    expect(running).toContain('a5')
+    expect(running).not.toContain('a4')
+  })
+
+  it('recordError 写 lastError', () => {
+    const r = createRun('a6', 1000)
+    recordError(r.id, 'boom')
+    expect(getRun(r.id)?.lastError).toBe('boom')
+  })
+})

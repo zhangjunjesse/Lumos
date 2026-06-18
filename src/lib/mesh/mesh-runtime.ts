@@ -43,6 +43,8 @@ export interface CollaborationSeed {
   riskRules?: RiskRules
   mode?: 'auto' | 'observe_only'
   focus?: string
+  /** 常驻团队账户标识；缺省回落每轮 runId（单轮 per-run，行为不变）。 */
+  accountId?: string
 }
 
 export interface CollaborationResult {
@@ -55,6 +57,7 @@ export interface CollaborationResult {
 interface TradeContext {
   mode: 'auto' | 'observe_only'
   rules?: RiskRules
+  accountId: string
 }
 
 const MAX_ITERATIONS = 12
@@ -64,16 +67,17 @@ export const MARKET_SNAPSHOT_KEY = 'market_snapshot'
 export async function runCollaborationOnce(
   participants: MeshParticipant[],
   seed: CollaborationSeed,
-  options: { sessionId?: string } = {},
+  options: { sessionId?: string; abortController?: AbortController } = {},
 ): Promise<CollaborationResult> {
   const runId = `mrun_${randomUUID()}`
+  const accountId = seed.accountId ?? runId
   const trace: TraceStep[] = []
   const byId = new Map(participants.map((p) => [p.agent.id, p]))
   const subscribersOf = (topic: string) =>
     participants.filter((p) => p.topics.includes(topic)).map((p) => p.agent.id)
-  const tradeCtx: TradeContext = { mode: seed.mode ?? 'auto', rules: seed.riskRules }
+  const tradeCtx: TradeContext = { mode: seed.mode ?? 'auto', rules: seed.riskRules, accountId }
 
-  initAccount(runId, seed.initialCash ?? DEFAULT_PAPER_CASH)
+  initAccount(accountId, seed.initialCash ?? DEFAULT_PAPER_CASH)
   writeBlackboard(runId, seed.snapshotKey, seed.snapshot, 'seed')
 
   const starter = byId.get(seed.starterId)
@@ -82,6 +86,7 @@ export async function runCollaborationOnce(
 
   let iter = 0
   while (iter < MAX_ITERATIONS) {
+    if (options.abortController?.signal.aborted) break
     const pending = listPendingDeliveries(runId)
     if (pending.length === 0) break
     const d = pending[0]
@@ -112,7 +117,7 @@ export async function runCollaborationOnce(
   }
 
   const decision = readBlackboard(runId, 'decision')?.value ?? null
-  return { runId, trace, decision, account: getAccount(runId) }
+  return { runId, trace, decision, account: getAccount(accountId) }
 }
 
 async function runParticipant(
@@ -124,9 +129,12 @@ async function runParticipant(
   subscribersOf: (topic: string) => string[],
   tradeCtx: TradeContext,
   trace: TraceStep[],
-  options: { sessionId?: string },
+  options: { sessionId?: string; abortController?: AbortController },
 ): Promise<void> {
-  const { plan } = await runMeshActor(participant.agent, prompt, { sessionId: options.sessionId })
+  const { plan } = await runMeshActor(participant.agent, prompt, {
+    sessionId: options.sessionId,
+    abortController: options.abortController,
+  })
   const { writes, emits, orders } = applyActionPlan(runId, participant, plan, consumed, subscribersOf, tradeCtx)
   trace.push({ participantId: participant.agent.id, trigger, thought: plan.thought, writes, emits, orders })
 }
@@ -184,7 +192,7 @@ function handleOrderIntent(
   const result = placeOrder(
     runId,
     { symbol: action.symbol, side: action.side, qty: action.qty },
-    { idempotencyKey: `${runId}:${agentId}:${idx}`, snapshot, rules: tradeCtx.rules },
+    { idempotencyKey: `${runId}:${agentId}:${idx}`, snapshot, rules: tradeCtx.rules, accountId: tradeCtx.accountId },
   )
   writeBlackboard(runId, `order_result:${action.symbol}`, { intent: action, ...result }, agentId)
   return `${action.side} ${action.symbol} x${action.qty} → ${result.status}` + (result.filled ? ` @${result.price}` : `(${result.reason})`)

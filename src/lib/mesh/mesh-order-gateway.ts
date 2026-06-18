@@ -22,6 +22,8 @@ export interface PlaceOrderOptions {
   snapshot: unknown
   mode?: 'paper' | 'live'
   rules?: RiskRules
+  /** 账户标识：常驻团队跨轮共享同一账户；缺省回落 runId（单轮即 per-run 账户，行为不变）。 */
+  accountId?: string
 }
 
 export function placeOrder(runId: string, intent: OrderIntent, options: PlaceOrderOptions): PlaceOrderResult {
@@ -29,6 +31,7 @@ export function placeOrder(runId: string, intent: OrderIntent, options: PlaceOrd
   if (mode === 'live') {
     throw new Error('OrderGateway: live backend not wired (M2 paper only)')
   }
+  const accountId = options.accountId ?? runId
   const rules = options.rules ?? DEFAULT_RISK_RULES
   const ticket = createTicket({
     runId,
@@ -43,18 +46,18 @@ export function placeOrder(runId: string, intent: OrderIntent, options: PlaceOrd
     return { ticketId: ticket.id, status: ticket.status, filled: ticket.status === 'filled', reason: ticket.rejectReason, price: ticket.price }
   }
 
-  const account = getAccount(runId)
-  if (!account) throw new Error(`paper account not found: ${runId}`)
+  const account = getAccount(accountId)
+  if (!account) throw new Error(`paper account not found: ${accountId}`)
   const verdict: RiskVerdict = checkOrder(intent, account, options.snapshot, rules)
   const riskSnapshot = { verdict, mode }
 
   if (!verdict.ok) {
     rejectTicket(ticket.id, verdict.reason, riskSnapshot)
-    if (verdict.reason.includes('总闸')) setHalted(runId) // 总闸触发 → 账户停摆
+    if (verdict.reason.includes('总闸')) setHalted(accountId) // 总闸触发 → 账户停摆
     return { ticketId: ticket.id, status: 'rejected', filled: false, reason: verdict.reason, price: verdict.price }
   }
 
-  applyFill(runId, { symbol: intent.symbol, side: intent.side, qty: intent.qty, price: verdict.price, fee: verdict.fee })
+  applyFill(accountId, { symbol: intent.symbol, side: intent.side, qty: intent.qty, price: verdict.price, fee: verdict.fee })
   fillTicket(ticket.id, verdict.price, riskSnapshot)
   return { ticketId: ticket.id, status: 'filled', filled: true, reason: '', price: verdict.price }
 }
