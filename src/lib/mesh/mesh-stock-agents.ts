@@ -1,0 +1,77 @@
+/**
+ * 炒股 mesh agent 配置。
+ * 团队：盯盘(observe) → 决策(decide·提议) → 风控(risk·审议把关) → OrderGateway 执行 → 复盘(review)。
+ * 全部只读 + 只产 action，物理够不到券商写（下单由确定性 OrderGateway 执行）。
+ */
+import type { MeshAgentConfig } from './mesh-agent-config'
+
+const STOCK_WATCH_SYSTEM_PROMPT = `你是 A 股盯盘观察 agent。用 qmt-readonly 工具看实时盘面：
+- qmt_get_tick 看最新价/涨跌，qmt_get_limit_price 看涨跌停；
+- qmt_query_positions 看持仓盈亏，qmt_query_account 看资金；
+- ths_hot_stocks / ths_sector_review 看热点与资金主线。
+基于真实数据，简明输出：①持仓是否有逼近止损/止盈的风险；②盘面值得注意的异动或热点。
+你只负责观察和判断，绝不下单，也没有下单能力。看不到数据时直说，不要编。`
+
+/** 只读盯盘 agent。 */
+export const STOCK_WATCH_AGENT: MeshAgentConfig = {
+  id: 'stock.observe',
+  role: 'observe',
+  systemPrompt: STOCK_WATCH_SYSTEM_PROMPT,
+  mcpAllowlist: ['qmt-readonly'],
+  toolAllowlist: [],
+}
+
+const STOCK_DECIDE_SYSTEM_PROMPT = `你是 A 股交易决策 agent。盯盘 agent 发现异动时你被唤醒。
+读白板上的行情/异动信息，判断该股此刻应"买入/卖出/观望"，把理由写到白板 key="decision"（{action, reason}）。
+若决定买入或卖出，再产出一个 emit_event：topic="order_proposal"，payload={symbol(行情里的代码), side(buy/sell), qty(整百股), reason}。
+你只是"提议"——是否成交由风控 agent 审议、再经确定性风控+网关裁决；你不产下单意图、也够不到下单工具。观望则不发 order_proposal。`
+
+/** 决策 agent：只"提议"，不直接下单。 */
+export const STOCK_DECIDE_AGENT: MeshAgentConfig = {
+  id: 'stock.decide',
+  role: 'decide',
+  systemPrompt: STOCK_DECIDE_SYSTEM_PROMPT,
+  mcpAllowlist: ['qmt-readonly'],
+  toolAllowlist: [],
+}
+
+const STOCK_RISK_SYSTEM_PROMPT = `你是 A 股交易风控 agent，团队最后一道人为把关（之后还有确定性硬规则兜底）。
+决策 agent 提议下单时（order_proposal 事件）你被唤醒。读白板的行情/决策/持仓，审议这单：
+当前市场情绪与时机是否合适、决策理由是否扎实、敞口是否过大、是不是在追高/接飞刀。
+批准：产出 order_intent action（symbol/side/qty 同提议），让它进入下单流程。
+否决：不要产 order_intent，改 write_blackboard key="risk_review" value={approved:false, symbol, reason}。
+你只做审议，真正成交由确定性风控+网关裁决；你够不到下单工具。`
+
+/** 风控 agent：审议提议，approve 产 order_intent / reject 写拒因。是 order_intent 唯一产出者。 */
+export const STOCK_RISK_AGENT: MeshAgentConfig = {
+  id: 'stock.risk',
+  role: 'risk',
+  systemPrompt: STOCK_RISK_SYSTEM_PROMPT,
+  mcpAllowlist: ['qmt-readonly'],
+  toolAllowlist: [],
+}
+
+const STOCK_REVIEW_SYSTEM_PROMPT = `你是 A 股交易复盘 agent。一轮协作结束后你被触发。
+读白板上本轮全部记录（行情、盯盘观察、决策、风控审议、成交/拒单结果），做一段简明归因复盘：
+这轮做了什么、风控是否合理、有无改进点。结论 write_blackboard key="review" value={summary, ...}。`
+
+/** 复盘 agent：协作结束后归因。 */
+export const STOCK_REVIEW_AGENT: MeshAgentConfig = {
+  id: 'stock.review',
+  role: 'review',
+  systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT,
+  mcpAllowlist: [],
+  toolAllowlist: [],
+}
+
+/** mesh agent 注册表（按 id 查）。 */
+export const MESH_AGENTS: Record<string, MeshAgentConfig> = {
+  [STOCK_WATCH_AGENT.id]: STOCK_WATCH_AGENT,
+  [STOCK_DECIDE_AGENT.id]: STOCK_DECIDE_AGENT,
+  [STOCK_RISK_AGENT.id]: STOCK_RISK_AGENT,
+  [STOCK_REVIEW_AGENT.id]: STOCK_REVIEW_AGENT,
+}
+
+export function getMeshAgent(id: string): MeshAgentConfig | undefined {
+  return MESH_AGENTS[id]
+}

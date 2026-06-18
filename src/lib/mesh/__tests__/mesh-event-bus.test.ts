@@ -1,0 +1,48 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- jest.mock 工厂内须用 require：顶部 import 会被 hoist 到 factory 之前导致 TDZ */
+jest.mock('@/lib/db/connection', () => {
+  const Database = require('better-sqlite3')
+  const { migrateMeshTables } = require('@/lib/db/migrations-mesh')
+  const mem = new Database(':memory:')
+  migrateMeshTables(mem)
+  return { getDb: () => mem }
+})
+
+import {
+  persistMessage,
+  markDelivered,
+  listPendingDeliveries,
+  subscribe,
+  wake,
+} from '../mesh-event-bus'
+
+describe('mesh-event-bus — per-subscriber delivery', () => {
+  it('one event creates one pending delivery per subscriber', () => {
+    const mid = persistMessage('run-1', 'quote_anomaly', { code: 'x' }, 'observe', ['decide', 'risk'])
+    const pending = listPendingDeliveries('run-1')
+    expect(pending).toHaveLength(2)
+    expect(pending.map((p) => p.subscriberId).sort()).toEqual(['decide', 'risk'])
+    expect(pending[0].messageId).toBe(mid)
+    expect(pending[0].payload).toEqual({ code: 'x' })
+    expect(pending[0].topic).toBe('quote_anomaly')
+  })
+
+  it('markDelivered consumes only that subscriber — others keep their delivery', () => {
+    persistMessage('run-2', 't', {}, 'a', ['b', 'c'])
+    const before = listPendingDeliveries('run-2')
+    markDelivered(before[0].messageId, 'b')
+    const after = listPendingDeliveries('run-2')
+    expect(after).toHaveLength(1)
+    expect(after[0].subscriberId).toBe('c')
+  })
+})
+
+describe('mesh-event-bus — in-process wake', () => {
+  it('notifies live subscribers and stops after unsubscribe', () => {
+    const seen: string[] = []
+    const unsub = subscribe('run-3', 'topicX', (e) => seen.push(e.id))
+    wake('run-3', 'topicX', { id: 'e1', runId: 'run-3', topic: 'topicX', payload: null, from: 'a' })
+    unsub()
+    wake('run-3', 'topicX', { id: 'e2', runId: 'run-3', topic: 'topicX', payload: null, from: 'a' })
+    expect(seen).toEqual(['e1'])
+  })
+})
