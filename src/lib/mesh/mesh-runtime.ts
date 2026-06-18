@@ -45,6 +45,10 @@ export interface CollaborationSeed {
   focus?: string
   /** 常驻团队账户标识；缺省回落每轮 runId（单轮 per-run，行为不变）。 */
   accountId?: string
+  /** 交易模式：paper 本地撮合 / live 走真盘后端。默认 paper。 */
+  tradeMode?: 'paper' | 'live'
+  /** live 总开关：默认关，关时 live 单直接拒、不碰真盘后端。 */
+  liveEnabled?: boolean
 }
 
 export interface CollaborationResult {
@@ -58,6 +62,8 @@ interface TradeContext {
   mode: 'auto' | 'observe_only'
   rules?: RiskRules
   accountId: string
+  tradeMode: 'paper' | 'live'
+  liveEnabled: boolean
 }
 
 const MAX_ITERATIONS = 12
@@ -75,7 +81,13 @@ export async function runCollaborationOnce(
   const byId = new Map(participants.map((p) => [p.agent.id, p]))
   const subscribersOf = (topic: string) =>
     participants.filter((p) => p.topics.includes(topic)).map((p) => p.agent.id)
-  const tradeCtx: TradeContext = { mode: seed.mode ?? 'auto', rules: seed.riskRules, accountId }
+  const tradeCtx: TradeContext = {
+    mode: seed.mode ?? 'auto',
+    rules: seed.riskRules,
+    accountId,
+    tradeMode: seed.tradeMode ?? 'paper',
+    liveEnabled: seed.liveEnabled ?? false,
+  }
 
   initAccount(accountId, seed.initialCash ?? DEFAULT_PAPER_CASH)
   writeBlackboard(runId, seed.snapshotKey, seed.snapshot, 'seed')
@@ -135,22 +147,23 @@ async function runParticipant(
     sessionId: options.sessionId,
     abortController: options.abortController,
   })
-  const { writes, emits, orders } = applyActionPlan(runId, participant, plan, consumed, subscribersOf, tradeCtx)
+  const { writes, emits, orders } = await applyActionPlan(runId, participant, plan, consumed, subscribersOf, tradeCtx)
   trace.push({ participantId: participant.agent.id, trigger, thought: plan.thought, writes, emits, orders })
 }
 
-function applyActionPlan(
+async function applyActionPlan(
   runId: string,
   participant: MeshParticipant,
   plan: MeshActionPlan,
   consumed: { messageId: string; subscriberId: string } | null,
   subscribersOf: (topic: string) => string[],
   tradeCtx: TradeContext,
-): { writes: string[]; emits: string[]; orders: string[] } {
+): Promise<{ writes: string[]; emits: string[]; orders: string[] }> {
   const writes: string[] = []
   const emits: string[] = []
   const orders: string[] = []
   const wakeups: Array<{ topic: string; event: MeshEvent }> = []
+  const orderIntents: Array<{ action: { symbol: string; side: 'buy' | 'sell'; qty: number }; idx: number }> = []
   const snapshot = readBlackboard(runId, MARKET_SNAPSHOT_KEY)?.value
 
   getDb().transaction(() => {
@@ -167,32 +180,36 @@ function applyActionPlan(
         })
         emits.push(action.topic)
       } else if (action.type === 'order_intent') {
-        orders.push(handleOrderIntent(runId, participant.agent.id, action, idx, snapshot, tradeCtx))
+        orderIntents.push({ action, idx })
       }
     })
     if (consumed) markDelivered(consumed.messageId, consumed.subscriberId)
   })()
 
   for (const w of wakeups) wake(runId, w.topic, w.event)
+  // 事务提交后再下单（paper 立即/live 走 IPC 异步）；ticket 幂等键保证不重复下单。
+  for (const oi of orderIntents) {
+    orders.push(await handleOrderIntent(runId, participant.agent.id, oi.action, oi.idx, snapshot, tradeCtx))
+  }
   return { writes, emits, orders }
 }
 
-function handleOrderIntent(
+async function handleOrderIntent(
   runId: string,
   agentId: string,
   action: { symbol: string; side: 'buy' | 'sell'; qty: number },
   idx: number,
   snapshot: unknown,
   tradeCtx: TradeContext,
-): string {
+): Promise<string> {
   if (tradeCtx.mode === 'observe_only') {
     writeBlackboard(runId, `order_result:${action.symbol}`, { intent: action, status: 'skipped', reason: 'observe_only(只看不买)' }, agentId)
     return `${action.side} ${action.symbol} x${action.qty} → skipped(observe_only)`
   }
-  const result = placeOrder(
+  const result = await placeOrder(
     runId,
     { symbol: action.symbol, side: action.side, qty: action.qty },
-    { idempotencyKey: `${runId}:${agentId}:${idx}`, snapshot, rules: tradeCtx.rules, accountId: tradeCtx.accountId },
+    { idempotencyKey: `${runId}:${agentId}:${idx}`, snapshot, rules: tradeCtx.rules, accountId: tradeCtx.accountId, mode: tradeCtx.tradeMode, liveEnabled: tradeCtx.liveEnabled },
   )
   writeBlackboard(runId, `order_result:${action.symbol}`, { intent: action, ...result }, agentId)
   return `${action.side} ${action.symbol} x${action.qty} → ${result.status}` + (result.filled ? ` @${result.price}` : `(${result.reason})`)

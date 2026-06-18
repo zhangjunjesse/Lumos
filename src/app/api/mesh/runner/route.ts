@@ -5,6 +5,7 @@ import {
   monitoringStatus,
   DEFAULT_ACCOUNT_ID,
 } from '@/lib/mesh/mesh-run-control'
+import { getLiveConfig, liveBackend } from '@/lib/mesh/mesh-live-backend'
 
 /** M7 默认演示快照（不连真 qmt；可由请求体 snapshot 覆盖）。 */
 const DEFAULT_SNAPSHOT = {
@@ -39,5 +40,9 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const accountId = req.nextUrl.searchParams.get('accountId') ?? DEFAULT_ACCOUNT_ID
-  return NextResponse.json(monitoringStatus(accountId))
+  const live = getLiveConfig()
+  return NextResponse.json({
+    ...monitoringStatus(accountId),
+    live: { ...live, backendConnected: liveBackend().isConnected() },
+  })
 }

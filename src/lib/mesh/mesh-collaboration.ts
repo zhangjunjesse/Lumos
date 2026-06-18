@@ -16,6 +16,7 @@ import {
 } from './mesh-stock-agents'
 import { getTeamConfig } from './mesh-team-config'
 import { DEFAULT_RISK_RULES } from './mesh-risk-rules'
+import { getLiveConfig } from './mesh-live-backend'
 
 /** 单向收敛链：盯盘→[quote_anomaly]→决策→[order_proposal]→风控→(order_intent)→成交；复盘 drain 后跑。 */
 export function buildStockParticipants(): MeshParticipant[] {
@@ -32,6 +33,7 @@ export function runStockCollaboration(
   options: { sessionId?: string; accountId?: string; abortController?: AbortController } = {},
 ): Promise<CollaborationResult> {
   const config = getTeamConfig()
+  const live = getLiveConfig()
   const riskRules = {
     ...DEFAULT_RISK_RULES,
     blacklist: Array.from(new Set([...DEFAULT_RISK_RULES.blacklist, ...config.blacklist])),
@@ -47,6 +49,8 @@ export function runStockCollaboration(
       mode: config.mode,
       focus: config.focus,
       accountId: options.accountId,
+      tradeMode: live.tradeMode,
+      liveEnabled: live.liveEnabled,
     },
     { sessionId: options.sessionId, abortController: options.abortController },
   )
