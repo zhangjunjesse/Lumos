@@ -22,6 +22,7 @@ export interface SchedulerRunner {
   abort: AbortController
   snapshot: SnapshotProvider
   inFlight: Set<string>
+  inFlightTasks: Map<string, Promise<void>>
   ticker: ReturnType<typeof setTimeout> | null
   stopped: boolean
   lastCloseDay?: string // 收盘事件当日去重标记
@@ -98,7 +99,9 @@ export function tickLoop(runner: SchedulerRunner): void {
   const pick = pickDispatchable(selectDue(runner.runId, Date.now()), runner.inFlight)
   for (const item of pick) {
     runner.inFlight.add(item.participantId)
-    void dispatchDutyCycle(runner, item)
+    const task = dispatchDutyCycle(runner, item)
+    runner.inFlightTasks.set(item.participantId, task)
+    void task.finally(() => runner.inFlightTasks.delete(item.participantId))
   }
   runner.ticker = setTimeout(() => tickLoop(runner), runner.tickMs)
 }

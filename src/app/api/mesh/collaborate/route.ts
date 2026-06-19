@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runStockCollaboration } from '@/lib/mesh/mesh-collaboration'
+import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
+import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
 /**
  * 跑一次炒股 mesh 协作（盯盘 → 异动 → 决策建议）。
@@ -19,13 +21,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({} as Record<string, unknown>))
     const snapshot = body.snapshot ?? DEFAULT_SNAPSHOT
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
-    const accountId = typeof body.accountId === 'string' ? body.accountId : undefined // 即 workshopId，缺省默认工作室
+    const accountId = typeof body.accountId === 'string' ? body.accountId : DEFAULT_WORKSHOP_ID // 即 workshopId，缺省默认工作室
+    ensureWorkshopExists(accountId)
     const result = await runStockCollaboration(snapshot, { sessionId, accountId })
     return NextResponse.json(result)
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'mesh collaboration failed' },
-      { status: 500 },
+      { status: error instanceof Error && error.message.startsWith('unknown mesh workshop:') ? 404 : 500 },
     )
   }
 }

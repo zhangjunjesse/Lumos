@@ -7,8 +7,11 @@ import { getDb } from '@/lib/db/connection'
 import { stopMonitoring } from './mesh-run-control'
 import { deleteWorkshopRow } from './mesh-workshop-store'
 
-export function deleteWorkshop(workshopId: string): void {
-  stopMonitoring(workshopId) // 先停 runner（事务外：含 AbortController 中断在飞 SDK）
+export async function deleteWorkshop(workshopId: string): Promise<void> {
+  const stopped = await stopMonitoring(workshopId) // 先停 runner（事务外：含 AbortController 中断在飞 SDK）
+  if (!stopped.ok && stopped.reason !== '该账户未在盯盘') {
+    throw new Error(stopped.reason ?? '工作室正在运行，停止失败')
+  }
 
   const db = getDb()
   db.transaction(() => {

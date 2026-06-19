@@ -165,15 +165,18 @@ export async function applyActionPlan(
   subscribersOf: (topic: string) => string[],
   tradeCtx: TradeContext,
   cycleSeq?: number,
+  options: { abortSignal?: AbortSignal } = {},
 ): Promise<{ writes: string[]; emits: string[]; orders: string[] }> {
   const writes: string[] = []
   const emits: string[] = []
   const orders: string[] = []
   const wakeups: Array<{ topic: string; event: MeshEvent }> = []
   const orderIntents: Array<{ action: { symbol: string; side: 'buy' | 'sell'; qty: number }; idx: number }> = []
+  if (options.abortSignal?.aborted) return { writes, emits, orders }
   const snapshot = readBlackboard(runId, MARKET_SNAPSHOT_KEY)?.value
 
   getDb().transaction(() => {
+    if (options.abortSignal?.aborted) return
     plan.actions.forEach((action, idx) => {
       if (action.type === 'write_blackboard') {
         writeBlackboard(runId, action.key, action.value, participant.agent.id)
@@ -207,9 +210,11 @@ export async function applyActionPlan(
     if (consumed) markDelivered(consumed.messageId, consumed.subscriberId)
   })()
 
+  if (options.abortSignal?.aborted) return { writes, emits, orders }
   for (const w of wakeups) wake(runId, w.topic, w.event)
   // 事务提交后再下单（paper 立即/live 走 IPC 异步）；ticket 幂等键保证不重复下单。
   for (const oi of orderIntents) {
+    if (options.abortSignal?.aborted) break
     orders.push(await handleOrderIntent(runId, participant.agent.id, oi.action, oi.idx, snapshot, tradeCtx, cycleSeq))
   }
   return { writes, emits, orders }

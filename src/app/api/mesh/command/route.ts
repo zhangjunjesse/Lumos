@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runLeader, applyCommands } from '@/lib/mesh/mesh-leader'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
+import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
 /**
  * 用自然语言给某工作室团队下指令。POST { message, accountId?, sessionId? } -> { reply, applied[], config }
@@ -16,13 +17,14 @@ export async function POST(req: NextRequest) {
     }
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
     const workshopId = typeof body.accountId === 'string' ? body.accountId : DEFAULT_WORKSHOP_ID
+    ensureWorkshopExists(workshopId)
     const { reply, commands } = await runLeader(message, { sessionId, workshopId })
     const { applied, config } = applyCommands(message, commands, workshopId)
     return NextResponse.json({ reply, applied, config })
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'mesh command failed' },
-      { status: 500 },
+      { status: error instanceof Error && error.message.startsWith('unknown mesh workshop:') ? 404 : 500 },
     )
   }
 }

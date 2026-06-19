@@ -49,7 +49,7 @@ export async function DELETE(req: NextRequest) {
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
     if (id === DEFAULT_WORKSHOP_ID) return NextResponse.json({ error: '默认工作室不可删' }, { status: 400 })
-    deleteWorkshop(id) // 全删干净：停 runner + 级联删配置/历史
+    await deleteWorkshop(id) // 全删干净：停 runner + 级联删配置/历史
     return NextResponse.json({ workshops: listWorkshops() })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: 500 })

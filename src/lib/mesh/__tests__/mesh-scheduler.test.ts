@@ -36,7 +36,7 @@ const mockedBuildP = jest.mocked(buildParticipant)
 const mockedSubs = jest.mocked(buildSubscribersOf)
 
 function runner(runId: string, abort = new AbortController(), inFlight = new Set<string>()): SchedulerRunner {
-  return { runId, accountId: 'a', tickMs: 2500, abort, snapshot: () => ({}), inFlight, ticker: null, stopped: false }
+  return { runId, accountId: 'a', tickMs: 2500, abort, snapshot: () => ({}), inFlight, inFlightTasks: new Map(), ticker: null, stopped: false }
 }
 const PART = { agent: { id: 'stock.observe', role: 'observe' as const, systemPrompt: '', mcpAllowlist: [], toolAllowlist: [] }, topics: [] }
 

@@ -39,7 +39,7 @@ interface LocalMsg {
   applied?: string[]
 }
 
-export function AgentChat({ messages }: { messages: MsgRecord[] }) {
+export function AgentChat({ accountId, messages }: { accountId: string; messages: MsgRecord[] }) {
   const [local, setLocal] = useState<LocalMsg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -54,7 +54,7 @@ export function AgentChat({ messages }: { messages: MsgRecord[] }) {
       const r = await fetch('/api/mesh/command', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ message: msg, accountId }),
       })
       const data = await r.json()
       setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied) }])

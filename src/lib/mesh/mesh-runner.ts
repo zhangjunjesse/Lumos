@@ -13,6 +13,7 @@ export type SnapshotProvider = () => unknown
 
 export const DEFAULT_TICK_MS = 2500
 export const MIN_TICK_MS = 1000
+const STOP_DRAIN_TIMEOUT_MS = 30_000
 
 /** 常驻 runner = scheduler 调度态 + 关联的 mesh_run 控制记录 id。 */
 export interface ActiveRunner extends SchedulerRunner {
@@ -58,6 +59,7 @@ export function startRunner(opts: {
     abort: new AbortController(),
     snapshot: opts.snapshot,
     inFlight: new Set(),
+    inFlightTasks: new Map(),
     ticker: null,
     stopped: false,
     onError: (msg) => recordError(opts.controlId, msg),
@@ -76,13 +78,31 @@ export function emitMarketCloseNow(accountId: string): boolean {
   return true
 }
 
-/** 停止：停时间轮 + abort 所有在飞 duty cycle + 清 participant 行（§75 不挂起恢复）+ mesh_run 终态。 */
-export function stopRunner(accountId: string): boolean {
+/** 停止：停时间轮 + abort 所有在飞 duty cycle + 等待收口 + 清 participant 行（§75 不挂起恢复）+ mesh_run 终态。 */
+export async function stopRunner(accountId: string): Promise<boolean> {
   const runner = registry().runners.get(accountId)
   if (!runner) return false
   stopScheduler(runner) // stopped=true + clearTimeout + abort（透传给在飞 SDK）
+  const drained = await waitForInFlight(runner)
+  if (!drained) {
+    recordError(runner.controlId, `停止超时：仍有 ${runner.inFlightTasks.size} 个 duty cycle 未退出`)
+    return false
+  }
   deleteByRun(runner.runId)
   registry().runners.delete(accountId)
   markStopped(runner.controlId)
   return true
+}
+
+async function waitForInFlight(runner: ActiveRunner): Promise<boolean> {
+  const tasks = Array.from(runner.inFlightTasks.values())
+  if (tasks.length === 0) return true
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), STOP_DRAIN_TIMEOUT_MS)
+  })
+  const settled = Promise.allSettled(tasks).then(() => 'settled' as const)
+  const result = await Promise.race([settled, timeout])
+  if (timer) clearTimeout(timer)
+  return result === 'settled'
 }

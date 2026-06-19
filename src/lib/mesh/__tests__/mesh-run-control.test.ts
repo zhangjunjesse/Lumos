@@ -56,24 +56,36 @@ describe('mesh-run-control 生命周期', () => {
     expect(mStart).toHaveBeenCalledWith(expect.objectContaining({ tickMs: 1000 }))
   })
 
-  it('stop：有活跃 runner → 调 stopRunner', () => {
-    mStop.mockReturnValue(true)
-    const r = stopMonitoring('c4')
+  it('stop：有活跃 runner → 调 stopRunner', async () => {
+    mStop.mockResolvedValue(true)
+    const r = await stopMonitoring('c4')
     expect(r.ok).toBe(true)
     expect(mStop).toHaveBeenCalledWith('c4')
   })
 
-  it('stop：内存无 runner 但有孤儿 mesh_run → 清孤儿标 stopped', () => {
-    mStop.mockReturnValue(false)
+  it('stop：内存无 runner 但有孤儿 mesh_run → 清孤儿标 stopped', async () => {
+    mStop.mockResolvedValue(false)
     const run = createRun('c5', 1000, 'mrun_c5')
-    const r = stopMonitoring('c5')
+    const r = await stopMonitoring('c5')
     expect(r.ok).toBe(true)
     expect(getRun(run.id)?.status).toBe('stopped')
   })
 
-  it('stop：既无 runner 也无记录 → ok=false', () => {
-    mStop.mockReturnValue(false)
-    const r = stopMonitoring('c-none')
+  it('stop：runner 仍活跃但停止失败 → 不把运行记录当孤儿清理', async () => {
+    mStop.mockResolvedValue(false)
+    mActive.mockReturnValue(true)
+    const run = createRun('c5b', 1000, 'mrun_c5b')
+
+    const r = await stopMonitoring('c5b')
+
+    expect(r.ok).toBe(false)
+    expect(r.reason).toContain('停止超时')
+    expect(getRun(run.id)?.status).toBe('running')
+  })
+
+  it('stop：既无 runner 也无记录 → ok=false', async () => {
+    mStop.mockResolvedValue(false)
+    const r = await stopMonitoring('c-none')
     expect(r.ok).toBe(false)
   })
 

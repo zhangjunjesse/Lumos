@@ -122,7 +122,7 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
           </div>
         </div>
 
-        <AgentChat messages={snap?.messages ?? []} />
+        <AgentChat accountId={accountId} messages={snap?.messages ?? []} />
       </div>
     </div>
   )

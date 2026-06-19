@@ -47,6 +47,7 @@ export async function runOneDutyCycle(input: DutyCycleInput): Promise<DutyCycleR
     sessionId: input.sessionId,
     abortController: input.abortController,
   })
+  if (input.abortController?.signal.aborted) return { thought: plan.thought, writes: [], emits: [], orders: [] }
   const consumed = input.delivery
     ? { messageId: input.delivery.messageId, subscriberId: input.delivery.subscriberId }
     : null
@@ -58,6 +59,7 @@ export async function runOneDutyCycle(input: DutyCycleInput): Promise<DutyCycleR
     input.subscribersOf,
     input.tradeCtx,
     input.cycleSeq,
+    { abortSignal: input.abortController?.signal },
   )
   return { thought: plan.thought, writes, emits, orders }
 }

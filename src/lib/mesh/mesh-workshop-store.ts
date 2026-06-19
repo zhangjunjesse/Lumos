@@ -46,6 +46,12 @@ export function getWorkshop(id: string): Workshop | null {
   return r ? toWorkshop(r) : null
 }
 
+export function ensureWorkshopExists(id: string): Workshop {
+  const workshop = getWorkshop(id)
+  if (!workshop) throw new Error(`unknown mesh workshop: ${id}`)
+  return workshop
+}
+
 /** 建工作室行（id 缺省生成 ws_<uuid>）。默认 agents/config/risk 的 seed 由调用方在 W3/W4 接入。 */
 export function createWorkshop(input: { name: string; description?: string; id?: string; status?: WorkshopStatus }): Workshop {
   const id = input.id ?? `ws_${randomUUID()}`

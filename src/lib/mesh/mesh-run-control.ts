@@ -68,8 +68,9 @@ export interface StopResult {
   reason?: string
 }
 
-export function stopMonitoring(accountId: string = DEFAULT_ACCOUNT_ID): StopResult {
-  if (stopRunner(accountId)) return { ok: true }
+export async function stopMonitoring(accountId: string = DEFAULT_ACCOUNT_ID): Promise<StopResult> {
+  if (await stopRunner(accountId)) return { ok: true }
+  if (isRunnerActive(accountId)) return { ok: false, reason: '停止超时：仍有 duty cycle 未退出' }
   const orphan = getRunningRun(accountId)
   if (orphan) {
     markStopped(orphan.id)

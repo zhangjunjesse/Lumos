@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listAgents, upsertAgent, setEnabled, deleteAgent, agentExists, type StoredAgent } from '@/lib/mesh/mesh-agent-store'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
+import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
 /** Agent Registry：团队信息设置页读写（按 workshopId=accountId 隔离）。GET 列表 / POST upsert|启停|新增 / DELETE。 */
 function workshopOf(req: NextRequest): string {
@@ -9,9 +10,11 @@ function workshopOf(req: NextRequest): string {
 
 export async function GET(req: NextRequest) {
   try {
-    return NextResponse.json({ agents: listAgents(workshopOf(req)) })
+    const workshopId = workshopOf(req)
+    ensureWorkshopExists(workshopId)
+    return NextResponse.json({ agents: listAgents(workshopId) })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: statusOf(error) })
   }
 }
 
@@ -22,6 +25,7 @@ export async function POST(req: NextRequest) {
     if (typeof body.id !== 'string' || !body.id) {
       return NextResponse.json({ error: 'id required' }, { status: 400 })
     }
+    ensureWorkshopExists(workshopId)
     // 快捷启停
     if (body.action === 'setEnabled' && typeof body.enabled === 'boolean') {
       setEnabled(workshopId, body.id, body.enabled)
@@ -44,7 +48,7 @@ export async function POST(req: NextRequest) {
     const agent = upsertAgent(workshopId, patch)
     return NextResponse.json({ agent, agents: listAgents(workshopId) })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: statusOf(error) })
   }
 }
 
@@ -54,9 +58,14 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
     if (id === 'team.leader') return NextResponse.json({ error: '队长不可删（团队唯一）' }, { status: 400 })
     const workshopId = workshopOf(req)
+    ensureWorkshopExists(workshopId)
     deleteAgent(workshopId, id)
     return NextResponse.json({ agents: listAgents(workshopId) })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: statusOf(error) })
   }
+}
+
+function statusOf(error: unknown): number {
+  return error instanceof Error && error.message.startsWith('unknown mesh workshop:') ? 404 : 500
 }

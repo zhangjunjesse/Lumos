@@ -17,8 +17,8 @@ import { initParticipants, listParticipants } from '../mesh-participant-store'
 const mStart = jest.mocked(startScheduler)
 const mStop = jest.mocked(stopScheduler)
 
-afterEach(() => {
-  for (const id of activeAccountIds()) stopRunner(id) // 清残留 runner，避免污染下个用例
+afterEach(async () => {
+  for (const id of activeAccountIds()) await stopRunner(id) // 清残留 runner，避免污染下个用例
   mStart.mockReset()
   mStop.mockReset()
 })
@@ -33,15 +33,38 @@ describe('mesh-runner 常驻 session', () => {
     expect(mStart).toHaveBeenCalledWith(r) // 启了时间轮
   })
 
-  it('stopRunner：停时间轮 + 清 participant + mesh_run 终态 + 注销', () => {
+  it('stopRunner：停时间轮 + 清 participant + mesh_run 终态 + 注销', async () => {
     const run = createRun('acc2', 2500, 'mrun_2')
     initParticipants('mrun_2', [{ participantId: 'a', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 0)
     startRunner({ controlId: run.id, accountId: 'acc2', runId: 'mrun_2', snapshot: () => ({}) })
-    expect(stopRunner('acc2')).toBe(true)
+    await expect(stopRunner('acc2')).resolves.toBe(true)
     expect(mStop).toHaveBeenCalled() // abort 透传给在飞 SDK
     expect(isRunnerActive('acc2')).toBe(false)
     expect(getRun(run.id)?.status).toBe('stopped')
     expect(listParticipants('mrun_2')).toHaveLength(0) // participant 行清空（§75 不挂起恢复）
+  })
+
+  it('stopRunner：等待在飞 duty cycle 收口后才清 participant/标终态', async () => {
+    const run = createRun('acc2b', 2500, 'mrun_2b')
+    initParticipants('mrun_2b', [{ participantId: 'a', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 0)
+    const r = startRunner({ controlId: run.id, accountId: 'acc2b', runId: 'mrun_2b', snapshot: () => ({}) })
+    let release!: () => void
+    const task = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    r.inFlightTasks.set('a', task)
+    const stopping = stopRunner('acc2b')
+
+    await Promise.resolve()
+    expect(isRunnerActive('acc2b')).toBe(true)
+    expect(getRun(run.id)?.status).toBe('running')
+    expect(listParticipants('mrun_2b')).toHaveLength(1)
+
+    release()
+    await expect(stopping).resolves.toBe(true)
+    expect(isRunnerActive('acc2b')).toBe(false)
+    expect(getRun(run.id)?.status).toBe('stopped')
+    expect(listParticipants('mrun_2b')).toHaveLength(0)
   })
 
   it('onCycle / onError 注入 recordCycle / recordError', () => {
@@ -54,7 +77,7 @@ describe('mesh-runner 常驻 session', () => {
     expect(getRun(run.id)?.lastError).toBe('boom')
   })
 
-  it('stopRunner 对不存在账户返回 false', () => {
-    expect(stopRunner('nope')).toBe(false)
+  it('stopRunner 对不存在账户返回 false', async () => {
+    await expect(stopRunner('nope')).resolves.toBe(false)
   })
 })

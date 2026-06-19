@@ -19,8 +19,13 @@ import { getDb } from '@/lib/db/connection'
 const mStop = jest.mocked(stopMonitoring)
 const count = (sql: string, ...args: unknown[]) => (getDb().prepare(sql).get(...args) as { c: number }).c
 
+beforeEach(() => {
+  mStop.mockReset().mockResolvedValue({ ok: false, reason: '该账户未在盯盘' })
+})
+
 describe('deleteWorkshop —— 全删干净（W5）', () => {
-  it('先停 runner + 级联删配置/历史 + workshop 行', () => {
+  it('先停 runner + 级联删配置/历史 + workshop 行', async () => {
+    mStop.mockResolvedValue({ ok: true })
     createWorkshop({ name: '待删工作室', id: 'ws_del' })
     listAgents('ws_del') // 触发 seed 5 个 agents
     upsertTeamConfig('ws_del', { focus: '半导体' })
@@ -32,7 +37,7 @@ describe('deleteWorkshop —— 全删干净（W5）', () => {
     db.prepare("INSERT INTO mesh_participant (run_id, participant_id) VALUES ('mrun_x', 'p1')").run()
     db.prepare("INSERT INTO mesh_paper_account (run_id, cash) VALUES ('ws_del', 100000)").run()
 
-    deleteWorkshop('ws_del')
+    await deleteWorkshop('ws_del')
 
     expect(mStop).toHaveBeenCalledWith('ws_del') // 先停 runner
     expect(getWorkshop('ws_del')).toBeNull() // workshop 行删
@@ -49,11 +54,22 @@ describe('deleteWorkshop —— 全删干净（W5）', () => {
     expect(count("SELECT count(*) c FROM mesh_paper_account WHERE run_id='ws_del'")).toBe(0)
   })
 
-  it('不波及其它工作室（删 ws_del 不动默认工作室）', () => {
+  it('停止失败时不删除工作室数据', async () => {
+    mStop.mockResolvedValue({ ok: false, reason: '停止超时' })
+    createWorkshop({ name: '运行中', id: 'ws_busy' })
+    listAgents('ws_busy')
+
+    await expect(deleteWorkshop('ws_busy')).rejects.toThrow('停止超时')
+
+    expect(getWorkshop('ws_busy')).not.toBeNull()
+    expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_busy'")).toBe(5)
+  })
+
+  it('不波及其它工作室（删 ws_del 不动默认工作室）', async () => {
     createWorkshop({ name: 'X', id: 'ws_keep' })
     listAgents('ws_keep')
     upsertTeamConfig('ws_keep', { focus: '保留' })
-    deleteWorkshop('ws_del2_nonexist') // 删不存在的不报错
+    await deleteWorkshop('ws_del2_nonexist') // 删不存在的不报错
     expect(getTeamConfig('ws_keep').focus).toBe('保留')
     expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_keep'")).toBe(5)
   })
