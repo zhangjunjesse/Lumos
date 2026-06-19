@@ -144,21 +144,23 @@ export interface MeshMessageRecord {
 }
 
 /** 读某 run 全部消息（事件/任务/回执流，按时间）——供作战室消息流展示。 */
-export function listAllMessages(runId: string): MeshMessageRecord[] {
+export function listAllMessages(runId: string, limit = 500): MeshMessageRecord[] {
   const rows = getDb()
     .prepare(
       `SELECT id, topic, payload_json, from_participant, task_id, created_at
-       FROM mesh_message WHERE run_id = ? ORDER BY created_at`,
+       FROM mesh_message WHERE run_id = ? ORDER BY rowid DESC LIMIT ?`,
     )
-    .all(runId) as Array<{ id: string; topic: string; payload_json: string; from_participant: string; task_id: string | null; created_at: string }>
-  return rows.map((r) => ({
-    id: r.id,
-    topic: r.topic,
-    payload: safeParse(r.payload_json),
-    from: r.from_participant,
-    taskId: r.task_id,
-    createdAt: r.created_at,
-  }))
+    .all(runId, limit) as Array<{ id: string; topic: string; payload_json: string; from_participant: string; task_id: string | null; created_at: string }>
+  return rows
+    .map((r) => ({
+      id: r.id,
+      topic: r.topic,
+      payload: safeParse(r.payload_json),
+      from: r.from_participant,
+      taskId: r.task_id,
+      createdAt: r.created_at,
+    }))
+    .reverse() // 取最近 limit 条再正序：常驻 session 消息跨 cycle 累积，只读端分页防膨胀
 }
 
 function safeParse(json: string): unknown {

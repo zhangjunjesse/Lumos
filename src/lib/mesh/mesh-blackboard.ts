@@ -65,14 +65,14 @@ export function readAllBlackboard(runId: string): BlackboardEntry[] {
 }
 
 /** 读某 run 全部写入历史（所有版本，按时间）——作战室留痕展示。 */
-export function readBlackboardHistory(runId: string): BlackboardEntry[] {
+export function readBlackboardHistory(runId: string, limit = 500): BlackboardEntry[] {
   const rows = getDb()
     .prepare(
       `SELECT key, value_json, version, written_by, written_at
-       FROM mesh_blackboard WHERE run_id = ? ORDER BY written_at, version`,
+       FROM mesh_blackboard WHERE run_id = ? ORDER BY rowid DESC LIMIT ?`,
     )
-    .all(runId) as BlackboardRow[]
-  return rows.map(hydrate)
+    .all(runId, limit) as BlackboardRow[]
+  return rows.map(hydrate).reverse() // 取最近 limit 条留痕再正序：常驻 session 跨 cycle 无限累积，只读端分页防膨胀
 }
 
 function hydrate(row: BlackboardRow): BlackboardEntry {
