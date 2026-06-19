@@ -50,7 +50,7 @@ export function buildActiveLoopPrompt(runId: string, role: MeshAgentRole, snapsh
   const board = boardLines(runId)
   if (role === 'observe') {
     const focusLine = focus ? `\n关注重点：${focus}` : ''
-    return `你是常驻盯盘 agent，轮到你看盘了。最新行情快照：\n${JSON.stringify(snapshot, null, 2)}${focusLine}\n\n当前白板（含你之前的观察）：\n${board}\n\n对比之前，只在出现**新的**值得交易关注的异动时，emit_event 一个 topic="quote_anomaly"、payload 带代码和理由，并把观察写白板；若无新异动，只 write_blackboard 一句"无新异动"即可，不要 emit。`
+    return `你是常驻盯盘 agent，轮到你看盘了。最新行情快照：\n${JSON.stringify(snapshot, null, 2)}${focusLine}\n\n当前白板：\n${board}\n\n发现值得交易关注的异动（放量突破、涨跌停附近、主线龙头异动、明确低吸/止盈点等）就**必须** emit_event 一个 topic="quote_anomaly"、payload 带 code 和 reason，并把观察写白板 key="watch_note"。\n去重：仅当白板 watch_note 显示你**已就同一标的的同一异动**提示过、本次快照又无变化时，才跳过 emit、只更新 watch_note。注意 market_snapshot 是待你分析的实时行情、不是你的历史观察，别因为"和快照一致"就压制首次提示。确实毫无异动才写一句"无异动"且不 emit。`
   }
   return `轮到你（${role}）巡检。当前白板：\n${board}\n\n按你的职责产出 action plan；确无可做时只写一句白板说明，不要硬造动作。`
 }
