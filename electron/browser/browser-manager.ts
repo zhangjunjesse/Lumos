@@ -1519,7 +1519,13 @@ export class BrowserManager extends EventEmitter {
   }
 
   private refreshTabMetadata(tabId: string, view: WebContentsView): void {
-    const metadata = this.requireTab(tabId);
+    // A late WebContents event (e.g. did-finish-load) can fire after the tab was
+    // already removed. Ignore it instead of throwing from requireTab, which would
+    // surface as an uncaught exception and crash the main process. See issue #19.
+    const metadata = this.tabMetadata.get(tabId);
+    if (!metadata) {
+      return;
+    }
     metadata.isLoading = false;
     metadata.url = view.webContents.getURL() || metadata.url;
     metadata.title = view.webContents.getTitle() || metadata.title;
