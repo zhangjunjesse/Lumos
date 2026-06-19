@@ -1,31 +1,20 @@
 /**
  * 炒股协作编排：盯盘 → 决策(提议) → 风控审议 → OrderGateway paper 成交 → 复盘归因。
- * 跑前读 team config（Leader/Control Plane 改的）：黑名单并进 Risk Gate、focus 进盯盘、mode 控制是否下单。
- * 行情用传入快照驱动（不连 qmt）；白板/事件/全部 agent 都是真的。
+ * 跑前读 db：team config（Leader/设置改的）、风控规则、agent registry（团队成员配置）。
+ * 协作框架由 role + topics 驱动：starter=observe、reviewer=review，其余按各自 topics 订阅；停用的 agent 不进。
+ * 行情用传入快照驱动（不连 qmt）；白板/事件/全部 agent 都是真的。不 import workflow / team-run。
  */
-import {
-  runCollaborationOnce,
-  type CollaborationResult,
-  type MeshParticipant,
-} from './mesh-runtime'
-import {
-  STOCK_WATCH_AGENT,
-  STOCK_DECIDE_AGENT,
-  STOCK_RISK_AGENT,
-  STOCK_REVIEW_AGENT,
-} from './mesh-stock-agents'
+import { runCollaborationOnce, type CollaborationResult, type MeshParticipant } from './mesh-runtime'
+import { listAgents } from './mesh-agent-store'
 import { getTeamConfig } from './mesh-team-config'
 import { getRiskRules } from './mesh-risk-store'
 import { getLiveConfig } from './mesh-live-backend'
 
-/** 单向收敛链：盯盘→[quote_anomaly]→决策→[order_proposal]→风控→(order_intent)→成交；复盘 drain 后跑。 */
+/** 从 Agent Registry 读 enabled 的协作成员（排除队长——队长是指挥层，不在协作链）。 */
 export function buildStockParticipants(): MeshParticipant[] {
-  return [
-    { agent: STOCK_WATCH_AGENT, topics: [] },
-    { agent: STOCK_DECIDE_AGENT, topics: ['quote_anomaly'] },
-    { agent: STOCK_RISK_AGENT, topics: ['order_proposal'] },
-    { agent: STOCK_REVIEW_AGENT, topics: [] },
-  ]
+  return listAgents({ enabled: true })
+    .filter((a) => a.role !== 'leader')
+    .map((a) => ({ agent: a, topics: a.topics }))
 }
 
 export function runStockCollaboration(
@@ -39,13 +28,19 @@ export function runStockCollaboration(
     ...stored,
     blacklist: Array.from(new Set([...stored.blacklist, ...config.blacklist])),
   }
+
+  const participants = buildStockParticipants()
+  // 协作链由 role 定位：观察者起步、复盘收尾（来自 db registry，可被启停/编辑）。
+  const starterId = participants.find((p) => p.agent.role === 'observe')?.agent.id ?? participants[0]?.agent.id ?? ''
+  const reviewerId = participants.find((p) => p.agent.role === 'review')?.agent.id
+
   return runCollaborationOnce(
-    buildStockParticipants(),
+    participants,
     {
       snapshotKey: 'market_snapshot',
       snapshot,
-      starterId: STOCK_WATCH_AGENT.id,
-      reviewerId: STOCK_REVIEW_AGENT.id,
+      starterId,
+      reviewerId,
       riskRules,
       mode: config.mode,
       focus: config.focus,

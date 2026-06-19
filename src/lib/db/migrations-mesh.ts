@@ -114,6 +114,20 @@ export function migrateMeshTables(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS mesh_agent (
+      id TEXT PRIMARY KEY,
+      role TEXT NOT NULL,
+      system_prompt TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      mcp_json TEXT NOT NULL DEFAULT '[]',
+      tool_json TEXT NOT NULL DEFAULT '[]',
+      topics_json TEXT NOT NULL DEFAULT '[]',
+      interval_sec INTEGER NOT NULL DEFAULT 10,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_mesh_run_status ON mesh_run(status, account_id);
   `);
 }

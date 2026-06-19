@@ -15,6 +15,7 @@ import {
   type LeaderResult,
 } from './mesh-command-schema'
 import { getTeamConfig, upsertTeamConfig, type TeamConfig } from './mesh-team-config'
+import { getAgent } from './mesh-agent-store'
 import type { MeshAgentConfig } from './mesh-agent-config'
 
 const LEADER_AGENT: MeshAgentConfig = {
@@ -34,7 +35,8 @@ reply 用一句话复述你的理解。看不懂或无可执行命令时 command
 export async function runLeader(userMessage: string, options: { sessionId?: string } = {}): Promise<LeaderResult> {
   const config = getTeamConfig()
   const prompt = `当前团队配置：${JSON.stringify(config)}\n\n用户指令：${userMessage}\n\n据此拆成控制命令。`
-  const { structured } = await runMeshAgentStructured(LEADER_AGENT, prompt, buildLeaderSchema(), options)
+  const leaderAgent = getAgent('team.leader') ?? LEADER_AGENT // db registry 配置，缺省回落默认
+  const { structured } = await runMeshAgentStructured(leaderAgent, prompt, buildLeaderSchema(), options)
   return parseLeaderResult(structured)
 }
 

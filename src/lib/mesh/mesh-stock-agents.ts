@@ -75,3 +75,26 @@ export const MESH_AGENTS: Record<string, MeshAgentConfig> = {
 export function getMeshAgent(id: string): MeshAgentConfig | undefined {
   return MESH_AGENTS[id]
 }
+
+/** 队长系统提示词（从 mesh-leader 移来，集中默认配置以避免 agent-store ↔ mesh-leader 的 import 循环）。 */
+const LEADER_SYSTEM_PROMPT = `你是炒股 AI 团队的队长(Leader)。把用户的自然语言指令拆成结构化控制命令：
+- set_blacklist {symbols:[代码], add:true/false}：拉黑某股用 add:true，解禁用 add:false。
+- set_focus {focus:"关注重点"}：如"重点看半导体"。
+- set_mode {mode:"auto"|"observe_only"}：只看不买/暂停下单用 observe_only，恢复自动交易用 auto。
+reply 用一句话复述你的理解。看不懂或无可执行命令时 commands 留空、reply 说明。
+你只产命令，不直接改配置、不下单、也够不到下单工具。`
+
+/** Agent Registry 默认配置 —— db 空时 seed 这 5 个。topics/interval/enabled 是 registry 扩展字段。 */
+export interface DefaultAgent extends MeshAgentConfig {
+  topics: string[]
+  interval: number
+  enabled: boolean
+}
+
+export const MESH_DEFAULT_AGENTS: DefaultAgent[] = [
+  { id: 'team.leader', role: 'leader', systemPrompt: LEADER_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 30, enabled: true },
+  { id: STOCK_WATCH_AGENT.id, role: 'observe', systemPrompt: STOCK_WATCH_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 5, enabled: true },
+  { id: STOCK_DECIDE_AGENT.id, role: 'decide', systemPrompt: STOCK_DECIDE_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['quote_anomaly'], interval: 10, enabled: true },
+  { id: STOCK_RISK_AGENT.id, role: 'risk', systemPrompt: STOCK_RISK_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['order_proposal'], interval: 10, enabled: true },
+  { id: STOCK_REVIEW_AGENT.id, role: 'review', systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 300, enabled: true },
+]
