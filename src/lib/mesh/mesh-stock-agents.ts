@@ -23,8 +23,9 @@ export const STOCK_WATCH_AGENT: MeshAgentConfig = {
 
 const STOCK_DECIDE_SYSTEM_PROMPT = `你是 A 股交易决策 agent。盯盘 agent 发现异动时你被唤醒。
 读白板上的行情/异动信息，判断该股此刻应"买入/卖出/观望"，把理由写到白板 key="decision"（{action, reason}）。
-若决定买入或卖出，再产出一个 emit_event：topic="order_proposal"，payload={symbol(行情里的代码), side(buy/sell), qty(整百股), reason}。
-你只是"提议"——是否成交由风控 agent 审议、再经确定性风控+网关裁决；你不产下单意图、也够不到下单工具。观望则不发 order_proposal。`
+若决定买入或卖出，用 send_task action 把审单任务派给风控：to="stock.risk"，summary 写清"请审：买入/卖出 <代码> <整百股数>，理由 ..."。
+你只是"提议"——是否成交由风控审议、再经确定性风控+网关裁决；你不产下单意图、也够不到下单工具。观望则不派任务。
+风控会用 reply 把审议结果回执给你，届时把结论 write_blackboard 记录即可。`
 
 /** 决策 agent：只"提议"，不直接下单。 */
 export const STOCK_DECIDE_AGENT: MeshAgentConfig = {
@@ -36,10 +37,10 @@ export const STOCK_DECIDE_AGENT: MeshAgentConfig = {
 }
 
 const STOCK_RISK_SYSTEM_PROMPT = `你是 A 股交易风控 agent，团队最后一道人为把关（之后还有确定性硬规则兜底）。
-决策 agent 提议下单时（order_proposal 事件）你被唤醒。读白板的行情/决策/持仓，审议这单：
+决策 agent 用定向任务请你审单时你被唤醒（任务带 taskId 和要审的买卖）。读白板的行情/决策/持仓，审议这单：
 当前市场情绪与时机是否合适、决策理由是否扎实、敞口是否过大、是不是在追高/接飞刀。
-批准：产出 order_intent action（symbol/side/qty 同提议），让它进入下单流程。
-否决：不要产 order_intent，改 write_blackboard key="risk_review" value={approved:false, symbol, reason}。
+无论批准还是否决，都必须用 reply action 回执（带上任务的 taskId，summary 写"批准/否决 + 理由"）。
+批准时，再额外产出 order_intent action（symbol/side/qty 同任务），让它进入下单流程。
 你只做审议，真正成交由确定性风控+网关裁决；你够不到下单工具。`
 
 /** 风控 agent：审议提议，approve 产 order_intent / reject 写拒因。是 order_intent 唯一产出者。 */

@@ -24,6 +24,7 @@ export function migrateMeshTables(db: Database.Database): void {
       topic TEXT NOT NULL,
       payload_json TEXT NOT NULL DEFAULT '{}',
       from_participant TEXT NOT NULL DEFAULT '',
+      task_id TEXT DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -130,4 +131,11 @@ export function migrateMeshTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_mesh_run_status ON mesh_run(status, account_id);
   `);
+
+  // 旧 db 迁移：CREATE IF NOT EXISTS 不会给已存在表加列，补 mesh_message.task_id（幂等）。
+  try {
+    db.exec('ALTER TABLE mesh_message ADD COLUMN task_id TEXT')
+  } catch {
+    /* 列已存在，忽略 */
+  }
 }

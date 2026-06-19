@@ -71,7 +71,7 @@ export function AgentChat({ messages }: { messages: MsgRecord[] }) {
     <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-white">
       <div className="border-b border-neutral-200 px-4 py-3">
         <h2 className="text-sm font-medium text-neutral-900">团队消息流</h2>
-        <p className="mt-0.5 text-xs text-neutral-400">agent 广播的事件 + 你与队长的指挥（定向任务/回执后端待实现）</p>
+        <p className="mt-0.5 text-xs text-neutral-400">事件广播 · 定向任务 · 回执 · 你与队长的指挥</p>
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -79,6 +79,21 @@ export function AgentChat({ messages }: { messages: MsgRecord[] }) {
 
         {messages.map((m) => {
           const meta = agentMeta(m.from)
+          const p = (m.payload ?? {}) as { summary?: string; to?: string; taskId?: string }
+          if (m.topic === 'agent_task') {
+            return (
+              <Row key={m.id} name={meta.name} color={meta.color} badge="任务" badgeClass="bg-violet-50 text-violet-600" extra={`→ ${agentMeta(p.to ?? '').name}`} time={fmtTime(m.createdAt)}>
+                {p.summary}
+              </Row>
+            )
+          }
+          if (m.topic === 'agent_reply') {
+            return (
+              <Row key={m.id} name={meta.name} color={meta.color} badge="回执" badgeClass="bg-emerald-50 text-emerald-600" extra="↩ 回执" time={fmtTime(m.createdAt)}>
+                {p.summary}
+              </Row>
+            )
+          }
           return (
             <Row key={m.id} name={meta.name} color={meta.color} badge="事件" badgeClass="bg-sky-50 text-sky-600" extra={m.topic} time={fmtTime(m.createdAt)}>
               {payloadText(m.payload)}

@@ -2,9 +2,10 @@
  * mesh agent 产出的 action plan —— agent 不直接产生副作用，只声明"要做什么"，
  * 由 MeshRuntime 在单事务里执行。
  *
- * action 是白名单：write_blackboard / emit_event / order_intent。
- * order_intent 只是"下单意图"，必经确定性 Risk Gate + OrderGateway 才可能成交——
- * agent 物理够不到撮合/券商写（第一道保险是 M1 的 canUseTool）。
+ * action 白名单：write_blackboard / emit_event / send_task / reply / order_intent。
+ * - send_task：点名派任务给某 agent（定向，runtime 生成 taskId）。
+ * - reply：对收到的任务回执（带原 taskId）。
+ * order_intent 只是"下单意图"，必经确定性 Risk Gate + OrderGateway 才可能成交。
  */
 export interface WriteBlackboardAction {
   type: 'write_blackboard'
@@ -18,6 +19,18 @@ export interface EmitEventAction {
   payload: unknown
 }
 
+export interface SendTaskAction {
+  type: 'send_task'
+  to: string
+  summary: string
+}
+
+export interface ReplyAction {
+  type: 'reply'
+  taskId: string
+  summary: string
+}
+
 export interface OrderIntentAction {
   type: 'order_intent'
   symbol: string
@@ -25,7 +38,7 @@ export interface OrderIntentAction {
   qty: number
 }
 
-export type MeshAction = WriteBlackboardAction | EmitEventAction | OrderIntentAction
+export type MeshAction = WriteBlackboardAction | EmitEventAction | SendTaskAction | ReplyAction | OrderIntentAction
 
 export interface MeshActionPlan {
   thought: string
@@ -47,11 +60,14 @@ export function buildMeshActionPlanSchema(): Record<string, unknown> {
           additionalProperties: false,
           required: ['type'],
           properties: {
-            type: { type: 'string', enum: ['write_blackboard', 'emit_event', 'order_intent'] },
+            type: { type: 'string', enum: ['write_blackboard', 'emit_event', 'send_task', 'reply', 'order_intent'] },
             key: { type: 'string' },
             value: {},
             topic: { type: 'string' },
             payload: {},
+            to: { type: 'string' },
+            taskId: { type: 'string' },
+            summary: { type: 'string' },
             symbol: { type: 'string' },
             side: { type: 'string', enum: ['buy', 'sell'] },
             qty: { type: 'number' },
@@ -83,6 +99,12 @@ function normalizeAction(a: unknown): MeshAction | null {
   }
   if (o.type === 'emit_event' && typeof o.topic === 'string') {
     return { type: 'emit_event', topic: o.topic, payload: o.payload ?? null }
+  }
+  if (o.type === 'send_task' && typeof o.to === 'string' && o.to) {
+    return { type: 'send_task', to: o.to, summary: typeof o.summary === 'string' ? o.summary : '' }
+  }
+  if (o.type === 'reply' && typeof o.taskId === 'string' && o.taskId) {
+    return { type: 'reply', taskId: o.taskId, summary: typeof o.summary === 'string' ? o.summary : '' }
   }
   if (
     o.type === 'order_intent' &&

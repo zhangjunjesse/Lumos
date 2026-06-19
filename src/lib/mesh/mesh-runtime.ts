@@ -12,7 +12,7 @@
 import { randomUUID } from 'crypto'
 import { getDb } from '@/lib/db/connection'
 import { writeBlackboard, readBlackboard, readAllBlackboard } from './mesh-blackboard'
-import { persistMessage, markDelivered, listPendingDeliveries, wake, type MeshEvent } from './mesh-event-bus'
+import { persistMessage, markDelivered, listPendingDeliveries, wake, findTaskFrom, type MeshEvent } from './mesh-event-bus'
 import { runMeshActor } from './mesh-worker'
 import { placeOrder } from './mesh-order-gateway'
 import { initAccount, getAccount, type PaperAccount } from './mesh-paper-account'
@@ -107,10 +107,16 @@ export async function runCollaborationOnce(
       markDelivered(d.messageId, d.subscriberId, 'failed')
       continue
     }
+    const prompt =
+      d.topic === 'agent_task'
+        ? buildTaskPrompt(runId, d.payload, d.taskId ?? '')
+        : d.topic === 'agent_reply'
+          ? buildReplyPrompt(runId, d.payload)
+          : buildEventPrompt(runId, d.topic, d.payload)
     await runParticipant(
       runId,
       p,
-      buildEventPrompt(runId, d.topic, d.payload),
+      prompt,
       `event:${d.topic}`,
       { messageId: d.messageId, subscriberId: d.subscriberId },
       subscribersOf,
@@ -179,6 +185,20 @@ async function applyActionPlan(
           event: { id: messageId, runId, topic: action.topic, payload: action.payload, from: participant.agent.id },
         })
         emits.push(action.topic)
+      } else if (action.type === 'send_task') {
+        const taskId = randomUUID()
+        const payload = { summary: action.summary, from: participant.agent.id, to: action.to }
+        const messageId = persistMessage(runId, 'agent_task', payload, participant.agent.id, [action.to], taskId)
+        wakeups.push({ topic: 'agent_task', event: { id: messageId, runId, topic: 'agent_task', payload, from: participant.agent.id } })
+        emits.push(`task→${action.to}`)
+      } else if (action.type === 'reply') {
+        const origFrom = findTaskFrom(runId, action.taskId)
+        if (origFrom) {
+          const payload = { summary: action.summary, taskId: action.taskId }
+          const messageId = persistMessage(runId, 'agent_reply', payload, participant.agent.id, [origFrom], action.taskId)
+          wakeups.push({ topic: 'agent_reply', event: { id: messageId, runId, topic: 'agent_reply', payload, from: participant.agent.id } })
+          emits.push(`reply→${origFrom}`)
+        }
       } else if (action.type === 'order_intent') {
         orderIntents.push({ action, idx })
       }
@@ -232,4 +252,20 @@ function buildReviewPrompt(runId: string): string {
     .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
     .join('\n')
   return `本轮协作结束，白板全部记录：\n${board}\n\n做一段简明归因复盘，write_blackboard key="review"。`
+}
+
+function buildTaskPrompt(runId: string, payload: unknown, taskId: string): string {
+  const board = readAllBlackboard(runId)
+    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
+    .join('\n')
+  const p = (payload ?? {}) as { summary?: string; from?: string }
+  return `你收到一个定向任务（taskId=${taskId}），来自 ${p.from ?? '?'}：${p.summary ?? ''}\n\n当前白板：\n${board}\n\n处理这个任务。完成后必须用 reply action 回执（带上 taskId="${taskId}"，summary 写你的结论）。`
+}
+
+function buildReplyPrompt(runId: string, payload: unknown): string {
+  const board = readAllBlackboard(runId)
+    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
+    .join('\n')
+  const p = (payload ?? {}) as { summary?: string; taskId?: string }
+  return `你派出的任务（taskId=${p.taskId ?? '?'}）收到回执：${p.summary ?? ''}\n\n当前白板：\n${board}\n\n据此产出后续 action（如把结果 write_blackboard 记录）。`
 }

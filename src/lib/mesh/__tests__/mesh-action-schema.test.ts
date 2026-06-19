@@ -35,13 +35,15 @@ describe('parseActionPlan', () => {
     expect(parseActionPlan('x').thought).toBe('')
   })
 
-  it('schema action 白名单 = write_blackboard / emit_event / order_intent（仍无任何直接下单工具）', () => {
+  it('schema action 白名单 = write_blackboard / emit_event / send_task / reply / order_intent（仍无直接下单工具）', () => {
     const schema = buildMeshActionPlanSchema() as {
       properties: { actions: { items: { properties: { type: { enum: string[] } } } } }
     }
     expect(schema.properties.actions.items.properties.type.enum).toEqual([
       'write_blackboard',
       'emit_event',
+      'send_task',
+      'reply',
       'order_intent',
     ])
   })
