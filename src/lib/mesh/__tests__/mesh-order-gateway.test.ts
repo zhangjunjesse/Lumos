@@ -17,21 +17,31 @@ jest.mock('../mesh-live-backend', () => {
       this.name = 'LiveBackendError'
     }
   }
-  return { liveBackend: jest.fn(), LiveBackendError, getLiveConfig: jest.fn(() => ({ liveEnabled: false, tradeMode: 'paper' })) }
+  return {
+    liveBackend: jest.fn(),
+    LiveBackendError,
+    getLiveConfig: jest.fn(() => ({ liveEnabled: false, tradeMode: 'paper', backendConfigured: false })),
+    isLiveBackendConfigured: jest.fn(() => true),
+  }
 })
 
 import { placeOrder } from '../mesh-order-gateway'
 import { initAccount, getAccount } from '../mesh-paper-account'
-import { liveBackend, LiveBackendError } from '../mesh-live-backend'
+import { getTicket } from '../mesh-order-ticket'
+import { isLiveBackendConfigured, liveBackend, LiveBackendError } from '../mesh-live-backend'
 
 const snapshot = { ticks: [{ code: '600160.SH', last: 45, pct: 5 }] }
 const mockedLiveBackend = jest.mocked(liveBackend)
+const mockedIsLiveBackendConfigured = jest.mocked(isLiveBackendConfigured)
 
 function stubLive(placeImpl: () => Promise<unknown>) {
   mockedLiveBackend.mockReturnValue({ placeOrder: placeImpl } as unknown as ReturnType<typeof liveBackend>)
 }
 
-beforeEach(() => mockedLiveBackend.mockReset())
+beforeEach(() => {
+  mockedLiveBackend.mockReset()
+  mockedIsLiveBackendConfigured.mockReturnValue(true)
+})
 
 describe('placeOrder (paper)', () => {
   it('过 Risk Gate → paper 成交 + 账户记账 + ticket filled', async () => {
@@ -84,6 +94,15 @@ describe('placeOrder (live) — M8 真盘后端', () => {
     expect(mockedLiveBackend).not.toHaveBeenCalled()
   })
 
+  it('live 启用但后端未配置 → rejected，不回退到 mock 后端', async () => {
+    initAccount('L0', 100000)
+    mockedIsLiveBackendConfigured.mockReturnValue(false)
+    const r = await placeOrder('L0', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L0-1', snapshot, mode: 'live', liveEnabled: true })
+    expect(r.status).toBe('rejected')
+    expect(r.reason).toContain('live 后端脚本未配置')
+    expect(mockedLiveBackend).not.toHaveBeenCalled()
+  })
+
   it('live 启用 + 后端 filled → 成交记账（用后端回执价）', async () => {
     initAccount('L2', 100000)
     stubLive(async () => ({ status: 'filled', filledPrice: 44.8, filledQty: 100, brokerOrderId: 'B1' }))
@@ -104,13 +123,62 @@ describe('placeOrder (live) — M8 真盘后端', () => {
 
   it('live 后端超时 → 自动 halt + ticket pending（绝不当成交、不盲目重下）', async () => {
     initAccount('L4', 100000)
+    let calls = 0
     stubLive(async () => {
+      calls += 1
       throw new LiveBackendError('回执超时', 'timeout')
     })
     const r = await placeOrder('L4', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L4-1', snapshot, mode: 'live', liveEnabled: true })
     expect(r.status).toBe('pending')
     expect(r.filled).toBe(false)
+    expect(r.reason).toContain('人工核对')
+    expect(getTicket(r.ticketId)?.rejectReason).toContain('人工核对')
     expect(getAccount('L4')!.halted).toBe(true)
+
+    const retry = await placeOrder('L4-retry', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L4-1', snapshot, accountId: 'L4', mode: 'live', liveEnabled: true })
+    expect(retry.status).toBe('pending')
+    expect(retry.ticketId).toBe(r.ticketId)
+    expect(calls).toBe(1)
+    expect(getTicket(r.ticketId)?.status).toBe('pending')
+  })
+
+  it('live 后端 filled 回执数量超过原始下单数量 → pending + halt，不记账不重试', async () => {
+    initAccount('L6', 100000)
+    let calls = 0
+    stubLive(async () => {
+      calls += 1
+      return { status: 'filled', filledPrice: 44.8, filledQty: 200, brokerOrderId: 'B2' }
+    })
+    const r = await placeOrder('L6', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L6-1', snapshot, mode: 'live', liveEnabled: true })
+    expect(r.status).toBe('pending')
+    expect(r.reason).toContain('成交数量超过')
+    expect(r.reason).toContain('人工核对')
+    expect(getAccount('L6')!.halted).toBe(true)
+    expect(getAccount('L6')!.positions['600160.SH']).toBeUndefined()
+
+    const retry = await placeOrder('L6-retry', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L6-1', snapshot, accountId: 'L6', mode: 'live', liveEnabled: true })
+    expect(retry.status).toBe('pending')
+    expect(calls).toBe(1)
+  })
+
+  it('live 后端 filled 回执缺有效成交价/量 → pending + halt，不用默认值伪造成交', async () => {
+    initAccount('L7', 100000)
+    stubLive(async () => ({ status: 'filled', brokerOrderId: 'B3' }))
+    const r = await placeOrder('L7', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L7-1', snapshot, mode: 'live', liveEnabled: true })
+    expect(r.status).toBe('pending')
+    expect(r.reason).toContain('有效成交价')
+    expect(getAccount('L7')!.halted).toBe(true)
+    expect(getAccount('L7')!.positions['600160.SH']).toBeUndefined()
+  })
+
+  it('live 后端 filled 回执价格高于请求限价 → pending + halt，不按超价成交记账', async () => {
+    initAccount('L8', 100000)
+    stubLive(async () => ({ status: 'filled', filledPrice: 46, filledQty: 100, brokerOrderId: 'B4' }))
+    const r = await placeOrder('L8', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'L8-1', snapshot, mode: 'live', liveEnabled: true })
+    expect(r.status).toBe('pending')
+    expect(r.reason).toContain('高于请求限价')
+    expect(getAccount('L8')!.halted).toBe(true)
+    expect(getAccount('L8')!.positions['600160.SH']).toBeUndefined()
   })
 
   it('live 后端崩溃 → 自动 halt（in-flight 不当成交）', async () => {

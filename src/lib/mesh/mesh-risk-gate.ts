@@ -28,7 +28,8 @@ export interface RiskVerdict {
 const FEE_RATE = 0.0003
 const MIN_FEE = 5
 
-function feeFor(notional: number): number {
+export function calculateOrderFee(notional: number): number {
+  if (!Number.isFinite(notional) || notional < 0) return MIN_FEE
   return Math.max(MIN_FEE, notional * FEE_RATE)
 }
 
@@ -56,7 +57,7 @@ export function checkOrder(
   const tick = findTick(snapshot, intent.symbol)
   const price = tick?.last ?? 0
   const notional = intent.qty * price
-  const fee = feeFor(notional)
+  const fee = calculateOrderFee(notional)
   const fail = (reason: string): RiskVerdict => ({ ok: false, reason, price, fee })
 
   // 总闸（最高优先级）
@@ -67,8 +68,8 @@ export function checkOrder(
     return fail(`触发单日最大下单金额总闸(${rules.maxDailyNotional})`)
 
   // 基础校验
-  if (!tick || price <= 0) return fail(`无该标的行情：${intent.symbol}`)
-  if (intent.qty <= 0) return fail('下单数量必须为正')
+  if (!tick || !Number.isFinite(price) || price <= 0) return fail(`无该标的有效行情：${intent.symbol}`)
+  if (!Number.isInteger(intent.qty) || intent.qty <= 0) return fail('下单数量必须为正整数')
   if (rules.blacklist.includes(intent.symbol)) return fail('标的在黑名单')
   if (notional > rules.maxOrderNotional) return fail(`超单笔金额上限(${rules.maxOrderNotional})`)
 

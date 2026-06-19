@@ -44,7 +44,7 @@ interface TicketRow {
 
 /** 建 pending 票据；幂等键已存在则直接返回已有票据（防重复下单）。 */
 export function createTicket(input: CreateTicketInput): OrderTicket {
-  const existing = getTicketByKey(input.idempotencyKey)
+  const existing = getTicketByIdempotencyKey(input.idempotencyKey)
   if (existing) return existing
   const id = `tkt_${randomUUID()}`
   getDb()
@@ -70,12 +70,20 @@ export function rejectTicket(id: string, reason: string, riskSnapshot: unknown):
     .run(reason, JSON.stringify(riskSnapshot ?? {}), id)
 }
 
+export function markTicketPendingReview(id: string, reason: string, riskSnapshot: unknown): void {
+  getDb()
+    .prepare(
+      "UPDATE mesh_order_ticket SET status='pending', reject_reason=?, risk_snapshot_json=? WHERE id=? AND status='pending'",
+    )
+    .run(reason, JSON.stringify(riskSnapshot ?? {}), id)
+}
+
 export function getTicket(id: string): OrderTicket | null {
   const row = getDb().prepare('SELECT * FROM mesh_order_ticket WHERE id=?').get(id) as TicketRow | undefined
   return row ? hydrate(row) : null
 }
 
-function getTicketByKey(key: string): OrderTicket | null {
+export function getTicketByIdempotencyKey(key: string): OrderTicket | null {
   const row = getDb().prepare('SELECT * FROM mesh_order_ticket WHERE idempotency_key=?').get(key) as
     | TicketRow
     | undefined

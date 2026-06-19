@@ -116,6 +116,31 @@ export function listPendingDeliveries(runId: string): PendingDelivery[] {
   }))
 }
 
+export interface MeshMessageRecord {
+  id: string
+  topic: string
+  payload: unknown
+  from: string
+  createdAt: string
+}
+
+/** 读某 run 全部消息（事件流，按时间）——供作战室消息流展示。 */
+export function listAllMessages(runId: string): MeshMessageRecord[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, topic, payload_json, from_participant, created_at
+       FROM mesh_message WHERE run_id = ? ORDER BY created_at`,
+    )
+    .all(runId) as Array<{ id: string; topic: string; payload_json: string; from_participant: string; created_at: string }>
+  return rows.map((r) => ({
+    id: r.id,
+    topic: r.topic,
+    payload: safeParse(r.payload_json),
+    from: r.from_participant,
+    createdAt: r.created_at,
+  }))
+}
+
 function safeParse(json: string): unknown {
   try {
     return JSON.parse(json)

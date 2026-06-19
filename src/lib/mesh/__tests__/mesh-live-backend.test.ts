@@ -50,6 +50,30 @@ describe('mesh-live-backend IPC（真起 mock python 子进程）', () => {
     }
   })
 
+  it('handshake timeout → 清理卡死子进程，下一次可重新启动', async () => {
+    process.env.MESH_MOCK_MODE = 'no_ready'
+    const b = new LiveBackend({ script: SCRIPT, requestTimeoutMs: 1000, handshakeTimeoutMs: 300 })
+    try {
+      await expect(
+        b.placeOrder({ symbol: 'X', side: 'buy', qty: 100, price: 10, idempotencyKey: 'k-ready-timeout-1' }),
+      ).rejects.toMatchObject({ kind: 'timeout' })
+      expect(b.isConnected()).toBe(false)
+      process.env.MESH_MOCK_MODE = 'normal'
+      const r = await b.placeOrder({
+        symbol: 'X',
+        side: 'buy',
+        qty: 100,
+        price: 10,
+        idempotencyKey: 'k-ready-timeout-2',
+      })
+      expect(r.status).toBe('filled')
+      expect(b.isConnected()).toBe(true)
+    } finally {
+      delete process.env.MESH_MOCK_MODE
+      b.shutdown()
+    }
+  })
+
   it('crash → 抛 LiveBackendError(crash)，in-flight 不当成交', async () => {
     const b = backend('crash')
     try {

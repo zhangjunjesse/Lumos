@@ -7,6 +7,7 @@ Mesh 交易后端 —— mock 实现（mac 验链路用，绝不接真券商）�
 
 环境变量 MESH_MOCK_MODE 控制行为（测试用）：
   normal(默认) → filled 回执
+  no_ready     → 启动后不发 ready（触发 Node 侧握手超时）
   reject       → rejected 回执
   timeout      → 收到请求不回（触发 Node 侧超时）
   crash        → 收到请求即退出（触发 Node 侧崩溃处理）
@@ -31,6 +32,10 @@ def emit(obj):
 
 def main():
     mode = os.environ.get("MESH_MOCK_MODE", "normal")
+    if mode == "no_ready":
+        for _ in sys.stdin:
+            pass
+        return
     emit({"type": "ready"})
 
     for line in sys.stdin:

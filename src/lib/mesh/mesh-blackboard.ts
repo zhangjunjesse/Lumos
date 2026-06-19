@@ -61,6 +61,17 @@ export function readAllBlackboard(runId: string): BlackboardEntry[] {
   return rows.map(hydrate)
 }
 
+/** 读某 run 全部写入历史（所有版本，按时间）——作战室留痕展示。 */
+export function readBlackboardHistory(runId: string): BlackboardEntry[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT key, value_json, version, written_by, written_at
+       FROM mesh_blackboard WHERE run_id = ? ORDER BY written_at, version`,
+    )
+    .all(runId) as BlackboardRow[]
+  return rows.map(hydrate)
+}
+
 function hydrate(row: BlackboardRow): BlackboardEntry {
   return {
     key: row.key,

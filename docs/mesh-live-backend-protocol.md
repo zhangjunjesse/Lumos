@@ -31,8 +31,9 @@ OrderGateway 的 live 下单通过一个 **Python 子进程**完成：Node 侧�
 
 ## 真钱安全语义（Node 侧已实现，后端须配合）
 
-- **幂等键防重复下单**：`idempotencyKey` 全局唯一（`runId:agentId:idx`）。后端**必须**用它去重——同 key 不可重复报单。Node 侧 ticket 也有 `idempotency_key UNIQUE` 兜底。
+- **幂等键防重复下单**：`idempotencyKey` 全局唯一（`runId:agentId:idx`）。后端**必须**用它去重——同 key 不可重复报单。Node 侧 ticket 也有 `idempotency_key UNIQUE` 兜底；如果同 key 已经处于 live `pending`（券商状态未知），Node 侧会直接返回“需人工核对”，不会再次发单。
 - **回执超时 ≠ 没成交**：Node 等回执超时（默认 10s）→ 自动 `halt` + ticket 留 `pending`，**不当成交、不自动重下**，需人工核对。所以后端对每个请求**务必回一条回执**（成/拒），即使慢也要回。
+- **异常成交回执按未知状态处理**：后端如果返回 `filled` 但缺少有效 `filledPrice/filledQty`、成交量超过请求量，或成交价高于请求限价，Node 侧会 `halt` + ticket 留 `pending`，不记成本地成交，也不改成 rejected，需人工核对券商真实状态。
 - **崩溃**：子进程退出 → Node 把所有在途请求判为失败 + halt。
 - **总闸**：下单前已过 Node 侧确定性 Risk Gate（单日亏损/笔数/金额/黑名单/涨停不追/资金持仓校验）。后端不需重复校验，但可加券商侧校验。
 
@@ -43,10 +44,10 @@ OrderGateway 的 live 下单通过一个 **Python 子进程**完成：Node 侧�
 ```bash
 export LUMOS_MESH_ENABLE_LIVE=1            # 真盘总闸，默认关
 export LUMOS_MESH_TRADE_MODE=live          # paper(默认) | live；live 需总闸也开才生效
-export LUMOS_MESH_LIVE_BACKEND=/path/to/qmt_trade_backend.py   # 不设则用内置 mock
+export LUMOS_MESH_LIVE_BACKEND=/path/to/qmt_trade_backend.py   # live 必填；不配置不进入 live
 ```
 
-两个都开（`ENABLE_LIVE=1` 且 `TRADE_MODE=live`）才会走真盘；任一没开 → 仍是 paper。
+三个条件都满足（`ENABLE_LIVE=1`、`TRADE_MODE=live`、`LUMOS_MESH_LIVE_BACKEND` 指向真实脚本）才会走真盘；任一没开 → 仍是 paper 或明确拒绝。内置 mock 只用于显式 IPC / 集成测试，不作为生产 live 的默认后端。
 
 ## Windows 接国金 qmt（你来做 + L2 验）
 

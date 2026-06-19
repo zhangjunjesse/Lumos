@@ -64,6 +64,14 @@ export function getRunningRun(accountId: string): MeshRunRow | null {
   return r ? toRow(r) : null
 }
 
+/** 该账户最近一条 run（不限状态）——作战室停止后仍能看最后一轮。 */
+export function getLatestRun(accountId: string): MeshRunRow | null {
+  const r = getDb()
+    .prepare(`SELECT * FROM mesh_run WHERE account_id = ? ORDER BY started_at DESC LIMIT 1`)
+    .get(accountId) as RawRow | undefined
+  return r ? toRow(r) : null
+}
+
 export function listRunningRuns(): MeshRunRow[] {
   const rows = getDb().prepare(`SELECT * FROM mesh_run WHERE status = 'running'`).all() as RawRow[]
   return rows.map(toRow)

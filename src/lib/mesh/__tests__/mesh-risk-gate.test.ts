@@ -60,6 +60,19 @@ describe('checkOrder (Risk Gate)', () => {
     expect(v.reason).toContain('持仓不足')
   })
 
+  it('非法行情价格拒，不让 NaN/Infinity 穿过总闸', () => {
+    const badSnapshot = { ticks: [{ code: 'BAD', last: Number.NaN }] }
+    const v = checkOrder({ symbol: 'BAD', side: 'buy', qty: 100 }, acc(), badSnapshot, DEFAULT_RISK_RULES)
+    expect(v.ok).toBe(false)
+    expect(v.reason).toContain('有效行情')
+  })
+
+  it('非整数数量拒', () => {
+    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 1.5 }, acc(), snapshot, DEFAULT_RISK_RULES)
+    expect(v.ok).toBe(false)
+    expect(v.reason).toContain('正整数')
+  })
+
   it('总闸：单日亏损触线拒', () => {
     const v = checkOrder({ symbol: 'A', side: 'buy', qty: 10 }, acc({ realizedPnl: -25000 }), snapshot, DEFAULT_RISK_RULES)
     expect(v.ok).toBe(false)

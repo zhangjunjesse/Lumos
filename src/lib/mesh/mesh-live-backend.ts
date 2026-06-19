@@ -152,15 +152,26 @@ export class LiveBackend {
   private async waitReady(): Promise<void> {
     if (this.ready) return
     await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new LiveBackendError('握手超时', 'timeout')),
-        this.opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS,
-      )
-      this.readyWaiters.push((ok) => {
+      let settled = false
+      const t = setTimeout(() => {
+        if (settled) return
+        settled = true
+        const err = new LiveBackendError('握手超时', 'timeout')
+        const child = this.child
+        if (child) child.kill()
+        this.cleanupChild()
+        this.failPending(err) // failPending 会清空 readyWaiters（含本 waiter）
+        reject(err)
+      }, this.opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS)
+      const waiter = (ok: boolean) => {
+        if (settled) return
+        settled = true
         clearTimeout(t)
+        this.readyWaiters = this.readyWaiters.filter((w) => w !== waiter)
         if (ok) resolve()
         else reject(new LiveBackendError('子进程启动即退出', 'crash'))
-      })
+      }
+      this.readyWaiters.push(waiter)
     })
   }
 
@@ -199,14 +210,20 @@ export class LiveBackend {
 export interface LiveConfig {
   liveEnabled: boolean
   tradeMode: 'paper' | 'live'
+  backendConfigured: boolean
+}
+
+export function isLiveBackendConfigured(): boolean {
+  return Boolean(process.env.LUMOS_MESH_LIVE_BACKEND?.trim())
 }
 
 /** 真盘开关从 env 读（部署级，不入 db/UI——真钱保险）。liveEnabled 关时 tradeMode 强制 paper。 */
 export function getLiveConfig(): LiveConfig {
   const liveEnabled = process.env.LUMOS_MESH_ENABLE_LIVE === '1'
+  const backendConfigured = isLiveBackendConfigured()
   const tradeMode: 'paper' | 'live' =
-    liveEnabled && process.env.LUMOS_MESH_TRADE_MODE === 'live' ? 'live' : 'paper'
-  return { liveEnabled, tradeMode }
+    liveEnabled && backendConfigured && process.env.LUMOS_MESH_TRADE_MODE === 'live' ? 'live' : 'paper'
+  return { liveEnabled, tradeMode, backendConfigured }
 }
 
 // 进程级单例（生产用）；测试可 new LiveBackend({script,env}) 起独立实例。
