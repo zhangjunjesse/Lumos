@@ -11,11 +11,12 @@
  */
 import { randomUUID } from 'crypto'
 import { getDb } from '@/lib/db/connection'
-import { writeBlackboard, readBlackboard, readAllBlackboard } from './mesh-blackboard'
+import { writeBlackboard, readBlackboard } from './mesh-blackboard'
 import { persistMessage, markDelivered, listPendingDeliveries, wake, findTaskFrom, type MeshEvent } from './mesh-event-bus'
 import { runMeshActor } from './mesh-worker'
 import { placeOrder } from './mesh-order-gateway'
 import { initAccount, getAccount, type PaperAccount } from './mesh-paper-account'
+import { buildSeedPrompt, buildEventPrompt, buildReviewPrompt, buildTaskPrompt, buildReplyPrompt } from './mesh-prompts'
 import type { RiskRules } from './mesh-risk-rules'
 import type { MeshActionPlan } from './mesh-action-schema'
 import type { MeshAgentConfig } from './mesh-agent-config'
@@ -58,7 +59,7 @@ export interface CollaborationResult {
   account: PaperAccount | null
 }
 
-interface TradeContext {
+export interface TradeContext {
   mode: 'auto' | 'observe_only'
   rules?: RiskRules
   accountId: string
@@ -157,13 +158,14 @@ async function runParticipant(
   trace.push({ participantId: participant.agent.id, trigger, thought: plan.thought, writes, emits, orders })
 }
 
-async function applyActionPlan(
+export async function applyActionPlan(
   runId: string,
   participant: MeshParticipant,
   plan: MeshActionPlan,
   consumed: { messageId: string; subscriberId: string } | null,
   subscribersOf: (topic: string) => string[],
   tradeCtx: TradeContext,
+  cycleSeq?: number,
 ): Promise<{ writes: string[]; emits: string[]; orders: string[] }> {
   const writes: string[] = []
   const emits: string[] = []
@@ -209,7 +211,7 @@ async function applyActionPlan(
   for (const w of wakeups) wake(runId, w.topic, w.event)
   // 事务提交后再下单（paper 立即/live 走 IPC 异步）；ticket 幂等键保证不重复下单。
   for (const oi of orderIntents) {
-    orders.push(await handleOrderIntent(runId, participant.agent.id, oi.action, oi.idx, snapshot, tradeCtx))
+    orders.push(await handleOrderIntent(runId, participant.agent.id, oi.action, oi.idx, snapshot, tradeCtx, cycleSeq))
   }
   return { writes, emits, orders }
 }
@@ -221,6 +223,7 @@ async function handleOrderIntent(
   idx: number,
   snapshot: unknown,
   tradeCtx: TradeContext,
+  cycleSeq?: number,
 ): Promise<string> {
   if (tradeCtx.mode === 'observe_only') {
     writeBlackboard(runId, `order_result:${action.symbol}`, { intent: action, status: 'skipped', reason: 'observe_only(只看不买)' }, agentId)
@@ -229,43 +232,8 @@ async function handleOrderIntent(
   const result = await placeOrder(
     runId,
     { symbol: action.symbol, side: action.side, qty: action.qty },
-    { idempotencyKey: `${runId}:${agentId}:${idx}`, snapshot, rules: tradeCtx.rules, accountId: tradeCtx.accountId, mode: tradeCtx.tradeMode, liveEnabled: tradeCtx.liveEnabled },
+    { idempotencyKey: `${runId}:${agentId}:${cycleSeq ?? 0}:${idx}`, snapshot, rules: tradeCtx.rules, accountId: tradeCtx.accountId, mode: tradeCtx.tradeMode, liveEnabled: tradeCtx.liveEnabled },
   )
   writeBlackboard(runId, `order_result:${action.symbol}`, { intent: action, ...result }, agentId)
   return `${action.side} ${action.symbol} x${action.qty} → ${result.status}` + (result.filled ? ` @${result.price}` : `(${result.reason})`)
-}
-
-function buildSeedPrompt(seed: CollaborationSeed): string {
-  const focusLine = seed.focus ? `\n关注重点：${seed.focus}` : ''
-  return `行情快照(${seed.snapshotKey})：\n${JSON.stringify(seed.snapshot, null, 2)}${focusLine}\n\n基于快照判断。若发现值得交易关注的异动，emit_event 一个 topic="quote_anomaly"、payload 带股票代码和理由，并把观察写入白板。`
-}
-
-function buildEventPrompt(runId: string, topic: string, payload: unknown): string {
-  const board = readAllBlackboard(runId)
-    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
-    .join('\n')
-  return `你被事件 "${topic}" 唤醒，事件内容：${JSON.stringify(payload)}\n\n当前白板：\n${board}\n\n据此产出 action plan。`
-}
-
-function buildReviewPrompt(runId: string): string {
-  const board = readAllBlackboard(runId)
-    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
-    .join('\n')
-  return `本轮协作结束，白板全部记录：\n${board}\n\n做一段简明归因复盘，write_blackboard key="review"。`
-}
-
-function buildTaskPrompt(runId: string, payload: unknown, taskId: string): string {
-  const board = readAllBlackboard(runId)
-    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
-    .join('\n')
-  const p = (payload ?? {}) as { summary?: string; from?: string }
-  return `你收到一个定向任务（taskId=${taskId}），来自 ${p.from ?? '?'}：${p.summary ?? ''}\n\n当前白板：\n${board}\n\n处理这个任务。完成后必须用 reply action 回执（带上 taskId="${taskId}"，summary 写你的结论）。`
-}
-
-function buildReplyPrompt(runId: string, payload: unknown): string {
-  const board = readAllBlackboard(runId)
-    .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
-    .join('\n')
-  const p = (payload ?? {}) as { summary?: string; taskId?: string }
-  return `你派出的任务（taskId=${p.taskId ?? '?'}）收到回执：${p.summary ?? ''}\n\n当前白板：\n${board}\n\n据此产出后续 action（如把结果 write_blackboard 记录）。`
 }
