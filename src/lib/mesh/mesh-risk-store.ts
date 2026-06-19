@@ -1,5 +1,5 @@
 /**
- * 风控规则存储 —— 单例（default）。设置页保存的数值规则落这里，协作据此做确定性风控。
+ * 风控规则存储 —— 按 workshopId 隔离（每个工作室一份）。设置页保存的数值规则落这里，协作据此做确定性风控。
  * 缺省回落 DEFAULT_RISK_RULES。agent 只读、改不了（放宽风险须人工，经设置页确定性写入）。
  */
 import { getDb } from '@/lib/db/connection'
@@ -18,8 +18,8 @@ interface Row {
   max_daily_notional: number
 }
 
-export function getRiskRules(): RiskRules {
-  const row = getDb().prepare('SELECT * FROM mesh_risk_rules WHERE id = ?').get(DEFAULT_ID) as Row | undefined
+export function getRiskRules(workshopId: string): RiskRules {
+  const row = getDb().prepare('SELECT * FROM mesh_risk_rules WHERE workshop_id = ? AND id = ?').get(workshopId, DEFAULT_ID) as Row | undefined
   if (!row) return { ...DEFAULT_RISK_RULES }
   return {
     maxOrderNotional: row.max_order_notional,
@@ -33,15 +33,15 @@ export function getRiskRules(): RiskRules {
   }
 }
 
-export function upsertRiskRules(patch: Partial<RiskRules>): RiskRules {
-  const next: RiskRules = { ...getRiskRules(), ...patch }
+export function upsertRiskRules(workshopId: string, patch: Partial<RiskRules>): RiskRules {
+  const next: RiskRules = { ...getRiskRules(workshopId), ...patch }
   getDb()
     .prepare(
       `INSERT INTO mesh_risk_rules
          (id, max_order_notional, max_symbol_qty, max_total_notional, blacklist_json,
-          no_chase_limit_up, max_daily_loss_abs, max_order_count, max_daily_notional, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET
+          no_chase_limit_up, max_daily_loss_abs, max_order_count, max_daily_notional, workshop_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(workshop_id, id) DO UPDATE SET
          max_order_notional=excluded.max_order_notional, max_symbol_qty=excluded.max_symbol_qty,
          max_total_notional=excluded.max_total_notional, blacklist_json=excluded.blacklist_json,
          no_chase_limit_up=excluded.no_chase_limit_up, max_daily_loss_abs=excluded.max_daily_loss_abs,
@@ -58,6 +58,7 @@ export function upsertRiskRules(patch: Partial<RiskRules>): RiskRules {
       next.maxDailyLossAbs,
       next.maxOrderCount,
       next.maxDailyNotional,
+      workshopId,
     )
   return next
 }

@@ -19,8 +19,9 @@ import { getAccount, initAccount, type PaperAccount } from './mesh-paper-account
 import { initParticipants, deleteByRun } from './mesh-participant-store'
 import { buildSessionSeeds } from './mesh-session-context'
 import { writeBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
+import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 
-export const DEFAULT_ACCOUNT_ID = 'mesh_team_default'
+export const DEFAULT_ACCOUNT_ID = DEFAULT_WORKSHOP_ID // 工作室 id 即账户 id
 const DEFAULT_PAPER_CASH = 100000
 
 /** 清孤儿：mesh_run=running 但内存无 runner（多为进程重启遗留）→ 标 stopped。返回清理条数。 */
@@ -56,7 +57,7 @@ export function startMonitoring(opts: {
   const runId = `mrun_${randomUUID()}` // 常驻 session id，贯穿 start→stop
   const run = createRun(accountId, tickMs, runId)
   initAccount(accountId, opts.initialCash ?? DEFAULT_PAPER_CASH) // 账户跨 cycle 常驻
-  initParticipants(runId, buildSessionSeeds(), Date.now()) // 每 enabled agent 一行运行态
+  initParticipants(runId, buildSessionSeeds(accountId), Date.now()) // accountId 即 workshopId；每 enabled agent 一行运行态
   writeBlackboard(runId, MARKET_SNAPSHOT_KEY, opts.snapshot(), 'seed') // 首个行情快照
   startRunner({ controlId: run.id, accountId, runId, snapshot: opts.snapshot, tickMs })
   return { ok: true, run }

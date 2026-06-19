@@ -89,7 +89,7 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
   let productive = false
   try {
     if (runner.abort.signal.aborted) return
-    const participant = buildParticipant(item.participantId)
+    const participant = buildParticipant(runner.accountId, item.participantId)
     if (!participant) return
     const cycleSeq = nextCycleSeq(runId, item.participantId)
     const result = await runOneDutyCycle({
@@ -98,10 +98,10 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
       trigger: item.trigger,
       delivery: item.delivery,
       cycleSeq,
-      subscribersOf: buildSubscribersOf(),
+      subscribersOf: buildSubscribersOf(runner.accountId),
       tradeCtx: buildTradeContext(runner.accountId),
       snapshot: runner.snapshot(),
-      focus: getSessionFocus(),
+      focus: getSessionFocus(runner.accountId),
       abortController: runner.abort,
     })
     productive = result.emits.length > 0 || result.orders.length > 0
@@ -111,18 +111,18 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
     runner.onError?.(String((err as Error)?.message ?? err))
   } finally {
     runner.inFlight.delete(item.participantId)
-    if (!runner.abort.signal.aborted) scheduleNext(runId, item.participantId, productive)
+    if (!runner.abort.signal.aborted) scheduleNext(runId, runner.accountId, item.participantId, productive)
   }
 }
 
 /** active_loop 跑完排下次（含空转退避）；event_driven 不主动排（等下次事件唤醒）。 */
-function scheduleNext(runId: string, participantId: string, productive: boolean): void {
+function scheduleNext(runId: string, workshopId: string, participantId: string, productive: boolean): void {
   const p = getParticipant(runId, participantId)
   if (!p || p.workMode !== 'active_loop') return
   const idleStreak = productive ? 0 : p.idleStreak + 1
   const now = Date.now()
   updateParticipant(runId, participantId, {
-    nextRunAt: computeNextRunAt(getAgentIntervalMs(participantId), idleStreak, now),
+    nextRunAt: computeNextRunAt(getAgentIntervalMs(workshopId, participantId), idleStreak, now),
     lastRunAt: now,
     idleStreak,
   })

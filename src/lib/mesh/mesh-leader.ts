@@ -1,5 +1,5 @@
 /**
- * Team Leader（管理面）+ Control Plane（确定性应用面）。
+ * Team Leader（管理面）+ Control Plane（确定性应用面）。按 workshopId 隔离：每个工作室有自己的队长 + 配置。
  * - runLeader：把用户自然语言拆成结构化控制命令（LLM）。
  * - applyCommands：确定性把命令应用到 team config + 审计落盘。
  * Leader 只产命令意图，够不到改配置/下单/券商写——改配置由 applyCommands 这层确定性代码做。
@@ -16,6 +16,7 @@ import {
 } from './mesh-command-schema'
 import { getTeamConfig, upsertTeamConfig, type TeamConfig } from './mesh-team-config'
 import { getAgent } from './mesh-agent-store'
+import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 import type { MeshAgentConfig } from './mesh-agent-config'
 
 const LEADER_AGENT: MeshAgentConfig = {
@@ -31,12 +32,16 @@ reply 用一句话复述你的理解。看不懂或无可执行命令时 command
   toolAllowlist: [],
 }
 
-/** Leader：把用户自然语言拆成结构化命令（LLM）。 */
-export async function runLeader(userMessage: string, options: { sessionId?: string } = {}): Promise<LeaderResult> {
-  const config = getTeamConfig()
+/** Leader：把用户自然语言拆成结构化命令（LLM）。workshopId 缺省默认工作室。 */
+export async function runLeader(
+  userMessage: string,
+  options: { sessionId?: string; workshopId?: string } = {},
+): Promise<LeaderResult> {
+  const workshopId = options.workshopId ?? DEFAULT_WORKSHOP_ID
+  const config = getTeamConfig(workshopId)
   const prompt = `当前团队配置：${JSON.stringify(config)}\n\n用户指令：${userMessage}\n\n据此拆成控制命令。`
-  const leaderAgent = getAgent('team.leader') ?? LEADER_AGENT // db registry 配置，缺省回落默认
-  const { structured } = await runMeshAgentStructured(leaderAgent, prompt, buildLeaderSchema(), options)
+  const leaderAgent = getAgent(workshopId, 'team.leader') ?? LEADER_AGENT // db registry 配置，缺省回落默认
+  const { structured } = await runMeshAgentStructured(leaderAgent, prompt, buildLeaderSchema(), { sessionId: options.sessionId })
   return parseLeaderResult(structured)
 }
 
@@ -45,26 +50,31 @@ export interface AppliedCommand {
   relaxesRisk: boolean
 }
 
-/** Control Plane：确定性应用命令到 team config + 审计落盘。 */
-export function applyCommands(rawMessage: string, commands: LeaderCommand[]): { applied: AppliedCommand[]; config: TeamConfig } {
+/** Control Plane：确定性应用命令到某工作室的 team config + 审计落盘。 */
+export function applyCommands(
+  rawMessage: string,
+  commands: LeaderCommand[],
+  workshopId: string = DEFAULT_WORKSHOP_ID,
+): { applied: AppliedCommand[]; config: TeamConfig } {
   const db = getDb()
   const applied: AppliedCommand[] = []
-  let config = getTeamConfig()
+  let config = getTeamConfig(workshopId)
   for (const cmd of commands) {
-    config = applyOne(cmd, config)
+    config = applyOne(cmd, config, workshopId)
     const relaxes = relaxesRisk(cmd)
-    db.prepare('INSERT INTO mesh_command (id, raw_message, command_json, relaxes_risk) VALUES (?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO mesh_command (id, raw_message, command_json, relaxes_risk, workshop_id) VALUES (?, ?, ?, ?, ?)').run(
       `cmd_${randomUUID()}`,
       rawMessage,
       JSON.stringify(cmd),
       relaxes ? 1 : 0,
+      workshopId,
     )
     applied.push({ command: cmd, relaxesRisk: relaxes })
   }
   return { applied, config }
 }
 
-function applyOne(cmd: LeaderCommand, config: TeamConfig): TeamConfig {
+function applyOne(cmd: LeaderCommand, config: TeamConfig, workshopId: string): TeamConfig {
   let next: TeamConfig = config
   if (cmd.type === 'set_blacklist') {
     const set = new Set(config.blacklist)
@@ -76,6 +86,6 @@ function applyOne(cmd: LeaderCommand, config: TeamConfig): TeamConfig {
   } else if (cmd.type === 'set_mode') {
     next = { ...config, mode: cmd.mode }
   }
-  upsertTeamConfig(next)
+  upsertTeamConfig(workshopId, next)
   return next
 }

@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({} as Record<string, unknown>))
     const snapshot = body.snapshot ?? DEFAULT_SNAPSHOT
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
-    const result = await runStockCollaboration(snapshot, { sessionId })
+    const accountId = typeof body.accountId === 'string' ? body.accountId : undefined // 即 workshopId，缺省默认工作室
+    const result = await runStockCollaboration(snapshot, { sessionId, accountId })
     return NextResponse.json(result)
   } catch (error) {
     return NextResponse.json(
