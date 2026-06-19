@@ -43,11 +43,12 @@ function toRow(r: RawRow): MeshRunRow {
   }
 }
 
-export function createRun(accountId: string, intervalMs: number): MeshRunRow {
+/** 建运行记录。runId=常驻 session id（贯穿 start→stop），写定 last_run_id 供 warroom 实时读。 */
+export function createRun(accountId: string, intervalMs: number, runId: string): MeshRunRow {
   const id = `mctl_${randomUUID()}`
   getDb()
-    .prepare(`INSERT INTO mesh_run (id, account_id, status, interval_ms) VALUES (?, ?, 'running', ?)`)
-    .run(id, accountId, intervalMs)
+    .prepare(`INSERT INTO mesh_run (id, account_id, status, interval_ms, last_run_id) VALUES (?, ?, 'running', ?, ?)`)
+    .run(id, accountId, intervalMs, runId)
   return getRun(id)!
 }
 
@@ -77,10 +78,11 @@ export function listRunningRuns(): MeshRunRow[] {
   return rows.map(toRow)
 }
 
-export function recordRound(id: string, runId: string): void {
+/** 累加一次 duty cycle 计数（常驻 session 的 last_run_id 在 createRun 已写定，这里不动）。 */
+export function recordCycle(id: string): void {
   getDb()
-    .prepare(`UPDATE mesh_run SET rounds = rounds + 1, last_run_id = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(runId, id)
+    .prepare(`UPDATE mesh_run SET rounds = rounds + 1, updated_at = datetime('now') WHERE id = ?`)
+    .run(id)
 }
 
 export function recordError(id: string, message: string): void {

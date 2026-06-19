@@ -4,6 +4,9 @@
  */
 import { getDb } from '@/lib/db/connection'
 
+/** 行情快照在白板里的 key（盯盘写、决策/风控读）。放轻量模块，避免 magic string + 不拉 SDK 依赖。 */
+export const MARKET_SNAPSHOT_KEY = 'market_snapshot'
+
 export interface BlackboardEntry {
   key: string
   value: unknown

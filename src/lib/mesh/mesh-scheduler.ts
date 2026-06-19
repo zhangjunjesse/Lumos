@@ -24,6 +24,7 @@ export interface SchedulerRunner {
   ticker: ReturnType<typeof setTimeout> | null
   stopped: boolean
   onError?: (msg: string) => void
+  onCycle?: () => void
 }
 
 export interface DueItem {
@@ -104,6 +105,7 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
       abortController: runner.abort,
     })
     productive = result.emits.length > 0 || result.orders.length > 0
+    runner.onCycle?.()
   } catch (err) {
     if (runner.abort.signal.aborted) return
     runner.onError?.(String((err as Error)?.message ?? err))

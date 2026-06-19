@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isRunnerActive } from '@/lib/mesh/mesh-runner'
-import { getLatestRun } from '@/lib/mesh/mesh-run'
+import { getRunningRun, getLatestRun } from '@/lib/mesh/mesh-run'
 import { getAccount } from '@/lib/mesh/mesh-paper-account'
 import { readBlackboardHistory } from '@/lib/mesh/mesh-blackboard'
 import { listAllMessages } from '@/lib/mesh/mesh-event-bus'
@@ -13,7 +13,7 @@ import { DEFAULT_ACCOUNT_ID } from '@/lib/mesh/mesh-run-control'
  */
 export async function GET(req: NextRequest) {
   const accountId = req.nextUrl.searchParams.get('accountId') ?? DEFAULT_ACCOUNT_ID
-  const run = getLatestRun(accountId)
+  const run = getRunningRun(accountId) ?? getLatestRun(accountId) // 优先正在跑的常驻 session（实时可见），停了回落最后一次
   const runId = run?.lastRunId ?? null
   return NextResponse.json({
     accountId,

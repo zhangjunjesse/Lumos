@@ -11,7 +11,7 @@
  */
 import { randomUUID } from 'crypto'
 import { getDb } from '@/lib/db/connection'
-import { writeBlackboard, readBlackboard } from './mesh-blackboard'
+import { writeBlackboard, readBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
 import { persistMessage, markDelivered, listPendingDeliveries, wake, findTaskFrom, type MeshEvent } from './mesh-event-bus'
 import { runMeshActor } from './mesh-worker'
 import { placeOrder } from './mesh-order-gateway'
@@ -69,7 +69,6 @@ export interface TradeContext {
 
 const MAX_ITERATIONS = 12
 const DEFAULT_PAPER_CASH = 100000
-export const MARKET_SNAPSHOT_KEY = 'market_snapshot'
 
 export async function runCollaborationOnce(
   participants: MeshParticipant[],

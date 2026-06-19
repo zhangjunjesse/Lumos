@@ -1,22 +1,22 @@
 /**
- * 常驻盯盘 runner —— setTimeout 链跑多轮 paper 协作（跑完一轮 + 间隔再排下一轮，绝不重叠）。
- * 内存注册表（globalThis）持 timer + abortController；生命周期由 mesh-run-control 编排。
+ * 常驻 session runner —— 一次 start→stop 一个常驻 runId，时间轮调度每 agent 各自 duty loop。
+ * 内存注册表（globalThis）持 scheduler 调度态 + 关联 mesh_run 控制 id；生命周期由 mesh-run-control 编排。
+ * 不再「整轮跑 runStockCollaboration」——改 mesh-scheduler 时间轮（每 agent 按自己 interval / 事件触发）。
  * 自有定时器，不碰 workflow scheduler / cron-engine。
  */
-import { runStockCollaboration } from './mesh-collaboration'
-import { recordRound, recordError, markStopped } from './mesh-run'
+import { startScheduler, stopScheduler, type SchedulerRunner } from './mesh-scheduler'
+import { deleteByRun } from './mesh-participant-store'
+import { recordCycle, recordError, markStopped } from './mesh-run'
 
-/** 每轮行情来源：M7 用给定/固定快照（不连真 qmt）。 */
+/** 行情来源：S5 用给定/固定快照（不连真 qmt）；盯盘 agent 主动 cycle 时调它取最新。 */
 export type SnapshotProvider = () => unknown
 
-export interface ActiveRunner {
+export const DEFAULT_TICK_MS = 2500
+export const MIN_TICK_MS = 1000
+
+/** 常驻 runner = scheduler 调度态 + 关联的 mesh_run 控制记录 id。 */
+export interface ActiveRunner extends SchedulerRunner {
   controlId: string
-  accountId: string
-  intervalMs: number
-  timer: ReturnType<typeof setTimeout> | null
-  abort: AbortController
-  rounds: number
-  stopped: boolean
 }
 
 interface RunnerRegistry {
@@ -42,50 +42,38 @@ export function activeAccountIds(): string[] {
   return Array.from(registry().runners.keys())
 }
 
+/** 启动常驻 session 的时间轮（participant 行已由 run-control 建好；这里只起调度循环）。 */
 export function startRunner(opts: {
   controlId: string
   accountId: string
-  intervalMs: number
+  runId: string
   snapshot: SnapshotProvider
+  tickMs?: number
 }): ActiveRunner {
   const runner: ActiveRunner = {
     controlId: opts.controlId,
+    runId: opts.runId,
     accountId: opts.accountId,
-    intervalMs: opts.intervalMs,
-    timer: null,
+    tickMs: opts.tickMs ?? DEFAULT_TICK_MS,
     abort: new AbortController(),
-    rounds: 0,
+    snapshot: opts.snapshot,
+    inFlight: new Set(),
+    ticker: null,
     stopped: false,
+    onError: (msg) => recordError(opts.controlId, msg),
+    onCycle: () => recordCycle(opts.controlId),
   }
   registry().runners.set(opts.accountId, runner)
-  void runLoop(runner, opts.snapshot) // 立刻跑第一轮，跑完自排下一轮
+  startScheduler(runner) // 立即首 tick，跑完自排下次
   return runner
 }
 
-async function runLoop(runner: ActiveRunner, snapshot: SnapshotProvider): Promise<void> {
-  if (runner.stopped || runner.abort.signal.aborted) return
-  try {
-    const result = await runStockCollaboration(snapshot(), {
-      accountId: runner.accountId,
-      abortController: runner.abort,
-    })
-    runner.rounds += 1
-    recordRound(runner.controlId, result.runId)
-  } catch (err) {
-    if (runner.abort.signal.aborted) return // 被 stop 中断当轮，不算错
-    recordError(runner.controlId, String((err as Error)?.message ?? err))
-  }
-  if (runner.stopped || runner.abort.signal.aborted) return
-  runner.timer = setTimeout(() => void runLoop(runner, snapshot), runner.intervalMs)
-}
-
-/** 停止：清 timer + abort 当轮 + 从注册表移除 + mesh_run 写终态。返回是否确有活跃 runner。 */
+/** 停止：停时间轮 + abort 所有在飞 duty cycle + 清 participant 行（§75 不挂起恢复）+ mesh_run 终态。 */
 export function stopRunner(accountId: string): boolean {
   const runner = registry().runners.get(accountId)
   if (!runner) return false
-  runner.stopped = true
-  if (runner.timer) clearTimeout(runner.timer)
-  runner.abort.abort()
+  stopScheduler(runner) // stopped=true + clearTimeout + abort（透传给在飞 SDK）
+  deleteByRun(runner.runId)
   registry().runners.delete(accountId)
   markStopped(runner.controlId)
   return true

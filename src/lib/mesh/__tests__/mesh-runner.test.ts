@@ -6,75 +6,52 @@ jest.mock('@/lib/db/connection', () => {
   migrateMeshTables(mem)
   return { getDb: () => mem }
 })
-jest.mock('../mesh-collaboration', () => ({ runStockCollaboration: jest.fn() }))
+// mock scheduler：隔离 runner 的生命周期/注册逻辑，不真起时间轮
+jest.mock('../mesh-scheduler', () => ({ startScheduler: jest.fn(), stopScheduler: jest.fn() }))
 
-import { runStockCollaboration } from '../mesh-collaboration'
 import { startRunner, stopRunner, getActiveRunner, isRunnerActive, activeAccountIds } from '../mesh-runner'
+import { startScheduler, stopScheduler } from '../mesh-scheduler'
 import { createRun, getRun } from '../mesh-run'
+import { initParticipants, listParticipants } from '../mesh-participant-store'
 
-const mockedCollab = jest.mocked(runStockCollaboration)
-const result = (runId: string) => ({ runId, trace: [], decision: null, account: null })
+const mStart = jest.mocked(startScheduler)
+const mStop = jest.mocked(stopScheduler)
 
-beforeEach(() => {
-  jest.useFakeTimers()
-  mockedCollab.mockReset()
-})
 afterEach(() => {
   for (const id of activeAccountIds()) stopRunner(id) // 清残留 runner，避免污染下个用例
-  jest.useRealTimers()
+  mStart.mockReset()
+  mStop.mockReset()
 })
 
-describe('mesh-runner 常驻循环', () => {
-  it('启动按 setTimeout 链跑多轮，透传 accountId，记 rounds', async () => {
-    let n = 0
-    mockedCollab.mockImplementation(async () => result('r' + ++n))
-    const run = createRun('acc-multi', 1000)
-    startRunner({ controlId: run.id, accountId: 'acc-multi', intervalMs: 1000, snapshot: () => ({ ticks: [] }) })
-
-    await jest.advanceTimersByTimeAsync(0) // flush 第一轮（立即触发）
-    expect(getActiveRunner('acc-multi')?.rounds).toBe(1)
-    await jest.advanceTimersByTimeAsync(1000) // 第二轮
-    expect(getActiveRunner('acc-multi')?.rounds).toBe(2)
-    await jest.advanceTimersByTimeAsync(1000) // 第三轮
-    expect(getActiveRunner('acc-multi')?.rounds).toBe(3)
-
-    expect(mockedCollab).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ accountId: 'acc-multi' }),
-    )
-    expect(getRun(run.id)?.rounds).toBe(3) // mesh_run 跨轮累计
+describe('mesh-runner 常驻 session', () => {
+  it('startRunner：建 runner、启时间轮、进注册表', () => {
+    const run = createRun('acc1', 2500, 'mrun_1')
+    const r = startRunner({ controlId: run.id, accountId: 'acc1', runId: 'mrun_1', snapshot: () => ({}), tickMs: 2500 })
+    expect(isRunnerActive('acc1')).toBe(true)
+    expect(getActiveRunner('acc1')?.runId).toBe('mrun_1')
+    expect(getActiveRunner('acc1')?.controlId).toBe(run.id)
+    expect(mStart).toHaveBeenCalledWith(r) // 启了时间轮
   })
 
-  it('stop 后不再排下一轮，mesh_run 终态', async () => {
-    mockedCollab.mockImplementation(async () => result('r'))
-    const run = createRun('acc-stop', 1000)
-    startRunner({ controlId: run.id, accountId: 'acc-stop', intervalMs: 1000, snapshot: () => ({}) })
-    await jest.advanceTimersByTimeAsync(0)
-    expect(getActiveRunner('acc-stop')?.rounds).toBe(1)
-
-    expect(stopRunner('acc-stop')).toBe(true)
-    expect(isRunnerActive('acc-stop')).toBe(false)
+  it('stopRunner：停时间轮 + 清 participant + mesh_run 终态 + 注销', () => {
+    const run = createRun('acc2', 2500, 'mrun_2')
+    initParticipants('mrun_2', [{ participantId: 'a', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 0)
+    startRunner({ controlId: run.id, accountId: 'acc2', runId: 'mrun_2', snapshot: () => ({}) })
+    expect(stopRunner('acc2')).toBe(true)
+    expect(mStop).toHaveBeenCalled() // abort 透传给在飞 SDK
+    expect(isRunnerActive('acc2')).toBe(false)
     expect(getRun(run.id)?.status).toBe('stopped')
-
-    const callsBefore = mockedCollab.mock.calls.length
-    await jest.advanceTimersByTimeAsync(5000)
-    expect(mockedCollab.mock.calls.length).toBe(callsBefore) // 停后再推进时间也不跑
+    expect(listParticipants('mrun_2')).toHaveLength(0) // participant 行清空（§75 不挂起恢复）
   })
 
-  it('当轮抛错记 lastError，循环继续', async () => {
-    let n = 0
-    mockedCollab.mockImplementation(async () => {
-      n++
-      if (n === 1) throw new Error('boom')
-      return result('r' + n)
-    })
-    const run = createRun('acc-err', 1000)
-    startRunner({ controlId: run.id, accountId: 'acc-err', intervalMs: 1000, snapshot: () => ({}) })
-    await jest.advanceTimersByTimeAsync(0)
-    expect(getRun(run.id)?.lastError).toContain('boom')
-    expect(getActiveRunner('acc-err')?.rounds).toBe(0) // 失败轮不计数
-    await jest.advanceTimersByTimeAsync(1000)
-    expect(getActiveRunner('acc-err')?.rounds).toBe(1) // 下一轮成功
+  it('onCycle / onError 注入 recordCycle / recordError', () => {
+    const run = createRun('acc3', 2500, 'mrun_3')
+    const r = startRunner({ controlId: run.id, accountId: 'acc3', runId: 'mrun_3', snapshot: () => ({}) })
+    r.onCycle?.()
+    r.onCycle?.()
+    expect(getRun(run.id)?.rounds).toBe(2) // duty cycle 计数
+    r.onError?.('boom')
+    expect(getRun(run.id)?.lastError).toBe('boom')
   })
 
   it('stopRunner 对不存在账户返回 false', () => {

@@ -94,7 +94,7 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
             active ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200'
           }`}
         >
-          {active ? `运行中 · ${snap?.rounds ?? 0} 轮` : '已停止'}
+          {active ? `运行中 · ${snap?.rounds ?? 0} 次执行` : '已停止'}
         </span>
         <Controls active={active} busy={busy} onStart={() => control('start')} onStop={() => control('stop')} onSettings={onSettings} />
       </div>

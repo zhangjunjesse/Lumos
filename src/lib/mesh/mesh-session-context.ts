@@ -7,7 +7,15 @@ import { getTeamConfig } from './mesh-team-config'
 import { getRiskRules } from './mesh-risk-store'
 import { getLiveConfig } from './mesh-live-backend'
 import { listAgents, getAgent } from './mesh-agent-store'
+import type { ParticipantSeed } from './mesh-participant-store'
 import type { MeshParticipant, TradeContext } from './mesh-runtime'
+
+/** enabled 协作成员（队长除外）→ participant 种子，供 start 时 initParticipants 建行。 */
+export function buildSessionSeeds(): ParticipantSeed[] {
+  return listAgents({ enabled: true })
+    .filter((a) => a.role !== 'leader')
+    .map((a) => ({ participantId: a.id, role: a.role, subscriptions: a.topics, workMode: a.workMode }))
+}
 
 /** 现读 team config + 风控 + live，组装下单上下文（黑名单 = 风控规则 ∪ 队长拉黑）。 */
 export function buildTradeContext(accountId: string): TradeContext {
