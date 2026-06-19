@@ -3,7 +3,7 @@
  * 团队：盯盘(observe) → 决策(decide·提议) → 风控(risk·审议把关) → OrderGateway 执行 → 复盘(review)。
  * 全部只读 + 只产 action，物理够不到券商写（下单由确定性 OrderGateway 执行）。
  */
-import type { MeshAgentConfig } from './mesh-agent-config'
+import type { MeshAgentConfig, MeshWorkMode } from './mesh-agent-config'
 
 const STOCK_WATCH_SYSTEM_PROMPT = `你是 A 股盯盘观察 agent。用 qmt-readonly 工具看实时盘面：
 - qmt_get_tick 看最新价/涨跌，qmt_get_limit_price 看涨跌停；
@@ -90,12 +90,13 @@ export interface DefaultAgent extends MeshAgentConfig {
   topics: string[]
   interval: number
   enabled: boolean
+  workMode: MeshWorkMode
 }
 
 export const MESH_DEFAULT_AGENTS: DefaultAgent[] = [
-  { id: 'team.leader', role: 'leader', systemPrompt: LEADER_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 30, enabled: true },
-  { id: STOCK_WATCH_AGENT.id, role: 'observe', systemPrompt: STOCK_WATCH_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 5, enabled: true },
-  { id: STOCK_DECIDE_AGENT.id, role: 'decide', systemPrompt: STOCK_DECIDE_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['quote_anomaly'], interval: 10, enabled: true },
-  { id: STOCK_RISK_AGENT.id, role: 'risk', systemPrompt: STOCK_RISK_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['order_proposal'], interval: 10, enabled: true },
-  { id: STOCK_REVIEW_AGENT.id, role: 'review', systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 300, enabled: true },
+  { id: 'team.leader', role: 'leader', systemPrompt: LEADER_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 30, enabled: true, workMode: 'event_driven' },
+  { id: STOCK_WATCH_AGENT.id, role: 'observe', systemPrompt: STOCK_WATCH_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 5, enabled: true, workMode: 'active_loop' },
+  { id: STOCK_DECIDE_AGENT.id, role: 'decide', systemPrompt: STOCK_DECIDE_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['quote_anomaly'], interval: 10, enabled: true, workMode: 'event_driven' },
+  { id: STOCK_RISK_AGENT.id, role: 'risk', systemPrompt: STOCK_RISK_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 10, enabled: true, workMode: 'event_driven' },
+  { id: STOCK_REVIEW_AGENT.id, role: 'review', systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 300, enabled: true, workMode: 'active_loop' },
 ]

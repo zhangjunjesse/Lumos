@@ -4,13 +4,14 @@
  */
 import { getDb } from '@/lib/db/connection'
 import { MESH_DEFAULT_AGENTS } from './mesh-stock-agents'
-import type { MeshAgentConfig, MeshAgentRole } from './mesh-agent-config'
+import type { MeshAgentConfig, MeshAgentRole, MeshWorkMode } from './mesh-agent-config'
 
 export interface StoredAgent extends MeshAgentConfig {
   topics: string[]
   interval: number
   enabled: boolean
   sortOrder: number
+  workMode: MeshWorkMode
 }
 
 interface Row {
@@ -24,6 +25,7 @@ interface Row {
   interval_sec: number
   enabled: number
   sort_order: number
+  work_mode: string
 }
 
 function toAgent(r: Row): StoredAgent {
@@ -38,6 +40,7 @@ function toAgent(r: Row): StoredAgent {
     interval: r.interval_sec,
     enabled: r.enabled !== 0,
     sortOrder: r.sort_order,
+    workMode: (r.work_mode as MeshWorkMode) || 'event_driven',
   }
 }
 
@@ -48,11 +51,11 @@ export function ensureSeed(): void {
   if (cnt.c > 0) return
   const ins = db.prepare(
     `INSERT OR IGNORE INTO mesh_agent
-       (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   MESH_DEFAULT_AGENTS.forEach((a, i) =>
-    ins.run(a.id, a.role, a.systemPrompt, a.model ?? '', JSON.stringify(a.mcpAllowlist), JSON.stringify(a.toolAllowlist), JSON.stringify(a.topics), a.interval, a.enabled ? 1 : 0, i),
+    ins.run(a.id, a.role, a.systemPrompt, a.model ?? '', JSON.stringify(a.mcpAllowlist), JSON.stringify(a.toolAllowlist), JSON.stringify(a.topics), a.interval, a.enabled ? 1 : 0, i, a.workMode),
   )
 }
 
@@ -83,17 +86,18 @@ export function upsertAgent(patch: Partial<StoredAgent> & { id: string }): Store
     interval: patch.interval ?? cur?.interval ?? 10,
     enabled: patch.enabled ?? cur?.enabled ?? true,
     sortOrder: patch.sortOrder ?? cur?.sortOrder ?? 99,
+    workMode: patch.workMode ?? cur?.workMode ?? 'event_driven',
   }
   getDb()
     .prepare(
       `INSERT INTO mesh_agent
-         (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(id) DO UPDATE SET
          role=excluded.role, system_prompt=excluded.system_prompt, model=excluded.model,
          mcp_json=excluded.mcp_json, tool_json=excluded.tool_json, topics_json=excluded.topics_json,
          interval_sec=excluded.interval_sec, enabled=excluded.enabled, sort_order=excluded.sort_order,
-         updated_at=datetime('now')`,
+         work_mode=excluded.work_mode, updated_at=datetime('now')`,
     )
     .run(
       next.id,
@@ -106,6 +110,7 @@ export function upsertAgent(patch: Partial<StoredAgent> & { id: string }): Store
       next.interval,
       next.enabled ? 1 : 0,
       next.sortOrder,
+      next.workMode,
     )
   return next
 }

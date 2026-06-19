@@ -10,7 +10,7 @@ import os from 'os'
 import path from 'path'
 import type { MCPServerConfig } from '@/types'
 
-/** mesh agent 角色（M1 仅声明，责任 duty loop 在 M3 接入）。 */
+/** mesh agent 角色。 */
 export type MeshAgentRole =
   | 'observe'
   | 'decide'
@@ -19,6 +19,9 @@ export type MeshAgentRole =
   | 'leader'
   | 'research'
   | 'review'
+
+/** agent 工作模式：active_loop=按 interval 主动醒来干活；event_driven=只被事件/定向任务唤醒。 */
+export type MeshWorkMode = 'active_loop' | 'event_driven'
 
 /**
  * 网状 agent 配置。能力边界靠 mcpAllowlist + toolAllowlist 显式声明——

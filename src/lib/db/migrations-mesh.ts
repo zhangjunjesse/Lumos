@@ -126,15 +126,40 @@ export function migrateMeshTables(db: Database.Database): void {
       interval_sec INTEGER NOT NULL DEFAULT 10,
       enabled INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
+      work_mode TEXT NOT NULL DEFAULT 'event_driven',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS mesh_participant (
+      run_id TEXT NOT NULL,
+      participant_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '',
+      subscriptions_json TEXT NOT NULL DEFAULT '[]',
+      work_mode TEXT NOT NULL DEFAULT 'event_driven'
+        CHECK(work_mode IN ('active_loop','event_driven')),
+      status TEXT NOT NULL DEFAULT 'idle'
+        CHECK(status IN ('idle','running','paused','failed')),
+      state_json TEXT NOT NULL DEFAULT '{}',
+      backlog_json TEXT NOT NULL DEFAULT '[]',
+      next_run_at INTEGER,
+      last_run_at INTEGER,
+      idle_streak INTEGER NOT NULL DEFAULT 0,
+      cycle_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (run_id, participant_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_mesh_run_status ON mesh_run(status, account_id);
+    CREATE INDEX IF NOT EXISTS idx_mesh_participant_due ON mesh_participant(run_id, work_mode, next_run_at);
   `);
 
-  // 旧 db 迁移：CREATE IF NOT EXISTS 不会给已存在表加列，补 mesh_message.task_id（幂等）。
+  // 旧 db 迁移：CREATE IF NOT EXISTS 不会给已存在表加列，补列（幂等）。
   try {
     db.exec('ALTER TABLE mesh_message ADD COLUMN task_id TEXT')
+  } catch {
+    /* 列已存在，忽略 */
+  }
+  try {
+    db.exec("ALTER TABLE mesh_agent ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'event_driven'")
   } catch {
     /* 列已存在，忽略 */
   }
