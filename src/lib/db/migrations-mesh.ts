@@ -101,6 +101,19 @@ export function migrateMeshTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_mesh_ticket_run ON mesh_order_ticket(run_id, status);
     CREATE INDEX IF NOT EXISTS idx_mesh_message_run ON mesh_message(run_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_mesh_delivery_sub ON mesh_message_delivery(subscriber_id, status);
+    CREATE TABLE IF NOT EXISTS mesh_risk_rules (
+      id TEXT PRIMARY KEY,
+      max_order_notional REAL NOT NULL DEFAULT 50000,
+      max_symbol_qty INTEGER NOT NULL DEFAULT 10000,
+      max_total_notional REAL NOT NULL DEFAULT 200000,
+      blacklist_json TEXT NOT NULL DEFAULT '[]',
+      no_chase_limit_up INTEGER NOT NULL DEFAULT 1,
+      max_daily_loss_abs REAL NOT NULL DEFAULT 20000,
+      max_order_count INTEGER NOT NULL DEFAULT 20,
+      max_daily_notional REAL NOT NULL DEFAULT 300000,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_mesh_run_status ON mesh_run(status, account_id);
   `);
 }
