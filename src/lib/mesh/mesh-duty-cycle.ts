@@ -6,7 +6,7 @@
  */
 import { runMeshActor } from './mesh-worker'
 import { applyActionPlan, type MeshParticipant, type TradeContext } from './mesh-runtime'
-import { buildActiveLoopPrompt, buildEventPrompt, buildTaskPrompt, buildReplyPrompt } from './mesh-prompts'
+import { buildActiveLoopPrompt, buildEventPrompt, buildTaskPrompt, buildReplyPrompt, buildReviewPrompt } from './mesh-prompts'
 
 /** 被动触发时消费的一条 pending 投递（事件/任务/回执）。 */
 export interface DutyDelivery {
@@ -68,6 +68,7 @@ function buildPrompt(input: DutyCycleInput): string {
     const { topic, payload, taskId } = input.delivery
     if (topic === 'agent_task') return buildTaskPrompt(input.runId, payload, taskId ?? '')
     if (topic === 'agent_reply') return buildReplyPrompt(input.runId, payload)
+    if (topic === 'market_close') return buildReviewPrompt(input.runId) // 收盘 → 复盘归因
     return buildEventPrompt(input.runId, topic, payload)
   }
   return buildActiveLoopPrompt(input.runId, input.participant.agent.role, input.snapshot, input.focus)

@@ -2,13 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from 'react'
 import { TeamSettings } from './team-settings'
-
-interface Workshop {
-  id: string
-  name: string
-  desc: string
-  status: string
-}
+import type { Workshop } from './war-room'
 
 interface Cfg {
   mode: 'auto' | 'observe_only'
@@ -47,29 +41,37 @@ const num = (v: string) => Number(v) || 0
 
 export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onBack: () => void }) {
   const [tab, setTab] = useState('basic')
+  const [name, setName] = useState(workshop.name)
+  const [description, setDescription] = useState(workshop.description)
   const [cfg, setCfg] = useState<Cfg>({ mode: 'auto', focus: '', blacklist: [] })
   const [risk, setRisk] = useState<Risk>(DEFAULT_RISK)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    fetch('/api/mesh/config')
+    fetch(`/api/mesh/config?accountId=${workshop.id}`)
       .then((r) => r.json())
       .then((d) => {
         if (d?.config) setCfg(d.config)
         if (d?.risk) setRisk(d.risk)
       })
       .catch(() => {})
-  }, [])
+  }, [workshop.id])
 
   const save = async () => {
     setSaving(true)
     setSaved(false)
     try {
+      // 基本信息（名称/描述）落 workshop；模式/关注/黑名单/风控落 config
+      await fetch('/api/mesh/workshops', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: workshop.id, name, description }),
+      })
       const r = await fetch('/api/mesh/config', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...cfg, risk }),
+        body: JSON.stringify({ ...cfg, risk, accountId: workshop.id }),
       })
       const d = await r.json()
       if (d?.config) setCfg(d.config)
@@ -82,12 +84,7 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
 
   const riskNum = (key: keyof Risk, label: string) => (
     <Field label={label}>
-      <input
-        type="number"
-        className={INPUT}
-        value={risk[key] as number}
-        onChange={(e) => setRisk((s) => ({ ...s, [key]: num(e.target.value) }))}
-      />
+      <input type="number" className={INPUT} value={risk[key] as number} onChange={(e) => setRisk((s) => ({ ...s, [key]: num(e.target.value) }))} />
     </Field>
   )
 
@@ -117,19 +114,22 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
         <div className="min-w-0 flex-1">
           {tab === 'basic' && (
             <Section title="基本信息">
-              <Field label={`名称 ${TODO}`}>
-                <input className={INPUT} defaultValue={workshop.name} />
+              <Field label="名称">
+                <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} />
               </Field>
-              <Field label="关注重点（focus · 已接存储）">
+              <Field label="描述">
+                <input className={INPUT} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="这个工作室做什么策略" />
+              </Field>
+              <Field label="关注重点（focus）">
                 <input className={INPUT} value={cfg.focus} onChange={(e) => setCfg((c) => ({ ...c, focus: e.target.value }))} placeholder="如：盯封装主线、半导体回踩" />
               </Field>
             </Section>
           )}
 
-          {tab === 'team' && <TeamSettings />}
+          {tab === 'team' && <TeamSettings accountId={workshop.id} />}
 
           {tab === 'risk' && (
-            <Section title="风控规则（已接存储）">
+            <Section title="风控规则">
               <Field label="黑名单（永不交易）">
                 <input
                   className={INPUT}
@@ -156,7 +156,7 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
           {tab === 'run' && (
             <div className="space-y-6">
               <Section title="运行设置">
-                <Field label="交易模式（已接存储）">
+                <Field label="交易模式">
                   <select className={INPUT} value={cfg.mode} onChange={(e) => setCfg((c) => ({ ...c, mode: e.target.value as Cfg['mode'] }))}>
                     <option value="auto">自动交易</option>
                     <option value="observe_only">只看不买</option>
@@ -186,7 +186,7 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
         <button onClick={onBack} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50">
           取消
         </button>
-        {saved && <span className="text-sm text-emerald-600">已保存（模式/关注/黑名单/风控规则）</span>}
+        {saved && <span className="text-sm text-emerald-600">已保存（名称/描述/模式/关注/黑名单/风控）</span>}
       </div>
     </div>
   )

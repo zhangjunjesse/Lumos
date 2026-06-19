@@ -4,7 +4,7 @@
  * 不再「整轮跑 runStockCollaboration」——改 mesh-scheduler 时间轮（每 agent 按自己 interval / 事件触发）。
  * 自有定时器，不碰 workflow scheduler / cron-engine。
  */
-import { startScheduler, stopScheduler, type SchedulerRunner } from './mesh-scheduler'
+import { startScheduler, stopScheduler, emitMarketClose, type SchedulerRunner } from './mesh-scheduler'
 import { deleteByRun } from './mesh-participant-store'
 import { recordCycle, recordError, markStopped } from './mesh-run'
 
@@ -66,6 +66,14 @@ export function startRunner(opts: {
   registry().runners.set(opts.accountId, runner)
   startScheduler(runner) // 立即首 tick，跑完自排下次
   return runner
+}
+
+/** 手动触发收盘事件（演示/测试用）：找该账户活跃 runner，emit market_close 唤醒复盘。无活跃 runner 返回 false。 */
+export function emitMarketCloseNow(accountId: string): boolean {
+  const runner = registry().runners.get(accountId)
+  if (!runner) return false
+  emitMarketClose(runner)
+  return true
 }
 
 /** 停止：停时间轮 + abort 所有在飞 duty cycle + 清 participant 行（§75 不挂起恢复）+ mesh_run 终态。 */

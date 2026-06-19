@@ -21,17 +21,19 @@ import {
   computeNextRunAt,
   tickLoop,
   dispatchDutyCycle,
+  emitMarketClose,
   MAX_CONCURRENT,
   type SchedulerRunner,
   type DueItem,
 } from '../mesh-scheduler'
 import { runOneDutyCycle } from '../mesh-duty-cycle'
-import { buildParticipant } from '../mesh-session-context'
+import { buildParticipant, buildSubscribersOf } from '../mesh-session-context'
 import { initParticipants, getParticipant } from '../mesh-participant-store'
-import { persistMessage } from '../mesh-event-bus'
+import { persistMessage, listPendingDeliveries } from '../mesh-event-bus'
 
 const mockedRun = jest.mocked(runOneDutyCycle)
 const mockedBuildP = jest.mocked(buildParticipant)
+const mockedSubs = jest.mocked(buildSubscribersOf)
 
 function runner(runId: string, abort = new AbortController(), inFlight = new Set<string>()): SchedulerRunner {
   return { runId, accountId: 'a', tickMs: 2500, abort, snapshot: () => ({}), inFlight, ticker: null, stopped: false }
@@ -104,5 +106,12 @@ describe('mesh-scheduler —— 时间轮调度（S4）', () => {
     tickLoop(r)
     expect(r.ticker).toBeNull()
     expect(mockedRun).not.toHaveBeenCalled()
+  })
+
+  it('emitMarketClose：投递给订阅 market_close 的 agent（复盘 W7）', () => {
+    mockedSubs.mockReturnValue((t: string) => (t === 'market_close' ? ['stock.review'] : []))
+    emitMarketClose(runner('rs_close'))
+    const pending = listPendingDeliveries('rs_close')
+    expect(pending.find((p) => p.subscriberId === 'stock.review' && p.topic === 'market_close')).toBeTruthy()
   })
 })

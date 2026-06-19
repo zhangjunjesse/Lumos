@@ -4,10 +4,11 @@
  * inFlight 锁（同 agent 不重叠）+ MAX_CONCURRENT 限速。事件/任务优先于主动 timer。
  * 自有定时器，不碰 workflow scheduler / cron-engine。
  */
-import { listPendingDeliveries } from './mesh-event-bus'
+import { listPendingDeliveries, persistMessage } from './mesh-event-bus'
 import { queryDueParticipants, getParticipant, updateParticipant, nextCycleSeq } from './mesh-participant-store'
 import { runOneDutyCycle, type DutyDelivery } from './mesh-duty-cycle'
 import { buildParticipant, buildSubscribersOf, buildTradeContext, getSessionFocus, getAgentIntervalMs } from './mesh-session-context'
+import { isAfterMarketClose, dayKey } from './mesh-market-clock'
 import type { SnapshotProvider } from './mesh-runner'
 
 export const MAX_CONCURRENT = 3
@@ -23,6 +24,7 @@ export interface SchedulerRunner {
   inFlight: Set<string>
   ticker: ReturnType<typeof setTimeout> | null
   stopped: boolean
+  lastCloseDay?: string // 收盘事件当日去重标记
   onError?: (msg: string) => void
   onCycle?: () => void
 }
@@ -72,9 +74,27 @@ export function computeNextRunAt(intervalMs: number, idleStreak: number, now: nu
   return now + intervalMs * 2 ** Math.min(idleStreak, IDLE_BACKOFF_CAP)
 }
 
+/** 工作日 15:00 后、当日首次 → emit market_close（复盘 agent 订阅它做收盘归因）。 */
+function maybeEmitMarketClose(runner: SchedulerRunner): void {
+  const now = new Date()
+  if (!isAfterMarketClose(now)) return
+  const today = dayKey(now)
+  if (runner.lastCloseDay === today) return // 当日已 emit
+  runner.lastCloseDay = today
+  emitMarketClose(runner)
+}
+
+/** emit market_close 给订阅它的 agent（复盘）；手动触发（演示/测试）也走这。 */
+export function emitMarketClose(runner: SchedulerRunner): void {
+  const subs = buildSubscribersOf(runner.accountId)('market_close')
+  if (subs.length === 0) return
+  persistMessage(runner.runId, 'market_close', { at: new Date().toISOString() }, 'system', subs)
+}
+
 /** 一次 tick：选 due → 门控 → fire-and-forget 派发 → 排下一 tick。永远轻快。 */
 export function tickLoop(runner: SchedulerRunner): void {
   if (runner.stopped || runner.abort.signal.aborted) return
+  maybeEmitMarketClose(runner) // 工作日 15:00 后当日首次 → emit market_close（复盘订阅）
   const pick = pickDispatchable(selectDue(runner.runId, Date.now()), runner.inFlight)
   for (const item of pick) {
     runner.inFlight.add(item.participantId)

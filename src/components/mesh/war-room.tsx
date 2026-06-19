@@ -6,11 +6,11 @@ import { AgentChat } from './agent-chat'
 import { Blackboard } from './blackboard'
 import { DataPanels } from './data-panels'
 
-interface Workshop {
+export interface Workshop {
   id: string
   name: string
-  desc: string
-  status: string
+  description: string
+  status: 'active' | 'paused' | 'draft'
 }
 
 export interface BBEntry {
@@ -44,21 +44,20 @@ interface Snapshot {
   messages: MsgRecord[]
 }
 
-const ACCOUNT_ID = 'mesh_team_default' // 单工作室：固定连 default team
-
 export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; onBack: () => void; onSettings: () => void }) {
   const [leftTab, setLeftTab] = useState('board')
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [busy, setBusy] = useState(false)
+  const accountId = workshop.id // 工作室 id 即账户/会话维度（多工作室隔离）
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`/api/mesh/warroom?accountId=${ACCOUNT_ID}`)
+      const r = await fetch(`/api/mesh/warroom?accountId=${accountId}`)
       if (r.ok) setSnap(await r.json())
     } catch {
       /* 轮询失败忽略，下次再试 */
     }
-  }, [])
+  }, [accountId])
 
   useEffect(() => {
     refresh()
@@ -72,7 +71,7 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
       await fetch('/api/mesh/runner', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action, accountId: ACCOUNT_ID, intervalMs: 5000 }),
+        body: JSON.stringify({ action, accountId }),
       })
       await refresh()
     } finally {

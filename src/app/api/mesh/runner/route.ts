@@ -5,6 +5,7 @@ import {
   monitoringStatus,
   DEFAULT_ACCOUNT_ID,
 } from '@/lib/mesh/mesh-run-control'
+import { emitMarketCloseNow } from '@/lib/mesh/mesh-runner'
 import { getLiveConfig, liveBackend } from '@/lib/mesh/mesh-live-backend'
 
 /** M7 默认演示快照（不连真 qmt；可由请求体 snapshot 覆盖）。 */
@@ -33,6 +34,11 @@ export async function POST(req: NextRequest) {
   if (action === 'stop') {
     const result = stopMonitoring(accountId)
     return NextResponse.json(result, { status: result.ok ? 200 : 404 })
+  }
+
+  if (action === 'emit_close') {
+    const ok = emitMarketCloseNow(accountId) // 手动触发收盘复盘（演示/测试，无需等真 15:00）
+    return NextResponse.json({ ok }, { status: ok ? 200 : 404 })
   }
 
   return NextResponse.json({ ok: false, reason: `unknown action: ${String(action)}` }, { status: 400 })

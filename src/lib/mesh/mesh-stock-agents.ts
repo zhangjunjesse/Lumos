@@ -99,5 +99,5 @@ export const MESH_DEFAULT_AGENTS: DefaultAgent[] = [
   { id: STOCK_WATCH_AGENT.id, role: 'observe', systemPrompt: STOCK_WATCH_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 60, enabled: true, workMode: 'active_loop' },
   { id: STOCK_DECIDE_AGENT.id, role: 'decide', systemPrompt: STOCK_DECIDE_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: ['quote_anomaly'], interval: 10, enabled: true, workMode: 'event_driven' },
   { id: STOCK_RISK_AGENT.id, role: 'risk', systemPrompt: STOCK_RISK_SYSTEM_PROMPT, mcpAllowlist: ['qmt-readonly'], toolAllowlist: [], topics: [], interval: 10, enabled: true, workMode: 'event_driven' },
-  { id: STOCK_REVIEW_AGENT.id, role: 'review', systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: [], interval: 300, enabled: true, workMode: 'active_loop' },
+  { id: STOCK_REVIEW_AGENT.id, role: 'review', systemPrompt: STOCK_REVIEW_SYSTEM_PROMPT, mcpAllowlist: [], toolAllowlist: [], topics: ['market_close'], interval: 300, enabled: true, workMode: 'event_driven' },
 ]

@@ -186,6 +186,9 @@ export function migrateMeshTables(db: Database.Database): void {
   db.exec(
     `INSERT OR IGNORE INTO mesh_workshop (id, name, description) VALUES ('mesh_team_default', '默认工作室', '炒股 AI 团队默认工作室')`,
   )
+
+  // W7：复盘 agent 改收盘触发（现有 review 行也改，用户定）。仅改还是主动循环的，幂等、不覆盖用户已自定义的事件驱动配置。
+  db.exec(`UPDATE mesh_agent SET work_mode='event_driven', topics_json='["market_close"]' WHERE role='review' AND work_mode='active_loop'`)
 }
 
 /**

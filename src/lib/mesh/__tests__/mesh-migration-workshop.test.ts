@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- 直接建内存库验迁移，不走 connection mock */
+// 直接建内存库验迁移，不走 connection mock
 import Database from 'better-sqlite3'
 import { migrateMeshTables } from '@/lib/db/migrations-mesh'
 
