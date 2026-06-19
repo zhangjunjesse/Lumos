@@ -8,6 +8,7 @@ import { MemoryToastProvider } from "@/components/memory/memory-toast-container"
 import { ScheduleNotifications } from "@/components/workflow/ScheduleNotifications";
 import { UpdateProvider } from "@/components/layout/UpdateProvider";
 import { UpdateDialog } from "@/components/layout/UpdateDialog";
+import { LegacyStoragePurge } from "@/components/layout/legacy-storage-purge";
 
 export const metadata: Metadata = {
   title: "Lumos",
@@ -22,6 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
+        <LegacyStoragePurge />
         <ThemeProvider>
           <I18nProvider>
             <MemoryToastProvider>

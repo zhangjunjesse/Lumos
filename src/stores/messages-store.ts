@@ -1,5 +1,4 @@
 import create from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { Message } from '@/types';
 
 export interface SessionMessages {
@@ -33,128 +32,120 @@ export interface MessagesStore {
   cleanup: () => void;
 }
 
-export const useMessagesStore = create<MessagesStore>(
-  persist(
-    (set, get) => ({
-      sessions: {},
+// In-memory only. Messages are the server's responsibility (SQLite) and are
+// re-fetched from /api/chat/sessions/:id/messages on mount, so this store must
+// NOT be persisted to localStorage: doing so blew past the ~5MB quota on write
+// and OOM-crashed the renderer when reloading megabytes of history. See #25/#26.
+export const useMessagesStore = create<MessagesStore>((set, get) => ({
+  sessions: {},
 
-      getSession: (sessionId: string) => {
-        return get().sessions[sessionId] || null;
-      },
+  getSession: (sessionId: string) => {
+    return get().sessions[sessionId] || null;
+  },
 
-      updateSession: (sessionId: string, updates: Partial<Omit<SessionMessages, 'sessionId' | 'lastFetch'>>) => {
-        set((state) => {
-          const existing = state.sessions[sessionId];
-          const now = Date.now();
+  updateSession: (sessionId: string, updates: Partial<Omit<SessionMessages, 'sessionId' | 'lastFetch'>>) => {
+    set((state) => {
+      const existing = state.sessions[sessionId];
+      const now = Date.now();
 
-          if (existing) {
-            // Update existing session
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: {
-                  ...existing,
-                  ...updates,
-                  lastFetch: now,
-                },
-              },
-            };
-          } else {
-            // Create new session
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: {
-                  sessionId,
-                  messages: [],
-                  hasMore: false,
-                  loading: false,
-                  error: null,
-                  lastFetch: now,
-                  ...updates,
-                },
-              },
-            };
-          }
-        });
-      },
-
-      addMessage: (sessionId: string, message: Message) => {
-        set((state) => {
-          const session = state.sessions[sessionId];
-          if (!session) return state;
-
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...session,
-                messages: [...session.messages, message],
-                lastFetch: Date.now(),
-              },
+      if (existing) {
+        // Update existing session
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: {
+              ...existing,
+              ...updates,
+              lastFetch: now,
             },
-          };
-        });
-      },
-
-      updateMessage: (sessionId: string, messageId: number, updates: Partial<Message>) => {
-        set((state) => {
-          const session = state.sessions[sessionId];
-          if (!session) return state;
-
-          const messageIndex = session.messages.findIndex((m) => String(m.id) === String(messageId));
-          if (messageIndex === -1) return state;
-
-          const updatedMessages = [...session.messages];
-          updatedMessages[messageIndex] = {
-            ...updatedMessages[messageIndex],
-            ...updates,
-          };
-
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...session,
-                messages: updatedMessages,
-                lastFetch: Date.now(),
-              },
+          },
+        };
+      } else {
+        // Create new session
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: {
+              sessionId,
+              messages: [],
+              hasMore: false,
+              loading: false,
+              error: null,
+              lastFetch: now,
+              ...updates,
             },
-          };
-        });
-      },
+          },
+        };
+      }
+    });
+  },
 
-      clearSession: (sessionId: string) => {
-        set((state) => {
-          const { [sessionId]: _, ...rest } = state.sessions;
-          return { sessions: rest };
-        });
-      },
+  addMessage: (sessionId: string, message: Message) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
 
-      cleanup: () => {
-        set((state) => {
-          const now = Date.now();
-          const ONE_DAY = 24 * 60 * 60 * 1000;
-          const sessions: Record<string, SessionMessages> = {};
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            messages: [...session.messages, message],
+            lastFetch: Date.now(),
+          },
+        },
+      };
+    });
+  },
 
-          Object.entries(state.sessions).forEach(([id, session]) => {
-            // Keep sessions fetched within last 24h
-            if (now - session.lastFetch < ONE_DAY) {
-              sessions[id] = session;
-            }
-          });
+  updateMessage: (sessionId: string, messageId: number, updates: Partial<Message>) => {
+    set((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return state;
 
-          return { sessions };
-        });
-      },
-    }),
-    {
-      name: 'lumos-messages-store',
-    }
-  )
-);
+      const messageIndex = session.messages.findIndex((m) => String(m.id) === String(messageId));
+      if (messageIndex === -1) return state;
 
-// Auto-cleanup on load
-if (typeof window !== 'undefined') {
-  useMessagesStore.getState().cleanup();
-}
+      const updatedMessages = [...session.messages];
+      updatedMessages[messageIndex] = {
+        ...updatedMessages[messageIndex],
+        ...updates,
+      };
+
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            messages: updatedMessages,
+            lastFetch: Date.now(),
+          },
+        },
+      };
+    });
+  },
+
+  clearSession: (sessionId: string) => {
+    set((state) => {
+      const { [sessionId]: _, ...rest } = state.sessions;
+      return { sessions: rest };
+    });
+  },
+
+  cleanup: () => {
+    set((state) => {
+      const now = Date.now();
+      const ONE_DAY = 24 * 60 * 60 * 1000;
+      const sessions: Record<string, SessionMessages> = {};
+
+      Object.entries(state.sessions).forEach(([id, session]) => {
+        // Keep sessions fetched within last 24h
+        if (now - session.lastFetch < ONE_DAY) {
+          sessions[id] = session;
+        }
+      });
+
+      return { sessions };
+    });
+  },
+}));

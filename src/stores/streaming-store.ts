@@ -1,5 +1,4 @@
 import create from 'zustand';
-import { persist } from 'zustand/middleware';
 import type { PermissionRequestEvent } from '@/types';
 
 export interface ToolUseInfo {
@@ -54,58 +53,35 @@ export interface StreamingStore {
   cleanupOldSessions: () => void;
 }
 
-export const useStreamingStore = create<StreamingStore>(
-  persist(
-    (set, get) => ({
-      sessions: {},
+// In-memory only. Streaming state is live UI state (full streamed content + tool
+// outputs); persisting it to localStorage added ~9MB of dead weight that never
+// survives a reload usefully (the SSE connection drops) and helped OOM-crash the
+// renderer. The final assistant message is saved server-side anyway. See #26.
+export const useStreamingStore = create<StreamingStore>((set, get) => ({
+  sessions: {},
 
-      getSession: (sessionId: string) => {
-        return get().sessions[sessionId] || null;
-      },
+  getSession: (sessionId: string) => {
+    return get().sessions[sessionId] || null;
+  },
 
-      updateSession: (sessionId: string, updates: Partial<Omit<StreamingState, 'sessionId' | 'updatedAt'>>) => {
-        set((state) => {
-          const existing = state.sessions[sessionId];
-          if (existing) {
-            // Update existing session
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: {
-                  ...existing,
-                  ...updates,
-                  updatedAt: Date.now(),
-                },
-              },
-            };
-          } else {
-            // Create new session with defaults
-            return {
-              sessions: {
-                ...state.sessions,
-                [sessionId]: {
-                  sessionId,
-                  status: 'streaming',
-                  content: '',
-                  reasoningSummaries: [],
-                  toolUses: [],
-                  toolResults: [],
-                  streamingToolOutput: '',
-                  statusText: '',
-                  pendingPermission: null,
-                  permissionResolved: null,
-                  startedAt: Date.now(),
-                  ...updates,
-                  updatedAt: Date.now(),
-                },
-              },
-            };
-          }
-        });
-      },
-
-      startStreaming: (sessionId: string) => {
-        set((state) => ({
+  updateSession: (sessionId: string, updates: Partial<Omit<StreamingState, 'sessionId' | 'updatedAt'>>) => {
+    set((state) => {
+      const existing = state.sessions[sessionId];
+      if (existing) {
+        // Update existing session
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: {
+              ...existing,
+              ...updates,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+      } else {
+        // Create new session with defaults
+        return {
           sessions: {
             ...state.sessions,
             [sessionId]: {
@@ -120,88 +96,103 @@ export const useStreamingStore = create<StreamingStore>(
               pendingPermission: null,
               permissionResolved: null,
               startedAt: Date.now(),
+              ...updates,
               updatedAt: Date.now(),
             },
           },
-        }));
+        };
+      }
+    });
+  },
+
+  startStreaming: (sessionId: string) => {
+    set((state) => ({
+      sessions: {
+        ...state.sessions,
+        [sessionId]: {
+          sessionId,
+          status: 'streaming',
+          content: '',
+          reasoningSummaries: [],
+          toolUses: [],
+          toolResults: [],
+          streamingToolOutput: '',
+          statusText: '',
+          pendingPermission: null,
+          permissionResolved: null,
+          startedAt: Date.now(),
+          updatedAt: Date.now(),
+        },
       },
+    }));
+  },
 
-      completeStreaming: (sessionId: string) => {
-        set((state) => {
-          const existing = state.sessions[sessionId];
-          if (!existing) return state;
+  completeStreaming: (sessionId: string) => {
+    set((state) => {
+      const existing = state.sessions[sessionId];
+      if (!existing) return state;
 
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...existing,
-                status: 'completed',
-                pendingPermission: null,
-                permissionResolved: null,
-                updatedAt: Date.now(),
-              },
-            },
-          };
-        });
-      },
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...existing,
+            status: 'completed',
+            pendingPermission: null,
+            permissionResolved: null,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
 
-      errorStreaming: (sessionId: string) => {
-        set((state) => {
-          const existing = state.sessions[sessionId];
-          if (!existing) return state;
+  errorStreaming: (sessionId: string) => {
+    set((state) => {
+      const existing = state.sessions[sessionId];
+      if (!existing) return state;
 
-          return {
-            sessions: {
-              ...state.sessions,
-              [sessionId]: {
-                ...existing,
-                status: 'error',
-                pendingPermission: null,
-                permissionResolved: null,
-                updatedAt: Date.now(),
-              },
-            },
-          };
-        });
-      },
+      return {
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...existing,
+            status: 'error',
+            pendingPermission: null,
+            permissionResolved: null,
+            updatedAt: Date.now(),
+          },
+        },
+      };
+    });
+  },
 
-      clearSession: (sessionId: string) => {
-        set((state) => {
-          const { [sessionId]: _, ...rest } = state.sessions;
-          return { sessions: rest };
-        });
-      },
+  clearSession: (sessionId: string) => {
+    set((state) => {
+      const { [sessionId]: _, ...rest } = state.sessions;
+      return { sessions: rest };
+    });
+  },
 
-      cleanupOldSessions: () => {
-        const now = Date.now();
-        const ONE_DAY = 24 * 60 * 60 * 1000;
+  cleanupOldSessions: () => {
+    const now = Date.now();
+    const ONE_DAY = 24 * 60 * 60 * 1000;
 
-        set((state) => {
-          const sessions = { ...state.sessions };
+    set((state) => {
+      const sessions = { ...state.sessions };
 
-          Object.keys(sessions).forEach((sessionId) => {
-            const session = sessions[sessionId];
-            // Keep streaming sessions, remove completed sessions older than 24h
-            if (
-              session.status === 'completed' &&
-              now - session.updatedAt > ONE_DAY
-            ) {
-              delete sessions[sessionId];
-            }
-          });
+      Object.keys(sessions).forEach((sessionId) => {
+        const session = sessions[sessionId];
+        // Keep streaming sessions, remove completed sessions older than 24h
+        if (
+          session.status === 'completed' &&
+          now - session.updatedAt > ONE_DAY
+        ) {
+          delete sessions[sessionId];
+        }
+      });
 
-          return { sessions };
-        });
-      },
-    }),
-    {
-      name: 'lumos-streaming-store',
-    }
-  )
-);
-
-// Auto cleanup on mount
-if (typeof window !== 'undefined') {
-  useStreamingStore.getState().cleanupOldSessions();
-}
+      return { sessions };
+    });
+  },
+}));
