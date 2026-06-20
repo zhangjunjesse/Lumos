@@ -11,6 +11,14 @@ import { useCreationSession } from './tabs/use-creation-session';
 import { MaterialPicker } from './tabs/MaterialPicker';
 import { CreationPromptTemplates } from './tabs/CreationPromptTemplates';
 
+function fmtTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
 export function CreationDock() {
   const s = useCreationSession();
   const [expanded, setExpanded] = useState(false);
@@ -45,7 +53,42 @@ export function CreationDock() {
         className={`absolute bottom-4 right-4 z-40 flex h-[62vh] max-h-[660px] w-[clamp(420px,38vw,560px)] flex-col overflow-hidden rounded-xl border bg-card shadow-2xl ${expanded ? '' : 'hidden'}`}
       >
         <div className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
-          <span className="text-sm font-medium">创作助手</span>
+          <span className="shrink-0 text-sm font-medium">创作助手</span>
+          {s.sessions.length > 0 && (
+            <select
+              value={s.sessionId}
+              onChange={(e) => s.switchSession(e.target.value)}
+              title="切换会话"
+              className="ml-1 max-w-[120px] truncate rounded border bg-background px-1.5 py-1 text-xs"
+            >
+              {s.sessions.map((sess, i) => (
+                <option key={sess.id} value={sess.id}>
+                  会话 {s.sessions.length - i} · {fmtTime(sess.created_at)}
+                </option>
+              ))}
+            </select>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-1.5 text-xs"
+            onClick={() => void s.newSession()}
+            title="新建会话"
+          >
+            ＋
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-1.5 text-xs text-muted-foreground hover:text-destructive"
+            disabled={!s.sessionId}
+            onClick={() => {
+              if (window.confirm('删除当前创作会话?该会话的对话和生成记录会一并删除。')) void s.deleteSession(s.sessionId);
+            }}
+            title="删除当前会话"
+          >
+            删
+          </Button>
           <div className="flex-1" />
           <Button
             size="sm"
