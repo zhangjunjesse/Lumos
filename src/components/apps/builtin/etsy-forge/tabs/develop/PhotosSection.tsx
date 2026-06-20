@@ -14,6 +14,7 @@ import { MaterialStudio, type BatchSel } from './MaterialStudio';
 import { type BaseMaterial } from './MaterialPickerGrid';
 import { PhotoGallery } from './PhotoGallery';
 import { PhotoRefineDialog } from './PhotoRefineDialog';
+import { PromptEditorDialog } from './PromptEditorDialog';
 import { PhotoPicker, type PickedPhoto } from './PhotoPicker';
 import type { SectionProps } from './use-listing-editor';
 
@@ -29,7 +30,7 @@ function dirSummary(d: Dirs): string {
   if (d.productDescs.length) parts.push(`商品氛围=${d.productDescs.join(' / ')}`);
   return parts.length ? parts.join(' · ') : '未读到任何方向 → 用了内置默认池(可能没配识图服务商，或素材没描述)';
 }
-type NewPhoto = { src: string; sourceType: ListingPhoto['sourceType']; label?: string; role?: ListingPhoto['role'] };
+type NewPhoto = { src: string; sourceType: ListingPhoto['sourceType']; label?: string; role?: ListingPhoto['role']; prompt?: string };
 
 export function PhotosSection({ listing, patch }: SectionProps) {
   const photos = useMemo(() => listing.photos || [], [listing.photos]);
@@ -46,6 +47,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
   const [creationImgs, setCreationImgs] = useState<string[]>([]); // 创作助手出的图(回流)
   const [pickFor, setPickFor] = useState<'design' | 'gallery' | null>(null);
   const [refineSrc, setRefineSrc] = useState<string | null>(null);
+  const [promptPhoto, setPromptPhoto] = useState<ListingPhoto | null>(null);
   const consumed = useRef<Set<string>>(new Set());
   const tickRef = useRef<() => Promise<void>>(async () => {});
 
@@ -98,7 +100,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
 
   const append = useCallback((items: NewPhoto[]) => {
     let next = photosRef.current;
-    for (const it of items) next = [...next, { position: next.length, src: it.src, sourceType: it.sourceType, label: it.label, role: it.role, isMain: next.length === 0 }];
+    for (const it of items) next = [...next, { position: next.length, src: it.src, sourceType: it.sourceType, label: it.label, role: it.role, prompt: it.prompt, isMain: next.length === 0 }];
     patch({ photos: next });
   }, [patch]);
 
@@ -117,7 +119,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
           if (j.status === 'running') { run++; continue; }
           if (consumed.current.has(j.id)) continue;
           consumed.current.add(j.id);
-          if (j.status === 'success' && j.result_src) adds.push({ src: j.result_src, sourceType: 'generated', role: j.role });
+          if (j.status === 'success' && j.result_src) adds.push({ src: j.result_src, sourceType: 'generated', role: j.role, prompt: j.prompt });
           else if (j.status === 'failed') setGenErr(`${j.label}：${j.error || '生成失败'}`);
           void listingApi.deletePhotoJob(j.id).catch(() => {});
         }
@@ -147,6 +149,12 @@ export function PhotosSection({ listing, patch }: SectionProps) {
   const doRefine = (src: string, instruction: string) => {
     setGenErr(null);
     listingApi.refinePhoto(listing.id, src, instruction)
+      .then(() => { setRunningCount((c) => c + 1); return tickRef.current(); })
+      .catch((e) => setGenErr(e instanceof Error ? e.message : String(e)));
+  };
+  const doRegenerate = (prompt: string, role?: string) => {
+    setGenErr(null);
+    listingApi.regeneratePhoto(listing.id, prompt, role)
       .then(() => { setRunningCount((c) => c + 1); return tickRef.current(); })
       .catch((e) => setGenErr(e instanceof Error ? e.message : String(e)));
   };
@@ -189,6 +197,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
             photos={photos}
             runningCount={Math.max(pending, runningCount)}
             onRefine={(src) => setRefineSrc(src)}
+            onEditPrompt={(p) => setPromptPhoto(p)}
             onSetMain={(src) => patch({ photos: photos.map((p) => ({ ...p, isMain: p.src === src })) })}
             onRemove={(src) => patch({ photos: photos.filter((p) => p.src !== src) })}
             onPick={() => setPickFor('gallery')}
@@ -204,6 +213,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
 
       <PhotoPicker open={pickFor !== null} roleLabel={pickFor === 'design' ? '印花' : '商品图'} onClose={() => setPickFor(null)} onPick={onPicked} />
       <PhotoRefineDialog open={refineSrc !== null} src={refineSrc} onClose={() => setRefineSrc(null)} onRefine={(ins) => { if (refineSrc) doRefine(refineSrc, ins); }} />
+      <PromptEditorDialog key={promptPhoto?.src ?? 'none'} photo={promptPhoto} onClose={() => setPromptPhoto(null)} onRegenerate={(prompt, role) => doRegenerate(prompt, role)} />
     </div>
   );
 }

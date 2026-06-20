@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     const specs = resolveBatchGen(listing, body, dirs); // 校验失败抛 → 400
 
     const jobIds = specs.map((s) => {
-      const job = startPhotoJob(store, userId, body.id as string, s.label, s.role);
+      const job = startPhotoJob(store, userId, body.id as string, s.label, s.role, s.prompt);
       void runPhotoGenJob(store, job.id, [s.ref], s.prompt).catch(() => {});
       return job.id;
     });

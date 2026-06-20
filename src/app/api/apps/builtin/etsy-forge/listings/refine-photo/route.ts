@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     const spec = resolveRefine(body.src, body.instruction ?? '');
-    const job = startPhotoJob(store, userId, body.id, spec.label);
+    const job = startPhotoJob(store, userId, body.id, spec.label, undefined, spec.prompt);
     void runPhotoGenJob(store, job.id, spec.refs, spec.prompt).catch(() => {});
 
     return NextResponse.json({ ok: true, jobId: job.id });

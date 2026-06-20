@@ -50,6 +50,12 @@ export const listingApi = {
       method: 'POST',
       body: JSON.stringify({ id, src, instruction }),
     }),
+  // 重生成:用编辑后的提示词 + 印花重新出一张(异步,原图保留)。
+  regeneratePhoto: (id: string, prompt: string, role?: string, label?: string) =>
+    jf<{ ok: boolean; jobId: string }>(`${BASE}/listings/regenerate-photo`, {
+      method: 'POST',
+      body: JSON.stringify({ id, prompt, role, label }),
+    }),
   listPhotoJobs: (listingId?: string) =>
     jf<{ jobs: PhotoGenJobRow[] }>(`${BASE}/listings/photo-jobs${listingId ? `?listingId=${encodeURIComponent(listingId)}` : ''}`),
   deletePhotoJob: (id: string) =>

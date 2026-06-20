@@ -32,6 +32,7 @@ export interface ListingPhoto {
   isMain?: boolean;
   role?: PhotoRole; // 来源角色标签(可选，分类展示用)
   label?: string; // 具体来源(如「场景·beach」「颜色·Black」「精修」)
+  prompt?: string; // AI 生成图所用的提示词(可查看/编辑后重生成);非生成图为空
 }
 
 export interface VariationProperty {
@@ -81,6 +82,7 @@ export interface PhotoGenJobRow extends Record<string, unknown> {
   listing_id: string;
   role?: PhotoRole; // 来源标签(精修无)
   label: string; // 展示名(模特图/场景图/姿势图/颜色图/精修)
+  prompt?: string; // 本次生成所用提示词(随结果带到 ListingPhoto,供查看/重生成)
   status: PhotoJobStatus;
   result_src?: string; // 成功结果(可渲染 src)
   error?: string;

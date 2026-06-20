@@ -4,12 +4,13 @@ import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { COLLECTIONS } from '../types';
 import type { PhotoGenJobRow, PhotoRole } from './types';
 
-export function startPhotoJob(store: AppDataStore, userId: string, listingId: string, label: string, role?: PhotoRole): PhotoGenJobRow {
+export function startPhotoJob(store: AppDataStore, userId: string, listingId: string, label: string, role?: PhotoRole, prompt?: string): PhotoGenJobRow {
   return store.create<PhotoGenJobRow>(COLLECTIONS.LISTING_PHOTO_JOBS, {
     user_id: userId,
     listing_id: listingId,
     role,
     label,
+    prompt,
     status: 'running',
     created_at: new Date().toISOString(),
   } as PhotoGenJobRow);
