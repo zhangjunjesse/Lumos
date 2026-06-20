@@ -1227,6 +1227,9 @@ export class BrowserManager extends EventEmitter {
     });
 
     view.webContents.on('did-finish-load', () => {
+      // 迟到事件可能在 tab 已移除后触发:直接忽略,避免写 ghost 历史/context,
+      // 以及 recording 命中时 installRecordingHooks→switchTab 抛错(未处理 rejection)。见 #19。
+      if (!this.tabMetadata.has(tabId)) return;
       this.refreshTabMetadata(tabId, view);
       this.database.addHistory({
         tabId,
@@ -1250,6 +1253,7 @@ export class BrowserManager extends EventEmitter {
     });
 
     view.webContents.on('did-navigate', (_event, url) => {
+      if (!this.tabMetadata.has(tabId)) return; // tab 已移除的迟到事件
       metadata.url = url;
       metadata.canGoBack = getCanGoBack(view.webContents);
       metadata.canGoForward = getCanGoForward(view.webContents);
@@ -1267,6 +1271,7 @@ export class BrowserManager extends EventEmitter {
     });
 
     view.webContents.on('did-navigate-in-page', (_event, url) => {
+      if (!this.tabMetadata.has(tabId)) return; // tab 已移除的迟到事件
       metadata.url = url;
       metadata.canGoBack = getCanGoBack(view.webContents);
       metadata.canGoForward = getCanGoForward(view.webContents);
@@ -1287,6 +1292,7 @@ export class BrowserManager extends EventEmitter {
       if (!isMainFrame || errorCode === -3) {
         return;
       }
+      if (!this.tabMetadata.has(tabId)) return; // tab 已移除的迟到事件
       metadata.isLoading = false;
       void this.persistTabState(tabId);
       this.emit('tab-loading', { tabId, isLoading: false });
