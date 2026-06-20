@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { ChatView } from '@/components/chat/ChatView';
 import { Button } from '@/components/ui/button';
-import { useCreationSession } from './tabs/use-creation-session';
+import { useCreationSession } from './tabs/creation-session-context';
 import { MaterialPicker } from './tabs/MaterialPicker';
 import { CreationPromptTemplates } from './tabs/CreationPromptTemplates';
 

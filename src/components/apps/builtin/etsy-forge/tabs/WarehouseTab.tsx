@@ -4,7 +4,7 @@
 
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Loading } from '@hugeicons/core-free-icons';
-import { useCreationSession } from './use-creation-session';
+import { useCreationSession } from './creation-session-context';
 import { WarehouseView } from './WarehouseView';
 
 export function WarehouseTab() {

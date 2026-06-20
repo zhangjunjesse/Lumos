@@ -15,6 +15,7 @@ import { ProductTab } from './tabs/ProductTab';
 import { DevelopTab } from './tabs/DevelopTab';
 import { WarehouseTab } from './tabs/WarehouseTab';
 import { CreationDock } from './CreationDock';
+import { CreationSessionProvider } from './tabs/creation-session-context';
 import { SopTaskDock } from './SopTaskDock';
 import { LogsTab } from './tabs/LogsTab';
 import { SettingsTab } from './tabs/SettingsTab';
@@ -27,6 +28,7 @@ export function EtsyForgeApp(): React.ReactElement {
   const refresh = React.useCallback(() => setRefreshKey((k) => k + 1), []);
 
   return (
+    <CreationSessionProvider>
     <div className="relative flex h-full flex-col overflow-hidden bg-background">
       <header className="border-b bg-card px-9 py-6">
         <div className="flex items-start gap-4">
@@ -115,5 +117,6 @@ export function EtsyForgeApp(): React.ReactElement {
       <CreationDock />
       <SopTaskDock />
     </div>
+    </CreationSessionProvider>
   );
 }
