@@ -7,6 +7,7 @@ import { migrateLumosTables } from './migrations-lumos';
 import { migrateSyncTables } from './migrations-sync';
 import { migrateAppTables } from './migrations-app';
 import { migrateWeChatAssistantTables } from './migrations-wechat-assistant';
+import { migrateMeshTables } from './migrations-mesh';
 import { seedAdminUser } from '@/lib/auth/user-service';
 
 function isBuildPhase(): boolean {
@@ -227,6 +228,7 @@ export function initDb(db: Database.Database): void {
     migrateWeChatAssistantTables(db);
     migrateEtsyErankTables(db);
     migratePinterestRadarTables(db);
+    migrateMeshTables(db);
     db.exec('COMMIT');
 
     if (!isBuildPhase()) {

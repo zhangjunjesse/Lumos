@@ -37,8 +37,12 @@ describe('builtin-apps-visibility', () => {
       'douyin-collector',
       'ecommerce-assistant',
       'etsy-erank',
+      'etsy-forge',
       'goofish-assistant',
+      'mesh-trading-team',
+      'pinterest-radar',
       'wechat-assistant',
+      'x-radar',
     ]);
   });
 
@@ -116,12 +120,19 @@ describe('builtin-apps-visibility', () => {
   });
 
   describe('opt-in default before server sync', () => {
-    it('without sync: every app is hiddenByDefaultPendingSync and not visible', () => {
+    it('without sync: opt-in apps are hidden, default-visible apps remain visible', () => {
       // Reset the sync marker to simulate a fresh install / never-synced state.
       settingsStore.delete('builtin_apps_hidden_server_synced');
       const v = getBuiltinAppVisibility();
-      expect(v.every((e) => e.hiddenByDefaultPendingSync)).toBe(true);
-      expect(v.every((e) => e.visible === false)).toBe(true);
+      for (const entry of v) {
+        if (entry.defaultVisible) {
+          expect(entry.hiddenByDefaultPendingSync).toBe(false);
+          expect(entry.visible).toBe(true);
+        } else {
+          expect(entry.hiddenByDefaultPendingSync).toBe(true);
+          expect(entry.visible).toBe(false);
+        }
+      }
       expect(getEffectiveHiddenAppIds().sort()).toEqual(
         BUILTIN_APP_REGISTRY.filter((a) => !a.defaultVisible)
           .map((a) => a.id)
