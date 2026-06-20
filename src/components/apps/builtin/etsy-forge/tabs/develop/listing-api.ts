@@ -56,6 +56,12 @@ export const listingApi = {
       method: 'POST',
       body: JSON.stringify({ id, prompt, role, label }),
     }),
+  // 裁剪落盘:前端 canvas 裁好的 base64 图存盘,返回新图 serve URL(原图保留)。
+  cropPhoto: (dataUrl: string) =>
+    jf<{ ok: boolean; src: string }>(`${BASE}/listings/crop-photo`, {
+      method: 'POST',
+      body: JSON.stringify({ dataUrl }),
+    }),
   listPhotoJobs: (listingId?: string) =>
     jf<{ jobs: PhotoGenJobRow[] }>(`${BASE}/listings/photo-jobs${listingId ? `?listingId=${encodeURIComponent(listingId)}` : ''}`),
   deletePhotoJob: (id: string) =>

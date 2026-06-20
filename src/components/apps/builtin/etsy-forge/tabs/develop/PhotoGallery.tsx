@@ -3,7 +3,7 @@
 // 商品图结果库:批量出的图都进这里。点图放大(lightbox);每张 hover → 精修/设主图/删除/加到创作助手；
 // 生成中显示转圈占位；末尾「挑图/上传」补图。
 import { useState } from 'react';
-import { FileText, ImagePlus, Loader2, RefreshCw, Star, Trash2, Upload } from 'lucide-react';
+import { Crop, FileText, ImagePlus, Loader2, RefreshCw, Star, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ListingPhoto } from '@/lib/etsy-forge/listing/types';
 import { ImageLightbox } from '../ImageLightbox';
@@ -14,13 +14,14 @@ interface Props {
   runningCount: number;
   onRefine: (src: string) => void;
   onEditPrompt: (photo: ListingPhoto) => void;
+  onCrop: (src: string) => void;
   onSetMain: (src: string) => void;
   onRemove: (src: string) => void;
   onPick: () => void;
   onUpload: (src: string) => void;
 }
 
-export function PhotoGallery({ photos, runningCount, onRefine, onEditPrompt, onSetMain, onRemove, onPick, onUpload }: Props) {
+export function PhotoGallery({ photos, runningCount, onRefine, onEditPrompt, onCrop, onSetMain, onRemove, onPick, onUpload }: Props) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadSrc, setUploadSrc] = useState('');
   const [zoom, setZoom] = useState(-1); // lightbox 当前索引
@@ -37,6 +38,7 @@ export function PhotoGallery({ photos, runningCount, onRefine, onEditPrompt, onS
             <div className="absolute right-1 top-1 flex flex-col gap-1 opacity-0 transition group-hover:opacity-100">
               <button type="button" onClick={() => onRefine(p.src)} title="精修(再出一张)" className="rounded bg-white/90 p-1 hover:bg-white"><RefreshCw className="size-3" /></button>
               <button type="button" onClick={() => onEditPrompt(p)} title="查看/编辑提示词" className="rounded bg-white/90 p-1 hover:bg-white"><FileText className="size-3" /></button>
+              <button type="button" onClick={() => onCrop(p.src)} title="裁剪" className="rounded bg-white/90 p-1 hover:bg-white"><Crop className="size-3" /></button>
               {!p.isMain && <button type="button" onClick={() => onSetMain(p.src)} title="设为主图" className="rounded bg-white/90 p-1 hover:bg-white"><Star className="size-3" /></button>}
               <button type="button" onClick={() => onRemove(p.src)} title="删除" className="rounded bg-white/90 p-1 hover:bg-white"><Trash2 className="size-3" /></button>
             </div>

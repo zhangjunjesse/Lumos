@@ -15,6 +15,7 @@ import { type BaseMaterial } from './MaterialPickerGrid';
 import { PhotoGallery } from './PhotoGallery';
 import { PhotoRefineDialog } from './PhotoRefineDialog';
 import { PromptEditorDialog } from './PromptEditorDialog';
+import { ImageCropDialog } from './ImageCropDialog';
 import { PhotoPicker, type PickedPhoto } from './PhotoPicker';
 import type { SectionProps } from './use-listing-editor';
 
@@ -48,6 +49,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
   const [pickFor, setPickFor] = useState<'design' | 'gallery' | null>(null);
   const [refineSrc, setRefineSrc] = useState<string | null>(null);
   const [promptPhoto, setPromptPhoto] = useState<ListingPhoto | null>(null);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
   const consumed = useRef<Set<string>>(new Set());
   const tickRef = useRef<() => Promise<void>>(async () => {});
 
@@ -158,6 +160,12 @@ export function PhotosSection({ listing, patch }: SectionProps) {
       .then(() => { setRunningCount((c) => c + 1); return tickRef.current(); })
       .catch((e) => setGenErr(e instanceof Error ? e.message : String(e)));
   };
+  const doCrop = (dataUrl: string) => {
+    setGenErr(null);
+    listingApi.cropPhoto(dataUrl)
+      .then((r) => append([{ src: r.src, sourceType: 'generated', label: '裁剪' }]))
+      .catch((e) => setGenErr(e instanceof Error ? e.message : String(e)));
+  };
   const onPicked = (p: PickedPhoto) => {
     if (pickFor === 'design') patch({ design_src: p.src });
     else if (pickFor === 'gallery') append([{ src: p.src, sourceType: p.sourceType }]);
@@ -198,6 +206,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
             runningCount={Math.max(pending, runningCount)}
             onRefine={(src) => setRefineSrc(src)}
             onEditPrompt={(p) => setPromptPhoto(p)}
+            onCrop={(src) => setCropSrc(src)}
             onSetMain={(src) => patch({ photos: photos.map((p) => ({ ...p, isMain: p.src === src })) })}
             onRemove={(src) => patch({ photos: photos.filter((p) => p.src !== src) })}
             onPick={() => setPickFor('gallery')}
@@ -214,6 +223,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
       <PhotoPicker open={pickFor !== null} roleLabel={pickFor === 'design' ? '印花' : '商品图'} onClose={() => setPickFor(null)} onPick={onPicked} />
       <PhotoRefineDialog open={refineSrc !== null} src={refineSrc} onClose={() => setRefineSrc(null)} onRefine={(ins) => { if (refineSrc) doRefine(refineSrc, ins); }} />
       <PromptEditorDialog key={promptPhoto?.src ?? 'none'} photo={promptPhoto} onClose={() => setPromptPhoto(null)} onRegenerate={(prompt, role) => doRegenerate(prompt, role)} />
+      <ImageCropDialog key={cropSrc ?? 'no-crop'} src={cropSrc} onClose={() => setCropSrc(null)} onCropped={doCrop} />
     </div>
   );
 }
