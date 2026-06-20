@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Compass,
   MessageCircleHeart,
+  Network,
   Palette,
   Pin,
   Radar,
@@ -496,6 +497,46 @@ export function BuiltinXRadarCard({
         {alerts > 0 ? (
           <span className="text-muted-foreground tabular-nums">· {alerts} 条告警</span>
         ) : null}
+      </div>
+    </Link>
+  );
+}
+
+export function BuiltinMeshTradingTeamCard(): React.ReactElement {
+  return (
+    <Link
+      href="/mesh"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-teal-600 text-white shadow-sm">
+          <Network className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              AI 交易团队
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · Agent Mesh
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        多 Agent 盯盘、决策、风控、模拟成交与复盘驾驶舱；可用自然语言指挥团队
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone="warn" />
+          <span className="text-muted-foreground">paper 模拟盘 · live 需显式配置</span>
+        </span>
       </div>
     </Link>
   );

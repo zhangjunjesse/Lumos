@@ -88,6 +88,13 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     icon: 'radio',
   },
   {
+    id: 'mesh-trading-team',
+    name: 'AI 交易团队',
+    description: '多 Agent 盯盘、决策、风控、模拟成交与复盘驾驶舱，支持自然语言指挥团队',
+    defaultVisible: true,
+    icon: 'network',
+  },
+  {
     id: 'etsy-forge',
     name: 'Etsy 选品采集',
     description:
