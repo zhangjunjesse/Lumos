@@ -118,6 +118,15 @@ export interface PromptRow extends Record<string, unknown> {
   created_at: string;
 }
 
+// 创作助手「提示词模板」：用户自存的可复用提示词，与上面分类化的生图提示词库分开。
+export interface CreationPromptRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  name: string;
+  content: string;
+  created_at: string;
+}
+
 export interface CutoutRow extends Record<string, unknown> {
   id: string;
   user_id: string;
@@ -394,6 +403,7 @@ export const COLLECTIONS = {
   LISTINGS: 'etsy_forge_listings',
   LISTING_PHOTO_JOBS: 'etsy_forge_listing_photo_jobs',
   EXTRA_PROMPTS: 'etsy_forge_extra_prompts',
+  CREATION_PROMPTS: 'etsy_forge_creation_prompts',
   SHOPS: 'etsy_forge_shops',
   REMIX_DIRECTIONS: 'etsy_forge_remix_directions',
   REMIX_STRATEGIES: 'etsy_forge_remix_strategies',

@@ -9,11 +9,13 @@ import { ChatView } from '@/components/chat/ChatView';
 import { Button } from '@/components/ui/button';
 import { useCreationSession } from './tabs/use-creation-session';
 import { MaterialPicker } from './tabs/MaterialPicker';
+import { CreationPromptTemplates } from './tabs/CreationPromptTemplates';
 
 export function CreationDock() {
   const s = useCreationSession();
   const [expanded, setExpanded] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   // 任何地方"加入对话"(图/文字)时自动展开。
   useEffect(() => {
@@ -45,6 +47,14 @@ export function CreationDock() {
         <div className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
           <span className="text-sm font-medium">创作助手</span>
           <div className="flex-1" />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => setTemplatesOpen(true)}
+          >
+            模板
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -83,6 +93,7 @@ export function CreationDock() {
       </div>
 
       {pickerOpen && <MaterialPicker onClose={() => setPickerOpen(false)} />}
+      {templatesOpen && <CreationPromptTemplates onClose={() => setTemplatesOpen(false)} />}
     </>
   );
 }
