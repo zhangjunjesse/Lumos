@@ -27,9 +27,6 @@ export interface MessagesStore {
 
   // Clear session messages (for refresh)
   clearSession: (sessionId: string) => void;
-
-  // Remove old sessions from cache (older than 24h)
-  cleanup: () => void;
 }
 
 // In-memory only. Messages are the server's responsibility (SQLite) and are
@@ -129,23 +126,6 @@ export const useMessagesStore = create<MessagesStore>((set, get) => ({
     set((state) => {
       const { [sessionId]: _, ...rest } = state.sessions;
       return { sessions: rest };
-    });
-  },
-
-  cleanup: () => {
-    set((state) => {
-      const now = Date.now();
-      const ONE_DAY = 24 * 60 * 60 * 1000;
-      const sessions: Record<string, SessionMessages> = {};
-
-      Object.entries(state.sessions).forEach(([id, session]) => {
-        // Keep sessions fetched within last 24h
-        if (now - session.lastFetch < ONE_DAY) {
-          sessions[id] = session;
-        }
-      });
-
-      return { sessions };
     });
   },
 }));

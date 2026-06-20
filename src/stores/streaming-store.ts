@@ -48,9 +48,6 @@ export interface StreamingStore {
 
   // Clear session state
   clearSession: (sessionId: string) => void;
-
-  // Clear old completed sessions (keep only last 24h)
-  cleanupOldSessions: () => void;
 }
 
 // In-memory only. Streaming state is live UI state (full streamed content + tool
@@ -171,28 +168,6 @@ export const useStreamingStore = create<StreamingStore>((set, get) => ({
     set((state) => {
       const { [sessionId]: _, ...rest } = state.sessions;
       return { sessions: rest };
-    });
-  },
-
-  cleanupOldSessions: () => {
-    const now = Date.now();
-    const ONE_DAY = 24 * 60 * 60 * 1000;
-
-    set((state) => {
-      const sessions = { ...state.sessions };
-
-      Object.keys(sessions).forEach((sessionId) => {
-        const session = sessions[sessionId];
-        // Keep streaming sessions, remove completed sessions older than 24h
-        if (
-          session.status === 'completed' &&
-          now - session.updatedAt > ONE_DAY
-        ) {
-          delete sessions[sessionId];
-        }
-      });
-
-      return { sessions };
     });
   },
 }));
