@@ -13,6 +13,9 @@ export async function POST(req: NextRequest) {
     const m = /^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/.exec(body.dataUrl ?? '');
     if (!m) return NextResponse.json({ error: 'dataUrl 无效' }, { status: 400 });
     const [, mimeType, base64] = m;
+    if (base64.length > 8_000_000) {
+      return NextResponse.json({ error: '裁剪图过大,请缩小原图后再裁剪' }, { status: 413 });
+    }
     const [saved] = saveBase64Images([{ base64, mimeType }]);
     if (!saved) return NextResponse.json({ error: '保存失败' }, { status: 500 });
     return NextResponse.json({ ok: true, src: `/api/media/serve?path=${encodeURIComponent(saved.localPath)}` });

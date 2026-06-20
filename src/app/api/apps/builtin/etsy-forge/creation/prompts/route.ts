@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic';
 
 const NAME_MAX = 80;
 const CONTENT_MAX = 8000;
+const MAX_TEMPLATES = 200;
 
 export async function GET(req: NextRequest) {
   try {
@@ -36,8 +37,12 @@ export async function POST(req: NextRequest) {
     if (!name || !content) return NextResponse.json({ error: 'name 和 content 必填' }, { status: 400 });
 
     const store = getEtsyForgeStore();
+    const userId = getStorageUserId(req);
+    if (store.count(COLLECTIONS.CREATION_PROMPTS, { user_id: userId }) >= MAX_TEMPLATES) {
+      return NextResponse.json({ error: `模板数量已达上限 ${MAX_TEMPLATES},请先删除一些` }, { status: 400 });
+    }
     const row = store.create(COLLECTIONS.CREATION_PROMPTS, {
-      user_id: getStorageUserId(req),
+      user_id: userId,
       name: name.slice(0, NAME_MAX),
       content: content.slice(0, CONTENT_MAX),
       created_at: new Date().toISOString(),

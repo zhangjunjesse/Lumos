@@ -57,7 +57,11 @@ export function ImageCropDialog({ src, onClose, onCropped }: Props) {
     if (!box) return;
     e.preventDefault();
     e.stopPropagation();
-    boxRef.current?.parentElement?.setPointerCapture(e.pointerId);
+    try {
+      boxRef.current?.parentElement?.setPointerCapture(e.pointerId);
+    } catch {
+      /* 个别环境不支持 pointer capture,降级为普通拖拽,不致命 */
+    }
     drag.current = { mode, startX: e.clientX, startY: e.clientY, box };
   };
   const onPointerMove = (e: React.PointerEvent) => {

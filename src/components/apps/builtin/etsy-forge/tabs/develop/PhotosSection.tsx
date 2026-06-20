@@ -162,6 +162,10 @@ export function PhotosSection({ listing, patch }: SectionProps) {
   };
   const doCrop = (dataUrl: string) => {
     setGenErr(null);
+    if (photos.length >= LISTING_LIMITS.PHOTOS) {
+      setGenErr(`已达 Etsy 上限 ${LISTING_LIMITS.PHOTOS} 张,请先删一张再裁剪`);
+      return; // 落盘前拦下,不浪费文件
+    }
     listingApi.cropPhoto(dataUrl)
       .then((r) => append([{ src: r.src, sourceType: 'generated', label: '裁剪' }]))
       .catch((e) => setGenErr(e instanceof Error ? e.message : String(e)));
