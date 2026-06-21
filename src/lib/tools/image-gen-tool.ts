@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
 import { coerceStringArray, coerceJsonArray } from './image-gen-arg-coerce';
+import { findUnreferencedPromptPaths } from './image-gen-path-guard';
 import {
   consumeRemoteQuota,
   refundRemoteQuota,
@@ -112,22 +113,7 @@ function buildProviderOptions(args: ImageGenArgs): Record<string, unknown> | und
   return Object.keys(opts).length > 0 ? opts : undefined;
 }
 
-/**
- * Detect absolute local image file paths embedded in the prompt text.
- * Catches the common agent mistake of copying reference-image paths into the
- * natural-language `prompt` field instead of populating `reference_image_paths`.
- */
-const PROMPT_EMBEDDED_IMAGE_PATH_RE =
-  /(?:^|[\s([{"'`,])((?:\/|[a-zA-Z]:[\\/])[^\s()[\]{}"'`,<>]+\.(?:jpg|jpeg|png|webp|gif|bmp|heic|heif|avif))(?=$|[\s)\]}"'`,.;:!?])/gi;
-
-function findEmbeddedImagePaths(prompt: string): string[] {
-  if (!prompt) return [];
-  const found = new Set<string>();
-  for (const m of prompt.matchAll(PROMPT_EMBEDDED_IMAGE_PATH_RE)) {
-    found.add(m[1]);
-  }
-  return [...found];
-}
+// 检测 prompt 内嵌入绝对图片路径的纯函数已抽到 ./image-gen-path-guard(便于单测)。
 
 async function runGeneration(
   args: ImageGenArgs,
@@ -169,22 +155,26 @@ export function createImageGenTool(sessionId?: string, userId?: string) {
     + 'generate, draw, create, edit, restyle, or transform images.',
     inputSchema,
     async (args): Promise<CallToolResult> => {
-      const embedded = findEmbeddedImagePaths(args.prompt);
-      if (embedded.length > 0) {
+      // 只拦「prompt 里有、但没放进 reference_image_paths」的路径(那才是真漏传,provider 收不到参考图)。
+      // 已在 reference_image_paths 里的重复路径放行 —— 上游 context-image 注入器会把
+      // "[Context Image N: /abs/path]" 拼进 agent 文本,agent 据此正确填了 reference_image_paths
+      // 却又在 prompt 里带了路径;旧逻辑一刀切拦死,导致图生图 100% 失败(#28)。
+      const unreferenced = findUnreferencedPromptPaths(args.prompt, args.reference_image_paths);
+      if (unreferenced.length > 0) {
         const existingRefs = args.reference_image_paths ?? [];
-        const merged = [...new Set([...existingRefs, ...embedded])];
+        const merged = [...new Set([...existingRefs, ...unreferenced])];
         return textResult({
           success: false,
           error:
-            `Detected ${embedded.length} absolute image path(s) embedded in the prompt text. `
-            + `Absolute paths belong in reference_image_paths, never in prompt. `
+            `Detected ${unreferenced.length} absolute image path(s) in the prompt text that are NOT in reference_image_paths. `
+            + `Absolute paths belong in reference_image_paths, never only in prompt. `
             + `Retry this call with reference_image_paths=${JSON.stringify(merged)} `
             + `and rewrite the prompt so it refers to them positionally (Image 1, Image 2, …) `
             + `with NO absolute paths in the prompt string.`,
           error_source: 'image_generation_input_shape',
-          detected_paths: embedded,
+          detected_paths: unreferenced,
           suggested_reference_image_paths: merged,
-          hint: '把 detected_paths 里的所有路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
+          hint: '把 detected_paths 里的路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
         }, true);
       }
 
