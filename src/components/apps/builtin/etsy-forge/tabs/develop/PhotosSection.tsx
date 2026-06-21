@@ -226,7 +226,7 @@ export function PhotosSection({ listing, patch }: SectionProps) {
 
       <PhotoPicker open={pickFor !== null} roleLabel={pickFor === 'design' ? '印花' : '商品图'} onClose={() => setPickFor(null)} onPick={onPicked} />
       <PhotoRefineDialog open={refineSrc !== null} src={refineSrc} onClose={() => setRefineSrc(null)} onRefine={(ins) => { if (refineSrc) doRefine(refineSrc, ins); }} />
-      <PromptEditorDialog key={promptPhoto?.src ?? 'none'} photo={promptPhoto} onClose={() => setPromptPhoto(null)} onRegenerate={(prompt, role) => doRegenerate(prompt, role)} />
+      <PromptEditorDialog key={promptPhoto?.src ?? 'none'} photo={promptPhoto} designSrc={listing.design_src} onClose={() => setPromptPhoto(null)} onRegenerate={(prompt, role) => doRegenerate(prompt, role)} />
       <ImageCropDialog key={cropSrc ?? 'no-crop'} src={cropSrc} onClose={() => setCropSrc(null)} onCropped={doCrop} />
     </div>
   );

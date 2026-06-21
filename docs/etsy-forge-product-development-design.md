@@ -123,7 +123,7 @@ ready ──标记已上架(填 Etsy 链接)──▶ listed(已上架)
 
 用户进来通常只有「一个印花 + 一张基础产品图」,但上架要 6-8 张图。交互**不是逐格手填**,而是 **选图库素材 → AI 批量合成商品图 → 逐张精修**(结果图库模型,已拆掉固定角色格子)。
 
-**生成方法对齐权威 SOP**:`/Users/zhangjun/私藏/etsy/prompt_research/playbook/etsy_product_mockup_sop.md`(见 memory `reference-etsy-mockup-sop`)。四铁律:① 印花=唯一真图参考;② 模特/场景/姿势绝不喂像素,只"读图→文字方向"让 AI 生成全新人/景(合规);③ 印花随褶皱变形+受光(防贴纸感);④ 多色每张换人换景不克隆。
+**生成方法对齐权威 SOP**:`/Users/zhangjun/私藏/etsy/prompt_research/playbook/etsy_product_mockup_sop.md`(见 memory `reference-etsy-mockup-sop`)。四铁律:① 印花=唯一真图参考;② 模特/场景/姿势绝不喂像素,只"读图→文字方向"让 AI 生成全新人/景(合规);③ 印花随褶皱变形+受光(防贴纸感)、**忠实复刻原色原样(不转线稿、不变色)**;④ 多色每张换人换景不克隆。
 
 - **印花作一等字段** `design_src`:顶部显示,可设/换。**SOP 铁律1:它是唯一进 `reference_image_paths` 的真图(Image 1)。**
 - **选素材批量出图**(`MaterialStudio`,分 4 个 tab):
@@ -134,7 +134,7 @@ ready ──标记已上架(填 Etsy 链接)──▶ listed(已上架)
     - 已采集商品 / 我关注的商品 = 真实商品图(`listProducts` 主图 / `listLibrary` 详情图,按 url 去重)→ `productRefs`,vision **整体读氛围方向**(`PRODUCT_Q`:人+景+姿势+光);选了就**优先**按它出(`resolveBatchGen` 里 `productDescs` 在则 modelPoseScene 直接取它)。
     - **绝不喂像素**(铁律2,采集同行图也只读方向)。留空用内置多样化默认池(`MODEL/POSE/SCENE_ROSTER`)。
   - **额外要求 tab**:自由文本输入,`resolveBatchGen` 用 `withExtra` 把它追加进 模特/场景/特写/平铺 每张 prompt(结构化选项之外的补充,如"模特戴渔夫帽""避免文字")。
-  - **生成 = 单图单参考**(只印花):`resolveBatchGen`(纯,出 SOP §3 模板 prompt) → `runPhotoGenJob`(异步,`generateFromRefs([印花], prompt)`)。模板含褶皱变形 realism(铁律3)+ 线色规则(深衣白线/浅衣深线,§4)。
+  - **生成 = 单图单参考**(只印花):`resolveBatchGen`(纯,出 SOP §3 模板 prompt) → `runPhotoGenJob`(异步,`generateFromRefs([印花], prompt)`)。模板含褶皱变形 realism(铁律3)+ **印花保真复刻**:忠实还原 Image 1 原色原样(彩色实心/多色/线稿都照原样,绝不转线稿、不变色、不重画)。⚠️ #27 修复:旧模板硬编码「印花=单线线稿 + 线色随衣深浅(深衣白线/浅衣深线)」,会把彩色实心印花(如彩色番茄)重绘成黑白线稿;现已全部改成 `printFidelity` 保真措辞。
   - 校验:无印花报错(铁律1);没选颜色报错;没选任何输出报错。
   - 颜色矩阵图(把多色拼一张)= 后续(SOP §6 提醒 AI 画色号字不稳,需人工核对)。
 - **商品图结果库**(`PhotoGallery`= listing.photos 扁平列表,Etsy 取前 10、`isMain` 标主图):
@@ -146,6 +146,7 @@ ready ──标记已上架(填 Etsy 链接)──▶ listed(已上架)
   - 批量生成的图本就**自动追加**进结果库(`generated`)。
   - 注:创作会话是全局单例(localStorage 缓存),故"回流"是置顶+横幅一键(非按槽位全自动,避免把无关聊天图塞进来)。
 - **精修**(`resolveRefine`):给一张图 + 一句指令 → `[原图]` + 精修 prompt(img2img)再出一张,作为新图进库、原图保留。
+- **重生成**(`regenerate-photo`):图库每张图「查看/编辑提示词」(`PromptEditorDialog`)→ 编辑该图 prompt → 用印花(`design_src`)作唯一真图参考重出一张(原图保留)。弹窗亮出「唯一参考图=印花」缩略图、缺印花则警告(#27 可观测性);完整请求/服务商响应落「日志」tab(`scope=重生成`)。
 - **异步**:发起 → 起 `etsy_forge_listing_photo_jobs`(running)→ `generateFromRefs` 跑完写回 job。前端轮询:running→结果库占位转圈;success→**追加**进结果库(客户端 patch,photos 始终客户端所有,避免与自动保存抢)+删 job;failed→提示。右下 `PhotoJobsDock` 浮层显示全部 running,不挡手。
 - **底线**:只拿用户自有印花 + 自有图库素材合成,不碰同行成品图(R1);失败如实显示;生成图 `sourceType='generated'`,存本 listing,不污染「我的产品」板。
 

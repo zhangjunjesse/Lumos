@@ -34,7 +34,11 @@ async function loadRef(ref: string): Promise<FetchedImage> {
 
 // 生成核心:参考图(可空=纯文生图) + 提示词 → 一张图,返回本地路径(失败抛)。
 // 导出复用:产品开发「图片」子 tab 的按角色生成也走这条核心(与产品解耦)。
-export async function generateFromRefs(prompt: string, references: string[]): Promise<string> {
+export async function generateFromRefs(
+  prompt: string,
+  references: string[],
+  log?: { scope?: string; product?: string }, // 日志标识(默认「继续二创」);重生成等传专属 scope 便于在日志 tab 辨认
+): Promise<string> {
   const refs: FetchedImage[] = [];
   for (const r of references) {
     try {
@@ -46,8 +50,8 @@ export async function generateFromRefs(prompt: string, references: string[]): Pr
   const res = await generateImagesWithRetry(
     { prompt, referenceImages: refs.length ? refs : undefined, abortSignal: AbortSignal.timeout(TIMEOUT_MS) },
     3,
-    '继续二创',
-    { product: prompt, sources: references },
+    log?.scope ?? '继续二创',
+    { product: log?.product ?? prompt, sources: references },
   );
   const out = res.images[0];
   if (!out?.localPath) throw new Error('图片服务商未返回结果（该模型可能不支持图像编辑）');

@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
 
     const job = startPhotoJob(store, userId, body.id, body.label || '商品图', body.role, prompt);
-    void runPhotoGenJob(store, job.id, [ref], prompt).catch(() => {});
+    void runPhotoGenJob(store, job.id, [ref], prompt, { scope: '重生成', product: '重生成' }).catch(() => {});
 
     return NextResponse.json({ ok: true, jobId: job.id });
   } catch (err) {

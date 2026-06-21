@@ -108,9 +108,15 @@ export function resolveRefine(src: string, instruction: string): RefineSpec {
 }
 
 // fire-and-forget：跑生成核心，成功写 result_src、失败写 error，都落 job 终态。批量与精修共用。
-export async function runPhotoGenJob(store: AppDataStore, jobId: string, refs: string[], prompt: string): Promise<void> {
+export async function runPhotoGenJob(
+  store: AppDataStore,
+  jobId: string,
+  refs: string[],
+  prompt: string,
+  log?: { scope?: string; product?: string }, // 透传给日志(重生成传 {scope:'重生成'} 便于排查)
+): Promise<void> {
   try {
-    const path = await generateFromRefs(prompt, refs);
+    const path = await generateFromRefs(prompt, refs, log);
     finishPhotoJob(store, jobId, true, serveUrl(path));
   } catch (err) {
     finishPhotoJob(store, jobId, false, undefined, err instanceof Error ? err.message : String(err));

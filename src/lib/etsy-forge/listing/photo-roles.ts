@@ -1,12 +1,13 @@
 // SOP 对齐:/Users/zhangjun/私藏/etsy/prompt_research/playbook/etsy_product_mockup_sop.md
-// 铁律:印花=唯一真图参考(Image 1);模特/场景/姿势只进文字方向;印花随褶皱变形+受光;线色随衣深浅。
+// 铁律:印花=唯一真图参考(Image 1);模特/场景/姿势只进文字方向;印花随褶皱变形+受光;
+//   印花忠实复刻 Image 1 的原色原样(彩色实心/多色/线稿都照原样,绝不转线稿、不重画、不变色)。
 // 这里是 SOP §3 模板 + §4 颜色表 + 防克隆默认池。改 prompt/颜色只改这里。
 
 export interface ShirtColor {
   name: string; // 代号(传参用)
   label: string; // 中文展示
   desc: string; // 进 prompt 的英文描述
-  dark: boolean; // 深色→白线 / 浅色→深线
+  dark: boolean; // 衣色深浅(保留供调光/对比;印花保真后不再据此给印花反色)
 }
 
 // §4 Comfort Colors 常用色。
@@ -38,15 +39,18 @@ export const PHOTO_STYLES: PhotoStyle[] = [
 export const DEFAULT_STYLE = 'phone';
 export const styleFragment = (key?: string) => (PHOTO_STYLES.find((s) => s.key === key) ?? PHOTO_STYLES[0]).fragment;
 
-const lineColor = (dark: boolean) => (dark ? 'WHITE' : 'DARK CHARCOAL');
-const inv = (dark: boolean) => (dark ? ' (inverted to white because the shirt is dark)' : '');
+// 印花保真复刻:把 Image 1 的图案原色原样印上去 —— 彩色实心、多色、线稿都照原样;
+// 绝不转成线稿/单色描边、不重画、不变色、不简化;只允许随布料褶皱/受光自然形变(见 REALISM)。
+const printFidelity = (placement: string) =>
+  `Reproduce the EXACT artwork from Image 1 and print it ${placement}, FAITHFULLY preserving its original colors, shapes, details and style exactly as shown in Image 1. If the artwork is colored, keep it full-color; do NOT turn it into a line drawing or single-color outlines, do NOT recolor, invert, redraw or simplify it.`;
 
-// 铁律3:印花随褶皱变形 + 受光(防贴纸感)。
+// 铁律3:印花随褶皱变形 + 受光(防贴纸感),同时保持原色原样不变。
 const REALISM = [
   'CRITICAL realism — the print must look truly PRINTED INTO the fabric, NOT a flat sticker:',
-  '- print lines follow and DISTORT along every wrinkle and fold; where fabric creases, the lines bend, break and warp',
-  '- print curves and stretches over the chest/body contour, not perfectly flat',
-  '- print catches the SAME lighting: brighter on raised folds, faded/darker in shadowed creases, uneven ink opacity',
+  '- the print keeps its ORIGINAL colors and artwork exactly — do not shift hue/saturation, do not reduce it to a line drawing',
+  '- the print follows and DISTORTS along every wrinkle and fold; where fabric creases, it bends, breaks and warps',
+  '- the print curves and stretches over the chest/body contour, not perfectly flat',
+  '- the print catches the SAME lighting: brighter on raised folds, faded/darker in shadowed creases, uneven ink opacity',
   '- fabric weave texture shows slightly through the ink, soft vintage screen-print feel',
   '- do NOT redraw or change the design, only deform it naturally with the cloth',
 ].join('\n');
@@ -56,7 +60,7 @@ export function modelShotPrompt(shirt: ShirtColor, modelPoseScene: string, style
   return [
     `A photo of a woman wearing an oversized ${shirt.desc} Comfort Colors t-shirt, shown from chin down to mid-thigh, face cropped above the lips. ${modelPoseScene}. Light it to MATCH that scene's own lighting (brightness, warmth / color-temperature, time of day). Real skin texture; the t-shirt has natural deep wrinkles and body contour over the chest.`,
     '',
-    `Take the EXACT line-art design from Image 1 and print it centered on the chest as thin ${lineColor(shirt.dark)} line-art${inv(shirt.dark)}.`,
+    printFidelity('centered on the chest'),
     '',
     REALISM,
     '',
@@ -66,20 +70,19 @@ export function modelShotPrompt(shirt: ShirtColor, modelPoseScene: string, style
 
 // §3.2 场景氛围图(无模特,印花T恤摆进场景)。
 export function sceneShotPrompt(shirt: ShirtColor, sceneDesc: string, prop: string, style: string): string {
-  const line = shirt.dark ? 'white' : 'dark';
-  return `Using Image 1 as the print design, naturally place a folded ${shirt.desc} vintage washed t-shirt draped over ${prop}. On the t-shirt's visible chest area, show the EXACT line-art print from Image 1 (${line} line), following the fabric folds with soft vintage screen-print texture. Keep the ${sceneDesc} unchanged. ${style} No watermark, no extra text.`;
+  return `Using Image 1 as the print design, naturally place a folded ${shirt.desc} vintage washed t-shirt draped over ${prop}. On the t-shirt's visible chest area, reproduce the print from Image 1 FAITHFULLY with its exact original colors and artwork (not a line drawing, not recolored), following the fabric folds with soft vintage screen-print texture. Keep the ${sceneDesc} unchanged. ${style} No watermark, no extra text.`;
 }
 
 // §3.3 设计特写图。
 export function detailShotPrompt(shirt: ShirtColor): string {
-  return `A close-up macro detail product photo of a ${shirt.desc} vintage washed cotton t-shirt fabric, showing the EXACT line-art print from Image 1 printed on it. Focus on the print, showing realistic faded vintage screen-print texture, slight ink cracking, soft cotton weave, gentle natural light. Realistic, no watermark, no text.`;
+  return `A close-up macro detail product photo of a ${shirt.desc} vintage washed cotton t-shirt fabric, showing the print from Image 1 reproduced FAITHFULLY with its exact original colors and artwork (not turned into a line drawing, not recolored). Focus on the print, showing realistic faded vintage screen-print texture, slight ink cracking, soft cotton weave, gentle natural light. Realistic, no watermark, no text.`;
 }
 
 // §2 ④ 平铺白底主图(缩略图担当)。
 export function flatMainPrompt(shirt: ShirtColor): string {
   return [
     `A clean flat-lay product photo of a neatly laid-flat ${shirt.desc} Comfort Colors t-shirt on a pure white seamless background, front view, centered.`,
-    `Print the EXACT line-art design from Image 1 on the chest as thin ${lineColor(shirt.dark)} line-art${inv(shirt.dark)}, following the fabric folds with soft vintage screen-print texture (truly printed in, not a flat sticker).`,
+    `${printFidelity('on the chest')} Follow the fabric folds with soft vintage screen-print texture (truly printed in, not a flat sticker).`,
     'Realistic studio product shot, no model, no props, no watermark, no text.',
   ].join('\n');
 }

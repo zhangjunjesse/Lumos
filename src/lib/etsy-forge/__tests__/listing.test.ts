@@ -133,7 +133,8 @@ describe('批量出图解析（SOP：印花=唯一参考、颜色主轴、不克
     expect(specs.every((s) => s.label === '商品图')).toBe(true);
     const modelSpecs = specs.filter((s) => s.role === 'model');
     expect(modelSpecs).toHaveLength(4);
-    expect(modelSpecs[0].prompt).toContain('EXACT line-art design from Image 1');
+    expect(specs.every((s) => !/line-art/i.test(s.prompt))).toBe(true); // #27 根因:所有模板不再把印花当线稿
+    expect(modelSpecs[0].prompt).toMatch(/faithfully|original colors/i); // 忠实复刻印花原色原样
     expect(modelSpecs[0].prompt).toContain('PRINTED INTO the fabric'); // 褶皱变形 realism(铁律3)
   });
 
@@ -150,12 +151,13 @@ describe('批量出图解析（SOP：印花=唯一参考、颜色主轴、不克
     expect(specs).toHaveLength(4);
   });
 
-  it('线色随衣深浅：深色(Pepper)→白线，浅色(White)→深炭灰线', () => {
+  it('印花保真:深/浅色衣服都忠实复刻印花原色,不转线稿、不反色(#27)', () => {
     const l = makeListing({ design_src: '/print.png' });
     const dark = resolveBatchGen(l, { colors: ['Pepper'], modelCount: 1, outputs: { model: true } }, dirs())[0];
     const light = resolveBatchGen(l, { colors: ['White'], modelCount: 1, outputs: { model: true } }, dirs())[0];
-    expect(dark.prompt).toContain('WHITE line-art');
-    expect(light.prompt).toContain('DARK CHARCOAL line-art');
+    expect(dark.prompt).not.toMatch(/inverted to white/i); // 不再按衣色反色
+    expect(dark.prompt).toMatch(/faithfully|original colors/i);
+    expect(light.prompt).toMatch(/faithfully|original colors/i);
   });
 
   it('用户给的方向描述进 prompt（只文字，不喂像素）', () => {
