@@ -15,7 +15,7 @@ import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime'
 import { getProvider } from '@/lib/db/providers'
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth'
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env'
-import { createMeshCanUseTool, resolveMeshMcpServers } from './mesh-tool-policy'
+import { createMeshCanUseTool, resolveMeshMcpServers, MESH_BUILTIN_TOOLS } from './mesh-tool-policy'
 import { buildMeshActionPlanSchema, parseActionPlan, type MeshActionPlan } from './mesh-action-schema'
 import type { MeshAgentConfig } from './mesh-agent-config'
 
@@ -62,9 +62,9 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
     abortController,
     systemPrompt: agent.systemPrompt,
     permissionMode: 'default' as const,
-    // 只暴露 agent 白名单内的内置工具(空=无工具)。否则模型拿到默认全套工具会去试、
-    // 被 canUseTool 全拒,陷入"试→拒→再试"死循环、永远产不出结构化 action plan。
-    allowedTools: agent.toolAllowlist,
+    // 全放开:预批准全部内置工具(+ agent 额外声明的),让 agent 确知可用、不再误判"没工具"。
+    // canUseTool 仍兜底裁决(内置放行、未注入 MCP 拒);下单安全靠 OrderGateway 结构隔离。
+    allowedTools: [...MESH_BUILTIN_TOOLS, ...agent.toolAllowlist],
     canUseTool: createMeshCanUseTool(agent),
     env: ctx.env,
     settingSources: ctx.settingSources,

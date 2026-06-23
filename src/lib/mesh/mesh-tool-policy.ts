@@ -1,9 +1,11 @@
 /**
  * 网状执行器的工具裁决 —— M1 安全核心。
  *
- * 与 workflow 执行器的关键区别：这里的 canUseTool 真正生效（执行器用 permissionMode:'default'
- * 并把它传给 SDK），按 agent 白名单对每一次工具调用做硬裁决。白名单外一律 deny。
- * 下单类工具的 server 永不进白名单，因此 LLM 物理上够不到下单接口。
+ * 与 workflow 执行器的关键区别：这里的 canUseTool 真正生效（permissionMode:'default'）。
+ * 工具策略（用户选择「全放开」）：内置工具一律放开；MCP 工具仍按 agent.mcpAllowlist 裁决
+ * （mcpAllowlist = 注入清单，未注入的 MCP server 一律 deny）。
+ * 下单安全不靠工具白名单——下单走确定性 OrderGateway，从不注册下单类 MCP server，
+ * 因此 LLM 物理上够不到下单接口（这才是真正的硬隔离）。
  *
  * 设计依据：docs/agent-mesh-collaboration-design.md §6
  */
@@ -14,6 +16,9 @@ import { MESH_MCP_REGISTRY, type MeshAgentConfig } from './mesh-agent-config'
 
 const MCP_TOOL_PREFIX = 'mcp__'
 
+/** 全放开:预批准给 SDK 的内置工具集,让 agent 确知可用、不再误判"没工具"。 */
+export const MESH_BUILTIN_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoWrite', 'NotebookEdit', 'Task', 'ToolSearch']
+
 /** MCP 工具名形如 `mcp__<server>__<tool>`；取出 <server>，非 MCP 工具返回 null。 */
 export function parseMcpServerName(toolName: string): string | null {
   if (!toolName.startsWith(MCP_TOOL_PREFIX)) return null
@@ -22,13 +27,13 @@ export function parseMcpServerName(toolName: string): string | null {
   return sep === -1 ? rest : rest.slice(0, sep)
 }
 
-/** 判定某工具是否在该 agent 的白名单内。 */
+/** 判定某工具是否可用。内置工具全放开;MCP 工具按 mcpAllowlist(= 注入清单)。 */
 export function isToolAllowed(agent: MeshAgentConfig, toolName: string): boolean {
   const server = parseMcpServerName(toolName)
-  if (server !== null) {
-    return agent.mcpAllowlist.includes(server)
-  }
-  return agent.toolAllowlist.includes(toolName)
+  // MCP 工具:仍按 mcpAllowlist。未注入的 server(含下单类,从不注册)一律拒。
+  if (server !== null) return agent.mcpAllowlist.includes(server)
+  // 内置工具:全放开。下单不靠工具白名单防,靠 OrderGateway 结构隔离(无下单工具)。
+  return true
 }
 
 /**
