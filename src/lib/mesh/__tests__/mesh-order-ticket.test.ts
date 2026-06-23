@@ -24,13 +24,23 @@ describe('mesh-order-ticket', () => {
 
   it('fill / reject 改状态', () => {
     const t = createTicket({ runId: 'r3', symbol: 'X', side: 'buy', qty: 100, idempotencyKey: 'k3', mode: 'paper' })
-    fillTicket(t.id, 45, {})
+    fillTicket(t.id, 45, 100, {})
     expect(getTicket(t.id)?.status).toBe('filled')
     expect(getTicket(t.id)?.price).toBe(45)
+    expect(getTicket(t.id)?.filledQty).toBe(100)
 
     const t2 = createTicket({ runId: 'r3', symbol: 'Y', side: 'sell', qty: 50, idempotencyKey: 'k4', mode: 'paper' })
     rejectTicket(t2.id, '资金不足', {})
     expect(getTicket(t2.id)?.status).toBe('rejected')
     expect(getTicket(t2.id)?.rejectReason).toBe('资金不足')
+  })
+
+  it('部分成交：filled_qty 记实际成交量(< 下单 qty)，下单 qty 保留', () => {
+    const t = createTicket({ runId: 'r5', symbol: 'Z', side: 'buy', qty: 100, idempotencyKey: 'k5', mode: 'live' })
+    fillTicket(t.id, 45, 60, {}) // 下单 100,只成交 60
+    const got = getTicket(t.id)
+    expect(got?.status).toBe('filled')
+    expect(got?.qty).toBe(100) // 下单量保留
+    expect(got?.filledQty).toBe(60) // 实际成交量
   })
 })

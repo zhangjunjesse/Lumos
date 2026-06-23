@@ -32,22 +32,19 @@ OrderGateway 的 live 下单通过一个 **Python 子进程**完成：Node 侧�
 ## 真钱安全语义（Node 侧已实现，后端须配合）
 
 - **幂等键防重复下单**：`idempotencyKey` 全局唯一（`runId:agentId:idx`）。后端**必须**用它去重——同 key 不可重复报单。Node 侧 ticket 也有 `idempotency_key UNIQUE` 兜底；如果同 key 已经处于 live `pending`（券商状态未知），Node 侧会直接返回“需人工核对”，不会再次发单。
-- **回执超时 ≠ 没成交**：Node 等回执超时（默认 10s）→ 自动 `halt` + ticket 留 `pending`，**不当成交、不自动重下**，需人工核对。所以后端对每个请求**务必回一条回执**（成/拒），即使慢也要回。
+- **回执超时 ≠ 没成交**：Node 等回执超时（默认 12s，须 > python `FILL_TIMEOUT` 6s + 撤单 + sleep 总耗时）→ 自动 `halt` + ticket 留 `pending`，**不当成交、不自动重下**，需人工核对。所以后端对每个请求**务必回一条回执**（成/拒），即使慢也要回。
 - **异常成交回执按未知状态处理**：后端如果返回 `filled` 但缺少有效 `filledPrice/filledQty`、成交量超过请求量，或成交价高于请求限价，Node 侧会 `halt` + ticket 留 `pending`，不记成本地成交，也不改成 rejected，需人工核对券商真实状态。
 - **崩溃**：子进程退出 → Node 把所有在途请求判为失败 + halt。
 - **总闸**：下单前已过 Node 侧确定性 Risk Gate（单日亏损/笔数/金额/黑名单/涨停不追/资金持仓校验）。后端不需重复校验，但可加券商侧校验。
 
 ## 开启 live（默认关）
 
-真盘开关在 **环境变量**（部署级，不入 db/UI，防误触发真钱）：
+真盘开关已改为 **UI（带确认）**：工作室设置 →「运行 & 实盘」→ 勾「接入真盘」+ 输入确认词「真盘下单」→ 保存。写进 DB（`mesh_team_config.trade_mode`，per-workshop）。`buildTradeContext` 据此判 live：`tradeMode==='live' && isLiveBackendConfigured()` 才走真盘，否则强制 paper（真钱保险）。
 
-```bash
-export LUMOS_MESH_ENABLE_LIVE=1            # 真盘总闸，默认关
-export LUMOS_MESH_TRADE_MODE=live          # paper(默认) | live；live 需总闸也开才生效
-export LUMOS_MESH_LIVE_BACKEND=/path/to/qmt_trade_backend.py   # live 必填；不配置不进入 live
-```
-
-三个条件都满足（`ENABLE_LIVE=1`、`TRADE_MODE=live`、`LUMOS_MESH_LIVE_BACKEND` 指向真实脚本）才会走真盘；任一没开 → 仍是 paper 或明确拒绝。内置 mock 只用于显式 IPC / 集成测试，不作为生产 live 的默认后端。
+- 后端脚本默认指向随包的 `resources/mcp-servers/mesh-trade/qmt_trade_backend.py`，**无需设 env**；`LUMOS_MESH_LIVE_BACKEND` 仍可覆盖路径（部署级）。
+- `isLiveBackendConfigured()` 要求 Windows（qmt 只 Windows）或显式 env，故 mac 上勾 live 也强制 paper。
+- `MESH_TRADE_DRY_RUN`（python 端，默认 `1`=空跑）是上真钱前的小单验证档：DRY_RUN 跑通链路后设 `0` 才真下单。
+- 旧 env（`LUMOS_MESH_ENABLE_LIVE` / `LUMOS_MESH_TRADE_MODE`）已废弃、不再生效；内置 mock 只用于显式 IPC / 集成测试。
 
 ## Windows 接国金 qmt（你来做 + L2 验）
 

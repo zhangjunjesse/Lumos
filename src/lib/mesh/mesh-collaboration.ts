@@ -8,7 +8,7 @@ import { runCollaborationOnce, type CollaborationResult, type MeshParticipant } 
 import { listAgents } from './mesh-agent-store'
 import { getTeamConfig } from './mesh-team-config'
 import { getRiskRules } from './mesh-risk-store'
-import { getLiveConfig } from './mesh-live-backend'
+import { isLiveBackendConfigured } from './mesh-live-backend'
 import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 
 /** 从某工作室的 Agent Registry 读 enabled 的协作成员（排除队长——队长是指挥层，不在协作链）。 */
@@ -24,7 +24,7 @@ export function runStockCollaboration(
 ): Promise<CollaborationResult> {
   const workshopId = options.accountId ?? DEFAULT_WORKSHOP_ID // accountId 即 workshopId
   const config = getTeamConfig(workshopId)
-  const live = getLiveConfig()
+  const live = config.tradeMode === 'live' && isLiveBackendConfigured() // UI 开关(带确认)+ 后端就绪 才真盘
   const stored = getRiskRules(workshopId)
   const riskRules = {
     ...stored,
@@ -47,8 +47,8 @@ export function runStockCollaboration(
       mode: config.mode,
       focus: config.focus,
       accountId: options.accountId,
-      tradeMode: live.tradeMode,
-      liveEnabled: live.liveEnabled,
+      tradeMode: live ? 'live' : 'paper',
+      liveEnabled: live,
     },
     { sessionId: options.sessionId, abortController: options.abortController },
   )

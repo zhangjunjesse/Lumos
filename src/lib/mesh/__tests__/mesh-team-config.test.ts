@@ -14,7 +14,15 @@ const WS = DEFAULT_WORKSHOP_ID
 
 describe('mesh-team-config（按 workshopId 隔离）', () => {
   it('默认配置（无行）', () => {
-    expect(getTeamConfig('ws_empty')).toEqual({ blacklist: [], focus: '', mode: 'auto' })
+    expect(getTeamConfig('ws_empty')).toEqual({ blacklist: [], focus: '', mode: 'auto', tradeMode: 'paper', watchlist: [] })
+  })
+
+  it('tradeMode 默认 paper，可 upsert 成 live 且不串其它字段', () => {
+    expect(getTeamConfig('ws_tm').tradeMode).toBe('paper')
+    upsertTeamConfig('ws_tm', { tradeMode: 'live' })
+    expect(getTeamConfig('ws_tm').tradeMode).toBe('live')
+    upsertTeamConfig('ws_tm', { focus: 'x' })
+    expect(getTeamConfig('ws_tm').tradeMode).toBe('live') // focus 改不动 tradeMode
   })
 
   it('upsert 单字段不覆盖其它字段', () => {

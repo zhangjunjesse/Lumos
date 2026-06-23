@@ -31,10 +31,12 @@ const TEAM_CONFIG_SCHEMA = `
   blacklist_json TEXT NOT NULL DEFAULT '[]',
   focus TEXT NOT NULL DEFAULT '',
   mode TEXT NOT NULL DEFAULT 'auto' CHECK(mode IN ('auto','observe_only')),
+  trade_mode TEXT NOT NULL DEFAULT 'paper' CHECK(trade_mode IN ('paper','live')),
+  watchlist_json TEXT NOT NULL DEFAULT '[]',
   workshop_id TEXT NOT NULL DEFAULT 'mesh_team_default',
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (workshop_id, id)`
-const TEAM_CONFIG_COLS = 'id, blacklist_json, focus, mode, updated_at'
+const TEAM_CONFIG_COLS = 'id, blacklist_json, focus, mode, trade_mode, watchlist_json, updated_at'
 
 const RISK_SCHEMA = `
   id TEXT NOT NULL DEFAULT 'default',
@@ -97,6 +99,7 @@ export function migrateMeshTables(db: Database.Database): void {
       idempotency_key TEXT NOT NULL UNIQUE,
       mode TEXT NOT NULL DEFAULT 'paper' CHECK(mode IN ('paper','live')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      filled_qty INTEGER DEFAULT NULL,
       filled_at TEXT DEFAULT NULL
     );
 
@@ -177,6 +180,9 @@ export function migrateMeshTables(db: Database.Database): void {
   try { db.exec("ALTER TABLE mesh_agent ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'event_driven'") } catch { /* 列已存在或表待建 */ }
   try { db.exec("ALTER TABLE mesh_agent ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''") } catch { /* 列已存在或表待建 */ }
   try { db.exec("ALTER TABLE mesh_command ADD COLUMN workshop_id TEXT NOT NULL DEFAULT 'mesh_team_default'") } catch { /* 列已存在 */ }
+  try { db.exec("ALTER TABLE mesh_team_config ADD COLUMN trade_mode TEXT NOT NULL DEFAULT 'paper'") } catch { /* 列已存在或表待建 */ }
+  try { db.exec("ALTER TABLE mesh_team_config ADD COLUMN watchlist_json TEXT NOT NULL DEFAULT '[]'") } catch { /* 列已存在或表待建 */ }
+  try { db.exec('ALTER TABLE mesh_order_ticket ADD COLUMN filled_qty INTEGER DEFAULT NULL') } catch { /* 列已存在 */ }
 
   // agent/team_config/risk：PK 含 workshop_id（多工作室隔离）。新库直接建，旧库（单列 PK=id）重建迁移。
   ensureWorkshopPkTable(db, 'mesh_agent', AGENT_SCHEMA, AGENT_COLS)

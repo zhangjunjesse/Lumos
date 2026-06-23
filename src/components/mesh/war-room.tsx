@@ -39,6 +39,7 @@ export interface PaperAccountLike {
 interface Snapshot {
   active: boolean
   rounds: number
+  tradeMode?: 'paper' | 'live'
   account: PaperAccountLike | null
   blackboard: BBEntry[]
   messages: MsgRecord[]
@@ -95,6 +96,11 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
         >
           {active ? `运行中 · ${snap?.rounds ?? 0} 次执行` : '已停止'}
         </span>
+        {snap?.tradeMode === 'live' ? (
+          <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-300">● 真盘 · 真实下单</span>
+        ) : (
+          <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500 ring-1 ring-neutral-200">模拟盘</span>
+        )}
         <Controls active={active} busy={busy} onStart={() => control('start')} onStop={() => control('stop')} onSettings={onSettings} />
       </div>
 

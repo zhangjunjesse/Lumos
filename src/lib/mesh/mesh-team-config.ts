@@ -5,22 +5,27 @@
 import { getDb } from '@/lib/db/connection'
 
 export type TeamMode = 'auto' | 'observe_only'
+/** paper=模拟盘(默认,安全);live=真盘下单(需 UI 带确认开启 + qmt 后端就绪)。 */
+export type TradeMode = 'paper' | 'live'
 
 export interface TeamConfig {
   blacklist: string[]
   focus: string
   mode: TeamMode
+  tradeMode: TradeMode
+  /** 自选股(代码)。行情桥按"持仓 + 自选"取实时价;买新股必须先进自选,否则 RiskGate 因无价拒单。 */
+  watchlist: string[]
 }
 
 const DEFAULT_ID = 'default'
-const DEFAULTS: TeamConfig = { blacklist: [], focus: '', mode: 'auto' }
+const DEFAULTS: TeamConfig = { blacklist: [], focus: '', mode: 'auto', tradeMode: 'paper', watchlist: [] }
 
 export function getTeamConfig(workshopId: string): TeamConfig {
   const row = getDb()
-    .prepare('SELECT blacklist_json, focus, mode FROM mesh_team_config WHERE workshop_id = ? AND id = ?')
-    .get(workshopId, DEFAULT_ID) as { blacklist_json: string; focus: string; mode: TeamMode } | undefined
+    .prepare('SELECT blacklist_json, focus, mode, trade_mode, watchlist_json FROM mesh_team_config WHERE workshop_id = ? AND id = ?')
+    .get(workshopId, DEFAULT_ID) as { blacklist_json: string; focus: string; mode: TeamMode; trade_mode: TradeMode; watchlist_json: string } | undefined
   if (!row) return { ...DEFAULTS }
-  return { blacklist: safeArr(row.blacklist_json), focus: row.focus, mode: row.mode }
+  return { blacklist: safeArr(row.blacklist_json), focus: row.focus, mode: row.mode, tradeMode: row.trade_mode || 'paper', watchlist: safeArr(row.watchlist_json) }
 }
 
 export function upsertTeamConfig(workshopId: string, patch: Partial<TeamConfig>): TeamConfig {
@@ -29,16 +34,18 @@ export function upsertTeamConfig(workshopId: string, patch: Partial<TeamConfig>)
     blacklist: patch.blacklist ?? cur.blacklist,
     focus: patch.focus ?? cur.focus,
     mode: patch.mode ?? cur.mode,
+    tradeMode: patch.tradeMode ?? cur.tradeMode,
+    watchlist: patch.watchlist ?? cur.watchlist,
   }
   getDb()
     .prepare(
-      `INSERT INTO mesh_team_config (id, blacklist_json, focus, mode, workshop_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `INSERT INTO mesh_team_config (id, blacklist_json, focus, mode, trade_mode, watchlist_json, workshop_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(workshop_id, id) DO UPDATE SET
          blacklist_json=excluded.blacklist_json, focus=excluded.focus,
-         mode=excluded.mode, updated_at=datetime('now')`,
+         mode=excluded.mode, trade_mode=excluded.trade_mode, watchlist_json=excluded.watchlist_json, updated_at=datetime('now')`,
     )
-    .run(DEFAULT_ID, JSON.stringify(next.blacklist), next.focus, next.mode, workshopId)
+    .run(DEFAULT_ID, JSON.stringify(next.blacklist), next.focus, next.mode, next.tradeMode, JSON.stringify(next.watchlist), workshopId)
   return next
 }
 
