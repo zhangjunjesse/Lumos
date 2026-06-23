@@ -3,7 +3,11 @@
 import { agentMeta } from './agent-meta'
 import type { BBEntry } from './war-room'
 
-const fmtTime = (s: string) => s.split(' ')[1] ?? s
+// 数据库存的是 UTC（datetime('now')，无时区标记）→ 补 Z 解析再转本地，否则界面会差 8 小时。
+const fmtTime = (s: string) => {
+  const d = new Date(s.replace(' ', 'T') + 'Z')
+  return isNaN(d.getTime()) ? (s.split(' ')[1] ?? s) : d.toLocaleTimeString('zh-CN', { hour12: false })
+}
 
 function ValueView({ value }: { value: unknown }) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -32,9 +36,12 @@ export function Blackboard({ entries }: { entries: BBEntry[] }) {
   const latest: Record<string, number> = {}
   for (const e of entries) latest[e.key] = Math.max(latest[e.key] ?? 0, e.version)
 
+  // 最新写入排最上面（入参按时间正序，倒转即可）
+  const ordered = [...entries].reverse()
+
   return (
     <div className="space-y-3 p-4">
-      {entries.map((e, i) => {
+      {ordered.map((e, i) => {
         const meta = agentMeta(e.writtenBy)
         const stale = e.version < latest[e.key]
         return (

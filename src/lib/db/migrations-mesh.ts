@@ -20,10 +20,11 @@ const AGENT_SCHEMA = `
   enabled INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0,
   work_mode TEXT NOT NULL DEFAULT 'event_driven',
+  provider_id TEXT NOT NULL DEFAULT '',
   workshop_id TEXT NOT NULL DEFAULT 'mesh_team_default',
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (workshop_id, id)`
-const AGENT_COLS = 'id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, updated_at'
+const AGENT_COLS = 'id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, provider_id, updated_at'
 
 const TEAM_CONFIG_SCHEMA = `
   id TEXT NOT NULL DEFAULT 'default',
@@ -174,6 +175,7 @@ export function migrateMeshTables(db: Database.Database): void {
   // work_mode 要在重建 mesh_agent 之前补好（重建 AGENT_COLS 含 work_mode）。
   try { db.exec('ALTER TABLE mesh_message ADD COLUMN task_id TEXT') } catch { /* 列已存在 */ }
   try { db.exec("ALTER TABLE mesh_agent ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'event_driven'") } catch { /* 列已存在或表待建 */ }
+  try { db.exec("ALTER TABLE mesh_agent ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''") } catch { /* 列已存在或表待建 */ }
   try { db.exec("ALTER TABLE mesh_command ADD COLUMN workshop_id TEXT NOT NULL DEFAULT 'mesh_team_default'") } catch { /* 列已存在 */ }
 
   // agent/team_config/risk：PK 含 workshop_id（多工作室隔离）。新库直接建，旧库（单列 PK=id）重建迁移。

@@ -26,6 +26,7 @@ interface Row {
   enabled: number
   sort_order: number
   work_mode: string
+  provider_id: string
 }
 
 function toAgent(r: Row): StoredAgent {
@@ -34,6 +35,7 @@ function toAgent(r: Row): StoredAgent {
     role: r.role as MeshAgentRole,
     systemPrompt: r.system_prompt,
     model: r.model || undefined,
+    providerId: r.provider_id || undefined,
     mcpAllowlist: safeArr(r.mcp_json),
     toolAllowlist: safeArr(r.tool_json),
     topics: safeArr(r.topics_json),
@@ -51,11 +53,11 @@ export function ensureSeed(workshopId: string): void {
   if (cnt.c > 0) return
   const ins = db.prepare(
     `INSERT OR IGNORE INTO mesh_agent
-       (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, workshop_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, provider_id, workshop_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   MESH_DEFAULT_AGENTS.forEach((a, i) =>
-    ins.run(a.id, a.role, a.systemPrompt, a.model ?? '', JSON.stringify(a.mcpAllowlist), JSON.stringify(a.toolAllowlist), JSON.stringify(a.topics), a.interval, a.enabled ? 1 : 0, i, a.workMode, workshopId),
+    ins.run(a.id, a.role, a.systemPrompt, a.model ?? '', JSON.stringify(a.mcpAllowlist), JSON.stringify(a.toolAllowlist), JSON.stringify(a.topics), a.interval, a.enabled ? 1 : 0, i, a.workMode, a.providerId ?? '', workshopId),
   )
 }
 
@@ -86,6 +88,7 @@ export function upsertAgent(workshopId: string, patch: Partial<StoredAgent> & { 
     role: patch.role ?? cur?.role ?? 'observe',
     systemPrompt: patch.systemPrompt ?? cur?.systemPrompt ?? '',
     model: patch.model ?? cur?.model,
+    providerId: patch.providerId ?? cur?.providerId,
     mcpAllowlist: patch.mcpAllowlist ?? cur?.mcpAllowlist ?? [],
     toolAllowlist: patch.toolAllowlist ?? cur?.toolAllowlist ?? [],
     topics: patch.topics ?? cur?.topics ?? [],
@@ -97,13 +100,13 @@ export function upsertAgent(workshopId: string, patch: Partial<StoredAgent> & { 
   getDb()
     .prepare(
       `INSERT INTO mesh_agent
-         (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, workshop_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         (id, role, system_prompt, model, mcp_json, tool_json, topics_json, interval_sec, enabled, sort_order, work_mode, provider_id, workshop_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(workshop_id, id) DO UPDATE SET
          role=excluded.role, system_prompt=excluded.system_prompt, model=excluded.model,
          mcp_json=excluded.mcp_json, tool_json=excluded.tool_json, topics_json=excluded.topics_json,
          interval_sec=excluded.interval_sec, enabled=excluded.enabled, sort_order=excluded.sort_order,
-         work_mode=excluded.work_mode, updated_at=datetime('now')`,
+         work_mode=excluded.work_mode, provider_id=excluded.provider_id, updated_at=datetime('now')`,
     )
     .run(
       next.id,
@@ -117,6 +120,7 @@ export function upsertAgent(workshopId: string, patch: Partial<StoredAgent> & { 
       next.enabled ? 1 : 0,
       next.sortOrder,
       next.workMode,
+      next.providerId ?? '',
       workshopId,
     )
   return next

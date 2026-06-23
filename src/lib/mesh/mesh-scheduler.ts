@@ -110,10 +110,12 @@ export function tickLoop(runner: SchedulerRunner): void {
 export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem): Promise<void> {
   const { runId } = runner
   let productive = false
+  let role: string | undefined
   try {
     if (runner.abort.signal.aborted) return
     const participant = buildParticipant(runner.accountId, item.participantId)
     if (!participant) return
+    role = participant.agent.role // 现读的活角色(custom 免空转退避)
     const cycleSeq = nextCycleSeq(runId, item.participantId)
     const result = await runOneDutyCycle({
       runId,
@@ -134,15 +136,16 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
     runner.onError?.(String((err as Error)?.message ?? err))
   } finally {
     runner.inFlight.delete(item.participantId)
-    if (!runner.abort.signal.aborted) scheduleNext(runId, runner.accountId, item.participantId, productive)
+    if (!runner.abort.signal.aborted) scheduleNext(runId, runner.accountId, item.participantId, productive, role)
   }
 }
 
-/** active_loop 跑完排下次（含空转退避）；event_driven 不主动排（等下次事件唤醒）。 */
-function scheduleNext(runId: string, workshopId: string, participantId: string, productive: boolean): void {
+/** active_loop 跑完排下次；其余角色含空转退避，custom 角色免退避(按设定间隔死跑)；event_driven 不主动排。 */
+function scheduleNext(runId: string, workshopId: string, participantId: string, productive: boolean, role?: string): void {
   const p = getParticipant(runId, participantId)
   if (!p || p.workMode !== 'active_loop') return
-  const idleStreak = productive ? 0 : p.idleStreak + 1
+  // custom = 零内置逻辑:不参与空转退避;其余角色无产出(无 emit/order)则指数延长下次。
+  const idleStreak = role === 'custom' || productive ? 0 : p.idleStreak + 1
   const now = Date.now()
   updateParticipant(runId, participantId, {
     nextRunAt: computeNextRunAt(getAgentIntervalMs(workshopId, participantId), idleStreak, now),

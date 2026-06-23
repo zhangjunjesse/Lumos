@@ -6,7 +6,7 @@
  */
 import { runMeshActor } from './mesh-worker'
 import { applyActionPlan, type MeshParticipant, type TradeContext } from './mesh-runtime'
-import { buildActiveLoopPrompt, buildEventPrompt, buildTaskPrompt, buildReplyPrompt, buildReviewPrompt } from './mesh-prompts'
+import { buildActiveLoopPrompt, buildEventPrompt, buildTaskPrompt, buildReplyPrompt, buildReviewPrompt, conversationLines } from './mesh-prompts'
 
 /** 被动触发时消费的一条 pending 投递（事件/任务/回执）。 */
 export interface DutyDelivery {
@@ -64,8 +64,13 @@ export async function runOneDutyCycle(input: DutyCycleInput): Promise<DutyCycleR
   return { thought: plan.thought, writes, emits, orders }
 }
 
-/** 按触发类型选 prompt：事件按 topic 分流，timer 走主动巡检。 */
+/** 选 prompt 并前置「最近对话」记忆块——让无状态的 agent 跨 cycle 记住用户的指令与纠正。 */
 function buildPrompt(input: DutyCycleInput): string {
+  return conversationLines(input.runId, input.participant.agent.id) + buildBasePrompt(input)
+}
+
+/** 按触发类型选 base prompt：事件按 topic 分流，timer 走主动巡检。 */
+function buildBasePrompt(input: DutyCycleInput): string {
   if (input.trigger === 'event' && input.delivery) {
     const { topic, payload, taskId } = input.delivery
     if (topic === 'agent_task') return buildTaskPrompt(input.runId, payload, taskId ?? '')

@@ -4,6 +4,7 @@
  * 触发分两类：主动（active_loop timer：盯盘/复盘/巡检）+ 被动（事件/定向任务/回执唤醒）。
  */
 import { readAllBlackboard } from './mesh-blackboard'
+import { recentAgentMessages } from './mesh-event-bus'
 import type { MeshAgentRole } from './mesh-agent-config'
 
 /** 白板当前全 key 摘要（每行一条）。 */
@@ -11,6 +12,24 @@ function boardLines(runId: string): string {
   return readAllBlackboard(runId)
     .map((e) => `- ${e.key}: ${JSON.stringify(e.value)}`)
     .join('\n')
+}
+
+/**
+ * 某 agent 最近的对话记忆块（发给它的指令/任务 + 它自己的回复），拼成可前置的上下文；无对话则空串。
+ * 解决 mesh agent 无状态、跨 cycle 不记得用户纠正的问题（每轮 query 都是全新调用）。
+ */
+export function conversationLines(runId: string, agentId: string): string {
+  const msgs = recentAgentMessages(runId, agentId, 12)
+  if (msgs.length === 0) return ''
+  const lines = msgs
+    .map((m) => {
+      const p = (m.payload ?? {}) as { summary?: string }
+      const who = m.from === agentId ? '你' : m.from === 'user' ? '用户' : m.from
+      const text = p.summary ?? (typeof m.payload === 'string' ? m.payload : JSON.stringify(m.payload))
+      return `- ${who}：${text}`
+    })
+    .join('\n')
+  return `你最近的对话（延续其中对你的指令与纠正，别重犯已被指出的错）：\n${lines}\n\n`
 }
 
 /** 整轮编排起步 prompt（runCollaborationOnce 用；接快照字段子集，不耦合 CollaborationSeed）。 */
@@ -42,15 +61,19 @@ export function buildReplyPrompt(runId: string, payload: unknown): string {
 }
 
 /**
- * 主动 duty cycle（active_loop 按 next_run_at 醒来）：盯盘看最新快照找新异动、复盘归因、其余按职责巡检。
- * 设计 §64-76：责任常驻、自己负责一摊事，不是只等事件。
+ * 主动 duty cycle（active_loop 按 next_run_at 醒来）：只喂通用上下文——被定时唤醒 + observe 角色带最新行情快照 + 当前白板。
+ * 具体职责由各 agent 自己的 systemPrompt 定义，这里**不写死角色职责**，自定义 agent 才能按自己的提示词干活。
  */
 export function buildActiveLoopPrompt(runId: string, role: MeshAgentRole, snapshot: unknown, focus?: string): string {
-  if (role === 'review') return buildReviewPrompt(runId)
-  const board = boardLines(runId)
-  if (role === 'observe') {
-    const focusLine = focus ? `\n关注重点：${focus}` : ''
-    return `你是常驻盯盘 agent，轮到你看盘了。最新行情快照：\n${JSON.stringify(snapshot, null, 2)}${focusLine}\n\n当前白板：\n${board}\n\n发现值得交易关注的异动（放量突破、涨跌停附近、主线龙头异动、明确低吸/止盈点等）就**必须** emit_event 一个 topic="quote_anomaly"、payload 带 code 和 reason，并把观察写白板 key="watch_note"。\n去重：仅当白板 watch_note 显示你**已就同一标的的同一异动**提示过、本次快照又无变化时，才跳过 emit、只更新 watch_note。注意 market_snapshot 是待你分析的实时行情、不是你的历史观察，别因为"和快照一致"就压制首次提示。确实毫无异动才写一句"无异动"且不 emit。`
+  // custom = 零内置逻辑:不喂行情、不喂共享白板(避免炒股团队的 market_snapshot 等噪音带偏),纯按用户 systemPrompt 跑。
+  if (role === 'custom') {
+    return `你被定时唤醒。严格按你的系统提示词产出本轮 action plan,并把这轮结果用 write_blackboard 留痕(key 自取)。不要做系统提示词以外的事。`
   }
-  return `轮到你（${role}）巡检。当前白板：\n${board}\n\n按你的职责产出 action plan；确无可做时只写一句白板说明，不要硬造动作。`
+  const board = boardLines(runId)
+  // observe 到点带上最新行情快照作上下文;其余角色只看白板。
+  const snapshotBlock =
+    role === 'observe' && snapshot !== undefined
+      ? `最新行情快照(供参考)：\n${JSON.stringify(snapshot, null, 2)}${focus ? `\n关注重点：${focus}` : ''}\n\n`
+      : ''
+  return `你被定时唤醒,轮到你主动履职。\n\n${snapshotBlock}当前白板：\n${board}\n\n按你的系统提示词(职责)产出 action plan：thought 写清这轮做了什么;需要留痕用 write_blackboard,需要通知队友用 emit_event/send_task。确无可做就 write_blackboard 写一句说明,不要硬造动作。`
 }

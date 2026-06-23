@@ -163,6 +163,23 @@ export function listAllMessages(runId: string, limit = 500): MeshMessageRecord[]
     .reverse() // 取最近 limit 条再正序：常驻 session 消息跨 cycle 累积，只读端分页防膨胀
 }
 
+/** 某 agent 最近参与的对话（它发的 + 投递给它的），按时间正序，供 prompt 做跨轮记忆。 */
+export function recentAgentMessages(runId: string, agentId: string, limit = 12): MeshMessageRecord[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, topic, payload_json, from_participant, task_id, created_at
+       FROM mesh_message m
+       WHERE run_id = ?
+         AND (from_participant = ?
+              OR EXISTS (SELECT 1 FROM mesh_message_delivery d WHERE d.message_id = m.id AND d.subscriber_id = ?))
+       ORDER BY rowid DESC LIMIT ?`,
+    )
+    .all(runId, agentId, agentId, limit) as Array<{ id: string; topic: string; payload_json: string; from_participant: string; task_id: string | null; created_at: string }>
+  return rows
+    .map((r) => ({ id: r.id, topic: r.topic, payload: safeParse(r.payload_json), from: r.from_participant, taskId: r.task_id, createdAt: r.created_at }))
+    .reverse()
+}
+
 function safeParse(json: string): unknown {
   try {
     return JSON.parse(json)

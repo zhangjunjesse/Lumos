@@ -85,6 +85,16 @@ describe('mesh-scheduler —— 时间轮调度（S4）', () => {
     expect(r.inFlight.has('stock.observe')).toBe(false)
   })
 
+  it('dispatchDutyCycle：custom 角色免空转退避 → idleStreak 保持 0（按设定间隔死跑）', async () => {
+    initParticipants('rs_custom', [{ participantId: 'my.custom', role: 'custom', subscriptions: [], workMode: 'active_loop' }], 100)
+    mockedBuildP.mockReturnValue({ agent: { id: 'my.custom', role: 'custom' as const, systemPrompt: '', mcpAllowlist: [], toolAllowlist: [] }, topics: [] })
+    mockedRun.mockResolvedValue({ thought: '', writes: ['hello'], emits: [], orders: [] }) // 无 emit/order，但 custom 不退避
+    const r = runner('rs_custom', new AbortController(), new Set(['my.custom']))
+    await dispatchDutyCycle(r, { participantId: 'my.custom', trigger: 'timer', delivery: null })
+    const p = getParticipant('rs_custom', 'my.custom')!
+    expect(p.idleStreak).toBe(0) // custom 免退避，不累加
+  })
+
   it('dispatchDutyCycle：abort 后不 scheduleNext（不写 next_run_at）', async () => {
     initParticipants('rs5', [{ participantId: 'stock.observe', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 100)
     mockedBuildP.mockReturnValue(PART)
