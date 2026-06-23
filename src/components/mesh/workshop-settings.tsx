@@ -2,12 +2,15 @@
 
 import { useState, useEffect, type ReactNode } from 'react'
 import { TeamSettings } from './team-settings'
+import { LIVE_CONFIRM_WORD } from '@/lib/mesh/mesh-constants'
 import type { Workshop } from './war-room'
 
 interface Cfg {
   mode: 'auto' | 'observe_only'
   focus: string
   blacklist: string[]
+  tradeMode: 'paper' | 'live'
+  watchlist: string[]
 }
 interface Risk {
   maxOrderNotional: number
@@ -38,21 +41,36 @@ const DEFAULT_RISK: Risk = {
   maxDailyNotional: 300000,
 }
 const num = (v: string) => Number(v) || 0
+// 归一 server 返回的 config,缺字段给默认,防 .join/.map 崩(老 server 或异常返回时)。
+const normCfg = (c: Partial<Cfg> | undefined): Cfg => ({
+  mode: c?.mode ?? 'auto',
+  focus: c?.focus ?? '',
+  blacklist: c?.blacklist ?? [],
+  tradeMode: c?.tradeMode ?? 'paper',
+  watchlist: c?.watchlist ?? [],
+})
 
 export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onBack: () => void }) {
   const [tab, setTab] = useState('basic')
   const [name, setName] = useState(workshop.name)
   const [description, setDescription] = useState(workshop.description)
-  const [cfg, setCfg] = useState<Cfg>({ mode: 'auto', focus: '', blacklist: [] })
+  const [cfg, setCfg] = useState<Cfg>({ mode: 'auto', focus: '', blacklist: [], tradeMode: 'paper', watchlist: [] })
   const [risk, setRisk] = useState<Risk>(DEFAULT_RISK)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [loadedTradeMode, setLoadedTradeMode] = useState<'paper' | 'live'>('paper') // 已持久化的真盘态,判是否在切换
+  const [liveConfirm, setLiveConfirm] = useState('') // paper→live 的确认词
+  const [err, setErr] = useState('')
 
   useEffect(() => {
     fetch(`/api/mesh/config?accountId=${workshop.id}`)
       .then((r) => r.json())
       .then((d) => {
-        if (d?.config) setCfg(d.config)
+        if (d?.config) {
+          const c = normCfg(d.config)
+          setCfg(c)
+          setLoadedTradeMode(c.tradeMode)
+        }
         if (d?.risk) setRisk(d.risk)
       })
       .catch(() => {})
@@ -61,8 +79,9 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
   const save = async () => {
     setSaving(true)
     setSaved(false)
+    setErr('')
     try {
-      // 基本信息（名称/描述）落 workshop；模式/关注/黑名单/风控落 config
+      // 基本信息（名称/描述）落 workshop；模式/关注/黑名单/风控/真盘落 config
       await fetch('/api/mesh/workshops', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
@@ -71,11 +90,20 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
       const r = await fetch('/api/mesh/config', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...cfg, risk, accountId: workshop.id }),
+        body: JSON.stringify({ ...cfg, risk, accountId: workshop.id, ...(cfg.tradeMode === 'live' ? { liveConfirm } : {}) }),
       })
       const d = await r.json()
-      if (d?.config) setCfg(d.config)
+      if (!r.ok) {
+        setErr(d?.error || '保存失败')
+        return
+      }
+      if (d?.config) {
+        const c = normCfg(d.config)
+        setCfg(c)
+        setLoadedTradeMode(c.tradeMode)
+      }
       if (d?.risk) setRisk(d.risk)
+      setLiveConfirm('')
       setSaved(true)
     } finally {
       setSaving(false)
@@ -162,6 +190,14 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
                     <option value="observe_only">只看不买</option>
                   </select>
                 </Field>
+                <Field label="自选股（团队盯/交易的票；买新股必须先加进来，否则因无行情被拒）">
+                  <input
+                    className={INPUT}
+                    value={cfg.watchlist.join('、')}
+                    onChange={(e) => setCfg((c) => ({ ...c, watchlist: e.target.value.split(/[，,、\s]+/).filter(Boolean) }))}
+                    placeholder="逗号或顿号分隔，如 600160.SH、300750.SZ（留空=只管现有持仓）"
+                  />
+                </Field>
                 <Field label={`初始资金 ${TODO}`}>
                   <input className={INPUT} defaultValue="100000" disabled />
                 </Field>
@@ -169,10 +205,30 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
               </Section>
 
               <Section title="实盘接入">
-                <label className="flex items-start gap-2 text-sm text-neutral-700">
-                  <input type="checkbox" disabled className="mt-0.5 h-4 w-4" />
-                  <span>接入实盘 {TODO}（env 控制，需 Windows + qmt）</span>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                  真盘 = 真实下单、真金白银。需 Windows + 国金 QMT 客户端登录 + qmt 交易后端就绪;开启前请先用模拟盘 / DRY_RUN 验过链路。
+                </div>
+                <label className="flex items-center gap-2 text-sm text-neutral-700">
+                  <input
+                    type="checkbox"
+                    checked={cfg.tradeMode === 'live'}
+                    onChange={(e) => {
+                      setCfg((c) => ({ ...c, tradeMode: e.target.checked ? 'live' : 'paper' }))
+                      setLiveConfirm('')
+                    }}
+                    className="h-4 w-4"
+                  />
+                  接入真盘（真实下单）
                 </label>
+                {cfg.tradeMode === 'live' && loadedTradeMode !== 'live' && (
+                  <Field label={`确认开启真盘：请输入「${LIVE_CONFIRM_WORD}」`}>
+                    <input className={INPUT} value={liveConfirm} onChange={(e) => setLiveConfirm(e.target.value)} placeholder={LIVE_CONFIRM_WORD} />
+                  </Field>
+                )}
+                {cfg.tradeMode === 'live' && loadedTradeMode === 'live' && (
+                  <p className="text-xs text-amber-600">⚠ 真盘已开启,下单会走真实券商。关掉此勾选并保存即回模拟盘。</p>
+                )}
+                <p className="text-xs text-neutral-400">关掉=回模拟盘(paper),随时可。后端默认用随包的 qmt 交易脚本;DRY_RUN(空跑)仍由后端控制。</p>
               </Section>
             </div>
           )}
@@ -186,7 +242,8 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
         <button onClick={onBack} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50">
           取消
         </button>
-        {saved && <span className="text-sm text-emerald-600">已保存（名称/描述/模式/关注/黑名单/风控）</span>}
+        {saved && <span className="text-sm text-emerald-600">已保存（名称/描述/模式/关注/黑名单/风控/真盘）</span>}
+        {err && <span className="text-sm text-red-600">{err}</span>}
       </div>
     </div>
   )

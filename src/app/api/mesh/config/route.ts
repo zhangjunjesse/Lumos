@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTeamConfig, upsertTeamConfig, type TeamConfig } from '@/lib/mesh/mesh-team-config'
 import { getRiskRules, upsertRiskRules } from '@/lib/mesh/mesh-risk-store'
-import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
+import { DEFAULT_WORKSHOP_ID, LIVE_CONFIRM_WORD } from '@/lib/mesh/mesh-constants'
 import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 import type { RiskRules } from '@/lib/mesh/mesh-risk-rules'
 
@@ -39,6 +39,17 @@ export async function POST(req: NextRequest) {
     if (body.mode === 'auto' || body.mode === 'observe_only') patch.mode = body.mode
     if (typeof body.focus === 'string') patch.focus = body.focus
     if (Array.isArray(body.blacklist)) patch.blacklist = body.blacklist.map(String).filter(Boolean)
+    if (Array.isArray(body.watchlist)) patch.watchlist = body.watchlist.map(String).filter(Boolean)
+    // 真盘开关:关(paper)随时可;开(live)必须带确认词(真钱保险,挡误点/误调)。
+    if (body.tradeMode === 'paper') patch.tradeMode = 'paper'
+    else if (body.tradeMode === 'live') {
+      // 仅 paper→live 切换要确认词(已 live 再存别的设置不重复要)。
+      const alreadyLive = getTeamConfig(workshopId).tradeMode === 'live'
+      if (!alreadyLive && body.liveConfirm !== LIVE_CONFIRM_WORD) {
+        return NextResponse.json({ error: `开启真盘需确认：请输入「${LIVE_CONFIRM_WORD}」` }, { status: 400 })
+      }
+      patch.tradeMode = 'live'
+    }
     const config = upsertTeamConfig(workshopId, patch)
 
     let risk = getRiskRules(workshopId)

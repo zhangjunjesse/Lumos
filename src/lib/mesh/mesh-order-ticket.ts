@@ -14,6 +14,7 @@ export interface OrderTicket {
   side: 'buy' | 'sell'
   qty: number
   price: number
+  filledQty: number | null
   status: TicketStatus
   rejectReason: string
   idempotencyKey: string
@@ -36,6 +37,7 @@ interface TicketRow {
   side: 'buy' | 'sell'
   qty: number
   price: number
+  filled_qty: number | null
   status: TicketStatus
   reject_reason: string
   idempotency_key: string
@@ -56,12 +58,12 @@ export function createTicket(input: CreateTicketInput): OrderTicket {
   return getTicket(id)!
 }
 
-export function fillTicket(id: string, price: number, riskSnapshot: unknown): void {
+export function fillTicket(id: string, price: number, filledQty: number, riskSnapshot: unknown): void {
   getDb()
     .prepare(
-      "UPDATE mesh_order_ticket SET status='filled', price=?, risk_snapshot_json=?, filled_at=datetime('now') WHERE id=?",
+      "UPDATE mesh_order_ticket SET status='filled', price=?, filled_qty=?, risk_snapshot_json=?, filled_at=datetime('now') WHERE id=?",
     )
-    .run(price, JSON.stringify(riskSnapshot ?? {}), id)
+    .run(price, filledQty, JSON.stringify(riskSnapshot ?? {}), id)
 }
 
 export function rejectTicket(id: string, reason: string, riskSnapshot: unknown): void {
@@ -98,6 +100,7 @@ function hydrate(r: TicketRow): OrderTicket {
     side: r.side,
     qty: r.qty,
     price: r.price,
+    filledQty: r.filled_qty,
     status: r.status,
     rejectReason: r.reject_reason,
     idempotencyKey: r.idempotency_key,

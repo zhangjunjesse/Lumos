@@ -88,7 +88,7 @@ export async function placeOrder(
 
   // paper 本地撮合
   applyFill(accountId, { symbol: intent.symbol, side: intent.side, qty: intent.qty, price: verdict.price, fee: verdict.fee })
-  fillTicket(ticket.id, verdict.price, riskSnapshot)
+  fillTicket(ticket.id, verdict.price, intent.qty, riskSnapshot)
   return { ticketId: ticket.id, status: 'filled', filled: true, reason: '', price: verdict.price }
 }
 
@@ -136,7 +136,7 @@ async function placeLiveOrder(
       }
       const fee = calculateOrderFee(fillQty * fillPrice)
       applyFill(accountId, { symbol: intent.symbol, side: intent.side, qty: fillQty, price: fillPrice, fee })
-      fillTicket(ticketId, fillPrice, { live: r })
+      fillTicket(ticketId, fillPrice, fillQty, { live: r }) // 部分成交据实记 filled_qty(可能 < 下单 qty)
       return { ticketId, status: 'filled', filled: true, reason: '', price: fillPrice }
     }
     rejectTicket(ticketId, r.reason ?? '券商拒单', { live: r })

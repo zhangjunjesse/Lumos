@@ -4,6 +4,8 @@ import { getRunningRun, getLatestRun } from '@/lib/mesh/mesh-run'
 import { getAccount } from '@/lib/mesh/mesh-paper-account'
 import { readBlackboardHistory } from '@/lib/mesh/mesh-blackboard'
 import { listAllMessages } from '@/lib/mesh/mesh-event-bus'
+import { getTeamConfig } from '@/lib/mesh/mesh-team-config'
+import { isLiveBackendConfigured } from '@/lib/mesh/mesh-live-backend'
 import { DEFAULT_ACCOUNT_ID } from '@/lib/mesh/mesh-run-control'
 import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
@@ -21,11 +23,13 @@ export async function GET(req: NextRequest) {
   }
   const run = getRunningRun(accountId) ?? getLatestRun(accountId) // 优先正在跑的常驻 session（实时可见），停了回落最后一次
   const runId = run?.lastRunId ?? null
+  const tradeMode = getTeamConfig(accountId).tradeMode === 'live' && isLiveBackendConfigured() ? 'live' : 'paper'
   return NextResponse.json({
     accountId,
     active: isRunnerActive(accountId),
     rounds: run?.rounds ?? 0,
     runId,
+    tradeMode, // 真盘/模拟态:作战室据此显红色「真盘」徽标(重启后 live 恢复也可见)
     account: getAccount(accountId),
     blackboard: runId ? readBlackboardHistory(runId) : [],
     messages: runId ? listAllMessages(runId) : [],

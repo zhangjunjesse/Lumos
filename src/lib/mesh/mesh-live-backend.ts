@@ -52,7 +52,7 @@ export interface BackendOptions {
   handshakeTimeoutMs?: number
 }
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 10_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 12_000 // 须 > python FILL_TIMEOUT(6s)+撤单+sleep 总耗时,否则 Node 先超时丢回执
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 8_000
 
 export class LiveBackend {
@@ -67,7 +67,8 @@ export class LiveBackend {
   private backendScript(): string {
     if (this.opts.script) return this.opts.script
     if (process.env.LUMOS_MESH_LIVE_BACKEND) return process.env.LUMOS_MESH_LIVE_BACKEND
-    return resolveRuntimeResourcePath(path.join('mcp-servers', 'mesh-trade', 'mock_trade_backend.py')) ?? ''
+    // 默认真盘后端(qmt);python 内 DRY_RUN 默认开=不真下单的保险。mock 仅显式注入(测试)用。
+    return resolveRuntimeResourcePath(path.join('mcp-servers', 'mesh-trade', 'qmt_trade_backend.py')) ?? ''
   }
 
   private ensureChild(): void {
@@ -207,23 +208,11 @@ export class LiveBackend {
   }
 }
 
-export interface LiveConfig {
-  liveEnabled: boolean
-  tradeMode: 'paper' | 'live'
-  backendConfigured: boolean
-}
-
 export function isLiveBackendConfigured(): boolean {
-  return Boolean(process.env.LUMOS_MESH_LIVE_BACKEND?.trim())
-}
-
-/** 真盘开关从 env 读（部署级，不入 db/UI——真钱保险）。liveEnabled 关时 tradeMode 强制 paper。 */
-export function getLiveConfig(): LiveConfig {
-  const liveEnabled = process.env.LUMOS_MESH_ENABLE_LIVE === '1'
-  const backendConfigured = isLiveBackendConfigured()
-  const tradeMode: 'paper' | 'live' =
-    liveEnabled && backendConfigured && process.env.LUMOS_MESH_TRADE_MODE === 'live' ? 'live' : 'paper'
-  return { liveEnabled, tradeMode, backendConfigured }
+  if (process.env.LUMOS_MESH_LIVE_BACKEND?.trim()) return true // 显式 env 覆盖(任意平台)
+  // qmt 只 Windows;非 win 即使脚本随包发也视为未就绪——避免 Mac 勾 live 误触发"试→崩→halt"。
+  if (process.platform !== 'win32') return false
+  return Boolean(resolveRuntimeResourcePath(path.join('mcp-servers', 'mesh-trade', 'qmt_trade_backend.py')))
 }
 
 // 进程级单例（生产用）；测试可 new LiveBackend({script,env}) 起独立实例。

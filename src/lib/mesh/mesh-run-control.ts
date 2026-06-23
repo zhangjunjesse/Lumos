@@ -19,6 +19,7 @@ import { getAccount, initAccount, type PaperAccount } from './mesh-paper-account
 import { initParticipants, deleteByRun } from './mesh-participant-store'
 import { buildSessionSeeds } from './mesh-session-context'
 import { writeBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
+import { startQuoteFeed, stopQuoteFeed, getQuoteSnapshot } from './mesh-quote-feed'
 import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 
 export const DEFAULT_ACCOUNT_ID = DEFAULT_WORKSHOP_ID // 工作室 id 即账户 id
@@ -48,7 +49,8 @@ export function startMonitoring(opts: {
   /** 时间轮 tick 粒度（ms）；盯盘多快由各 agent 自己的 interval 决定，不再是整轮间隔。 */
   intervalMs?: number
   initialCash?: number
-  snapshot: SnapshotProvider
+  /** 行情供给：不传则启用真行情桥（qmt 实时价，去假数据）；测试/显式 demo 可传固定快照覆盖。 */
+  snapshot?: SnapshotProvider
 }): StartResult {
   reconcileOrphans()
   const accountId = opts.accountId ?? DEFAULT_ACCOUNT_ID
@@ -58,8 +60,11 @@ export function startMonitoring(opts: {
   const run = createRun(accountId, tickMs, runId)
   initAccount(accountId, opts.initialCash ?? DEFAULT_PAPER_CASH) // 账户跨 cycle 常驻
   initParticipants(runId, buildSessionSeeds(accountId), Date.now()) // accountId 即 workshopId；每 enabled agent 一行运行态
-  writeBlackboard(runId, MARKET_SNAPSHOT_KEY, opts.snapshot(), 'seed') // 首个行情快照
-  startRunner({ controlId: run.id, accountId, runId, snapshot: opts.snapshot, tickMs })
+  // 默认走真行情桥（按持仓取 qmt 实时价、每 5s 刷新黑板快照）；显式传 snapshot 才用固定值（测试/demo）。
+  if (!opts.snapshot) startQuoteFeed(accountId, runId)
+  const snapshot: SnapshotProvider = opts.snapshot ?? (() => getQuoteSnapshot(accountId))
+  writeBlackboard(runId, MARKET_SNAPSHOT_KEY, snapshot(), 'seed') // 首个快照（真行情桥刚启时可能空，随刷新填）
+  startRunner({ controlId: run.id, accountId, runId, snapshot, tickMs })
   return { ok: true, run }
 }
 
@@ -69,7 +74,9 @@ export interface StopResult {
 }
 
 export async function stopMonitoring(accountId: string = DEFAULT_ACCOUNT_ID): Promise<StopResult> {
-  if (await stopRunner(accountId)) return { ok: true }
+  const stopped = await stopRunner(accountId) // 先 drain 在飞 cycle（期间行情桥还活着，prompt 行情不空）
+  stopQuoteFeed(accountId) // drain 完再停行情桥（杀 python 子进程）
+  if (stopped) return { ok: true }
   if (isRunnerActive(accountId)) return { ok: false, reason: '停止超时：仍有 duty cycle 未退出' }
   const orphan = getRunningRun(accountId)
   if (orphan) {

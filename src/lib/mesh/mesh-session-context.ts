@@ -5,7 +5,7 @@
  */
 import { getTeamConfig } from './mesh-team-config'
 import { getRiskRules } from './mesh-risk-store'
-import { getLiveConfig } from './mesh-live-backend'
+import { isLiveBackendConfigured } from './mesh-live-backend'
 import { listAgents, getAgent } from './mesh-agent-store'
 import type { ParticipantSeed } from './mesh-participant-store'
 import type { MeshParticipant, TradeContext } from './mesh-runtime'
@@ -17,17 +17,18 @@ export function buildSessionSeeds(workshopId: string): ParticipantSeed[] {
     .map((a) => ({ participantId: a.id, role: a.role, subscriptions: a.topics, workMode: a.workMode }))
 }
 
-/** 现读该工作室 team config + 风控 + 全局 live，组装下单上下文（accountId = workshopId）。 */
+/** 现读该工作室 team config + 风控，组装下单上下文（accountId = workshopId）。
+ *  真盘=团队配置 tradeMode==='live'（UI 带确认开关写入）且 qmt 后端就绪；否则强制 paper（真钱保险）。 */
 export function buildTradeContext(workshopId: string): TradeContext {
   const config = getTeamConfig(workshopId)
-  const live = getLiveConfig()
+  const live = config.tradeMode === 'live' && isLiveBackendConfigured()
   const stored = getRiskRules(workshopId)
   return {
     mode: config.mode,
     rules: { ...stored, blacklist: Array.from(new Set([...stored.blacklist, ...config.blacklist])) },
     accountId: workshopId,
-    tradeMode: live.tradeMode,
-    liveEnabled: live.liveEnabled,
+    tradeMode: live ? 'live' : 'paper',
+    liveEnabled: live,
   }
 }
 
