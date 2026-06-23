@@ -75,7 +75,7 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
     expect(listPendingDeliveries('run-d2').find((p) => p.subscriberId === 'stock.decide')).toBeTruthy()
   })
 
-  it('timer 触发（盯盘 active_loop）：用主动盯盘 prompt（含 snapshot），无 consumed', async () => {
+  it('timer 触发（盯盘 active_loop）：用通用主动循环 prompt（含 snapshot），无 consumed', async () => {
     mockedActor.mockResolvedValue({ plan: { thought: '看盘', actions: [] }, text: '' })
     const r = await runOneDutyCycle({
       runId: 'run-d3',
@@ -87,9 +87,25 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
       snapshot: { ticks: [{ code: '600160', pct: 9 }] },
     })
     const prompt = mockedActor.mock.calls[0][1]
-    expect(prompt).toContain('盯盘')
-    expect(prompt).toContain('600160')
+    expect(prompt).toContain('主动履职') // 通用主动循环 prompt（盯盘职责已下沉到 systemPrompt）
+    expect(prompt).toContain('600160') // observe 仍带行情快照作上下文
     expect(r.writes).toHaveLength(0)
+  })
+
+  it('记忆：prompt 前置该 agent 最近对话（无状态 agent 跨 cycle 记住用户纠正）', async () => {
+    persistMessage('run-mem', 'agent_task', { summary: '时分秒别给0', from: '用户' }, 'user', ['my.custom'], 'ut-1')
+    mockedActor.mockResolvedValue({ plan: { thought: 'ok', actions: [] }, text: '' })
+    await runOneDutyCycle({
+      runId: 'run-mem',
+      participant: participant('my.custom', 'custom'),
+      trigger: 'timer',
+      cycleSeq: 1,
+      subscribersOf: () => [],
+      tradeCtx,
+    })
+    const prompt = mockedActor.mock.calls[0][1]
+    expect(prompt).toContain('最近的对话') // 记忆块已前置
+    expect(prompt).toContain('时分秒别给0') // 记住了用户的纠正
   })
 
   it('cycleSeq 进下单幂等键：同 runId/agent 不同 cycle → 不同 key（常驻不撞、新单不被吞）', async () => {

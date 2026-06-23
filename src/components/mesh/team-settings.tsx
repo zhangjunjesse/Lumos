@@ -2,12 +2,15 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { agentMeta } from './agent-meta'
+import { ModelMenu } from './model-menu'
+import type { ProviderModelGroup } from '@/types'
 
 interface Agent {
   id: string
   role: string
   systemPrompt: string
   model?: string
+  providerId?: string
   mcpAllowlist: string[]
   topics: string[]
   interval: number
@@ -16,7 +19,9 @@ interface Agent {
 }
 
 const CORE_ROLES = ['observe', 'decide', 'risk', 'review']
-const ROLE_OPTIONS = ['observe', 'decide', 'risk', 'review', 'research', 'integration']
+const ROLE_OPTIONS = ['custom', 'observe', 'decide', 'risk', 'review', 'research', 'integration']
+// 角色中文标签。custom=零内置逻辑;盯盘(observe)会被喂行情快照,其余角色只看白板。
+const ROLE_LABELS: Record<string, string> = { custom: '自定义 custom', observe: '盯盘 observe', decide: '决策 decide', risk: '风控 risk', review: '复盘 review', research: '研究 research', integration: '集成 integration' }
 const HEADERS = { 'content-type': 'application/json' }
 const FIELD = 'w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400'
 
@@ -25,18 +30,23 @@ interface AgentForm {
   role: string
   systemPrompt: string
   model: string
+  providerId: string
   interval: number
   workMode: 'active_loop' | 'event_driven'
   topics: string
 }
-const EMPTY_FORM: AgentForm = { id: '', role: 'observe', systemPrompt: '', model: '', interval: 60, workMode: 'event_driven', topics: '' }
+const EMPTY_FORM: AgentForm = { id: '', role: 'custom', systemPrompt: '', model: '', providerId: '', interval: 60, workMode: 'active_loop', topics: '' }
 
 export function TeamSettings({ accountId }: { accountId: string }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [editing, setEditing] = useState<string | null>(null)
-  const [draft, setDraft] = useState<{ systemPrompt: string; model: string; interval: number }>({ systemPrompt: '', model: '', interval: 10 })
+  const [draft, setDraft] = useState<{ systemPrompt: string; model: string; providerId: string; role: string; interval: number; workMode: 'active_loop' | 'event_driven' }>({ systemPrompt: '', model: '', providerId: '', role: 'observe', interval: 10, workMode: 'active_loop' })
   const [form, setForm] = useState<AgentForm | null>(null)
   const [error, setError] = useState('')
+  // 服务商+模型双选:列出所有可用服务商的模型(像 chat),每个 agent 自己选服务商+模型。
+  const [modelGroups, setModelGroups] = useState<ProviderModelGroup[]>([])
+  const [defaultProviderId, setDefaultProviderId] = useState('')
+  const [defaultModel, setDefaultModel] = useState('')
 
   const refresh = useCallback(
     () =>
@@ -49,6 +59,18 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+  useEffect(() => {
+    fetch('/api/providers/models')
+      .then((r) => r.json())
+      .then((d) => {
+        const groups: ProviderModelGroup[] = d.groups ?? []
+        setModelGroups(groups) // 所有服务商,供下拉选
+        setDefaultProviderId(d.default_provider_id ?? '')
+        const def = groups.find((g) => g.provider_id === d.default_provider_id) ?? groups[0]
+        setDefaultModel((d.default_model || def?.default_model || '').trim())
+      })
+      .catch(() => {})
+  }, [])
 
   const toggle = async (id: string, enabled: boolean) => {
     await fetch('/api/mesh/agents', { method: 'POST', headers: HEADERS, body: JSON.stringify({ id, action: 'setEnabled', enabled, accountId }) })
@@ -56,7 +78,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   }
   const startEdit = (a: Agent) => {
     setEditing(a.id)
-    setDraft({ systemPrompt: a.systemPrompt, model: a.model ?? '', interval: a.interval })
+    setDraft({ systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', role: a.role, interval: a.interval, workMode: a.workMode ?? 'event_driven' })
   }
   const saveEdit = async (id: string) => {
     await fetch('/api/mesh/agents', { method: 'POST', headers: HEADERS, body: JSON.stringify({ id, ...draft, accountId }) })
@@ -69,11 +91,12 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   }
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM })
+    const def = modelGroups.find((g) => g.provider_id === defaultProviderId) ?? modelGroups[0]
+    setForm({ ...EMPTY_FORM, providerId: def?.provider_id ?? '', model: defaultModel || def?.models[0]?.value || '' })
     setError('')
   }
   const openClone = (a: Agent) => {
-    setForm({ id: `${a.id}_copy`, role: a.role, systemPrompt: a.systemPrompt, model: a.model ?? '', interval: a.interval, workMode: a.workMode ?? 'event_driven', topics: a.topics.join('、') })
+    setForm({ id: `${a.id}_copy`, role: a.role, systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', interval: a.interval, workMode: a.workMode ?? 'event_driven', topics: a.topics.join('、') })
     setError('')
   }
   const submitCreate = async () => {
@@ -90,6 +113,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
         role: form.role,
         systemPrompt: form.systemPrompt,
         model: form.model || undefined,
+        providerId: form.providerId || undefined,
         interval: form.interval,
         workMode: form.workMode,
         topics: form.topics.split(/[，,、\s]+/).filter(Boolean),
@@ -110,6 +134,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   const card = (a: Agent, lead = false) => {
     const meta = agentMeta(a.id)
     const isEditing = editing === a.id
+    const provName = a.providerId ? modelGroups.find((g) => g.provider_id === a.providerId)?.provider_name ?? a.providerId : ''
     return (
       <div key={a.id} className={`rounded-xl border p-4 ${lead ? 'border-indigo-200 bg-indigo-50/40' : a.enabled ? 'border-neutral-200' : 'border-neutral-200 opacity-60'}`}>
         <div className="flex items-center justify-between gap-2">
@@ -130,10 +155,28 @@ export function TeamSettings({ accountId }: { accountId: string }) {
           <div className="mt-3 space-y-2">
             <textarea value={draft.systemPrompt} onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))} rows={4} className={FIELD} />
             <div className="flex gap-2">
-              <input value={draft.model} onChange={(e) => setDraft((d) => ({ ...d, model: e.target.value }))} placeholder="模型（留空用默认）" className="flex-1 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400" />
-              <input type="number" value={draft.interval} onChange={(e) => setDraft((d) => ({ ...d, interval: Number(e.target.value) || 0 }))} className="w-24 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400" />
-              <span className="self-center text-xs text-neutral-400">秒/轮</span>
+              <select value={draft.role} onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))} className="w-44 rounded-lg border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400">
+                {ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
+                ))}
+              </select>
+              <ModelMenu groups={modelGroups} value={draft.model} onChange={(pid, m) => setDraft((d) => ({ ...d, providerId: pid, model: m }))} className="flex-1" />
             </div>
+            <div className="flex gap-2">
+              <select value={draft.workMode} onChange={(e) => setDraft((d) => ({ ...d, workMode: e.target.value as 'active_loop' | 'event_driven' }))} className="w-36 rounded-lg border border-neutral-200 px-2 py-1.5 text-sm outline-none focus:border-neutral-400">
+                <option value="active_loop">主动循环</option>
+                <option value="event_driven">被事件唤醒</option>
+              </select>
+              {draft.workMode === 'active_loop' ? (
+                <>
+                  <input type="number" value={draft.interval} onChange={(e) => setDraft((d) => ({ ...d, interval: Number(e.target.value) || 0 }))} className="w-20 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400" />
+                  <span className="self-center text-xs text-neutral-400">秒/轮</span>
+                </>
+              ) : (
+                <span className="self-center text-xs text-neutral-400">事件触发，无需间隔</span>
+              )}
+            </div>
+            <p className="text-xs text-neutral-400">角色 = 这个 agent 在团队里干啥。自定义(custom) 零内置逻辑、纯按上面的提示词走;盯盘(observe) 会被喂行情快照;其余是炒股团队的固定职责。</p>
             <div className="flex gap-2">
               <button onClick={() => saveEdit(a.id)} className="rounded-md bg-neutral-900 px-3 py-1 text-sm text-white hover:bg-neutral-700">保存</button>
               <button onClick={() => setEditing(null)} className="rounded-md px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-100">取消</button>
@@ -143,6 +186,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
           <>
             <p className="mt-2 line-clamp-2 text-sm text-neutral-500">{a.systemPrompt}</p>
             <div className="mt-2 flex flex-wrap gap-x-4 text-xs text-neutral-400">
+              <span>服务商：{provName || '默认'}</span>
               <span>模型：{a.model || '默认'}</span>
               <span>{a.workMode === 'active_loop' ? `主动每 ${a.interval} 秒` : '被事件唤醒'}</span>
               {a.topics.length > 0 && <span>订阅：{a.topics.join('、')}</span>}
@@ -167,7 +211,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
         </button>
       </div>
 
-      {form && <CreateForm form={form} setForm={setForm} error={error} onSubmit={submitCreate} onCancel={() => setForm(null)} />}
+      {form && <CreateForm form={form} setForm={setForm} error={error} onSubmit={submitCreate} onCancel={() => setForm(null)} models={modelGroups} />}
 
       {leader && card(leader, true)}
 
@@ -177,30 +221,37 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   )
 }
 
-function CreateForm({ form, setForm, error, onSubmit, onCancel }: { form: AgentForm; setForm: (f: AgentForm) => void; error: string; onSubmit: () => void; onCancel: () => void }) {
+function CreateForm({ form, setForm, error, onSubmit, onCancel, models }: { form: AgentForm; setForm: (f: AgentForm) => void; error: string; onSubmit: () => void; onCancel: () => void; models: ProviderModelGroup[] }) {
   const set = (patch: Partial<AgentForm>) => setForm({ ...form, ...patch })
   return (
     <div className="space-y-2 rounded-xl border border-neutral-300 bg-neutral-50 p-4">
       <div className="flex gap-2">
         <input value={form.id} onChange={(e) => set({ id: e.target.value })} placeholder="agent id（如 custom.news）" className={FIELD} />
-        <select value={form.role} onChange={(e) => set({ role: e.target.value })} className="w-32 rounded-lg border border-neutral-200 px-2 py-2 text-sm">
+        <select value={form.role} onChange={(e) => set({ role: e.target.value })} className="w-40 rounded-lg border border-neutral-200 px-2 py-2 text-sm">
           {ROLE_OPTIONS.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {ROLE_LABELS[r] ?? r}
             </option>
           ))}
         </select>
       </div>
       <textarea value={form.systemPrompt} onChange={(e) => set({ systemPrompt: e.target.value })} rows={3} placeholder="systemPrompt（这个 agent 的职责）" className={FIELD} />
       <div className="flex gap-2">
-        <input value={form.model} onChange={(e) => set({ model: e.target.value })} placeholder="模型（留空默认）" className="flex-1 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm" />
+        <ModelMenu groups={models} value={form.model} onChange={(pid, m) => set({ providerId: pid, model: m })} className="flex-1" />
         <select value={form.workMode} onChange={(e) => set({ workMode: e.target.value as AgentForm['workMode'] })} className="w-40 rounded-lg border border-neutral-200 px-2 py-1.5 text-sm">
           <option value="active_loop">主动循环</option>
           <option value="event_driven">被事件唤醒</option>
         </select>
-        <input type="number" value={form.interval} onChange={(e) => set({ interval: Number(e.target.value) || 0 })} className="w-20 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm" />
-        <span className="self-center text-xs text-neutral-400">秒</span>
+        {form.workMode === 'active_loop' ? (
+          <>
+            <input type="number" value={form.interval} onChange={(e) => set({ interval: Number(e.target.value) || 0 })} className="w-20 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm" />
+            <span className="self-center text-xs text-neutral-400">秒</span>
+          </>
+        ) : (
+          <span className="self-center text-xs text-neutral-400">事件触发，无需间隔</span>
+        )}
       </div>
+      <p className="text-xs text-neutral-400">服务商 + 模型从「设置 → 服务商」已配置的里选；留空走默认服务商。</p>
       <input value={form.topics} onChange={(e) => set({ topics: e.target.value })} placeholder="订阅事件 topic（顿号分隔，如 quote_anomaly、market_close）" className={FIELD} />
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="flex gap-2">

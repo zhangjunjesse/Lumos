@@ -1,10 +1,14 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { agentMeta } from './agent-meta'
 import type { MsgRecord } from './war-room'
 
-const fmtTime = (s: string) => s.split(' ')[1] ?? s
+// 数据库存的是 UTC（datetime('now')，无时区标记）→ 补 Z 解析再转本地，否则界面会差 8 小时。
+const fmtTime = (s: string) => {
+  const d = new Date(s.replace(' ', 'T') + 'Z')
+  return isNaN(d.getTime()) ? (s.split(' ')[1] ?? s) : d.toLocaleTimeString('zh-CN', { hour12: false })
+}
 
 function payloadText(payload: unknown): string {
   if (payload && typeof payload === 'object') {
@@ -43,23 +47,59 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
   const [local, setLocal] = useState<LocalMsg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // 拉启用中的成员(队长除外,它是不 @ 时的默认目标)供 @ 下拉用。
+  useEffect(() => {
+    fetch(`/api/mesh/agents?accountId=${accountId}`)
+      .then((r) => r.json())
+      .then((d: { agents?: { id: string; role: string; enabled: boolean }[] }) =>
+        setAgents((d.agents ?? []).filter((a) => a.enabled && a.role !== 'leader').map((a) => ({ id: a.id, name: agentMeta(a.id).name }))),
+      )
+      .catch(() => {})
+  }, [accountId])
+
+  // 正在输入 @<片段> 时弹成员下拉(@ 直达该成员,绕过队长)。
+  const atMatch = input.match(/@(\S*)$/)
+  const atOptions = atMatch ? agents.filter((a) => a.id.includes(atMatch[1]) || a.name.includes(atMatch[1])) : []
+  const showAtMenu = Boolean(atMatch) && atOptions.length > 0
+  const pickAgent = (id: string) => {
+    setInput((cur) => cur.replace(/@(\S*)$/, `@${id} `))
+    inputRef.current?.focus()
+  }
 
   const send = async () => {
     const msg = input.trim()
     if (!msg || sending) return
+    const at = msg.match(/^@(\S+)\s+([\s\S]+)$/)
+    const target = at && agents.some((a) => a.id === at[1]) ? at[1] : null
     setInput('')
-    setLocal((l) => [...l, { kind: 'user', from: 'user', text: msg }])
     setSending(true)
     try {
-      const r = await fetch('/api/mesh/command', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: msg, accountId }),
-      })
-      const data = await r.json()
-      setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied) }])
+      if (target) {
+        // @ 直达该成员:发定向任务。它的处理 + 回执会经轮询出现在消息流(不本地追加,避免与轮询重复)。
+        const r = await fetch('/api/mesh/message', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ to: target, text: at![2].trim(), accountId }),
+        })
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}))
+          setLocal((l) => [...l, { kind: 'command', from: target, text: data.error || '(发送失败)' }])
+        }
+      } else {
+        setLocal((l) => [...l, { kind: 'user', from: 'user', text: msg }])
+        const r = await fetch('/api/mesh/command', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ message: msg, accountId }),
+        })
+        const data = await r.json()
+        setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied) }])
+      }
     } catch {
-      setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: '(指令处理失败)' }])
+      setLocal((l) => [...l, { kind: 'command', from: target ?? 'team.leader', text: '(处理失败)' }])
     } finally {
       setSending(false)
     }
@@ -128,12 +168,34 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
       </div>
 
       <div className="border-t border-neutral-200 p-3">
-        <div className="flex items-center gap-2">
+        <div className="relative flex items-center gap-2">
+          {showAtMenu && (
+            <div className="absolute bottom-full left-0 mb-1.5 max-h-56 w-64 overflow-y-auto rounded-lg border bg-white shadow-lg">
+              <div className="bg-neutral-50 px-3 py-1.5 text-xs text-neutral-400">@ 直达成员（绕过队长）</div>
+              {atOptions.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => pickAgent(a.id)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                >
+                  <span className="font-medium text-neutral-900">{a.name}</span>
+                  <span className="truncate font-mono text-xs text-neutral-400">{a.id}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && send()}
-            placeholder="给队长下令，如：只看不买，别碰 600160"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              if (showAtMenu) pickAgent(atOptions[0].id)
+              else send()
+            }}
+            placeholder="给队长下令；或输入 @ 直接对话某个成员"
             className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
           />
           <button

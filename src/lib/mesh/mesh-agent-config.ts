@@ -19,6 +19,8 @@ export type MeshAgentRole =
   | 'leader'
   | 'research'
   | 'review'
+  /** 自定义:零内置逻辑(不喂行情快照、不进协作链),纯按 systemPrompt + 订阅的 topic 跑。用户自建 agent 用。 */
+  | 'custom'
 
 /** agent 工作模式：active_loop=按 interval 主动醒来干活；event_driven=只被事件/定向任务唤醒。 */
 export type MeshWorkMode = 'active_loop' | 'event_driven'
@@ -33,6 +35,8 @@ export interface MeshAgentConfig {
   systemPrompt: string
   /** 解析后的模型 id；留空时由 provider 默认模型决定。 */
   model?: string
+  /** 该 agent 用哪个服务商(api_providers.id);留空走默认服务商。 */
+  providerId?: string
   /** 允许注入的 MCP server 名单（如 'qmt-readonly'）。 */
   mcpAllowlist: string[]
   /** 允许的内置工具名单（如 'Read'/'Grep'）；下单等危险能力永不在此。 */

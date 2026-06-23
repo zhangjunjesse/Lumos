@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     if (typeof body.role === 'string') patch.role = body.role as StoredAgent['role']
     if (typeof body.systemPrompt === 'string') patch.systemPrompt = body.systemPrompt
     if (typeof body.model === 'string') patch.model = body.model
+    if (typeof body.providerId === 'string') patch.providerId = body.providerId
     if (typeof body.interval === 'number') patch.interval = body.interval
     if (typeof body.enabled === 'boolean') patch.enabled = body.enabled
     if (Array.isArray(body.topics)) patch.topics = body.topics.map(String)
