@@ -33,8 +33,8 @@ describe('isToolAllowed', () => {
   it('allows a builtin tool in the allowlist', () => {
     expect(isToolAllowed(agent, 'Read')).toBe(true)
   })
-  it('denies a builtin tool not in the allowlist', () => {
-    expect(isToolAllowed(agent, 'Bash')).toBe(false)
+  it('allows any builtin tool (全放开)', () => {
+    expect(isToolAllowed(agent, 'Bash')).toBe(true)
   })
   it('allows an mcp tool whose server is whitelisted', () => {
     expect(isToolAllowed(agent, 'mcp__qmt-readonly__qmt_query_positions')).toBe(true)
@@ -60,8 +60,8 @@ describe('createMeshCanUseTool', () => {
     }
   })
 
-  it('denies an unknown tool', async () => {
+  it('allows an unknown non-mcp (builtin) tool —— 内置全放开', async () => {
     const res = await canUse('SomeRandomTool', {}, toolCtx as never)
-    expect(res.behavior).toBe('deny')
+    expect(res.behavior).toBe('allow')
   })
 })
