@@ -480,6 +480,21 @@ function buildLoginCommand(nodePath: string, cliPath: string, configDir: string)
 }
 
 /**
+ * Windows 登录用临时 bat。每步独立 set + 引号包路径,整体由 bat 执行——
+ * 避免内联 `set "X=Y" && ... && node /login` 经 cmd /c start ... cmd /k 多层传递时
+ * 被嵌套引号 / && 拆坏(实测会把整条命令当文字喂给 claude,/login 根本没跑)。
+ */
+function buildWindowsLoginBat(nodePath: string, cliPath: string, configDir: string): string {
+  return [
+    '@echo off',
+    `set "CLAUDE_CONFIG_DIR=${configDir}"`,
+    'set "ELECTRON_RUN_AS_NODE=1"',
+    `"${nodePath}" "${cliPath}" /login`,
+    '',
+  ].join('\r\n');
+}
+
+/**
  * Fast filesystem-based auth check.
  * If the config file has a valid oauthAccount.accountUuid, we can assume
  * the user has authenticated and skip the expensive probe process.
@@ -487,7 +502,10 @@ function buildLoginCommand(nodePath: string, cliPath: string, configDir: string)
  */
 function fastFilesystemAuthCheck(): ClaudeLocalAuthStatus | null {
   const configDir = getClaudeConfigDir();
-  if (!readSandboxOauthAccountHint(configDir)) {
+  // .credentials.json = /login 写下的真实 OAuth token(Windows 文件态),有它即视为已登录——
+  // 比只看 .claude.json 的 oauthAccount 更直接可靠;token 实际有效性仍由后续 SDK 调用验证。
+  const hasCredentials = fs.existsSync(path.join(configDir, '.credentials.json'));
+  if (!hasCredentials && !readSandboxOauthAccountHint(configDir)) {
     return null;
   }
 
@@ -585,7 +603,10 @@ end tell`;
   }
 
   if (process.platform === 'win32') {
-    const child = spawn('cmd.exe', ['/c', 'start', '"Lumos Claude Login"', 'cmd.exe', '/k', command], {
+    // 写进临时 bat 整体执行,start 只负责开新窗口跑这个 bat —— 避开内联命令的嵌套引号/&& 转义被拆坏。
+    const batPath = path.join(os.tmpdir(), 'lumos-claude-login.bat');
+    fs.writeFileSync(batPath, buildWindowsLoginBat(nodePath, cliPath, configDir), 'utf-8');
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/k', batPath], {
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
