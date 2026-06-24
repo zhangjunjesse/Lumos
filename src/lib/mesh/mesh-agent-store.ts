@@ -132,7 +132,10 @@ export function setEnabled(workshopId: string, id: string, enabled: boolean): vo
 }
 
 export function deleteAgent(workshopId: string, id: string): void {
-  getDb().prepare('DELETE FROM mesh_agent WHERE workshop_id = ? AND id = ?').run(workshopId, id)
+  const db = getDb()
+  db.prepare('DELETE FROM mesh_agent WHERE workshop_id = ? AND id = ?').run(workshopId, id)
+  // 同步清 MCP 状态，免得同 id 重建的新 agent 继承上一个的旧"已连"状态。
+  db.prepare('DELETE FROM mesh_mcp_status WHERE workshop_id = ? AND agent_id = ?').run(workshopId, id)
 }
 
 function safeArr(json: string): string[] {

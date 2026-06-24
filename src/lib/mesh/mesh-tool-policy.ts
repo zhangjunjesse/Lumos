@@ -12,7 +12,7 @@
 import type { CanUseTool, McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import type { MCPServerConfig } from '@/types'
 import { toSdkMcpConfig } from '@/lib/mcp-resolver'
-import { MESH_MCP_REGISTRY, type MeshAgentConfig } from './mesh-agent-config'
+import { getMeshMcpRegistry, type MeshAgentConfig } from './mesh-agent-config'
 
 const MCP_TOOL_PREFIX = 'mcp__'
 
@@ -58,9 +58,11 @@ export function createMeshCanUseTool(agent: MeshAgentConfig): CanUseTool {
  * 白名单里尚未注册的 server（如未实现的 mesh-collab）安全跳过。
  */
 export function resolveMeshMcpServers(allowlist: string[]): Record<string, McpServerConfig> {
+  if (allowlist.length === 0) return {} // 无 MCP 的 agent 不必构建注册表（省去读 qmt 设置的 DB 查询）
+  const registry = getMeshMcpRegistry()
   const selected: Record<string, MCPServerConfig> = {}
   for (const name of allowlist) {
-    const cfg = MESH_MCP_REGISTRY[name]
+    const cfg = registry[name]
     if (cfg) selected[name] = cfg
   }
   return toSdkMcpConfig(selected)

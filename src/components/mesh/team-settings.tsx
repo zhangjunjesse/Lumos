@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { agentMeta } from './agent-meta'
 import { ModelMenu } from './model-menu'
 import { McpPicker } from './mcp-picker'
+import { TeamAssistant } from './team-assistant'
+import { SELECTABLE_ROLES } from '@/lib/mesh/mesh-constants'
 import type { ProviderModelGroup } from '@/types'
 
 type McpOption = { name: string; description: string }
@@ -19,10 +21,11 @@ interface Agent {
   interval: number
   enabled: boolean
   workMode?: 'active_loop' | 'event_driven'
+  mcpStatus?: { name: string; status: string }[]
 }
 
 const CORE_ROLES = ['observe', 'decide', 'risk', 'review']
-const ROLE_OPTIONS = ['custom', 'observe', 'decide', 'risk', 'review', 'research', 'integration']
+const ROLE_OPTIONS = SELECTABLE_ROLES
 // 角色中文标签。custom=零内置逻辑;盯盘(observe)会被喂行情快照,其余角色只看白板。
 const ROLE_LABELS: Record<string, string> = { custom: '自定义 custom', observe: '盯盘 observe', decide: '决策 decide', risk: '风控 risk', review: '复盘 review', research: '研究 research', integration: '集成 integration' }
 const HEADERS = { 'content-type': 'application/json' }
@@ -186,7 +189,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
                 <span className="self-center text-xs text-neutral-400">事件触发，无需间隔</span>
               )}
             </div>
-            <McpPicker options={availableMcp} value={draft.mcpAllowlist} onChange={(v) => setDraft((d) => ({ ...d, mcpAllowlist: v }))} />
+            <McpPicker options={availableMcp} value={draft.mcpAllowlist} onChange={(v) => setDraft((d) => ({ ...d, mcpAllowlist: v }))} status={a.mcpStatus} />
             <p className="text-xs text-neutral-400">角色 = 这个 agent 在团队里干啥。自定义(custom) 零内置逻辑、纯按上面的提示词走;盯盘(observe) 会被喂行情快照;其余是炒股团队的固定职责。</p>
             <div className="flex gap-2">
               <button onClick={() => saveEdit(a.id)} className="rounded-md bg-neutral-900 px-3 py-1 text-sm text-white hover:bg-neutral-700">保存</button>
@@ -202,6 +205,15 @@ export function TeamSettings({ accountId }: { accountId: string }) {
               <span>{a.workMode === 'active_loop' ? `主动每 ${a.interval} 秒` : '被事件唤醒'}</span>
               {a.topics.length > 0 && <span>订阅：{a.topics.join('、')}</span>}
             </div>
+            {a.mcpStatus && a.mcpStatus.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
+                {a.mcpStatus.map((s) => (
+                  <span key={s.name} className={`rounded px-1.5 py-0.5 ${s.status === 'connected' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                    {s.name}：{s.status === 'connected' ? '已连' : `失败(${s.status})`}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap gap-1 border-t border-neutral-100 pt-3">
               <button onClick={() => startEdit(a)} className="rounded-md px-2.5 py-1 text-sm text-neutral-600 hover:bg-neutral-100">编辑</button>
               {!lead && <button onClick={() => openClone(a)} className="rounded-md px-2.5 py-1 text-sm text-neutral-600 hover:bg-neutral-100">克隆</button>}
@@ -215,6 +227,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
 
   return (
     <div className="space-y-3">
+      <TeamAssistant accountId={accountId} onChanged={refresh} />
       <div className="flex items-center justify-between">
         <p className="text-sm text-neutral-500">团队成员（Agent Registry）—— 配置已接 db，下单能力永不注入</p>
         <button onClick={openCreate} className="shrink-0 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50">

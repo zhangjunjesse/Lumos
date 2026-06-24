@@ -9,6 +9,8 @@ const fmtTime = (s: string) => {
   const d = new Date(s.replace(' ', 'T') + 'Z')
   return isNaN(d.getTime()) ? (s.split(' ')[1] ?? s) : d.toLocaleTimeString('zh-CN', { hour12: false })
 }
+const parseAt = (s: string) => Date.parse(s.replace(' ', 'T') + 'Z') || 0
+const fmtMs = (ms: number) => new Date(ms).toLocaleTimeString('zh-CN', { hour12: false })
 
 function payloadText(payload: unknown): string {
   if (payload && typeof payload === 'object') {
@@ -40,7 +42,61 @@ interface LocalMsg {
   kind: 'user' | 'command'
   from: string
   text: string
+  at: number
   applied?: string[]
+}
+
+/** 轮询来的消息（事件/任务/回执）渲染成一行。 */
+function renderMsg(m: MsgRecord): ReactNode {
+  const meta = agentMeta(m.from)
+  const p = (m.payload ?? {}) as { summary?: string; to?: string }
+  const time = fmtTime(m.createdAt)
+  if (m.topic === 'agent_task') {
+    return (
+      <Row key={m.id} name={meta.name} color={meta.color} badge="任务" badgeClass="bg-violet-50 text-violet-600" extra={`→ ${agentMeta(p.to ?? '').name}`} time={time}>
+        {p.summary}
+      </Row>
+    )
+  }
+  if (m.topic === 'agent_reply') {
+    return (
+      <Row key={m.id} name={meta.name} color={meta.color} badge="回执" badgeClass="bg-emerald-50 text-emerald-600" extra="↩ 回执" time={time}>
+        {p.summary}
+      </Row>
+    )
+  }
+  return (
+    <Row key={m.id} name={meta.name} color={meta.color} badge="事件" badgeClass="bg-sky-50 text-sky-600" extra={m.topic} time={time}>
+      {payloadText(m.payload)}
+    </Row>
+  )
+}
+
+/** 本地的你↔队长指挥消息渲染成一行（带时间）。 */
+function renderLocal(m: LocalMsg, key: string): ReactNode {
+  const meta = agentMeta(m.from)
+  const isUser = m.kind === 'user'
+  return (
+    <Row
+      key={key}
+      name={meta.name}
+      color={meta.color}
+      badge={isUser ? '指令' : '队长'}
+      badgeClass={isUser ? 'bg-neutral-100 text-neutral-500' : 'bg-indigo-50 text-indigo-600'}
+      time={fmtMs(m.at)}
+    >
+      {m.text}
+      {m.applied && m.applied.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {m.applied.map((a, j) => (
+            <span key={j} className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-600">
+              {a}
+            </span>
+          ))}
+        </div>
+      )}
+    </Row>
+  )
 }
 
 export function AgentChat({ accountId, messages }: { accountId: string; messages: MsgRecord[] }) {
@@ -86,85 +142,43 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
         })
         if (!r.ok) {
           const data = await r.json().catch(() => ({}))
-          setLocal((l) => [...l, { kind: 'command', from: target, text: data.error || '(发送失败)' }])
+          // 发送失败是「你」这边的事,别用 from:target 否则显示成对方头像、像是对方拒绝。
+          setLocal((l) => [...l, { kind: 'user', from: 'user', text: `@${target} 发送失败：${data.error || '未知错误'}`, at: Date.now() }])
         }
       } else {
-        setLocal((l) => [...l, { kind: 'user', from: 'user', text: msg }])
+        setLocal((l) => [...l, { kind: 'user', from: 'user', text: msg, at: Date.now() }])
         const r = await fetch('/api/mesh/command', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ message: msg, accountId }),
         })
         const data = await r.json()
-        setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied) }])
+        setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied), at: Date.now() }])
       }
     } catch {
-      setLocal((l) => [...l, { kind: 'command', from: target ?? 'team.leader', text: '(处理失败)' }])
+      setLocal((l) => [...l, { kind: 'user', from: 'user', text: target ? `@${target} 发送失败` : '(发送失败)', at: Date.now() }])
     } finally {
       setSending(false)
     }
   }
 
   const empty = messages.length === 0 && local.length === 0
+  // 轮询消息 + 本地指挥统一成一条流，按时间倒排（最新在上）。
+  const stream = [
+    ...messages.map((m) => ({ at: parseAt(m.createdAt), el: renderMsg(m) })),
+    ...local.map((m, i) => ({ at: m.at, el: renderLocal(m, `u${m.at}-${i}`) })),
+  ].sort((a, b) => b.at - a.at)
 
   return (
     <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-white">
       <div className="border-b border-neutral-200 px-4 py-3">
         <h2 className="text-sm font-medium text-neutral-900">团队消息流</h2>
-        <p className="mt-0.5 text-xs text-neutral-400">事件广播 · 定向任务 · 回执 · 你与队长的指挥</p>
+        <p className="mt-0.5 text-xs text-neutral-400">事件广播 · 定向任务 · 回执 · 你与队长的指挥（最新在上）</p>
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {empty && <div className="py-8 text-center text-sm text-neutral-400">还没有消息 —— 启动团队，或在下方给队长下令</div>}
-
-        {messages.map((m) => {
-          const meta = agentMeta(m.from)
-          const p = (m.payload ?? {}) as { summary?: string; to?: string; taskId?: string }
-          if (m.topic === 'agent_task') {
-            return (
-              <Row key={m.id} name={meta.name} color={meta.color} badge="任务" badgeClass="bg-violet-50 text-violet-600" extra={`→ ${agentMeta(p.to ?? '').name}`} time={fmtTime(m.createdAt)}>
-                {p.summary}
-              </Row>
-            )
-          }
-          if (m.topic === 'agent_reply') {
-            return (
-              <Row key={m.id} name={meta.name} color={meta.color} badge="回执" badgeClass="bg-emerald-50 text-emerald-600" extra="↩ 回执" time={fmtTime(m.createdAt)}>
-                {p.summary}
-              </Row>
-            )
-          }
-          return (
-            <Row key={m.id} name={meta.name} color={meta.color} badge="事件" badgeClass="bg-sky-50 text-sky-600" extra={m.topic} time={fmtTime(m.createdAt)}>
-              {payloadText(m.payload)}
-            </Row>
-          )
-        })}
-
-        {local.map((m, i) => {
-          const meta = agentMeta(m.from)
-          const isUser = m.kind === 'user'
-          return (
-            <Row
-              key={`l${i}`}
-              name={meta.name}
-              color={meta.color}
-              badge={isUser ? '指令' : '队长'}
-              badgeClass={isUser ? 'bg-neutral-100 text-neutral-500' : 'bg-indigo-50 text-indigo-600'}
-            >
-              {m.text}
-              {m.applied && m.applied.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {m.applied.map((a, j) => (
-                    <span key={j} className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-600">
-                      {a}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </Row>
-          )
-        })}
+        {stream.map((it) => it.el)}
       </div>
 
       <div className="border-t border-neutral-200 p-3">

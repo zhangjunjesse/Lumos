@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listAgents, upsertAgent, setEnabled, deleteAgent, agentExists, type StoredAgent } from '@/lib/mesh/mesh-agent-store'
 import { listMeshMcpServers } from '@/lib/mesh/mesh-agent-config'
+import { getMcpStatus } from '@/lib/mesh/mesh-mcp-status'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
 import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
@@ -13,7 +14,12 @@ export async function GET(req: NextRequest) {
   try {
     const workshopId = workshopOf(req)
     ensureWorkshopExists(workshopId)
-    return NextResponse.json({ agents: listAgents(workshopId), availableMcp: listMeshMcpServers() })
+    // 每个 agent 附上最近一轮的 MCP 连接状态（只取当前仍在白名单里的，免得显示已撤 server 的陈旧状态）。
+    const agents = listAgents(workshopId).map((a) => ({
+      ...a,
+      mcpStatus: getMcpStatus(workshopId, a.id).filter((s) => a.mcpAllowlist.includes(s.name)),
+    }))
+    return NextResponse.json({ agents, availableMcp: listMeshMcpServers() })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: statusOf(error) })
   }

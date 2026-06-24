@@ -2,6 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from 'react'
 import { TeamSettings } from './team-settings'
+import { McpSettings } from './mcp-settings'
 import { LIVE_CONFIRM_WORD } from '@/lib/mesh/mesh-constants'
 import type { Workshop } from './war-room'
 
@@ -27,6 +28,7 @@ const SETTING_TABS = [
   { key: 'team', label: '团队信息' },
   { key: 'risk', label: '风控规则' },
   { key: 'run', label: '运行 & 实盘' },
+  { key: 'data', label: '数据源' },
 ]
 
 const INPUT = 'w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400'
@@ -232,19 +234,23 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
               </Section>
             </div>
           )}
+
+          {tab === 'data' && <McpSettings />}
         </div>
       </div>
 
-      <div className="mt-8 flex items-center gap-3 border-t border-neutral-200 pt-4">
-        <button onClick={save} disabled={saving} className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50">
-          {saving ? '保存中…' : '保存'}
-        </button>
-        <button onClick={onBack} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50">
-          取消
-        </button>
-        {saved && <span className="text-sm text-emerald-600">已保存（名称/描述/模式/关注/黑名单/风控/真盘）</span>}
-        {err && <span className="text-sm text-red-600">{err}</span>}
-      </div>
+      {tab !== 'data' && (
+        <div className="mt-8 flex items-center gap-3 border-t border-neutral-200 pt-4">
+          <button onClick={save} disabled={saving} className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50">
+            {saving ? '保存中…' : '保存'}
+          </button>
+          <button onClick={onBack} className="rounded-lg border border-neutral-200 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50">
+            取消
+          </button>
+          {saved && <span className="text-sm text-emerald-600">已保存（名称/描述/模式/关注/黑名单/风控/真盘）</span>}
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+      )}
     </div>
   )
 }

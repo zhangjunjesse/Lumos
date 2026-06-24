@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Play, Pause, Square, Settings } from 'lucide-react'
+import { Play, Pause, Square, Settings, Clock } from 'lucide-react'
 import { AgentChat } from './agent-chat'
 import { Blackboard } from './blackboard'
 import { DataPanels } from './data-panels'
@@ -101,6 +101,7 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
         ) : (
           <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500 ring-1 ring-neutral-200">模拟盘</span>
         )}
+        <LiveClock />
         <Controls active={active} busy={busy} onStart={() => control('start')} onStop={() => control('stop')} onSettings={onSettings} />
       </div>
 
@@ -134,6 +135,21 @@ export function WarRoom({ workshop, onBack, onSettings }: { workshop: Workshop; 
   )
 }
 
+/** 当前时间（到秒，每秒刷新）—— 给整个作战室一个准确时间锚点。 */
+function LiveClock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <span className="ml-auto flex items-center gap-1.5 font-mono text-sm tabular-nums text-neutral-500" title="当前时间">
+      <Clock className="h-3.5 w-3.5" />
+      {now.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+    </span>
+  )
+}
+
 const BTN = 'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed'
 const BTN_PRIMARY = `${BTN} border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-700 disabled:opacity-50`
 const BTN_GHOST = `${BTN} border-neutral-200 text-neutral-700 hover:bg-neutral-50`
@@ -154,7 +170,7 @@ function Controls({
   onSettings: () => void
 }) {
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="flex items-center gap-2">
       {active ? (
         <>
           <button disabled title="暂停暂未接入（后端只有启动/停止）" className={BTN_DISABLED}>

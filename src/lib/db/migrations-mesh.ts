@@ -166,6 +166,22 @@ export function migrateMeshTables(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- 全局 mesh 设置（KV）：qmt 脚本目录/python/QMT 安装路径/账户号，UI 可配，拔掉硬编码。
+    CREATE TABLE IF NOT EXISTS mesh_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 每 agent 最近一次跑出来的 MCP 连接状态（connected/failed），供 UI 展示、终结"黑盒静默失败"。
+    CREATE TABLE IF NOT EXISTS mesh_mcp_status (
+      workshop_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      status_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (workshop_id, agent_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_mesh_blackboard_run_key ON mesh_blackboard(run_id, key, version DESC);
     CREATE INDEX IF NOT EXISTS idx_mesh_ticket_run ON mesh_order_ticket(run_id, status);
     CREATE INDEX IF NOT EXISTS idx_mesh_message_run ON mesh_message(run_id, created_at);

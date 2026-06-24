@@ -18,6 +18,7 @@ import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env'
 import { createMeshCanUseTool, resolveMeshMcpServers, MESH_BUILTIN_TOOLS } from './mesh-tool-policy'
 import { buildMeshActionPlanSchema, parseActionPlan, type MeshActionPlan } from './mesh-action-schema'
 import type { MeshAgentConfig } from './mesh-agent-config'
+import type { McpServerStatus } from './mesh-mcp-status'
 
 // 单轮 duty cycle 调模型上限:超时中止本轮并抛错(被调度器记进 mesh_run.last_error),
 // 避免模型/代理一卡就静默死等、UI 假装"运行中"。
@@ -26,6 +27,8 @@ const MESH_QUERY_TIMEOUT_MS = 120_000
 export interface MeshRunOptions {
   sessionId?: string
   abortController?: AbortController
+  /** SDK 调用最大轮数；缺省 6。纯 NL→JSON 解析(队长/管家)可设低值,杜绝多轮工具探索拖到超时。 */
+  maxTurns?: number
 }
 
 export interface MeshRunResult {
@@ -36,6 +39,8 @@ export interface MeshRunResult {
 export interface MeshActorResult {
   plan: MeshActionPlan
   text: string
+  /** 本轮 SDK 启动时的 MCP 连接状态（来自 init 消息的 mcp_servers）。 */
+  mcpStatus?: McpServerStatus[]
 }
 
 interface SdkStreamMessage {
@@ -43,6 +48,15 @@ interface SdkStreamMessage {
   text?: string
   result?: unknown
   structured_output?: unknown
+}
+
+/** 从 SDK 的 system/init 消息里取 mcp_servers 状态（[{name,status}]）。 */
+function extractMcpStatus(m: { type?: string; mcp_servers?: unknown }): McpServerStatus[] | undefined {
+  if (m.type !== 'system' || !Array.isArray(m.mcp_servers)) return undefined
+  return (m.mcp_servers as Array<{ name?: string; status?: string }>).map((s) => ({
+    name: String(s.name ?? ''),
+    status: String(s.status ?? ''),
+  }))
 }
 
 /** 装配 mesh agent 的 SDK query options：非 bypass + 真 canUseTool + 白名单 MCP。 */
@@ -109,11 +123,12 @@ export async function runMeshAgentStructured(
   prompt: string,
   schema: Record<string, unknown>,
   options: MeshRunOptions = {},
-): Promise<{ structured: unknown; text: string }> {
+): Promise<{ structured: unknown; text: string; mcpStatus?: McpServerStatus[] }> {
   const { queryOptions, abortController, activeProvider } = prepareMeshQuery(agent, options)
   const jsonPrompt = `${prompt}\n\n———\n只输出一个 JSON 对象,严格匹配下面的 JSON Schema;不要任何解释文字,不要用 markdown 代码块包裹:\n${JSON.stringify(schema)}`
   let text = ''
   let resultText = ''
+  let mcpStatus: McpServerStatus[] | undefined
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
@@ -124,10 +139,11 @@ export async function runMeshAgentStructured(
     if (isClaudeLocalAuthProvider(activeProvider)) {
       await ensureClaudeLocalAuthReady(activeProvider)
     }
-    // maxTurns 兜底:无工具时一轮即出 JSON;有 MCP 的真 agent 留几轮工具调用空间,同时防跑飞。
-    const stream = query({ prompt: jsonPrompt, options: { ...queryOptions, maxTurns: 6 } })
+    // maxTurns:无工具时一轮即出 JSON;有 MCP 的真 agent 留几轮工具调用空间(缺省 6);纯解析类可传低值防多轮拖超时。
+    const stream = query({ prompt: jsonPrompt, options: { ...queryOptions, maxTurns: options.maxTurns ?? 6 } })
     for await (const message of stream) {
-      const m = message as { type?: string; result?: unknown; text?: string; message?: { content?: Array<{ type?: string; text?: string }> } }
+      const m = message as { type?: string; result?: unknown; text?: string; mcp_servers?: unknown; message?: { content?: Array<{ type?: string; text?: string }> } }
+      mcpStatus = extractMcpStatus(m) ?? mcpStatus
       if (typeof m.text === 'string') text += m.text
       if (Array.isArray(m.message?.content)) {
         for (const c of m.message.content) if (c?.type === 'text' && typeof c.text === 'string') text += c.text
@@ -135,7 +151,7 @@ export async function runMeshAgentStructured(
       if (m.type === 'result' && typeof m.result === 'string') resultText = m.result
     }
     const finalText = (resultText || text).trim()
-    return { structured: extractJson(finalText), text: finalText }
+    return { structured: extractJson(finalText), text: finalText, mcpStatus }
   } catch (err) {
     if (timedOut) throw new Error(`mesh 调模型超时:${MESH_QUERY_TIMEOUT_MS / 1000}s 内无返回(已中止本轮)`)
     throw err
@@ -172,6 +188,6 @@ export async function runMeshActor(
   prompt: string,
   options: MeshRunOptions = {},
 ): Promise<MeshActorResult> {
-  const { structured, text } = await runMeshAgentStructured(agent, prompt, buildMeshActionPlanSchema(), options)
-  return { plan: parseActionPlan(structured), text }
+  const { structured, text, mcpStatus } = await runMeshAgentStructured(agent, prompt, buildMeshActionPlanSchema(), options)
+  return { plan: parseActionPlan(structured), text, mcpStatus }
 }

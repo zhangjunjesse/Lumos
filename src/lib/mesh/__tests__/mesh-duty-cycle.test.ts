@@ -14,6 +14,7 @@ import { runMeshActor } from '../mesh-worker'
 import { placeOrder } from '../mesh-order-gateway'
 import { persistMessage, listPendingDeliveries } from '../mesh-event-bus'
 import { readBlackboard } from '../mesh-blackboard'
+import { getMcpStatus } from '../mesh-mcp-status'
 import type { MeshParticipant, TradeContext } from '../mesh-runtime'
 
 const mockedActor = jest.mocked(runMeshActor)
@@ -39,6 +40,7 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
 
     const r = await runOneDutyCycle({
       runId: 'run-d1',
+      workshopId: 'mesh_team_default',
       participant: participant('stock.risk', 'risk'),
       trigger: 'event',
       delivery: { messageId: mid, subscriberId: 'stock.risk', topic: 'agent_task', payload: { summary: '审买入 X', from: 'stock.decide' }, taskId: 'task-1' },
@@ -64,6 +66,7 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
     })
     const r = await runOneDutyCycle({
       runId: 'run-d2',
+      workshopId: 'mesh_team_default',
       participant: participant('stock.observe', 'observe'),
       trigger: 'event',
       delivery: { messageId: persistMessage('run-d2', 'tick', {}, 'seed', ['stock.observe']), subscriberId: 'stock.observe', topic: 'tick', payload: {} },
@@ -79,6 +82,7 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
     mockedActor.mockResolvedValue({ plan: { thought: '看盘', actions: [] }, text: '' })
     const r = await runOneDutyCycle({
       runId: 'run-d3',
+      workshopId: 'mesh_team_default',
       participant: participant('stock.observe', 'observe'),
       trigger: 'timer',
       cycleSeq: 1,
@@ -97,6 +101,7 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
     mockedActor.mockResolvedValue({ plan: { thought: 'ok', actions: [] }, text: '' })
     await runOneDutyCycle({
       runId: 'run-mem',
+      workshopId: 'mesh_team_default',
       participant: participant('my.custom', 'custom'),
       trigger: 'timer',
       cycleSeq: 1,
@@ -115,12 +120,30 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
       text: '',
     })
     const ctx: TradeContext = { mode: 'auto', accountId: 'acc-s3', tradeMode: 'paper', liveEnabled: false }
-    const base = { runId: 'run-s3', participant: participant('stock.risk', 'risk'), trigger: 'timer' as const, subscribersOf: () => [], tradeCtx: ctx }
+    const base = { runId: 'run-s3', workshopId: 'mesh_team_default', participant: participant('stock.risk', 'risk'), trigger: 'timer' as const, subscribersOf: () => [], tradeCtx: ctx }
     await runOneDutyCycle({ ...base, cycleSeq: 1 })
     await runOneDutyCycle({ ...base, cycleSeq: 2 })
     const keys = mockedPlace.mock.calls.map((c) => c[2].idempotencyKey)
     expect(keys[0]).toBe('run-s3:stock.risk:1:0')
     expect(keys[1]).toBe('run-s3:stock.risk:2:0')
     expect(keys[0]).not.toBe(keys[1]) // 常驻 runId 跨 cycle 不撞 key
+  })
+
+  it('MCP 状态落库：runMeshActor 返回 mcpStatus → 落库 → 可读回（黑盒失败可见）', async () => {
+    mockedActor.mockResolvedValue({
+      plan: { thought: 'ok', actions: [] },
+      text: '',
+      mcpStatus: [{ name: 'qmt-readonly', status: 'connected' }],
+    })
+    await runOneDutyCycle({
+      runId: 'run-mcp',
+      workshopId: 'ws-mcp',
+      participant: participant('stock.observe', 'observe'),
+      trigger: 'timer',
+      cycleSeq: 1,
+      subscribersOf: () => [],
+      tradeCtx,
+    })
+    expect(getMcpStatus('ws-mcp', 'stock.observe')).toEqual([{ name: 'qmt-readonly', status: 'connected' }])
   })
 })

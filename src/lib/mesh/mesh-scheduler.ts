@@ -119,6 +119,7 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
     const cycleSeq = nextCycleSeq(runId, item.participantId)
     const result = await runOneDutyCycle({
       runId,
+      workshopId: runner.accountId,
       participant,
       trigger: item.trigger,
       delivery: item.delivery,
