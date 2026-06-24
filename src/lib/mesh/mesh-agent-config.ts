@@ -76,6 +76,14 @@ export const MESH_MCP_REGISTRY: Record<string, MCPServerConfig> = {
   },
 }
 
+/** 供 UI 列出「可授给某个 agent」的 MCP server（name + 描述）。下单类从不在注册表里。 */
+export function listMeshMcpServers(): { name: string; description: string }[] {
+  return Object.entries(MESH_MCP_REGISTRY).map(([name, cfg]) => ({
+    name,
+    description: cfg.description ?? name,
+  }))
+}
+
 /** M1 示例：一个只读盯盘 agent，只能看行情/持仓，碰不到任何写/下单能力。 */
 export const EXAMPLE_OBSERVE_AGENT: MeshAgentConfig = {
   id: 'observe.market',

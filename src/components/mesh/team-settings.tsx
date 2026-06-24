@@ -3,7 +3,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { agentMeta } from './agent-meta'
 import { ModelMenu } from './model-menu'
+import { McpPicker } from './mcp-picker'
 import type { ProviderModelGroup } from '@/types'
+
+type McpOption = { name: string; description: string }
 
 interface Agent {
   id: string
@@ -34,15 +37,17 @@ interface AgentForm {
   interval: number
   workMode: 'active_loop' | 'event_driven'
   topics: string
+  mcpAllowlist: string[]
 }
-const EMPTY_FORM: AgentForm = { id: '', role: 'custom', systemPrompt: '', model: '', providerId: '', interval: 60, workMode: 'active_loop', topics: '' }
+const EMPTY_FORM: AgentForm = { id: '', role: 'custom', systemPrompt: '', model: '', providerId: '', interval: 60, workMode: 'active_loop', topics: '', mcpAllowlist: [] }
 
 export function TeamSettings({ accountId }: { accountId: string }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [editing, setEditing] = useState<string | null>(null)
-  const [draft, setDraft] = useState<{ systemPrompt: string; model: string; providerId: string; role: string; interval: number; workMode: 'active_loop' | 'event_driven' }>({ systemPrompt: '', model: '', providerId: '', role: 'observe', interval: 10, workMode: 'active_loop' })
+  const [draft, setDraft] = useState<{ systemPrompt: string; model: string; providerId: string; role: string; interval: number; workMode: 'active_loop' | 'event_driven'; mcpAllowlist: string[] }>({ systemPrompt: '', model: '', providerId: '', role: 'observe', interval: 10, workMode: 'active_loop', mcpAllowlist: [] })
   const [form, setForm] = useState<AgentForm | null>(null)
   const [error, setError] = useState('')
+  const [availableMcp, setAvailableMcp] = useState<McpOption[]>([])
   // 服务商+模型双选:列出所有可用服务商的模型(像 chat),每个 agent 自己选服务商+模型。
   const [modelGroups, setModelGroups] = useState<ProviderModelGroup[]>([])
   const [defaultProviderId, setDefaultProviderId] = useState('')
@@ -52,7 +57,10 @@ export function TeamSettings({ accountId }: { accountId: string }) {
     () =>
       fetch(`/api/mesh/agents?accountId=${accountId}`)
         .then((r) => r.json())
-        .then((d) => setAgents(d.agents ?? []))
+        .then((d) => {
+          setAgents(d.agents ?? [])
+          if (Array.isArray(d.availableMcp)) setAvailableMcp(d.availableMcp)
+        })
         .catch(() => {}),
     [accountId],
   )
@@ -78,7 +86,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   }
   const startEdit = (a: Agent) => {
     setEditing(a.id)
-    setDraft({ systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', role: a.role, interval: a.interval, workMode: a.workMode ?? 'event_driven' })
+    setDraft({ systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', role: a.role, interval: a.interval, workMode: a.workMode ?? 'event_driven', mcpAllowlist: a.mcpAllowlist ?? [] })
   }
   const saveEdit = async (id: string) => {
     await fetch('/api/mesh/agents', { method: 'POST', headers: HEADERS, body: JSON.stringify({ id, ...draft, accountId }) })
@@ -92,11 +100,12 @@ export function TeamSettings({ accountId }: { accountId: string }) {
 
   const openCreate = () => {
     const def = modelGroups.find((g) => g.provider_id === defaultProviderId) ?? modelGroups[0]
-    setForm({ ...EMPTY_FORM, providerId: def?.provider_id ?? '', model: defaultModel || def?.models[0]?.value || '' })
+    // 新成员默认勾上全部可用 MCP，免得又是空手没工具；用户可在表单里取消。
+    setForm({ ...EMPTY_FORM, providerId: def?.provider_id ?? '', model: defaultModel || def?.models[0]?.value || '', mcpAllowlist: availableMcp.map((m) => m.name) })
     setError('')
   }
   const openClone = (a: Agent) => {
-    setForm({ id: `${a.id}_copy`, role: a.role, systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', interval: a.interval, workMode: a.workMode ?? 'event_driven', topics: a.topics.join('、') })
+    setForm({ id: `${a.id}_copy`, role: a.role, systemPrompt: a.systemPrompt, model: a.model ?? '', providerId: a.providerId ?? '', interval: a.interval, workMode: a.workMode ?? 'event_driven', topics: a.topics.join('、'), mcpAllowlist: a.mcpAllowlist ?? [] })
     setError('')
   }
   const submitCreate = async () => {
@@ -117,6 +126,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
         interval: form.interval,
         workMode: form.workMode,
         topics: form.topics.split(/[，,、\s]+/).filter(Boolean),
+        mcpAllowlist: form.mcpAllowlist,
         enabled: true,
       }),
     })
@@ -176,6 +186,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
                 <span className="self-center text-xs text-neutral-400">事件触发，无需间隔</span>
               )}
             </div>
+            <McpPicker options={availableMcp} value={draft.mcpAllowlist} onChange={(v) => setDraft((d) => ({ ...d, mcpAllowlist: v }))} />
             <p className="text-xs text-neutral-400">角色 = 这个 agent 在团队里干啥。自定义(custom) 零内置逻辑、纯按上面的提示词走;盯盘(observe) 会被喂行情快照;其余是炒股团队的固定职责。</p>
             <div className="flex gap-2">
               <button onClick={() => saveEdit(a.id)} className="rounded-md bg-neutral-900 px-3 py-1 text-sm text-white hover:bg-neutral-700">保存</button>
@@ -211,7 +222,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
         </button>
       </div>
 
-      {form && <CreateForm form={form} setForm={setForm} error={error} onSubmit={submitCreate} onCancel={() => setForm(null)} models={modelGroups} />}
+      {form && <CreateForm form={form} setForm={setForm} error={error} onSubmit={submitCreate} onCancel={() => setForm(null)} models={modelGroups} mcp={availableMcp} />}
 
       {leader && card(leader, true)}
 
@@ -221,7 +232,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   )
 }
 
-function CreateForm({ form, setForm, error, onSubmit, onCancel, models }: { form: AgentForm; setForm: (f: AgentForm) => void; error: string; onSubmit: () => void; onCancel: () => void; models: ProviderModelGroup[] }) {
+function CreateForm({ form, setForm, error, onSubmit, onCancel, models, mcp }: { form: AgentForm; setForm: (f: AgentForm) => void; error: string; onSubmit: () => void; onCancel: () => void; models: ProviderModelGroup[]; mcp: McpOption[] }) {
   const set = (patch: Partial<AgentForm>) => setForm({ ...form, ...patch })
   return (
     <div className="space-y-2 rounded-xl border border-neutral-300 bg-neutral-50 p-4">
@@ -252,6 +263,7 @@ function CreateForm({ form, setForm, error, onSubmit, onCancel, models }: { form
         )}
       </div>
       <p className="text-xs text-neutral-400">服务商 + 模型从「设置 → 服务商」已配置的里选；留空走默认服务商。</p>
+      <McpPicker options={mcp} value={form.mcpAllowlist} onChange={(v) => set({ mcpAllowlist: v })} />
       <input value={form.topics} onChange={(e) => set({ topics: e.target.value })} placeholder="订阅事件 topic（顿号分隔，如 quote_anomaly、market_close）" className={FIELD} />
       {error && <p className="text-xs text-red-600">{error}</p>}
       <div className="flex gap-2">
