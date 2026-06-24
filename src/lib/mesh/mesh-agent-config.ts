@@ -11,6 +11,7 @@ import path from 'path'
 import type { MCPServerConfig } from '@/types'
 import { getMeshSetting } from './mesh-settings-store'
 import { SELECTABLE_ROLES } from './mesh-constants'
+import { resolveRuntimeResourcePath } from '@/lib/runtime-resources'
 
 /** mesh agent 角色。可选角色见 mesh-constants.SELECTABLE_ROLES(单一真源);leader=团队唯一管理者,不可被用户新建。 */
 export type MeshAgentRole = (typeof SELECTABLE_ROLES)[number] | 'leader'
@@ -36,9 +37,13 @@ export interface MeshAgentConfig {
   toolAllowlist: string[]
 }
 
-// qmt 接入参数:env > DB 设置(UI 可配) > 内置默认。拔掉写死的 ~/Downloads/量化。
+// qmt 脚本目录:env > DB 设置(UI 可配) > 随安装包的内置脚本 > 回落用户目录。
+// 默认走内置(resources/mcp-servers/qmt-readonly):更新 Lumos 即更新脚本,用户无需手动同步。
 function resolveQmtDir(): string {
-  return process.env.LUMOS_QMT_DIR?.trim() || getMeshSetting('qmt_dir') || path.join(os.homedir(), 'Downloads', '量化')
+  const configured = process.env.LUMOS_QMT_DIR?.trim() || getMeshSetting('qmt_dir')
+  if (configured) return configured
+  const bundled = resolveRuntimeResourcePath(path.join('mcp-servers', 'qmt-readonly', 'qmt_mcp_server.py'))
+  return bundled ? path.dirname(bundled) : path.join(os.homedir(), 'Downloads', '量化')
 }
 
 function resolveQmtPython(): string {
