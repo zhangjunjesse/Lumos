@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listAgents, upsertAgent, setEnabled, deleteAgent, agentExists, type StoredAgent } from '@/lib/mesh/mesh-agent-store'
+import { listMeshMcpServers } from '@/lib/mesh/mesh-agent-config'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
 import { ensureWorkshopExists } from '@/lib/mesh/mesh-workshop-store'
 
@@ -12,7 +13,7 @@ export async function GET(req: NextRequest) {
   try {
     const workshopId = workshopOf(req)
     ensureWorkshopExists(workshopId)
-    return NextResponse.json({ agents: listAgents(workshopId) })
+    return NextResponse.json({ agents: listAgents(workshopId), availableMcp: listMeshMcpServers() })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'failed' }, { status: statusOf(error) })
   }
