@@ -68,6 +68,7 @@ resources/ffmpeg/
 
 # claude code local settings
 /.claude/
+/.ai/
 
 # local exploration / scratch scripts (not project code)
 /AI-Information-Summary.md

@@ -9,18 +9,11 @@
 import os from 'os'
 import path from 'path'
 import type { MCPServerConfig } from '@/types'
+import { getMeshSetting } from './mesh-settings-store'
+import { SELECTABLE_ROLES } from './mesh-constants'
 
-/** mesh agent 角色。 */
-export type MeshAgentRole =
-  | 'observe'
-  | 'decide'
-  | 'risk'
-  | 'execute'
-  | 'leader'
-  | 'research'
-  | 'review'
-  /** 自定义:零内置逻辑(不喂行情快照、不进协作链),纯按 systemPrompt + 订阅的 topic 跑。用户自建 agent 用。 */
-  | 'custom'
+/** mesh agent 角色。可选角色见 mesh-constants.SELECTABLE_ROLES(单一真源);leader=团队唯一管理者,不可被用户新建。 */
+export type MeshAgentRole = (typeof SELECTABLE_ROLES)[number] | 'leader'
 
 /** agent 工作模式：active_loop=按 interval 主动醒来干活；event_driven=只被事件/定向任务唤醒。 */
 export type MeshWorkMode = 'active_loop' | 'event_driven'
@@ -43,42 +36,53 @@ export interface MeshAgentConfig {
   toolAllowlist: string[]
 }
 
+// qmt 接入参数:env > DB 设置(UI 可配) > 内置默认。拔掉写死的 ~/Downloads/量化。
 function resolveQmtDir(): string {
-  return process.env.LUMOS_QMT_DIR?.trim() || path.join(os.homedir(), 'Downloads', '量化')
+  return process.env.LUMOS_QMT_DIR?.trim() || getMeshSetting('qmt_dir') || path.join(os.homedir(), 'Downloads', '量化')
 }
 
 function resolveQmtPython(): string {
   if (process.env.LUMOS_QMT_PYTHON?.trim()) return process.env.LUMOS_QMT_PYTHON.trim()
+  const configured = getMeshSetting('qmt_python')
+  if (configured) return configured
   // Lumos 会把内置 venv 前置进 SDK 子进程的 PATH，裸 'python' 会被劫持到没有 xtquant 的
   // venv，导致 qmt MCP 一 import xtquant 就崩。Windows 实测解释器在 C:\Python311（装了
-  // xtquant），用绝对路径绕开劫持；非 win 开发机保持 'python'，可被 LUMOS_QMT_PYTHON 覆盖。
+  // xtquant），用绝对路径绕开劫持；非 win 开发机保持 'python'，可被设置/LUMOS_QMT_PYTHON 覆盖。
   if (process.platform === 'win32') return 'C:\\Python311\\python.exe'
   return 'python'
 }
 
+/** QMT 安装路径 / 账户号：env > DB 设置；空则交给 python 脚本内默认。 */
+function resolveQmtEnv(): Record<string, string> {
+  const qmtPath = process.env.QMT_PATH || getMeshSetting('qmt_path')
+  const accountId = process.env.QMT_ACCOUNT_ID || getMeshSetting('qmt_account_id')
+  return {
+    ...(qmtPath ? { QMT_PATH: qmtPath } : {}),
+    ...(accountId ? { QMT_ACCOUNT_ID: accountId } : {}),
+  }
+}
+
 /**
- * 网状专属 MCP 注册表 —— 刻意不进 DB、不进全局 isEnabled。
- * 这样 workflow 的全量 MCP 注入物理上看不到这些 server，实现双向隔离。
- * 执行器只从这里按 agent 白名单挑选注入。
+ * 网状专属 MCP 注册表 —— 每次调用按当前 DB 设置重建（路径/python 在 UI 改后下一轮即生效）。
+ * 刻意不进全局 isEnabled，workflow 物理上看不到这些 server（双向隔离）；执行器只按 agent 白名单挑选注入。
  */
-export const MESH_MCP_REGISTRY: Record<string, MCPServerConfig> = {
-  'qmt-readonly': {
-    command: resolveQmtPython(),
-    args: [path.join(resolveQmtDir(), 'qmt_mcp_server.py')],
-    env: {
-      ...(process.env.QMT_PATH ? { QMT_PATH: process.env.QMT_PATH } : {}),
-      ...(process.env.QMT_ACCOUNT_ID ? { QMT_ACCOUNT_ID: process.env.QMT_ACCOUNT_ID } : {}),
+export function getMeshMcpRegistry(): Record<string, MCPServerConfig> {
+  return {
+    'qmt-readonly': {
+      command: resolveQmtPython(),
+      args: [path.join(resolveQmtDir(), 'qmt_mcp_server.py')],
+      env: resolveQmtEnv(),
+      type: 'stdio',
+      runtime: 'python',
+      description: 'QMT 行情/账户只读 MCP（无下单）',
+      scope: 'builtin',
     },
-    type: 'stdio',
-    runtime: 'python',
-    description: 'QMT 行情/账户只读 MCP（无下单）',
-    scope: 'builtin',
-  },
+  }
 }
 
 /** 供 UI 列出「可授给某个 agent」的 MCP server（name + 描述）。下单类从不在注册表里。 */
 export function listMeshMcpServers(): { name: string; description: string }[] {
-  return Object.entries(MESH_MCP_REGISTRY).map(([name, cfg]) => ({
+  return Object.entries(getMeshMcpRegistry()).map(([name, cfg]) => ({
     name,
     description: cfg.description ?? name,
   }))

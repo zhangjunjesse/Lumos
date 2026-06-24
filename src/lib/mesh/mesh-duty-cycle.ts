@@ -5,6 +5,7 @@
  * 设计 §268-284：读白板+自己状态 → mesh-worker 跑一次 → action plan → 单事务写 outbox。
  */
 import { runMeshActor } from './mesh-worker'
+import { saveMcpStatus } from './mesh-mcp-status'
 import { applyActionPlan, type MeshParticipant, type TradeContext } from './mesh-runtime'
 import { buildActiveLoopPrompt, buildEventPrompt, buildTaskPrompt, buildReplyPrompt, buildReviewPrompt, conversationLines } from './mesh-prompts'
 
@@ -19,6 +20,8 @@ export interface DutyDelivery {
 
 export interface DutyCycleInput {
   runId: string
+  /** 工作室 id（= accountId），MCP 状态按 (workshop, agent) 落库用。 */
+  workshopId: string
   participant: MeshParticipant
   /** timer=主动到点（盯盘/复盘/巡检）；event=被一条投递唤醒。 */
   trigger: 'timer' | 'event'
@@ -43,7 +46,7 @@ export interface DutyCycleResult {
 
 export async function runOneDutyCycle(input: DutyCycleInput): Promise<DutyCycleResult> {
   const prompt = buildPrompt(input)
-  const { plan } = await runMeshActor(input.participant.agent, prompt, {
+  const { plan, mcpStatus } = await runMeshActor(input.participant.agent, prompt, {
     sessionId: input.sessionId,
     abortController: input.abortController,
   })
@@ -61,6 +64,8 @@ export async function runOneDutyCycle(input: DutyCycleInput): Promise<DutyCycleR
     input.cycleSeq,
     { abortSignal: input.abortController?.signal },
   )
+  // 落本轮 MCP 连接状态（connected/failed）供 UI 展示;放履职之后,状态记录不阻断 agent 干活。
+  if (mcpStatus) saveMcpStatus(input.workshopId, input.participant.agent.id, mcpStatus)
   return { thought: plan.thought, writes, emits, orders }
 }
 
