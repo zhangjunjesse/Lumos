@@ -11,8 +11,10 @@ interface RouteContext {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;
+  // refresh=1：绕过内存缓存强制重新探测（用户点「重新检测」或登录后轮询用）。
+  const forceRefresh = new URL(request.url).searchParams.get('refresh') === '1';
 
   try {
     const provider = getProvider(id);
@@ -33,7 +35,7 @@ export async function GET(_request: Request, context: RouteContext) {
       });
     }
 
-    const status = await getClaudeLocalAuthStatus();
+    const status = await getClaudeLocalAuthStatus({ forceRefresh });
     return NextResponse.json(status);
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

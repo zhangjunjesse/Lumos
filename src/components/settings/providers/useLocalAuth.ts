@@ -22,8 +22,10 @@ export interface LocalAuthState {
   clearMessages: () => void;
 }
 
-async function fetchStatus(configId: string): Promise<ClaudeLocalAuthStatus> {
-  const res = await fetch(`/api/providers/${configId}/auth/status`, { cache: 'no-store' });
+async function fetchStatus(configId: string, forceRefresh = false): Promise<ClaudeLocalAuthStatus> {
+  // forceRefresh：服务端绕过内存缓存重探（cache:'no-store' 只挡浏览器，绕不过服务端缓存）。
+  const url = `/api/providers/${configId}/auth/status${forceRefresh ? '?refresh=1' : ''}`;
+  const res = await fetch(url, { cache: 'no-store' });
   const data = (await res.json().catch(() => ({}))) as ClaudeLocalAuthStatus & { error?: string };
   if (!res.ok) throw new Error(data.error || '读取 Claude 本地登录状态失败');
   return data;
@@ -38,7 +40,7 @@ export function useLocalAuth(): LocalAuthState {
   const syncStatus = useCallback(async (configId: string): Promise<ClaudeLocalAuthStatus> => {
     setLoadingId(configId);
     try {
-      const status = await fetchStatus(configId);
+      const status = await fetchStatus(configId, true);
       setStatuses((prev) => ({ ...prev, [configId]: status }));
       return status;
     } catch (error) {
@@ -82,7 +84,7 @@ export function useLocalAuth(): LocalAuthState {
     while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
       await sleep(POLL_INTERVAL_MS);
       try {
-        const status = await fetchStatus(configId);
+        const status = await fetchStatus(configId, true);
         setStatuses((prev) => ({ ...prev, [configId]: status }));
         last = status;
         if (status.authenticated) return status;
