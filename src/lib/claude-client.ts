@@ -278,8 +278,11 @@ const DEFAULT_CHAT_DISALLOWED_TOOLS = [
 const STABLE_CLAUDE_CODE_ENV: Record<string, string> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'false',
-  // Avoid Claude Code's deferred-tool token-count fanout for large MCP toolsets.
-  CLAUDE_CODE_TST_NAMES_IN_MESSAGES: '1',
+  // 关掉 Tool Search Tool（deferred 工具发现）。SDK 只对 Claude Opus/Sonnet 4+ 自动开它，
+  // 且依赖 Anthropic 的 tool_reference beta；部分账号/端点不支持该 beta → 模型把工具调用打成
+  // "select:..." 正文文字、不真执行、对话中断（issue #30；GPT 不走 TST 故无此问题）。
+  // 强制 standard 模式：Claude 与 GPT 一样直接发 tool_use，工具正常执行。
+  ENABLE_TOOL_SEARCH: 'false',
 };
 const MODEL_FIRST_RESPONSE_TIMEOUT_MS = 180_000;
 const MODEL_FIRST_RESPONSE_TIMEOUT_ERROR = 'LUMOS_MODEL_FIRST_RESPONSE_TIMEOUT';
