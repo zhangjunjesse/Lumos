@@ -25,6 +25,7 @@ import {
   type McpPlaceholderContext,
 } from '@/lib/mcp-config-placeholders';
 import { resolveMcpRuntimeCommand } from '@/lib/mcp-runtime-command';
+import { resolveQmtPython, resolveQmtScript } from '@/lib/qmt-runtime';
 
 export interface McpResolveOptions {
   sessionWorkingDirectory?: string;
@@ -94,6 +95,12 @@ export function resolveEnabledMcpServers(
     pythonPath,
     userHome: os.homedir(),
   };
+  // qmt 只读 MCP 启用时才解析它专用的系统 python / 脚本路径（避免每次对话都读 DB 设置）。
+  // 它走系统 python（装了 xtquant），不能用 [PYTHON_PATH] 的内置 venv。
+  if (mcpServers['qmt-readonly']) {
+    placeholderContext.qmtPython = resolveQmtPython();
+    placeholderContext.qmtScript = resolveQmtScript();
+  }
   const enrichContext: McpEnrichContext = {
     sessionWorkingDirectory: options.sessionWorkingDirectory,
     sessionId: options.sessionId,

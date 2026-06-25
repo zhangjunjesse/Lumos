@@ -9,6 +9,7 @@ import path from 'path';
 import { dataDir } from '@/lib/db';
 import { getFeishuCredentials } from '@/lib/feishu-config';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
+import { resolveQmtEnv } from '@/lib/qmt-runtime';
 
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-image-preview';
@@ -206,6 +207,12 @@ function enrichWeChatExportEnv(
   };
 }
 
+// qmt 只读 MCP：注入 QMT 安装路径 / 账户号（python 解释器与脚本路径走 [QMT_PYTHON]/[QMT_SCRIPT]
+// 占位符，不在 env 这层）。命令/脚本/env 同一份真源见 @/lib/qmt-runtime。
+function enrichQmtEnv(env: Record<string, string>): Record<string, string> {
+  return { ...env, ...resolveQmtEnv() };
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -220,4 +227,5 @@ export const ENRICHER_MAP: Record<string, McpEnvEnricher> = {
   'gemini-image': enrichGeminiEnv,
   'gemini_image': enrichGeminiEnv,
   'wechat-export': enrichWeChatExportEnv,
+  'qmt-readonly': enrichQmtEnv,
 };

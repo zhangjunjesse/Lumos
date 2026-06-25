@@ -1,0 +1,9 @@
+{
+  "name": "qmt-readonly",
+  "description": "QMT 行情 / 账户只读 MCP：A股实时行情、K线、持仓、资金、财经快讯（无下单）。需本机 Python 装好 xtquant 与 mcp，并在炒股团队「数据源」里配置 Python 与 QMT 路径。",
+  "command": "[QMT_PYTHON]",
+  "args": ["[QMT_SCRIPT]"],
+  "type": "stdio",
+  "runtime": "python",
+  "runMode": "on_demand"
+}

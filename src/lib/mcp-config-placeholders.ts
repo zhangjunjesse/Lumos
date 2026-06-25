@@ -11,6 +11,9 @@ export interface McpPlaceholderContext {
   dataDir: string;
   pythonPath: string;
   userHome: string;
+  /** qmt 只读 MCP 专用：系统 python 解释器与脚本绝对路径。仅当 qmt-readonly 启用时由 mcp-resolver 构建。 */
+  qmtPython?: string;
+  qmtScript?: string;
 }
 
 function normalizePathSeparators(value: string): string {
@@ -85,11 +88,16 @@ export function normalizePortableMcpConfig(
 }
 
 export function resolveMcpConfigPlaceholders(value: string, context: McpPlaceholderContext): string {
-  return value
+  let result = value
     .replace(/\[RUNTIME_PATH\]|\$\{RUNTIME_PATH\}/g, context.runtimePath)
     .replace(/\[WORKSPACE_PATH\]|\$\{WORKSPACE_PATH\}/g, context.workspacePath)
     .replace(/\[DATA_DIR\]|\$\{DATA_DIR\}|\[LUMOS_HOME\]|\$\{LUMOS_HOME\}/g, context.dataDir)
     .replace(/\[PYTHON_PATH\]|\$\{PYTHON_PATH\}/g, context.pythonPath)
     .replace(/\[USER_HOME\]|\$\{USER_HOME\}/g, context.userHome)
     .replace(/^~(?=$|[/\\])/, context.userHome);
+  // qmt 占位符仅当上下文提供时替换（qmt-readonly 启用时由 mcp-resolver 注入）；
+  // 未提供则原样保留，让缺失暴露为明确的 spawn 失败而非静默空命令。
+  if (context.qmtPython) result = result.replace(/\[QMT_PYTHON\]/g, context.qmtPython);
+  if (context.qmtScript) result = result.replace(/\[QMT_SCRIPT\]/g, context.qmtScript);
+  return result;
 }
