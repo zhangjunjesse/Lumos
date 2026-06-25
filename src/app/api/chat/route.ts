@@ -10,7 +10,7 @@ import {
 } from '@/lib/agent-capabilities';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs, scheduleSessionAutoContinue, stopSessionAutoContinue } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
-import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, MCPServerConfig, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
+import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
   isImageFile,
   parseMessageContent,
@@ -50,23 +50,12 @@ const MAX_FEISHU_CONTEXT_DOCS = 2;
 const FEISHU_CONTEXT_MAX_CHARS = 3500;
 // FEISHU/DEEPSEARCH/BROWSER 系统提示常量已迁至能力注册中心
 // （src/lib/agent-capabilities/hints.ts），由对应连接器持有。
-const BROWSER_REQUEST_DISALLOWED_TOOLS = [
-  'Bash',
-  'Task',
-  'TaskOutput',
-  'WebFetch',
-  'WebSearch',
-  'Read',
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'Glob',
-  'Grep',
-  'LS',
-  'NotebookEdit',
-  'TodoWrite',
-  'ExitPlanMode',
-];
+// 浏览器意图下「优先用浏览器工具」的提示词。历史上这里是一张 disallowedTools 名单（把
+// Bash/Read/Write 等全套内置工具禁掉，逼模型只用浏览器），叠加 tools:[] 与「只留浏览器 MCP」
+// 一起构成「浏览器专用模式」。问题：触发它的是一串写死的关键词正则（含 chrome/查一下/网页…），
+// 误判极频繁；一旦误判，模型没了 Bash 就把命令打成文字、不执行（见 issue #30 排查）。
+// 现已废弃这套「砍工具」做法，改为：始终保留全套工具，仅用下面这段提示词引导，模型自行判断。
+const BROWSER_PREFERENCE_HINT = `用户这条消息可能涉及浏览器/网页操作。若确实要打开网页、在浏览器里访问/点击/填写/截图，请优先使用浏览器工具（chrome-devtools 等 Lumos 浏览器工具），不要用 Bash 或网络抓取自行获取页面。但你仍拥有 Bash、文件读写等全部工具——若这条消息其实不是浏览器操作（例如查本地文件、安装路径、跑命令），照常用相应工具完成，绝不要把工具调用写成文字。`;
 
 const MAIN_AGENT_PRIMARY_SESSION_HINT = `This conversation is the primary Main Agent space, not a project-specific thread.
 Do not imply that a specific project workspace is active unless this session has an explicit working directory or the user explicitly selected one in this conversation.
@@ -164,19 +153,6 @@ function findMentionedBrowserContext(userInput: string): {
 }
 
 // hasFeishuMcp / hasDeepSearchMcp 已由能力注册中心 buildDbServerHints 取代。
-// onlyBrowserMcpServers 保留：用户自装 MCP 不在注册表，浏览器意图下做硬过滤兜底。
-function onlyBrowserMcpServers(
-  servers: Record<string, MCPServerConfig> | undefined,
-): Record<string, MCPServerConfig> | undefined {
-  if (!servers) return undefined;
-  const result: Record<string, MCPServerConfig> = {};
-  for (const name of ['chrome-devtools', 'chrome_devtools']) {
-    if (servers[name]) {
-      result[name] = servers[name];
-    }
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
 
 function isEmbeddedBrowserContext(contextId?: string): boolean {
   return !contextId || contextId.trim() === '' || contextId.trim() === 'embedded:default';
@@ -862,7 +838,8 @@ export async function POST(request: NextRequest) {
       selectedBrowserLabel,
     };
     const capabilityPlan = buildCapabilityPlan(connectorContext);
-    let loadedMcpServers = resolveEnabledMcpServers({
+    // 浏览器意图不再过滤掉非浏览器 MCP——保留全套，由模型按需选用（浏览器工具仍在其中）。
+    const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedSessionWorkingDirectory,
       sessionId: session_id,
       browserBridgeOverride,
@@ -870,10 +847,6 @@ export async function POST(request: NextRequest) {
       skipNames: capabilityPlan.dbMcpSkipNames,
       browserBackground: !visibleBrowserIntent,
     });
-    if (browserAutomationIntent) {
-      // 兜底：用户自装 MCP 不在注册表，浏览器意图下硬过滤只留浏览器工具。
-      loadedMcpServers = onlyBrowserMcpServers(loadedMcpServers);
-    }
     console.timeEnd('[perf] MCP servers loading');
 
     const shouldAllowAutoContinue = isAutoContinueRequest || session.auto_continue_enabled === 1;
@@ -896,6 +869,9 @@ export async function POST(request: NextRequest) {
     }
     if (hasLumosBugIssueIntent) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + LUMOS_BUG_ISSUE_REQUEST_HINT;
+    }
+    if (browserAutomationIntent) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + BROWSER_PREFERENCE_HINT;
     }
     // In-process image gen tool — always inject hint (replaces old gemini-image MCP hint)
     if (permissionMode !== 'default' && !isLegacyImageAgentPrompt(systemPromptAppend)) {
@@ -976,9 +952,8 @@ export async function POST(request: NextRequest) {
       permissionMode,
       files: fileAttachments,
       toolTimeoutSeconds: toolTimeout || 900,
-      forceFreshSession: browserAutomationIntent,
-      sdkBuiltinTools: browserAutomationIntent ? [] : undefined,
-      disallowedTools: browserAutomationIntent ? BROWSER_REQUEST_DISALLOWED_TOOLS : undefined,
+      // 浏览器意图不再强制新会话、不再砍内置工具、不再硬塞禁用名单——保留全套工具，
+      // 仅靠 BROWSER_PREFERENCE_HINT 引导。根因见上方常量注释（issue #30）。
       provider: resolvedProvider,
       knowledgeOptions: {
         enabled: knowledgeEnabledForRequest,
