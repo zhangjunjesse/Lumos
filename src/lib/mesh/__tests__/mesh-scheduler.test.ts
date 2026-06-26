@@ -65,17 +65,16 @@ describe('mesh-scheduler —— 时间轮调度（S4）', () => {
     expect(pickDispatchable([{ participantId: 'a', trigger: 'timer', delivery: null }, { participantId: 'b', trigger: 'timer', delivery: null }], new Set(['a'])).map((p) => p.participantId)).toEqual(['b']) // a 在飞跳过
   })
 
-  it('dispatchDutyCycle：active_loop 跑完按固定间隔排下次（框架不退避，idleStreak 不变）+ 清 inFlight', async () => {
+  it('dispatchDutyCycle：active_loop 跑完按固定间隔排下次（框架不退避）+ 清 inFlight', async () => {
     initParticipants('rs4', [{ participantId: 'stock.observe', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 100)
     mockedBuildP.mockReturnValue(PART)
-    mockedRun.mockResolvedValue({ thought: '', writes: ['无新异动'], emits: [], orders: [] }) // 无 emit/order：框架不再据此退避
+    mockedRun.mockResolvedValue({ thought: '无新异动' }) // DutyCycleResult 只有 thought（副作用由工具即时落库）
     const r = runner('rs4', new AbortController(), new Set(['stock.observe']))
     const before = Date.now()
     await dispatchDutyCycle(r, { participantId: 'stock.observe', trigger: 'timer', delivery: null })
     const p = getParticipant('rs4', 'stock.observe')!
     expect(p.nextRunAt).toBeGreaterThanOrEqual(before + 60000) // 固定间隔(mock interval=60s)，无指数退避
-    expect(p.nextRunAt).toBeLessThan(before + 120000)
-    expect(p.idleStreak).toBe(0) // 框架不再退避，idleStreak 不被累加
+    expect(p.nextRunAt).toBeLessThan(before + 120000) // 关键不变量：排下次=now+interval，不随空转指数拉长
     expect(r.inFlight.has('stock.observe')).toBe(false)
   })
 
@@ -85,7 +84,7 @@ describe('mesh-scheduler —— 时间轮调度（S4）', () => {
     const abort = new AbortController()
     mockedRun.mockImplementation(async () => {
       abort.abort() // duty cycle 跑到一半被 stop
-      return { thought: '', writes: [], emits: [], orders: [] }
+      return { thought: '' }
     })
     const r = runner('rs5', abort, new Set(['stock.observe']))
     await dispatchDutyCycle(r, { participantId: 'stock.observe', trigger: 'timer', delivery: null })

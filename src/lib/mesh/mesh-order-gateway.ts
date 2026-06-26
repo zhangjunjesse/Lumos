@@ -12,7 +12,7 @@ import {
   rejectTicket,
   type OrderTicket,
 } from './mesh-order-ticket'
-import { getAccount, applyFill, setHalted } from './mesh-paper-account'
+import { getAccount, initAccount, applyFill, setHalted, DEFAULT_PAPER_CASH } from './mesh-paper-account'
 import { calculateOrderFee, checkOrder, type OrderIntent, type RiskVerdict } from './mesh-risk-gate'
 import { DEFAULT_RISK_RULES, type RiskRules } from './mesh-risk-rules'
 import { isLiveBackendConfigured, liveBackend, LiveBackendError } from './mesh-live-backend'
@@ -70,7 +70,9 @@ export async function placeOrder(
     return { ticketId: ticket.id, status: ticket.status, filled: ticket.status === 'filled', reason: ticket.rejectReason, price: ticket.price }
   }
 
-  const account = getAccount(accountId)
+  // paper 账户按需懒建：团队启动后中途加入下单成员、或聊天即时下单时账户可能还没建。
+  // live 缺账户属配置错误，保持 throw（不为真盘自动凭空建账户）。
+  const account = getAccount(accountId) ?? (mode === 'paper' ? initAccount(accountId, DEFAULT_PAPER_CASH) : null)
   if (!account) throw new Error(`paper account not found: ${accountId}`)
   const verdict: RiskVerdict = checkOrder(intent, account, options.snapshot, rules)
   const riskSnapshot = { verdict, mode }
