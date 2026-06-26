@@ -95,9 +95,12 @@ describe('runMeshAgent', () => {
   it('外部 abort 监听器跑完即解绑（常驻长会话不在会话级 signal 上累积泄漏）', async () => {
     mockQuery.mockReturnValue(streamMessages([{ type: 'result', result: 'done' }]))
     const external = new AbortController()
+    const addSpy = jest.spyOn(external.signal, 'addEventListener')
     const removeSpy = jest.spyOn(external.signal, 'removeEventListener')
     await runMeshAgent(agent, 'hi', { abortController: external })
-    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function)) // finally 里解绑了本轮注册的监听器
+    const registered = addSpy.mock.calls.find((c) => c[0] === 'abort')?.[1]
+    expect(registered).toBeDefined() // 本轮确实注册了 abort 监听器
+    expect(removeSpy).toHaveBeenCalledWith('abort', registered) // 且解绑的正是同一个 handler（按引用，不是随便一个函数）
   })
 })
 

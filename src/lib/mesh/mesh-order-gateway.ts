@@ -93,7 +93,8 @@ async function placeOrderInner(
   // paper 账户按需懒建：团队启动后中途加入下单成员、或聊天即时下单时账户可能还没建。
   // live 缺账户属配置错误，保持 throw（不为真盘自动凭空建账户）。
   const ensured = getAccount(accountId) ?? (mode === 'paper' ? initAccount(accountId, DEFAULT_PAPER_CASH) : null)
-  if (!ensured) throw new Error(`paper account not found: ${accountId}`)
+  // paper 上面已懒建,走不到这；这里只剩 live：live 缺账户属配置错误,不为真盘凭空建账户,报清楚是 live 账户问题。
+  if (!ensured) throw new Error(`live 账户不存在(需先建账户/配置): ${accountId}`)
   // 跨交易日先清「当日计数」、刷新当日亏损基线，再过总闸——否则单日笔数/金额/亏损会从开户终身累计、把常驻团队锁死。
   const account = rollDayIfNeeded(accountId, dayKey(new Date()))
   const verdict: RiskVerdict = checkOrder(intent, account, options.snapshot, rules)
