@@ -39,6 +39,9 @@ interface AccountRow {
   halted: number
 }
 
+/** 默认模拟盘初始资金（开新 paper 账户用）。run-control 启动建账户、gateway 懒建都用它。 */
+export const DEFAULT_PAPER_CASH = 100000
+
 export function initAccount(runId: string, cash: number): PaperAccount {
   getDb().prepare('INSERT OR IGNORE INTO mesh_paper_account (run_id, cash) VALUES (?, ?)').run(runId, cash)
   return getAccount(runId)!

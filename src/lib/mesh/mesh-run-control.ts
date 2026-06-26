@@ -15,7 +15,7 @@ import {
   DEFAULT_TICK_MS,
   type SnapshotProvider,
 } from './mesh-runner'
-import { getAccount, initAccount, type PaperAccount } from './mesh-paper-account'
+import { getAccount, initAccount, DEFAULT_PAPER_CASH, type PaperAccount } from './mesh-paper-account'
 import { initParticipants, deleteByRun } from './mesh-participant-store'
 import { buildSessionSeeds, teamTrades } from './mesh-session-context'
 import { writeBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
@@ -23,7 +23,6 @@ import { startQuoteFeed, stopQuoteFeed, getQuoteSnapshot } from './mesh-quote-fe
 import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 
 export const DEFAULT_ACCOUNT_ID = DEFAULT_WORKSHOP_ID // 工作室 id 即账户 id
-const DEFAULT_PAPER_CASH = 100000
 
 /** 清孤儿：mesh_run=running 但内存无 runner（多为进程重启遗留）→ 标 stopped。返回清理条数。 */
 export function reconcileOrphans(): number {

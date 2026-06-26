@@ -24,9 +24,8 @@ interface Agent {
   mcpStatus?: { name: string; status: string }[]
 }
 
-const CORE_ROLES = ['observe', 'decide', 'risk', 'review']
 const ROLE_OPTIONS = SELECTABLE_ROLES
-// 角色中文标签。custom=零内置逻辑;盯盘(observe)会被喂行情快照,其余角色只看白板。
+// 角色中文标签——现在只是展示用的分组标签,不影响执行(成员职责完全由系统提示词决定)。
 const ROLE_LABELS: Record<string, string> = { custom: '自定义 custom', observe: '盯盘 observe', decide: '决策 decide', risk: '风控 risk', review: '复盘 review', research: '研究 research', integration: '集成 integration' }
 const HEADERS = { 'content-type': 'application/json' }
 const FIELD = 'w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400'
@@ -162,8 +161,6 @@ export function TeamSettings({ accountId }: { accountId: string }) {
           </label>
         </div>
 
-        {!a.enabled && CORE_ROLES.includes(a.role) && <p className="mt-2 text-xs text-amber-600">⚠ 停用核心角色会中断协作链（盯盘→决策→风控→复盘）</p>}
-
         {isEditing ? (
           <div className="mt-3 space-y-2">
             <textarea value={draft.systemPrompt} onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))} rows={4} className={FIELD} />
@@ -190,7 +187,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
               )}
             </div>
             <McpPicker options={availableMcp} value={draft.mcpAllowlist} onChange={(v) => setDraft((d) => ({ ...d, mcpAllowlist: v }))} status={a.mcpStatus} />
-            <p className="text-xs text-neutral-400">角色 = 这个 agent 在团队里干啥。自定义(custom) 零内置逻辑、纯按上面的提示词走;盯盘(observe) 会被喂行情快照;其余是炒股团队的固定职责。</p>
+            <p className="text-xs text-neutral-400">角色只是展示用的标签,不影响执行;这个成员具体干啥,完全由上面的系统提示词决定。</p>
             <div className="flex gap-2">
               <button onClick={() => saveEdit(a.id)} className="rounded-md bg-neutral-900 px-3 py-1 text-sm text-white hover:bg-neutral-700">保存</button>
               <button onClick={() => setEditing(null)} className="rounded-md px-3 py-1 text-sm text-neutral-600 hover:bg-neutral-100">取消</button>
@@ -239,7 +236,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
 
       {leader && card(leader, true)}
 
-      <div className="pt-2 text-xs font-medium text-neutral-400">协作成员（盯盘 → 决策 → 风控 → 复盘）</div>
+      <div className="pt-2 text-xs font-medium text-neutral-400">协作成员（队长除外）</div>
       {others.map((a) => card(a))}
     </div>
   )

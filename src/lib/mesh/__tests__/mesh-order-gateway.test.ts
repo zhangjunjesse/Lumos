@@ -110,6 +110,13 @@ describe('placeOrder (paper)', () => {
     expect(acc.orderCount).toBe(2)
     expect(getAccount('run-1')).toBeNull()
   })
+
+  it('paper 账户按需懒建：无账户直接下单 → 懒建账户再成交（修「中途加入下单成员/即时下单时账户没建」的边角）', async () => {
+    expect(getAccount('g_lazy')).toBeNull() // 没预先 initAccount
+    const r = await placeOrder('g_lazy', { symbol: '600160.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'g_lazy-1', snapshot })
+    expect(r.filled).toBe(true)
+    expect(getAccount('g_lazy')?.positions['600160.SH'].qty).toBe(100)
+  })
 })
 
 describe('placeOrder (live) — M8 真盘后端', () => {
