@@ -12,7 +12,9 @@ import { resolveScriptFromCmd, sanitizeEnv } from './utils'
 import {
   clearClaudeAndAnthropicEnv,
   injectClaudeProviderEnv,
+  isClaudeLocalAuthProvider,
 } from './provider-env'
+import { applyConfiguredProxyToEnv } from '@/lib/net/proxy-settings'
 import { getVenvDir, getVenvPythonPath } from '@/lib/python-venv'
 import {
   buildLumosLlmRequestHeaders,
@@ -100,6 +102,11 @@ function injectProviderEnv(
 ): ApiProvider | undefined {
   const activeProvider = resolveRuntimeProvider(options)
   injectClaudeProviderEnv(sdkEnv, activeProvider)
+  // 本地 Claude(local_auth) 走官方 api.anthropic.com（国内常被墙）→ 按「设置→通用→外网连接」
+  // 配的代理出网。只对 local_auth 注入：其他类型服务商多为国内中转/自带 base_url，塞代理反而坏。
+  if (isClaudeLocalAuthProvider(activeProvider)) {
+    applyConfiguredProxyToEnv(sdkEnv)
+  }
   return activeProvider
 }
 
