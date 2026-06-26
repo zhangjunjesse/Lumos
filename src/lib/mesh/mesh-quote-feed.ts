@@ -120,6 +120,11 @@ class QuoteFeed {
     })
   }
 
+  /** 按需现取某些股的实时 tick（不限自选/持仓）；复用同一子进程通道。无桥/取不到→[]。 */
+  fetchNow(codes: string[]): Promise<QuoteTick[]> {
+    return this.getTicks(codes)
+  }
+
   private ensureChild(): void {
     if (this.child && !this.child.killed) return
     if (Date.now() - this.lastSpawnFailAt < SPAWN_BACKOFF_MS) throw new Error('quote feed 退避中(上次起即退)')
@@ -202,4 +207,16 @@ export function stopQuoteFeed(accountId: string): void {
 /** 取某账户最新真实行情快照(同步)。无桥/无行情=空 {ticks:[]},绝不返回假数据。 */
 export function getQuoteSnapshot(accountId: string): QuoteSnapshot {
   return feeds.get(accountId)?.snapshot() ?? { ticks: [] }
+}
+
+/**
+ * 下单前按需现取某些股的实时 tick（不限当前持仓/自选）。
+ * 参考成熟交易实现的做法：下单时就地取价，而非依赖只覆盖自选的缓存快照——
+ * 否则买一只不在自选里的股，RiskGate 会因"无该标的有效行情"误拒（price=0）。
+ * 无活跃行情桥 / mac 无 xtquant / 取不到 → 返回 []（RiskGate 据此拒单，绝不按假价下单）。
+ */
+export async function fetchTicksOnDemand(accountId: string, codes: string[]): Promise<QuoteTick[]> {
+  const feed = feeds.get(accountId)
+  if (!feed || codes.length === 0) return []
+  return feed.fetchNow(codes)
 }

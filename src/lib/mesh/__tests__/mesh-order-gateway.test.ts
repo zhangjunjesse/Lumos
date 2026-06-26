@@ -24,15 +24,21 @@ jest.mock('../mesh-live-backend', () => {
     isLiveBackendConfigured: jest.fn(() => true),
   }
 })
+// mock 行情桥：验证"快照里没有该股价 → 下单时按需现取"这条新路径，不真起 python
+jest.mock('../mesh-quote-feed', () => ({
+  fetchTicksOnDemand: jest.fn(async () => []),
+}))
 
 import { placeOrder } from '../mesh-order-gateway'
 import { initAccount, getAccount } from '../mesh-paper-account'
 import { getTicket } from '../mesh-order-ticket'
 import { isLiveBackendConfigured, liveBackend, LiveBackendError } from '../mesh-live-backend'
+import { fetchTicksOnDemand } from '../mesh-quote-feed'
 
 const snapshot = { ticks: [{ code: '600160.SH', last: 45, pct: 5 }] }
 const mockedLiveBackend = jest.mocked(liveBackend)
 const mockedIsLiveBackendConfigured = jest.mocked(isLiveBackendConfigured)
+const mockedFetchTicks = jest.mocked(fetchTicksOnDemand)
 
 function stubLive(placeImpl: () => Promise<unknown>) {
   mockedLiveBackend.mockReturnValue({ placeOrder: placeImpl } as unknown as ReturnType<typeof liveBackend>)
@@ -41,6 +47,8 @@ function stubLive(placeImpl: () => Promise<unknown>) {
 beforeEach(() => {
   mockedLiveBackend.mockReset()
   mockedIsLiveBackendConfigured.mockReturnValue(true)
+  mockedFetchTicks.mockReset()
+  mockedFetchTicks.mockResolvedValue([]) // 默认：按需取价取不到（除非用例显式 mock）
 })
 
 describe('placeOrder (paper)', () => {
@@ -53,6 +61,25 @@ describe('placeOrder (paper)', () => {
     const acc = getAccount('g1')!
     expect(acc.positions['600160.SH'].qty).toBe(100)
     expect(acc.cash).toBeLessThan(100000)
+  })
+
+  it('快照里没有该股 → 按需现取到价 → 正常成交（参考项目做法：下单就地取价，不限自选）', async () => {
+    initAccount('od1', 100000)
+    mockedFetchTicks.mockResolvedValue([{ code: '603011.SH', last: 32, pct: 3 }])
+    const r = await placeOrder('od1', { symbol: '603011.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'od1-1', snapshot })
+    expect(mockedFetchTicks).toHaveBeenCalledWith('od1', ['603011.SH'])
+    expect(r.filled).toBe(true)
+    expect(r.price).toBe(32)
+    expect(getAccount('od1')!.positions['603011.SH'].qty).toBe(100)
+  })
+
+  it('快照无该股 + 按需也取不到价（mac/无 xtquant 降级）→ 拒单，绝不按假价下单', async () => {
+    initAccount('od2', 100000)
+    mockedFetchTicks.mockResolvedValue([])
+    const r = await placeOrder('od2', { symbol: '603011.SH', side: 'buy', qty: 100 }, { idempotencyKey: 'od2-1', snapshot })
+    expect(r.status).toBe('rejected')
+    expect(r.reason).toContain('有效行情')
+    expect(getAccount('od2')!.positions['603011.SH']).toBeUndefined()
   })
 
   it('资金不足 → ticket rejected，账户不动', async () => {

@@ -16,6 +16,7 @@ import { getAccount, applyFill, setHalted } from './mesh-paper-account'
 import { calculateOrderFee, checkOrder, type OrderIntent, type RiskVerdict } from './mesh-risk-gate'
 import { DEFAULT_RISK_RULES, type RiskRules } from './mesh-risk-rules'
 import { isLiveBackendConfigured, liveBackend, LiveBackendError } from './mesh-live-backend'
+import { fetchTicksOnDemand, type QuoteTick } from './mesh-quote-feed'
 
 export interface PlaceOrderResult {
   ticketId: string
@@ -72,7 +73,19 @@ export async function placeOrder(
 
   const account = getAccount(accountId)
   if (!account) throw new Error(`paper account not found: ${accountId}`)
-  const verdict: RiskVerdict = checkOrder(intent, account, options.snapshot, rules)
+
+  // 下单时若缓存快照里没有该股价格（它不在持仓/自选）→ 按需现取一次实时价并入快照，
+  // 否则 RiskGate 会因 price=0 误判"无该标的有效行情"而拒单（成熟交易实现都是下单就地取价）。
+  // 取不到（无行情桥 / mac 无 xtquant）→ 不并入，RiskGate 据实拒单，绝不按假价下单。
+  let snapshot = options.snapshot
+  const ticks = (snapshot as { ticks?: QuoteTick[] } | null | undefined)?.ticks
+  if (!Array.isArray(ticks) || !ticks.some((t) => t.code === intent.symbol)) {
+    const fresh = await fetchTicksOnDemand(accountId, [intent.symbol])
+    if (fresh.length > 0) {
+      snapshot = { ticks: [...(Array.isArray(ticks) ? ticks : []), ...fresh] }
+    }
+  }
+  const verdict: RiskVerdict = checkOrder(intent, account, snapshot, rules)
   const riskSnapshot = { verdict, mode }
 
   // 确定性总闸（不经 LLM）：不过即拒，触线 halt
