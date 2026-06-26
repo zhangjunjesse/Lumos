@@ -18,7 +18,6 @@ jest.mock('../mesh-session-context', () => ({
 import {
   selectDue,
   pickDispatchable,
-  computeNextRunAt,
   tickLoop,
   dispatchDutyCycle,
   emitMarketClose,
@@ -67,32 +66,18 @@ describe('mesh-scheduler —— 时间轮调度（S4）', () => {
     expect(pickDispatchable([{ participantId: 'a', trigger: 'timer', delivery: null }, { participantId: 'b', trigger: 'timer', delivery: null }], new Set(['a'])).map((p) => p.participantId)).toEqual(['b']) // a 在飞跳过
   })
 
-  it('computeNextRunAt：空转指数退避，封顶 5 档', () => {
-    expect(computeNextRunAt(60000, 0, 1000)).toBe(1000 + 60000)
-    expect(computeNextRunAt(60000, 2, 1000)).toBe(1000 + 60000 * 4)
-    expect(computeNextRunAt(60000, 99, 0)).toBe(60000 * 2 ** 5) // 封顶
-  })
-
-  it('dispatchDutyCycle：active_loop 空转跑完 → 写 next_run_at + idleStreak+1 + 清 inFlight', async () => {
+  it('dispatchDutyCycle：active_loop 跑完按固定间隔排下次（框架不退避，idleStreak 不变）+ 清 inFlight', async () => {
     initParticipants('rs4', [{ participantId: 'stock.observe', role: 'observe', subscriptions: [], workMode: 'active_loop' }], 100)
     mockedBuildP.mockReturnValue(PART)
-    mockedRun.mockResolvedValue({ thought: '', writes: ['无新异动'], emits: [], orders: [] }) // 空转（无 emit/order）
+    mockedRun.mockResolvedValue({ thought: '', writes: ['无新异动'], emits: [], orders: [] }) // 无 emit/order：框架不再据此退避
     const r = runner('rs4', new AbortController(), new Set(['stock.observe']))
+    const before = Date.now()
     await dispatchDutyCycle(r, { participantId: 'stock.observe', trigger: 'timer', delivery: null })
     const p = getParticipant('rs4', 'stock.observe')!
-    expect(p.nextRunAt).toBeGreaterThan(100) // 排了下次
-    expect(p.idleStreak).toBe(1) // 空转退避计数
+    expect(p.nextRunAt).toBeGreaterThanOrEqual(before + 60000) // 固定间隔(mock interval=60s)，无指数退避
+    expect(p.nextRunAt).toBeLessThan(before + 120000)
+    expect(p.idleStreak).toBe(0) // 框架不再退避，idleStreak 不被累加
     expect(r.inFlight.has('stock.observe')).toBe(false)
-  })
-
-  it('dispatchDutyCycle：custom 角色免空转退避 → idleStreak 保持 0（按设定间隔死跑）', async () => {
-    initParticipants('rs_custom', [{ participantId: 'my.custom', role: 'custom', subscriptions: [], workMode: 'active_loop' }], 100)
-    mockedBuildP.mockReturnValue({ agent: { id: 'my.custom', role: 'custom' as const, systemPrompt: '', mcpAllowlist: [], toolAllowlist: [] }, topics: [] })
-    mockedRun.mockResolvedValue({ thought: '', writes: ['hello'], emits: [], orders: [] }) // 无 emit/order，但 custom 不退避
-    const r = runner('rs_custom', new AbortController(), new Set(['my.custom']))
-    await dispatchDutyCycle(r, { participantId: 'my.custom', trigger: 'timer', delivery: null })
-    const p = getParticipant('rs_custom', 'my.custom')!
-    expect(p.idleStreak).toBe(0) // custom 免退避，不累加
   })
 
   it('dispatchDutyCycle：abort 后不 scheduleNext（不写 next_run_at）', async () => {
