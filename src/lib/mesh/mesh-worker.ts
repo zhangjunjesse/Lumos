@@ -6,7 +6,9 @@
  * 转换），不依赖也不修改 workflow 执行链。
  *
  * - runMeshAgent：收集纯文本（M1 单 agent 入口用）
- * - runMeshActor：强制结构化 action plan（M3 协作用）
+ * - runMeshAgentText：跑一轮,agent 在 turn 内直接调注入的工具（mesh-collab 协作 / mesh-trade 下单）产生
+ *   副作用,返回思考文本（常驻 duty cycle 主入口,取代旧的"结构化 action plan + 框架单事务执行"）
+ * - runMeshAgentStructured：强制 JSON 输出（队长/管家等 NL→JSON 解析用,复用 runMeshAgentText）
  *
  * 设计依据：docs/agent-mesh-collaboration-design.md §5 / §6
  */
@@ -16,8 +18,8 @@ import { getProvider } from '@/lib/db/providers'
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth'
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env'
 import { createMeshCanUseTool, resolveMeshMcpServers, MESH_BUILTIN_TOOLS } from './mesh-tool-policy'
-import { buildMeshActionPlanSchema, parseActionPlan, type MeshActionPlan } from './mesh-action-schema'
 import { createMeshCollabMcpServer, MESH_COLLAB_MCP_SERVER_NAME, type MeshCollabContext } from './mesh-collab-mcp-server'
+import { createMeshTradeMcpServer, MESH_TRADE_MCP_SERVER_NAME, type MeshTradeToolContext } from './mesh-trade-mcp-server'
 import type { MeshAgentConfig } from './mesh-agent-config'
 import type { McpServerStatus } from './mesh-mcp-status'
 
@@ -33,18 +35,14 @@ export interface MeshRunOptions {
   /** 协作上下文:有则注入框架级 mesh-collab 工具(read/write_blackboard/emit_event/send_task/reply),
    *  让 agent 在 turn 内直接调协作原语(取代旧的 action-plan 输出)。缺省不注入(纯 NL/解析类如队长/管家)。 */
   collabContext?: MeshCollabContext
+  /** 下单上下文:有且 agent.mcpAllowlist 含 'mesh-trade' 才注入 place_order 工具(经确定性风控总闸 + OrderGateway)。
+   *  下单走 mcpAllowlist 正常裁决(不像 collab 那样人人放行)——能力隔离:只有声明下单职责的 agent 够得到。 */
+  tradeContext?: MeshTradeToolContext
 }
 
 export interface MeshRunResult {
   text: string
   finishReason: 'completed' | 'aborted'
-}
-
-export interface MeshActorResult {
-  plan: MeshActionPlan
-  text: string
-  /** 本轮 SDK 启动时的 MCP 连接状态（来自 init 消息的 mcp_servers）。 */
-  mcpStatus?: McpServerStatus[]
 }
 
 interface SdkStreamMessage {
@@ -78,6 +76,13 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
       collabTools.push(`mcp__${MESH_COLLAB_MCP_SERVER_NAME}__${t}`)
     }
   }
+  // 框架级下单工具:有 tradeContext 且 agent 白名单声明了 'mesh-trade' 才注入 place_order。
+  // 与 collab 不同它走 mcpAllowlist 正常裁决(canUseTool 据白名单放行)——能力隔离:只有有下单职责的 agent 够得到。
+  const tradeTools: string[] = []
+  if (options.tradeContext && agent.mcpAllowlist.includes(MESH_TRADE_MCP_SERVER_NAME)) {
+    mcpServers[MESH_TRADE_MCP_SERVER_NAME] = createMeshTradeMcpServer(options.tradeContext)
+    tradeTools.push(`mcp__${MESH_TRADE_MCP_SERVER_NAME}__place_order`)
+  }
   // 本轮独立 controller:外部 abort(停团队)联动它,但本轮超时只 abort 它、不波及整个 run。
   const abortController = new AbortController()
   const external = options.abortController
@@ -91,7 +96,7 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
     permissionMode: 'default' as const,
     // 全放开:预批准全部内置工具(+ agent 额外声明的),让 agent 确知可用、不再误判"没工具"。
     // canUseTool 仍兜底裁决(内置放行、未注入 MCP 拒);下单安全靠 OrderGateway 结构隔离。
-    allowedTools: [...MESH_BUILTIN_TOOLS, ...agent.toolAllowlist, ...collabTools],
+    allowedTools: [...MESH_BUILTIN_TOOLS, ...agent.toolAllowlist, ...collabTools, ...tradeTools],
     canUseTool: createMeshCanUseTool(agent),
     env: ctx.env,
     settingSources: ctx.settingSources,
@@ -128,17 +133,15 @@ export async function runMeshAgent(
   }
 }
 
-/** 跑一个 mesh agent,要它输出严格 JSON(提示词约束 + 自己解析),返回解析后的结构 + 文本。
- *  不用 SDK 的 outputFormat:json_schema —— 对部分代理会陷入 assistant↔user 死循环、永不收口
- *  (chat 能用正是因为它纯文本流式)。改成像 chat 那样取文本,再从文本里抽 JSON。 */
-export async function runMeshAgentStructured(
+/** 跑一个 mesh agent 一轮:agent 在 turn 内直接调注入的工具(mesh-collab 协作 / mesh-trade 下单)产生副作用,
+ *  最后返回它的思考文本。带超时(MESH_QUERY_TIMEOUT_MS) + maxTurns 工具调用空间 + 本轮 MCP 连接状态 + local_auth 就绪。
+ *  这是常驻 duty cycle 的主入口(取代旧的"结构化 action plan + 框架单事务执行")。 */
+export async function runMeshAgentText(
   agent: MeshAgentConfig,
   prompt: string,
-  schema: Record<string, unknown>,
   options: MeshRunOptions = {},
-): Promise<{ structured: unknown; text: string; mcpStatus?: McpServerStatus[] }> {
+): Promise<{ text: string; mcpStatus?: McpServerStatus[] }> {
   const { queryOptions, abortController, activeProvider } = prepareMeshQuery(agent, options)
-  const jsonPrompt = `${prompt}\n\n———\n只输出一个 JSON 对象,严格匹配下面的 JSON Schema;不要任何解释文字,不要用 markdown 代码块包裹:\n${JSON.stringify(schema)}`
   let text = ''
   let resultText = ''
   let mcpStatus: McpServerStatus[] | undefined
@@ -152,8 +155,8 @@ export async function runMeshAgentStructured(
     if (isClaudeLocalAuthProvider(activeProvider)) {
       await ensureClaudeLocalAuthReady(activeProvider)
     }
-    // maxTurns:无工具时一轮即出 JSON;有 MCP 的真 agent 留几轮工具调用空间(缺省 6);纯解析类可传低值防多轮拖超时。
-    const stream = query({ prompt: jsonPrompt, options: { ...queryOptions, maxTurns: options.maxTurns ?? 6 } })
+    // maxTurns:无工具时一轮即收口;有 MCP/协作工具的真 agent 留几轮工具调用空间(缺省 6);纯解析类可传低值防多轮拖超时。
+    const stream = query({ prompt, options: { ...queryOptions, maxTurns: options.maxTurns ?? 6 } })
     for await (const message of stream) {
       const m = message as { type?: string; result?: unknown; text?: string; mcp_servers?: unknown; message?: { content?: Array<{ type?: string; text?: string }> } }
       mcpStatus = extractMcpStatus(m) ?? mcpStatus
@@ -163,14 +166,28 @@ export async function runMeshAgentStructured(
       }
       if (m.type === 'result' && typeof m.result === 'string') resultText = m.result
     }
-    const finalText = (resultText || text).trim()
-    return { structured: extractJson(finalText), text: finalText, mcpStatus }
+    return { text: (resultText || text).trim(), mcpStatus }
   } catch (err) {
     if (timedOut) throw new Error(`mesh 调模型超时:${MESH_QUERY_TIMEOUT_MS / 1000}s 内无返回(已中止本轮)`)
     throw err
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** 跑一个 mesh agent,要它输出严格 JSON(提示词约束 + 自己解析),返回解析后的结构 + 文本。
+ *  不用 SDK 的 outputFormat:json_schema —— 对部分代理会陷入 assistant↔user 死循环、永不收口
+ *  (chat 能用正是因为它纯文本流式)。改成像 chat 那样取文本,再从文本里抽 JSON。
+ *  复用 runMeshAgentText 的流式/超时/mcpStatus/local_auth,只在前包 JSON Schema 指令、后抽 JSON。 */
+export async function runMeshAgentStructured(
+  agent: MeshAgentConfig,
+  prompt: string,
+  schema: Record<string, unknown>,
+  options: MeshRunOptions = {},
+): Promise<{ structured: unknown; text: string; mcpStatus?: McpServerStatus[] }> {
+  const jsonPrompt = `${prompt}\n\n———\n只输出一个 JSON 对象,严格匹配下面的 JSON Schema;不要任何解释文字,不要用 markdown 代码块包裹:\n${JSON.stringify(schema)}`
+  const { text, mcpStatus } = await runMeshAgentText(agent, jsonPrompt, options)
+  return { structured: extractJson(text), text, mcpStatus }
 }
 
 /** 从模型文本里抽出 JSON 对象:容忍 ```json 围栏和前后多余文字。 */
@@ -193,14 +210,4 @@ function extractJson(text: string): unknown {
     }
   }
   return undefined
-}
-
-/** 跑一个 mesh agent，强制返回结构化 action plan（协作用）。 */
-export async function runMeshActor(
-  agent: MeshAgentConfig,
-  prompt: string,
-  options: MeshRunOptions = {},
-): Promise<MeshActorResult> {
-  const { structured, text, mcpStatus } = await runMeshAgentStructured(agent, prompt, buildMeshActionPlanSchema(), options)
-  return { plan: parseActionPlan(structured), text, mcpStatus }
 }

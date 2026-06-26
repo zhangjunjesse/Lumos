@@ -2,6 +2,9 @@ const mockQuery = jest.fn()
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (...args: unknown[]) => mockQuery(...args),
+  // 框架级协作/下单工具是 in-process MCP（createSdkMcpServer 构建）：stub 成直通即可,工具不真跑。
+  createSdkMcpServer: (cfg: unknown) => cfg,
+  tool: (name: string, _desc: string, _schema: unknown, handler: unknown) => ({ name, handler }),
 }))
 
 jest.mock('@/lib/claude/sdk-runtime', () => ({
@@ -24,7 +27,7 @@ jest.mock('@/lib/mcp-resolver', () => ({
   }),
 }))
 
-import { runMeshAgent } from '../mesh-worker'
+import { runMeshAgent, runMeshAgentText } from '../mesh-worker'
 import type { MeshAgentConfig } from '../mesh-agent-config'
 
 async function* streamMessages(messages: unknown[]) {
@@ -87,5 +90,40 @@ describe('runMeshAgent', () => {
 
     expect(res.finishReason).toBe('completed')
     expect(res.text).toContain('no opportunity')
+  })
+})
+
+describe('runMeshAgentText —— 框架级工具注入（协作人人可用 + 下单按白名单门控）', () => {
+  beforeEach(() => {
+    mockQuery.mockReset()
+    mockQuery.mockReturnValue(streamMessages([{ type: 'result', result: 'done' }]))
+  })
+  const optionsOf = () => (mockQuery.mock.calls[0][0] as { options: Record<string, unknown> }).options
+  const trade = { runId: 'r', agentId: 'a', cycleSeq: 1, trade: { mode: 'auto' as const, accountId: 'acc', tradeMode: 'paper' as const, liveEnabled: false } }
+
+  it('有 collabContext → 注入 mesh-collab + allowedTools 含 5 个协作工具（人人可用）', async () => {
+    await runMeshAgentText(agent, 'p', { collabContext: { runId: 'r', agentId: 'a', subscribersOf: () => [] } })
+    const options = optionsOf()
+    expect(Object.keys(options.mcpServers as object)).toContain('mesh-collab')
+    const allowed = options.allowedTools as string[]
+    for (const t of ['read_blackboard', 'write_blackboard', 'emit_event', 'send_task', 'reply']) {
+      expect(allowed).toContain(`mcp__mesh-collab__${t}`)
+    }
+  })
+
+  it('有 tradeContext 且白名单含 mesh-trade → 注入 mesh-trade + place_order', async () => {
+    const trader: MeshAgentConfig = { ...agent, mcpAllowlist: ['mesh-trade'] }
+    await runMeshAgentText(trader, 'p', { tradeContext: trade })
+    const options = optionsOf()
+    expect(Object.keys(options.mcpServers as object)).toContain('mesh-trade')
+    expect(options.allowedTools as string[]).toContain('mcp__mesh-trade__place_order')
+  })
+
+  it('有 tradeContext 但白名单无 mesh-trade → 不注入下单工具（能力隔离）', async () => {
+    await runMeshAgentText(agent, 'p', { tradeContext: trade })
+    const options = optionsOf()
+    const servers = options.mcpServers ? Object.keys(options.mcpServers as object) : []
+    expect(servers).not.toContain('mesh-trade')
+    expect(options.allowedTools as string[]).not.toContain('mcp__mesh-trade__place_order')
   })
 })
