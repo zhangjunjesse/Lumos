@@ -91,6 +91,14 @@ describe('runMeshAgent', () => {
     expect(res.finishReason).toBe('completed')
     expect(res.text).toContain('no opportunity')
   })
+
+  it('外部 abort 监听器跑完即解绑（常驻长会话不在会话级 signal 上累积泄漏）', async () => {
+    mockQuery.mockReturnValue(streamMessages([{ type: 'result', result: 'done' }]))
+    const external = new AbortController()
+    const removeSpy = jest.spyOn(external.signal, 'removeEventListener')
+    await runMeshAgent(agent, 'hi', { abortController: external })
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function)) // finally 里解绑了本轮注册的监听器
+  })
 })
 
 describe('runMeshAgentText —— 框架级工具注入（协作人人可用 + 下单按白名单门控）', () => {

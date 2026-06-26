@@ -18,6 +18,8 @@ function acc(over: Partial<PaperAccount> = {}): PaperAccount {
     feesPaid: 0,
     orderCount: 0,
     notionalTraded: 0,
+    dayStartRealizedPnl: 0,
+    lastResetDay: null,
     halted: false,
     ...over,
   }
@@ -84,10 +86,16 @@ describe('checkOrder (Risk Gate)', () => {
     expect(v.reason).toContain('正整数')
   })
 
-  it('总闸：单日亏损触线拒', () => {
-    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 10 }, acc({ realizedPnl: -25000 }), snapshot, DEFAULT_RISK_RULES)
+  it('总闸：单日亏损触线拒（无基线 → 当日亏损=realizedPnl）', () => {
+    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 100 }, acc({ realizedPnl: -25000 }), snapshot, DEFAULT_RISK_RULES)
     expect(v.ok).toBe(false)
     expect(v.reason).toContain('总闸')
+  })
+
+  it('总闸：单日亏损按日初基线算，终身累计亏损不误触发', () => {
+    // 终身已实现 -1.5万，但今天开盘基线 -1万 → 当日亏损仅 -0.5万，不触发（默认线 2万）
+    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 100 }, acc({ realizedPnl: -15000, dayStartRealizedPnl: -10000 }), snapshot, DEFAULT_RISK_RULES)
+    expect(v.ok).toBe(true)
   })
 
   it('总闸：已 halt 的账户一律拒', () => {

@@ -87,9 +87,15 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
   // 本轮独立 controller:外部 abort(停团队)联动它,但本轮超时只 abort 它、不波及整个 run。
   const abortController = new AbortController()
   const external = options.abortController
+  // 联动外部 abort,并返回解绑函数——常驻长会话每轮都注册一个监听器,跑完必须移除,否则在会话级 signal 上越积越多成泄漏。
+  let unlinkExternal = () => {}
   if (external) {
     if (external.signal.aborted) abortController.abort()
-    else external.signal.addEventListener('abort', () => abortController.abort(), { once: true })
+    else {
+      const onAbort = () => abortController.abort()
+      external.signal.addEventListener('abort', onAbort, { once: true })
+      unlinkExternal = () => external.signal.removeEventListener('abort', onAbort)
+    }
   }
   const queryOptions = {
     abortController,
@@ -107,7 +113,7 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
       ? { pathToClaudeCodeExecutable: ctx.pathToClaudeCodeExecutable }
       : {}),
   }
-  return { queryOptions, abortController, activeProvider: ctx.activeProvider }
+  return { queryOptions, abortController, activeProvider: ctx.activeProvider, unlinkExternal }
 }
 
 /** 跑一个 mesh agent，收集纯文本。 */
@@ -116,7 +122,7 @@ export async function runMeshAgent(
   prompt: string,
   options: MeshRunOptions = {},
 ): Promise<MeshRunResult> {
-  const { queryOptions, abortController } = prepareMeshQuery(agent, options)
+  const { queryOptions, abortController, unlinkExternal } = prepareMeshQuery(agent, options)
   let text = ''
   try {
     const stream = query({ prompt, options: queryOptions })
@@ -131,6 +137,8 @@ export async function runMeshAgent(
       return { text, finishReason: 'aborted' }
     }
     throw err
+  } finally {
+    unlinkExternal()
   }
 }
 
@@ -142,7 +150,7 @@ export async function runMeshAgentText(
   prompt: string,
   options: MeshRunOptions = {},
 ): Promise<{ text: string; mcpStatus?: McpServerStatus[] }> {
-  const { queryOptions, abortController, activeProvider } = prepareMeshQuery(agent, options)
+  const { queryOptions, abortController, activeProvider, unlinkExternal } = prepareMeshQuery(agent, options)
   let text = ''
   let resultText = ''
   let mcpStatus: McpServerStatus[] | undefined
@@ -173,6 +181,7 @@ export async function runMeshAgentText(
     throw err
   } finally {
     clearTimeout(timer)
+    unlinkExternal()
   }
 }
 
