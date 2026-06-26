@@ -27,10 +27,12 @@ export function parseMcpServerName(toolName: string): string | null {
   return sep === -1 ? rest : rest.slice(0, sep)
 }
 
-/** 判定某工具是否可用。内置工具全放开;MCP 工具按 mcpAllowlist(= 注入清单)。 */
+/** 判定某工具是否可用。内置工具全放开;框架级 mesh-collab 人人可用;其余 MCP 按 mcpAllowlist(= 注入清单)。 */
 export function isToolAllowed(agent: MeshAgentConfig, toolName: string): boolean {
   const server = parseMcpServerName(toolName)
-  // MCP 工具:仍按 mcpAllowlist。未注入的 server(含下单类,从不注册)一律拒。
+  // mesh-collab = 框架自带的通用协作工具(读写黑板/发事件/派任务/回执),所有 agent 都可用,不需进 mcpAllowlist。
+  if (server === 'mesh-collab') return true
+  // 其余 MCP 工具:仍按 mcpAllowlist。未注入的 server(含下单类,从不注册)一律拒。
   if (server !== null) return agent.mcpAllowlist.includes(server)
   // 内置工具:全放开。下单不靠工具白名单防,靠 OrderGateway 结构隔离(无下单工具)。
   return true
