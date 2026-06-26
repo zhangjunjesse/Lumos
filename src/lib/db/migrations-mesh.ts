@@ -204,6 +204,10 @@ export function migrateMeshTables(db: Database.Database): void {
   // 风控总闸的「单日」计数按交易日重置（之前缺重置=终身累计，会把常驻团队逐渐锁死/误判当日亏损）。
   try { db.exec('ALTER TABLE mesh_paper_account ADD COLUMN day_start_realized_pnl REAL NOT NULL DEFAULT 0') } catch { /* 列已存在 */ }
   try { db.exec('ALTER TABLE mesh_paper_account ADD COLUMN last_reset_day TEXT') } catch { /* 列已存在 */ }
+  // 升级回填：已存在账户按其 updated_at 当天回填 last_reset_day、基线设为当前已实现盈亏。
+  // 否则升级当天首单会因 last_reset_day=NULL 误判跨日、把当日已累计的 order_count/notional 清零、绕过当日上限。
+  // 只回填未回填过的行（last_reset_day IS NULL），幂等。
+  try { db.exec("UPDATE mesh_paper_account SET last_reset_day = date(updated_at, 'localtime'), day_start_realized_pnl = realized_pnl WHERE last_reset_day IS NULL") } catch { /* 表待建 */ }
 
   // agent/team_config/risk：PK 含 workshop_id（多工作室隔离）。新库直接建，旧库（单列 PK=id）重建迁移。
   ensureWorkshopPkTable(db, 'mesh_agent', AGENT_SCHEMA, AGENT_COLS)

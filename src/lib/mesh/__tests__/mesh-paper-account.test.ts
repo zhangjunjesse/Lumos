@@ -8,6 +8,7 @@ jest.mock('@/lib/db/connection', () => {
 })
 
 import { initAccount, getAccount, applyFill, setHalted, rollDayIfNeeded } from '../mesh-paper-account'
+import { getDb } from '@/lib/db/connection'
 
 describe('mesh-paper-account', () => {
   it('init + buy：现金减、持仓加、均价正确', () => {
@@ -53,5 +54,21 @@ describe('mesh-paper-account', () => {
     expect(d2.lastResetDay).toBe('2026-06-27')
     expect(d2.orderCount).toBe(0)
     expect(d2.dayStartRealizedPnl).toBeCloseTo(d2.realizedPnl) // 当日亏损 = realizedPnl - 基线 = 0
+  })
+
+  it('升级回填：已存在账户(last_reset_day=NULL + 当天已有计数) 不被首单误清零、不绕过当日上限', () => {
+    const db = getDb()
+    // 模拟升级前就存在的账户：当天已下 18 单、NULL last_reset_day（迁移前没这列）
+    db.prepare(
+      "INSERT INTO mesh_paper_account (run_id, cash, order_count, notional_traded, realized_pnl, last_reset_day, updated_at) VALUES ('upg', 50000, 18, 280000, -5000, NULL, datetime('now'))",
+    ).run()
+    require('@/lib/db/migrations-mesh').migrateMeshTables(db) // 跑回填迁移(幂等)
+    const acc = getAccount('upg')!
+    expect(acc.lastResetDay).not.toBeNull() // 回填了交易日
+    expect(acc.dayStartRealizedPnl).toBeCloseTo(-5000) // 基线=当前已实现盈亏
+    // 同一天再 roll：last_reset_day 已=今天 → 不清零，当天已下的 18 单仍在(没被绕过上限)
+    const rolled = rollDayIfNeeded('upg', acc.lastResetDay!)
+    expect(rolled.orderCount).toBe(18)
+    expect(rolled.notionalTraded).toBeCloseTo(280000)
   })
 })
