@@ -16,6 +16,7 @@ import {
   updateMcpServer,
   deleteMcpServer,
   setSetting,
+  getSetting,
   getBuiltinProvider,
 } from './db';
 import { getDb } from './db';
@@ -222,6 +223,7 @@ function importMcpServers(): number {
     'chrome-devtools',
     'image-reader',
     'im-tools',
+    'qmt-readonly',
     ...DEFAULT_ENABLED_DB_MCP_NAMES,
   ]);
 
@@ -863,6 +865,20 @@ export async function initBuiltinResources(): Promise<void> {
 
     const mcpImported = importMcpServers();
     console.log(`[init-builtin-resources] MCP servers: ${mcpImported} new`);
+
+    // qmt-readonly 从 v0.36.5 起默认启用。v0.36.3/4 已把它作为默认关闭的内置 MCP 落库的实例，
+    // 这里做一次性开启（用 setting 守卫，只跑一次——之后用户仍可在插件页自行关闭，不会被反复翻开）。
+    try {
+      if (getSetting('qmt_readonly_default_enabled_v1') !== 'true') {
+        getDb()
+          .prepare("UPDATE mcp_servers SET is_enabled = 1 WHERE name = 'qmt-readonly' AND source = 'builtin'")
+          .run();
+        setSetting('qmt_readonly_default_enabled_v1', 'true');
+        console.log('[init-builtin-resources] qmt-readonly 默认启用迁移已执行');
+      }
+    } catch (err) {
+      console.warn('[init-builtin-resources] qmt-readonly 默认启用迁移失败:', err);
+    }
 
     importProviders();
 
