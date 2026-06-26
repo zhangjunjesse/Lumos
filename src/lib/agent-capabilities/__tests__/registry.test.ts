@@ -49,6 +49,10 @@ jest.mock('@/lib/tools/lumos-trade-mcp-server', () => ({
   createLumosTradeMcpServer: () => ({ name: 'lumos-trade' }),
   LUMOS_TRADE_MCP_SYSTEM_HINT: 'TRADE_HINT_TEXT',
 }));
+jest.mock('@/lib/tools/lumos-skills-mcp-server', () => ({
+  createLumosSkillsMcpServer: () => ({ name: 'lumos-skills' }),
+  LUMOS_SKILLS_MCP_SYSTEM_HINT: 'SKILLS_HINT_TEXT',
+}));
 
 import {
   buildCapabilityPlan,

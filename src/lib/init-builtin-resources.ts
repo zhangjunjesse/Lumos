@@ -34,6 +34,7 @@ import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
 // 仅依赖零重依赖的静态来源——不把连接器/工具工厂图拉进启动路径。
 import { DEFAULT_ENABLED_DB_MCP_NAMES } from './agent-capabilities/default-enabled';
+import { importUserSkills } from './user-skills-import';
 
 const BUILTIN_GOOFISH_APP_ID = 'goofish-assistant';
 const BUILTIN_GOOFISH_VERSION = '0.1.0';
@@ -862,6 +863,17 @@ export async function initBuiltinResources(): Promise<void> {
   try {
     const skillsImported = importSkills();
     console.log(`[init-builtin-resources] Skills: ${skillsImported} new`);
+
+    // 用户自建 Skill：扫描 ~/.lumos/skills/（升级不覆盖）注册进 db(scope='user')，再 sync 进
+    // skills-plugin → SDK 加载 + 能力面板可见（issue #31/#32/#33）。在 builtin 之后跑，确保同步含两者。
+    try {
+      const userSkills = importUserSkills();
+      const { syncSkillsToPlugin } = await import('./skills-sync');
+      syncSkillsToPlugin();
+      console.log(`[init-builtin-resources] 用户 Skill: ${userSkills} 个已注册并同步`);
+    } catch (err) {
+      console.warn('[init-builtin-resources] 用户 Skill 导入/同步失败:', err);
+    }
 
     const mcpImported = importMcpServers();
     console.log(`[init-builtin-resources] MCP servers: ${mcpImported} new`);

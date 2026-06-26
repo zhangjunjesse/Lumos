@@ -27,6 +27,10 @@ import {
   createLumosTradeMcpServer,
   LUMOS_TRADE_MCP_SYSTEM_HINT,
 } from '@/lib/tools/lumos-trade-mcp-server';
+import {
+  createLumosSkillsMcpServer,
+  LUMOS_SKILLS_MCP_SYSTEM_HINT,
+} from '@/lib/tools/lumos-skills-mcp-server';
 import type { ConnectorContext, ConnectorDefinition } from '../types';
 
 const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
@@ -136,6 +140,16 @@ const tradeConnector: ConnectorDefinition = {
     'the Lumos stock trading tools: preview_order anytime; place_order only when the user explicitly confirms a buy/sell — it still pops a confirmation dialog and passes the deterministic risk gate before executing',
 };
 
+/** 用户自建 Skill 脚手架——主 agent 会话可用。create_skill 写到 ~/.lumos/skills/(升级不覆盖)
+ *  并注册可见，绝不写会被刷新的 skills-plugin（见 lumos-skills-mcp-server / issue #31/#32/#33）。 */
+const skillsConnector: ConnectorDefinition = {
+  id: 'lumos-skills',
+  label: '自建 Skill',
+  appliesTo: (ctx) => ctx.isPrimaryMainAgentSession && !ctx.browserAutomationIntent,
+  resolve: () => ({ inProcess: () => createLumosSkillsMcpServer() }),
+  buildHint: () => LUMOS_SKILLS_MCP_SYSTEM_HINT,
+};
+
 export const inProcessConnectors: ConnectorDefinition[] = [
   lumosImageConnector,
   knowledgeConnector,
@@ -145,4 +159,5 @@ export const inProcessConnectors: ConnectorDefinition[] = [
   ecommerceConnector,
   etsyForgeConnector,
   tradeConnector,
+  skillsConnector,
 ];
