@@ -13,7 +13,6 @@ import type { SnapshotProvider } from './mesh-runner'
 
 export const MAX_CONCURRENT = 3
 export const MAX_DISPATCH_PER_TICK = 5
-export const IDLE_BACKOFF_CAP = 5
 
 export interface SchedulerRunner {
   runId: string
@@ -70,11 +69,6 @@ export function pickDispatchable(due: DueItem[], inFlight: Set<string>): DueItem
   return pick
 }
 
-/** 空转退避：连续无产出（无 emit/order）则指数延长下次（封顶 IDLE_BACKOFF_CAP 档）。 */
-export function computeNextRunAt(intervalMs: number, idleStreak: number, now: number): number {
-  return now + intervalMs * 2 ** Math.min(idleStreak, IDLE_BACKOFF_CAP)
-}
-
 /** 工作日 15:00 后、当日首次 → emit market_close（复盘 agent 订阅它做收盘归因）。 */
 function maybeEmitMarketClose(runner: SchedulerRunner): void {
   const now = new Date()
@@ -109,15 +103,12 @@ export function tickLoop(runner: SchedulerRunner): void {
 /** 派发一次 duty cycle（异步本体）：现读配置 → runOneDutyCycle → 排下次。abort 后不排。 */
 export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem): Promise<void> {
   const { runId } = runner
-  let productive = false
-  let role: string | undefined
   try {
     if (runner.abort.signal.aborted) return
     const participant = buildParticipant(runner.accountId, item.participantId)
     if (!participant) return
-    role = participant.agent.role // 现读的活角色(custom 免空转退避)
     const cycleSeq = nextCycleSeq(runId, item.participantId)
-    const result = await runOneDutyCycle({
+    await runOneDutyCycle({
       runId,
       workshopId: runner.accountId,
       participant,
@@ -130,28 +121,25 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
       focus: getSessionFocus(runner.accountId),
       abortController: runner.abort,
     })
-    productive = result.emits.length > 0 || result.orders.length > 0
     runner.onCycle?.()
   } catch (err) {
     if (runner.abort.signal.aborted) return
     runner.onError?.(String((err as Error)?.message ?? err))
   } finally {
     runner.inFlight.delete(item.participantId)
-    if (!runner.abort.signal.aborted) scheduleNext(runId, runner.accountId, item.participantId, productive, role)
+    if (!runner.abort.signal.aborted) scheduleNext(runId, runner.accountId, item.participantId)
   }
 }
 
-/** active_loop 跑完排下次；其余角色含空转退避，custom 角色免退避(按设定间隔死跑)；event_driven 不主动排。 */
-function scheduleNext(runId: string, workshopId: string, participantId: string, productive: boolean, role?: string): void {
+/** active_loop 跑完按固定间隔排下次；event_driven 不主动排。
+ *  框架不做业务退避——节奏纯由 agent 的 interval 配置决定(要自适应节奏请用配置/提示词,不写死)。 */
+function scheduleNext(runId: string, workshopId: string, participantId: string): void {
   const p = getParticipant(runId, participantId)
   if (!p || p.workMode !== 'active_loop') return
-  // custom = 零内置逻辑:不参与空转退避;其余角色无产出(无 emit/order)则指数延长下次。
-  const idleStreak = role === 'custom' || productive ? 0 : p.idleStreak + 1
   const now = Date.now()
   updateParticipant(runId, participantId, {
-    nextRunAt: computeNextRunAt(getAgentIntervalMs(workshopId, participantId), idleStreak, now),
+    nextRunAt: now + getAgentIntervalMs(workshopId, participantId),
     lastRunAt: now,
-    idleStreak,
   })
 }
 
