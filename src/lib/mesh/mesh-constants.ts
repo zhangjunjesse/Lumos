@@ -6,6 +6,14 @@
 /** 默认工作室 id。workshopId 复用 accountId 维度，故默认工作室即默认账户（现有数据零迁移归此）。 */
 export const DEFAULT_WORKSHOP_ID = 'mesh_team_default'
 
+/**
+ * 框架自带的两个 in-process 能力名（单一真源，放无依赖模块避免各处散字面量 + 免把 SDK 拉进轻量模块）：
+ * - mesh-collab：通用协作工具（读写黑板/发事件/派任务/回执），人人可用、不需授权。
+ * - mesh-trade：下单工具，opt-in——只有 mcpAllowlist 含它的 agent 才注入，经确定性风控总闸 + OrderGateway。
+ */
+export const MESH_COLLAB_MCP_SERVER_NAME = 'mesh-collab'
+export const MESH_TRADE_MCP_SERVER_NAME = 'mesh-trade'
+
 /** 开启真盘(paper→live)必须回传的确认词——防 UI 误点 / API 误调真金白银。前后端共用。 */
 export const LIVE_CONFIRM_WORD = '真盘下单'
 

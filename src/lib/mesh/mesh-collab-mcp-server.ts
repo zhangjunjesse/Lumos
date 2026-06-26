@@ -13,8 +13,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { writeBlackboard, readBlackboard, readAllBlackboard } from './mesh-blackboard'
 import { persistMessage, findTaskFrom } from './mesh-event-bus'
-
-export const MESH_COLLAB_MCP_SERVER_NAME = 'mesh-collab'
+import { MESH_COLLAB_MCP_SERVER_NAME } from './mesh-constants'
 
 export interface MeshCollabContext {
   runId: string

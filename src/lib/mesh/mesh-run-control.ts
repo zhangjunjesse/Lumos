@@ -17,7 +17,7 @@ import {
 } from './mesh-runner'
 import { getAccount, initAccount, type PaperAccount } from './mesh-paper-account'
 import { initParticipants, deleteByRun } from './mesh-participant-store'
-import { buildSessionSeeds } from './mesh-session-context'
+import { buildSessionSeeds, teamTrades } from './mesh-session-context'
 import { writeBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
 import { startQuoteFeed, stopQuoteFeed, getQuoteSnapshot } from './mesh-quote-feed'
 import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
@@ -58,12 +58,14 @@ export function startMonitoring(opts: {
   const tickMs = Math.max(MIN_TICK_MS, opts.intervalMs ?? DEFAULT_TICK_MS)
   const runId = `mrun_${randomUUID()}` // 常驻 session id，贯穿 start→stop
   const run = createRun(accountId, tickMs, runId)
-  initAccount(accountId, opts.initialCash ?? DEFAULT_PAPER_CASH) // 账户跨 cycle 常驻
+  // 交易基建（paper 账户 + 行情桥）只为「会下单」的团队拉起；纯协作/调研团队不建账户、不 spawn python 行情桥。
+  const trades = teamTrades(accountId)
+  if (trades) initAccount(accountId, opts.initialCash ?? DEFAULT_PAPER_CASH) // 账户跨 cycle 常驻
   initParticipants(runId, buildSessionSeeds(accountId), Date.now()) // accountId 即 workshopId；每 enabled agent 一行运行态
-  // 默认走真行情桥（按持仓取 qmt 实时价、每 5s 刷新黑板快照）；显式传 snapshot 才用固定值（测试/demo）。
-  if (!opts.snapshot) startQuoteFeed(accountId, runId)
-  const snapshot: SnapshotProvider = opts.snapshot ?? (() => getQuoteSnapshot(accountId))
-  writeBlackboard(runId, MARKET_SNAPSHOT_KEY, snapshot(), 'seed') // 首个快照（真行情桥刚启时可能空，随刷新填）
+  // 交易团队默认走真行情桥（按持仓取 qmt 实时价、每 5s 刷新黑板快照）；显式传 snapshot 用固定值（测试/demo）。
+  if (trades && !opts.snapshot) startQuoteFeed(accountId, runId)
+  const snapshot: SnapshotProvider = opts.snapshot ?? (trades ? () => getQuoteSnapshot(accountId) : () => ({ ticks: [] }))
+  if (trades || opts.snapshot) writeBlackboard(runId, MARKET_SNAPSHOT_KEY, snapshot(), 'seed') // 交易团队/显式 demo 才写初始行情快照
   startRunner({ controlId: run.id, accountId, runId, snapshot, tickMs })
   return { ok: true, run }
 }

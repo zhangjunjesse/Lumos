@@ -5,6 +5,8 @@ import { useState } from 'react'
 interface McpOption {
   name: string
   description: string
+  /** 框架自带的 in-process 能力（如下单 mesh-trade）：直接注入、无 stdio 连接，故不显示「测试连接」。 */
+  builtin?: boolean
 }
 interface McpStat {
   name: string
@@ -52,9 +54,9 @@ export function McpPicker({
 
   return (
     <div className="space-y-1.5">
-      <p className="text-xs text-neutral-500">MCP 工具(授给这个成员的行情/数据能力;下单永不在此)</p>
+      <p className="text-xs text-neutral-500">成员能力（行情/数据 MCP + 下单等框架能力；勾选即授权该成员使用）</p>
       {options.length === 0 ? (
-        <p className="text-xs text-neutral-400">暂无可用 MCP 工具</p>
+        <p className="text-xs text-neutral-400">暂无可授能力</p>
       ) : (
         options.map((o) => {
           const on = value.includes(o.name)
@@ -66,22 +68,28 @@ export function McpPicker({
                 <label className="flex flex-1 cursor-pointer items-center gap-1.5 text-xs" title={o.description}>
                   <input type="checkbox" checked={on} onChange={() => toggle(o.name)} className="h-3.5 w-3.5" />
                   <span className={on ? 'text-neutral-800' : 'text-neutral-500'}>{o.name}</span>
+                  {o.builtin && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">内置</span>}
                 </label>
-                {st && (
+                {!o.builtin && st && (
                   <span className={`rounded px-1.5 py-0.5 text-[11px] ${st === 'connected' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                     上轮{st === 'connected' ? '已连' : `失败(${st})`}
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => test(o.name)}
-                  disabled={testing === o.name}
-                  className="rounded border border-neutral-200 px-2 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
-                >
-                  {testing === o.name ? '测试中…' : '测试连接'}
-                </button>
+                {!o.builtin && (
+                  <button
+                    type="button"
+                    onClick={() => test(o.name)}
+                    disabled={testing === o.name}
+                    className="rounded border border-neutral-200 px-2 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    {testing === o.name ? '测试中…' : '测试连接'}
+                  </button>
+                )}
               </div>
-              {res &&
+              {o.builtin ? (
+                <p className="mt-1 text-[11px] text-neutral-400">{o.description}</p>
+              ) : (
+                res &&
                 (res.ok ? (
                   <p className="mt-1.5 text-[11px] text-emerald-700">
                     ✓ 连接成功 · {res.tools.length} 个工具
@@ -89,7 +97,8 @@ export function McpPicker({
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[11px] text-red-600">✗ {res.error}</p>
-                ))}
+                ))
+              )}
             </div>
           )
         })

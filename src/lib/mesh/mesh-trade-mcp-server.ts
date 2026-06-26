@@ -13,9 +13,8 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { placeOrder } from './mesh-order-gateway'
 import { writeBlackboard, readBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
+import { MESH_TRADE_MCP_SERVER_NAME } from './mesh-constants'
 import type { TradeContext } from './mesh-runtime'
-
-export const MESH_TRADE_MCP_SERVER_NAME = 'mesh-trade'
 
 export interface MeshTradeToolContext {
   runId: string

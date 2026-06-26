@@ -13,6 +13,7 @@ import type { CanUseTool, McpServerConfig } from '@anthropic-ai/claude-agent-sdk
 import type { MCPServerConfig } from '@/types'
 import { toSdkMcpConfig } from '@/lib/mcp-resolver'
 import { getMeshMcpRegistry, type MeshAgentConfig } from './mesh-agent-config'
+import { MESH_COLLAB_MCP_SERVER_NAME } from './mesh-constants'
 
 const MCP_TOOL_PREFIX = 'mcp__'
 
@@ -31,7 +32,7 @@ export function parseMcpServerName(toolName: string): string | null {
 export function isToolAllowed(agent: MeshAgentConfig, toolName: string): boolean {
   const server = parseMcpServerName(toolName)
   // mesh-collab = 框架自带的通用协作工具(读写黑板/发事件/派任务/回执),所有 agent 都可用,不需进 mcpAllowlist。
-  if (server === 'mesh-collab') return true
+  if (server === MESH_COLLAB_MCP_SERVER_NAME) return true
   // 其余 MCP 工具:仍按 mcpAllowlist。未注入的 server(含下单类,从不注册)一律拒。
   if (server !== null) return agent.mcpAllowlist.includes(server)
   // 内置工具:全放开。下单不靠工具白名单防,靠 OrderGateway 结构隔离(无下单工具)。

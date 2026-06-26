@@ -7,7 +7,7 @@
  * 设计依据：docs/agent-mesh-collaboration-design.md §0.5 / §6
  */
 import type { MCPServerConfig } from '@/types'
-import { SELECTABLE_ROLES } from './mesh-constants'
+import { SELECTABLE_ROLES, MESH_TRADE_MCP_SERVER_NAME } from './mesh-constants'
 import { resolveQmtPython, resolveQmtScript, resolveQmtEnv } from '@/lib/qmt-runtime'
 
 /** mesh agent 角色。可选角色见 mesh-constants.SELECTABLE_ROLES(单一真源);leader=团队唯一管理者,不可被用户新建。 */
@@ -54,10 +54,28 @@ export function getMeshMcpRegistry(): Record<string, MCPServerConfig> {
   }
 }
 
-/** 供 UI 列出「可授给某个 agent」的 MCP server（name + 描述）。下单类从不在注册表里。 */
-export function listMeshMcpServers(): { name: string; description: string }[] {
-  return Object.entries(getMeshMcpRegistry()).map(([name, cfg]) => ({
+export interface MeshMcpOption {
+  name: string
+  description: string
+  /** 框架自带的 in-process 能力（如下单 mesh-trade）：执行器直接注入、无 stdio 连接，故 UI 不提供「测试连接」。 */
+  builtin?: boolean
+}
+
+/**
+ * 供 UI / 管家列出「可授给某个 agent」的能力：
+ * - 注册表里的 stdio MCP（qmt-readonly 等行情/数据，按 mcpAllowlist 注入、可测连接）
+ * - 框架自带的 opt-in 能力：mesh-trade 下单（只有授了的 agent 才注入，经确定性风控总闸 + OrderGateway）
+ * mesh-collab 协作工具人人自带、不需授权，故不在此列。
+ */
+export function listMeshMcpServers(): MeshMcpOption[] {
+  const registry: MeshMcpOption[] = Object.entries(getMeshMcpRegistry()).map(([name, cfg]) => ({
     name,
     description: cfg.description ?? name,
   }))
+  registry.push({
+    name: MESH_TRADE_MCP_SERVER_NAME,
+    description: '下单（买/卖，经确定性风控总闸 + OrderGateway 撮合）。默认模拟盘；真盘须在工作室「运行 & 实盘」开关并输确认词。授给谁，谁就能下单。',
+    builtin: true,
+  })
+  return registry
 }
