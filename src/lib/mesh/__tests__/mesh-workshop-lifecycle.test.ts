@@ -62,7 +62,7 @@ describe('deleteWorkshop —— 全删干净（W5）', () => {
     await expect(deleteWorkshop('ws_busy')).rejects.toThrow('停止超时')
 
     expect(getWorkshop('ws_busy')).not.toBeNull()
-    expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_busy'")).toBe(5)
+    expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_busy'")).toBe(2)
   })
 
   it('不波及其它工作室（删 ws_del 不动默认工作室）', async () => {
@@ -71,6 +71,6 @@ describe('deleteWorkshop —— 全删干净（W5）', () => {
     upsertTeamConfig('ws_keep', { focus: '保留' })
     await deleteWorkshop('ws_del2_nonexist') // 删不存在的不报错
     expect(getTeamConfig('ws_keep').focus).toBe('保留')
-    expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_keep'")).toBe(5)
+    expect(count("SELECT count(*) c FROM mesh_agent WHERE workshop_id='ws_keep'")).toBe(2)
   })
 })

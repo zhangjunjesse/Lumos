@@ -7,7 +7,7 @@
 import { listPendingDeliveries, persistMessage } from './mesh-event-bus'
 import { queryDueParticipants, getParticipant, updateParticipant, nextCycleSeq } from './mesh-participant-store'
 import { runOneDutyCycle, type DutyDelivery } from './mesh-duty-cycle'
-import { buildParticipant, buildSubscribersOf, buildTradeContext, getSessionFocus, getAgentIntervalMs } from './mesh-session-context'
+import { buildParticipant, buildSubscribersOf, buildTradeContext, getAgentIntervalMs } from './mesh-session-context'
 import { isAfterMarketClose, dayKey } from './mesh-market-clock'
 import type { SnapshotProvider } from './mesh-runner'
 
@@ -117,8 +117,6 @@ export async function dispatchDutyCycle(runner: SchedulerRunner, item: DueItem):
       cycleSeq,
       subscribersOf: buildSubscribersOf(runner.accountId),
       tradeCtx: buildTradeContext(runner.accountId),
-      snapshot: runner.snapshot(),
-      focus: getSessionFocus(runner.accountId),
       abortController: runner.abort,
     })
     runner.onCycle?.()

@@ -45,10 +45,6 @@ export function buildParticipant(workshopId: string, agentId: string): MeshParti
   return { agent: a, topics: a.topics }
 }
 
-export function getSessionFocus(workshopId: string): string {
-  return getTeamConfig(workshopId).focus
-}
-
 /** agent 主动循环间隔（秒→毫秒）；缺省 60s。现读 registry，用户改 interval 下次排程生效。 */
 export function getAgentIntervalMs(workshopId: string, agentId: string): number {
   return (getAgent(workshopId, agentId)?.interval ?? 60) * 1000

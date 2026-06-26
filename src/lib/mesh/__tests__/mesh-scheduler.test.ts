@@ -11,7 +11,6 @@ jest.mock('../mesh-session-context', () => ({
   buildParticipant: jest.fn(),
   buildSubscribersOf: jest.fn(() => () => []),
   buildTradeContext: jest.fn(() => ({ mode: 'auto', accountId: 'a', tradeMode: 'paper', liveEnabled: false })),
-  getSessionFocus: jest.fn(() => ''),
   getAgentIntervalMs: jest.fn(() => 60000),
 }))
 

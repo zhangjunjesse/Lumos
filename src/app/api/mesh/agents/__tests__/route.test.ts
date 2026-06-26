@@ -39,10 +39,10 @@ describe('/api/mesh/agents', () => {
   it('allows writes for an existing workshop', async () => {
     createWorkshop({ id: 'ws_agents_route', name: 'Agents Route' })
 
-    const res = await POST(postReq({ accountId: 'ws_agents_route', id: 'stock.observe', action: 'setEnabled', enabled: false }))
+    const res = await POST(postReq({ accountId: 'ws_agents_route', id: 'example.member', action: 'setEnabled', enabled: false }))
     const body = await res.json()
 
     expect(res.status).toBe(200)
-    expect(body.agents.find((a: { id: string; enabled: boolean }) => a.id === 'stock.observe')?.enabled).toBe(false)
+    expect(body.agents.find((a: { id: string; enabled: boolean }) => a.id === 'example.member')?.enabled).toBe(false)
   })
 })
