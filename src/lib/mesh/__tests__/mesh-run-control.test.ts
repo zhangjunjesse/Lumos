@@ -20,6 +20,8 @@ import { startMonitoring, stopMonitoring, reconcileOrphans } from '../mesh-run-c
 import { startRunner, stopRunner, isRunnerActive, getActiveRunner } from '../mesh-runner'
 import { createRun, getRun } from '../mesh-run'
 import { listParticipants } from '../mesh-participant-store'
+import { getAccount } from '../mesh-paper-account'
+import { upsertAgent } from '../mesh-agent-store'
 
 const mStart = jest.mocked(startRunner)
 const mStop = jest.mocked(stopRunner)
@@ -54,6 +56,19 @@ describe('mesh-run-control 生命周期', () => {
   it('tickMs 下限保护（太小拉到 MIN_TICK_MS）', () => {
     startMonitoring({ accountId: 'c3', intervalMs: 100, snapshot: () => ({}) })
     expect(mStart).toHaveBeenCalledWith(expect.objectContaining({ tickMs: 1000 }))
+  })
+
+  it('非交易团队 start：不建 paper 账户（纯协作团队不拉交易基建）', () => {
+    const r = startMonitoring({ accountId: 'c_notrade', snapshot: () => ({}) })
+    expect(r.ok).toBe(true)
+    expect(getAccount('c_notrade')).toBeNull() // 默认通用种子无 mesh-trade 成员 → 不建账户
+  })
+
+  it('交易团队 start：有下单成员 → 建 paper 账户', () => {
+    upsertAgent('c_trade', { id: 'trader', role: 'custom', systemPrompt: '', mcpAllowlist: ['mesh-trade'], toolAllowlist: [], topics: [], interval: 60, enabled: true, workMode: 'active_loop' })
+    const r = startMonitoring({ accountId: 'c_trade', snapshot: () => ({}) })
+    expect(r.ok).toBe(true)
+    expect(getAccount('c_trade')).not.toBeNull()
   })
 
   it('stop：有活跃 runner → 调 stopRunner', async () => {

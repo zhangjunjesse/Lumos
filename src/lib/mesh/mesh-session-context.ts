@@ -7,8 +7,15 @@ import { getTeamConfig } from './mesh-team-config'
 import { getRiskRules } from './mesh-risk-store'
 import { isLiveBackendConfigured } from './mesh-live-backend'
 import { listAgents, getAgent } from './mesh-agent-store'
+import { MESH_TRADE_MCP_SERVER_NAME } from './mesh-constants'
 import type { ParticipantSeed } from './mesh-participant-store'
 import type { MeshParticipant, TradeContext } from './mesh-runtime'
+
+/** 该工作室是否有「会下单」的成员（任一 enabled agent 的 mcpAllowlist 含 mesh-trade）。
+ *  决定 start 时是否拉起交易基建（行情桥 + paper 账户）：纯协作/调研团队不 spawn python、不建账户。 */
+export function teamTrades(workshopId: string): boolean {
+  return listAgents(workshopId, { enabled: true }).some((a) => a.mcpAllowlist.includes(MESH_TRADE_MCP_SERVER_NAME))
+}
 
 /** 该工作室 enabled 协作成员（队长除外）→ participant 种子，供 start 时 initParticipants 建行。 */
 export function buildSessionSeeds(workshopId: string): ParticipantSeed[] {

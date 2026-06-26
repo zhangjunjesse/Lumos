@@ -8,7 +8,7 @@ import { TeamAssistant } from './team-assistant'
 import { SELECTABLE_ROLES } from '@/lib/mesh/mesh-constants'
 import type { ProviderModelGroup } from '@/types'
 
-type McpOption = { name: string; description: string }
+type McpOption = { name: string; description: string; builtin?: boolean }
 
 interface Agent {
   id: string
@@ -103,8 +103,8 @@ export function TeamSettings({ accountId }: { accountId: string }) {
 
   const openCreate = () => {
     const def = modelGroups.find((g) => g.provider_id === defaultProviderId) ?? modelGroups[0]
-    // 新成员默认勾上全部可用 MCP，免得又是空手没工具；用户可在表单里取消。
-    setForm({ ...EMPTY_FORM, providerId: def?.provider_id ?? '', model: defaultModel || def?.models[0]?.value || '', mcpAllowlist: availableMcp.map((m) => m.name) })
+    // 新成员默认勾上非内置 MCP（行情/数据，免得空手没工具）；下单等内置能力不默认勾，需手动授权。
+    setForm({ ...EMPTY_FORM, providerId: def?.provider_id ?? '', model: defaultModel || def?.models[0]?.value || '', mcpAllowlist: availableMcp.filter((m) => !m.builtin).map((m) => m.name) })
     setError('')
   }
   const openClone = (a: Agent) => {
