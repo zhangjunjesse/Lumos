@@ -45,6 +45,10 @@ jest.mock('@/lib/knowledge/chat-knowledge-mcp', () => ({
   createChatKnowledgeMcpServer: jest.fn(() => ({ name: 'chat-knowledge' })),
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT: 'KNOWLEDGE_HINT_TEXT',
 }));
+jest.mock('@/lib/tools/lumos-trade-mcp-server', () => ({
+  createLumosTradeMcpServer: () => ({ name: 'lumos-trade' }),
+  LUMOS_TRADE_MCP_SYSTEM_HINT: 'TRADE_HINT_TEXT',
+}));
 
 import {
   buildCapabilityPlan,

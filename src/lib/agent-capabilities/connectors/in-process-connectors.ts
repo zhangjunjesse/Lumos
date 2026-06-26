@@ -23,6 +23,10 @@ import {
   createChatKnowledgeMcpServer,
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT,
 } from '@/lib/knowledge/chat-knowledge-mcp';
+import {
+  createLumosTradeMcpServer,
+  LUMOS_TRADE_MCP_SYSTEM_HINT,
+} from '@/lib/tools/lumos-trade-mcp-server';
 import type { ConnectorContext, ConnectorDefinition } from '../types';
 
 const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
@@ -118,6 +122,20 @@ const etsyForgeConnector: ConnectorDefinition = {
   buildHint: () => ETSY_FORGE_MCP_SYSTEM_HINT,
 };
 
+/** 股票交易（写/真钱）——主 agent 聊天可用。下单经 place_order 弹确认框，且过确定性风控；
+ *  真钱安全靠「每单确认 + RiskGate 总闸 + OrderGateway 唯一下单权」，见 lumos-trade-mcp-server。 */
+const tradeConnector: ConnectorDefinition = {
+  id: 'lumos-trade',
+  label: '股票交易',
+  appliesTo: (ctx) => ctx.isPrimaryMainAgentSession && !ctx.browserAutomationIntent,
+  resolve: (ctx) => ({
+    inProcess: () => createLumosTradeMcpServer({ sessionId: ctx.sessionId }),
+  }),
+  buildHint: () => LUMOS_TRADE_MCP_SYSTEM_HINT,
+  askModeReadAllowance: () =>
+    'the Lumos stock trading tools: preview_order anytime; place_order only when the user explicitly confirms a buy/sell — it still pops a confirmation dialog and passes the deterministic risk gate before executing',
+};
+
 export const inProcessConnectors: ConnectorDefinition[] = [
   lumosImageConnector,
   knowledgeConnector,
@@ -126,4 +144,5 @@ export const inProcessConnectors: ConnectorDefinition[] = [
   workflowConnector,
   ecommerceConnector,
   etsyForgeConnector,
+  tradeConnector,
 ];

@@ -195,6 +195,11 @@ export function startQuoteFeed(accountId: string, runId: string): void {
   feed.start()
 }
 
+/** 确保某账户有行情桥在跑（聊天下单等无 run 场景懒启用）；已有则不动，不会顶掉团队正在跑的桥。 */
+export function ensureQuoteFeed(accountId: string, runId: string): void {
+  if (!feeds.has(accountId)) startQuoteFeed(accountId, runId)
+}
+
 /** 停止某账户的行情桥(随 run 停止)。 */
 export function stopQuoteFeed(accountId: string): void {
   const feed = feeds.get(accountId)

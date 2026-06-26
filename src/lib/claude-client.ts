@@ -835,6 +835,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               || toolName.startsWith('mcp__lumos-knowledge__')
               || toolName.startsWith('mcp__lumos-wechat-assistant__')
               || toolName.startsWith('mcp__wechat-export__')
+              // 交易：只读的 preview_order 自动批准；place_order 刻意不批——必须弹确认框（真钱）。
+              || toolName === 'mcp__lumos-trade__preview_order'
             || toolName.startsWith('mcp__chrome-devtools__')
             || toolName.startsWith('mcp__chrome_devtools__')
           ) {
