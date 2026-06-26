@@ -37,13 +37,24 @@ describe('checkOrder (Risk Gate)', () => {
   })
 
   it('涨停不追拒', () => {
-    const v = checkOrder({ symbol: 'UP', side: 'buy', qty: 10 }, acc(), snapshot, DEFAULT_RISK_RULES)
+    const v = checkOrder({ symbol: 'UP', side: 'buy', qty: 100 }, acc(), snapshot, DEFAULT_RISK_RULES)
     expect(v.ok).toBe(false)
     expect(v.reason).toContain('涨停')
   })
 
+  it('买入非整百股拒（A 股按手成交）', () => {
+    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 150 }, acc(), snapshot, DEFAULT_RISK_RULES)
+    expect(v.ok).toBe(false)
+    expect(v.reason).toContain('100 股整数倍')
+  })
+
+  it('卖出零股不受整百限制（清隔夜碎股）', () => {
+    const v = checkOrder({ symbol: 'A', side: 'sell', qty: 50 }, acc({ positions: { A: { qty: 50, avgPrice: 40 } } }), snapshot, DEFAULT_RISK_RULES)
+    expect(v.ok).toBe(true)
+  })
+
   it('黑名单拒', () => {
-    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 10 }, acc(), snapshot, { ...DEFAULT_RISK_RULES, blacklist: ['A'] })
+    const v = checkOrder({ symbol: 'A', side: 'buy', qty: 100 }, acc(), snapshot, { ...DEFAULT_RISK_RULES, blacklist: ['A'] })
     expect(v.ok).toBe(false)
     expect(v.reason).toContain('黑名单')
   })

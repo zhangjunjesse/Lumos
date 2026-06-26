@@ -74,6 +74,8 @@ export function checkOrder(
   if (notional > rules.maxOrderNotional) return fail(`超单笔金额上限(${rules.maxOrderNotional})`)
 
   if (intent.side === 'buy') {
+    // A 股买入按手(100 股)成交,非整百券商会直接拒——确定性挡在前面,别让它走到撮合。卖出可有零股(清隔夜碎股)故不限。
+    if (intent.qty % 100 !== 0) return fail('买入数量须为 100 股整数倍')
     if (rules.noChaseLimitUp && (tick.limitUp || (tick.pct ?? 0) >= 9.8)) return fail('涨停不追')
     if (account.cash < notional + fee)
       return fail(`可用资金不足(需 ${(notional + fee).toFixed(2)}，有 ${account.cash.toFixed(2)})`)
