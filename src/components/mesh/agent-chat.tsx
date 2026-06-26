@@ -21,29 +21,10 @@ function payloadText(payload: unknown): string {
   return String(payload ?? '')
 }
 
-interface AppliedItem {
-  command?: { type?: string; mode?: string; focus?: string; symbols?: string[]; add?: boolean }
-}
-function describeApplied(applied: unknown): string[] {
-  if (!Array.isArray(applied)) return []
-  return (applied as AppliedItem[])
-    .map((a) => {
-      const c = a?.command
-      if (!c) return ''
-      if (c.type === 'set_mode') return c.mode === 'auto' ? '切换：自动交易' : '切换：只看不买'
-      if (c.type === 'set_focus') return `关注：${c.focus}`
-      if (c.type === 'set_blacklist') return `${c.add ? '拉黑' : '解禁'}：${(c.symbols ?? []).join('、')}`
-      return c.type ?? ''
-    })
-    .filter(Boolean)
-}
-
+/** 本地的「你」消息（@ 直达成员发出 / 发送失败 / 用法提示）；带时间。 */
 interface LocalMsg {
-  kind: 'user' | 'command'
-  from: string
   text: string
   at: number
-  applied?: string[]
 }
 
 /** 轮询来的消息（事件/任务/回执）渲染成一行。 */
@@ -72,29 +53,12 @@ function renderMsg(m: MsgRecord): ReactNode {
   )
 }
 
-/** 本地的你↔队长指挥消息渲染成一行（带时间）。 */
+/** 本地「你」消息渲染成一行（带时间）。 */
 function renderLocal(m: LocalMsg, key: string): ReactNode {
-  const meta = agentMeta(m.from)
-  const isUser = m.kind === 'user'
+  const meta = agentMeta('user')
   return (
-    <Row
-      key={key}
-      name={meta.name}
-      color={meta.color}
-      badge={isUser ? '指令' : '队长'}
-      badgeClass={isUser ? 'bg-neutral-100 text-neutral-500' : 'bg-indigo-50 text-indigo-600'}
-      time={fmtMs(m.at)}
-    >
+    <Row key={key} name={meta.name} color={meta.color} badge="你" badgeClass="bg-neutral-100 text-neutral-500" time={fmtMs(m.at)}>
       {m.text}
-      {m.applied && m.applied.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {m.applied.map((a, j) => (
-            <span key={j} className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-600">
-              {a}
-            </span>
-          ))}
-        </div>
-      )}
     </Row>
   )
 }
@@ -106,7 +70,7 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // 拉启用中的成员(队长除外,它是不 @ 时的默认目标)供 @ 下拉用。
+  // 拉启用中的成员（队长是管理锚点、不参与协作，不列入 @ 直达对象）供 @ 下拉用。
   useEffect(() => {
     fetch(`/api/mesh/agents?accountId=${accountId}`)
       .then((r) => r.json())
@@ -116,7 +80,7 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
       .catch(() => {})
   }, [accountId])
 
-  // 正在输入 @<片段> 时弹成员下拉(@ 直达该成员,绕过队长)。
+  // 正在输入 @<片段> 时弹成员下拉。
   const atMatch = input.match(/@(\S*)$/)
   const atOptions = atMatch ? agents.filter((a) => a.id.includes(atMatch[1]) || a.name.includes(atMatch[1])) : []
   const showAtMenu = Boolean(atMatch) && atOptions.length > 0
@@ -130,40 +94,33 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
     if (!msg || sending) return
     const at = msg.match(/^@(\S+)\s+([\s\S]+)$/)
     const target = at && agents.some((a) => a.id === at[1]) ? at[1] : null
+    if (!target) {
+      // 没 @ 指定成员:这个框只做「@ 直达成员对话」;增删改成员请用「AI 团队管家」。给本地提示,不发后端。
+      setLocal((l) => [...l, { text: '请用 @ 指定要对话的成员；增删改成员请用「AI 团队管家」。', at: Date.now() }])
+      return
+    }
     setInput('')
     setSending(true)
     try {
-      if (target) {
-        // @ 直达该成员:发定向任务。它的处理 + 回执会经轮询出现在消息流(不本地追加,避免与轮询重复)。
-        const r = await fetch('/api/mesh/message', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ to: target, text: at![2].trim(), accountId }),
-        })
-        if (!r.ok) {
-          const data = await r.json().catch(() => ({}))
-          // 发送失败是「你」这边的事,别用 from:target 否则显示成对方头像、像是对方拒绝。
-          setLocal((l) => [...l, { kind: 'user', from: 'user', text: `@${target} 发送失败：${data.error || '未知错误'}`, at: Date.now() }])
-        }
-      } else {
-        setLocal((l) => [...l, { kind: 'user', from: 'user', text: msg, at: Date.now() }])
-        const r = await fetch('/api/mesh/command', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ message: msg, accountId }),
-        })
-        const data = await r.json()
-        setLocal((l) => [...l, { kind: 'command', from: 'team.leader', text: data.reply || '(无回复)', applied: describeApplied(data.applied), at: Date.now() }])
+      // @ 直达该成员:发定向任务。它的处理 + 回执会经轮询出现在消息流(不本地追加,避免与轮询重复)。
+      const r = await fetch('/api/mesh/message', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: target, text: at![2].trim(), accountId }),
+      })
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}))
+        setLocal((l) => [...l, { text: `@${target} 发送失败：${data.error || '未知错误'}`, at: Date.now() }])
       }
     } catch {
-      setLocal((l) => [...l, { kind: 'user', from: 'user', text: target ? `@${target} 发送失败` : '(发送失败)', at: Date.now() }])
+      setLocal((l) => [...l, { text: `@${target} 发送失败`, at: Date.now() }])
     } finally {
       setSending(false)
     }
   }
 
   const empty = messages.length === 0 && local.length === 0
-  // 轮询消息 + 本地指挥统一成一条流，按时间倒排（最新在上）。
+  // 轮询消息 + 本地「你」消息统一成一条流，按时间倒排（最新在上）。
   const stream = [
     ...messages.map((m) => ({ at: parseAt(m.createdAt), el: renderMsg(m) })),
     ...local.map((m, i) => ({ at: m.at, el: renderLocal(m, `u${m.at}-${i}`) })),
@@ -173,11 +130,11 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
     <div className="flex min-w-0 flex-1 flex-col rounded-xl border border-neutral-200 bg-white">
       <div className="border-b border-neutral-200 px-4 py-3">
         <h2 className="text-sm font-medium text-neutral-900">团队消息流</h2>
-        <p className="mt-0.5 text-xs text-neutral-400">事件广播 · 定向任务 · 回执 · 你与队长的指挥（最新在上）</p>
+        <p className="mt-0.5 text-xs text-neutral-400">事件广播 · 定向任务 · 回执 · 你 @ 成员的对话（最新在上）</p>
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        {empty && <div className="py-8 text-center text-sm text-neutral-400">还没有消息 —— 启动团队，或在下方给队长下令</div>}
+        {empty && <div className="py-8 text-center text-sm text-neutral-400">还没有消息 —— 启动团队，或在下方 @ 某个成员对话</div>}
         {stream.map((it) => it.el)}
       </div>
 
@@ -185,7 +142,7 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
         <div className="relative flex items-center gap-2">
           {showAtMenu && (
             <div className="absolute bottom-full left-0 mb-1.5 max-h-56 w-64 overflow-y-auto rounded-lg border bg-white shadow-lg">
-              <div className="bg-neutral-50 px-3 py-1.5 text-xs text-neutral-400">@ 直达成员（绕过队长）</div>
+              <div className="bg-neutral-50 px-3 py-1.5 text-xs text-neutral-400">@ 直达成员</div>
               {atOptions.map((a) => (
                 <button
                   key={a.id}
@@ -209,7 +166,7 @@ export function AgentChat({ accountId, messages }: { accountId: string; messages
               if (showAtMenu) pickAgent(atOptions[0].id)
               else send()
             }}
-            placeholder="给队长下令；或输入 @ 直接对话某个成员"
+            placeholder="输入 @ 直接对话某个成员（增删改成员用「AI 团队管家」）"
             className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
           />
           <button

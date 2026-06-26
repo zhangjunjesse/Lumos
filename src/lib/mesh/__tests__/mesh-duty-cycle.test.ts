@@ -73,15 +73,14 @@ describe('mesh-duty-cycle —— runOneDutyCycle 执行核（工具注入 + 投�
     expect(listPendingDeliveries('run-d1').find((p) => p.subscriberId === 'risk')).toBeUndefined() // 已消费
   })
 
-  it('timer 盯盘 active_loop：通用主动 prompt（observe 带行情快照），无投递可消费', async () => {
+  it('timer 主动 active_loop：通用主动 prompt（不按角色分叉、不喂业务数据），无投递可消费', async () => {
     await runOneDutyCycle({
       runId: 'run-d3', workshopId: 'ws', participant: participant('observe', 'observe'),
       trigger: 'timer', cycleSeq: 1, subscribersOf: () => [], tradeCtx,
-      snapshot: { ticks: [{ code: '600160', pct: 9 }] },
     })
     const prompt = mockedText.mock.calls[0][1]
     expect(prompt).toContain('主动履职')
-    expect(prompt).toContain('600160')
+    expect(prompt).toContain('共享黑板') // 通用 prompt 只喂黑板,不喂行情快照/角色分叉
   })
 
   it('记忆：prompt 前置该 agent 最近对话（无状态 agent 跨 cycle 记住用户纠正）', async () => {

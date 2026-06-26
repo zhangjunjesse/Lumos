@@ -34,9 +34,6 @@ export interface DutyCycleInput {
   cycleSeq: number
   subscribersOf: (topic: string) => string[]
   tradeCtx: TradeContext
-  /** 盯盘 timer 触发时的最新行情快照。 */
-  snapshot?: unknown
-  focus?: string
   abortController?: AbortController
   sessionId?: string
 }
@@ -83,5 +80,5 @@ function buildBasePrompt(input: DutyCycleInput): string {
     if (topic === 'market_close') return buildReviewPrompt(input.runId) // 收盘 → 复盘归因
     return buildEventPrompt(input.runId, topic, payload)
   }
-  return buildActiveLoopPrompt(input.runId, input.participant.agent.role, input.snapshot, input.focus)
+  return buildActiveLoopPrompt(input.runId)
 }

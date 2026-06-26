@@ -6,7 +6,6 @@
  */
 import { readAllBlackboard } from './mesh-blackboard'
 import { recentAgentMessages } from './mesh-event-bus'
-import type { MeshAgentRole } from './mesh-agent-config'
 
 /** 白板当前全 key 摘要（每行一条）。 */
 function boardLines(runId: string): string {
@@ -56,19 +55,10 @@ export function buildReplyPrompt(runId: string, payload: unknown): string {
 }
 
 /**
- * 主动 duty cycle（active_loop 按 next_run_at 醒来）：只喂通用上下文——被定时唤醒 + observe 角色带最新行情快照 + 当前白板。
- * 具体职责由各 agent 自己的 systemPrompt 定义，这里**不写死角色职责**，自定义 agent 才能按自己的提示词干活。
+ * 主动 duty cycle（active_loop 按 next_run_at 醒来）：纯通用上下文——被定时唤醒 + 当前共享黑板。
+ * 不按角色分叉、不喂任何业务数据（行情等就在黑板的 market_snapshot 键里，agent 需要自己读）；
+ * 具体职责完全由各 agent 的 systemPrompt 决定，框架不写死。
  */
-export function buildActiveLoopPrompt(runId: string, role: MeshAgentRole, snapshot: unknown, focus?: string): string {
-  // custom = 零内置逻辑:不喂行情、不喂共享白板(避免炒股团队的 market_snapshot 等噪音带偏),纯按用户 systemPrompt 跑。
-  if (role === 'custom') {
-    return `你被定时唤醒。严格按你的系统提示词履职,并调 write_blackboard 工具把这轮结果留痕(key 自取)。不要做系统提示词以外的事。`
-  }
-  const board = boardLines(runId)
-  // observe 到点带上最新行情快照作上下文;其余角色只看白板。
-  const snapshotBlock =
-    role === 'observe' && snapshot !== undefined
-      ? `最新行情快照(供参考)：\n${JSON.stringify(snapshot, null, 2)}${focus ? `\n关注重点：${focus}` : ''}\n\n`
-      : ''
-  return `你被定时唤醒,轮到你主动履职。\n\n${snapshotBlock}当前白板：\n${board}\n\n按你的系统提示词(职责)直接调用相应工具履职:需要留痕调 write_blackboard,需要通知队友调 emit_event/send_task,有下单职责调 place_order。确无可做就调 write_blackboard 写一句说明,不要硬造动作。`
+export function buildActiveLoopPrompt(runId: string): string {
+  return `你被定时唤醒,轮到你主动履职。\n\n当前共享黑板：\n${boardLines(runId) || '（空）'}\n\n按你的系统提示词(职责)直接调用相应工具履职:需要留痕调 write_blackboard,需要通知队友调 emit_event/send_task,需要更多上下文调 read_blackboard,有下单职责调 place_order。确无可做就调 write_blackboard 写一句说明,不要硬造动作。`
 }

@@ -92,12 +92,3 @@ export function listMeshMcpServers(): { name: string; description: string }[] {
     description: cfg.description ?? name,
   }))
 }
-
-/** M1 示例：一个只读盯盘 agent，只能看行情/持仓，碰不到任何写/下单能力。 */
-export const EXAMPLE_OBSERVE_AGENT: MeshAgentConfig = {
-  id: 'observe.market',
-  role: 'observe',
-  systemPrompt: '你是盯盘观察 agent，只读行情与持仓，发现异动写入结论。不下单。',
-  mcpAllowlist: ['qmt-readonly'],
-  toolAllowlist: ['Read', 'Grep', 'Glob'],
-}

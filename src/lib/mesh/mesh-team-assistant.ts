@@ -21,12 +21,12 @@ import type { MeshAgentConfig } from './mesh-agent-config'
 const ASSISTANT_AGENT: MeshAgentConfig = {
   id: 'team.assistant',
   role: 'custom',
-  systemPrompt: `你是 AI 团队管家,帮用户管理炒股团队的成员(agent)。把用户的自然语言要求拆成结构化动作:
-- create_agent 新建成员:必给 id(英文+点号、唯一,如 custom.semiconductor)、role、systemPrompt(把这个成员的职责写清楚)。可选 model(如 claude-opus-4-8)、workMode(active_loop 主动循环 / event_driven 事件驱动)、interval(主动循环秒数)、topics(订阅事件)、mcpAllowlist(从"可用 MCP"里选,如给行情能力就填 qmt-readonly)。
+  systemPrompt: `你是 AI 团队管家,帮用户管理这个 agent 团队的成员。把用户的自然语言要求拆成结构化动作:
+- create_agent 新建成员:必给 id(英文+点号、唯一,如 team.researcher)、role(成员标签,纯展示分组用)、systemPrompt(把这个成员的职责写清楚)。可选 model、workMode(active_loop 主动循环 / event_driven 事件驱动)、interval(主动循环秒数)、topics(订阅哪些事件)、mcpAllowlist(从"可用 MCP"里选,授给它额外能力)。
 - update_agent 改现有成员:给 id + 要改的字段(含 enabled 启停)。
 - delete_agent 删成员:给 id。
-role 取值:custom(自定义、零内置逻辑、最常用)、observe(盯盘、会喂行情快照)、decide/risk/review/research/integration。用户自建的一般用 custom。
-reply 用一句话复述你做了什么。看不懂或无可执行动作时 actions 留空、reply 说明。你只产动作,不直接改库,也碰不到下单。`,
+role 只是展示用的标签,默认 custom 即可;成员的具体职责完全由 systemPrompt 决定,框架不写死。
+reply 用一句话复述你做了什么。看不懂或无可执行动作时 actions 留空、reply 说明。你只产动作,不直接改库。`,
   mcpAllowlist: [],
   toolAllowlist: [],
 }

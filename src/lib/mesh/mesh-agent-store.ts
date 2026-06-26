@@ -1,9 +1,9 @@
 /**
  * Agent Registry 存储 —— agent 配置真源（设计 §150）。按 workshopId 隔离：每个工作室一套 agents。
- * db 该工作室空时从 MESH_DEFAULT_AGENTS seed。协作（mesh-collaboration）和队长（mesh-leader）读这里。
+ * db 该工作室空时从 MESH_DEFAULT_AGENTS（通用极简种子）seed。调度器/管家/UI 都读这里。
  */
 import { getDb } from '@/lib/db/connection'
-import { MESH_DEFAULT_AGENTS } from './mesh-stock-agents'
+import { MESH_DEFAULT_AGENTS } from './mesh-default-agents'
 import type { MeshAgentConfig, MeshAgentRole, MeshWorkMode } from './mesh-agent-config'
 
 export interface StoredAgent extends MeshAgentConfig {
@@ -46,7 +46,7 @@ function toAgent(r: Row): StoredAgent {
   }
 }
 
-/** 该工作室无 agent 时灌入默认 5 个（幂等，per-workshop）。 */
+/** 该工作室无 agent 时灌入默认种子（幂等，per-workshop）。 */
 export function ensureSeed(workshopId: string): void {
   const db = getDb()
   const cnt = db.prepare('SELECT COUNT(*) AS c FROM mesh_agent WHERE workshop_id = ?').get(workshopId) as { c: number }
@@ -85,7 +85,7 @@ export function upsertAgent(workshopId: string, patch: Partial<StoredAgent> & { 
   const cur = getAgent(workshopId, patch.id)
   const next: StoredAgent = {
     id: patch.id,
-    role: patch.role ?? cur?.role ?? 'observe',
+    role: patch.role ?? cur?.role ?? 'custom',
     systemPrompt: patch.systemPrompt ?? cur?.systemPrompt ?? '',
     model: patch.model ?? cur?.model,
     providerId: patch.providerId ?? cur?.providerId,
