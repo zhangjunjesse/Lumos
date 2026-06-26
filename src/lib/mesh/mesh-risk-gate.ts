@@ -62,7 +62,7 @@ export function checkOrder(
 
   // 总闸（最高优先级）
   if (account.halted) return fail('账户已触发总闸 halt')
-  if (account.realizedPnl <= -rules.maxDailyLossAbs) return fail(`触发单日最大亏损总闸(${rules.maxDailyLossAbs})`)
+  if (account.realizedPnl - account.dayStartRealizedPnl <= -rules.maxDailyLossAbs) return fail(`触发单日最大亏损总闸(${rules.maxDailyLossAbs})`)
   if (account.orderCount >= rules.maxOrderCount) return fail(`触发单日最大下单笔数总闸(${rules.maxOrderCount})`)
   if (account.notionalTraded + notional > rules.maxDailyNotional)
     return fail(`触发单日最大下单金额总闸(${rules.maxDailyNotional})`)

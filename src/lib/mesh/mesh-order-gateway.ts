@@ -12,7 +12,8 @@ import {
   rejectTicket,
   type OrderTicket,
 } from './mesh-order-ticket'
-import { getAccount, initAccount, applyFill, setHalted, DEFAULT_PAPER_CASH } from './mesh-paper-account'
+import { getAccount, initAccount, applyFill, setHalted, rollDayIfNeeded, DEFAULT_PAPER_CASH } from './mesh-paper-account'
+import { dayKey } from './mesh-market-clock'
 import { calculateOrderFee, checkOrder, type OrderIntent, type RiskVerdict } from './mesh-risk-gate'
 import { DEFAULT_RISK_RULES, type RiskRules } from './mesh-risk-rules'
 import { isLiveBackendConfigured, liveBackend, LiveBackendError } from './mesh-live-backend'
@@ -37,13 +38,32 @@ export interface PlaceOrderOptions {
   liveEnabled?: boolean
 }
 
+// 每账户串行锁：并发下单按账户排队执行，杜绝「读账户 → await 真盘下单 → 写账户」之间被另一笔覆盖现金(live 竞态)。
+// paper 路径本就同步无竞态，加锁也无害(立即接力)。Map 按 accountId 覆盖、数量有界(每工作室一个)，不无限增长。
+const accountLocks = new Map<string, Promise<unknown>>()
+function withAccountLock<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = accountLocks.get(accountId) ?? Promise.resolve()
+  const run = prev.then(fn, fn) // 排在前一笔之后(无论其成败都接力)
+  accountLocks.set(accountId, run.then(() => {}, () => {})) // 链上保活，吞错不传染给下一笔
+  return run
+}
+
 export async function placeOrder(
   runId: string,
   intent: OrderIntent,
   options: PlaceOrderOptions,
 ): Promise<PlaceOrderResult> {
-  const mode = options.mode ?? 'paper'
   const accountId = options.accountId ?? runId
+  return withAccountLock(accountId, () => placeOrderInner(runId, intent, options, accountId))
+}
+
+async function placeOrderInner(
+  runId: string,
+  intent: OrderIntent,
+  options: PlaceOrderOptions,
+  accountId: string,
+): Promise<PlaceOrderResult> {
+  const mode = options.mode ?? 'paper'
   const rules = options.rules ?? DEFAULT_RISK_RULES
   const existingTicket = getTicketByIdempotencyKey(options.idempotencyKey)
   const ticket =
@@ -73,8 +93,10 @@ export async function placeOrder(
 
   // paper 账户按需懒建：团队启动后中途加入下单成员、或聊天即时下单时账户可能还没建。
   // live 缺账户属配置错误，保持 throw（不为真盘自动凭空建账户）。
-  const account = getAccount(accountId) ?? (mode === 'paper' ? initAccount(accountId, DEFAULT_PAPER_CASH) : null)
-  if (!account) throw new Error(`paper account not found: ${accountId}`)
+  const ensured = getAccount(accountId) ?? (mode === 'paper' ? initAccount(accountId, DEFAULT_PAPER_CASH) : null)
+  if (!ensured) throw new Error(`paper account not found: ${accountId}`)
+  // 跨交易日先清「当日计数」、刷新当日亏损基线，再过总闸——否则单日笔数/金额/亏损会从开户终身累计、把常驻团队锁死。
+  const account = rollDayIfNeeded(accountId, dayKey(new Date()))
 
   // 下单时若缓存快照里没有该股价格（它不在持仓/自选）→ 按需现取一次实时价并入快照，
   // 否则 RiskGate 会因 price=0 误判"无该标的有效行情"而拒单（成熟交易实现都是下单就地取价）。

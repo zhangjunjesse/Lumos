@@ -224,4 +224,20 @@ describe('placeOrder (live) — M8 真盘后端', () => {
     expect(r.filled).toBe(false)
     expect(getAccount('L5')!.halted).toBe(true)
   })
+
+  it('并发 live 下单按账户串行：cash 只够一笔 → 第二笔看到扣减后余额被拒（无竞态覆盖）', async () => {
+    initAccount('cc', 5000) // 只够买一笔(100×45 + 费 ≈ 4505)
+    stubLive(async () => {
+      await new Promise((res) => setTimeout(res, 10)) // 制造并发窗口：两笔都进来再依次成交
+      return { status: 'filled', filledPrice: 45, filledQty: 100 }
+    })
+    const opt = (k: string) => ({ idempotencyKey: k, snapshot, mode: 'live' as const, accountId: 'cc', liveEnabled: true })
+    const [r1, r2] = await Promise.all([
+      placeOrder('run-a', { symbol: '600160.SH', side: 'buy', qty: 100 }, opt('cc-1')),
+      placeOrder('run-b', { symbol: '600160.SH', side: 'buy', qty: 100 }, opt('cc-2')),
+    ])
+    expect([r1, r2].filter((r) => r.filled).length).toBe(1) // 串行后第二笔余额不足被拒(无锁会两笔都成交、现金被覆盖)
+    expect([r1, r2].some((r) => r.reason.includes('资金不足'))).toBe(true)
+    expect(getAccount('cc')!.cash).toBeCloseTo(495) // 只扣了一笔
+  })
 })

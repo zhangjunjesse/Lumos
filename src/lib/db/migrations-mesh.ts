@@ -111,6 +111,8 @@ export function migrateMeshTables(db: Database.Database): void {
       fees_paid REAL NOT NULL DEFAULT 0,
       order_count INTEGER NOT NULL DEFAULT 0,
       notional_traded REAL NOT NULL DEFAULT 0,
+      day_start_realized_pnl REAL NOT NULL DEFAULT 0,
+      last_reset_day TEXT DEFAULT NULL,
       halted INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -199,6 +201,9 @@ export function migrateMeshTables(db: Database.Database): void {
   try { db.exec("ALTER TABLE mesh_team_config ADD COLUMN trade_mode TEXT NOT NULL DEFAULT 'paper'") } catch { /* 列已存在或表待建 */ }
   try { db.exec("ALTER TABLE mesh_team_config ADD COLUMN watchlist_json TEXT NOT NULL DEFAULT '[]'") } catch { /* 列已存在或表待建 */ }
   try { db.exec('ALTER TABLE mesh_order_ticket ADD COLUMN filled_qty INTEGER DEFAULT NULL') } catch { /* 列已存在 */ }
+  // 风控总闸的「单日」计数按交易日重置（之前缺重置=终身累计，会把常驻团队逐渐锁死/误判当日亏损）。
+  try { db.exec('ALTER TABLE mesh_paper_account ADD COLUMN day_start_realized_pnl REAL NOT NULL DEFAULT 0') } catch { /* 列已存在 */ }
+  try { db.exec('ALTER TABLE mesh_paper_account ADD COLUMN last_reset_day TEXT') } catch { /* 列已存在 */ }
 
   // agent/team_config/risk：PK 含 workshop_id（多工作室隔离）。新库直接建，旧库（单列 PK=id）重建迁移。
   ensureWorkshopPkTable(db, 'mesh_agent', AGENT_SCHEMA, AGENT_COLS)
