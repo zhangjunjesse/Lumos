@@ -17,6 +17,7 @@ import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth'
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env'
 import { createMeshCanUseTool, resolveMeshMcpServers, MESH_BUILTIN_TOOLS } from './mesh-tool-policy'
 import { buildMeshActionPlanSchema, parseActionPlan, type MeshActionPlan } from './mesh-action-schema'
+import { createMeshCollabMcpServer, MESH_COLLAB_MCP_SERVER_NAME, type MeshCollabContext } from './mesh-collab-mcp-server'
 import type { MeshAgentConfig } from './mesh-agent-config'
 import type { McpServerStatus } from './mesh-mcp-status'
 
@@ -29,6 +30,9 @@ export interface MeshRunOptions {
   abortController?: AbortController
   /** SDK 调用最大轮数；缺省 6。纯 NL→JSON 解析(队长/管家)可设低值,杜绝多轮工具探索拖到超时。 */
   maxTurns?: number
+  /** 协作上下文:有则注入框架级 mesh-collab 工具(read/write_blackboard/emit_event/send_task/reply),
+   *  让 agent 在 turn 内直接调协作原语(取代旧的 action-plan 输出)。缺省不注入(纯 NL/解析类如队长/管家)。 */
+  collabContext?: MeshCollabContext
 }
 
 export interface MeshRunResult {
@@ -65,6 +69,15 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
   const provider = agent.providerId ? getProvider(agent.providerId) : undefined
   const ctx = buildClaudeSdkInvocationContext({ provider, sessionId: options.sessionId, requestedModel: agent.model })
   const mcpServers = resolveMeshMcpServers(agent.mcpAllowlist)
+  // 框架级协作工具:有 collabContext 就注入 mesh-collab(read/write_blackboard/emit_event/send_task/reply),
+  // 让 agent 在 turn 内直接调协作原语。它是框架自带、人人可用,不在 agent.mcpAllowlist 里(canUseTool 放行见 tool-policy)。
+  const collabTools: string[] = []
+  if (options.collabContext) {
+    mcpServers[MESH_COLLAB_MCP_SERVER_NAME] = createMeshCollabMcpServer(options.collabContext)
+    for (const t of ['read_blackboard', 'write_blackboard', 'emit_event', 'send_task', 'reply']) {
+      collabTools.push(`mcp__${MESH_COLLAB_MCP_SERVER_NAME}__${t}`)
+    }
+  }
   // 本轮独立 controller:外部 abort(停团队)联动它,但本轮超时只 abort 它、不波及整个 run。
   const abortController = new AbortController()
   const external = options.abortController
@@ -78,7 +91,7 @@ function prepareMeshQuery(agent: MeshAgentConfig, options: MeshRunOptions) {
     permissionMode: 'default' as const,
     // 全放开:预批准全部内置工具(+ agent 额外声明的),让 agent 确知可用、不再误判"没工具"。
     // canUseTool 仍兜底裁决(内置放行、未注入 MCP 拒);下单安全靠 OrderGateway 结构隔离。
-    allowedTools: [...MESH_BUILTIN_TOOLS, ...agent.toolAllowlist],
+    allowedTools: [...MESH_BUILTIN_TOOLS, ...agent.toolAllowlist, ...collabTools],
     canUseTool: createMeshCanUseTool(agent),
     env: ctx.env,
     settingSources: ctx.settingSources,
