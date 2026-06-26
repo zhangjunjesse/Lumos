@@ -6,144 +6,118 @@ jest.mock('@/lib/db/connection', () => {
   migrateMeshTables(mem)
   return { getDb: () => mem }
 })
-jest.mock('../mesh-worker', () => ({ runMeshActor: jest.fn() }))
-jest.mock('../mesh-order-gateway', () => ({ placeOrder: jest.fn() }))
+jest.mock('../mesh-worker', () => ({ runMeshAgentText: jest.fn() }))
+// duty-cycle 现在(为门控下单)import 了 mesh-trade-mcp-server,它会加载 SDK ESM → 在 jest 里需 stub。
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: (cfg: unknown) => cfg,
+  tool: (name: string, _desc: string, _schema: unknown, handler: unknown) => ({ name, handler }),
+}))
 
 import { runOneDutyCycle } from '../mesh-duty-cycle'
-import { runMeshActor } from '../mesh-worker'
-import { placeOrder } from '../mesh-order-gateway'
+import { runMeshAgentText } from '../mesh-worker'
 import { persistMessage, listPendingDeliveries } from '../mesh-event-bus'
-import { readBlackboard } from '../mesh-blackboard'
 import { getMcpStatus } from '../mesh-mcp-status'
 import type { MeshParticipant, TradeContext } from '../mesh-runtime'
 
-const mockedActor = jest.mocked(runMeshActor)
-const mockedPlace = jest.mocked(placeOrder)
+const mockedText = jest.mocked(runMeshAgentText)
 const tradeCtx: TradeContext = { mode: 'auto', accountId: 'acc', tradeMode: 'paper', liveEnabled: false }
 
-function participant(id: string, role: MeshParticipant['agent']['role']): MeshParticipant {
-  return { agent: { id, role, systemPrompt: '', mcpAllowlist: [], toolAllowlist: [] }, topics: [] }
+function participant(id: string, role: MeshParticipant['agent']['role'], mcpAllowlist: string[] = []): MeshParticipant {
+  return { agent: { id, role, systemPrompt: '', mcpAllowlist, toolAllowlist: [] }, topics: [] }
 }
 
 beforeEach(() => {
-  mockedActor.mockReset()
-  mockedPlace.mockReset()
+  mockedText.mockReset()
+  mockedText.mockResolvedValue({ text: 'done' })
 })
 
-describe('mesh-duty-cycle —— runOneDutyCycle 执行核（S2）', () => {
-  it('event 触发（agent_task）：跑 plan、写白板、消费 consumed 投递，prompt 含任务', async () => {
-    const mid = persistMessage('run-d1', 'agent_task', { summary: '审买入 X', from: 'stock.decide' }, 'stock.decide', ['stock.risk'], 'task-1')
-    mockedActor.mockResolvedValue({
-      plan: { thought: '审议', actions: [{ type: 'write_blackboard', key: 'risk_review', value: { ok: true } }] },
-      text: '',
+describe('mesh-duty-cycle —— runOneDutyCycle 执行核（工具注入 + 投递消费）', () => {
+  it('注入协作上下文：runId/agentId/subscribersOf 传给 worker（人人可用）', async () => {
+    const subscribersOf = (t: string) => (t === 'x' ? ['a', 'b'] : [])
+    await runOneDutyCycle({
+      runId: 'run-c', workshopId: 'ws', participant: participant('observe.1', 'observe'),
+      trigger: 'timer', cycleSeq: 1, subscribersOf, tradeCtx,
     })
+    const opts = mockedText.mock.calls[0][2]!
+    expect(opts.collabContext).toMatchObject({ runId: 'run-c', agentId: 'observe.1' })
+    expect(opts.collabContext!.subscribersOf('x')).toEqual(['a', 'b'])
+  })
 
-    const r = await runOneDutyCycle({
-      runId: 'run-d1',
-      workshopId: 'mesh_team_default',
-      participant: participant('stock.risk', 'risk'),
+  it('下单上下文按白名单门控：含 mesh-trade 才注入（带 cycleSeq + 当前 trade）', async () => {
+    await runOneDutyCycle({
+      runId: 'run-t', workshopId: 'ws', participant: participant('risk.1', 'custom', ['mesh-trade']),
+      trigger: 'timer', cycleSeq: 9, subscribersOf: () => [], tradeCtx,
+    })
+    expect(mockedText.mock.calls[0][2]!.tradeContext).toEqual({ runId: 'run-t', agentId: 'risk.1', cycleSeq: 9, trade: tradeCtx })
+  })
+
+  it('无 mesh-trade 白名单 → 不给下单上下文（能力隔离：够不到 place_order）', async () => {
+    await runOneDutyCycle({
+      runId: 'run-n', workshopId: 'ws', participant: participant('observe.1', 'observe'),
+      trigger: 'timer', cycleSeq: 1, subscribersOf: () => [], tradeCtx,
+    })
+    expect(mockedText.mock.calls[0][2]!.tradeContext).toBeUndefined()
+  })
+
+  it('event 触发（agent_task）：prompt 含任务内容，turn 后消费该投递', async () => {
+    const mid = persistMessage('run-d1', 'agent_task', { summary: '审买入 X', from: 'decide' }, 'decide', ['risk'], 'task-1')
+    await runOneDutyCycle({
+      runId: 'run-d1', workshopId: 'ws', participant: participant('risk', 'custom'),
       trigger: 'event',
-      delivery: { messageId: mid, subscriberId: 'stock.risk', topic: 'agent_task', payload: { summary: '审买入 X', from: 'stock.decide' }, taskId: 'task-1' },
-      cycleSeq: 1,
-      subscribersOf: () => [],
-      tradeCtx,
+      delivery: { messageId: mid, subscriberId: 'risk', topic: 'agent_task', payload: { summary: '审买入 X', from: 'decide' }, taskId: 'task-1' },
+      cycleSeq: 1, subscribersOf: () => [], tradeCtx,
     })
-
-    expect(r.writes).toContain('risk_review')
-    expect(readBlackboard('run-d1', 'risk_review')?.value).toEqual({ ok: true })
-    // consumed 投递被 markDelivered → 风控不再有 pending
-    expect(listPendingDeliveries('run-d1').find((p) => p.subscriberId === 'stock.risk')).toBeUndefined()
-    // 风控收到的是定向任务 prompt
-    const prompt = mockedActor.mock.calls[0][1]
+    const prompt = mockedText.mock.calls[0][1]
     expect(prompt).toContain('定向任务')
     expect(prompt).toContain('task-1')
+    expect(listPendingDeliveries('run-d1').find((p) => p.subscriberId === 'risk')).toBeUndefined() // 已消费
   })
 
-  it('event 触发 emit_event：投递给订阅者', async () => {
-    mockedActor.mockResolvedValue({
-      plan: { thought: '发现异动', actions: [{ type: 'emit_event', topic: 'quote_anomaly', payload: { code: '600160' } }] },
-      text: '',
-    })
-    const r = await runOneDutyCycle({
-      runId: 'run-d2',
-      workshopId: 'mesh_team_default',
-      participant: participant('stock.observe', 'observe'),
-      trigger: 'event',
-      delivery: { messageId: persistMessage('run-d2', 'tick', {}, 'seed', ['stock.observe']), subscriberId: 'stock.observe', topic: 'tick', payload: {} },
-      cycleSeq: 1,
-      subscribersOf: (t) => (t === 'quote_anomaly' ? ['stock.decide'] : []),
-      tradeCtx,
-    })
-    expect(r.emits).toContain('quote_anomaly')
-    expect(listPendingDeliveries('run-d2').find((p) => p.subscriberId === 'stock.decide')).toBeTruthy()
-  })
-
-  it('timer 触发（盯盘 active_loop）：用通用主动循环 prompt（含 snapshot），无 consumed', async () => {
-    mockedActor.mockResolvedValue({ plan: { thought: '看盘', actions: [] }, text: '' })
-    const r = await runOneDutyCycle({
-      runId: 'run-d3',
-      workshopId: 'mesh_team_default',
-      participant: participant('stock.observe', 'observe'),
-      trigger: 'timer',
-      cycleSeq: 1,
-      subscribersOf: () => [],
-      tradeCtx,
+  it('timer 盯盘 active_loop：通用主动 prompt（observe 带行情快照），无投递可消费', async () => {
+    await runOneDutyCycle({
+      runId: 'run-d3', workshopId: 'ws', participant: participant('observe', 'observe'),
+      trigger: 'timer', cycleSeq: 1, subscribersOf: () => [], tradeCtx,
       snapshot: { ticks: [{ code: '600160', pct: 9 }] },
     })
-    const prompt = mockedActor.mock.calls[0][1]
-    expect(prompt).toContain('主动履职') // 通用主动循环 prompt（盯盘职责已下沉到 systemPrompt）
-    expect(prompt).toContain('600160') // observe 仍带行情快照作上下文
-    expect(r.writes).toHaveLength(0)
+    const prompt = mockedText.mock.calls[0][1]
+    expect(prompt).toContain('主动履职')
+    expect(prompt).toContain('600160')
   })
 
   it('记忆：prompt 前置该 agent 最近对话（无状态 agent 跨 cycle 记住用户纠正）', async () => {
     persistMessage('run-mem', 'agent_task', { summary: '时分秒别给0', from: '用户' }, 'user', ['my.custom'], 'ut-1')
-    mockedActor.mockResolvedValue({ plan: { thought: 'ok', actions: [] }, text: '' })
     await runOneDutyCycle({
-      runId: 'run-mem',
-      workshopId: 'mesh_team_default',
-      participant: participant('my.custom', 'custom'),
-      trigger: 'timer',
-      cycleSeq: 1,
-      subscribersOf: () => [],
-      tradeCtx,
+      runId: 'run-mem', workshopId: 'ws', participant: participant('my.custom', 'custom'),
+      trigger: 'timer', cycleSeq: 1, subscribersOf: () => [], tradeCtx,
     })
-    const prompt = mockedActor.mock.calls[0][1]
-    expect(prompt).toContain('最近的对话') // 记忆块已前置
-    expect(prompt).toContain('时分秒别给0') // 记住了用户的纠正
+    const prompt = mockedText.mock.calls[0][1]
+    expect(prompt).toContain('最近的对话')
+    expect(prompt).toContain('时分秒别给0')
   })
 
-  it('cycleSeq 进下单幂等键：同 runId/agent 不同 cycle → 不同 key（常驻不撞、新单不被吞）', async () => {
-    mockedPlace.mockResolvedValue({ ticketId: 't', status: 'filled', filled: true, reason: '', price: 45 })
-    mockedActor.mockResolvedValue({
-      plan: { thought: '批准', actions: [{ type: 'order_intent', symbol: '600160', side: 'buy', qty: 100 }] },
-      text: '',
+  it('MCP 状态落库：worker 返回 mcpStatus → 落库 → 可读回（黑盒失败可见）', async () => {
+    mockedText.mockResolvedValue({ text: 'ok', mcpStatus: [{ name: 'qmt-readonly', status: 'connected' }] })
+    await runOneDutyCycle({
+      runId: 'run-mcp', workshopId: 'ws-mcp', participant: participant('observe', 'observe'),
+      trigger: 'timer', cycleSeq: 1, subscribersOf: () => [], tradeCtx,
     })
-    const ctx: TradeContext = { mode: 'auto', accountId: 'acc-s3', tradeMode: 'paper', liveEnabled: false }
-    const base = { runId: 'run-s3', workshopId: 'mesh_team_default', participant: participant('stock.risk', 'risk'), trigger: 'timer' as const, subscribersOf: () => [], tradeCtx: ctx }
-    await runOneDutyCycle({ ...base, cycleSeq: 1 })
-    await runOneDutyCycle({ ...base, cycleSeq: 2 })
-    const keys = mockedPlace.mock.calls.map((c) => c[2].idempotencyKey)
-    expect(keys[0]).toBe('run-s3:stock.risk:1:0')
-    expect(keys[1]).toBe('run-s3:stock.risk:2:0')
-    expect(keys[0]).not.toBe(keys[1]) // 常驻 runId 跨 cycle 不撞 key
+    expect(getMcpStatus('ws-mcp', 'observe')).toEqual([{ name: 'qmt-readonly', status: 'connected' }])
   })
 
-  it('MCP 状态落库：runMeshActor 返回 mcpStatus → 落库 → 可读回（黑盒失败可见）', async () => {
-    mockedActor.mockResolvedValue({
-      plan: { thought: 'ok', actions: [] },
-      text: '',
-      mcpStatus: [{ name: 'qmt-readonly', status: 'connected' }],
+  it('abort：中止后返回思考，但不消费投递、不落 MCP 状态', async () => {
+    const ac = new AbortController()
+    mockedText.mockImplementation(async () => {
+      ac.abort()
+      return { text: '半截', mcpStatus: [{ name: 'qmt-readonly', status: 'connected' }] }
     })
-    await runOneDutyCycle({
-      runId: 'run-mcp',
-      workshopId: 'ws-mcp',
-      participant: participant('stock.observe', 'observe'),
-      trigger: 'timer',
-      cycleSeq: 1,
-      subscribersOf: () => [],
-      tradeCtx,
+    const mid = persistMessage('run-ab', 'tick', {}, 'seed', ['observe'])
+    const r = await runOneDutyCycle({
+      runId: 'run-ab', workshopId: 'ws-ab', participant: participant('observe', 'observe'),
+      trigger: 'event', delivery: { messageId: mid, subscriberId: 'observe', topic: 'tick', payload: {} },
+      cycleSeq: 1, subscribersOf: () => [], tradeCtx, abortController: ac,
     })
-    expect(getMcpStatus('ws-mcp', 'stock.observe')).toEqual([{ name: 'qmt-readonly', status: 'connected' }])
+    expect(r.thought).toBe('半截')
+    expect(listPendingDeliveries('run-ab').find((p) => p.subscriberId === 'observe')).toBeTruthy() // 未消费
+    expect(getMcpStatus('ws-ab', 'observe')).toEqual([]) // 未落库
   })
 })
