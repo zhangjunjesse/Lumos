@@ -7,7 +7,7 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import path from 'path'
-import { resolvePythonBinary } from '@/lib/python-runtime'
+import { resolveQmtPython } from '@/lib/qmt-runtime'
 import { resolveRuntimeResourcePath } from '@/lib/runtime-resources'
 
 export interface LivePlaceParams {
@@ -73,8 +73,10 @@ export class LiveBackend {
 
   private ensureChild(): void {
     if (this.child && !this.child.killed) return
-    const python = resolvePythonBinary({ minimumVersion: { major: 3, minor: 8 } })
-    if (!python) throw new LiveBackendError('python runtime 不可用', 'spawn')
+    // 必须用装了 xtquant 的解释器(Windows=C:\Python311 绝对路径,绕开 Lumos 把内置 venv 前置进 PATH
+    // 的劫持)。跟 qmt-readonly / 行情喂入同一个解析,别用通用 resolvePythonBinary(会抓到没 xtquant 的
+    // venv → qmt_trade_backend 一 import xtquant 就崩 → 启动即退 → Node 握手超时 halt)。
+    const python = resolveQmtPython()
     const script = this.backendScript()
     if (!script) throw new LiveBackendError('live backend 脚本未配置', 'spawn')
     const child = spawn(python, [script], {

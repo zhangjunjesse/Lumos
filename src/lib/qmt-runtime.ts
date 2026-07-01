@@ -8,6 +8,7 @@ import os from 'os'
 import path from 'path'
 import { getMeshSetting } from '@/lib/mesh/mesh-settings-store'
 import { resolveRuntimeResourcePath } from '@/lib/runtime-resources'
+import { resolvePythonBinary } from '@/lib/python-runtime'
 
 // qmt 脚本目录：env > DB 设置(UI 可配) > 随安装包的内置脚本 > 回落用户目录。
 // 默认走内置(resources/mcp-servers/qmt-readonly)：更新 Lumos 即更新脚本，用户无需手动同步。
@@ -29,9 +30,10 @@ export function resolveQmtPython(): string {
   if (configured) return configured
   // Lumos 会把内置 venv 前置进 SDK 子进程的 PATH，裸 'python' 会被劫持到没有 xtquant 的
   // venv，导致 qmt MCP 一 import xtquant 就崩。Windows 实测解释器在 C:\Python311（装了
-  // xtquant），用绝对路径绕开劫持；非 win 开发机保持 'python'，可被设置/LUMOS_QMT_PYTHON 覆盖。
+  // xtquant），用绝对路径绕开劫持；非 win 开发机找真实 python3（很多 mac 只有 python3 没 python），
+  // 找不到再退 'python'。均可被设置/LUMOS_QMT_PYTHON 覆盖。
   if (process.platform === 'win32') return 'C:\\Python311\\python.exe'
-  return 'python'
+  return resolvePythonBinary({ minimumVersion: { major: 3, minor: 8 } }) ?? 'python'
 }
 
 /** QMT 安装路径 / 账户号：env > DB 设置；空则交给 python 脚本内默认。 */

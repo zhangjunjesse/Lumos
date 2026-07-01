@@ -11,7 +11,7 @@
  */
 import { spawn, type ChildProcess } from 'child_process'
 import path from 'path'
-import { resolvePythonBinary } from '@/lib/python-runtime'
+import { resolveQmtPython } from '@/lib/qmt-runtime'
 import { resolveRuntimeResourcePath } from '@/lib/runtime-resources'
 import { writeBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
 import { getAccount } from './mesh-paper-account'
@@ -128,9 +128,12 @@ class QuoteFeed {
   private ensureChild(): void {
     if (this.child && !this.child.killed) return
     if (Date.now() - this.lastSpawnFailAt < SPAWN_BACKOFF_MS) throw new Error('quote feed 退避中(上次起即退)')
-    const python = resolvePythonBinary({ minimumVersion: { major: 3, minor: 8 } })
+    // 必须用装了 xtquant 的解释器(Windows=C:\Python311 绝对路径,绕开 Lumos 把内置 venv 前置进
+    // PATH 的劫持)。跟能跑通的 qmt-readonly MCP 用同一个解析,别用通用 resolvePythonBinary——
+    // 它会抓到没 xtquant 的 venv → 脚本 import 即崩 → 行情恒空 → RiskGate 把每单都拒(无法获取价格)。
+    const python = resolveQmtPython()
     const script = resolveRuntimeResourcePath(path.join('mcp-servers', 'mesh-trade', 'qmt_quote_feed.py'))
-    if (!python || !script) throw new Error('quote feed 不可用(python/脚本缺)')
+    if (!script) throw new Error('quote feed 不可用(脚本缺)')
     const child = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] })
     this.child = child
     this.ready = false
