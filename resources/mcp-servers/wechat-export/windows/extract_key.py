@@ -922,14 +922,16 @@ def verify_and_mark_v4_key(key: bytes, grouped: list[tuple[dict, list[dict]]], m
     added = 0
     key_hex = key.hex()
     for account, records in grouped:
+        # 快速否决:这把 key 连该账号任一核心库(contact/session/message_*)都开不了就跳过。
         if not any(_verify_key_v4(key, rec["path"]) for rec in records):
             continue
-        # Windows WeChat 4.x uses one raw SQLCipher key for all v4 dbs in the
-        # account. Once a core db verifies, record that key for every v4 salt so
-        # later decryptors can pick it by salt without re-scanning memory.
+        # 命中后【逐库各自验证】,只把 key 标到它真能解开的库上。绝不"验过一个核心库就盖给全部 v4 salt"——
+        # 部分微信 4.x 账号对 contact / session / message_* 用【不同的 key】,盖全部会把 message/session
+        # 标上错的 contact key,后续解密全崩(表现为消息库 0/N)。逐库标也让上层扫描知道还差哪些 key、继续找。
         all_records = [rec for rec in account.get("_db_records") or [] if rec.get("mode") == "v4"]
         for record in all_records:
-            added += int(bool(mark_key(account, record, key_hex)))
+            if _verify_key_v4(key, record["path"]):
+                added += int(bool(mark_key(account, record, key_hex)))
     return added
 
 
@@ -937,6 +939,18 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
     grouped = v4_records_by_account(accounts)
     if not grouped:
         return 0
+    # 目标 = 各账号的核心 v4 库 salt(contact/session/message_*);逐库验到、集齐才提前收工。
+    # 别再"找到第一把 key 就 return"——一个账号可能对不同库用不同 key,早退会漏掉 message/session 的 key。
+    target_salts = {rec["salt"] for _account, records in grouped for rec in records if rec.get("salt")}
+    recovered_salts: set[str] = set()
+
+    def tracking_mark(account: dict, record: dict, key_hex: str) -> bool:
+        ok = mark_key(account, record, key_hex)
+        salt = record.get("salt")
+        if ok and salt:
+            recovered_salts.add(salt)
+        return ok
+
     regions = iter_writable_private_regions(handle)
     log(f"[+] scanning v4 raw heap regions={len(regions)}")
     found = candidates = scanned = failures = 0
@@ -958,10 +972,12 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
                 key = block[pos:pos + KEY_SIZE]
                 if high_entropy_key_candidate(key):
                     candidates += 1
-                    found += verify_and_mark_v4_key(key, grouped, mark_key)
-                    if found:
+                    marked = verify_and_mark_v4_key(key, grouped, tracking_mark)
+                    if marked:
+                        found += marked
                         log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
-                        return found
+                        if target_salts and target_salts.issubset(recovered_salts):
+                            return found
             scanned += len(data)
             tail = block[-31:]
             offset += to_read
