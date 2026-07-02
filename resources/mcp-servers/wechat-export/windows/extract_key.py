@@ -1065,11 +1065,16 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     recovered_by_wxid: dict[str, dict] = {}
     recovered_salts: set[str] = set()
     total_records = sum(len(account.get("_db_records") or []) for account in accounts)
+    # 完成判据只看【核心聊天库】(contact / session / message_*)。非核心库(media / emoticon /
+    # 业务库等)的 key 未必在进程内存里;若把它们也纳入判据,扫描会永远"没集齐"→ 一路空耗到 hex
+    # 全量扫描卡死、never 写盘,连已找到的聊天库 key 也一起丢(现象:找到 7 把却卡一夜、仍 0/3)。
+    # 核心库 key 找齐即视为成功、收工写盘;非核心库能顺带找到就找,找不到不阻塞完成。
+    # (Windows 微信 4.1.8 实测验证:改后取钥 1-2 分钟完成,message/session 全部解开。)
     v4_salts = {
         rec["salt"]
         for account in accounts
         for rec in account.get("_db_records") or []
-        if rec.get("mode") == "v4"
+        if rec.get("mode") == "v4" and is_core_v4_db(rec.get("path") or "")
     }
     target_salts = v4_salts or {
         rec["salt"]
