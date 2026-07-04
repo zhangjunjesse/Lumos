@@ -3,6 +3,7 @@
 import * as React from 'react';
 
 import {
+  BuiltinAmazonRankCard,
   BuiltinDeepResearchCard,
   BuiltinDouyinCollectorCard,
   BuiltinEcommerceCard,
@@ -219,6 +220,7 @@ export default function AppsListPage(): React.ReactElement {
             ) : null}
             {visibleBuiltinIds.has('mesh-trading-team') ? <BuiltinMeshTradingTeamCard /> : null}
             {visibleBuiltinIds.has('etsy-forge') ? <BuiltinEtsyForgeCard /> : null}
+            {visibleBuiltinIds.has('amazon-rank') ? <BuiltinAmazonRankCard /> : null}
           </div>
         ) : (
           <EmptyAppsHint />

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "自动化",
+  "description": "每日排名监控：按监控清单自动查一遍排名，结果进运行记录；绑定微信 IM 后推送摘要。默认关闭，在结果页点「设为每日监控」开启。",
+  "layout": "list-detail",
+  "list": {
+    "type": "table",
+    "data": "{{ db.app_automations }}",
+    "columns": [
+      { "field": "title", "label": "名称", "search": true },
+      { "field": "enabled", "label": "启用", "render": "tag" },
+      { "field": "schedule", "label": "触发规则" },
+      { "field": "native_action", "label": "执行动作" },
+      { "field": "last_status", "label": "最近状态", "render": "tag" },
+      { "field": "last_run_summary", "label": "最近结果" },
+      { "field": "schedule_status", "label": "调度状态", "render": "tag" },
+      { "field": "next_run_at", "label": "下次运行", "render": "date", "sortable": true }
+    ],
+    "filter": [
+      { "field": "last_status", "options": ["not_connected", "idle", "running", "success", "failed", "cancelled"] },
+      { "field": "schedule_status", "options": ["not_connected", "scheduled", "paused", "failed"] }
+    ],
+    "actions": {
+      "row": [
+        {
+          "label": "立即运行",
+          "run": "native:app:run-automation",
+          "input": { "confirmed": true },
+          "confirm": "确认立即运行每日排名监控？会按监控清单查一遍亚马逊排名（消耗浏览器抓取资源），结果写入「运行结果」。"
+        },
+        {
+          "label": "同步定时任务",
+          "run": "native:app:sync-automation-schedule",
+          "confirm": "确认把这条自动化同步为 Lumos 定时任务？关闭自动化会暂停对应定时任务。"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "view": {
+      "form": [
+        { "type": "text", "name": "title", "label": "名称", "required": true },
+        { "type": "switch", "name": "enabled", "label": "启用" },
+        { "type": "text", "name": "schedule", "label": "触发规则", "placeholder": "例如：每天 09:00" },
+        { "type": "text", "name": "native_action", "label": "执行动作", "placeholder": "amazon-rank:run-monitor" },
+        { "type": "textarea", "name": "description", "label": "说明", "rows": 3 },
+        { "type": "textarea", "name": "last_run_summary", "label": "最近结果", "rows": 3 },
+        { "type": "textarea", "name": "schedule_error", "label": "调度失败原因", "rows": 2 }
+      ],
+      "submit": { "label": "保存自动化", "run": "db:update:app_automations" }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "运行结果",
+  "description": "每次排名查询 / 每日监控 / 安装自检的运行状态、摘要与失败原因。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "table",
+      "data": "{{ db.run_history }}",
+      "filter": [
+        { "field": "status", "options": ["running", "success", "failed", "cancelled"] },
+        { "field": "kind", "options": ["rank_query", "monitor", "self_check"] }
+      ],
+      "columns": [
+        { "field": "title", "label": "运行" },
+        { "field": "kind", "label": "类型", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "summary", "label": "摘要" },
+        { "field": "failure_reason", "label": "失败原因" },
+        { "field": "started_at", "label": "开始", "render": "date" },
+        { "field": "updated_at", "label": "更新", "render": "date", "sortable": true }
+      ]
+    }
+  ]
+}

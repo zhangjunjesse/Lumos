@@ -102,6 +102,14 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     defaultVisible: true,
     icon: 'image',
   },
+  {
+    id: 'amazon-rank',
+    name: '亚马逊排名助手',
+    description:
+      '粘贴关键词和 ASIN，查亚马逊自然搜索前 20 名排名：命中一眼看清、失败如实标原因、可导出 Excel、可开每日监控推微信',
+    defaultVisible: true,
+    icon: 'search',
+  },
 ]);
 
 const SETTING_KEY = 'builtin_apps_hidden';

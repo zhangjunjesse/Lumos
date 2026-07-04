@@ -33,6 +33,7 @@ describe('builtin-apps-visibility', () => {
   it('registry exposes the expected builtin app ids', () => {
     const ids = BUILTIN_APP_REGISTRY.map((app) => app.id).sort();
     expect(ids).toEqual([
+      'amazon-rank',
       'deep-research',
       'douyin-collector',
       'ecommerce-assistant',

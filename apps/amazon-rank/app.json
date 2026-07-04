@@ -1,0 +1,19 @@
+{
+  "$schema": "https://lumos.io/schemas/app.v1.json",
+  "id": "amazon-rank",
+  "name": "亚马逊排名助手",
+  "version": "0.1.0",
+  "description": "粘贴关键词和 ASIN，自动查亚马逊自然搜索前 20 名排名：命中一眼看清、失败原因如实展示、结果可导出 Excel，可开每日监控并推微信摘要。",
+  "icon": "./icon.png",
+  "category": "data",
+  "entry": "main",
+  "tags": ["amazon", "rank", "keyword", "ecommerce"],
+  "requires": {
+    "lumos": ">=1.0.0"
+  },
+  "permissions": {
+    "data": "isolated",
+    "network": { "mode": "disabled" },
+    "system": ["notification", "schedule", "im-notification"]
+  }
+}

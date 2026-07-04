@@ -77,6 +77,11 @@ extraResources:
   - from: resources/app-schemas/
     to: standalone/resources/app-schemas/
     filter: ["**/*"]
+  # 内置应用包（etsy-forge / amazon-rank …）：安装函数用 process.cwd()/apps 解析，
+  # 生产 cwd = standalone 目录（electron/main.ts spawn cwd），必须随包带上。
+  - from: apps/
+    to: standalone/apps/
+    filter: ["**/*"]
   - from: resources/models/
     to: models/
     filter: ["**/*"]
