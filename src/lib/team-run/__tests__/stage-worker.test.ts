@@ -36,6 +36,15 @@ jest.mock('@/lib/mcp-resolver', () => ({
   toSdkMcpConfig: jest.fn(() => undefined),
 }))
 
+// Mocked to cut the heavy transitive chain (agent-capabilities → connectors →
+// wechat-mcp → scheduler → openworkflow) that Jest's Haste map can't resolve.
+// The real buildDbServerHints has its own coverage in registry.test.ts; here we
+// only assert stage-worker actually feeds its output into the agent prompt.
+const mockBuildDbServerHints = jest.fn(() => '')
+jest.mock('@/lib/agent-capabilities', () => ({
+  buildDbServerHints: (...args: unknown[]) => mockBuildDbServerHints(...args),
+}))
+
 jest.mock('@/lib/knowledge/workflow-knowledge-tool', () => ({
   createKnowledgeMcpServer: jest.fn(() => ({})),
 }))
@@ -263,6 +272,26 @@ describe('StageWorker', () => {
           stageId: 'stage-test-001',
         },
       })
+    })
+
+    test('workflow agent 的 systemPrompt 带上能力注册中心的 DB 工具说明（S3 接入）', async () => {
+      const realWorker = new StageWorker(true)
+      const payload = buildPayload(tempDir)
+      mockBuildDbServerHints.mockReturnValueOnce('<<DEEPSEARCH+FEISHU 用法说明>>')
+
+      mockQuery.mockReturnValue(streamMessages([
+        {
+          type: 'result',
+          structured_output: { outcome: 'done', summary: 'ok', artifacts: [] },
+        },
+      ]))
+
+      await realWorker.execute(payload)
+
+      expect(mockBuildDbServerHints).toHaveBeenCalled()
+      const systemPrompt = mockQuery.mock.calls[0][0]?.options?.systemPrompt as string
+      expect(systemPrompt).toContain('You are a worker.')
+      expect(systemPrompt).toContain('<<DEEPSEARCH+FEISHU 用法说明>>')
     })
 
     test('真实执行分支会把 Claude 风格请求模型映射到 provider catalog 实际模型', async () => {
