@@ -19,21 +19,4 @@ export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (lumos-image MC
 - If the tool returns an error about missing provider config, tell the user to configure it in Settings → Providers → Image Generation.
 - If user asks to send generated files to Feishu, include \`FEISHU_SEND_FILE::<absolute_path>\` on separate lines.
 
-Advanced features (DashScope Wanxiang 2.7):
-- Sequential group mode (enable_sequential=true, count=2-4): generates multiple images with consistent characters/style. Use when user asks for "连续插图", "多角度", "一致性组图", "绘本", "故事板", or multiple views of the same subject.
-- Color palette (color_palette): controls the color scheme. Use when user specifies colors like "暖色调", "蓝白配色", or provides hex codes.
-- Region editing (region_edit_bbox + reference_image_paths): modifies only specific areas of an image. Coordinates are [x1,y1,x2,y2] in pixels. Use when user says "只改这部分", "局部修改", or points to a specific area.
-- Thinking mode (thinking_mode): enabled by default. Improves creative quality and prompt understanding. Only disable if user explicitly asks for faster generation.
-- Resolution: 1K for quick previews, 2K for quality output, 4K for print/professional use (pro model only, slower).
-
-Advanced features (Gemini gemini-3.1-flash-image-preview / gemini-3-pro-image-preview):
-- Multi-reference editing: pass multiple paths in reference_image_paths to remix, combine subjects, or transfer style across several references.
-- Aspect ratios: supports 10 ratios natively — 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9. Unsupported ratios fall back to 1:1 with a warning.
-- Resolution: 1K/2K/4K all supported.
-- Parallel generation: count>1 triggers parallel API calls (Gemini allows only 1 image per call natively — handled transparently).
-- Negative prompt (negative_prompt): describe what to EXCLUDE, e.g. "no text, no watermark, cartoon style". Synthesized into the prompt since the API has no dedicated field.
-- Color palette (color_palette): works the same way as DashScope — hex codes or color names, injected as natural-language guidance.
-- Region editing (region_edit_bbox + reference_image_paths): bbox coordinates are injected as natural-language instructions ("modify ONLY [x1,y1,x2,y2]"); works best with clear, non-overlapping regions.
-- Sequential consistency (enable_sequential=true): injects character/style-consistency guidance into the prompt.
-- Safety settings (safety_settings): advanced — array of {category, threshold} to override Gemini's default content filters. Only use if user explicitly asks to relax safety for e.g. medical/artistic content. Valid categories: HARM_CATEGORY_HATE_SPEECH / DANGEROUS_CONTENT / HARASSMENT / SEXUALLY_EXPLICIT / CIVIC_INTEGRITY. Thresholds: BLOCK_LOW_AND_ABOVE / BLOCK_MEDIUM_AND_ABOVE / BLOCK_ONLY_HIGH / BLOCK_NONE / OFF.
-- Not supported: thinking_mode (DashScope-specific — ignored on Gemini).`;
+Advanced parameters (enable_sequential, color_palette, region_edit_bbox, negative_prompt, thinking_mode, safety_settings, plus the full aspect-ratio and resolution ranges) are fully described in the tool's input schema — read them there, don't restate them here. When to reach for them: "连续插图 / 绘本 / 故事板 / 多角度 / 一致性组图" → enable_sequential with count 2-4; "暖色调 / 蓝白配色" or hex codes → color_palette; "只改这部分 / 局部修改" → region_edit_bbox with reference_image_paths; "去掉水印 / 不要文字" → negative_prompt (Gemini only).`;
