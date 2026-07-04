@@ -142,6 +142,30 @@ describe('mcp resolver', () => {
     }
   });
 
+  test('drops internal-backend MCPs (wechat-export) even without skipNames', () => {
+    // Regression: workflow's stage-worker calls resolveEnabledMcpServers with no
+    // skipNames. Before the default exclusion, an authorized (is_enabled=1)
+    // wechat-export leaked its raw decrypted-DB tools to workflow agents,
+    // bypassing the read-only lumos-wechat-assistant wrapper.
+    mockedGetEnabledMcpServersAsConfig.mockReturnValue({
+      'wechat-export': { command: 'python', args: ['server.py'], env: {} },
+      feishu: { command: 'node', args: ['feishu.mjs'], env: {} },
+    });
+
+    const resolved = resolveEnabledMcpServers();
+
+    expect(resolved?.['wechat-export']).toBeUndefined();
+    expect(resolved?.feishu).toBeDefined();
+  });
+
+  test('drops wechat-export as the only server, returning undefined', () => {
+    mockedGetEnabledMcpServersAsConfig.mockReturnValue({
+      'wechat-export': { command: 'python', args: ['server.py'], env: {} },
+    });
+
+    expect(resolveEnabledMcpServers()).toBeUndefined();
+  });
+
   test('uses bundled node runtime for node MCP servers when available', () => {
     mockedResolveRuntimeResourcePath.mockReturnValue('/runtime/node-runtime/darwin/arm64/node');
     mockedGetEnabledMcpServersAsConfig.mockReturnValue({
