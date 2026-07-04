@@ -62,6 +62,11 @@ describe('inferSessionKind — 普通对话与边界', () => {
     expect(inferSessionKind(null, null)).toBe('chat');
     expect(inferSessionKind(undefined, undefined)).toBe('chat');
   });
+
+  test('marker 作为子串出现在正文里（非独占行）不误判——用户自定义提示词可能引用内部标记', () => {
+    const prompt = `You are a helpful bot.\n注意：${SESSION_MARKERS.workflow} 是内部标记，不要在回复里使用它。`;
+    expect(inferSessionKind(prompt, 'New Chat')).toBe('chat');
+  });
 });
 
 describe('stripSessionMarkers', () => {

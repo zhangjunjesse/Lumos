@@ -146,7 +146,8 @@ describe('ConversationEngine capability injection', () => {
   test('injects WeChat read tools for WeChat IM messages routed to Main Agent', async () => {
     mockGetSession.mockReturnValue({
       id: 'main-1',
-      system_prompt: '__LUMOS_MAIN_AGENT__',
+      kind: 'main-agent',
+      system_prompt: '',
       working_directory: '',
       sdk_session_id: null,
       requested_model: null,
@@ -200,7 +201,8 @@ describe('ConversationEngine capability injection', () => {
   test('surfaces Claude error SSE as visible IM text', async () => {
     mockGetSession.mockReturnValue({
       id: 'main-err',
-      system_prompt: '__LUMOS_MAIN_AGENT__',
+      kind: 'main-agent',
+      system_prompt: '',
       working_directory: '/tmp/lumos-main',
       sdk_session_id: null,
       requested_model: null,
@@ -227,7 +229,8 @@ describe('ConversationEngine capability injection', () => {
     mockGetSession.mockReturnValue({
       id: 'wechat-1',
       title: '微信助手 AI 对话',
-      system_prompt: '__LUMOS_WECHAT_ASSISTANT_CHAT__',
+      kind: 'wechat-assistant',
+      system_prompt: '',
       working_directory: '/tmp/lumos-wechat',
       sdk_session_id: null,
       requested_model: null,
@@ -251,7 +254,8 @@ describe('ConversationEngine capability injection', () => {
   test('strips leaked tool trace markers before persisting or returning visible IM text', async () => {
     mockGetSession.mockReturnValue({
       id: 'main-2',
-      system_prompt: '__LUMOS_MAIN_AGENT__',
+      kind: 'main-agent',
+      system_prompt: '',
       working_directory: '/tmp/lumos-main',
       sdk_session_id: null,
       requested_model: null,

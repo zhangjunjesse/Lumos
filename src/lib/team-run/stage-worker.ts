@@ -600,6 +600,10 @@ export class StageWorker {
       isEcommerceAssistantChatSession: false,
       knowledgeEnabledForRequest: false,
       selectedKnowledgeTagIds: [],
+      // 若缺省，chrome-devtools 的 buildDbHint 会输出 `Current browser context: \`\`.`
+      // 这段空标签文案（chrome-devtools 默认启用，workflow 几乎必加载）。用同一个
+      // browserContextId（上面 resolveEnabledMcpServers 已用它）兜底。
+      selectedBrowserLabel: payload.browserContextId || 'embedded:default',
     }
     const dbServerHints = buildDbServerHints(
       workflowConnectorContext,

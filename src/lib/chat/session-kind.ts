@@ -69,8 +69,13 @@ export function inferSessionKind(
   title: string | null | undefined,
 ): SessionKind {
   const prompt = String(systemPrompt || '');
+  // 整行精确匹配（与 stripSessionMarkers 对称）：marker 在各 build*SystemPrompt 里
+  // 恒独占一行，这样用户自定义提示词正文里若字面提到某个 marker 字符串，不会被
+  // 误判成那类专属会话——子串 includes 会误判，而回填后 kind 不再随内容重算、
+  // 出错无法自愈。
+  const lines = prompt.split('\n').map((l) => l.trim());
   for (const [kind, marker] of Object.entries(SESSION_MARKERS)) {
-    if (prompt.includes(marker)) return kind as SessionKind;
+    if (lines.includes(marker)) return kind as SessionKind;
   }
   const t = String(title || '').trim();
   if (t === SESSION_TITLES['wechat-assistant']) return 'wechat-assistant';

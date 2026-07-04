@@ -30,10 +30,7 @@ jest.mock('@/lib/wechat-assistant/settings-store', () => ({
   getWeChatAssistantSettings: () => mockGetWeChatAssistantSettings(),
 }));
 
-import {
-  WECHAT_ASSISTANT_CHAT_MARKER,
-  WECHAT_ASSISTANT_CHAT_TITLE,
-} from '@/lib/chat/wechat-assistant-session';
+import { WECHAT_ASSISTANT_CHAT_TITLE } from '@/lib/chat/wechat-assistant-session';
 import { POST } from '../route';
 
 describe('wechat chat session route', () => {
@@ -44,11 +41,12 @@ describe('wechat chat session route', () => {
     });
     mockCreateSession.mockReturnValue({
       id: 'session-1',
+      kind: 'wechat-assistant',
       title: WECHAT_ASSISTANT_CHAT_TITLE,
       model: '',
       provider_id: '',
       working_directory: '/tmp/lumos-test-data',
-      system_prompt: WECHAT_ASSISTANT_CHAT_MARKER,
+      system_prompt: '自定义微信助手提示词',
     });
     mockGetSession.mockReturnValue(undefined);
   });
@@ -60,33 +58,38 @@ describe('wechat chat session route', () => {
     expect(res.status).toBe(201);
     expect(json.session.id).toBe('session-1');
     expect(mockMkdir).toHaveBeenCalledWith('/tmp/lumos-test-data', { recursive: true });
+    // 身份现在通过第 8 个位置参数 kind='wechat-assistant' 声明，不再往 system_prompt 塞 marker。
     expect(mockCreateSession).toHaveBeenCalledWith(
       WECHAT_ASSISTANT_CHAT_TITLE,
       '',
       expect.stringContaining('自定义微信助手提示词'),
       '/tmp/lumos-test-data',
       'code',
+      undefined,
+      undefined,
+      'wechat-assistant',
     );
-    expect(mockCreateSession.mock.calls[0]?.[2]).toContain(WECHAT_ASSISTANT_CHAT_MARKER);
   });
 
   it('reuses an existing WeChat assistant session and refreshes changed prompt', async () => {
     mockGetSession
       .mockReturnValueOnce({
         id: 'session-1',
+        kind: 'wechat-assistant',
         title: WECHAT_ASSISTANT_CHAT_TITLE,
         model: '',
         provider_id: '',
         working_directory: '/tmp/lumos-test-data',
-        system_prompt: WECHAT_ASSISTANT_CHAT_MARKER + '\n旧提示词',
+        system_prompt: '旧提示词',
       })
       .mockReturnValueOnce({
         id: 'session-1',
+        kind: 'wechat-assistant',
         title: WECHAT_ASSISTANT_CHAT_TITLE,
         model: '',
         provider_id: '',
         working_directory: '/tmp/lumos-test-data',
-        system_prompt: WECHAT_ASSISTANT_CHAT_MARKER + '\n自定义微信助手提示词',
+        system_prompt: '自定义微信助手提示词',
       });
 
     const res = await POST(makeReq({ session_id: 'session-1' }));

@@ -399,3 +399,19 @@ describe('dbHintedMcpNames — 发现提示的排除集（修 BUILTIN_HINTED_MCP
     expect(names.has('x-platform')).toBe(false);
   });
 });
+
+describe('chrome-devtools buildDbHint — 浏览器上下文标签（防空反引号破损文案）', () => {
+  test('无 selectedBrowserLabel 时省略上下文句，不输出空反引号', () => {
+    const hint = buildDbServerHints(ctx({ selectedBrowserLabel: undefined }), new Set(['chrome-devtools']));
+    expect(hint).toContain('chrome_devtools'); // 确实产出了 browser hint
+    expect(hint).not.toContain('``'); // 无 `Current ... context: ``.` 破损文案
+  });
+
+  test('有 selectedBrowserLabel 时输出该标签', () => {
+    const hint = buildDbServerHints(
+      ctx({ selectedBrowserLabel: '浏览器1 (ctx-abc)' }),
+      new Set(['chrome-devtools']),
+    );
+    expect(hint).toContain('`浏览器1 (ctx-abc)`');
+  });
+});

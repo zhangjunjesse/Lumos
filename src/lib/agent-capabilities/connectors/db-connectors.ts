@@ -94,9 +94,13 @@ const chromeDevtoolsConnector: ConnectorDefinition = {
   buildDbHint: (ctx, presentDbServers) => {
     if (!present(presentDbServers, 'chrome-devtools', 'chrome_devtools')) return null;
     let hint = BROWSER_MCP_SYSTEM_HINT;
-    const label = ctx.selectedBrowserLabel || '';
+    // label 缺省时省略「当前浏览器上下文: `xx`」这句，避免输出空反引号的破损文案
+    // （根治：不依赖每个调用方都记得传 selectedBrowserLabel）。
+    const contextLine = ctx.selectedBrowserLabel
+      ? `${BROWSER_CONTEXT_SYSTEM_HINT_PREFIX}: \`${ctx.selectedBrowserLabel}\`.\n`
+      : '';
     hint +=
-      `\n\n${BROWSER_CONTEXT_SYSTEM_HINT_PREFIX}: \`${label}\`.\n` +
+      `\n\n${contextLine}` +
       'If the user names a configured browser/profile such as "浏览器1", use the selected Lumos browser context via chrome-devtools tools. Do not use shell commands, system open commands, or the OS default browser as a fallback for browser/profile requests. If chrome-devtools fails, report the failure and the selected context instead of opening Google Chrome.';
     if (ctx.browserAutomationIntent) {
       hint +=
