@@ -10,6 +10,7 @@ export {
   buildDbServerHints,
   buildAskModeAllowance,
   defaultEnabledDbMcpNames,
+  dbHintedMcpNames,
 } from './registry';
 export type {
   CapabilityPlan,

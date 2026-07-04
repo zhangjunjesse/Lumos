@@ -177,7 +177,7 @@ export function defaultEnabledDbMcpNames(): string[] {
   return [...names];
 }
 
-/** 中性上下文：仅用于 defaultEnabledDbMcpNames 静态求值。 */
+/** 中性上下文：仅用于 defaultEnabledDbMcpNames / dbHintedMcpNames 静态求值。 */
 const NEUTRAL_CONTEXT: ConnectorContext = {
   sessionId: '',
   permissionMode: 'acceptEdits',
@@ -191,3 +191,23 @@ const NEUTRAL_CONTEXT: ConnectorContext = {
   knowledgeEnabledForRequest: false,
   selectedKnowledgeTagIds: [],
 };
+
+/**
+ * 有专属 DB hint（buildDbHint）的连接器所拥有的 DB MCP 名。
+ *
+ * chat route 的「通用发现提示」据此排除已被专属说明书覆盖的 server，避免同一
+ * server 既有专属说明又被列进「你还有这些 MCP」——旧硬编码
+ * `BUILTIN_HINTED_MCPS = {feishu, deepsearch, chrome-devtools}` 漏了
+ * douyin-collector / im-tools（它们也有 buildDbHint），导致这两个被双重广告。
+ * 注册即契约：新连接器只要声明了 buildDbHint，其 owned server 自动纳入。
+ */
+export function dbHintedMcpNames(): Set<string> {
+  const names = new Set<string>();
+  for (const def of CONNECTORS) {
+    if (!def.buildDbHint) continue;
+    for (const name of def.resolve(NEUTRAL_CONTEXT).ownedDbMcpNames ?? []) {
+      names.add(name);
+    }
+  }
+  return names;
+}

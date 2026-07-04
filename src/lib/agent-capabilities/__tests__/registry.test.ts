@@ -51,6 +51,7 @@ import {
   buildDbServerHints,
   buildAskModeAllowance,
   defaultEnabledDbMcpNames,
+  dbHintedMcpNames,
 } from '../registry';
 import type { ConnectorContext } from '../types';
 import { DEFAULT_ENABLED_DB_MCP_NAMES } from '../default-enabled';
@@ -378,5 +379,23 @@ describe('逐连接器零回归点位', () => {
     const p = buildCapabilityPlan(ctx());
     expect([...p.dbMcpSkipNames]).not.toContain('goofish-search');
     expect(Object.keys(p.inProcessServers)).toContain('lumos-wechat-assistant');
+  });
+});
+
+describe('dbHintedMcpNames — 发现提示的排除集（修 BUILTIN_HINTED_MCPS 漂移）', () => {
+  test('含所有有专属 DB hint 的 server，尤其旧硬编码漏掉的 douyin-collector / im-tools', () => {
+    const names = dbHintedMcpNames();
+    expect(names.has('feishu')).toBe(true);
+    expect(names.has('deepsearch')).toBe(true);
+    expect(names.has('chrome-devtools')).toBe(true);
+    // 旧 BUILTIN_HINTED_MCPS 漏了这两个 → 它们被专属 hint + 发现提示双重广告。
+    expect(names.has('douyin-collector')).toBe(true);
+    expect(names.has('im-tools')).toBe(true);
+  });
+
+  test('不含无专属 hint 的 server（goofish-search / x-platform）——它们应留在发现提示里让 agent 知道其存在', () => {
+    const names = dbHintedMcpNames();
+    expect(names.has('goofish-search')).toBe(false);
+    expect(names.has('x-platform')).toBe(false);
   });
 });
