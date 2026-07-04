@@ -10,7 +10,7 @@ import {
 } from './runtime-result-normalizer'
 import { buildStageRuntimeToolPolicy, getStageExecutionCwd } from './runtime-tool-policy'
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
-import { IM_TOOLS_SYSTEM_HINT, hasImToolsMcp } from '@/lib/im'
+import { buildDbServerHints, type ConnectorContext } from '@/lib/agent-capabilities'
 import { createKnowledgeMcpServer } from '@/lib/knowledge/workflow-knowledge-tool'
 import {
   buildKnowledgePromptSection,
@@ -582,16 +582,35 @@ export class StageWorker {
         }
       : undefined
 
-    // Workflow agents get the im-tools hint when im-tools MCP is loaded — same
-    // wording as chat / inbound dispatch paths so the agent reliably picks up
-    // "send to wechat / feishu" requests as tool calls instead of just text.
-    const imToolsHint = hasImToolsMcp(lumosMcpServers) ? IM_TOOLS_SYSTEM_HINT : ''
+    // Workflow agents get the same DB-server usage hints as chat / inbound
+    // dispatch, driven by the capability registry: every loaded MCP that has a
+    // usage contract (feishu / deepsearch / browser / douyin / im-tools) comes
+    // with its instructions instead of being loaded silently. The old code only
+    // wired im-tools by hand, leaving every other MCP the workflow loads (to let
+    // agents "use DeepSearch, Feishu, etc.") undocumented to the model.
+    const workflowConnectorContext: ConnectorContext = {
+      sessionId: payload.sessionId,
+      permissionMode: 'acceptEdits',
+      browserAutomationIntent: false,
+      visibleBrowserIntent: false,
+      legacyImageAgentPrompt: false,
+      isPrimaryMainAgentSession: false,
+      isDedicatedWeChatAssistantSession: false,
+      isWorkflowChatSession: false,
+      isEcommerceAssistantChatSession: false,
+      knowledgeEnabledForRequest: false,
+      selectedKnowledgeTagIds: [],
+    }
+    const dbServerHints = buildDbServerHints(
+      workflowConnectorContext,
+      new Set(Object.keys(lumosMcpServers ?? {})),
+    )
 
     const effectiveSystemPrompt = [
       payload.agent.systemPrompt,
       knowledgeSystemPromptSuffix,
       builtinAgentContext.systemPromptSuffix,
-      imToolsHint,
+      dbServerHints,
     ]
       .filter((segment): segment is string => Boolean(segment && segment.trim()))
       .join('\n\n')
