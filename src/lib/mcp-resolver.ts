@@ -15,6 +15,7 @@ import type {
   McpHttpServerConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { getEnabledMcpServersAsConfig, dataDir } from '@/lib/db';
+import { INTERNAL_BACKEND_MCP_NAMES } from '@/lib/mcp-internal-backends';
 import type { MCPServerConfig } from '@/types';
 import { ENRICHER_MAP, type McpEnrichContext } from '@/lib/mcp-env-enrichers';
 import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
@@ -107,8 +108,12 @@ export function resolveEnabledMcpServers(
   const normalizedMcpPathSegment = `${path.sep}mcp-servers${path.sep}`;
 
   for (const [name, config] of Object.entries(mcpServers)) {
-    // Step 0: Skip excluded MCPs
-    if (options.skipNames?.has(name)) {
+    // Step 0: Skip internal backends (never exposed as agent tools — see
+    // mcp-internal-backends.ts) and any caller-provided skips. Excluding
+    // internal backends here, rather than relying on each caller to pass
+    // skipNames, is the safe default: it holds for chat / workflow / bridge
+    // alike, so a future call site can't silently re-leak wechat-export.
+    if (INTERNAL_BACKEND_MCP_NAMES.has(name) || options.skipNames?.has(name)) {
       delete mcpServers[name];
       continue;
     }

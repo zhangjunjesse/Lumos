@@ -15,6 +15,7 @@ import {
   WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT,
 } from '@/lib/tools/wechat-assistant-mcp-server';
 import { getMcpServerByNameAndScope } from '@/lib/db';
+import { WECHAT_EXPORT_MCP_NAME } from '@/lib/mcp-internal-backends';
 import type {
   ConnectorContext,
   ConnectorDefinition,
@@ -51,12 +52,14 @@ export const wechatConnector: ConnectorDefinition = {
   appliesTo: (ctx) => !ctx.browserAutomationIntent,
   resolve: (ctx) => ({
     // 内部后端：永不直接广告；agent 只用 in-process 助手。
-    alwaysSkipDbMcpNames: ['wechat-export'],
+    // resolver 已默认排除内部后端（mcp-internal-backends.ts）——此处保留是
+    // registry 层的显式意图声明，使 dbMcpSkipNames 契约完整、present 集合正确。
+    alwaysSkipDbMcpNames: [WECHAT_EXPORT_MCP_NAME],
     inProcess: () =>
       createWeChatAssistantMcpServer({ readOnly: isWeChatReadOnly(ctx) }),
   }),
   probeReadiness: (): ConnectorReadiness => {
-    const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
+    const mcp = getMcpServerByNameAndScope(WECHAT_EXPORT_MCP_NAME, 'builtin');
     if (mcp && mcp.is_enabled === 1) return { state: 'ready' };
     return {
       state: 'needs_setup',
