@@ -289,6 +289,10 @@ describe('StageWorker', () => {
       await realWorker.execute(payload)
 
       expect(mockBuildDbServerHints).toHaveBeenCalled()
+      // 传给注册中心的 ctx 必须带非空 selectedBrowserLabel，否则 chrome-devtools
+      // 的 buildDbHint 会产出空反引号的破损浏览器上下文文案。
+      const ctxArg = mockBuildDbServerHints.mock.calls[0][0] as { selectedBrowserLabel?: string }
+      expect(ctxArg.selectedBrowserLabel).toBeTruthy()
       const systemPrompt = mockQuery.mock.calls[0][0]?.options?.systemPrompt as string
       expect(systemPrompt).toContain('You are a worker.')
       expect(systemPrompt).toContain('<<DEEPSEARCH+FEISHU 用法说明>>')

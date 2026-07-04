@@ -133,7 +133,8 @@ function createSession(overrides: Partial<ChatSession> = {}): ChatSession {
     model: '',
     requested_model: '',
     resolved_model: '',
-    system_prompt: '__LUMOS_MAIN_AGENT__',
+    kind: 'main-agent',
+    system_prompt: '',
     working_directory: '',
     sdk_session_id: '',
     project_name: '',
@@ -286,7 +287,7 @@ describe('lumos-butler MCP server', () => {
               content: JSON.stringify([{ type: 'text', text: '这里是能力生成器安装失败的排查记录' }]),
               created_at: '2026-01-02 00:00:00',
               session_title: '管家测试会话',
-              system_prompt: '__LUMOS_MAIN_AGENT__',
+              kind: 'main-agent',
             }]),
           };
         }

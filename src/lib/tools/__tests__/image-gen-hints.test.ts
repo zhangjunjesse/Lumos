@@ -25,6 +25,16 @@ describe('IMAGE_GEN_IN_PROCESS_HINT — 瘦身后保留行为策略', () => {
     expect(IMAGE_GEN_IN_PROCESS_HINT).not.toContain('BLOCK_LOW_AND_ABOVE');
   });
 
+  it('保留 safety_settings 的「仅在用户明确要求时才放宽」安全门槛（行为策略，非参数百科）', () => {
+    // 这条是唯一阻止模型无端调低 Gemini 内容审核阈值的防线，瘦身时不能连它一起删。
+    expect(IMAGE_GEN_IN_PROCESS_HINT).toContain('safety_settings');
+    expect(IMAGE_GEN_IN_PROCESS_HINT).toMatch(/do NOT set safety_settings unless the user explicitly asks/i);
+  });
+
+  it('保留 region_edit_bbox 坐标是像素（schema 未说，模型调用前需要）', () => {
+    expect(IMAGE_GEN_IN_PROCESS_HINT).toMatch(/pixels/i);
+  });
+
   it('整体显著变短（删了约 2k 字符的重复参数说明）', () => {
     expect(IMAGE_GEN_IN_PROCESS_HINT.length).toBeLessThan(4200);
   });

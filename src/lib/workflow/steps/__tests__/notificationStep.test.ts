@@ -1,7 +1,7 @@
 // Mocks must be hoisted before imports that pull these modules in.
 const dbStore = new Map<string, string>();
 const messages: Array<{ sessionId: string; role: string; content: string }> = [];
-interface MockSession { id: string; system_prompt: string; created_at: string; status: 'active' | 'archived' }
+interface MockSession { id: string; kind: string; title?: string; system_prompt: string; created_at: string; status: 'active' | 'archived' }
 const sessions: MockSession[] = [];
 let createdSessionCounter = 0;
 function nowSqlUtc(): string {
@@ -16,11 +16,15 @@ jest.mock('@/lib/db', () => ({
     messages.push({ sessionId, role, content });
   },
   getAllSessions: () => sessions.slice(),
-  createSession: (title: string, _wd?: string, systemPrompt?: string) => {
+  createSession: (title: string, ...rest: unknown[]) => {
+    // 真实签名 (title, model, systemPrompt, workingDirectory, mode, folder, providerId, kind)
+    const systemPrompt = (rest[1] as string) || '';
+    const kind = (rest[6] as string) || 'chat';
     const session: MockSession = {
       id: `main-${++createdSessionCounter}`,
+      kind,
       title,
-      system_prompt: systemPrompt || '',
+      system_prompt: systemPrompt,
       created_at: nowSqlUtc(),
       status: 'active',
     };
@@ -167,7 +171,7 @@ describe('notificationStep: IM delivery (dual session + IM)', () => {
 
 describe('notificationStep: targetSessionRef resolution', () => {
   test('targetSessionRef=main-agent reuses existing main-agent session', async () => {
-    sessions.push({ id: 'main-existing', system_prompt: '__LUMOS_MAIN_AGENT__\nyou are the main agent', created_at: nowSqlUtc(), status: 'active' });
+    sessions.push({ id: 'main-existing', kind: 'main-agent', system_prompt: 'you are the main agent', created_at: nowSqlUtc(), status: 'active' });
     const result = await notificationStep({
       message: 'report ready',
       channel: 'system',
@@ -186,12 +190,12 @@ describe('notificationStep: targetSessionRef resolution', () => {
     });
     expect(result.success).toBe(true);
     expect(sessions).toHaveLength(1);
-    expect(sessions[0].system_prompt).toContain('__LUMOS_MAIN_AGENT__');
+    expect(sessions[0].kind).toBe('main-agent');
     expect(messages[0].sessionId).toBe(sessions[0].id);
   });
 
   test('targetSessionRef=main-agent with channel=im:wechat does dual delivery via session binding', async () => {
-    sessions.push({ id: 'main-x', system_prompt: '__LUMOS_MAIN_AGENT__', created_at: nowSqlUtc(), status: 'active' });
+    sessions.push({ id: 'main-x', kind: 'main-agent', system_prompt: '', created_at: nowSqlUtc(), status: 'active' });
     bindings.set('main-x', { id: 1, channelId: 'wxid_bound' });
 
     const result = await notificationStep({
@@ -210,7 +214,7 @@ describe('notificationStep: targetSessionRef resolution', () => {
   });
 
   test('wechat channel falls back to defaultUserImTarget when no session binding', async () => {
-    sessions.push({ id: 'main-x', system_prompt: '__LUMOS_MAIN_AGENT__', created_at: nowSqlUtc(), status: 'active' });
+    sessions.push({ id: 'main-x', kind: 'main-agent', system_prompt: '', created_at: nowSqlUtc(), status: 'active' });
     defaultUserTarget = { providerId: 'wechat', chatId: 'wxid_my_filehelper' };
 
     const result = await notificationStep({
