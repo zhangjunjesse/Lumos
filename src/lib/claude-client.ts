@@ -44,6 +44,7 @@ import {
 } from '@/lib/llm-circuit-breaker';
 import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-events';
 import { buildPromptWithHistory } from './claude/history-normalizer';
+import { appendKnowledgeReference } from './chat/knowledge-reference';
 import { extractHistoryImages } from './claude/history-images';
 import { recordRuntimeEvent } from './claude/runtime-events';
 
@@ -636,12 +637,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         }
 
-        const fullSystemPrompt = [systemPrompt, kbContext].filter(Boolean).join('\n\n');
-        if (fullSystemPrompt) {
+        // KB 检索结果不再拼进 system append —— 改拼进用户消息（见 buildFinalPrompt
+        // 的 appendKnowledgeReference）。system 只留会话级稳定内容（persona +
+        // 能力规则 + Ask 权威钳），前缀缓存稳定、注入面收窄、Ask 钳保持垫底。
+        if (systemPrompt) {
           queryOptions.systemPrompt = {
             type: 'preset',
             preset: 'claude_code',
-            append: fullSystemPrompt,
+            append: systemPrompt,
           };
         }
 
@@ -989,9 +992,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // real multimodal blocks (text fallback alone drops them to a truncated
         // base64 smear the model reads as "[Unsupported Image]").
         function buildFinalPrompt(useHistory: boolean): string | AsyncIterable<SDKUserMessage> {
-          const basePrompt = useHistory
+          const historyPrompt = useHistory
             ? buildPromptWithHistory(prompt, conversationHistory)
             : prompt;
+          // KB 检索结果作为参考资料拼进用户消息，不进 system（见上方 systemPrompt 注释）。
+          const basePrompt = kbContext
+            ? appendKnowledgeReference(historyPrompt, kbContext)
+            : historyPrompt;
           const historyImages = useHistory ? extractHistoryImages(conversationHistory) : [];
 
           if ((!files || files.length === 0) && historyImages.length === 0) return basePrompt;
