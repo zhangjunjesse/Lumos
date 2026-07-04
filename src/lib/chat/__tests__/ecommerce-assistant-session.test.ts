@@ -1,15 +1,13 @@
 import {
-  ECOMMERCE_ASSISTANT_CHAT_MARKER,
-  ECOMMERCE_ASSISTANT_CHAT_TITLE,
   buildEcommerceAssistantChatSystemPrompt,
   isEcommerceAssistantChatSession,
 } from '../ecommerce-assistant-session';
 
 describe('ecommerce-assistant-session', () => {
   describe('buildEcommerceAssistantChatSystemPrompt', () => {
-    it('includes the marker as the first line', () => {
+    it('embeds no legacy identity marker (identity now lives in the kind column)', () => {
       const prompt = buildEcommerceAssistantChatSystemPrompt();
-      expect(prompt.startsWith(ECOMMERCE_ASSISTANT_CHAT_MARKER)).toBe(true);
+      expect(prompt).not.toContain('__LUMOS_');
     });
 
     it('mentions all four ecommerce app tabs by name', () => {
@@ -38,9 +36,8 @@ describe('ecommerce-assistant-session', () => {
       expect(prompt).toContain('mcp__lumos-ecommerce-assistant__resolve_product_input');
     });
 
-    it('honors a custom prompt override while still emitting the marker and the MCP hint', () => {
+    it('honors a custom prompt override while still emitting the MCP hint', () => {
       const prompt = buildEcommerceAssistantChatSystemPrompt('完全自定义提示词');
-      expect(prompt).toContain(ECOMMERCE_ASSISTANT_CHAT_MARKER);
       expect(prompt).toContain('完全自定义提示词');
       // Default role/tab text dropped, but the MCP hint stays so tools are still discoverable.
       expect(prompt).not.toContain('## Your role');
@@ -54,31 +51,13 @@ describe('ecommerce-assistant-session', () => {
   });
 
   describe('isEcommerceAssistantChatSession', () => {
-    it('identifies sessions by the marker in the system prompt', () => {
-      expect(
-        isEcommerceAssistantChatSession({
-          title: 'whatever',
-          system_prompt: ECOMMERCE_ASSISTANT_CHAT_MARKER + '\n…',
-        }),
-      ).toBe(true);
+    it('identifies sessions by the kind column', () => {
+      expect(isEcommerceAssistantChatSession({ kind: 'ecommerce-assistant' })).toBe(true);
     });
 
-    it('identifies sessions by the canonical title as a fallback', () => {
-      expect(
-        isEcommerceAssistantChatSession({
-          title: ECOMMERCE_ASSISTANT_CHAT_TITLE,
-          system_prompt: '',
-        }),
-      ).toBe(true);
-    });
-
-    it('rejects unrelated sessions', () => {
-      expect(
-        isEcommerceAssistantChatSession({
-          title: '资料库 AI 对话',
-          system_prompt: '__LUMOS_LIBRARY_CHAT__\n…',
-        }),
-      ).toBe(false);
+    it('rejects other kinds', () => {
+      expect(isEcommerceAssistantChatSession({ kind: 'library' })).toBe(false);
+      expect(isEcommerceAssistantChatSession({ kind: 'chat' })).toBe(false);
     });
 
     it('rejects null / undefined', () => {

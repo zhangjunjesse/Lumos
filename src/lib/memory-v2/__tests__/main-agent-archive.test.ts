@@ -23,11 +23,15 @@ async function seedMainAgentSession(opts: {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
 }): Promise<string> {
   const { createSession, addMessage } = await import('@/lib/db');
-  const { withSessionEntryMarker } = await import('@/lib/chat/session-entry');
   const session = createSession(
     'main-agent-test',
     undefined,
-    withSessionEntryMarker(undefined, 'main-agent'),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'main-agent',
   );
   const { getDb } = await import('@/lib/db/connection');
   getDb()

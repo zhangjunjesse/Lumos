@@ -1,12 +1,10 @@
 import type { ChatSession } from "@/types";
+import { getSessionKind, SESSION_TITLES } from "@/lib/chat/session-kind";
 
-export const LIBRARY_CHAT_TITLE = "资料库 AI 对话";
-export const LIBRARY_CHAT_MARKER = "__LUMOS_LIBRARY_CHAT__";
-const LIBRARY_CHAT_LEGACY_FRAGMENT = "dedicated assistant for the knowledge library page";
+export const LIBRARY_CHAT_TITLE = SESSION_TITLES.library;
 
 export function buildLibraryChatSystemPrompt(): string {
   return [
-    LIBRARY_CHAT_MARKER,
     "You are the dedicated assistant for the knowledge library page.",
     "This chat session is separate from project coding sessions.",
     "Prioritize answering based on indexed knowledge-base context and cited source snippets that the system provides.",
@@ -16,17 +14,13 @@ export function buildLibraryChatSystemPrompt(): string {
 }
 
 export function isLibraryChatSession(
-  session?: Pick<ChatSession, "title" | "system_prompt"> | null,
+  session?: Pick<ChatSession, "kind"> | null,
 ): boolean {
-  if (!session) return false;
-  const title = String(session.title || "").trim();
-  const prompt = String(session.system_prompt || "");
-  if (prompt.includes(LIBRARY_CHAT_MARKER)) return true;
-  return title === LIBRARY_CHAT_TITLE && prompt.includes(LIBRARY_CHAT_LEGACY_FRAGMENT);
+  return getSessionKind(session) === "library";
 }
 
 export function isIsolatedLibraryChatSession(
-  session?: Pick<ChatSession, "system_prompt"> | null,
+  session?: Pick<ChatSession, "kind"> | null,
 ): boolean {
-  return Boolean(session?.system_prompt?.includes(LIBRARY_CHAT_MARKER));
+  return getSessionKind(session) === "library";
 }

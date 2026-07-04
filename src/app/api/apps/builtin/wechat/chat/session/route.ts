@@ -48,6 +48,9 @@ export async function POST(request: NextRequest) {
       systemPrompt,
       dataDir,
       'code',
+      undefined,
+      undefined,
+      'wechat-assistant',
     );
 
     return NextResponse.json({ session, reused: false, promptRefreshed: false }, { status: 201 });

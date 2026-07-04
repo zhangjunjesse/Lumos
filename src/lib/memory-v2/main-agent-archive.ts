@@ -6,7 +6,6 @@ import {
   updateMemoryV2Entry,
 } from './store';
 import { embedMemoryEntryText, memoryEmbedText } from './vector';
-import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { currentMainAgentDayKey, sessionDayKey } from '@/lib/chat/main-agent-session';
 
 // 主 Agent 单日会话 → 向量片段。
@@ -30,7 +29,7 @@ interface MessageRow {
 interface SessionRow {
   id: string;
   title: string;
-  system_prompt: string;
+  kind: string;
   status: string;
   created_at: string;
 }
@@ -76,10 +75,10 @@ function clip(text: string, max: number): string {
 
 function listMainAgentSessionsForDay(day: string): SessionRow[] {
   const rows = getDb()
-    .prepare('SELECT id, title, system_prompt, status, created_at FROM chat_sessions ORDER BY created_at ASC')
+    .prepare('SELECT id, title, kind, status, created_at FROM chat_sessions ORDER BY created_at ASC')
     .all() as SessionRow[];
   return rows.filter((session) =>
-    isMainAgentSession({ system_prompt: session.system_prompt })
+    session.kind === 'main-agent'
     && sessionDayKey(session.created_at) === day,
   );
 }

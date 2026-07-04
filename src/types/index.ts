@@ -4,6 +4,8 @@
 
 export interface ChatSession {
   id: string;
+  /** 会话身份（专属应用/主 agent/普通对话）。真源在 chat_sessions.kind 列。 */
+  kind: import('@/lib/chat/session-kind').SessionKind;
   title: string;
   created_at: string;
   updated_at: string;

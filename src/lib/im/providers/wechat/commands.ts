@@ -26,6 +26,7 @@ import type { IMCommandContext, IMCommandResult, InboundMessage } from '../../co
 import { handleBuiltinCommand } from '../../core/built-in-commands';
 import { runInstalledNativeAppImCommand } from '@/lib/app/native-command-im-bridge';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
+import type { SessionKind } from '@/lib/chat/session-kind';
 import { WECHAT_COMMANDS } from './command-defs';
 import { resolveWechatMainAgentSession } from './main-agent-route';
 import {
@@ -131,23 +132,15 @@ export function maybeHandleWechatVoiceModePhrase(message: InboundMessage): IMCom
 
 // ---- helpers ---------------------------------------------------------------
 
-// 这些 marker 标记的是 lumos 内部专项会话（工作流编辑器、应用开发助手、知识库
+// 这些 kind 标记的是 lumos 内部专项会话（工作流编辑器、应用开发助手、知识库
 // 助手）— 微信切换不应该把人带到这些非主线的对话里。`mode='workflow'` 是工作
 // 流执行时自动建的临时调试 session，更不应该让用户切过去。
-const SPECIAL_SESSION_MARKERS = [
-  '__LUMOS_WORKFLOW_CHAT__',
-  '__LUMOS_APP_BUILDER_CHAT__',
-  '__LUMOS_LIBRARY_CHAT__',
-];
+const NON_SWITCHABLE_KINDS: readonly SessionKind[] = ['workflow', 'app-builder', 'library'];
 
 function isSwitchableSession(s: ChatSession): boolean {
   if (s.status !== 'active') return false;
   if (s.mode === 'workflow') return false;
-  const sp = String(s.system_prompt || '');
-  for (const marker of SPECIAL_SESSION_MARKERS) {
-    if (sp.includes(marker)) return false;
-  }
-  return true;
+  return !NON_SWITCHABLE_KINDS.includes(s.kind);
 }
 
 function listChatSessions(): ChatSession[] {

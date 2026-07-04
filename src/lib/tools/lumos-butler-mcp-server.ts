@@ -1253,15 +1253,14 @@ function appendRuntimeDiagnostics(
 function searchSessions(like: string, limit: number) {
   if (!tableExists('chat_sessions')) return [];
   const rows = getDb().prepare(`
-    SELECT id, title, updated_at, working_directory, mode, system_prompt
+    SELECT id, title, updated_at, working_directory, mode, kind
     FROM chat_sessions
     WHERE title LIKE ?
     ORDER BY updated_at DESC
     LIMIT ?
   `).all(like, limit) as Array<Record<string, unknown>>;
   return rows.map((row) => {
-    const markerSession = { system_prompt: String(row.system_prompt ?? '') } as ChatSession;
-    const routePrefix = isMainAgentSession(markerSession) ? '/main-agent' : '/chat';
+    const routePrefix = row.kind === 'main-agent' ? '/main-agent' : '/chat';
     return {
       type: 'session',
       id: String(row.id),
@@ -1281,7 +1280,7 @@ function searchMessages(like: string, limit: number) {
   if (!tableExists('messages') || !tableExists('chat_sessions')) return [];
   const rows = getDb().prepare(`
     SELECT m.id, m.session_id, m.role, m.content, m.created_at,
-           s.title as session_title, s.system_prompt as system_prompt
+           s.title as session_title, s.kind as kind
     FROM messages m
     JOIN chat_sessions s ON s.id = m.session_id
     WHERE m.content LIKE ?
@@ -1289,8 +1288,7 @@ function searchMessages(like: string, limit: number) {
     LIMIT ?
   `).all(like, limit) as Array<Record<string, unknown>>;
   return rows.map((row) => {
-    const session = { system_prompt: String(row.system_prompt ?? '') } as ChatSession;
-    const routePrefix = isMainAgentSession(session) ? '/main-agent' : '/chat';
+    const routePrefix = row.kind === 'main-agent' ? '/main-agent' : '/chat';
     return {
       type: 'message',
       id: String(row.id),

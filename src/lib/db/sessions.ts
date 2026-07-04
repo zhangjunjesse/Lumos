@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import path from 'path';
 import type { ChatKnowledgeOptions, ChatSession, KnowledgeOverrides, Message, SettingsMap } from '@/types';
+import type { SessionKind } from '@/lib/chat/session-kind';
 import { getDb } from './connection';
 import { taskEventBus } from '@/lib/task-event-bus';
 
@@ -26,6 +27,7 @@ export function createSession(
   mode?: string,
   folder?: string,
   providerId?: string,
+  kind: SessionKind = 'chat',
 ): ChatSession {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
@@ -38,9 +40,10 @@ export function createSession(
     : '';
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, requested_model, resolved_model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, provider_name, provider_id, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO chat_sessions (id, kind, title, created_at, updated_at, model, requested_model, resolved_model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, provider_name, provider_id, sdk_cwd, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
+    kind,
     title || 'New Chat',
     now,
     now,

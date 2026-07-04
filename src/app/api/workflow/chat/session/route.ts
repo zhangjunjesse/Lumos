@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
       'code',
       undefined,
       getWorkflowProviderId(),
+      'workflow',
     );
 
     setSetting(buildWorkflowChatSessionBindingKey(input.workflowId), session.id);
