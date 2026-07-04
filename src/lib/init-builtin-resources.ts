@@ -28,6 +28,8 @@ import { ensureDouyinDefaultAutomations } from './app/douyin-default-automations
 import { ensureDeepResearchDefaultAutomations } from './app/deep-research-default-automations';
 import { ensureXRadarDefaultAutomations } from './app/x-radar-default-automations';
 import { ensureEtsyForgeDefaultAutomations } from './app/etsy-forge-default-automations';
+import { ensureAmazonRankDefaultAutomations } from './app/amazon-rank-default-automations';
+import { BUILTIN_AMAZON_RANK_APP_ID, BUILTIN_AMAZON_RANK_VERSION } from './app/amazon-rank-app-id';
 import { installApp } from './app/installer/install';
 import { createAppDataStore } from './app/runtime/data-store';
 import { buildInstallContext, getAppPlatformService } from './app/service';
@@ -842,6 +844,64 @@ async function ensureEtsyForgeInstalled(): Promise<void> {
   }
 }
 
+async function ensureAmazonRankInstalled(): Promise<void> {
+  const svc = getAppPlatformService();
+  const existing = svc.db
+    .prepare('SELECT id, version FROM lumos_app_apps WHERE id = ?')
+    .get(BUILTIN_AMAZON_RANK_APP_ID) as { id: string; version: string } | undefined;
+
+  if (existing && existing.version === BUILTIN_AMAZON_RANK_VERSION) {
+    ensureAmazonRankDefaultAutomations(createAppDataStore(svc.db, BUILTIN_AMAZON_RANK_APP_ID));
+    return;
+  }
+
+  // amazon-rank 与 etsy-forge 同款：直接从 apps/amazon-rank/ 目录拷贝安装
+  const sourceDir = path.join(process.cwd(), 'apps', 'amazon-rank');
+  if (!fs.existsSync(sourceDir)) {
+    console.warn(
+      `[init-builtin-resources] amazon-rank source dir not found: ${sourceDir} (生产打包时需把 apps/amazon-rank 加入 build config)`,
+    );
+    return;
+  }
+
+  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-amazon-rank-builtin-'));
+  try {
+    copyDirRecursive(sourceDir, stagingDir);
+
+    const ctx = buildInstallContext(async (req) => ({
+      granted: req.permissions.map((p) => p.permission),
+    }));
+
+    const result = await installApp(
+      { type: 'directory', path: stagingDir },
+      ctx,
+      { source: 'local' },
+    );
+
+    if (result.ok) {
+      const tag = existing
+        ? `升级 ${existing.version} → ${BUILTIN_AMAZON_RANK_VERSION}`
+        : `首次安装 ${BUILTIN_AMAZON_RANK_VERSION}`;
+      ensureAmazonRankDefaultAutomations(createAppDataStore(svc.db, BUILTIN_AMAZON_RANK_APP_ID));
+      console.log(`[init-builtin-resources] amazon-rank ${tag}`);
+    } else {
+      const issuesSummary = (result.issues ?? [])
+        .slice(0, 8)
+        .map((i) => {
+          const r = i as { level?: string; file?: string; jsonPath?: string; message?: string };
+          return `[${r.level ?? '?'}] ${r.file ?? '?'}${r.jsonPath ?? ''}: ${r.message ?? ''}`;
+        })
+        .join('\n  ');
+      console.warn(
+        `[init-builtin-resources] amazon-rank install failed: ${result.message}` +
+          (issuesSummary ? `\n  ${issuesSummary}` : ''),
+      );
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
 function copyDirRecursive(src: string, dest: string): void {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -912,6 +972,12 @@ export async function initBuiltinResources(): Promise<void> {
       await ensureEtsyForgeInstalled();
     } catch (err) {
       console.error('[init-builtin-resources] etsy-forge install error:', err);
+    }
+
+    try {
+      await ensureAmazonRankInstalled();
+    } catch (err) {
+      console.error('[init-builtin-resources] amazon-rank install error:', err);
     }
 
     try {

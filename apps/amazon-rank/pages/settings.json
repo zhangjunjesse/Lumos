@@ -1,0 +1,18 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "设置",
+  "description": "查询参数、浏览器选择与风险边界。",
+  "layout": "form",
+  "form": [
+    { "type": "text", "name": "site", "label": "站点", "placeholder": "www.amazon.com", "default": "www.amazon.com" },
+    { "type": "text", "name": "zip_code", "label": "配送邮编", "default": "10001", "description": "排名随配送地变化，固定邮编结果才可比。" },
+    { "type": "text", "name": "browser_context_id", "label": "查询用浏览器上下文", "default": "embedded:default", "description": "内置 / AdsPower / 外部 CDP，在「设置 → 浏览器」里管理。" },
+    { "type": "switch", "name": "incognito", "label": "无痕模式", "default": true, "description": "避免登录态影响排名个性化。" },
+    { "type": "number", "name": "delay_min_ms", "label": "每词最小间隔（毫秒）", "default": 3000, "min": 1000, "max": 60000 },
+    { "type": "number", "name": "delay_max_ms", "label": "每词最大间隔（毫秒）", "default": 6000, "min": 1000, "max": 120000 },
+    { "type": "number", "name": "max_keywords", "label": "单次词数上限", "default": 50, "min": 1, "max": 200, "description": "调高更容易触发亚马逊风控。" },
+    { "type": "textarea", "name": "ai_system_prompt", "label": "查询说明 (ai_system_prompt)", "rows": 4, "description": "本应用不调用大模型；此说明向使用者解释查询逻辑。" },
+    { "type": "textarea", "name": "risk_note", "label": "风险边界 (risk_note)", "rows": 4, "description": "只读查询、不登录不下单；遇验证码立即中止，不硬闯风控。" }
+  ],
+  "submit": { "label": "保存设置", "run": "db:update:app_settings" }
+}

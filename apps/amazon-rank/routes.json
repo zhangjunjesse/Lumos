@@ -1,0 +1,12 @@
+{
+  "$schema": "https://lumos.io/schemas/app-routes.v1.json",
+  "default": "main",
+  "menu": [
+    { "id": "main", "label": "排名查询", "icon": "search", "page": "pages/main.json" },
+    { "id": "status", "label": "状态", "icon": "circle-gauge", "page": "pages/status.json" },
+    { "id": "settings", "label": "设置", "icon": "settings", "page": "pages/settings.json" },
+    { "id": "automations", "label": "自动化", "icon": "calendar-clock", "page": "pages/automations.json" },
+    { "id": "im", "label": "通知命令", "icon": "message-square", "page": "pages/im.json" },
+    { "id": "run-history", "label": "运行结果", "icon": "history", "page": "pages/run-history.json" }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "通知命令",
+  "description": "微信 IM 通知目标与只读查询命令。写操作（发起新查询、改监控清单、改设置）不接受 IM 命令，必须回到应用内确认。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "markdown",
+      "content": "## 只读命令\n\n- `/app amazon-rank status` — 查看应用状态\n- `/app amazon-rank runs` — 查看最近运行\n- `/app amazon-rank acceptance` — 查看验收进度\n- `/app amazon-rank help` — 命令帮助\n\n高风险动作（发起新查询、修改监控清单、改设置）不接受 IM 命令，请回到应用内操作并确认。"
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_notifications }}",
+      "columns": [
+        { "field": "target_label", "label": "通知目标" },
+        { "field": "channel", "label": "渠道", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "last_error", "label": "失败原因" },
+        { "field": "last_sent_at", "label": "最近发送", "render": "date" }
+      ]
+    },
+    {
+      "type": "table",
+      "data": "{{ db.app_command_runs }}",
+      "columns": [
+        { "field": "command", "label": "命令" },
+        { "field": "risk_level", "label": "风险", "render": "tag" },
+        { "field": "confirmation_required", "label": "需确认", "render": "tag" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "result_summary", "label": "结果" },
+        { "field": "failure_reason", "label": "失败原因" }
+      ],
+      "actions": {
+        "row": [
+          {
+            "label": "测试运行",
+            "run": "native:app:run-command",
+            "confirm": "测试运行这条命令？只读命令会直接返回结果。"
+          }
+        ]
+      }
+    }
+  ]
+}

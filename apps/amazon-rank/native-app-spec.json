@@ -1,0 +1,100 @@
+{
+  "$schema": "https://lumos.io/schemas/native-app-spec.v1.json",
+  "version": 1,
+  "summary": "亚马逊关键词排名查询：粘贴或上传关键词与 ASIN，应用用 Lumos 内置浏览器（后台、默认无痕、配送地锁定到设置的邮编）逐词搜索亚马逊，提取自然搜索前 20 名 ASIN（排除广告位）并与监控 ASIN 比对，得出每个词的排名。全程确定性脚本，不调用大模型；查不到就如实标失败原因并留网页快照，绝不 mock。",
+  "userVisibleScope": [
+    "在「查询」页粘贴或上传 Excel 输入关键词和 ASIN，解析结果先回显确认（识别到几个词、几个 ASIN、丢了什么），确认后点「开始查询」。",
+    "运行中实时看到进度（第几个词、每个词的结果一行行出来），可随时停止；停止后未查的词标「已取消」。",
+    "结果页是排名矩阵：行=关键词、列=监控 ASIN、格=第几名；查到结果但没进前 20 显示「前20名外」；失败的词标明原因（无搜索结果 / 疑似风控 / 页面解析失败 / 执行失败），可点开当时的网页快照人工核对。",
+    "结果可一键导出 Excel（排名矩阵 + 排名位次 + 明细三个工作表）。",
+    "结果页点「设为每日监控」把本次词表和 ASIN 存为监控清单，并开启每日自动化；绑定微信 IM 后每天推送摘要。",
+    "在「设置」页改站点、配送邮编、查询用浏览器（内置 / AdsPower / 外部 CDP）、每词间隔和单次词数上限。",
+    "在「自动化」页查看每日监控的启用状态、触发规则、最近结果、下次运行时间，可手动运行、同步定时任务。",
+    "在「运行结果」页查看每次查询/监控的状态、摘要、失败原因和时间。",
+    "浏览器未连接时状态显示 not_connected 并提示启动 Lumos 桌面端；遇到亚马逊验证码立即中止并标「疑似风控」，绝不用假数据冒充成功。"
+  ],
+  "status": {
+    "states": ["not_configured", "ready", "running", "failed", "not_connected"],
+    "readyCriteria": [
+      "应用页面可打开，Browser Bridge 已连接（Lumos 桌面端在运行）。",
+      "至少成功跑通一次查询：结果页出现至少一个关键词的自然位数据。"
+    ],
+    "notConnectedBehavior": "Browser Bridge 未连接时，查询入口禁用并显示 not_connected 和「请确认 Lumos 桌面端已启动」；运行中浏览器断开会把当前词标为执行失败，连续失败自动中止并写明原因；遇验证码标 blocked 并立即中止。任何失败都保留网页快照供人工核对，绝不 mock。"
+  },
+  "settings": [
+    { "id": "query", "label": "查询参数", "fields": ["站点（默认 www.amazon.com）", "配送邮编（默认 10001）", "每词间隔（默认 3-6 秒随机）", "单次词数上限（默认 50）"] },
+    { "id": "browser", "label": "查询浏览器", "fields": ["浏览器上下文（内置 / AdsPower / 外部 CDP）", "无痕模式开关（默认开）"] },
+    { "id": "watchlist", "label": "监控清单", "fields": ["监控关键词列表", "监控 ASIN 列表"] },
+    { "id": "advanced", "label": "高级（查询说明 / 风险边界）", "fields": ["查询说明 (ai_system_prompt)", "风险边界 (risk_note)"] }
+  ],
+  "data": {
+    "entities": [
+      "amazon_rank_runs",
+      "amazon_rank_results",
+      "app_settings",
+      "app_automations",
+      "run_history",
+      "assistant_messages",
+      "app_notifications",
+      "app_command_runs",
+      "acceptance_checks"
+    ],
+    "reusableStores": ["settings", "run_history", "notifications", "command_runs"]
+  },
+  "ai": {
+    "enabled": false,
+    "promptSettings": true,
+    "draftBeforeWrite": true,
+    "visibleFailureHandling": true
+  },
+  "automations": {
+    "enabled": true,
+    "controls": ["enable", "pause", "run_now", "edit"],
+    "visibleRunResults": true
+  },
+  "runResults": {
+    "visible": true,
+    "states": ["running", "success", "failed", "cancelled"],
+    "failureReasons": true,
+    "retry": true
+  },
+  "im": {
+    "enabled": true,
+    "lowRiskCommands": [
+      "/app amazon-rank status",
+      "/app amazon-rank runs",
+      "/app amazon-rank acceptance",
+      "/app amazon-rank help"
+    ],
+    "confirmationRequiredFor": [
+      "通过 IM 命令触发新一轮排名查询（消耗浏览器抓取资源 / 可能触发亚马逊风控，必须回到应用内确认）",
+      "通过 IM 命令修改监控清单或设置"
+    ],
+    "visibleCommandResults": true
+  },
+  "risk": {
+    "writeActionsRequireConfirmation": true,
+    "highRiskActions": [
+      "开启每日监控（会按计划自动消耗浏览器抓取资源，需要用户在结果页明确点「设为每日监控」）",
+      "把单次词数上限调高（更容易触发亚马逊风控，设置页有提示）"
+    ],
+    "outOfScope": [
+      "登录亚马逊账号、下单、改价、改 listing 等任何写操作（本应用只做只读搜索查询）",
+      "绕过亚马逊风控（自动识别验证码 / IP 池 / 请求伪造）；遇验证码只中止并如实报告",
+      "为该应用单独修改 BrowserManager / 全局浏览器基础设施（必须走 browser-provider）",
+      "浏览器未连接或抓取失败时用 mock 数据冒充查询成功"
+    ]
+  },
+  "acceptance": [
+    { "id": "installation-self-check", "label": "安装自检", "howToVerify": "安装完成后查看安装自检结果，或在状态页点「重新运行安装自检」；通过或失败自动写入本验收项。" },
+    { "id": "browser-bridge-ready", "label": "Browser Bridge 可用", "howToVerify": "状态显示 Browser Bridge 连接状态；未连时显示 not_connected 和启动提示，查询入口禁用。" },
+    { "id": "parse-preview", "label": "输入解析回显", "howToVerify": "在查询页粘贴关键词和 ASIN（或上传 Excel），看到「识别到 N 个关键词、M 个 ASIN」及告警（去重、非法 ASIN），确认后才能开始。" },
+    { "id": "rank-query-e2e", "label": "排名查询跑通", "howToVerify": "对至少 1 个关键词 + 1 个 ASIN 点「开始查询」，运行中能看到逐词进度，结束后矩阵出现位次（#N 或 前20名外）。需要真机 + 亚马逊可访问。" },
+    { "id": "failure-honesty", "label": "失败如实呈现", "howToVerify": "断开浏览器或遇验证码时，对应关键词标明确的失败原因（执行失败 / 疑似风控），有快照的能点开人工核对；绝不显示假排名。" },
+    { "id": "stop-run", "label": "停止运行", "howToVerify": "运行中点「停止」，运行状态变已取消，未查的词标「已取消」，浏览器后台页被关闭。" },
+    { "id": "export-excel", "label": "导出 Excel", "howToVerify": "结果页点「导出 Excel」，下载的文件包含排名矩阵、排名位次、明细三个工作表，内容与页面一致。" },
+    { "id": "watchlist-monitor", "label": "设为每日监控", "howToVerify": "结果页点「设为每日监控」后，自动化页的「每日排名监控」变为启用且监控清单已保存；可手动运行一次并在运行结果页看到摘要。" },
+    { "id": "im-notify", "label": "IM 摘要推送", "howToVerify": "绑定微信 IM 目标后手动运行每日监控，收到摘要通知；未绑定时通知状态如实显示未接入原因。" },
+    { "id": "background-browser", "label": "后台不打扰", "howToVerify": "运行全程不切换用户当前可见的浏览器页签、不弹出前台窗口。" }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "状态",
+  "description": "应用当前状态：not_configured（还没跑过查询）、ready（可以查）、running（正在查）、failed（上次失败）、not_connected（浏览器未连接，请先启动 Lumos 桌面端）。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "markdown",
+      "content": "## 状态\n\n- 浏览器未连接时显示 **not_connected**：请确认 Lumos 桌面端已启动。\n- 遇到亚马逊验证码会立即中止并标「疑似风控」，不会用假数据冒充成功。\n- 运行数：{{ db.amazon_rank_runs.count }}；运行记录：{{ db.run_history.count }}。"
+    },
+    {
+      "type": "button",
+      "label": "重新运行安装自检",
+      "primary": true,
+      "run": "native:app:run-self-check",
+      "confirm": "重新运行安装自检？结果会写入「运行结果」和验收清单。"
+    },
+    {
+      "type": "table",
+      "data": "{{ db.acceptance_checks }}",
+      "columns": [
+        { "field": "acceptance_id", "label": "验收项" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "evidence", "label": "证据" },
+        { "field": "failure_reason", "label": "失败原因" },
+        { "field": "updated_at", "label": "更新时间", "render": "date" }
+      ]
+    }
+  ]
+}

@@ -49,6 +49,7 @@ export const SUPPORTED_NATIVE_AUTOMATION_ACTIONS = new Set([
   'x-radar:run-digest-tasks',
   'x-radar:run-stats-tasks',
   'etsy-forge:run-collection-tasks',
+  'amazon-rank:run-monitor',
 ]);
 
 export async function runNativeAppAutomation(input: {
@@ -350,6 +351,41 @@ export async function runNativeAppAutomation(input: {
       updated_at: updatedAt,
     });
     return { ok: status === 'success', automationId: automation.id, runId, message, nativeAction };
+  }
+
+  if (nativeAction === 'amazon-rank:run-monitor') {
+    const { isAmazonRankNativeApp } = await import('@/lib/app/amazon-rank-app-id');
+    if (!isAmazonRankNativeApp(input.manifest)) {
+      return fail('当前应用不是亚马逊排名助手，不能运行 amazon-rank 自动化。', { nativeAction });
+    }
+    const { runMonitorAutomation } = await import('@/lib/amazon-rank/monitor');
+    const report = await runMonitorAutomation({
+      store: input.store,
+      db: input.db,
+      appId: input.appId,
+    });
+    const status: 'success' | 'failed' = report.ok ? 'success' : 'failed';
+    const runId = createRunHistory(input.store, {
+      title: `运行自动化：${automation.title ?? nativeAction}`,
+      status,
+      summary: report.message,
+      failure_reason: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
+      updated_at: updatedAt,
+    }).id;
+    input.store.update<AppAutomationRow>('app_automations', automation.id, {
+      last_status: status,
+      last_run_summary: report.message,
+      last_run_id: runId,
+      updated_at: updatedAt,
+    });
+    return {
+      ok: report.ok,
+      automationId: automation.id,
+      runId,
+      message: report.message,
+      nativeAction,
+      error: status === 'failed' ? report.reasons.join('；') || undefined : undefined,
+    };
   }
 
   return fail(`当前应用自动化运行桥尚未接入动作：${nativeAction}`, { nativeAction });

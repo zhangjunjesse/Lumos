@@ -1,0 +1,23 @@
+{
+  "$schema": "https://lumos.io/schemas/app-page.v1.json",
+  "title": "排名查询",
+  "description": "粘贴关键词和 ASIN → 确认解析结果 → 开始查询。完整交互在应用主界面（/apps/amazon-rank）。",
+  "layout": "single",
+  "blocks": [
+    {
+      "type": "markdown",
+      "content": "## 亚马逊排名助手\n\n1. 在「查询」页粘贴关键词（一行一个）和 ASIN（10 位字母数字），或上传 Excel（内容放第一列）。\n2. 确认解析回显（识别到几个词、几个 ASIN）后点「开始查询」。\n3. 运行中逐词出结果，可随时停止；结束后看排名矩阵、导出 Excel。\n4. 结果页点「设为每日监控」，每天自动查一遍并推微信摘要。\n\n查不到就如实标原因（无搜索结果 / 疑似风控 / 页面解析失败），并保留网页快照供人工核对。"
+    },
+    {
+      "type": "table",
+      "data": "{{ db.run_history }}",
+      "columns": [
+        { "field": "title", "label": "运行" },
+        { "field": "status", "label": "状态", "render": "tag" },
+        { "field": "summary", "label": "摘要" },
+        { "field": "failure_reason", "label": "失败原因" },
+        { "field": "updated_at", "label": "时间", "render": "date", "sortable": true }
+      ]
+    }
+  ]
+}

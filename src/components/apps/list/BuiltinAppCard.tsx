@@ -11,6 +11,7 @@ import {
   Pin,
   Radar,
   Radio,
+  Search,
   ShoppingBag,
   Sparkles,
   Video,
@@ -591,6 +592,46 @@ export function BuiltinPinterestRadarCard(): React.ReactElement {
  * 主链已打通：UI/lib/API/注册全部就绪，进入即开始刷图。
  * 状态如实标：趋势抓取桥（EHunt + eRank）未接入时走 evergreen 兜底，不假装完整完成。
  */
+export function BuiltinAmazonRankCard(): React.ReactElement {
+  return (
+    <Link
+      href="/apps/amazon-rank"
+      className="group block rounded-2xl bg-card p-6 ring-1 ring-border transition-colors hover:ring-foreground/30"
+    >
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm">
+          <Search className="size-6" strokeWidth={1.75} />
+        </div>
+        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-lg font-semibold leading-tight tracking-tight">
+              亚马逊排名助手
+            </h3>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              内置 · 亚马逊查排名
+            </p>
+          </div>
+          <Button asChild size="sm" variant="ghost" className="-mr-2 shrink-0">
+            <span className="inline-flex items-center gap-1">
+              打开
+              <ArrowUpRight className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
+          </Button>
+        </div>
+      </div>
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+        粘贴关键词和 ASIN → 自动查自然搜索前 20 名 → 排名矩阵 + Excel 导出，可开每日监控推微信
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone="ok" />
+          <span className="text-muted-foreground">后台无痕查询 · 查不到如实标原因</span>
+        </span>
+      </div>
+    </Link>
+  );
+}
+
 export function BuiltinEtsyForgeCard(): React.ReactElement {
   return (
     <Link
