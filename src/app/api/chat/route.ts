@@ -6,6 +6,7 @@ import {
   buildCapabilityPlan,
   buildDbServerHints,
   buildAskModeAllowance,
+  dbHintedMcpNames,
   type ConnectorContext,
 } from '@/lib/agent-capabilities';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs, scheduleSessionAutoContinue, stopSessionAutoContinue } from '@/lib/db';
@@ -893,8 +894,11 @@ export async function POST(request: NextRequest) {
     // R2：移除 permissionMode==='default' 闸——这正是「Ask 模式 agent
     // 以为自己没有微信/任何工具」事故的直接修复点。
     if (loadedMcpServers) {
-      const BUILTIN_HINTED_MCPS = new Set(['feishu', 'deepsearch', 'chrome-devtools', 'chrome_devtools']);
-      const userMcpNames = Object.keys(loadedMcpServers).filter(n => !BUILTIN_HINTED_MCPS.has(n));
+      // 排除已有专属说明书的 server（真源=注册中心 dbHintedMcpNames，含
+      // douyin-collector/im-tools——旧硬编码 BUILTIN_HINTED_MCPS 漏了它俩，
+      // 导致这两个既有专属 hint 又被列进发现提示，双重广告）。
+      const hintedMcps = dbHintedMcpNames();
+      const userMcpNames = Object.keys(loadedMcpServers).filter(n => !hintedMcps.has(n));
       if (userMcpNames.length > 0) {
         const list = userMcpNames.map(n => `- \`${n}\`: tools available as \`mcp__${n}__<tool_name>\``).join('\n');
         finalSystemPrompt = (finalSystemPrompt || '') + `\n\nYou have access to the following additional MCP servers. Use their tools when relevant:\n${list}`;
