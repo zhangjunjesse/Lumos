@@ -20,7 +20,7 @@ import { registerConversation, unregisterConversation } from './conversation-reg
 import { getSetting, updateSdkSessionId, createPermissionRequest, setSetting } from './db';
 import { getExpandedPath } from './platform';
 import { execFileSync } from 'child_process';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -992,7 +992,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             : prompt;
           // KB 检索结果作为参考资料拼进用户消息，不进 system（见上方 systemPrompt 注释）。
           const basePrompt = kbContext
-            ? appendKnowledgeReference(historyPrompt, kbContext)
+            ? appendKnowledgeReference(historyPrompt, kbContext, randomBytes(8).toString('hex'))
             : historyPrompt;
           const historyImages = useHistory ? extractHistoryImages(conversationHistory) : [];
 
