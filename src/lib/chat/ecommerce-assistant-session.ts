@@ -1,13 +1,12 @@
 import type { ChatSession } from '@/types';
 import { ECOMMERCE_ASSISTANT_MCP_SYSTEM_HINT } from '@/lib/tools/ecommerce-assistant-mcp-hint';
+import { getSessionKind, SESSION_TITLES } from '@/lib/chat/session-kind';
 
-export const ECOMMERCE_ASSISTANT_CHAT_TITLE = '电商助手 AI 对话';
-export const ECOMMERCE_ASSISTANT_CHAT_MARKER = '__LUMOS_ECOMMERCE_ASSISTANT_CHAT__';
+export const ECOMMERCE_ASSISTANT_CHAT_TITLE = SESSION_TITLES['ecommerce-assistant'];
 
 export function buildEcommerceAssistantChatSystemPrompt(customPrompt?: string | null): string {
   const configured = customPrompt?.trim();
   return [
-    ECOMMERCE_ASSISTANT_CHAT_MARKER,
     configured ||
       [
         'You are the dedicated assistant for the built-in Ecommerce Assistant app in Lumos.',
@@ -34,10 +33,7 @@ export function buildEcommerceAssistantChatSystemPrompt(customPrompt?: string | 
 }
 
 export function isEcommerceAssistantChatSession(
-  session?: Pick<ChatSession, 'title' | 'system_prompt'> | null,
+  session?: Pick<ChatSession, 'kind'> | null,
 ): boolean {
-  if (!session) return false;
-  const prompt = String(session.system_prompt || '');
-  if (prompt.includes(ECOMMERCE_ASSISTANT_CHAT_MARKER)) return true;
-  return String(session.title || '').trim() === ECOMMERCE_ASSISTANT_CHAT_TITLE;
+  return getSessionKind(session) === 'ecommerce-assistant';
 }

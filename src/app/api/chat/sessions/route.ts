@@ -5,7 +5,7 @@ import { validateBrowserContextId } from '@/lib/browser-provider/context-validat
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
 import { isLibraryChatSession } from '@/lib/chat/library-session';
-import { isMainAgentSession, isWorkflowDebugSession, normalizeSessionEntry, withSessionEntryMarker } from '@/lib/chat/session-entry';
+import { isMainAgentSession, isWorkflowDebugSession, normalizeSessionEntry } from '@/lib/chat/session-entry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,11 +86,12 @@ export async function POST(request: NextRequest) {
     const session = createSession(
       body.title,
       body.model,
-      withSessionEntryMarker(body.system_prompt, entry),
+      body.system_prompt,
       workingDirectory,
       body.mode,
       body.folder,
       resolvedProviderId,
+      entry === 'main-agent' ? 'main-agent' : 'chat',
     );
     if (browserContextId) {
       updateSessionBrowserContext(session.id, browserContextId);

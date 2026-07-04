@@ -1,7 +1,7 @@
 import type { ChatSession } from '@/types';
+import { getSessionKind, SESSION_TITLES } from '@/lib/chat/session-kind';
 
-export const GOOFISH_ASSISTANT_CHAT_TITLE = '闲鱼助手 AI 对话';
-export const GOOFISH_ASSISTANT_CHAT_MARKER = '__LUMOS_GOOFISH_ASSISTANT_CHAT__';
+export const GOOFISH_ASSISTANT_CHAT_TITLE = SESSION_TITLES['goofish-assistant'];
 
 const APP_ID = 'goofish-assistant';
 
@@ -73,14 +73,11 @@ export function buildGoofishAssistantChatSystemPrompt(customPrompt?: string | nu
   const body = configured && configured.length > 0
     ? configured
     : DEFAULT_PROMPT_LINES.join('\n');
-  return [GOOFISH_ASSISTANT_CHAT_MARKER, `# Lumos 闲鱼助手 AI（appId=${APP_ID}）`, '', body].join('\n');
+  return [`# Lumos 闲鱼助手 AI（appId=${APP_ID}）`, '', body].join('\n');
 }
 
 export function isGoofishAssistantChatSession(
-  session?: Pick<ChatSession, 'title' | 'system_prompt'> | null,
+  session?: Pick<ChatSession, 'kind'> | null,
 ): boolean {
-  if (!session) return false;
-  const prompt = String(session.system_prompt || '');
-  if (prompt.includes(GOOFISH_ASSISTANT_CHAT_MARKER)) return true;
-  return String(session.title || '').trim() === GOOFISH_ASSISTANT_CHAT_TITLE;
+  return getSessionKind(session) === 'goofish-assistant';
 }

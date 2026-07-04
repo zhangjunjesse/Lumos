@@ -23,7 +23,8 @@ import { loadToken } from '@/lib/feishu-auth';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
 import { captureExplicitMemoryV2FromUserInput } from '@/lib/memory-v2/runtime';
 import type { MemoryV2Entry } from '@/lib/memory-v2/types';
-import { isMainAgentSession, stripMainAgentSessionMarker } from '@/lib/chat/session-entry';
+import { isMainAgentSession } from '@/lib/chat/session-entry';
+import { stripSessionMarkers } from '@/lib/chat/session-kind';
 import { getPreferredChatProviderId, shouldPersistChatProviderBinding } from '@/lib/chat/provider-selection';
 import { isWorkflowChatSession } from '@/lib/chat/workflow-session';
 import { isWeChatAssistantChatSession } from '@/lib/chat/wechat-assistant-session';
@@ -758,7 +759,7 @@ export async function POST(request: NextRequest) {
       updateSessionModel(session_id, effectiveModel);
     }
 
-    const sessionSystemPrompt = stripMainAgentSessionMarker(session.system_prompt || '');
+    const sessionSystemPrompt = stripSessionMarkers(session.system_prompt || '');
 
     // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools)
     const isPrimaryMainAgentSession = isMainAgentSession(session);

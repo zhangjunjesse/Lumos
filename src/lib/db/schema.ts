@@ -18,6 +18,7 @@ export function initDb(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'chat',
       title TEXT NOT NULL DEFAULT 'New Chat',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),

@@ -1,6 +1,6 @@
 import { createSession, getAllSessions, updateSessionStatus, getSetting, updateSessionBrowserContext } from '@/lib/db';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
-import { isMainAgentSession, withSessionEntryMarker } from './session-entry';
+import { isMainAgentSession } from './session-entry';
 import { localDayKey, resolveTimezone } from '@/lib/memory-v2/day-window';
 import type { ChatSession } from '@/types';
 
@@ -105,7 +105,12 @@ export function resolveMainAgentSession(
   const session = createSession(
     today,
     undefined,
-    withSessionEntryMarker(undefined, 'main-agent'),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'main-agent',
   );
   // 主 Agent 自动建会话、自动运行，没人手动选浏览器；新会话套用用户配置的默认浏览器。
   const browserContext = resolveMainAgentDefaultBrowserContext();

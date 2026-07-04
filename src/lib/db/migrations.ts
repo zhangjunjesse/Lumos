@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { inferSessionKind, stripSessionMarkers } from '@/lib/chat/session-kind';
 
 // Helper: safely run ALTER TABLE ADD COLUMN, ignoring "duplicate column" errors from
 // concurrent multi-process initialization (e.g. Next.js build with multiple workers).
@@ -9,6 +10,32 @@ function safeAddColumn(db: Database.Database, sql: string): void {
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes('duplicate column name')) throw err;
   }
+}
+
+/**
+ * 会话身份从「system_prompt 里的 __LUMOS_*__ 魔法标记 + 标题兜底」迁到
+ * chat_sessions.kind 一列。回填复用运行时同一份判定（inferSessionKind），保证
+ * 每个会话迁移后的 kind == 迁移前判定的身份、零行为漂移；同时剥掉正文里独占行的
+ * 历史标记（新数据不再写标记，运行时不再需要发送前 strip）。
+ *
+ * 幂等：只 UPDATE「非 chat 或仍含标记」的行；剥离后不含标记 → 二次运行不匹配。
+ * 导出以便单测直接喂内存库验证。
+ */
+export function backfillSessionKind(db: Database.Database): void {
+  const rows = db
+    .prepare('SELECT id, system_prompt, title FROM chat_sessions')
+    .all() as { id: string; system_prompt: string; title: string }[];
+  const update = db.prepare('UPDATE chat_sessions SET kind = ?, system_prompt = ? WHERE id = ?');
+  const tx = db.transaction((items: typeof rows) => {
+    for (const row of items) {
+      const kind = inferSessionKind(row.system_prompt, row.title);
+      const cleaned = stripSessionMarkers(row.system_prompt);
+      if (kind !== 'chat' || cleaned !== row.system_prompt) {
+        update.run(kind, cleaned, row.id);
+      }
+    }
+  });
+  tx(rows);
 }
 
 export function migrateCoreTables(db: Database.Database): void {
@@ -52,6 +79,13 @@ export function migrateCoreTables(db: Database.Database): void {
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_updated_at TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN runtime_error TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
+
+  // Session identity: migrate __LUMOS_*__ prompt markers → kind column, once.
+  const hasKind = colNames.includes('kind');
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'");
+  if (!hasKind) {
+    backfillSessionKind(db);
+  }
   db.exec(`
     UPDATE chat_sessions
     SET requested_model = CASE

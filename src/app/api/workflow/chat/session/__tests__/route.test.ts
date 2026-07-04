@@ -30,10 +30,9 @@ const mockedGetSession = getSession as jest.MockedFunction<typeof getSession>;
 const mockedGetSetting = getSetting as jest.MockedFunction<typeof getSetting>;
 const mockedSetSetting = setSetting as jest.MockedFunction<typeof setSetting>;
 
-const WORKFLOW_MARKER = '__LUMOS_WORKFLOW_CHAT__';
-
-function makeSession(id: string, withMarker = true): {
+function makeSession(id: string, isWorkflow = true): {
   id: string;
+  kind: string;
   system_prompt: string;
   title: string;
   model: string;
@@ -42,7 +41,8 @@ function makeSession(id: string, withMarker = true): {
 } {
   return {
     id,
-    system_prompt: withMarker ? `${WORKFLOW_MARKER}\nrest of prompt` : 'no marker here',
+    kind: isWorkflow ? 'workflow' : 'chat',
+    system_prompt: 'rest of prompt',
     title: 'workflow chat',
     model: '',
     provider_id: '',
@@ -72,7 +72,7 @@ describe('workflow chat session route', () => {
       expect(mockedGetSetting).toHaveBeenCalledWith('workflow_chat_session:wf-1');
     });
 
-    test('returns the bound session when it exists with marker', async () => {
+    test('returns the bound session when it exists with workflow kind', async () => {
       mockedGetSetting.mockReturnValue('SID-1');
       mockedGetSession.mockReturnValue(makeSession('SID-1') as never);
 
@@ -95,7 +95,7 @@ describe('workflow chat session route', () => {
       expect(mockedSetSetting).toHaveBeenCalledWith('workflow_chat_session:wf-2', '');
     });
 
-    test('clears stale binding when bound session no longer carries the workflow marker', async () => {
+    test('clears stale binding when bound session no longer has workflow kind', async () => {
       mockedGetSetting.mockReturnValue('SID-DRIFTED');
       mockedGetSession.mockReturnValue(makeSession('SID-DRIFTED', false) as never);
 

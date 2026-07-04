@@ -15,6 +15,9 @@ export async function POST(request: NextRequest) {
       buildLibraryChatSystemPrompt(),
       dataDir,
       'code',
+      undefined,
+      undefined,
+      'library',
     );
 
     return NextResponse.json({ session }, { status: 201 });

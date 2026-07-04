@@ -5,7 +5,9 @@ interface FakeSession {
   title: string;
   status: 'active' | 'archived';
   updated_at: string; // ISO-ish "YYYY-MM-DD HH:mm:ss"
+  created_at?: string;
   mode?: 'code' | 'plan' | 'ask' | 'workflow';
+  kind?: string;
   system_prompt?: string;
   working_directory?: string;
 }
@@ -95,10 +97,10 @@ describe('wechat/commands: /list', () => {
 
   test('lists active sessions, marks main agent entry', async () => {
     sessionsTable.push(
-      { id: 'sess_main', title: '主 Agent', status: 'active', updated_at: freshDate(0), system_prompt: '__LUMOS_MAIN_AGENT__' },
-      { id: 'sess_a1', title: '项目脑暴', status: 'active', updated_at: freshDate(0) },
-      { id: 'sess_b2', title: '阅读笔记', status: 'active', updated_at: freshDate(1) },
-      { id: 'sess_c3', title: '老的', status: 'active', updated_at: freshDate(40) }, // out of 30d
+      { id: 'sess_main', title: '主 Agent', status: 'active', updated_at: freshDate(0), created_at: freshDate(0), kind: 'main-agent' },
+      { id: 'sess_a1', title: '项目脑暴', status: 'active', updated_at: freshDate(0), kind: 'chat' },
+      { id: 'sess_b2', title: '阅读笔记', status: 'active', updated_at: freshDate(1), kind: 'chat' },
+      { id: 'sess_c3', title: '老的', status: 'active', updated_at: freshDate(40), kind: 'chat' }, // out of 30d
     );
 
     const r = await handleWechatCommand(makeCtx('list'));
@@ -123,7 +125,7 @@ describe('wechat/commands: /list', () => {
   test('workflow-related sessions excluded (mode=workflow)', async () => {
     sessionsTable.push(
       { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_MAIN_AGENT__' },
+        kind: 'main-agent' },
       { id: 'sess_wf_run', title: '[一次性] 工作流执行', status: 'active',
         updated_at: freshDate(0), mode: 'workflow' },
     );
@@ -135,10 +137,10 @@ describe('wechat/commands: /list', () => {
   test('renders scope label (主 agent / 项目 / 自由对话)', async () => {
     sessionsTable.push(
       { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_MAIN_AGENT__' },
+        kind: 'main-agent' },
       { id: 'sess_proj', title: '研究 lumos', status: 'active', updated_at: freshDate(0),
-        working_directory: '/Users/me/code/lumos' },
-      { id: 'sess_free', title: '随便聊聊', status: 'active', updated_at: freshDate(0) },
+        kind: 'chat', working_directory: '/Users/me/code/lumos' },
+      { id: 'sess_free', title: '随便聊聊', status: 'active', updated_at: freshDate(0), kind: 'chat' },
     );
     const r = await handleWechatCommand(makeCtx('list'));
     expect(r.reply!.text).toMatch(/主对话/);
@@ -150,14 +152,14 @@ describe('wechat/commands: /list', () => {
   test('special internal sessions excluded (workflow editor / app builder / library)', async () => {
     sessionsTable.push(
       { id: 'sess_main', title: '主对话', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_MAIN_AGENT__' },
+        kind: 'main-agent' },
       { id: 'sess_wfedit', title: '工作流 AI 助手', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_WORKFLOW_CHAT__\n你是工作流编辑助手' },
+        kind: 'workflow' },
       { id: 'sess_app', title: '应用开发助手', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_APP_BUILDER_CHAT__\n你是应用开发助手' },
+        kind: 'app-builder' },
       { id: 'sess_lib', title: '知识库助手', status: 'active', updated_at: freshDate(0),
-        system_prompt: '__LUMOS_LIBRARY_CHAT__\n你是知识库助手' },
-      { id: 'sess_normal', title: '研究项目', status: 'active', updated_at: freshDate(0) },
+        kind: 'library' },
+      { id: 'sess_normal', title: '研究项目', status: 'active', updated_at: freshDate(0), kind: 'chat' },
     );
     const r = await handleWechatCommand(makeCtx('list'));
     expect(r.reply!.text).toMatch(/主对话/);
@@ -241,7 +243,7 @@ describe('wechat/commands: /current', () => {
       title: '主 Agent',
       status: 'active',
       updated_at: freshDate(0),
-      system_prompt: '__LUMOS_MAIN_AGENT__',
+      kind: 'main-agent',
     });
     const r = await handleWechatCommand(makeCtx('current'));
     expect(r.reply!.text).toMatch(/主 Agent/);

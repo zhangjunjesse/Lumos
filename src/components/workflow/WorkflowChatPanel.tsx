@@ -7,15 +7,13 @@ import { ChatView } from '@/components/chat/ChatView';
 import { useMessagesStore } from '@/stores/messages-store';
 import type { ChatSession, Message, MessagesResponse } from '@/types';
 
-const WORKFLOW_CHAT_MARKER = '__LUMOS_WORKFLOW_CHAT__';
 const CAPABILITIES_SENTINEL = '## 能力说明';
 
 function needsCapabilitiesUpgrade(
-  session?: Pick<ChatSession, 'system_prompt'> | null,
+  session?: Pick<ChatSession, 'kind' | 'system_prompt'> | null,
 ): boolean {
-  const prompt = session?.system_prompt;
-  if (!prompt?.includes(WORKFLOW_CHAT_MARKER)) return false;
-  return !prompt.includes(CAPABILITIES_SENTINEL);
+  if (session?.kind !== 'workflow') return false;
+  return !session.system_prompt?.includes(CAPABILITIES_SENTINEL);
 }
 
 /** Extract valid workflow DSL JSON from a message text. */

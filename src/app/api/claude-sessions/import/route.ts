@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { parseClaudeSession } from '@/lib/claude-session-parser';
 import { createSession, addMessage, updateSdkSessionId, getAllSessions } from '@/lib/db';
-import { withSessionEntryMarker } from '@/lib/chat/session-entry';
 
 export async function POST(request: NextRequest) {
   try {
@@ -55,9 +54,12 @@ export async function POST(request: NextRequest) {
     const session = createSession(
       title,
       undefined, // model — will use default
-      withSessionEntryMarker(undefined, 'main-agent'),
+      undefined,
       info.cwd || info.projectPath,
       'code',
+      undefined,
+      undefined,
+      'main-agent',
     );
 
     // Store the original Claude Code SDK session ID so the conversation can be resumed

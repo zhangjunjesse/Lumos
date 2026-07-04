@@ -2,9 +2,9 @@ import type { AgentPresetDirectoryItem, ChatSession } from '@/types';
 import { getSetting } from '@/lib/db/sessions';
 import { listAgentPresets } from '@/lib/db/agent-presets';
 import { WORKFLOW_REFINE_PROMPT, WORKFLOW_STABILITY_RULES } from '@/lib/workflow/default-prompts';
+import { getSessionKind, SESSION_TITLES } from './session-kind';
 
-export const WORKFLOW_CHAT_TITLE = '工作流 AI 助手';
-export const WORKFLOW_CHAT_MARKER = '__LUMOS_WORKFLOW_CHAT__';
+export const WORKFLOW_CHAT_TITLE = SESSION_TITLES.workflow;
 
 const WORKFLOW_CAPABILITIES_HINT = `
 
@@ -319,7 +319,6 @@ export function buildWorkflowChatSystemPrompt(dslJson?: string): string {
     : '';
 
   return [
-    WORKFLOW_CHAT_MARKER,
     basePrompt,
     WORKFLOW_STABILITY_RULES,
     WORKFLOW_CAPABILITIES_HINT,
@@ -339,9 +338,9 @@ export function getWorkflowModel(): string {
 }
 
 export function isWorkflowChatSession(
-  session?: Pick<ChatSession, 'system_prompt'> | null,
+  session?: Pick<ChatSession, 'kind'> | null,
 ): boolean {
-  return Boolean(session?.system_prompt?.includes(WORKFLOW_CHAT_MARKER));
+  return getSessionKind(session) === 'workflow';
 }
 
 const WORKFLOW_CHAT_BINDING_KEY_PREFIX = 'workflow_chat_session:';

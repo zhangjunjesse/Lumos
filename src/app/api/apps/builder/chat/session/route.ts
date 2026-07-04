@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
       'code',
       undefined,
       'error' in providerModel ? undefined : providerModel.providerId,
+      'app-builder',
     );
 
     setSetting(buildAppBuilderChatSessionBindingKey(input.builderSessionId), session.id);

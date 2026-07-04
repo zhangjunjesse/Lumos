@@ -20,6 +20,9 @@ export async function POST(request: NextRequest) {
       buildCreationChatSystemPrompt(),
       dataDir,
       'code',
+      undefined,
+      undefined,
+      'creation',
     );
 
     return NextResponse.json({ session }, { status: 201 });

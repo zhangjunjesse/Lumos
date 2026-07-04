@@ -1,4 +1,5 @@
 import type { ChatSession } from '@/types';
+import { getSessionKind, SESSION_TITLES } from '@/lib/chat/session-kind';
 import {
   APP_BUILDER_MODEL_KEY,
   APP_BUILDER_PROVIDER_KEY,
@@ -13,8 +14,7 @@ import { providerSupportsCapability } from '@/lib/provider-config';
 import { resolveProviderRequestApiKey } from '@/lib/provider-model-discovery';
 import type { ApiProvider, ProviderModelGroup } from '@/types';
 
-export const APP_BUILDER_CHAT_TITLE = '应用开发助手';
-export const APP_BUILDER_CHAT_MARKER = '__LUMOS_APP_BUILDER_CHAT__';
+export const APP_BUILDER_CHAT_TITLE = SESSION_TITLES['app-builder'];
 
 const APP_BUILDER_CHAT_BINDING_KEY_PREFIX = 'app_builder_chat_session:';
 
@@ -22,8 +22,8 @@ export function buildAppBuilderChatSessionBindingKey(builderSessionId: string): 
   return `${APP_BUILDER_CHAT_BINDING_KEY_PREFIX}${builderSessionId}`;
 }
 
-export function isAppBuilderChatSession(session?: Pick<ChatSession, 'system_prompt'> | null): boolean {
-  return Boolean(session?.system_prompt?.includes(APP_BUILDER_CHAT_MARKER));
+export function isAppBuilderChatSession(session?: Pick<ChatSession, 'kind'> | null): boolean {
+  return getSessionKind(session) === 'app-builder';
 }
 
 export function buildAppBuilderChatSystemPrompt(builderSession?: BuilderSession | null): string {
@@ -34,7 +34,6 @@ export function buildAppBuilderChatSystemPrompt(builderSession?: BuilderSession 
   const nonGoals = extractNonGoals(builderSession?.needsSummary);
 
   return [
-    APP_BUILDER_CHAT_MARKER,
     basePrompt,
     '',
     '当前界面布局：主区域提供预览、代码、需求、项目状态和详情切换；底部是与你对话的应用开发助手。不要把对话区描述成右侧。',

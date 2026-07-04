@@ -63,6 +63,7 @@ jest.mock('@/lib/im/providers/wechat/commands', () => ({
 interface MockMainAgentSession {
   id: string;
   title: string;
+  kind?: string;
   system_prompt?: string;
   created_at?: string;
   status?: 'active' | 'archived';
@@ -82,12 +83,18 @@ jest.mock('@/lib/db', () => ({
     _title?: string,
     _model?: string,
     systemPrompt?: string,
+    _workingDirectory?: string,
+    _mode?: string,
+    _folder?: string,
+    _providerId?: string,
+    kind?: string,
   ) => {
     createSessionCounter += 1;
     const id = `auto_${createSessionCounter}`;
     const session: MockMainAgentSession = {
       id,
       title: 'New Chat',
+      kind: kind || 'chat',
       system_prompt: systemPrompt || '',
       created_at: nowSqlUtc(),
       status: 'active',
@@ -102,12 +109,7 @@ jest.mock('@/lib/db', () => ({
 }));
 
 jest.mock('@/lib/chat/session-entry', () => ({
-  isMainAgentSession: (s: { system_prompt?: string }) =>
-    String(s?.system_prompt || '').includes('__LUMOS_MAIN_AGENT__'),
-  withSessionEntryMarker: (prompt: string | undefined, entry: string) =>
-    entry === 'main-agent'
-      ? `__LUMOS_MAIN_AGENT__\n${prompt || ''}`.trim()
-      : prompt || '',
+  isMainAgentSession: (s: { kind?: string }) => s?.kind === 'main-agent',
 }));
 
 jest.mock('@/lib/im/providers/wechat/route-pointer', () => ({
@@ -436,7 +438,7 @@ describe('im-inbound-dispatcher', () => {
       expect(r.sessionId).toBe('auto_1');
       expect(routePointer).toBe('auto_1');
       expect(fakeSessions.has('auto_1')).toBe(true);
-      expect(fakeSessions.get('auto_1')?.system_prompt).toContain('__LUMOS_MAIN_AGENT__');
+      expect(fakeSessions.get('auto_1')?.kind).toBe('main-agent');
 
       const sentArgs = sendToProvider.mock.calls[0][1] as { text: string };
       expect(sentArgs.text).toBe('hi from AI');
@@ -447,7 +449,7 @@ describe('im-inbound-dispatcher', () => {
       fakeSessions.set('main_1', {
         id: 'main_1',
         title: 'Lumos 主 Agent',
-        system_prompt: '__LUMOS_MAIN_AGENT__',
+        kind: 'main-agent',
         created_at: nowSqlUtc(),
         status: 'active',
       });

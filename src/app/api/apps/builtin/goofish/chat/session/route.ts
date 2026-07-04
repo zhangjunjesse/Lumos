@@ -47,6 +47,9 @@ export async function POST(request: NextRequest) {
       systemPrompt,
       dataDir,
       'code',
+      undefined,
+      undefined,
+      'goofish-assistant',
     );
 
     return NextResponse.json({ session, reused: false, promptRefreshed: false }, { status: 201 });

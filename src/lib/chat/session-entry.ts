@@ -1,10 +1,9 @@
 import type { ChatSession } from '@/types';
-
-export const MAIN_AGENT_SESSION_MARKER = '__LUMOS_MAIN_AGENT__';
+import { getSessionKind } from './session-kind';
 
 export type SessionEntry = 'chat' | 'main-agent';
 
-type SessionPromptCarrier = Pick<ChatSession, 'system_prompt'> | null | undefined;
+type SessionKindCarrier = Pick<ChatSession, 'kind'> | null | undefined;
 
 export function isWorkflowDebugSession(
   session?: Pick<ChatSession, 'mode'> | null,
@@ -38,31 +37,10 @@ export function getPostDeleteRedirectPath(
   return fallbackSessionId ? `${basePath}/${fallbackSessionId}` : basePath;
 }
 
-export function isMainAgentSession(session?: SessionPromptCarrier): boolean {
-  return String(session?.system_prompt || '').includes(MAIN_AGENT_SESSION_MARKER);
+export function isMainAgentSession(session?: SessionKindCarrier): boolean {
+  return getSessionKind(session) === 'main-agent';
 }
 
-export function getSessionEntry(session?: SessionPromptCarrier): SessionEntry {
+export function getSessionEntry(session?: SessionKindCarrier): SessionEntry {
   return isMainAgentSession(session) ? 'main-agent' : 'chat';
-}
-
-export function stripMainAgentSessionMarker(systemPrompt?: string | null): string {
-  return String(systemPrompt || '')
-    .split('\n')
-    .filter((line) => line.trim() !== MAIN_AGENT_SESSION_MARKER)
-    .join('\n')
-    .replace(/^\n+/, '');
-}
-
-export function withSessionEntryMarker(
-  systemPrompt: string | undefined,
-  entry: SessionEntry,
-): string {
-  const promptWithoutMarker = stripMainAgentSessionMarker(systemPrompt);
-  if (entry !== 'main-agent') {
-    return promptWithoutMarker;
-  }
-  return promptWithoutMarker
-    ? `${MAIN_AGENT_SESSION_MARKER}\n${promptWithoutMarker}`
-    : MAIN_AGENT_SESSION_MARKER;
 }
