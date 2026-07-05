@@ -51,9 +51,17 @@ export function BrowserCompactToolbar({
       {/* Tab 列表 */}
       <div className="flex items-center gap-1 overflow-x-auto">
         {tabs.map((tab) => (
-          <button
+          <div
             key={tab.id}
+            role="button"
+            tabIndex={0}
             onClick={() => onSwitchTab(tab.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSwitchTab(tab.id);
+              }
+            }}
             className={cn(
               'group flex h-8 min-w-[120px] max-w-[200px] items-center gap-2 rounded-md px-3 text-sm transition-colors',
               tab.id === activeTabId
@@ -62,14 +70,19 @@ export function BrowserCompactToolbar({
             )}
           >
             <span className="flex-1 truncate">{tab.title || tab.url || 'New Tab'}</span>
-            <X
-              className="h-3 w-3 opacity-0 group-hover:opacity-100"
+            <button
+              type="button"
+              aria-label={t('browser.closeTab')}
+              title={t('browser.closeTab')}
+              className="shrink-0 rounded-full p-0.5 opacity-80 hover:bg-accent hover:text-foreground"
               onClick={(e) => {
                 e.stopPropagation();
                 onCloseTab(tab.id);
               }}
-            />
-          </button>
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
         ))}
         <Button variant="ghost" size="icon-sm" onClick={onCreateTab} className="h-8 w-8">
           <Plus className="h-4 w-4" />

@@ -387,8 +387,16 @@ export function Browser({ className }: BrowserProps) {
         return;
       }
 
-      // 只在标签关闭时重新加载列表，其他事件不改变标签顺序
-      if (eventName === 'tab-closed') {
+      // 标签元数据由主进程维护，URL/title/favicon 等事件到达后需要重新同步。
+      if (
+        eventName === 'tab-closed'
+        || eventName === 'tab-loaded'
+        || eventName === 'tab-loading'
+        || eventName === 'tab-url-updated'
+        || eventName === 'tab-title-updated'
+        || eventName === 'tab-favicon-updated'
+        || eventName === 'tab-error'
+      ) {
         void loadTabs();
       }
 
@@ -771,6 +779,406 @@ export function Browser({ className }: BrowserProps) {
 
   const activeWorkflowParameters = selectedWorkflow?.parameters || [];
   const completedDownloads = downloads.filter((entry) => entry.done);
+  const contextPanelContent = (
+    <div className="space-y-6">
+      <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold">{t('browser.captureControls')}</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t('browser.captureControlsDesc')}
+            </p>
+          </div>
+          <Switch
+            checked={captureSettings.enabled}
+            onCheckedChange={(checked) => void handleCaptureSettingUpdate({ enabled: checked })}
+          />
+        </div>
+
+        <Separator className="my-4" />
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">{t('browser.pauseCapture')}</div>
+              <div className="text-xs text-muted-foreground">{t('browser.pauseCaptureDesc')}</div>
+            </div>
+            <Switch
+              checked={captureSettings.paused}
+              disabled={!captureSettings.enabled}
+              onCheckedChange={(checked) => void handleCaptureSettingUpdate({ paused: checked })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">{t('browser.retentionDays')}</span>
+              <Input
+                type="number"
+                min={1}
+                value={captureSettings.retentionDays}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (Number.isFinite(next)) {
+                    void handleCaptureSettingUpdate({ retentionDays: Math.max(1, Math.floor(next)) });
+                  }
+                }}
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">{t('browser.maxEvents')}</span>
+              <Input
+                type="number"
+                min={50}
+                step={50}
+                value={captureSettings.maxEvents}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (Number.isFinite(next)) {
+                    void handleCaptureSettingUpdate({ maxEvents: Math.max(50, Math.floor(next)) });
+                  }
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">{t('browser.capturedActivity')}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t('browser.capturedActivityDesc')}
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleClearContext}>
+            <Trash2 className="size-4" />
+            {t('browser.clear')}
+          </Button>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <Button
+            variant={contextScope === 'active' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setContextScope('active')}
+          >
+            {t('browser.currentPage')}
+          </Button>
+          <Button
+            variant={contextScope === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setContextScope('all')}
+          >
+            {t('browser.allTabs')}
+          </Button>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {contextEvents.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground">
+              {t('browser.noEvents')}
+            </div>
+          )}
+
+          {contextEvents.map((event) => (
+            <div key={event.id || `${event.type}-${event.createdAt}`} className="flex gap-3 rounded-2xl border border-border/50 bg-muted/25 p-3">
+              <div className={cn('mt-1 size-2.5 rounded-full', pickEventColor(event.type))} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="truncate text-sm font-medium">{event.summary}</div>
+                  <div className="shrink-0 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    {event.type}
+                  </div>
+                </div>
+                {event.url && (
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{event.url}</div>
+                )}
+                <div className="mt-2 text-[11px] text-muted-foreground">{formatTimestamp(event.createdAt, t('browser.justNow'))}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+  const workflowsPanelContent = (
+    <div className="space-y-6">
+      <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold">{t('browser.workflowRecorder')}</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {t('browser.workflowRecorderDesc')}
+            </p>
+          </div>
+          {recording.isRecording ? (
+            <Badge className="rounded-full bg-rose-500 text-white">
+              {t('browser.live')}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="rounded-full">{t('browser.idle')}</Badge>
+          )}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {!recording.isRecording ? (
+            <Button onClick={handleStartRecording}>
+              <CirclePlay className="size-4" />
+              {t('browser.startRecording')}
+            </Button>
+          ) : (
+            <>
+              <Button onClick={() => void handleStopRecording(true)}>
+                <CirclePause className="size-4" />
+                {t('browser.saveRecording')}
+              </Button>
+              <Button variant="outline" onClick={() => void handleStopRecording(false)}>
+                {t('browser.stopWithoutSaving')}
+              </Button>
+              <Button variant="ghost" onClick={handleCancelRecording}>
+                {t('browser.cancel')}
+              </Button>
+            </>
+          )}
+        </div>
+
+        {recording.isRecording && (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900/80">
+            {t('browser.recordingOn')} <strong>{recording.tabId}</strong> {t('browser.with')} {recording.stepCount} {recording.stepCount === 1 ? t('browser.capturedStep') : t('browser.capturedSteps')}.
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">{t('browser.savedWorkflows')}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t('browser.savedWorkflowsDesc')}
+            </div>
+          </div>
+          <Badge variant="outline" className="rounded-full">{workflows.length}</Badge>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {workflows.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground">
+              {t('browser.noWorkflows')}
+            </div>
+          )}
+
+          {workflows.map((workflow) => (
+            <button
+              key={workflow.id}
+              type="button"
+              className={cn(
+                'w-full rounded-2xl border px-4 py-3 text-left transition-colors',
+                workflow.id === selectedWorkflowId
+                  ? 'border-sky-300 bg-sky-50/70'
+                  : 'border-border/60 bg-background hover:border-sky-200 hover:bg-sky-50/40',
+              )}
+              onClick={() => setSelectedWorkflowId(workflow.id)}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{workflow.name}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {workflow.steps.length} {workflow.steps.length === 1 ? t('browser.step') : t('browser.stepsPlural')} · {t('browser.updated')} {formatTimestamp(workflow.updatedAt, t('browser.justNow'))}
+                  </div>
+                </div>
+                <Wand2 className="size-4 text-muted-foreground" />
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {selectedWorkflow && (
+        <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold">{selectedWorkflow.name}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {selectedWorkflow.description || t('browser.noDescription')}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openPromptInChat(buildWorkflowPrompt(selectedWorkflow, { refineWorkflow: t('browser.refineWorkflow'), requirements: t('browser.requirements'), currentWorkflowJson: t('browser.currentWorkflowJson') }))}
+              >
+                <Sparkles className="size-4" />
+                {t('browser.askAi')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleAddScreenshotStep(selectedWorkflow)}
+              >
+                <FileDown className="size-4" />
+                {t('browser.addScreenshot')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleDeleteWorkflow(selectedWorkflow.id)}
+              >
+                <Trash2 className="size-4" />
+                {t('browser.delete')}
+              </Button>
+            </div>
+          </div>
+
+          {activeWorkflowParameters.length > 0 && (
+            <div className="mt-4 space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                {t('browser.replayParameters')}
+              </div>
+              {activeWorkflowParameters.map((parameter: BrowserWorkflowParameter) => (
+                <label key={parameter.id} className="block space-y-1.5">
+                  <span className="text-sm font-medium">
+                    {parameter.label}
+                    {parameter.required && ' *'}
+                  </span>
+                  <Input
+                    type={parameter.secret ? 'password' : 'text'}
+                    value={parameterValues[parameter.name] ?? parameter.defaultValue ?? ''}
+                    placeholder={parameter.description || parameter.name}
+                    onChange={(event) =>
+                      setParameterValues((current) => ({
+                        ...current,
+                        [parameter.name]: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button
+              onClick={() => void handleReplayWorkflow(selectedWorkflow)}
+              disabled={replayingWorkflowId === selectedWorkflow.id}
+            >
+              {replayingWorkflowId === selectedWorkflow.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              {t('browser.replayWorkflow')}
+            </Button>
+          </div>
+
+          <div className="mt-5 space-y-2">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t('browser.steps')}
+            </div>
+            <div className="space-y-2">
+              {selectedWorkflow.steps.map((step) => (
+                <div key={step.id} className="rounded-2xl border border-border/50 bg-muted/20 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium">{step.label}</div>
+                    <Badge variant="outline" className="rounded-full text-[11px] uppercase">
+                      {step.type}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                    {step.url || step.selector || step.waitForText || step.screenshotName || step.text || step.key || t('browser.noExtraData')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {replayResult && replayResult.workflowId === selectedWorkflow.id && (
+            <div className="mt-5 rounded-[22px] border border-border/60 bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold">{t('browser.lastReplay')}</div>
+                <Badge className={cn(
+                  'rounded-full',
+                  replayResult.status === 'success' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white',
+                )}>
+                  {replayResult.status}
+                </Badge>
+              </div>
+              <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                <div>{t('browser.finalUrl')}: {replayResult.finalUrl || t('browser.unavailable')}</div>
+                <div>{t('browser.downloads')}: {replayResult.downloadedFiles.length}</div>
+                <div>{t('browser.screenshots')}: {replayResult.screenshots.length}</div>
+                <div>{t('browser.started')}: {formatTimestamp(replayResult.startedAt, t('browser.justNow'))}</div>
+                {replayResult.error && (
+                  <div className="text-rose-600">{t('browser.error')}: {replayResult.error}</div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+  const downloadsPanelContent = (
+    <div className="space-y-4">
+      <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">{t('browser.recentDownloads')}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t('browser.recentDownloadsDesc')}
+            </div>
+          </div>
+          <Badge variant="outline" className="rounded-full">{downloads.length}</Badge>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {downloads.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground">
+              {t('browser.noDownloads')}
+            </div>
+          )}
+
+          {downloads.map((download) => (
+            <div key={download.id} className="rounded-2xl border border-border/60 bg-background px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{download.fileName}</div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{download.path}</div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {download.totalBytes ? `${formatBytes(download.receivedBytes)} / ${formatBytes(download.totalBytes)}` : download.state}
+                  </div>
+                </div>
+                <Badge variant="outline" className="rounded-full text-[11px] uppercase">
+                  {download.state}
+                </Badge>
+              </div>
+              {download.done && (
+                <div className="mt-3 flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => void handleOpenDownload(download)}>
+                    <Download className="size-4" />
+                    {t('browser.open')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {completedDownloads.length > 0 && replayResult && (
+        <section className="rounded-[22px] border border-border/60 bg-background/80 p-4">
+          <div className="text-sm font-semibold">{t('browser.replayOutput')}</div>
+          <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <div>{t('browser.downloadsExported')}: {replayResult.downloadedFiles.length}</div>
+            <div>{t('browser.screenshotsExported')}: {replayResult.screenshots.length}</div>
+            <div>{t('browser.extractedDataKeys')}: {Object.keys(replayResult.extractedData).length}</div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
 
   if (!isElectron) {
     return (
@@ -904,9 +1312,9 @@ export function Browser({ className }: BrowserProps) {
       <BrowserSidePanel
         open={openPanel}
         onOpenChange={setOpenPanel}
-        contextContent={<div>Context content placeholder</div>}
-        workflowsContent={<div>Workflows content placeholder</div>}
-        downloadsContent={<div>Downloads content placeholder</div>}
+        contextContent={contextPanelContent}
+        workflowsContent={workflowsPanelContent}
+        downloadsContent={downloadsPanelContent}
       />
     </div>
   );
