@@ -17,6 +17,7 @@ interface Skill {
   description: string;
   scope: 'builtin' | 'user';
   is_enabled: boolean;
+  is_default_writing_style?: boolean;
 }
 
 interface SkillsManagerProps {
@@ -54,9 +55,30 @@ export function SkillsManager({ refreshKey = 0 }: SkillsManagerProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: skill.name, scope: skill.scope, is_enabled: enabled }),
       });
-      setSkills(prev => prev.map(s => s.id === skill.id ? { ...s, is_enabled: enabled } : s));
+      setSkills(prev => prev.map(s => s.id === skill.id ? {
+        ...s,
+        is_enabled: enabled,
+        is_default_writing_style: enabled ? s.is_default_writing_style : false,
+      } : s));
     } catch (error) {
       console.error('Failed to toggle skill:', error);
+    }
+  }, []);
+
+  const handleDefaultWritingStyle = useCallback(async (skill: Skill, enabled: boolean) => {
+    try {
+      const res = await fetch('/api/skills', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: skill.name, scope: skill.scope, default_writing_style: enabled }),
+      });
+      if (!res.ok) return;
+      setSkills(prev => prev.map(s => ({
+        ...s,
+        is_default_writing_style: enabled && s.id === skill.id,
+      })));
+    } catch (error) {
+      console.error('Failed to set default writing style:', error);
     }
   }, []);
 
@@ -142,6 +164,14 @@ export function SkillsManager({ refreshKey = 0 }: SkillsManagerProps) {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>全局默认</span>
+              <Switch
+                checked={skill.is_default_writing_style === true}
+                disabled={!skill.is_enabled}
+                onCheckedChange={(checked) => handleDefaultWritingStyle(skill, checked)}
+              />
+            </label>
             <Switch
               checked={skill.is_enabled}
               onCheckedChange={(checked) => handleToggle(skill, checked)}

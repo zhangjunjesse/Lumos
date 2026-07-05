@@ -11,6 +11,11 @@ import {
   toggleSkillEnabled,
 } from '@/lib/db';
 import { dataDir } from '@/lib/db/connection';
+import {
+  clearDefaultWritingSkillIfMatches,
+  isDefaultWritingSkill,
+  setDefaultWritingSkill,
+} from '@/lib/default-writing-style';
 
 // ==========================================
 // Types
@@ -22,6 +27,7 @@ interface SkillResponse {
   description: string;
   scope: 'builtin' | 'user';
   is_enabled: boolean;
+  is_default_writing_style?: boolean;
   content?: string;
 }
 
@@ -46,13 +52,6 @@ function getUserSkillsDir(): string {
   return path.join(dataDir, 'skills', 'user');
 }
 
-function readSkillContent(filePath: string): string {
-  if (!fs.existsSync(filePath)) {
-    return '';
-  }
-  return fs.readFileSync(filePath, 'utf-8');
-}
-
 // ==========================================
 // GET - List all skills
 // ==========================================
@@ -69,6 +68,7 @@ export async function GET(): Promise<NextResponse<{ skills: SkillResponse[] } | 
       description: record.description,
       scope: record.scope,
       is_enabled: record.is_enabled === 1,
+      is_default_writing_style: isDefaultWritingSkill(record),
     }));
 
     return NextResponse.json({ skills });
@@ -164,11 +164,11 @@ export async function PATCH(
 ): Promise<NextResponse<SuccessResponse | ErrorResponse>> {
   try {
     const body = await request.json();
-    const { name, scope, is_enabled } = body;
+    const { name, scope, is_enabled, default_writing_style } = body;
 
-    if (!name || typeof is_enabled !== 'boolean') {
+    if (!name || (typeof is_enabled !== 'boolean' && typeof default_writing_style !== 'boolean')) {
       return NextResponse.json(
-        { error: 'Missing required fields: name, is_enabled' },
+        { error: 'Missing required fields: name and is_enabled/default_writing_style' },
         { status: 400 }
       );
     }
@@ -183,7 +183,25 @@ export async function PATCH(
       );
     }
 
+    if (typeof default_writing_style === 'boolean') {
+      if (default_writing_style) {
+        if (skill.is_enabled !== 1) {
+          return NextResponse.json(
+            { error: `Skill "${name}" must be enabled before setting it as global default` },
+            { status: 409 }
+          );
+        }
+        setDefaultWritingSkill({ name: skill.name, scope: skill.scope });
+      } else {
+        clearDefaultWritingSkillIfMatches(skill);
+      }
+      return NextResponse.json({ success: true });
+    }
+
     toggleSkillEnabled(skill.id, is_enabled);
+    if (is_enabled === false) {
+      clearDefaultWritingSkillIfMatches(skill);
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
@@ -259,4 +277,3 @@ export async function PUT(
     );
   }
 }
-

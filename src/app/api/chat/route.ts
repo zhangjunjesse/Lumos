@@ -39,6 +39,7 @@ import { AUTO_CONTINUE_SYSTEM_HINT, parseAutoContinueDirective, stripAutoContinu
 import { initSessionAutoContinueRunner } from '@/lib/chat/session-auto-continue-runner';
 import { registerSessionAutoContinueAbort, unregisterSessionAutoContinueAbort } from '@/lib/chat/session-auto-continue-abort';
 import { collectAssistantSseMessage } from '@/lib/chat/sse-message-collector';
+import { buildDefaultWritingStylePrompt } from '@/lib/default-writing-style';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -858,6 +859,10 @@ export async function POST(request: NextRequest) {
     }
     if (systemPromptAppend) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + systemPromptAppend;
+    }
+    const defaultWritingStylePrompt = buildDefaultWritingStylePrompt();
+    if (defaultWritingStylePrompt) {
+      finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + defaultWritingStylePrompt;
     }
     if (isPrimaryMainAgentSession) {
       finalSystemPrompt = (finalSystemPrompt || '') + '\n\n' + MAIN_AGENT_PRIMARY_SESSION_HINT;

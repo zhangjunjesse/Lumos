@@ -3,6 +3,10 @@ import fs from 'fs';
 import crypto from 'crypto';
 import matter from 'gray-matter';
 import { getSkillByNameAndScope, deleteSkill, updateSkill } from '@/lib/db';
+import {
+  clearDefaultWritingSkillIfMatches,
+  isDefaultWritingSkill,
+} from '@/lib/default-writing-style';
 
 interface ErrorResponse {
   error: string;
@@ -18,6 +22,7 @@ interface SkillResponse {
   description: string;
   scope: 'builtin' | 'user';
   is_enabled: boolean;
+  is_default_writing_style?: boolean;
   content: string;
 }
 
@@ -63,6 +68,7 @@ export async function GET(
         description: skill.description,
         scope: skill.scope,
         is_enabled: skill.is_enabled === 1,
+        is_default_writing_style: isDefaultWritingSkill(skill),
         content,
       },
     });
@@ -157,6 +163,7 @@ export async function DELETE(
         { status: 500 }
       );
     }
+    clearDefaultWritingSkillIfMatches(skill);
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -166,4 +173,3 @@ export async function DELETE(
     );
   }
 }
-
