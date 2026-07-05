@@ -965,8 +965,10 @@ export class BrowserBridgeServer {
               });
             }
 
-            // Only forward to UI when not in background mode (e.g. DeepSearch)
-            if (!body?.background) {
+            // Only forward to UI when not in background mode (e.g. DeepSearch).
+            // ContentPanel 只能渲染内置浏览器的 tab；外部浏览器（AdsPower/CDP）
+            // 的页面在其自己的窗口里可见，转发 pageId 只会生成死面板标签。
+            if (!body?.background && normalizeBrowserContextId(browserContextId) === DEFAULT_BROWSER_CONTEXT_ID) {
               try {
                 forwardUrlToContentTabs(body.url, createdPageId);
               } catch (error) {
@@ -1010,7 +1012,7 @@ export class BrowserBridgeServer {
           },
         );
         const selectedTab = manager.getTabs().find((tab) => tab.id === pageId);
-        if (selectedTab?.url) {
+        if (selectedTab?.url && normalizeBrowserContextId(browserContextId) === DEFAULT_BROWSER_CONTEXT_ID) {
           try {
             forwardUrlToContentTabs(selectedTab.url, pageId);
           } catch (error) {

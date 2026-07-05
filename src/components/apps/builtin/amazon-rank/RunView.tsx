@@ -28,6 +28,8 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
   const [results, setResults] = React.useState<ResultDto[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [monitorMessage, setMonitorMessage] = React.useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+  const [openingSnapshotId, setOpeningSnapshotId] = React.useState<string | null>(null);
 
   const running = run?.status === 'running';
 
@@ -77,6 +79,19 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
       setMonitorMessage('已设为每日监控：清单已保存、自动化已开启、定时任务已同步。可在「自动化」页查看。');
     } catch (err) {
       setMonitorMessage(`设置失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // 快照在设置里选定的浏览器中打开（内置 → 右侧面板；AdsPower/CDP → 对应浏览器窗口）
+  const openSnapshot = async (resultId: string) => {
+    setOpeningSnapshotId(resultId);
+    setSnapshotError(null);
+    try {
+      await api.openSnapshot(run.id, resultId);
+    } catch (err) {
+      setSnapshotError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOpeningSnapshotId(null);
     }
   };
 
@@ -144,6 +159,11 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
           <AlertDescription>{monitorMessage}</AlertDescription>
         </Alert>
       ) : null}
+      {snapshotError ? (
+        <Alert variant="destructive">
+          <AlertDescription>{snapshotError}</AlertDescription>
+        </Alert>
+      ) : null}
       {error ? (
         <p className="text-xs text-muted-foreground">刷新失败：{error}（自动重试中）</p>
       ) : null}
@@ -162,7 +182,13 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
           </thead>
           <tbody>
             {results.map((row) => (
-              <ResultRow key={row.id} row={row} asins={asins} runId={run.id} />
+              <ResultRow
+                key={row.id}
+                row={row}
+                asins={asins}
+                opening={openingSnapshotId === row.id}
+                onOpenSnapshot={() => void openSnapshot(row.id)}
+              />
             ))}
           </tbody>
         </table>
@@ -177,7 +203,17 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
   );
 }
 
-function ResultRow({ row, asins, runId }: { row: ResultDto; asins: string[]; runId: string }) {
+function ResultRow({
+  row,
+  asins,
+  opening,
+  onOpenSnapshot,
+}: {
+  row: ResultDto;
+  asins: string[];
+  opening: boolean;
+  onOpenSnapshot: () => void;
+}) {
   const rankByAsin = new Map(row.matches.map((m) => [m.asin.toUpperCase(), m.rank]));
   return (
     <tr className="border-b last:border-0 hover:bg-muted/20">
@@ -201,15 +237,15 @@ function ResultRow({ row, asins, runId }: { row: ResultDto; asins: string[]; run
       })}
       <td className="px-3 py-2">
         {row.snapshot_path ? (
-          <a
-            href={api.snapshotUrl(runId, row.id)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+          <button
+            type="button"
+            onClick={onOpenSnapshot}
+            disabled={opening}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
           >
             查看
-            <ExternalLink className="size-3" />
-          </a>
+            {opening ? <Loader2 className="size-3 animate-spin" /> : <ExternalLink className="size-3" />}
+          </button>
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
         )}
