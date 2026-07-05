@@ -14,6 +14,34 @@ describe('parseKeywordsText', () => {
     expect(parseKeywordsText('Keyword\nyoga mat').items).toEqual(['yoga mat']);
   });
 
+  it('首行按中文词干前缀 / 英文短语识别表头，并如实告警', () => {
+    const zh = parseKeywordsText('关键词词组\ngas torch');
+    expect(zh.items).toEqual(['gas torch']);
+    expect(zh.warnings.join('')).toContain('表头');
+    expect(zh.warnings.join('')).toContain('关键词词组');
+
+    expect(parseKeywordsText('Keyword Phrases\ngas torch').items).toEqual(['gas torch']);
+    expect(parseKeywordsText('搜索词列表\ngas torch').items).toEqual(['gas torch']);
+  });
+
+  it('英文表头只认固定短语，不误伤真实搜索词', () => {
+    const parsed = parseKeywordsText('keyword research planner\ngas torch');
+    expect(parsed.items).toEqual(['keyword research planner', 'gas torch']);
+  });
+
+  it('剔除任意位置的模板占位词并如实告警', () => {
+    const parsed = parseKeywordsText('gas torch\n关键词8\n关键词9\nKeyword 12\nbbq torch');
+    expect(parsed.items).toEqual(['gas torch', 'bbq torch']);
+    expect(parsed.warnings.join('')).toContain('3 个模板占位词');
+    expect(parsed.warnings.join('')).toContain('关键词8');
+  });
+
+  it('表头 + 占位词混合的模板粘贴只留真实关键词', () => {
+    const parsed = parseKeywordsText('关键词词组\ngas torch\nflame torch\n关键词8\n关键词9');
+    expect(parsed.items).toEqual(['gas torch', 'flame torch']);
+    expect(parsed.warnings).toHaveLength(2);
+  });
+
   it('丢弃超长行并告警', () => {
     const parsed = parseKeywordsText(`${'x'.repeat(201)}\nok keyword`);
     expect(parsed.items).toEqual(['ok keyword']);
