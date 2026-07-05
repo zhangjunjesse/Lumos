@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { WarRoom, type Workshop } from '@/components/mesh/war-room'
 import { WorkshopSettings } from '@/components/mesh/workshop-settings'
+import { MeshButler } from '@/components/mesh/mesh-butler'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
 
 type View = 'warroom' | 'settings'
@@ -25,6 +26,7 @@ export default function MeshPage() {
   const [active, setActive] = useState('workshop')
   const [selected, setSelected] = useState<Workshop | null>(null)
   const [view, setView] = useState<View>('warroom')
+  const [teamNonce, setTeamNonce] = useState(0) // 管家改完成员→bump，让团队设置页重拉
 
   const switchTab = (key: string) => {
     setActive(key)
@@ -55,11 +57,14 @@ export default function MeshPage() {
       <main className="px-6 py-6">
         {active === 'workshop' ? (
           selected ? (
-            view === 'settings' ? (
-              <WorkshopSettings workshop={selected} onBack={() => setSelected(null)} />
-            ) : (
-              <WarRoom workshop={selected} onBack={() => setSelected(null)} onSettings={() => setView('settings')} />
-            )
+            <>
+              {view === 'settings' ? (
+                <WorkshopSettings workshop={selected} onBack={() => setSelected(null)} refreshSignal={teamNonce} />
+              ) : (
+                <WarRoom workshop={selected} onBack={() => setSelected(null)} onSettings={() => setView('settings')} />
+              )}
+              <MeshButler accountId={selected.id} onChanged={() => setTeamNonce((n) => n + 1)} />
+            </>
           ) : (
             <WorkshopTab onOpen={(w) => open(w, 'warroom')} onSettings={(w) => open(w, 'settings')} />
           )

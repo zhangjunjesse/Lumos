@@ -10,6 +10,7 @@ interface ToolUseInfo {
 interface ToolResultInfo {
   tool_use_id: string;
   content: string;
+  is_error?: boolean;
 }
 
 export interface SSECallbacks {
@@ -78,6 +79,7 @@ function handleSSEEvent(
         callbacks.onToolResult({
           tool_use_id: resultData.tool_use_id,
           content: resultData.content,
+          is_error: resultData.is_error || false,
         });
       } catch {
         // skip malformed tool_result data

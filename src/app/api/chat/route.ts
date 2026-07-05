@@ -11,7 +11,7 @@ import {
 } from '@/lib/agent-capabilities';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs, scheduleSessionAutoContinue, stopSessionAutoContinue } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
-import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
+import type { SendMessageRequest, MessageContentBlock, FileAttachment, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
   isImageFile,
   parseMessageContent,
@@ -39,6 +39,7 @@ import { isExplicitLumosBugIssueRequest } from '@/lib/lumos-issue-reporter/inten
 import { AUTO_CONTINUE_SYSTEM_HINT, parseAutoContinueDirective, stripAutoContinueDirective } from '@/lib/chat/auto-continue-control';
 import { initSessionAutoContinueRunner } from '@/lib/chat/session-auto-continue-runner';
 import { registerSessionAutoContinueAbort, unregisterSessionAutoContinueAbort } from '@/lib/chat/session-auto-continue-abort';
+import { collectAssistantSseMessage } from '@/lib/chat/sse-message-collector';
 
 import { feishuSendLocalFiles, feishuSendMail, type FeishuMailDraft, syncMessageToFeishu, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { extractAssistantArtifactPaths } from '@/lib/bridge/file-artifact-extractor';
@@ -1026,109 +1027,12 @@ async function collectStreamResponse(
 ) {
   const sessionId = options.sessionId;
   const streamStartTime = Date.now();
-  const reader = stream.getReader();
-  const contentBlocks: MessageContentBlock[] = [];
-  let currentText = '';
-  let tokenUsage: TokenUsage | null = null;
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const lines = value.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const event: SSEEvent = JSON.parse(line.slice(6));
-            if (event.type === 'permission_request' || event.type === 'tool_output') {
-              // Skip permission_request and tool_output events - not saved as message content
-            } else if (event.type === 'text') {
-              currentText += event.data;
-            } else if (event.type === 'tool_use_summary') {
-              if (currentText.trim()) {
-                contentBlocks.push({ type: 'text', text: currentText });
-                currentText = '';
-              }
-              try {
-                const summaryData = JSON.parse(event.data);
-                const summary = typeof summaryData.summary === 'string' ? summaryData.summary.trim() : '';
-                if (summary) {
-                  contentBlocks.push({ type: 'reasoning', summary });
-                }
-              } catch {
-                const summary = event.data.trim();
-                if (summary) {
-                  contentBlocks.push({ type: 'reasoning', summary });
-                }
-              }
-            } else if (event.type === 'tool_use') {
-              // Flush any accumulated text before the tool use block
-              if (currentText.trim()) {
-                contentBlocks.push({ type: 'text', text: currentText });
-                currentText = '';
-              }
-              try {
-                const toolData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_use',
-                  id: toolData.id,
-                  name: toolData.name,
-                  input: toolData.input,
-                });
-              } catch {
-                // skip malformed tool_use data
-              }
-            } else if (event.type === 'tool_result') {
-              try {
-                const resultData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_result',
-                  tool_use_id: resultData.tool_use_id,
-                  content: resultData.content,
-                  is_error: resultData.is_error || false,
-                });
-              } catch {
-                // skip malformed tool_result data
-              }
-            } else if (event.type === 'status') {
-              // Capture SDK session_id and model from init event and persist them
-              try {
-                const statusData = JSON.parse(event.data);
-                if (statusData.session_id) {
-                  updateSdkSessionId(sessionId, statusData.session_id);
-                }
-                if (statusData.model) {
-                  updateSessionResolvedModel(sessionId, statusData.model);
-                }
-              } catch {
-                // skip malformed status data
-              }
-            } else if (event.type === 'result') {
-              try {
-                const resultData = JSON.parse(event.data);
-                if (resultData.usage) {
-                  tokenUsage = resultData.usage;
-                }
-                // Also capture session_id from result if we missed it from init
-                if (resultData.session_id) {
-                  updateSdkSessionId(sessionId, resultData.session_id);
-                }
-              } catch {
-                // skip malformed result data
-              }
-            }
-          } catch {
-            // skip malformed lines
-          }
-        }
-      }
-    }
-
-    // Flush any remaining text
-    if (currentText.trim()) {
-      contentBlocks.push({ type: 'text', text: currentText });
-    }
+    const { contentBlocks, tokenUsage } = await collectAssistantSseMessage(stream, {
+      onSdkSessionId: (sdkSessionId) => updateSdkSessionId(sessionId, sdkSessionId),
+      onResolvedModel: (model) => updateSessionResolvedModel(sessionId, model),
+    });
 
     if (contentBlocks.length > 0) {
       // If the message is text-only (no tool calls), store as plain text
@@ -1178,46 +1082,7 @@ async function collectStreamResponse(
       }
     }
   } catch {
-    // Stream reading error - best effort save
-    if (currentText.trim()) {
-      contentBlocks.push({ type: 'text', text: currentText });
-    }
-    if (contentBlocks.length > 0) {
-      const hasStructuredBlocks = contentBlocks.some((b) => b.type !== 'text');
-      const textOnlyContent = contentBlocks
-        .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
-        .map((b) => b.text)
-        .join('')
-        .trim();
-      const directive = parseAutoContinueDirective(textOnlyContent);
-      const content = hasStructuredBlocks
-        ? JSON.stringify(
-            contentBlocks.map((block) => (
-              block.type === 'text'
-                ? { ...block, text: stripAutoContinueDirective(block.text) }
-                : block
-            )),
-          )
-        : stripAutoContinueDirective(textOnlyContent);
-
-      if (content) {
-        const storedContent = hasStructuredBlocks ? content : stripFeishuDirectives(content);
-        if (storedContent) {
-          addMessage(sessionId, 'assistant', storedContent);
-        }
-        syncAssistantContentToFeishu(sessionId, content).catch(err =>
-          console.error('[Sync] Assistant message sync failed:', err),
-        );
-
-      }
-      if (directive) {
-        if (directive.continue) {
-          scheduleSessionAutoContinue(sessionId, directive.delaySeconds ?? 60, directive.summary || '等待下一轮自动续跑');
-        } else {
-          stopSessionAutoContinue(sessionId, directive.summary || 'AI requested stop');
-        }
-      }
-    }
+    // Best effort; collectAssistantSseMessage already preserves parsed partials.
   } finally {
     options.onComplete?.();
   }

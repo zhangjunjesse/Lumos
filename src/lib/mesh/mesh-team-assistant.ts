@@ -7,6 +7,7 @@
 import { runMeshAgentStructured } from './mesh-worker'
 import { listAgents, getAgent, upsertAgent, agentExists, type StoredAgent } from './mesh-agent-store'
 import { listMeshMcpServers } from './mesh-agent-config'
+import { getAssistantSettings } from './mesh-settings-store'
 import { DEFAULT_WORKSHOP_ID } from './mesh-constants'
 import {
   buildTeamAssistantSchema,
@@ -42,10 +43,14 @@ export async function runTeamAssistant(
     .join('\n')
   const mcp = listMeshMcpServers().map((m) => m.name).join('、') || '（无）'
   const prompt = `当前团队成员：\n${roster || '（空）'}\n\n可用 MCP 工具：${mcp}\n\n用户要求：${userMessage}\n\n据此产出对成员的增删改动作。`
-  // 复用队长配置的服务商（用户已配过的可用源；默认服务商常是坏的本地登录）。模型默认用 sonnet:
-  // NL→JSON 解析无需 opus,sonnet 快得多(实测 17s vs opus 80-120s 顶超时);队长若配了模型则尊重之。
+  // 服务商/模型优先用「团队管家设置」里用户显式定义的;没配才回退队长配置(已配过的可用源;
+  // 默认服务商常是坏的本地登录),再没有回退 sonnet:NL→JSON 解析无需 opus,sonnet 快得多
+  // (实测 17s vs opus 80-120s 顶超时)。
+  const saved = getAssistantSettings()
   const leader = getAgent(workshopId, 'team.leader')
-  const agent = { ...ASSISTANT_AGENT, providerId: leader?.providerId, model: leader?.model || 'claude-sonnet-4-6' }
+  const providerId = saved.providerId || leader?.providerId
+  const model = saved.model || leader?.model || 'claude-sonnet-4-6'
+  const agent = { ...ASSISTANT_AGENT, providerId, model }
   // maxTurns:2——管家只需一轮出 JSON,不必给工具探索空间,杜绝多轮把慢模型拖到超时。
   const { structured } = await runMeshAgentStructured(agent, prompt, buildTeamAssistantSchema(), { sessionId: options.sessionId, maxTurns: 2 })
   return parseTeamAssistantResult(structured)

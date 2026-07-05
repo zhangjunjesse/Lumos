@@ -52,7 +52,7 @@ const normCfg = (c: Partial<Cfg> | undefined): Cfg => ({
   watchlist: c?.watchlist ?? [],
 })
 
-export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onBack: () => void }) {
+export function WorkshopSettings({ workshop, onBack, refreshSignal }: { workshop: Workshop; onBack: () => void; refreshSignal?: number }) {
   const [tab, setTab] = useState('basic')
   const [name, setName] = useState(workshop.name)
   const [description, setDescription] = useState(workshop.description)
@@ -156,7 +156,7 @@ export function WorkshopSettings({ workshop, onBack }: { workshop: Workshop; onB
             </Section>
           )}
 
-          {tab === 'team' && <TeamSettings accountId={workshop.id} />}
+          {tab === 'team' && <TeamSettings accountId={workshop.id} refreshSignal={refreshSignal} />}
 
           {tab === 'risk' && (
             <Section title="风控规则">

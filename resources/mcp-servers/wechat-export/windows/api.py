@@ -144,16 +144,7 @@ def _load_accounts() -> list[dict]:
         return []
 
 
-def _account() -> dict:
-    accounts = _load_accounts()
-    if not accounts:
-        raise FileNotFoundError("未找到 Windows 微信密钥。请先在 Lumos 里点击“开始”提取密钥。")
-    accounts.sort(key=lambda item: _safe_int(item.get("extracted_at")), reverse=True)
-    return accounts[0]
-
-
-def _msg_dir() -> str:
-    account = _account()
+def _account_msg_dir(account: dict) -> str:
     msg_dir = str(account.get("msg_dir") or "").strip()
     if msg_dir and os.path.isdir(msg_dir):
         return msg_dir
@@ -164,35 +155,35 @@ def _msg_dir() -> str:
     return os.path.join(account["wx_dir"], "MSG")
 
 
-def _encrypted_micro_db() -> str:
-    micro = os.path.join(_msg_dir(), "MicroMsg.db")
+def _account_is_db_storage_layout(account: dict) -> bool:
+    return os.path.basename(_account_msg_dir(account)).lower() == "db_storage"
+
+
+def _account_micro_db(account: dict) -> str:
+    msg_dir = _account_msg_dir(account)
+    micro = os.path.join(msg_dir, "MicroMsg.db")
     if os.path.exists(micro):
         return micro
-    contact = os.path.join(_msg_dir(), "contact", "contact.db")
+    contact = os.path.join(msg_dir, "contact", "contact.db")
     return contact if os.path.exists(contact) else micro
 
 
-def _is_db_storage_layout() -> bool:
-    return os.path.basename(_msg_dir()).lower() == "db_storage"
+def _account_contact_db(account: dict) -> str:
+    if _account_is_db_storage_layout(account):
+        return os.path.join(_account_msg_dir(account), "contact", "contact.db")
+    return _account_micro_db(account)
 
 
-def _encrypted_contact_db() -> str:
-    if _is_db_storage_layout():
-        return os.path.join(_msg_dir(), "contact", "contact.db")
-    return _encrypted_micro_db()
+def _account_session_db(account: dict) -> str:
+    if _account_is_db_storage_layout(account):
+        return os.path.join(_account_msg_dir(account), "session", "session.db")
+    return _account_micro_db(account)
 
 
-def _encrypted_session_db() -> str:
-    if _is_db_storage_layout():
-        return os.path.join(_msg_dir(), "session", "session.db")
-    return _encrypted_micro_db()
-
-
-def _encrypted_message_dbs() -> list[str]:
-    account = _account()
-    msg_dir = str(account.get("message_db_dir") or "").strip() or _msg_dir()
+def _account_message_dbs(account: dict) -> list[str]:
+    msg_dir = str(account.get("message_db_dir") or "").strip() or _account_msg_dir(account)
     if not os.path.isdir(msg_dir):
-        multi_dir = os.path.join(_msg_dir(), "Multi")
+        multi_dir = os.path.join(_account_msg_dir(account), "Multi")
         if os.path.isdir(multi_dir):
             msg_dir = multi_dir
     if not os.path.isdir(msg_dir):
@@ -202,6 +193,87 @@ def _encrypted_message_dbs() -> list[str]:
         if MESSAGE_DB_RE.fullmatch(name):
             dbs.append(os.path.join(msg_dir, name))
     return sorted(dbs)
+
+
+def _key_for_db_from_account(account: dict, db_path: str) -> str:
+    candidates: list[str] = []
+
+    def add_candidate(value: object) -> None:
+        key = str(value or "").strip().lower()
+        if re.fullmatch(r"[0-9a-fA-F]{64}", key) and key not in candidates:
+            candidates.append(key)
+
+    salt = _db_salt(db_path)
+    keys = account.get("keys")
+    if salt and isinstance(keys, dict):
+        add_candidate(keys.get(salt))
+    add_candidate(account.get("key"))
+    if isinstance(keys, dict):
+        for value in keys.values():
+            add_candidate(value)
+    for key in candidates:
+        try:
+            _cipher_mode(bytes.fromhex(key), db_path)
+            return key
+        except Exception:
+            continue
+    if candidates:
+        raise RuntimeError(f"数据库密钥不匹配: {os.path.basename(db_path)}")
+    raise RuntimeError(f"未找到可用于 {os.path.basename(db_path)} 的数据库密钥")
+
+
+def _can_open_with_account(account: dict, db_path: str) -> bool:
+    if not os.path.exists(db_path):
+        return False
+    try:
+        _key_for_db_from_account(account, db_path)
+        return True
+    except Exception:
+        return False
+
+
+def _account_score(account: dict) -> tuple[int, int]:
+    score = 0
+    if _can_open_with_account(account, _account_session_db(account)):
+        score += 100
+    if _can_open_with_account(account, _account_contact_db(account)):
+        score += 20
+    for db_path in _account_message_dbs(account):
+        if CHAT_MESSAGE_DB_RE.fullmatch(os.path.basename(db_path)) and _can_open_with_account(account, db_path):
+            score += 1
+    return score, _safe_int(account.get("extracted_at"))
+
+
+def _account() -> dict:
+    accounts = _load_accounts()
+    if not accounts:
+        raise FileNotFoundError("未找到 Windows 微信密钥。请先在 Lumos 里点击“开始”提取密钥。")
+    accounts.sort(key=_account_score, reverse=True)
+    return accounts[0]
+
+
+def _msg_dir() -> str:
+    return _account_msg_dir(_account())
+
+
+def _encrypted_micro_db() -> str:
+    return _account_micro_db(_account())
+
+
+def _is_db_storage_layout() -> bool:
+    return _account_is_db_storage_layout(_account())
+
+
+def _encrypted_contact_db() -> str:
+    return _account_contact_db(_account())
+
+
+def _encrypted_session_db() -> str:
+    return _account_session_db(_account())
+
+
+def _encrypted_message_dbs() -> list[str]:
+    return _account_message_dbs(_account())
 
 
 def _encrypted_chat_message_dbs() -> list[str]:
@@ -222,17 +294,7 @@ def _db_salt(db_path: str) -> str | None:
 
 
 def _key_for_db(db_path: str) -> str:
-    account = _account()
-    salt = _db_salt(db_path)
-    keys = account.get("keys")
-    if salt and isinstance(keys, dict):
-        key = str(keys.get(salt) or "").strip()
-        if re.fullmatch(r"[0-9a-fA-F]{64}", key):
-            return key
-    key = str(account.get("key") or "").strip()
-    if re.fullmatch(r"[0-9a-fA-F]{64}", key):
-        return key
-    raise RuntimeError(f"未找到可用于 {os.path.basename(db_path)} 的数据库密钥")
+    return _key_for_db_from_account(_account(), db_path)
 
 
 def _verify_key_v3(key_bytes: bytes, data: bytes) -> bool:
@@ -327,21 +389,24 @@ def _decrypt_db(key_hex: str, db_path: str, out_path: str) -> str:
     return out_path
 
 
-def _cache_path(db_path: str) -> str:
-    account = _account()
+def _cache_path(account: dict, db_path: str, key_hex: str) -> str:
     rel = os.path.relpath(db_path, account["wx_dir"])
     safe_rel = rel.replace(":", "").replace("\\", "/")
+    key_fp = hashlib.sha256(key_hex.lower().encode("ascii")).hexdigest()[:12]
     try:
         stat = os.stat(db_path)
         base, ext = os.path.splitext(safe_rel)
-        safe_rel = f"{base}.{int(stat.st_mtime)}-{stat.st_size}{ext or '.db'}"
+        safe_rel = f"{base}.{int(stat.st_mtime)}-{stat.st_size}.{key_fp}{ext or '.db'}"
     except OSError:
-        pass
+        base, ext = os.path.splitext(safe_rel)
+        safe_rel = f"{base}.{key_fp}{ext or '.db'}"
     return os.path.join(DECRYPT_DIR, account["wxid"], safe_rel)
 
 
 def _decrypted(db_path: str) -> str:
-    return _decrypt_db(_key_for_db(db_path), db_path, _cache_path(db_path))
+    account = _account()
+    key_hex = _key_for_db_from_account(account, db_path)
+    return _decrypt_db(key_hex, db_path, _cache_path(account, db_path, key_hex))
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -895,6 +960,32 @@ def _latest_session_timestamp() -> int:
     return 0
 
 
+def _session_db_status() -> dict:
+    db_path = _encrypted_session_db()
+    status = {
+        "session_db_name": os.path.basename(db_path),
+        "session_db_path": db_path,
+        "session_db_readable": False,
+        "session_db_error": "",
+        "latest_session_timestamp": 0,
+    }
+    try:
+        with _connect(db_path) as conn:
+            if _table_exists(conn, "SessionTable"):
+                row = conn.execute("SELECT MAX(sort_timestamp) AS ts FROM SessionTable").fetchone()
+                status["latest_session_timestamp"] = _norm_ts(row["ts"] if row else 0)
+                status["session_db_readable"] = True
+            elif _table_exists(conn, "Session"):
+                row = conn.execute("SELECT MAX(nTime) AS ts FROM Session").fetchone()
+                status["latest_session_timestamp"] = _norm_ts(row["ts"] if row else 0)
+                status["session_db_readable"] = True
+            else:
+                status["session_db_error"] = "数据库已打开，但未识别到会话表"
+    except Exception as err:  # noqa: BLE001
+        status["session_db_error"] = str(err)
+    return status
+
+
 def _message_db_diagnostics() -> dict:
     items = _message_db_status()
     chat_items = [item for item in items if item["role"] == "chat"]
@@ -902,6 +993,7 @@ def _message_db_diagnostics() -> dict:
     readable = [item for item in chat_items if item["readable"]]
     skipped = [item for item in chat_items if not item["readable"]]
     latest_readable_ts = max((item.get("latest_message_timestamp", 0) for item in readable), default=0)
+    session_status = _session_db_status()
     return {
         "message_db_total": len(chat_items),
         "message_db_readable": len(readable),
@@ -913,7 +1005,7 @@ def _message_db_diagnostics() -> dict:
         "media_db_names": [item["name"] for item in media_items],
         "latest_message_db_mtime": max((item["mtime"] for item in items), default=0),
         "latest_readable_message_timestamp": latest_readable_ts,
-        "latest_session_timestamp": _latest_session_timestamp(),
+        **session_status,
         "message_db_statuses": [
             {
                 "name": item["name"],

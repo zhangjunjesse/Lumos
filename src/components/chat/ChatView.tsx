@@ -1280,6 +1280,7 @@ export function ChatView({
             setStreamingToolOutput('');
             recordBrowserConflict(res.content, conflictRetry);
             setToolResults((prev) => {
+              if (prev.some((r) => r.tool_use_id === res.tool_use_id)) return prev;
               const next = [...prev, res];
               toolResultsRef.current = next;
               updateStreamingSession(sessionId, {
@@ -1383,7 +1384,12 @@ export function ChatView({
             contentBlocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
             const tr = finalToolResults.find((r) => r.tool_use_id === tu.id);
             if (tr) {
-              contentBlocks.push({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content });
+              contentBlocks.push({
+                type: 'tool_result',
+                tool_use_id: tr.tool_use_id,
+                content: tr.content,
+                is_error: tr.is_error || false,
+              });
             }
           }
           if (sanitizedAccumulated) {

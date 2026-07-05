@@ -30,6 +30,26 @@ export function setMeshSetting(key: string, value: string): void {
     .run(key, value)
 }
 
+export interface MeshAssistantSettings {
+  /** 团队管家 LLM 的服务商 id；空则回退队长的服务商 */
+  providerId: string
+  /** 团队管家 LLM 的模型；空则回退队长模型，再空回退 sonnet */
+  model: string
+}
+
+/** 团队管家自己用的服务商/模型（全局一份，所有工作室共用）。 */
+export function getAssistantSettings(): MeshAssistantSettings {
+  return {
+    providerId: getMeshSetting('assistant_provider_id'),
+    model: getMeshSetting('assistant_model'),
+  }
+}
+
+export function setAssistantSettings(patch: Partial<MeshAssistantSettings>): void {
+  if (patch.providerId !== undefined) setMeshSetting('assistant_provider_id', patch.providerId.trim())
+  if (patch.model !== undefined) setMeshSetting('assistant_model', patch.model.trim())
+}
+
 export function getQmtSettings(): MeshQmtSettings {
   return {
     qmtDir: getMeshSetting('qmt_dir'),
