@@ -59,8 +59,12 @@ export const api = {
 
   exportUrl: (id: string) => `${BASE}/runs/${encodeURIComponent(id)}/export`,
 
-  snapshotUrl: (runId: string, resultId: string) =>
-    `${BASE}/runs/${encodeURIComponent(runId)}/snapshot?resultId=${encodeURIComponent(resultId)}`,
+  openSnapshot: (runId: string, resultId: string) =>
+    fetch(`${BASE}/runs/${encodeURIComponent(runId)}/snapshot/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resultId }),
+    }).then((r) => json<{ ok: boolean; browserContextId: string }>(r)),
 
   settings: () =>
     fetch(`${BASE}/settings`, { cache: 'no-store' }).then((r) =>
