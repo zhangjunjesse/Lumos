@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "./sidebar";
@@ -30,14 +29,9 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-  const pathname = usePathname();
-  // ContentPanel 渲染条件:除了 chat/main-agent 主场景, /extensions 也需要渲染
-  // (X / 闲鱼 等 builtin browser 登录通过 IPC 让 ContentPanel 接住 x.com 等
-  // 登录页 — 没渲染就接不住,登录就"没反应")。
-  const isChatRoute = pathname.startsWith("/chat")
-    || pathname.startsWith("/main-agent")
-    || pathname.startsWith("/extensions");
-
+  // ContentPanel 必须全局挂载:Electron 把所有 target=_blank / builtin browser
+  // 登录页都转成 content-browser:open-url-in-tab 事件,唯一的接收方就是它。
+  // 曾经按路由白名单渲染,导致白名单外页面(如 /apps)点外链"没反应"。
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   // ContentPanel store
@@ -126,11 +120,6 @@ export function AppLayout({ children }: AppLayoutProps) {
     });
   }, []);
 
-  // Close doc preview on route change (no longer needed, but keep for compatibility)
-  useEffect(() => {
-    // Temporary tabs are automatically cleared by ContentPanel
-  }, [pathname]);
-
   // Persist panel open state
   useEffect(() => {
     localStorage.setItem("lumos_panel_open", String(panelOpen));
@@ -199,16 +188,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <ErrorBoundary>{children}</ErrorBoundary>
               </main>
 
-              {isChatRoute && (
-                <>
-                  {contentPanelOpen && (
-                    <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
-                  )}
-                  <ErrorBoundary>
-                    <ContentPanel width={contentPanelOpen ? contentPanelWidth : undefined} />
-                  </ErrorBoundary>
-                </>
+              {contentPanelOpen && (
+                <ResizeHandle side="right" onResize={handleContentPanelResize} onResizeEnd={handleContentPanelResizeEnd} />
               )}
+              <ErrorBoundary>
+                <ContentPanel width={contentPanelOpen ? contentPanelWidth : undefined} />
+              </ErrorBoundary>
             </div>
           </div>
         </div>
