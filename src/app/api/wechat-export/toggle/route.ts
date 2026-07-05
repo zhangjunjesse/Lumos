@@ -8,6 +8,7 @@ import {
   updateMcpServer,
 } from '@/lib/db';
 import { ensureWeChatExportPythonEnv } from '@/lib/wechat-export/python-env';
+import { verifyWeChatReadable } from '@/lib/wechat-export/readiness';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,14 @@ export async function POST(request: NextRequest) {
         error: 'venv_install_failed',
         message: err instanceof Error ? err.message : String(err),
       }, { status: 500 });
+    }
+    const readiness = await verifyWeChatReadable();
+    if (!readiness.ok) {
+      return NextResponse.json({
+        error: 'wechat_unreadable',
+        message: readiness.message,
+        diagnostics: readiness.diagnostics,
+      }, { status: 400 });
     }
     updateMcpServer(mcp.id, { is_enabled: true });
     return NextResponse.json({ success: true, enabled: true });

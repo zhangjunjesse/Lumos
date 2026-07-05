@@ -4,6 +4,7 @@ import { hasValidConsent } from '@/lib/wechat-export/disclaimer';
 import { runEnvProbes } from '@/lib/wechat-export/env-check';
 import { extractKeys, type KeyExtractionProgress } from '@/lib/wechat-export/key-extractor';
 import { getWeChatExportPlatform } from '@/lib/wechat-export/setup-state';
+import { verifyWeChatReadable } from '@/lib/wechat-export/readiness';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,10 +109,25 @@ export async function POST(request: Request): Promise<Response> {
         { signal: request.signal },
       );
       if (result.success) {
+        const readiness = await verifyWeChatReadable();
+        if (!readiness.ok) {
+          send('error', {
+            message: `密钥已保存，但微信消息仍不可读：${readiness.message}`,
+            diagnostics: readiness.diagnostics,
+            logPath: result.logPath,
+            logTail: result.log.slice(-2000),
+          });
+          if (!streamClosed) {
+            try { controller.close(); } catch { /* client already disconnected */ }
+            streamClosed = true;
+          }
+          return;
+        }
         send('done', {
           keysFound: result.keysFound,
           keysJsonPath: result.keysJsonPath,
           keyTxtPath: result.keyTxtPath,
+          diagnostics: readiness.diagnostics,
           logPath: result.logPath,
           logTail: result.log.slice(-2000),
         });

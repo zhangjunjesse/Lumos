@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { agentMeta } from './agent-meta'
 import { ModelMenu } from './model-menu'
 import { McpPicker } from './mcp-picker'
-import { TeamAssistant } from './team-assistant'
 import { SELECTABLE_ROLES } from '@/lib/mesh/mesh-constants'
 import type { ProviderModelGroup } from '@/types'
 
@@ -43,7 +42,7 @@ interface AgentForm {
 }
 const EMPTY_FORM: AgentForm = { id: '', role: 'custom', systemPrompt: '', model: '', providerId: '', interval: 60, workMode: 'active_loop', topics: '', mcpAllowlist: [] }
 
-export function TeamSettings({ accountId }: { accountId: string }) {
+export function TeamSettings({ accountId, refreshSignal }: { accountId: string; refreshSignal?: number }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState<{ systemPrompt: string; model: string; providerId: string; role: string; interval: number; workMode: 'active_loop' | 'event_driven'; mcpAllowlist: string[] }>({ systemPrompt: '', model: '', providerId: '', role: 'observe', interval: 10, workMode: 'active_loop', mcpAllowlist: [] })
@@ -68,7 +67,7 @@ export function TeamSettings({ accountId }: { accountId: string }) {
   )
   useEffect(() => {
     refresh()
-  }, [refresh])
+  }, [refresh, refreshSignal])
   useEffect(() => {
     fetch('/api/providers/models')
       .then((r) => r.json())
@@ -224,7 +223,6 @@ export function TeamSettings({ accountId }: { accountId: string }) {
 
   return (
     <div className="space-y-3">
-      <TeamAssistant accountId={accountId} onChanged={refresh} />
       <div className="flex items-center justify-between">
         <p className="text-sm text-neutral-500">团队成员（Agent Registry）—— 配置已接 db，下单能力永不注入</p>
         <button onClick={openCreate} className="shrink-0 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50">
