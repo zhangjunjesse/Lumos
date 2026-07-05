@@ -14,10 +14,28 @@ const HEADER_WORDS = new Set([
   'asin', 'asins', '商品', '商品asin',
 ]);
 
+/** 英文表头短语（仅第一行按表头判定时使用，避免误伤真实搜索词） */
+const HEADER_PHRASES = new Set([
+  'keyword phrase', 'keyword phrases', 'keyword list', 'keywords list',
+  'search term', 'search terms',
+]);
+
+/** 中文表头词干：第一行以此开头即视为表头（如「关键词词组」「关键字列表」） */
+const HEADER_STEM_RE = /^(关键词|关键字|搜索词)/;
+
+/** 模板占位行：任意位置出现都剔除（如「关键词8」「Keyword 12」） */
+const PLACEHOLDER_RE = /^(关键词|关键字|keyword)\s*\d+$/i;
+
+function isKeywordHeaderLine(line: string): boolean {
+  const key = line.toLowerCase().replace(/\s+/g, ' ').trim();
+  return HEADER_WORDS.has(key) || HEADER_PHRASES.has(key) || HEADER_STEM_RE.test(line);
+}
+
 export function parseKeywordsText(text: string): ParsedItems {
   const warnings: string[] = [];
   const seen = new Set<string>();
   const items: string[] = [];
+  const placeholders: string[] = [];
   let duplicates = 0;
   let overlong = 0;
 
@@ -26,6 +44,10 @@ export function parseKeywordsText(text: string): ParsedItems {
     if (!kw) continue;
     if (kw.length > 200) {
       overlong++;
+      continue;
+    }
+    if (PLACEHOLDER_RE.test(kw)) {
+      placeholders.push(kw);
       continue;
     }
     const key = kw.toLowerCase();
@@ -37,8 +59,15 @@ export function parseKeywordsText(text: string): ParsedItems {
     items.push(kw);
   }
 
-  if (items.length > 0 && HEADER_WORDS.has(items[0].toLowerCase())) {
+  if (items.length > 0 && isKeywordHeaderLine(items[0])) {
+    warnings.push(`按表头剔除了首行「${items[0]}」`);
     items.shift();
+  }
+  if (placeholders.length > 0) {
+    const preview = placeholders.slice(0, 5).join('、');
+    warnings.push(
+      `剔除了 ${placeholders.length} 个模板占位词（${preview}${placeholders.length > 5 ? ' 等' : ''}）`,
+    );
   }
   if (duplicates > 0) warnings.push(`去掉了 ${duplicates} 个重复关键词`);
   if (overlong > 0) warnings.push(`丢弃了 ${overlong} 行超长内容（超过 200 字符）`);
