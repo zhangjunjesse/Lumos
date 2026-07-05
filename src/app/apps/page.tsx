@@ -207,6 +207,7 @@ export default function AppsListPage(): React.ReactElement {
             {visibleBuiltinIds.has('ecommerce-assistant') ? (
               <BuiltinEcommerceCard status={ecommerceStatus} />
             ) : null}
+            {visibleBuiltinIds.has('amazon-rank') ? <BuiltinAmazonRankCard /> : null}
             {visibleBuiltinIds.has('douyin-collector') ? (
               <BuiltinDouyinCollectorCard status={douyinCollectorStatus} />
             ) : null}
@@ -220,7 +221,6 @@ export default function AppsListPage(): React.ReactElement {
             ) : null}
             {visibleBuiltinIds.has('mesh-trading-team') ? <BuiltinMeshTradingTeamCard /> : null}
             {visibleBuiltinIds.has('etsy-forge') ? <BuiltinEtsyForgeCard /> : null}
-            {visibleBuiltinIds.has('amazon-rank') ? <BuiltinAmazonRankCard /> : null}
           </div>
         ) : (
           <EmptyAppsHint />

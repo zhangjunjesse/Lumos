@@ -49,6 +49,14 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
     icon: 'sparkles',
   },
   {
+    id: 'amazon-rank',
+    name: '亚马逊排名助手',
+    description:
+      '粘贴关键词和 ASIN，查亚马逊自然搜索前 20 名排名：命中一眼看清、失败如实标原因、可导出 Excel、可开每日监控推微信',
+    defaultVisible: true,
+    icon: 'search',
+  },
+  {
     id: 'douyin-collector',
     name: '抖音采集器',
     description: '按博主或关键词采集抖音视频，抓字幕、做摘要、入知识库，长视频也能转写',
@@ -101,14 +109,6 @@ export const BUILTIN_APP_REGISTRY: readonly BuiltinAppDescriptor[] = Object.free
       '关键词爬 Etsy 商品（主图 + EHunt 插件全部指标）→ 勾选感兴趣的 → 爬详情页所有详情图入图库。全程走浏览器爬取，不调图片服务商、不烧 AI 配额',
     defaultVisible: true,
     icon: 'image',
-  },
-  {
-    id: 'amazon-rank',
-    name: '亚马逊排名助手',
-    description:
-      '粘贴关键词和 ASIN，查亚马逊自然搜索前 20 名排名：命中一眼看清、失败如实标原因、可导出 Excel、可开每日监控推微信',
-    defaultVisible: true,
-    icon: 'search',
   },
 ]);
 
