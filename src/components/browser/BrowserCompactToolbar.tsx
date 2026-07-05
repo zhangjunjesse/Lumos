@@ -113,7 +113,7 @@ export function BrowserCompactToolbar({
           suggestions={suggestions}
           onChange={onUrlChange}
           onSubmit={onNavigate}
-          placeholder={t('browser.enterUrlOrSearch')}
+          placeholder={t('browser.urlPlaceholder')}
         />
       </div>
 
