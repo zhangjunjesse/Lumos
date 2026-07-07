@@ -29,6 +29,19 @@ describe('llm-error-classifier', () => {
     })
   })
 
+  test('classifies quota errors surfaced only in CLI stderr', () => {
+    // The Claude Agent SDK spawns the `claude` CLI; the upstream gateway text
+    // lands in stderr while error.message is just "exited with code 1".
+    const error = Object.assign(new Error('Claude Code process exited with code 1'), {
+      stderr: '429 Too Many Requests: 该令牌额度已用尽 TokenStatusExhausted[sk-O3G***wxK]',
+    })
+
+    expect(classifyTerminalLlmError(error)).toMatchObject({
+      code: 'llm_quota_exhausted',
+      retryable: false,
+    })
+  })
+
   test('classifies auth failures as terminal auth errors', () => {
     const error = { status: 401, message: 'invalid api key' }
 

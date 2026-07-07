@@ -44,6 +44,7 @@ function pushDiagnosticText(parts: string[], value: unknown, depth = 0, seen = n
     'response',
     'data',
     'cause',
+    'stderr',
   ]) {
     if (key in record) {
       pushDiagnosticText(parts, record[key], depth + 1, seen)

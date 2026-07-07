@@ -42,6 +42,7 @@ import {
   assertLlmProviderCircuitClosed,
   recordLlmProviderFailure,
 } from '@/lib/llm-circuit-breaker';
+import { classifyTerminalLlmError } from '@/lib/llm-error-classifier';
 import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-events';
 import { buildPromptWithHistory } from './claude/history-normalizer';
 import { appendKnowledgeReference } from './chat/knowledge-reference';
@@ -1427,8 +1428,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         let errorMessage = rawMessage;
 
+        // Insufficient balance / exhausted quota: reuse the shared terminal
+        // error classifier (it digs through message/cause/stderr where the
+        // upstream gateway text lands) and surface its friendly Chinese
+        // message instead of a raw 402/403/429 dump. Checked FIRST so a quota
+        // error that happens to carry a 403/429 code isn't mislabelled as
+        // "auth failed" / "rate limited" by the string branches below.
+        const terminalClass = classifyTerminalLlmError(error);
+
         // Provide more specific error messages based on error type
-        if (modelFirstResponseTimedOut || rawMessage === MODEL_FIRST_RESPONSE_TIMEOUT_ERROR) {
+        if (terminalClass?.code === 'llm_quota_exhausted') {
+          errorMessage = `${terminalClass.userMessage}\n\nOriginal error: ${rawMessage}`;
+        } else if (modelFirstResponseTimedOut || rawMessage === MODEL_FIRST_RESPONSE_TIMEOUT_ERROR) {
           const timeoutSeconds = Math.round(MODEL_FIRST_RESPONSE_TIMEOUT_MS / 1000);
           const providerHint = activeProvider?.name ? `（${activeProvider.name}）` : '';
           const modelHint = model ? ` / ${model}` : '';
