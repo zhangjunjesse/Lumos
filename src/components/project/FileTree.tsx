@@ -132,7 +132,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileAddT
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4&_t=${Date.now()}`
+        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=8&_t=${Date.now()}`
       );
       if (res.ok) {
         const data = await res.json();

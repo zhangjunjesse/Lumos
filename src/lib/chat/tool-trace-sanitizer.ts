@@ -4,6 +4,12 @@ const TOOL_TRACE_PREFIXES = [
   '[Reasoning summary:',
 ] as const;
 
+export const LEAKED_TOOL_INVOCATION_MESSAGE =
+  '检测到模型把工具调用当成普通文本输出，本轮工具没有执行。请重试这一步；Lumos 已阻止把这类伪执行文本当成正常结果展示。';
+
+const CALL_COMMAND_RE = /^[ \t]*call[ \t]+(?:true|echo\b|cd\b|dir\b|type\b|copy\b|xcopy\b|move\b|del\b|rm\b|cat\b|ls\b|pwd\b|python\b|node\b|npm\b|npx\b|pnpm\b|yarn\b|git\b|bash\b|sh\b|powershell\b|cmd\b|mkdir\b|rmdir\b|curl\b|wget\b|where\b|whoami\b|set\b|export\b)[^\n\r]*(?:\r?\n|$)/gim;
+const FUNCTION_CALL_RE = /<function_calls?\b[\s\S]*?(?:<\/function_calls?>|$)|<invoke\b[\s\S]*?(?:<\/invoke>|$)|<function\b[\s\S]*?(?:<\/function>|\/>|$)/gi;
+
 function tracePrefixAt(text: string, index: number): string | null {
   for (const prefix of TOOL_TRACE_PREFIXES) {
     if (text.startsWith(prefix, index)) return prefix;
@@ -56,12 +62,29 @@ function cleanupAfterStrip(text: string): string {
     .trim();
 }
 
+export function hasLeakedToolInvocationText(text: string): boolean {
+  if (!text) return false;
+  CALL_COMMAND_RE.lastIndex = 0;
+  FUNCTION_CALL_RE.lastIndex = 0;
+  return CALL_COMMAND_RE.test(text) || FUNCTION_CALL_RE.test(text);
+}
+
+function stripLeakedToolInvocationText(text: string): string {
+  CALL_COMMAND_RE.lastIndex = 0;
+  FUNCTION_CALL_RE.lastIndex = 0;
+  return text
+    .replace(FUNCTION_CALL_RE, ' ')
+    .replace(CALL_COMMAND_RE, '\n');
+}
+
 /**
  * Strip fallback-history tool markers that are internal to Lumos and should
  * never be displayed to users or forwarded to IM channels.
  */
 export function stripLeakedToolTraceText(text: string): string {
-  if (!text || !TOOL_TRACE_PREFIXES.some((prefix) => text.includes(prefix))) {
+  const hasTraceMarker = TOOL_TRACE_PREFIXES.some((prefix) => text.includes(prefix));
+  const hasToolInvocation = hasLeakedToolInvocationText(text);
+  if (!text || (!hasTraceMarker && !hasToolInvocation)) {
     return text;
   }
 
@@ -85,5 +108,6 @@ export function stripLeakedToolTraceText(text: string): string {
     }
   }
 
-  return changed ? cleanupAfterStrip(out) : text;
+  const stripped = hasToolInvocation ? stripLeakedToolInvocationText(out) : out;
+  return changed || hasToolInvocation ? cleanupAfterStrip(stripped) : text;
 }

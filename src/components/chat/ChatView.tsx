@@ -31,7 +31,11 @@ import {
   getChatStreamController,
   registerChatStreamController,
 } from '@/lib/chat-stream-controller-registry';
-import { stripLeakedToolTraceText } from '@/lib/chat/tool-trace-sanitizer';
+import {
+  hasLeakedToolInvocationText,
+  LEAKED_TOOL_INVOCATION_MESSAGE,
+  stripLeakedToolTraceText,
+} from '@/lib/chat/tool-trace-sanitizer';
 
 interface ToolUseInfo {
   id: string;
@@ -1158,6 +1162,7 @@ export function ChatView({
         }
       }, 10_000);
       const markActive = () => { lastEventTime = Date.now(); };
+      let leakedToolInvocationSeen = false;
 
       let effectiveContent = content;
       if (pendingImageNoticesRef.current.length > 0) {
@@ -1221,9 +1226,11 @@ export function ChatView({
           onText: (acc) => {
             markActive();
             const isFirstVisibleContent = accumulated.length === 0;
+            leakedToolInvocationSeen = leakedToolInvocationSeen || hasLeakedToolInvocationText(acc);
+            const visibleAcc = stripLeakedToolTraceText(acc);
             accumulated = acc;
             accumulatedRef.current = acc;
-            setStreamingContent(acc);
+            setStreamingContent(visibleAcc);
             if (isFirstVisibleContent) {
               setStatusText(undefined);
             }
@@ -1232,7 +1239,7 @@ export function ChatView({
               status: 'streaming';
               statusText?: string;
             } = {
-              content: acc,
+              content: visibleAcc,
               status: 'streaming',
             };
             if (isFirstVisibleContent) {
@@ -1372,7 +1379,14 @@ export function ChatView({
         const finalToolResults = toolResultsRef.current;
         const hasStructuredBlocks = finalReasoningSummaries.length > 0 || finalToolUses.length > 0 || finalToolResults.length > 0;
 
+        const leakedToolInvocation = leakedToolInvocationSeen || hasLeakedToolInvocationText(accumulated);
         const sanitizedAccumulated = stripLeakedToolTraceText(accumulated).trim();
+        const leakedToolInvocationError = leakedToolInvocation
+          ? `**Error:** ${LEAKED_TOOL_INVOCATION_MESSAGE}`
+          : '';
+        if (leakedToolInvocation) {
+          shouldMarkStreamError = true;
+        }
         let messageContent = sanitizedAccumulated;
         if (hasStructuredBlocks) {
           const contentBlocks: Array<Record<string, unknown>> = [];
@@ -1394,7 +1408,14 @@ export function ChatView({
           if (sanitizedAccumulated) {
             contentBlocks.push({ type: 'text', text: sanitizedAccumulated });
           }
+          if (leakedToolInvocationError) {
+            contentBlocks.push({ type: 'text', text: leakedToolInvocationError });
+          }
           messageContent = JSON.stringify(contentBlocks);
+        } else if (leakedToolInvocationError) {
+          messageContent = sanitizedAccumulated
+            ? `${sanitizedAccumulated}\n\n${leakedToolInvocationError}`
+            : leakedToolInvocationError;
         }
 
         if (messageContent) {

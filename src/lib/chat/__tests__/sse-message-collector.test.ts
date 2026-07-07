@@ -1,4 +1,5 @@
 import { collectAssistantSseMessage } from '../sse-message-collector';
+import { LEAKED_TOOL_INVOCATION_MESSAGE } from '../tool-trace-sanitizer';
 import type { SSEEvent } from '@/types';
 
 function frame(event: SSEEvent): string {
@@ -61,6 +62,19 @@ describe('collectAssistantSseMessage', () => {
     expect(result.contentBlocks).toEqual([
       { type: 'tool_use', id: 'toolu_1', name: 'mcp__x__status', input: {} },
       { type: 'tool_result', tool_use_id: 'toolu_1', content: 'first', is_error: false },
+    ]);
+  });
+
+  it('blocks leaked tool invocation text from being stored as a normal answer', async () => {
+    const result = await collectAssistantSseMessage(streamFromChunks([
+      frame({ type: 'text', data: '我准备执行。\n' }),
+      frame({ type: 'text', data: 'call true\n' }),
+      frame({ type: 'text', data: '继续。' }),
+    ]));
+
+    expect(result.contentBlocks).toEqual([
+      { type: 'text', text: '我准备执行。继续。' },
+      { type: 'text', text: `**Error:** ${LEAKED_TOOL_INVOCATION_MESSAGE}` },
     ]);
   });
 });

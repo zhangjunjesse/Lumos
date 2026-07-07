@@ -1,4 +1,9 @@
 import type { MessageContentBlock, SSEEvent, TokenUsage } from '@/types';
+import {
+  hasLeakedToolInvocationText,
+  LEAKED_TOOL_INVOCATION_MESSAGE,
+  stripLeakedToolTraceText,
+} from './tool-trace-sanitizer';
 
 export interface CollectedAssistantSseMessage {
   contentBlocks: MessageContentBlock[];
@@ -21,10 +26,17 @@ export async function collectAssistantSseMessage(
   let currentText = '';
   let tokenUsage: TokenUsage | null = null;
   let buffer = '';
+  let leakedToolInvocationReported = false;
 
   const flushText = () => {
     if (!currentText.trim()) return;
-    contentBlocks.push({ type: 'text', text: currentText });
+    const leakedToolInvocation = hasLeakedToolInvocationText(currentText);
+    const text = stripLeakedToolTraceText(currentText);
+    if (text.trim()) contentBlocks.push({ type: 'text', text });
+    if (leakedToolInvocation && !leakedToolInvocationReported) {
+      contentBlocks.push({ type: 'text', text: `**Error:** ${LEAKED_TOOL_INVOCATION_MESSAGE}` });
+      leakedToolInvocationReported = true;
+    }
     currentText = '';
   };
 

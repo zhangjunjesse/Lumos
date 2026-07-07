@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const tree = await scanDirectory(resolvedDir, Math.min(depth, 5));
+    const tree = await scanDirectory(resolvedDir, Math.min(depth, 10));
     return NextResponse.json<FileTreeResponse>({ tree, root: resolvedDir });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(
