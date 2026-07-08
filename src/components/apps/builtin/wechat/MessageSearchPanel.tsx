@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, Loader2, Search } from 'lucide-react';
+import { AlertCircle, Download, Loader2, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +26,7 @@ import { PanelBlock } from './PanelBlock';
 import { formatDateTime } from './wechat-types';
 
 type SearchScope = 'all' | 'personal' | 'group';
+type SearchSender = 'all' | 'me' | 'them';
 type SearchDays = '30' | '90' | '365' | 'all';
 
 interface SearchResult {
@@ -41,7 +42,10 @@ interface SearchResult {
 interface SearchResponse {
   query: string;
   scope: SearchScope;
+  sender: SearchSender;
   days: number | 'all';
+  from?: string;
+  to?: string;
   results: SearchResult[];
   error?: string;
 }
@@ -58,6 +62,12 @@ const SCOPE_OPTIONS: Array<{ value: SearchScope; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'personal', label: '私聊' },
   { value: 'group', label: '群聊' },
+];
+
+const SENDER_OPTIONS: Array<{ value: SearchSender; label: string }> = [
+  { value: 'all', label: '全部发送者' },
+  { value: 'me', label: '我发送' },
+  { value: 'them', label: '对方发送' },
 ];
 
 const DAYS_OPTIONS: Array<{ value: SearchDays; label: string }> = [
@@ -79,10 +89,15 @@ export function MessageSearchPanel({
 }): React.ReactElement {
   const [query, setQuery] = React.useState('');
   const [scope, setScope] = React.useState<SearchScope>('all');
+  const [sender, setSender] = React.useState<SearchSender>('all');
   const [days, setDays] = React.useState<SearchDays>('90');
+  const [fromDate, setFromDate] = React.useState('');
+  const [toDate, setToDate] = React.useState('');
   const [results, setResults] = React.useState<SearchResult[]>([]);
   const [searchedQuery, setSearchedQuery] = React.useState('');
+  const [hasRunSearch, setHasRunSearch] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [contextOpen, setContextOpen] = React.useState(false);
   const [context, setContext] = React.useState<SearchContext | null>(null);
@@ -95,9 +110,12 @@ export function MessageSearchPanel({
   const runSearch = React.useCallback(async (
     text: string,
     nextScope: SearchScope,
+    nextSender: SearchSender,
     nextDays: SearchDays,
+    nextFromDate: string,
+    nextToDate: string,
   ) => {
-    if (!text || searchLoadingRef.current) return;
+    if ((!text && nextSender === 'all') || searchLoadingRef.current) return;
     searchLoadingRef.current = true;
     setLoading(true);
     setError(null);
@@ -105,9 +123,12 @@ export function MessageSearchPanel({
       const params = new URLSearchParams({
         q: text,
         scope: nextScope,
+        sender: nextSender,
         days: nextDays,
         limit: '50',
       });
+      if (nextFromDate) params.set('from', nextFromDate);
+      if (nextToDate) params.set('to', nextToDate);
       const res = await fetch(`/api/apps/builtin/wechat/search?${params.toString()}`, {
         cache: 'no-store',
       });
@@ -117,10 +138,12 @@ export function MessageSearchPanel({
       }
       setResults(json.results.filter(isSearchResult));
       setSearchedQuery(typeof json.query === 'string' && json.query.trim() ? json.query : text);
+      setHasRunSearch(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '搜索失败');
       setResults([]);
       setSearchedQuery(text);
+      setHasRunSearch(true);
     } finally {
       searchLoadingRef.current = false;
       setLoading(false);
@@ -130,7 +153,7 @@ export function MessageSearchPanel({
   const submit = async (event?: React.FormEvent) => {
     event?.preventDefault();
     const text = query.trim();
-    await runSearch(text, scope, days);
+    await runSearch(text, scope, sender, days, fromDate, toDate);
   };
 
   React.useEffect(() => {
@@ -140,14 +163,52 @@ export function MessageSearchPanel({
     handledSearchRequestIdRef.current = searchRequest?.id ?? null;
     setQuery(text);
     setScope('all');
+    setSender('all');
     setDays('all');
-    void runSearch(text, 'all', 'all');
+    setFromDate('');
+    setToDate('');
+    void runSearch(text, 'all', 'all', 'all', '', '');
     window.requestAnimationFrame(() => {
       panelRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
   }, [runSearch, searchRequest?.id, searchRequest?.query]);
 
-  const hasSearched = searchedQuery.length > 0;
+  const hasSearched = hasRunSearch;
+  const canSearch = !!query.trim() || sender !== 'all';
+
+  const exportMyMessages = React.useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        scope,
+        sender: 'me',
+      });
+      if (fromDate) params.set('from', fromDate);
+      if (toDate) params.set('to', toDate);
+      const res = await fetch(`/api/apps/builtin/wechat/search/export?${params.toString()}`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+        throw new Error(json.message ?? json.error ?? '导出失败');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = exportFilename(fromDate, toDate);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, fromDate, scope, toDate]);
 
   const openContext = React.useCallback(async (item: SearchResult) => {
     setContextOpen(true);
@@ -190,7 +251,7 @@ export function MessageSearchPanel({
         right={hasSearched ? `${results.length} 条结果` : undefined}
       >
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-          <form className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_120px_132px_auto]" onSubmit={(event) => void submit(event)}>
+          <form className="grid gap-2 xl:grid-cols-[minmax(220px,1fr)_120px_132px_132px_128px_128px_auto_auto]" onSubmit={(event) => void submit(event)}>
             <div className="relative min-w-0">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -212,6 +273,18 @@ export function MessageSearchPanel({
                 ))}
               </SelectContent>
             </Select>
+            <Select value={sender} onValueChange={(value) => setSender(value as SearchSender)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SENDER_OPTIONS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={days} onValueChange={(value) => setDays(value as SearchDays)}>
               <SelectTrigger>
                 <SelectValue />
@@ -224,9 +297,27 @@ export function MessageSearchPanel({
                 ))}
               </SelectContent>
             </Select>
-            <Button type="submit" disabled={!query.trim() || loading}>
+            <Input
+              type="date"
+              value={fromDate}
+              onChange={(event) => setFromDate(event.target.value)}
+              aria-label="起始日期"
+              className="text-xs"
+            />
+            <Input
+              type="date"
+              value={toDate}
+              onChange={(event) => setToDate(event.target.value)}
+              aria-label="结束日期"
+              className="text-xs"
+            />
+            <Button type="submit" disabled={!canSearch || loading}>
               {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
               搜索
+            </Button>
+            <Button type="button" variant="outline" disabled={exporting} onClick={() => void exportMyMessages()}>
+              {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+              导出全部我发送
             </Button>
           </form>
 
@@ -239,7 +330,7 @@ export function MessageSearchPanel({
 
           {hasSearched && !loading && results.length === 0 && !error ? (
             <div className="rounded-md border border-dashed px-3 py-5 text-center text-xs text-muted-foreground">
-              没有找到包含「{searchedQuery}」的消息。
+              没有找到匹配的消息。
             </div>
           ) : null}
 
@@ -329,6 +420,11 @@ function trimWithEllipsis(value: string, start: number, length: number): string 
   const body = value.slice(start, start + length);
   const suffix = start + length < value.length ? '...' : '';
   return `${prefix}${body}${suffix}`;
+}
+
+function exportFilename(fromDate: string, toDate: string): string {
+  const range = fromDate || toDate ? `${fromDate || 'start'}_${toDate || 'end'}` : 'all';
+  return `wechat-my-messages-${range}.csv`;
 }
 
 function SearchContextDialog({

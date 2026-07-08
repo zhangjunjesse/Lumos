@@ -1,66 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { searchMessages } from '@/lib/wechat-assistant/mirror-store';
+import { listMessagesForExport } from '@/lib/wechat-assistant/mirror-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const scopeSchema = z.enum(['all', 'personal', 'group']).catch('all');
-const senderSchema = z.enum(['all', 'me', 'them']).catch('all');
-const daysSchema = z.union([
-  z.literal('all'),
-  z.coerce.number().int().positive().max(3650),
-]).catch(90);
+const senderSchema = z.enum(['me', 'them']).catch('me');
 
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
   const query = (params.get('q') ?? '').trim().slice(0, 120);
-  const sender = senderSchema.parse(params.get('sender') ?? 'all');
-  if (!query && sender === 'all') {
-    return NextResponse.json({
-      query: '',
-      scope: 'all',
-      sender: 'all',
-      days: 90,
-      results: [],
-    });
-  }
-
   const scope = scopeSchema.parse(params.get('scope') ?? 'all');
-  const days = daysSchema.parse(params.get('days') ?? '90');
-  const limit = clampInt(params.get('limit'), 1, 100, 50);
+  const sender = senderSchema.parse(params.get('sender') ?? 'me');
   const { fromTs, toTs } = parseDateRange(params);
-  const sinceTs = days === 'all'
-    ? null
-    : Math.floor(Date.now() / 1000) - days * 86400;
 
-  const results = searchMessages({
+  const rows = listMessagesForExport({
     query,
     scope,
     sender,
-    sinceTs,
     fromTs,
     toTs,
-    limit,
   });
 
-  return NextResponse.json({
-    query,
-    scope,
-    sender,
-    days,
-    from: params.get('from') ?? '',
-    to: params.get('to') ?? '',
-    results,
+  const csv = toCsv(rows);
+  const filename = `wechat-${sender}-messages-${new Date().toISOString().slice(0, 10)}.csv`;
+  return new NextResponse(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
   });
 }
 
-function clampInt(value: string | null, min: number, max: number, fallback: number): number {
-  if (value === null) return fallback;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(parsed)));
+function toCsv(rows: ReturnType<typeof listMessagesForExport>): string {
+  const header = ['时间', '聊天对象', '聊天类型', '发送者', '消息类型', '内容'];
+  const lines = rows.map((row) => [
+    formatTime(row.ts),
+    row.display,
+    row.isGroup ? '群聊' : '私聊',
+    row.sender === 'me' ? '我' : row.senderDisplay || (row.isGroup ? '群成员' : '对方'),
+    String(row.msgType),
+    row.content,
+  ].map(csvCell).join(','));
+  return `\uFEFF${header.map(csvCell).join(',')}\n${lines.join('\n')}\n`;
+}
+
+function csvCell(value: string): string {
+  const text = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const safe = /^[=+\-@]/.test(text.trimStart()) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
 }
 
 function parseDateRange(params: URLSearchParams): { fromTs: number | null; toTs: number | null } {

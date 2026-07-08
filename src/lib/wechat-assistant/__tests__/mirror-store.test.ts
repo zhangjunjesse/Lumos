@@ -16,6 +16,7 @@ import {
   getTopicRangeSummary,
   getSyncState,
   insertMessages,
+  listMessagesForExport,
   markSyncFinished,
   markSyncStarted,
   querySnapshot,
@@ -199,6 +200,42 @@ describe('searchMessages', () => {
       '合同第 203 条',
     ]);
     expect(searchMessages({ query: '合同', limit: 500 })).toHaveLength(200);
+  });
+
+  it('lists all self-sent messages when query is blank', () => {
+    upsertSessions([
+      session('alice', { display: 'Alice', isGroup: false }),
+      session('team@chatroom', { display: '项目群', isGroup: true }),
+    ]);
+    insertMessages([
+      msg('alice', 10, 'me', '我发的第一条'),
+      msg('alice', 20, 'them', '对方发的'),
+      msg('team@chatroom', 30, 'me', '[图片]', 3),
+      msg('team@chatroom', 40, 'me', '我发的最后一条'),
+    ]);
+
+    expect(searchMessages({ sender: 'me', limit: 10 }).map((item) => item.content)).toEqual([
+      '我发的最后一条',
+      '[图片]',
+      '我发的第一条',
+    ]);
+  });
+
+  it('exports self-sent messages with date filters in chronological order', () => {
+    upsertSessions([session('alice', { display: 'Alice' })]);
+    insertMessages([
+      msg('alice', 10, 'me', '太早'),
+      msg('alice', 20, 'me', '范围内 1'),
+      msg('alice', 30, 'them', '不是我'),
+      msg('alice', 40, 'me', '范围内 2'),
+      msg('alice', 50, 'me', '太晚'),
+    ]);
+
+    expect(listMessagesForExport({
+      sender: 'me',
+      fromTs: 20,
+      toTs: 50,
+    }).map((item) => item.content)).toEqual(['范围内 1', '范围内 2']);
   });
 
   it('returns readable chat and speaker names instead of WeChat internal ids', () => {

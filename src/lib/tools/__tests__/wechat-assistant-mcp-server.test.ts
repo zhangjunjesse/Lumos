@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const mockCreateSdkMcpServer = jest.fn((cfg: { name: string; tools: Array<{ name: string }> }) => cfg);
 const mockTool = jest.fn((name: string, description: string, schema: unknown, handler: unknown) => ({
   name,
@@ -8,6 +12,7 @@ const mockTool = jest.fn((name: string, description: string, schema: unknown, ha
 const mockGetSyncState = jest.fn();
 const mockSearchMessages = jest.fn();
 const mockReadChatMessages = jest.fn();
+const mockWriteMessagesExportFile = jest.fn();
 const mockListTodos = jest.fn();
 const mockAddManualTodo = jest.fn();
 const mockSetTodoStatus = jest.fn();
@@ -30,6 +35,7 @@ jest.mock('@/lib/wechat-assistant/mirror-store', () => ({
   getSyncState: (...args: unknown[]) => mockGetSyncState(...args),
   readChatMessages: (...args: unknown[]) => mockReadChatMessages(...args),
   searchMessages: (...args: unknown[]) => mockSearchMessages(...args),
+  writeMessagesExportFile: (...args: unknown[]) => mockWriteMessagesExportFile(...args),
 }));
 
 jest.mock('@/lib/wechat-assistant/db', () => ({
@@ -65,9 +71,12 @@ import {
   WECHAT_ASSISTANT_MCP_SERVER_NAME,
 } from '../wechat-assistant-mcp-server';
 
+const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'lumos-wechat-mcp-test-'));
+
 describe('wechat assistant MCP server', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.LUMOS_DATA_DIR = TMP_ROOT;
     mockGetSyncState.mockReturnValue({
       cursorTs: 1,
       firstStartedAt: 1,
@@ -82,6 +91,11 @@ describe('wechat assistant MCP server', () => {
       cursorTs: 1,
       durationMs: 0,
     });
+    mockWriteMessagesExportFile.mockReturnValue(2);
+  });
+
+  afterAll(() => {
+    fs.rmSync(TMP_ROOT, { recursive: true, force: true });
   });
 
   it('registers the expected in-process tools for the unified ChatView panel', () => {
@@ -96,6 +110,7 @@ describe('wechat assistant MCP server', () => {
       'delete_wechat_automation',
       'delete_wechat_followup',
       'diagnose_wechat_automation',
+      'export_wechat_my_messages',
       'get_wechat_assistant_status',
       'list_wechat_automations',
       'list_wechat_followups',
@@ -121,6 +136,7 @@ describe('wechat assistant MCP server', () => {
 
     expect(server.name).toBe(WECHAT_ASSISTANT_MCP_SERVER_NAME);
     expect(server.tools.map((item) => item.name).sort()).toEqual([
+      'export_wechat_my_messages',
       'get_wechat_assistant_status',
       'list_wechat_group_tags',
       'preview_wechat_group_tag',
@@ -139,6 +155,9 @@ describe('wechat assistant MCP server', () => {
     );
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain(
       'mcp__lumos-wechat-assistant__read_wechat_chat',
+    );
+    expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain(
+      'mcp__lumos-wechat-assistant__export_wechat_my_messages',
     );
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('read-only');
     expect(WECHAT_ASSISTANT_READONLY_MCP_SYSTEM_HINT).toContain('instead of saying you do not have this capability');
@@ -386,6 +405,36 @@ describe('wechat assistant MCP server', () => {
     expect(text).toContain('项目复盘群');
     expect(text).toContain('不要猜');
     expect(text).not.toContain('group_1@chatroom');
+  });
+
+  it('export_wechat_my_messages writes a local markdown export for self-sent messages', async () => {
+    createWeChatAssistantMcpServer({ readOnly: true });
+    const exportTool = findTool('export_wechat_my_messages');
+
+    const result = await exportTool.handler({
+      format: 'markdown',
+      scope: 'personal',
+      date_from: '2026-07-01',
+      date_to: '2026-07-08',
+    });
+    const text = (result as { content: Array<{ text: string }> }).content[0]?.text ?? '';
+
+    expect(mockRunSync).toHaveBeenCalledTimes(1);
+    expect(mockWriteMessagesExportFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: '',
+        scope: 'personal',
+        sender: 'me',
+      }),
+      expect.stringContaining(path.join('wechat-assistant', 'exports', 'wechat-my-messages-2026-07-01_2026-07-08')),
+      'markdown',
+    );
+    const options = mockWriteMessagesExportFile.mock.calls[0]?.[0] as { fromTs: number; toTs: number };
+    expect(options.fromTs).toBeGreaterThan(0);
+    expect(options.toTs).toBeGreaterThan(options.fromTs);
+    expect(text).toContain('"schema": "wechat-assistant-my-messages-export/v1"');
+    expect(text).toContain('"count": 2');
+    expect(text).toContain('"file_path"');
   });
 
   it('update_wechat_automation updates schedule and message content', async () => {

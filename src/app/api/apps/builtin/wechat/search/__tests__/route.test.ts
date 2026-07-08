@@ -20,6 +20,7 @@ describe('wechat message search route', () => {
     await expect(res.json()).resolves.toEqual({
       query: '',
       scope: 'all',
+      sender: 'all',
       days: 90,
       results: [],
     });
@@ -44,6 +45,7 @@ describe('wechat message search route', () => {
     expect(mockSearchMessages).toHaveBeenCalledWith(expect.objectContaining({
       query: '合同',
       scope: 'personal',
+      sender: 'all',
       limit: 20,
     }));
     const options = mockSearchMessages.mock.calls[0]?.[0] as { sinceTs: number };
@@ -52,8 +54,43 @@ describe('wechat message search route', () => {
     await expect(res.json()).resolves.toMatchObject({
       query: '合同',
       scope: 'personal',
+      sender: 'all',
       days: 90,
       results: [{ display: 'Alice' }],
+    });
+  });
+
+  it('allows blank query when filtering to self-sent messages', async () => {
+    mockSearchMessages.mockReturnValue([{
+      wxid: 'alice',
+      display: 'Alice',
+      isGroup: false,
+      ts: 1_700_000_000,
+      sender: 'me',
+      content: '我发的消息',
+    }]);
+
+    const res = await GET(new NextRequest(
+      'http://localhost/api/apps/builtin/wechat/search?q=&sender=me&days=all&from=2026-07-01&to=2026-07-08',
+    ));
+
+    expect(mockSearchMessages).toHaveBeenCalledWith(expect.objectContaining({
+      query: '',
+      scope: 'all',
+      sender: 'me',
+      sinceTs: null,
+      limit: 50,
+    }));
+    const options = mockSearchMessages.mock.calls[0]?.[0] as { fromTs: number; toTs: number };
+    expect(options.fromTs).toBeGreaterThan(0);
+    expect(options.toTs).toBeGreaterThan(options.fromTs);
+    await expect(res.json()).resolves.toMatchObject({
+      query: '',
+      sender: 'me',
+      days: 'all',
+      from: '2026-07-01',
+      to: '2026-07-08',
+      results: [{ content: '我发的消息' }],
     });
   });
 
@@ -67,12 +104,16 @@ describe('wechat message search route', () => {
     expect(mockSearchMessages).toHaveBeenCalledWith({
       query: 'project',
       scope: 'group',
+      sender: 'all',
       sinceTs: null,
+      fromTs: null,
+      toTs: null,
       limit: 100,
     });
     await expect(res.json()).resolves.toMatchObject({
       query: 'project',
       scope: 'group',
+      sender: 'all',
       days: 'all',
       results: [],
     });

@@ -50,6 +50,8 @@ export interface WeChatMirrorAttachment {
 }
 
 export type MessageSearchScope = 'all' | 'personal' | 'group';
+export type MessageSenderFilter = 'all' | 'me' | 'them';
+export type MessageExportFormat = 'csv' | 'markdown';
 
 export interface MessageSearchResult {
   wxid: string;
@@ -63,9 +65,12 @@ export interface MessageSearchResult {
 }
 
 export interface MessageSearchOptions {
-  query: string;
+  query?: string;
   scope?: MessageSearchScope;
+  sender?: MessageSenderFilter;
   sinceTs?: number | null;
+  fromTs?: number | null;
+  toTs?: number | null;
   limit?: number;
   offset?: number;
 }
@@ -960,34 +965,9 @@ export { TOPIC_SCOPES };
 /* ─── User-facing message search ───────────────────────────────── */
 
 export function searchMessages(options: MessageSearchOptions): MessageSearchResult[] {
-  const query = options.query.trim();
-  if (!query) return [];
-
-  const scope = options.scope ?? 'all';
   const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 50)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
-  const where: string[] = [
-    "m.content != ''",
-    "((m.msg_type = 1 AND m.content LIKE ? ESCAPE '\\') OR (m.msg_type = 49 AND m.content LIKE '[文件]%' AND m.content LIKE ? ESCAPE '\\') OR COALESCE(NULLIF(s.display, ''), m.wxid) LIKE ? ESCAPE '\\' OR m.wxid LIKE ? ESCAPE '\\')",
-  ];
-  const params: Array<string | number> = [
-    `%${escapeLikePattern(query)}%`,
-    `%${escapeLikePattern(query)}%`,
-    `%${escapeLikePattern(query)}%`,
-    `%${escapeLikePattern(query)}%`,
-  ];
-
-  if (typeof options.sinceTs === 'number' && Number.isFinite(options.sinceTs) && options.sinceTs > 0) {
-    where.push('m.ts >= ?');
-    params.push(Math.floor(options.sinceTs));
-  }
-
-  if (scope === 'personal') {
-    where.push("COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) = 0");
-  } else if (scope === 'group') {
-    where.push("COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) = 1");
-  }
-
+  const { where, params } = buildMessageSearchSql(options);
   params.push(limit, offset);
 
   const rows = getMirrorDb()
@@ -1028,6 +1008,211 @@ export function searchMessages(options: MessageSearchOptions): MessageSearchResu
     msgType: row.msg_type,
     content: row.content,
   }));
+}
+
+export function listMessagesForExport(options: MessageSearchOptions): MessageSearchResult[] {
+  const { where, params } = buildMessageSearchSql(options);
+  const rows = getMirrorDb()
+    .prepare<Array<string | number>, {
+      wxid: string;
+      display: string | null;
+      is_group: number | null;
+      ts: number;
+      sender: string;
+      sender_display: string | null;
+      msg_type: number;
+      content: string;
+    }>(`
+      SELECT
+        m.wxid,
+        COALESCE(NULLIF(s.display, ''), m.wxid) AS display,
+        COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) AS is_group,
+        m.ts,
+        m.sender,
+        m.sender_display,
+        m.msg_type,
+        m.content
+      FROM messages m
+      LEFT JOIN sessions s ON s.wxid = m.wxid
+      WHERE ${where.join(' AND ')}
+      ORDER BY m.ts ASC, m.fingerprint ASC
+    `)
+    .all(...params);
+
+  return rows.map((row) => ({
+    wxid: row.wxid,
+    display: displayChatName(row.display, row.wxid),
+    isGroup: !!row.is_group,
+    ts: row.ts,
+    sender: row.sender === 'me' ? 'me' : 'them',
+    senderDisplay: displayGroupMember(row.sender_display),
+    msgType: row.msg_type,
+    content: row.content,
+  }));
+}
+
+export function writeMessagesExportFile(
+  options: MessageSearchOptions,
+  filePath: string,
+  format: MessageExportFormat = 'markdown',
+): number {
+  const { where, params } = buildMessageSearchSql(options);
+  const rows = getMirrorDb()
+    .prepare<Array<string | number>, {
+      wxid: string;
+      display: string | null;
+      is_group: number | null;
+      ts: number;
+      sender: string;
+      sender_display: string | null;
+      msg_type: number;
+      content: string;
+    }>(`
+      SELECT
+        m.wxid,
+        COALESCE(NULLIF(s.display, ''), m.wxid) AS display,
+        COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) AS is_group,
+        m.ts,
+        m.sender,
+        m.sender_display,
+        m.msg_type,
+        m.content
+      FROM messages m
+      LEFT JOIN sessions s ON s.wxid = m.wxid
+      WHERE ${where.join(' AND ')}
+      ORDER BY m.ts ASC, m.fingerprint ASC
+    `)
+    .iterate(...params);
+
+  let count = 0;
+  let buffer = format === 'csv'
+    ? `\uFEFF${['时间', '聊天对象', '聊天类型', '发送者', '消息类型', '内容'].map(csvCell).join(',')}\n`
+    : [
+        '# 微信我发送消息导出',
+        '',
+        `导出时间：${new Date().toLocaleString('zh-CN')}`,
+        '',
+      ].join('\n');
+  fs.writeFileSync(filePath, buffer, 'utf8');
+  buffer = '';
+
+  for (const row of rows) {
+    count += 1;
+    const item = {
+      display: displayChatName(row.display, row.wxid),
+      isGroup: !!row.is_group,
+      ts: row.ts,
+      sender: (row.sender === 'me' ? 'me' : 'them') as 'me' | 'them',
+      senderDisplay: displayGroupMember(row.sender_display),
+      msgType: row.msg_type,
+      content: row.content,
+    };
+    buffer += format === 'csv'
+      ? exportCsvLine(item)
+      : exportMarkdownLine(item);
+    if (count % 1000 === 0) {
+      fs.appendFileSync(filePath, buffer, 'utf8');
+      buffer = '';
+    }
+  }
+
+  if (format === 'markdown') {
+    buffer += `\n---\n导出条数：${count}\n`;
+  }
+  if (buffer) fs.appendFileSync(filePath, buffer, 'utf8');
+  return count;
+}
+
+function buildMessageSearchSql(options: MessageSearchOptions): {
+  where: string[];
+  params: Array<string | number>;
+} {
+  const query = (options.query ?? '').trim();
+  const scope = options.scope ?? 'all';
+  const sender = options.sender ?? 'all';
+  const where: string[] = ["m.content != ''"];
+  const params: Array<string | number> = [];
+
+  if (query) {
+    const like = `%${escapeLikePattern(query)}%`;
+    where.push(
+      "((m.msg_type = 1 AND (m.content LIKE ? ESCAPE '\\' OR COALESCE(NULLIF(s.display, ''), m.wxid) LIKE ? ESCAPE '\\' OR m.wxid LIKE ? ESCAPE '\\')) OR (m.msg_type = 49 AND m.content LIKE '[文件]%' AND m.content LIKE ? ESCAPE '\\'))",
+    );
+    params.push(like, like, like, like);
+  }
+
+  if (sender === 'me' || sender === 'them') {
+    where.push('m.sender = ?');
+    params.push(sender);
+  }
+
+  if (typeof options.sinceTs === 'number' && Number.isFinite(options.sinceTs) && options.sinceTs > 0) {
+    where.push('m.ts >= ?');
+    params.push(Math.floor(options.sinceTs));
+  }
+  if (typeof options.fromTs === 'number' && Number.isFinite(options.fromTs) && options.fromTs > 0) {
+    where.push('m.ts >= ?');
+    params.push(Math.floor(options.fromTs));
+  }
+  if (typeof options.toTs === 'number' && Number.isFinite(options.toTs) && options.toTs > 0) {
+    where.push('m.ts < ?');
+    params.push(Math.floor(options.toTs));
+  }
+
+  if (scope === 'personal') {
+    where.push("COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) = 0");
+  } else if (scope === 'group') {
+    where.push("COALESCE(s.is_group, CASE WHEN m.wxid LIKE '%@chatroom' THEN 1 ELSE 0 END) = 1");
+  }
+
+  return { where, params };
+}
+
+function exportCsvLine(item: {
+  display: string;
+  isGroup: boolean;
+  ts: number;
+  sender: 'me' | 'them';
+  senderDisplay: string | null;
+  msgType: number;
+  content: string;
+}): string {
+  return [
+    new Date(item.ts * 1000).toLocaleString('zh-CN', { hour12: false }),
+    item.display,
+    item.isGroup ? '群聊' : '私聊',
+    item.sender === 'me' ? '我' : item.senderDisplay || (item.isGroup ? '群成员' : '对方'),
+    String(item.msgType),
+    item.content,
+  ].map(csvCell).join(',') + '\n';
+}
+
+function exportMarkdownLine(item: {
+  display: string;
+  isGroup: boolean;
+  ts: number;
+  msgType: number;
+  content: string;
+}): string {
+  const time = new Date(item.ts * 1000).toLocaleString('zh-CN', { hour12: false });
+  const chat = markdownInline(item.display);
+  const content = markdownInline(item.content);
+  return `- ${time} | ${item.isGroup ? '群聊' : '私聊'} | ${chat} | ${item.msgType} | ${content}\n`;
+}
+
+function csvCell(value: string): string {
+  const text = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const safe = /^[=+\-@]/.test(text.trimStart()) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function markdownInline(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n+/g, ' / ')
+    .replace(/\|/g, '\\|')
+    .trim();
 }
 
 export function findChatCandidates(

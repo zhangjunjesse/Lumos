@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
@@ -19,6 +23,7 @@ import {
   getSyncState,
   readChatMessages,
   searchMessages,
+  writeMessagesExportFile,
   type ChatReadCandidate,
 } from '@/lib/wechat-assistant/mirror-store';
 import { resolveGroupTag, findGroupTag } from '@/lib/wechat-assistant/group-tag-resolver';
@@ -40,6 +45,7 @@ Available tools:
 - \`mcp__lumos-wechat-assistant__get_wechat_assistant_status()\`: read sync/message, follow-up, and automation status.
 - \`mcp__lumos-wechat-assistant__search_wechat_messages(query, scope?, days?, limit?, offset?)\`: sync first, then search the locally mirrored WeChat messages by keyword. \`limit\` is page size, not a total cap; use \`next_offset\` while \`has_more=true\`.
 - \`mcp__lumos-wechat-assistant__read_wechat_chat(chat, scope?, days?, limit?, offset?, before_ts?)\`: sync first, then read messages from one visible chat/contact/group without requiring keyword matches. \`limit\` is page size, not a total cap; use \`next_offset\` or \`before_ts\` for older pages.
+- \`mcp__lumos-wechat-assistant__export_wechat_my_messages(format?, scope?, date_from?, date_to?, query?)\`: sync first, then export all locally mirrored messages sent by me to a local Markdown or CSV file. Use this for "导出我所有发言 / 全量个人消息导出".
 - \`mcp__lumos-wechat-assistant__resolve_wechat_followup(query, status?, limit?)\`: resolve a visible follow-up title to candidate ids.
 - \`mcp__lumos-wechat-assistant__list_wechat_followups(status?, limit?)\`: list WeChat follow-up tasks.
 - \`mcp__lumos-wechat-assistant__create_wechat_followup(text, summary?, next_step?, due_at?)\`: create a manual follow-up.
@@ -72,6 +78,7 @@ Available read-only tools:
 - \`mcp__lumos-wechat-assistant__get_wechat_assistant_status()\`: check whether the local WeChat mirror has synced messages and read basic status.
 - \`mcp__lumos-wechat-assistant__search_wechat_messages(query, scope?, days?, limit?, offset?)\`: sync first, then search the locally mirrored WeChat messages by keyword and return visible chat names, speakers, timestamps, and snippets. \`limit\` is page size, not a total cap.
 - \`mcp__lumos-wechat-assistant__read_wechat_chat(chat, scope?, days?, limit?, offset?, before_ts?)\`: sync first, then read messages from one visible chat/contact/group without requiring keyword matches. \`limit\` is page size, not a total cap.
+- \`mcp__lumos-wechat-assistant__export_wechat_my_messages(format?, scope?, date_from?, date_to?, query?)\`: sync first, then export all locally mirrored messages sent by me to a local Markdown or CSV file. Use this for "导出我所有发言 / 全量个人消息导出".
 
 Rules:
 - When the user asks to search by keyword, use \`search_wechat_messages\`; when the user names a contact/group and asks for recent/all messages, use \`read_wechat_chat\` instead of keyword-searching the contact name.
@@ -97,6 +104,7 @@ export function createWeChatAssistantMcpServer(options: CreateWeChatAssistantMcp
     createGetWeChatAssistantStatusTool(),
     createSearchWeChatMessagesTool(),
     createReadWeChatChatTool(),
+    createExportWeChatMyMessagesTool(),
     createListWeChatGroupTagsTool(),
     createPreviewWeChatGroupTagTool(),
     createSummarizeWeChatGroupsTool(),
@@ -274,6 +282,60 @@ function createReadWeChatChatTool() {
                 }
               : null,
           })),
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+function createExportWeChatMyMessagesTool() {
+  return tool(
+    'export_wechat_my_messages',
+    'Export all locally mirrored WeChat messages sent by me to a local Markdown or CSV file. Use for one-shot "我的所有发言/我发送的消息" export requests.',
+    {
+      format: z.enum(['markdown', 'csv']).optional().describe('Output format. Defaults to markdown.'),
+      scope: z.enum(['all', 'personal', 'group']).optional().describe('Export scope. Defaults to all chats.'),
+      date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Optional local start date, YYYY-MM-DD.'),
+      date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Optional local end date, YYYY-MM-DD, inclusive.'),
+      query: z.string().max(120).optional().describe('Optional keyword filter. Omit to export all messages sent by me.'),
+    },
+    async (args): Promise<CallToolResult> => {
+      try {
+        const sync = await syncMirrorBeforeMessageAccess();
+        const format = args.format ?? 'markdown';
+        const { fromTs, toTs } = parseDateRange(args.date_from, args.date_to);
+        const exportDir = path.join(getLumosDataDir(), 'wechat-assistant', 'exports');
+        fs.mkdirSync(exportDir, { recursive: true });
+        const fileName = buildMyMessagesExportFileName(format, args.date_from, args.date_to);
+        const filePath = path.join(exportDir, fileName);
+        const count = writeMessagesExportFile({
+          query: args.query?.trim() ?? '',
+          scope: args.scope ?? 'all',
+          sender: 'me',
+          fromTs,
+          toTs,
+        }, filePath, format);
+
+        return jsonResult({
+          schema: 'wechat-assistant-my-messages-export/v1',
+          exported: true,
+          format,
+          count,
+          file_path: filePath,
+          file_name: fileName,
+          filters: {
+            sender: 'me',
+            scope: args.scope ?? 'all',
+            date_from: args.date_from ?? null,
+            date_to: args.date_to ?? null,
+            query: args.query?.trim() || null,
+          },
+          sync,
+          guidance: count > 0
+            ? '已生成本地导出文件。把 file_path 告诉用户；如需打开文件，让用户在本机打开该路径。'
+            : '已生成文件但没有匹配记录。请确认微信镜像已同步，或放宽日期/关键词过滤。',
         });
       } catch (error) {
         return errorResult(error);
@@ -992,6 +1054,54 @@ function normalizePageLimit(value: number | undefined, fallback: number): number
 
 function normalizeOffset(value: number | undefined): number {
   return Math.max(0, Math.min(10000, Math.floor(value ?? 0)));
+}
+
+function getLumosDataDir(): string {
+  return process.env.LUMOS_DATA_DIR
+    || process.env.CLAUDE_GUI_DATA_DIR
+    || path.join(os.homedir(), '.lumos');
+}
+
+function buildMyMessagesExportFileName(format: 'markdown' | 'csv', dateFrom?: string, dateTo?: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const range = dateFrom || dateTo ? `${dateFrom || 'start'}_${dateTo || 'end'}` : 'all';
+  return `wechat-my-messages-${range}-${stamp}.${format === 'csv' ? 'csv' : 'md'}`;
+}
+
+function parseDateRange(dateFrom?: string, dateTo?: string): { fromTs: number | null; toTs: number | null } {
+  return {
+    fromTs: parseLocalDateStart(dateFrom),
+    toTs: parseLocalDateEndExclusive(dateTo),
+  };
+}
+
+function parseLocalDateStart(value: string | undefined): number | null {
+  const parts = parseDateParts(value);
+  if (!parts) return null;
+  return Math.floor(new Date(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0).getTime() / 1000);
+}
+
+function parseLocalDateEndExclusive(value: string | undefined): number | null {
+  const parts = parseDateParts(value);
+  if (!parts) return null;
+  return Math.floor(new Date(parts.year, parts.month - 1, parts.day + 1, 0, 0, 0, 0).getTime() / 1000);
+}
+
+function parseDateParts(value: string | undefined): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? '');
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+  return { year, month, day };
 }
 
 function chatCandidateSummary(candidate: ChatReadCandidate, index?: number) {

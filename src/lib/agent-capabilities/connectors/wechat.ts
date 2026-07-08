@@ -78,5 +78,5 @@ export const wechatConnector: ConnectorDefinition = {
   // R4 第三通道：微信读工具是只读检索，Ask 模式应与知识/管家一样放行
   // ——这是「Ask 模式 agent 说没有微信工具」事故的第三处修复点。
   askModeReadAllowance: () =>
-    'read-only WeChat history tools (lumos-wechat-assistant: search_wechat_messages / read_wechat_chat / get_wechat_assistant_status) when the user asks about WeChat messages, chats, or history',
+    'read-only WeChat history tools (lumos-wechat-assistant: search_wechat_messages / read_wechat_chat / export_wechat_my_messages / get_wechat_assistant_status) when the user asks about WeChat messages, chats, history, or exporting messages sent by them',
 };
