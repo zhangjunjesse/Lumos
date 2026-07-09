@@ -17,6 +17,10 @@ describe('provider-config capability defaults', () => {
     expect(parseProviderCapabilities(undefined, 'toapis-image')).toEqual(['image-gen']);
   });
 
+  test('keeps toapis-video restricted to video-gen by default', () => {
+    expect(parseProviderCapabilities(undefined, 'toapis-video')).toEqual(['video-gen']);
+  });
+
   test('allows explicit agent-chat capability to persist for chat providers', () => {
     const fields = resolveProviderPersistenceFields({
       providerType: 'anthropic',

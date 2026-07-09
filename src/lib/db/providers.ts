@@ -15,6 +15,7 @@ import { getDb } from './connection';
 const DEFAULT_PROVIDER_SETTING_KEY = 'default_provider_id';
 const KNOWLEDGE_OVERRIDE_SETTING_KEY = 'provider_override:knowledge';
 const IMAGE_OVERRIDE_SETTING_KEY = 'provider_override:image';
+const VIDEO_OVERRIDE_SETTING_KEY = 'provider_override:video';
 const MEMORY_INTELLIGENCE_PROVIDER_SETTING_KEY = 'memory_intelligence_provider_id';
 
 export class ProviderDeletionBlockedError extends Error {
@@ -71,6 +72,11 @@ const PROVIDER_UPDATE_REFERENCE_RULES: ProviderReferenceRule[] = [
     capability: 'image-gen',
   },
   {
+    key: VIDEO_OVERRIDE_SETTING_KEY,
+    label: '视频模块服务商',
+    capability: 'video-gen',
+  },
+  {
     key: MEMORY_INTELLIGENCE_PROVIDER_SETTING_KEY,
     label: '记忆智能服务商',
     capability: 'text-gen',
@@ -122,6 +128,8 @@ function describeCapability(capability: ProviderCapability): string {
       return '文本生成';
     case 'image-gen':
       return '图片生成';
+    case 'video-gen':
+      return '视频生成';
     case 'embedding':
       return '向量嵌入';
     default:
@@ -204,6 +212,7 @@ function assertProviderConnectionFieldsValid(provider: Pick<ApiProvider, 'name' 
     provider.api_protocol === 'openai-compatible'
     && provider.provider_type !== 'openrouter'
     && provider.provider_type !== 'gemini-image'
+    && provider.provider_type !== 'toapis-video'
     && !normalizedBaseUrl
   ) {
     throw new ProviderValidationError(

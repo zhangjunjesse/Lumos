@@ -144,6 +144,23 @@ describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
     expect(mGetProvider).not.toHaveBeenCalledWith('some-user-pick');
   });
 
+  test('media locked + video-gen → strips preferredProviderId, falls through to provider_override:video', () => {
+    mIsPro.mockReturnValue(true);
+    setFlags({ chat: true, media: false });
+    mGetSetting.mockImplementation(key => (key === 'provider_override:video' ? customProvider.id : ''));
+    mGetProvider.mockImplementation(id => (id === customProvider.id ? customProvider : undefined));
+    mSupports.mockReturnValue(true);
+
+    const result = resolveProviderForCapability({
+      moduleKey: 'video',
+      capability: 'video-gen',
+      preferredProviderId: 'some-user-pick',
+    });
+
+    expect(result).toBe(customProvider);
+    expect(mGetProvider).not.toHaveBeenCalledWith('some-user-pick');
+  });
+
   test('chat unlocked → honors preferredProviderId', () => {
     mIsPro.mockReturnValue(true);
     setFlags({ chat: true, media: true });

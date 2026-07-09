@@ -19,6 +19,7 @@ import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ImageGenCard } from './ImageGenCard';
+import { VideoGenCard } from './VideoGenCard';
 import { ArtifactReferencePreview } from './ArtifactReferencePreview';
 import { parseDBDate } from '@/lib/utils';
 import { ExtensionPlanCard } from '@/components/extensions/ExtensionPlanCard';
@@ -417,11 +418,44 @@ export function MessageItem({ message }: MessageItemProps) {
           } catch { return null; }
         })}
 
+        {/* Video gen cards from generate_video tool results */}
+        {!isUser && pairedTools.map((tool, i) => {
+          const n = tool.name.toLowerCase();
+          if (tool.isError || !tool.result || !n.includes('generate_video')) return null;
+          try {
+            const r = unwrapToolResult(tool.result);
+            if (!r || !Array.isArray(r.videos) || r.videos.length === 0) return null;
+            const videos = (r.videos as Array<Record<string, unknown>>).map(video => ({
+              mimeType: String(video.mime_type || 'video/mp4'),
+              directUrl: video.url ? String(video.url) : undefined,
+              localPath: video.url ? undefined : String(video.path || ''),
+            }));
+            const inp = tool.input as Record<string, unknown> | undefined;
+            const durationValue = typeof inp?.duration === 'number' ? inp.duration : undefined;
+            return (
+              <VideoGenCard
+                key={`video-gen-${i}`}
+                videos={videos}
+                prompt={String(inp?.prompt || r.prompt || '')}
+                mode={typeof inp?.mode === 'string' ? inp.mode : undefined}
+                aspectRatio={typeof inp?.aspect_ratio === 'string' ? inp.aspect_ratio : undefined}
+                resolution={typeof inp?.resolution === 'string' ? inp.resolution : undefined}
+                duration={durationValue}
+                model={typeof r.model === 'string' ? r.model : undefined}
+                provider={typeof r.provider === 'string' ? r.provider : undefined}
+              />
+            );
+          } catch { return null; }
+        })}
+
         {!isUser && (
           <ArtifactReferencePreview
             text={displayText}
             tools={pairedTools
-              .filter((tool) => !tool.name.toLowerCase().includes('generate_image'))
+              .filter((tool) => {
+                const name = tool.name.toLowerCase();
+                return !name.includes('generate_image') && !name.includes('generate_video');
+              })
               .map((tool) => ({
                 name: tool.name,
                 result: tool.result,

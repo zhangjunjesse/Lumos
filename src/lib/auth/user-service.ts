@@ -11,10 +11,12 @@ import { createSession, validateSession } from './session';
 import {
   provisionCloudProvider,
   provisionImageProviders,
+  provisionVideoProviders,
   provisionChatProviders,
   provisionSpeechProviders,
   persistCustomProviderFlags,
   type CloudImageProviderConfig,
+  type CloudVideoProviderConfig,
   type CloudChatProviderConfig,
   type CloudSpeechProviderConfig,
 } from '@/lib/lumos-cloud-auth';
@@ -101,6 +103,7 @@ export interface RemoteUser {
   newapi_token_key: string | null;
   newapi_token_id: number | null;
   image_providers?: CloudImageProviderConfig[];
+  video_providers?: CloudVideoProviderConfig[];
   /**
    * 新版 lumos-web 会下发 chat_providers；旧版本不含此字段。
    * 字段存在（含空数组）→ 以此为权威，全量同步；字段缺失 → 回退到
@@ -172,6 +175,11 @@ export async function provisionUserServices(remoteUser: RemoteUser): Promise<voi
     await provisionImageProviders(remoteUser.image_providers ?? []);
   } catch (e) {
     console.warn('[login] Failed to provision image providers:', e);
+  }
+  try {
+    await provisionVideoProviders(remoteUser.video_providers ?? []);
+  } catch (e) {
+    console.warn('[login] Failed to provision video providers:', e);
   }
   try {
     await provisionSpeechProviders(remoteUser.speech_providers ?? []);

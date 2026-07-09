@@ -23,6 +23,7 @@ export type ModelOverrideKey =
   | 'model_override:knowledge'
   | 'model_override:agent'
   | 'model_override:image'
+  | 'model_override:video'
   | 'model_override:speech';
 
 export interface ModuleConfig {
@@ -30,6 +31,7 @@ export interface ModuleConfig {
     | 'provider_override:knowledge'
     | 'provider_override:agent'
     | 'provider_override:image'
+    | 'provider_override:video'
     | 'provider_override:speech';
   modelKey: ModelOverrideKey;
   moduleKey: ProviderPresetModule;
@@ -87,6 +89,18 @@ export const IMAGE_MODULE_CONFIG: ModuleConfig = {
   createTitle: '添加图片生成服务',
 };
 
+export const VIDEO_MODULE_CONFIG: ModuleConfig = {
+  key: 'provider_override:video',
+  modelKey: 'model_override:video',
+  moduleKey: 'video',
+  label: '视频生成',
+  description: '生成视频、图生视频、参考视频编辑时使用的 AI 服务。',
+  capability: 'video-gen',
+  emptyValueLabel: '未配置',
+  emptyHint: '视频生成需要单独设置，未配置时此功能不可用。',
+  createTitle: '添加视频生成服务',
+};
+
 /**
  * Speech (ASR) module. Cloud-only — desktop never holds the api_key, all
  * transcription requests proxy through lumos-web. Used by MCP transcribe_audio
@@ -111,6 +125,7 @@ export function getCapabilityBadgeLabel(capability: ProviderCapability): string 
     case 'agent-chat': return '对话';
     case 'text-gen': return '文本';
     case 'image-gen': return '图片';
+    case 'video-gen': return '视频';
     case 'embedding': return '嵌入';
     case 'speech': return '语音';
     default: return capability;

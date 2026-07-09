@@ -17,6 +17,11 @@ export interface CloudUserInfo {
    */
   image_providers?: CloudImageProviderConfig[];
   /**
+   * Admin 下发的视频生成服务商列表。桌面端按 `id` (remote) 做一对一 upsert
+   * 本地 provider，并维护 `provider_override:video`。
+   */
+  video_providers?: CloudVideoProviderConfig[];
+  /**
    * Admin 下发的对话服务商列表（虚拟服务商）。`api_key` 由 lumos-web 在请求时
    * 注入为当前用户的 `sk-<newapi_token_key>`，因此下游 new-api 按本用户计费。
    * 桌面端按 `id` (remote) 做一对一 upsert 本地 provider。
@@ -55,6 +60,26 @@ export interface CloudImageProviderConfig {
   api_key: string;
   default_model: string;
   model_catalog: CloudImageProviderModel[];
+}
+
+export interface CloudVideoProviderModel {
+  value: string;
+  label: string;
+  /** Per-second price in new-api quota units (500000 = ¥1). Optional display hint. */
+  price_per_second?: number;
+}
+
+export interface CloudVideoProviderConfig {
+  /** Remote provider id from lumos-web (stable identity across renames). */
+  id: string;
+  is_default: boolean;
+  name: string;
+  provider_type: string;
+  api_protocol: string;
+  base_url: string;
+  api_key: string;
+  default_model: string;
+  model_catalog: CloudVideoProviderModel[];
 }
 
 export interface CloudChatProviderModel {

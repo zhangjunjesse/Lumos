@@ -21,3 +21,17 @@ export const IMAGE_GEN_IN_PROCESS_HINT = `About image generation (lumos-image MC
 
 Advanced parameters (enable_sequential, color_palette, region_edit_bbox, negative_prompt, thinking_mode, plus the full aspect-ratio and resolution ranges) are fully described in the tool's input schema — read them there, don't restate them here. When to reach for them: "连续插图 / 绘本 / 故事板 / 多角度 / 一致性组图" → enable_sequential with count 2-4; "暖色调 / 蓝白配色" or hex codes → color_palette; "只改这部分 / 局部修改" → region_edit_bbox with reference_image_paths (bbox coordinates are absolute pixels, NOT normalized 0-1); "去掉水印 / 不要文字" → negative_prompt (Gemini only).
 Safety: do NOT set safety_settings unless the user explicitly asks to relax content safety (e.g. medical/artistic) — it lowers Gemini's content filters and nothing else gates it.`;
+
+export const VIDEO_GEN_IN_PROCESS_HINT = `About video generation (same lumos-image MCP server):
+- The tool is \`mcp__lumos-image__generate_video\` / \`generate_video\`. When user asks to generate/create/animate/edit videos, call it directly. Do not send video model requests through chat/completions, and do not describe what you WOULD generate without calling the tool.
+- Understand Chinese size/time descriptions: "横版/宽屏" → 16:9, "竖版/手机视频" → 9:16, "N 秒" → duration N. Valid durations depend on the model: wan2.6 / wan2.6-flash accept 5/10/15 seconds, gemini_omni_flash accepts 4/6/10.
+- If using \`wan2.6-flash\`, provide reference_image_paths/reference_video_paths (one kind, not both) or ask the user for a reference; pure text-to-video should use a model that supports it such as \`wan2.6\` or \`gemini_omni_flash\`.
+- Video generation takes minutes, not seconds. Tell the user it is running; do not retry while a call is still in flight.
+- After \`generate_video\` succeeds, point the user to the returned \`url\` and mention the saved local \`path\` only if they need the file path. The UI renders the video tool result automatically.
+- Pro video generation is billed per second of requested duration; a failed generation is refunded automatically. Do not invent quota numbers.
+- If video generation reports missing provider config, tell the user to configure it in Settings → Providers → Video Generation.`;
+
+/** What agents actually receive when the lumos-image server (image + video tools) is loaded. */
+export const MEDIA_GEN_IN_PROCESS_HINT = `${IMAGE_GEN_IN_PROCESS_HINT}
+
+${VIDEO_GEN_IN_PROCESS_HINT}`;

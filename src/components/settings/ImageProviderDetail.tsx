@@ -9,16 +9,26 @@ interface ImageProviderDetailProps {
   provider: ProviderOption;
   onEdit: () => void;
   onDelete: () => void;
+  priceKind?: 'image' | 'second';
   /** When true (either admin disabled custom media or provider is system-origin),
    *  hide edit/delete controls. */
   readOnly?: boolean;
 }
 
-export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = false }: ImageProviderDetailProps) {
+export function ImageProviderDetail({
+  provider,
+  onEdit,
+  onDelete,
+  priceKind = 'image',
+  readOnly = false,
+}: ImageProviderDetailProps) {
   const models = parseModelCatalog(provider.model_catalog);
   const hasKey = provider.auth_mode !== 'local_auth';
   const locked = readOnly || provider.provider_origin === 'system';
-  const anyPriced = models.some((m) => m.price_per_image && m.price_per_image > 0);
+  const anyPriced = models.some((m) => {
+    const units = priceKind === 'second' ? m.price_per_second : m.price_per_image;
+    return Boolean(units && units > 0);
+  });
 
   return (
     <div className="mt-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5">
@@ -59,7 +69,7 @@ export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = fal
       {models.length > 0 && (
         <ul className="mt-2.5 space-y-1 border-t border-border/30 pt-2">
           {models.map((model) => {
-            const price = formatYuanPerImage(model.price_per_image);
+            const price = formatYuanPerImage(priceKind === 'second' ? model.price_per_second : model.price_per_image);
             return (
               <li
                 key={model.value}
@@ -71,7 +81,7 @@ export function ImageProviderDetail({ provider, onEdit, onDelete, readOnly = fal
                 {price ? (
                   <span className="shrink-0 text-muted-foreground tabular-nums">
                     {price}
-                    <span className="text-muted-foreground/60"> / 张</span>
+                    <span className="text-muted-foreground/60"> / {priceKind === 'second' ? '秒' : '张'}</span>
                   </span>
                 ) : anyPriced ? (
                   // Keep alignment when other models in the list show pricing.

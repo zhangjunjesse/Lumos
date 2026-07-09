@@ -1,4 +1,8 @@
-import { IMAGE_GEN_IN_PROCESS_HINT } from '../image-gen-hints';
+import {
+  IMAGE_GEN_IN_PROCESS_HINT,
+  MEDIA_GEN_IN_PROCESS_HINT,
+  VIDEO_GEN_IN_PROCESS_HINT,
+} from '../image-gen-hints';
 
 // 瘦身（删掉两段与 tool input schema 重复的参数百科）后，这些行为策略必须仍在——
 // 它们不在 schema 里、是 hint 的真正价值，误删会回退历史修复。
@@ -37,5 +41,36 @@ describe('IMAGE_GEN_IN_PROCESS_HINT — 瘦身后保留行为策略', () => {
 
   it('整体显著变短（删了约 2k 字符的重复参数说明）', () => {
     expect(IMAGE_GEN_IN_PROCESS_HINT.length).toBeLessThan(4200);
+  });
+
+  it('视频提示不混入图片常量（各自独立，防止再次撑爆瘦身护栏）', () => {
+    expect(IMAGE_GEN_IN_PROCESS_HINT).not.toContain('generate_video');
+  });
+});
+
+// 视频提示是独立常量：锁行为策略与体积，组合常量供 lumos-image server 消费点使用。
+describe('VIDEO_GEN_IN_PROCESS_HINT — 行为策略', () => {
+  it('保留直接调用规则与「不走 chat/completions」', () => {
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('generate_video');
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('chat/completions');
+  });
+
+  it('保留 wan2.6-flash 需参考素材的模型能力规则', () => {
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('wan2.6-flash');
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('gemini_omni_flash');
+  });
+
+  it('保留中文尺寸/时长映射与计费诚实性规则', () => {
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('横版');
+    expect(VIDEO_GEN_IN_PROCESS_HINT).toContain('billed per second');
+  });
+
+  it('体积受控（行为策略级提示，不是参数百科）', () => {
+    expect(VIDEO_GEN_IN_PROCESS_HINT.length).toBeLessThan(1600);
+  });
+
+  it('组合常量同时含图片与视频提示', () => {
+    expect(MEDIA_GEN_IN_PROCESS_HINT).toContain('CRITICAL path-extraction');
+    expect(MEDIA_GEN_IN_PROCESS_HINT).toContain('generate_video');
   });
 });

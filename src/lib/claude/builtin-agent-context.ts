@@ -1,5 +1,5 @@
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
-import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { MEDIA_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 
 export interface BuiltinAgentContext {
   inProcessMcpServers?: Record<string, ReturnType<typeof createLumosMcpServer>>;
@@ -20,6 +20,6 @@ export function buildBuiltinAgentContext(input: {
     inProcessMcpServers: {
       [lumosMcpServer.name]: lumosMcpServer,
     },
-    systemPromptSuffix: IMAGE_GEN_IN_PROCESS_HINT,
+    systemPromptSuffix: MEDIA_GEN_IN_PROCESS_HINT,
   };
 }

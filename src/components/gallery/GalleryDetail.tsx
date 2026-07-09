@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -37,12 +37,12 @@ interface GalleryDetailProps {
   onToggleFavorite?: (id: string) => void;
 }
 
-function imageUrl(img: GalleryItem['images'][0]): string {
-  if (img.localPath) {
-    return `/api/media/serve?path=${encodeURIComponent(img.localPath)}`;
+function mediaUrl(media: { data?: string; mimeType: string; localPath?: string }): string {
+  if (media.localPath) {
+    return `/api/media/serve?path=${encodeURIComponent(media.localPath)}`;
   }
-  if (img.data) {
-    return `data:${img.mimeType};base64,${img.data}`;
+  if (media.data) {
+    return `data:${media.mimeType};base64,${media.data}`;
   }
   return '';
 }
@@ -73,20 +73,24 @@ export function GalleryDetail({
   const router = useRouter();
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [prevItemId, setPrevItemId] = useState(item?.id);
 
-  // Reset image index when item changes
-  useEffect(() => {
+  // Reset per-item view state when item changes — adjust-during-render pattern,
+  // effects are not for deriving state from props (react-hooks/set-state-in-effect).
+  if (item?.id !== prevItemId) {
+    setPrevItemId(item?.id);
     setCurrentImageIndex(0);
     setConfirmDelete(false);
-  }, [item?.id]);
+  }
 
   const handleDownload = useCallback(async () => {
     if (!item) return;
-    const img = item.images[currentImageIndex];
-    if (!img) return;
+    const mediaItems = item.type === 'video' ? (item.videos || []) : item.images;
+    const media = mediaItems[currentImageIndex];
+    if (!media) return;
 
-    const url = imageUrl(img);
-    const ext = img.mimeType.split('/')[1] || 'png';
+    const url = mediaUrl(media);
+    const ext = media.mimeType.includes('quicktime') ? 'mov' : (media.mimeType.split('/')[1] || 'png');
     const filename = `generated-${item.id}-${currentImageIndex + 1}.${ext}`;
 
     try {
@@ -118,8 +122,10 @@ export function GalleryDetail({
 
   if (!item) return null;
 
-  const currentImage = item.images[currentImageIndex];
-  const hasMultipleImages = item.images.length > 1;
+  const isVideo = item.type === 'video';
+  const mediaItems = isVideo ? (item.videos || []) : item.images;
+  const currentMedia = mediaItems[currentImageIndex];
+  const hasMultipleImages = mediaItems.length > 1;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -129,16 +135,25 @@ export function GalleryDetail({
         </DialogTitle>
 
         <div className="flex flex-row h-full">
-          {/* Left: Image preview */}
+          {/* Left: media preview */}
           <div className="relative w-[70%] shrink-0 bg-black">
             <div className="absolute inset-0 flex items-center justify-center">
-              {currentImage && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={imageUrl(currentImage)}
-                  alt={item.prompt}
-                  className="max-w-full max-h-full object-contain"
-                />
+              {currentMedia && (
+                isVideo ? (
+                  <video
+                    src={mediaUrl(currentMedia)}
+                    controls
+                    preload="metadata"
+                    className="max-h-full max-w-full"
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={mediaUrl(currentMedia)}
+                    alt={item.prompt}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                )
               )}
             </div>
 
@@ -148,7 +163,7 @@ export function GalleryDetail({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => setCurrentImageIndex((i) => (i > 0 ? i - 1 : item.images.length - 1))}
+                      onClick={() => setCurrentImageIndex((i) => (i > 0 ? i - 1 : mediaItems.length - 1))}
                       className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
                     >
                       <HugeiconsIcon icon={ArrowLeft} className="h-5 w-5" />
@@ -160,7 +175,7 @@ export function GalleryDetail({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => setCurrentImageIndex((i) => (i < item.images.length - 1 ? i + 1 : 0))}
+                      onClick={() => setCurrentImageIndex((i) => (i < mediaItems.length - 1 ? i + 1 : 0))}
                       className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition z-10 cursor-pointer"
                     >
                       <HugeiconsIcon icon={ArrowRight} className="h-5 w-5" />
@@ -169,7 +184,7 @@ export function GalleryDetail({
                   <TooltipContent>{t('tooltip.nextImage' as TranslationKey)}</TooltipContent>
                 </Tooltip>
                 <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-2 py-0.5 text-xs text-white z-10">
-                  {currentImageIndex + 1} / {item.images.length}
+                  {currentImageIndex + 1} / {mediaItems.length}
                 </div>
               </>
             )}
@@ -251,6 +266,27 @@ export function GalleryDetail({
                       <div key={i} className="w-14 h-14 rounded-md border border-border/30 overflow-hidden bg-muted/30">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={src} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {item.referenceVideos && item.referenceVideos.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-1.5">
+                  参考视频
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {item.referenceVideos.map((ref, i) => {
+                    const src = ref.localPath
+                      ? `/api/media/serve?path=${encodeURIComponent(ref.localPath)}`
+                      : '';
+                    if (!src) return null;
+                    return (
+                      <div key={i} className="h-14 w-24 rounded-md border border-border/30 overflow-hidden bg-black">
+                        <video src={src} muted preload="metadata" className="h-full w-full object-cover" />
                       </div>
                     );
                   })}

@@ -7,7 +7,7 @@ import { canUseCustomProvider } from '@/lib/edition-runtime';
 import { customProviderCapFor } from '@/lib/auth/custom-provider-capabilities';
 import type { ApiProvider, ProviderCapability } from '@/types';
 
-export type ProviderModuleKey = 'chat' | 'knowledge' | 'agent' | 'image';
+export type ProviderModuleKey = 'chat' | 'knowledge' | 'agent' | 'image' | 'video';
 
 export class ProviderResolutionError extends Error {
   constructor(message: string) {
@@ -32,6 +32,8 @@ function describeCapability(capability: ProviderCapability): string {
       return '文本生成';
     case 'image-gen':
       return '图片生成';
+    case 'video-gen':
+      return '视频生成';
     case 'embedding':
       return '向量嵌入';
     default:

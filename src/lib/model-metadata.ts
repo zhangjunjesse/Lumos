@@ -119,6 +119,7 @@ function normalizeProviderModelOption(entry: unknown): ProviderModelOption | nul
     input_price_per_mtok?: unknown;
     output_price_per_mtok?: unknown;
     price_per_image?: unknown;
+    price_per_second?: unknown;
   };
   const rawValue = typeof candidate.value === 'string'
     ? candidate.value
@@ -142,6 +143,8 @@ function normalizeProviderModelOption(entry: unknown): ProviderModelOption | nul
   if (Number.isFinite(outputPrice) && outputPrice > 0) option.output_price_per_mtok = Math.round(outputPrice);
   const imagePrice = Number(candidate.price_per_image);
   if (Number.isFinite(imagePrice) && imagePrice > 0) option.price_per_image = Math.round(imagePrice);
+  const videoPrice = Number(candidate.price_per_second);
+  if (Number.isFinite(videoPrice) && videoPrice > 0) option.price_per_second = Math.round(videoPrice);
   return option;
 }
 

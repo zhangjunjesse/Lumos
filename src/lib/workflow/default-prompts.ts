@@ -125,6 +125,7 @@ ${WORKFLOW_STABILITY_RULES}
   - 不要所有节点都硬塞验收说明；边界不清的情况就留空，空比错写好
   - 示例：
     - \`"expectedOutput": "必须调用 generate_image 生成至少 1 张图片，输出里包含图片链接"\`
+    - \`"expectedOutput": "必须调用 generate_video 生成 1 个视频，输出里包含视频链接"\`
     - \`"expectedOutput": "纯文本竞品分析，输出包含至少 3 个竞品的价格对比；不需要调用任何工具"\`
     - \`"expectedOutput": "必须把报告写入本步产出目录中的 report/report.md，并在输出里报告相对路径"\`
     - \`"expectedOutput": "输出必须包含 summary、pros、cons 三段；不需要调用任何工具"\`

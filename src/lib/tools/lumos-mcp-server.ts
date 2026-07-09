@@ -1,5 +1,6 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { createImageGenTool } from './image-gen-tool';
+import { createVideoGenTool } from './video-gen-tool';
 
 export const LUMOS_MCP_SERVER_NAME = 'lumos-image';
 
@@ -8,6 +9,7 @@ export function createLumosMcpServer(sessionId?: string, userId?: string) {
     name: LUMOS_MCP_SERVER_NAME,
     tools: [
       createImageGenTool(sessionId, userId),
+      createVideoGenTool(sessionId, userId),
     ],
   });
 }

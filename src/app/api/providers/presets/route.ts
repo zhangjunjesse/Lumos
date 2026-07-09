@@ -10,6 +10,8 @@ function normalizeCapability(raw: string | null): ProviderCapability | null {
       return 'text-gen';
     case 'image-gen':
       return 'image-gen';
+    case 'video-gen':
+      return 'video-gen';
     case 'embedding':
       return 'embedding';
     default:
@@ -27,6 +29,8 @@ function normalizeModule(raw: string | null): ProviderPresetModule | null {
       return 'agent';
     case 'image':
       return 'image';
+    case 'video':
+      return 'video';
     default:
       return null;
   }

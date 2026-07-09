@@ -29,6 +29,11 @@ import {
   serializeProviderCapabilities,
 } from '@/lib/provider-config';
 import { serializeImageProviderDefaults } from '@/lib/image/provider-defaults';
+import {
+  serializeVideoProviderDefaults,
+} from '@/lib/video/provider-defaults';
+import type { VideoProviderUiConfigResponse } from '@/lib/video/provider-ui';
+import type { VideoMode } from '@/lib/video/types';
 import type { ProviderAuthMode, ProviderModelCatalogSource } from '@/types';
 
 export interface ProviderEditTarget {
@@ -56,6 +61,7 @@ interface ProviderEditDialogProps {
 function getCapabilityPurposeLabel(caps: string[]): string {
   if (caps.includes('agent-chat')) return '对话';
   if (caps.includes('image-gen')) return '图片生成';
+  if (caps.includes('video-gen')) return '视频生成';
   if (caps.includes('text-gen')) return '文本';
   if (caps.includes('embedding')) return '嵌入';
   return '对话';
@@ -96,6 +102,11 @@ export function ProviderEditDialog({
   const [imageCount, setImageCount] = useState(1);
   const [imageAdvancedOpen, setImageAdvancedOpen] = useState(false);
   const [imageAdvancedValues, setImageAdvancedValues] = useState<Record<string, unknown>>({});
+  const [videoUiConfig, setVideoUiConfig] = useState<VideoProviderUiConfigResponse | null>(null);
+  const [videoMode, setVideoMode] = useState<VideoMode>('text-to-video');
+  const [videoAspectRatio, setVideoAspectRatio] = useState('16:9');
+  const [videoResolution, setVideoResolution] = useState('720P');
+  const [videoDuration, setVideoDuration] = useState(6);
 
   const resetForm = useCallback((p: ProviderEditTarget) => {
     setName(p.name);
@@ -115,6 +126,11 @@ export function ProviderEditDialog({
     setImageCount(1);
     setImageAdvancedOpen(false);
     setImageAdvancedValues({});
+    setVideoUiConfig(null);
+    setVideoMode('text-to-video');
+    setVideoAspectRatio('16:9');
+    setVideoResolution('720P');
+    setVideoDuration(6);
   }, []);
 
   useEffect(() => {
@@ -152,6 +168,33 @@ export function ProviderEditDialog({
   }, [open, provider]);
 
   useEffect(() => {
+    if (!open || !provider) return;
+
+    const caps = parseProviderCapabilities(provider.capabilities, provider.provider_type);
+    if (!caps.includes('video-gen')) return;
+
+    let cancelled = false;
+    const loadVideoUiConfig = async () => {
+      try {
+        const res = await fetch(`/api/providers/${provider.id}/video-ui-config`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as VideoProviderUiConfigResponse;
+        if (cancelled) return;
+        setVideoUiConfig(data);
+        setVideoMode(data.defaults?.mode || 'text-to-video');
+        setVideoAspectRatio(data.defaults?.aspectRatio || '16:9');
+        setVideoResolution(data.defaults?.resolution || '720P');
+        setVideoDuration(data.defaults?.duration || 6);
+      } catch {
+        if (!cancelled) setVideoUiConfig(null);
+      }
+    };
+
+    void loadVideoUiConfig();
+    return () => { cancelled = true; };
+  }, [open, provider]);
+
+  useEffect(() => {
     const ratios = imageUiConfig?.uiConfig.supportedAspectRatios ?? ['1:1'];
     if (!ratios.includes(imageAspectRatio)) {
       setImageAspectRatio(ratios[0] || '1:1');
@@ -171,6 +214,34 @@ export function ProviderEditDialog({
       setImageCount(maxCount);
     }
   }, [imageCount, imageUiConfig]);
+
+  useEffect(() => {
+    const modes = videoUiConfig?.uiConfig.supportedModes.map((item) => item.value) ?? ['text-to-video'];
+    if (!modes.includes(videoMode)) {
+      setVideoMode((modes[0] || 'text-to-video') as VideoMode);
+    }
+  }, [videoMode, videoUiConfig]);
+
+  useEffect(() => {
+    const ratios = videoUiConfig?.uiConfig.supportedAspectRatios ?? ['16:9'];
+    if (!ratios.includes(videoAspectRatio)) {
+      setVideoAspectRatio(ratios[0] || '16:9');
+    }
+  }, [videoAspectRatio, videoUiConfig]);
+
+  useEffect(() => {
+    const resolutions = videoUiConfig?.uiConfig.supportedResolutions ?? ['720P'];
+    if (!resolutions.includes(videoResolution)) {
+      setVideoResolution(resolutions[0] || '720P');
+    }
+  }, [videoResolution, videoUiConfig]);
+
+  useEffect(() => {
+    const durations = videoUiConfig?.uiConfig.supportedDurations ?? [5];
+    if (!durations.includes(videoDuration)) {
+      setVideoDuration(durations[0] || 6);
+    }
+  }, [videoDuration, videoUiConfig]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     onOpenChange(nextOpen);
@@ -256,6 +327,15 @@ export function ProviderEditDialog({
           resolution: imageResolution,
           count: imageCount,
           providerOptions,
+        });
+      }
+
+      if (caps.includes('video-gen')) {
+        nextExtraEnv = serializeVideoProviderDefaults(nextExtraEnv, {
+          mode: videoMode,
+          aspectRatio: videoAspectRatio,
+          resolution: videoResolution,
+          duration: videoDuration,
         });
       }
 
@@ -417,6 +497,105 @@ export function ProviderEditDialog({
                 onAdvancedOpenChange={setImageAdvancedOpen}
                 onAdvancedValueChange={(key, value) => setImageAdvancedValues((prev) => ({ ...prev, [key]: value }))}
               />
+            </div>
+          )}
+
+          {caps.includes('video-gen') && videoUiConfig && (
+            <div className="space-y-3 rounded-lg border border-border/60 p-3">
+              <div>
+                <label className="text-sm font-medium">默认视频参数</label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  这里设置该视频服务商的默认模式、比例、分辨率和时长。聊天或 API 未指定时，会先使用这里的默认值。
+                </p>
+              </div>
+
+              <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <div className="font-medium text-foreground/90">当前服务商：{videoUiConfig.provider.name}</div>
+                {videoUiConfig.uiConfig.hint && <div>{videoUiConfig.uiConfig.hint}</div>}
+                <div>参考图上限：{videoUiConfig.uiConfig.maxReferenceImages} 张 · 参考视频上限：{videoUiConfig.uiConfig.maxReferenceVideos} 个</div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">模式</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {videoUiConfig.uiConfig.supportedModes.map((mode) => (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      onClick={() => setVideoMode(mode.value as VideoMode)}
+                      className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                        videoMode === mode.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border/40 bg-background hover:bg-muted/40'
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">尺寸比例</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {videoUiConfig.uiConfig.supportedAspectRatios.map((ratio) => (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => setVideoAspectRatio(ratio)}
+                      className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                        videoAspectRatio === ratio
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border/40 bg-background hover:bg-muted/40'
+                      }`}
+                    >
+                      {ratio}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">分辨率</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {videoUiConfig.uiConfig.supportedResolutions.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setVideoResolution(item)}
+                        className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                          videoResolution === item
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border/40 bg-background hover:bg-muted/40'
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">时长</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {videoUiConfig.uiConfig.supportedDurations.map((duration) => (
+                      <button
+                        key={duration}
+                        type="button"
+                        onClick={() => setVideoDuration(duration)}
+                        className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                          videoDuration === duration
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border/40 bg-background hover:bg-muted/40'
+                        }`}
+                      >
+                        {duration}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

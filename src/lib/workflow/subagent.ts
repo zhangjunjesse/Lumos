@@ -747,7 +747,7 @@ async function buildWorkflowAgentPayload(
         'Write detailed reports/documents as files under the artifact output directory.',
         // Make it explicit that productive tool calls are encouraged, so
         // plain-text delivery mode is not mis-read as "don't touch tools".
-        'You have full access to all tools, including image generation (`mcp__lumos-image__generate_image`), file writes, browser, and MCP tools. Call them whenever the task needs them — describing what you WOULD do is not acceptable when a real tool is available.',
+        'You have full access to all tools, including image generation (`mcp__lumos-image__generate_image`), video generation (`mcp__lumos-image__generate_video`), file writes, browser, and MCP tools. Call them whenever the task needs them — describing what you WOULD do is not acceptable when a real tool is available.',
         ...(runtimeContext.browserContextId
           ? [`When using browser tools, use the workflow-bound Lumos browser context: ${runtimeContext.browserContextId}. Do not switch to the OS default browser.`]
           : []),

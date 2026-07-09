@@ -17,7 +17,7 @@ import { useProAuthSelector } from "@/hooks/useProAuth";
 import { GeneralSection } from "./GeneralSection";
 import { ChatProvidersCard } from "./ChatProvidersCard";
 import { ModuleOverrideSection } from "./ModuleOverrideSection";
-import { ImageProviderSection } from "./ImageProviderSection";
+import { ImageProviderSection, VideoProviderSection } from "./ImageProviderSection";
 import { SpeechProviderSection } from "./SpeechProviderSection";
 import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
@@ -183,9 +183,9 @@ interface ProvidersSectionProps {
  *   can still pick a knowledge/workflow provider from the system pool, just
  *   can't add a custom one.
  * - media category: always shown in pro so the user can see and switch between
- *   admin-provisioned system image providers. When `allowMedia=false` the
- *   ImageProviderSection renders read-only (no add/edit/delete buttons) and
- *   only system-origin providers are listed.
+ *   admin-provisioned system media providers. When `allowMedia=false` the
+ *   media sections render read-only (no add/edit/delete buttons) and only
+ *   system-origin providers are listed.
  */
 function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
   const cards: Array<{ key: string; node: React.ReactNode }> = [];
@@ -193,6 +193,7 @@ function ProvidersSection({ allowChat, allowMedia }: ProvidersSectionProps) {
   cards.push({ key: 'chat', node: <ChatProvidersCard readOnly={!allowChat} /> });
   cards.push({ key: 'text-modules', node: <ModuleOverrideSection readOnly={!allowChat} /> });
   cards.push({ key: 'image', node: <ImageProviderSection readOnly={!allowMedia} /> });
+  cards.push({ key: 'video', node: <VideoProviderSection readOnly={!allowMedia} /> });
   cards.push({ key: 'speech', node: <SpeechProviderSection /> });
 
   return (

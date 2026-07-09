@@ -327,10 +327,37 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
   },
 ];
 
+/* ── 视频生成 预设 ────────────────────────────────────── */
+
+const TOAPIS_VIDEO_MODELS: ProviderModelOption[] = [
+  { value: 'wan2.6-flash', label: 'Wan 2.6 Flash（图生视频 / 参考视频）' },
+  { value: 'wan2.6', label: 'Wan 2.6（文生视频 / 图生视频）' },
+  { value: 'gemini_omni_flash', label: 'Gemini Omni Flash（文生视频）' },
+];
+
+const VIDEO_GEN_PRESETS: ProviderPreset[] = [
+  {
+    id: 'toapis-wan-video',
+    name: 'Wan / Gemini 视频生成（ToAPIs）',
+    description: 'ToAPIs 异步视频网关，支持 wan2.6-flash、wan2.6 与 Gemini Omni Flash。Lumos 会提交任务、轮询状态并把 mp4 下载到素材库。',
+    provider_type: 'toapis-video',
+    api_protocol: 'openai-compatible',
+    capabilities: ['video-gen'],
+    provider_origin: 'preset',
+    auth_mode: 'api_key',
+    base_url: 'https://toapis.com',
+    notes: '使用 ToAPIs Bearer Token。wan2.6-flash 官方接口需要参考图或参考视频；纯文生视频请在模型列表选择 wan2.6 / gemini_omni_flash。',
+    tags: ['视频', '补充能力', '异步任务'],
+    supported_modules: ['video'],
+    default_models: TOAPIS_VIDEO_MODELS,
+  },
+];
+
 /* ── 合并导出 ─────────────────────────────────────────── */
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   ...AGENT_CHAT_PRESETS,
   ...TEXT_GEN_PRESETS,
   ...IMAGE_GEN_PRESETS,
+  ...VIDEO_GEN_PRESETS,
 ];

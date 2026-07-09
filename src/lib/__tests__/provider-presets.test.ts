@@ -26,4 +26,13 @@ describe('provider-presets', () => {
 
     expect(presetIds).toContain('toapis-nano-banana2');
   });
+
+  test('video module exposes ToAPIs wan video preset', () => {
+    const presetIds = listProviderPresets({
+      capability: 'video-gen',
+      moduleKey: 'video',
+    }).map((preset) => preset.id);
+
+    expect(presetIds).toContain('toapis-wan-video');
+  });
 });

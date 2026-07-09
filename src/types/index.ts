@@ -323,7 +323,7 @@ export interface ApiProvider {
 }
 
 export type ProviderApiProtocol = 'anthropic-messages' | 'openai-compatible';
-export type ProviderCapability = 'agent-chat' | 'text-gen' | 'image-gen' | 'embedding' | 'speech';
+export type ProviderCapability = 'agent-chat' | 'text-gen' | 'image-gen' | 'video-gen' | 'embedding' | 'speech';
 export type ProviderOrigin = 'system' | 'preset' | 'custom';
 export type ProviderAuthMode = 'api_key' | 'local_auth';
 
@@ -338,6 +338,8 @@ export interface ProviderModelOption {
   output_price_per_mtok?: number;
   /** 可选展示单价（每张生成图片消耗的额度单位，500000 = ¥1）。仅图片模型有。 */
   price_per_image?: number;
+  /** 可选展示单价（每秒生成视频消耗的额度单位，500000 = ¥1）。仅视频模型有。 */
+  price_per_second?: number;
 }
 
 export interface ProviderModelGroup {
@@ -400,7 +402,7 @@ export interface ProviderResponse {
   provider: ApiProvider;
 }
 
-export type ProviderPresetModule = 'chat' | 'knowledge' | 'agent' | 'image';
+export type ProviderPresetModule = 'chat' | 'knowledge' | 'agent' | 'image' | 'video';
 
 export interface ProviderPreset {
   id: string;

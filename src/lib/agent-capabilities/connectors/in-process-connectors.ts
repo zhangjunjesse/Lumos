@@ -19,7 +19,7 @@ import {
 import { createWorkflowMcpServer } from '@/lib/tools/workflow-mcp-server';
 import { createEcommerceAssistantMcpServer } from '@/lib/tools/ecommerce-assistant-mcp-server';
 import { createEtsyForgeMcpServer, ETSY_FORGE_MCP_SYSTEM_HINT } from '@/lib/tools/etsy-forge-mcp-server';
-import { IMAGE_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
+import { MEDIA_GEN_IN_PROCESS_HINT } from '@/lib/tools/image-gen-hints';
 import {
   createChatKnowledgeMcpServer,
   CHAT_KNOWLEDGE_MCP_SYSTEM_HINT,
@@ -49,7 +49,7 @@ const lumosImageConnector: ConnectorDefinition = {
   resolve: (ctx) => ({
     inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId),
   }),
-  buildHint: () => IMAGE_GEN_IN_PROCESS_HINT,
+  buildHint: () => MEDIA_GEN_IN_PROCESS_HINT,
 };
 
 /** 知识库（读类）——条件为结构事实，与 permissionMode 无关。 */

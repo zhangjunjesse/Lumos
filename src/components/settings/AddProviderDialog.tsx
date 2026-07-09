@@ -40,6 +40,8 @@ function getCapabilityLabel(capability: ProviderCapability): string {
       return '文本处理';
     case 'image-gen':
       return '图片生成';
+    case 'video-gen':
+      return '视频生成';
     case 'embedding':
       return '文本嵌入';
     default:
@@ -212,6 +214,8 @@ export function AddProviderDialog({
       ? '这里展示适用于知识库的服务模板。'
     : requiredCapability === 'image-gen'
       ? '这里展示适用于图片生成的服务模板。'
+    : requiredCapability === 'video-gen'
+      ? '这里展示适用于视频生成的服务模板。'
       : description;
 
   return (

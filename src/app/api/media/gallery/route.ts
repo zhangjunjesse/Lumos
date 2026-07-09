@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 
 interface DbRow {
   id: string;
+  type: string;
   prompt: string;
   model: string;
   aspect_ratio: string;
@@ -19,15 +20,28 @@ interface DbRow {
   [key: string]: unknown;
 }
 
+function inferMimeType(filePath: string, type: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'webm') return 'video/webm';
+  return type === 'video' ? 'video/mp4' : 'image/png';
+}
+
 function mapRow(row: DbRow) {
-  // Build images array from local_path
+  const mediaType = row.type === 'video' ? 'video' : 'image';
   const images: Array<{ mimeType: string; localPath: string }> = [];
+  const videos: Array<{ mimeType: string; localPath: string }> = [];
   if (row.local_path) {
-    const ext = row.local_path.split('.').pop()?.toLowerCase();
-    const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-      : ext === 'webp' ? 'image/webp'
-      : 'image/png';
-    images.push({ mimeType, localPath: row.local_path });
+    const item = { mimeType: inferMimeType(row.local_path, mediaType), localPath: row.local_path };
+    if (mediaType === 'video') {
+      videos.push(item);
+    } else {
+      images.push(item);
+    }
   }
 
   // Parse tags JSON string to array
@@ -40,10 +54,14 @@ function mapRow(row: DbRow) {
 
   // Parse reference images from metadata
   let referenceImages: Array<{ mimeType: string; localPath: string }> | undefined;
+  let referenceVideos: Array<{ mimeType: string; localPath: string }> | undefined;
   try {
     const meta = JSON.parse(row.metadata || '{}');
     if (Array.isArray(meta.referenceImages) && meta.referenceImages.length > 0) {
       referenceImages = meta.referenceImages;
+    }
+    if (Array.isArray(meta.referenceVideos) && meta.referenceVideos.length > 0) {
+      referenceVideos = meta.referenceVideos;
     }
   } catch {
     // ignore
@@ -51,8 +69,10 @@ function mapRow(row: DbRow) {
 
   return {
     id: row.id,
+    type: mediaType,
     prompt: row.prompt,
     images,
+    videos,
     model: row.model,
     aspectRatio: row.aspect_ratio,
     imageSize: row.image_size,
@@ -61,6 +81,7 @@ function mapRow(row: DbRow) {
     created_at: row.created_at,
     session_id: row.session_id || undefined,
     referenceImages,
+    referenceVideos,
   };
 }
 

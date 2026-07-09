@@ -33,6 +33,7 @@ export const CUSTOM_PROVIDER_LABELS: Record<CustomProviderCapability, string> = 
 const CUSTOM_PROVIDER_CAP_FOR: Partial<Record<ProviderCapability, CustomProviderCapability>> = {
   'agent-chat': 'chat',
   'image-gen': 'media',
+  'video-gen': 'media',
 };
 
 export function customProviderCapFor(capability: ProviderCapability): CustomProviderCapability | undefined {

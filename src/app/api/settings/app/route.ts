@@ -48,9 +48,11 @@ const ALLOWED_KEYS = [
   'provider_override:knowledge',
   'provider_override:agent',
   'provider_override:image',
+  'provider_override:video',
   'model_override:knowledge',
   'model_override:agent',
   'model_override:image',
+  'model_override:video',
   'claude_project_settings_enabled',
   'main_agent_browser_context',
   'locale',
@@ -82,6 +84,11 @@ const PROVIDER_SETTING_RULES: Partial<Record<string, {
     moduleKey: 'image',
     capability: 'image-gen',
     label: '图片模块服务商',
+  },
+  'provider_override:video': {
+    moduleKey: 'video',
+    capability: 'video-gen',
+    label: '视频模块服务商',
   },
   'provider_override:agent': {
     moduleKey: 'agent',

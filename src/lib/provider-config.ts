@@ -14,6 +14,7 @@ const VALID_PROVIDER_CAPABILITIES = new Set<ProviderCapability>([
   'agent-chat',
   'text-gen',
   'image-gen',
+  'video-gen',
   'embedding',
   'speech',
 ]);
@@ -41,6 +42,7 @@ export function getDefaultApiProtocolForProviderType(providerType?: string | nul
     case 'toapis-image':
     case 'volcengine':
     case 'dashscope':
+    case 'toapis-video':
       return 'openai-compatible';
     default:
       return 'anthropic-messages';
@@ -54,6 +56,8 @@ export function getDefaultCapabilitiesForProviderType(providerType?: string | nu
     case 'volcengine':
     case 'dashscope':
       return ['image-gen'];
+    case 'toapis-video':
+      return ['video-gen'];
     case 'volcengine-asr-v2':
       return ['speech'];
     default:

@@ -16,6 +16,8 @@ import {
 export type {
   CloudImageProviderConfig,
   CloudImageProviderModel,
+  CloudVideoProviderConfig,
+  CloudVideoProviderModel,
   CloudChatProviderConfig,
   CloudChatProviderModel,
   CloudSpeechProviderConfig,
@@ -25,9 +27,11 @@ export {
   ensureDefaultProviderFallback,
   provisionCloudProvider,
   provisionImageProviders,
+  provisionVideoProviders,
   provisionChatProviders,
   provisionSpeechProviders,
   getRemoteImageProviderId,
+  getRemoteVideoProviderId,
   getRemoteChatProviderId,
   getRemoteSpeechProviderId,
 } from './cloud/provisioner';

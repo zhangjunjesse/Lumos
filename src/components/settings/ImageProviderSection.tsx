@@ -30,9 +30,11 @@ import {
 import { ImageProviderDetail } from './ImageProviderDetail';
 import {
   IMAGE_MODULE_CONFIG,
+  VIDEO_MODULE_CONFIG,
   PLACEHOLDER_VALUE,
   providerEligibleForModule,
   parseModelCatalog,
+  type ModuleConfig,
   type ProviderOption,
 } from './module-override-config';
 
@@ -41,6 +43,7 @@ interface ImageProviderSectionProps {
    *  dropdown to `provider_origin='system'` rows. User can still switch
    *  between admin-provisioned providers. */
   readOnly?: boolean;
+  config?: ModuleConfig;
 }
 
 /**
@@ -49,7 +52,10 @@ interface ImageProviderSectionProps {
  * bound image provider) is unique to this category and it is gated by the
  * `media` custom-provider flag independently of the text modules.
  */
-export function ImageProviderSection({ readOnly = false }: ImageProviderSectionProps = {}) {
+export function ImageProviderSection({
+  readOnly = false,
+  config = IMAGE_MODULE_CONFIG,
+}: ImageProviderSectionProps = {}) {
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [providerId, setProviderId] = useState('');
   const [modelId, setModelId] = useState('');
@@ -64,8 +70,6 @@ export function ImageProviderSection({ readOnly = false }: ImageProviderSectionP
   const [deleteTargetName, setDeleteTargetName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-
-  const config = IMAGE_MODULE_CONFIG;
 
   const fetchData = useCallback(async () => {
     try {
@@ -306,7 +310,7 @@ export function ImageProviderSection({ readOnly = false }: ImageProviderSectionP
           )}
           {eligible.length === 0 ? (
             <p className="text-xs text-amber-700 dark:text-amber-400">
-              {readOnly ? '管理员尚未配置图片生成服务。' : `还没有可用的服务。${config.emptyHint}`}
+              {readOnly ? `管理员尚未配置${config.label}服务。` : `还没有可用的服务。${config.emptyHint}`}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">{config.emptyHint}</p>
@@ -316,6 +320,7 @@ export function ImageProviderSection({ readOnly = false }: ImageProviderSectionP
             <ImageProviderDetail
               provider={currentProvider}
               readOnly={readOnly}
+              priceKind={config.capability === 'video-gen' ? 'second' : 'image'}
               onEdit={() => { void openEditDialog(currentProvider.id); }}
               onDelete={() => {
                 setDeleteTargetId(currentProvider.id);
@@ -376,4 +381,8 @@ export function ImageProviderSection({ readOnly = false }: ImageProviderSectionP
       </AlertDialog>
     </>
   );
+}
+
+export function VideoProviderSection({ readOnly = false }: Pick<ImageProviderSectionProps, 'readOnly'> = {}) {
+  return <ImageProviderSection readOnly={readOnly} config={VIDEO_MODULE_CONFIG} />;
 }
