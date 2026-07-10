@@ -26,12 +26,12 @@ const inputSchema = {
     .describe('Optional video model id. Defaults to Settings → Providers → Video Generation model override or provider default.'),
   mode: z.enum(['text-to-video', 'image-to-video', 'reference-to-video', 'video-edit']).optional()
     .describe('Video flow. Omit to infer from references: image refs → image-to-video, video refs → video-edit, no refs → text-to-video.'),
-  aspect_ratio: z.enum(['16:9', '9:16', '1:1', '4:3', '3:4']).optional()
-    .describe('Video aspect ratio. Defaults to provider setting or 16:9. wan2.6 supports all listed values; gemini_omni_flash only 16:9/9:16; wan2.6-flash derives it from the reference and ignores this.'),
-  resolution: z.enum(['720P', '1080P']).optional()
-    .describe('Output resolution. Defaults to provider setting or 720P.'),
-  duration: z.coerce.number().int().refine((value) => [4, 5, 6, 10, 15].includes(value), 'duration must be one of 4/5/6/10/15').optional()
-    .describe('Output duration in seconds. Valid values depend on the model: wan2.6 / wan2.6-flash accept 5/10/15; gemini_omni_flash accepts 4/6/10.'),
+  aspect_ratio: z.enum(['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '3:2', '2:3']).optional()
+    .describe('Video aspect ratio. Defaults to provider setting or 16:9. Supported values depend on the model — an unsupported value returns an error listing the valid ones. Some models (wan2.6-flash, MiniMax-Hailuo) derive it from the reference/resolution and ignore this.'),
+  resolution: z.enum(['480P', '512P', '540P', '720P', '768P', '1080P', '4K']).optional()
+    .describe('Output resolution (case-insensitive). Defaults to provider setting or the model default (usually 720P). Supported tiers depend on the model — an unsupported value returns an error listing the valid ones.'),
+  duration: z.coerce.number().int().min(1).max(16).optional()
+    .describe('Output duration in seconds (1-16). Valid values depend on the model, e.g. wan2.6 5/10/15, sora-2 4/8/12, gemini_omni_flash 4/6/10, kling 3-15 — an unsupported value returns an error listing the valid ones.'),
   reference_image_paths: z.preprocess(coerceStringArray, z.array(z.string()).optional())
     .describe('Local reference image paths for image-to-video or reference-to-video. Pass every absolute image path here.'),
   reference_video_paths: z.preprocess(coerceStringArray, z.array(z.string()).optional())
@@ -46,8 +46,8 @@ type VideoGenArgs = {
   prompt: string;
   model?: string;
   mode?: VideoMode;
-  aspect_ratio?: '16:9' | '9:16' | '1:1' | '4:3' | '3:4';
-  resolution?: '720P' | '1080P';
+  aspect_ratio?: '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '3:2' | '2:3';
+  resolution?: '480P' | '512P' | '540P' | '720P' | '768P' | '1080P' | '4K';
   duration?: number;
   reference_image_paths?: string[];
   reference_video_paths?: string[];

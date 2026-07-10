@@ -30,13 +30,13 @@ export function getVideoProviderUiConfig(providerType: string): VideoProviderUiC
           { value: 'video-edit', label: '视频编辑' },
         ],
         supportedAspectRatios: union.aspectRatios,
-        supportedResolutions: ['720P', '1080P'],
+        supportedResolutions: union.resolutions,
         supportedDurations: union.durations,
         maxReferenceImages: union.maxReferenceImages,
         maxReferenceVideos: 1,
         hint: 'ToAPIs 视频任务会先提交异步任务，再轮询结果并下载到本地素材库。'
-          + '时长按模型不同：wan2.6 / wan2.6-flash 支持 5/10/15 秒，gemini_omni_flash 支持 4/6/10 秒。'
-          + 'wan2.6-flash 需要参考图或参考视频（二选一），纯文生视频请改用 wan2.6 / gemini_omni_flash。',
+          + '时长/宽高比/分辨率的合法值随模型不同（如 wan2.6 支持 5/10/15 秒、sora-2 支持 4/8/12 秒），'
+          + '传了不支持的值会返回列出合法值的报错。wan2.6-flash 等模型需要参考素材，纯文生视频请选支持的模型。',
       }
     }
     default:

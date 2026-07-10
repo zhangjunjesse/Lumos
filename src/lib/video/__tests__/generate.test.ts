@@ -119,15 +119,14 @@ describe('generateVideo ToAPIs integration', () => {
           Authorization: 'Bearer toapis-key',
           'Content-Type': 'application/json',
         }),
+        // 无参考素材时不带 metadata —— 网关会把 metadata 合并进模型参数,多余字段会踩到
+        // 某些模型的同名参数(真机踩过 kling 的 mode)。
         body: JSON.stringify({
           model: 'wan2.6',
           prompt: 'A cinematic city sunrise with moving traffic.',
           aspect_ratio: '16:9',
           resolution: '720p',
           duration: 10,
-          metadata: {
-            mode: 'text-to-video',
-          },
         }),
       }),
     )
@@ -254,6 +253,103 @@ describe('generateVideo ToAPIs integration', () => {
       metadata: Record<string, unknown>
     }
     expect(submitBody.metadata.reference_urls).toEqual(['https://example.com/source.mp4'])
+  })
+
+  // 各家族请求体形状按官方文档锁定 — 字段名/投放位置错一个,线上就 100% 提交失败。
+  describe('per-family request body shapes', () => {
+    async function captureSubmitBody(params: Parameters<typeof generateVideo>[0], catalogModel: string) {
+      mockResolveProvider.mockReturnValue(provider({
+        model_catalog: JSON.stringify([{ value: catalogModel, label: catalogModel }]),
+      }))
+      const fetchMock = jest.fn()
+      global.fetch = fetchMock as unknown as typeof fetch
+      fetchMock
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: 't', status: 'queued' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          id: 't', status: 'completed', result: { url: 'https://files.toapis.com/out.mp4' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(Buffer.from('mp4'), {
+          status: 200, headers: { 'Content-Type': 'video/mp4' },
+        }))
+      const promise = generateVideo(params)
+      await jest.advanceTimersByTimeAsync(3000)
+      await promise
+      return JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)) as Record<string, unknown>
+    }
+
+    test('grok: duration 传字符串、参考图字段是 images、分辨率小写', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'grok-video-3', duration: 10, resolution: '480P',
+        referenceImageUrls: ['https://example.com/a.png'],
+      }, 'grok-video-3')
+      expect(body.duration).toBe('10')
+      expect(body.images).toEqual(['https://example.com/a.png'])
+      expect(body.resolution).toBe('480p')
+    })
+
+    test('kling: 参考图字段是 reference_images、分辨率映射为 mode std/pro', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'kling-v2-6', duration: 5, resolution: '1080P',
+        referenceImageUrls: ['https://example.com/a.png'],
+      }, 'kling-v2-6')
+      expect(body.reference_images).toEqual(['https://example.com/a.png'])
+      expect(body.mode).toBe('pro')
+      expect(body).not.toHaveProperty('resolution')
+    })
+
+    test('seedance-2: 参考图/参考视频走角色数组协议', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'seedance-2', duration: 5,
+        referenceImageUrls: ['https://example.com/a.png'],
+        referenceVideoUrls: ['https://example.com/b.mp4'],
+      }, 'seedance-2')
+      expect(body.image_with_roles).toEqual([{ url: 'https://example.com/a.png', role: 'reference_image' }])
+      expect(body.video_with_roles).toEqual([{ url: 'https://example.com/b.mp4', role: 'reference_video' }])
+    })
+
+    test('豆包 1.5 Pro: 首尾帧角色按序分配、resolution 落在 metadata', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'doubao-seedance-1-5-pro', duration: 5, resolution: '720P',
+        referenceImageUrls: ['https://example.com/first.png', 'https://example.com/last.png'],
+      }, 'doubao-seedance-1-5-pro')
+      expect(body.image_with_roles).toEqual([
+        { url: 'https://example.com/first.png', role: 'first_frame' },
+        { url: 'https://example.com/last.png', role: 'last_frame' },
+      ])
+      expect((body.metadata as Record<string, unknown>).resolution).toBe('720p')
+      expect(body).not.toHaveProperty('resolution')
+    })
+
+    test('happyhorse: 请求体带 action,视频编辑传顶层 url', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'happyhorse-1.1', duration: 5,
+        referenceVideoUrls: ['https://example.com/src.mp4'],
+      }, 'happyhorse-1.1')
+      expect(body.action).toBe('video-edit')
+      expect(body.url).toBe('https://example.com/src.mp4')
+    })
+
+    test('海螺: 不发送 aspect_ratio,未指定分辨率时按档案兜底(768P 而非 720P)', async () => {
+      const body = await captureSubmitBody({
+        prompt: 'p', model: 'MiniMax-Hailuo-02', duration: 6, aspectRatio: '16:9',
+      }, 'MiniMax-Hailuo-02')
+      expect(body).not.toHaveProperty('aspect_ratio')
+      expect(body.resolution).toBe('768P')
+    })
+
+    test('kling omni: 参考图协议未接入,传参考图直接明确报错', async () => {
+      const fetchMock = jest.fn()
+      global.fetch = fetchMock as unknown as typeof fetch
+      mockResolveProvider.mockReturnValue(provider({
+        model_catalog: JSON.stringify([{ value: 'kling-v3-omni', label: 'omni' }]),
+      }))
+      await expect(generateVideo({
+        prompt: 'p', model: 'kling-v3-omni', duration: 5,
+        referenceImageUrls: ['https://example.com/a.png'],
+      })).rejects.toMatchObject<Partial<VideoGenError>>({ code: 'invalid_params' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
   })
 
   test('rejects wan2.6-flash pure text-to-video before provider submission', async () => {

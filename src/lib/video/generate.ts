@@ -390,7 +390,7 @@ function inferMode(params: GenerateVideoParams, hasImageRefs: boolean, hasVideoR
 }
 
 // 请求体字段名和合法值以 docs.toapis.com 各模型 generation 文档为准(单一真源: model-profiles.ts)。
-// 参考图走顶层 image_urls,参考视频走 metadata.reference_urls;aspect_ratio/resolution 按模型档案裁剪。
+// 参考图/参考视频/分辨率的字段名与投放位置随模型家族不同,全部由档案驱动,不在这里写死。
 function buildRequestBody(params: {
   prompt: string
   model: string
@@ -403,23 +403,52 @@ function buildRequestBody(params: {
   videoUrls: string[]
   providerOptions?: Record<string, unknown>
 }): Record<string, unknown> {
+  const { profile } = params
+  const resolution = resolveResolutionParam(profile, params.resolution)
+  // 注意:ToAPIs 网关会把 metadata 合并进模型参数(真机验证:metadata.mode 覆盖了
+  // kling 的 mode=std/pro),所以 metadata 里只放官方文档定义的字段,不放诊断信息。
   const metadata = {
-    mode: params.mode,
-    ...(params.videoUrls.length ? { reference_urls: params.videoUrls } : {}),
+    ...(resolution?.inMetadata ? { [resolution.field]: resolution.value } : {}),
+    ...(profile.videoRef === 'wan-metadata' && params.videoUrls.length
+      ? { reference_urls: params.videoUrls }
+      : {}),
     ...(params.providerOptions?.metadata && typeof params.providerOptions.metadata === 'object'
       ? params.providerOptions.metadata as Record<string, unknown>
       : {}),
   }
-  const resolution = resolveResolutionParam(params.profile, params.resolution)
-  return {
+
+  const body: Record<string, unknown> = {
     model: params.model,
     prompt: params.prompt,
-    ...(params.profile.aspectRatios.includes(params.aspectRatio) ? { aspect_ratio: params.aspectRatio } : {}),
-    ...(resolution ? { resolution } : {}),
-    duration: params.duration,
-    ...(params.imageUrls.length ? { image_urls: params.imageUrls } : {}),
-    metadata,
+    // happyhorse 用 action 区分工作流;image-to-video 归入其"参考图生视频"。
+    ...(profile.actionField
+      ? { action: params.mode === 'image-to-video' ? 'reference-to-video' : params.mode }
+      : {}),
+    ...(profile.aspectRatios.includes(params.aspectRatio) ? { aspect_ratio: params.aspectRatio } : {}),
+    ...(resolution && !resolution.inMetadata ? { [resolution.field]: resolution.value } : {}),
+    duration: profile.durationAsString ? String(params.duration) : params.duration,
   }
+
+  if (params.imageUrls.length && profile.imageRef) {
+    if (profile.imageRef.field === 'image_with_roles') {
+      const roles = profile.imageRef.roles ?? ['reference_image']
+      body.image_with_roles = params.imageUrls.map((url, index) => ({
+        url,
+        role: roles[Math.min(index, roles.length - 1)],
+      }))
+    } else {
+      body[profile.imageRef.field] = params.imageUrls
+    }
+  }
+  if (params.videoUrls.length) {
+    if (profile.videoRef === 'video_with_roles') {
+      body.video_with_roles = params.videoUrls.map(url => ({ url, role: 'reference_video' }))
+    } else if (profile.videoRef === 'happyhorse-url') {
+      body.url = params.videoUrls[0]
+    }
+  }
+  if (Object.keys(metadata).length > 0) body.metadata = metadata
+  return body
 }
 
 function assertModelInputsSupported(params: {
@@ -429,12 +458,14 @@ function assertModelInputsSupported(params: {
   imageCount: number
   videoCount: number
   duration: number
+  aspectRatio: string
+  requestedResolution: string
 }): void {
-  const { model, profile, mode, imageCount, videoCount, duration } = params
+  const { model, profile, mode, imageCount, videoCount, duration, aspectRatio, requestedResolution } = params
   if (!profile.supportsTextToVideo && mode === 'text-to-video' && imageCount === 0 && videoCount === 0) {
     throw new VideoGenError(
       'invalid_params',
-      `${model} 官方视频接口暂不支持纯文生视频。请添加参考图/参考视频，或在“设置 → 服务商 → 视频生成”里选择支持文生视频的模型（如 wan2.6 / gemini_omni_flash）。`,
+      `${model} 官方视频接口暂不支持纯文生视频。请添加参考图/参考视频，或在“设置 → 服务商 → 视频生成”里选择支持文生视频的模型（如 wan2.6 / sora-2-official / gemini_omni_flash）。`,
       false,
     )
   }
@@ -442,14 +473,35 @@ function assertModelInputsSupported(params: {
   if (!durationCheck.ok) {
     throw new VideoGenError('invalid_params', durationCheck.error, false)
   }
-  if (imageCount > profile.maxReferenceImages) {
+  if (profile.aspectRatios.length > 0 && aspectRatio && !profile.aspectRatios.includes(aspectRatio)) {
     throw new VideoGenError(
       'invalid_params',
-      `模型 ${model} 最多接受 ${profile.maxReferenceImages} 张参考图,当前传入 ${imageCount} 张。`,
+      `模型 ${model} 不支持宽高比 ${aspectRatio},合法值: ${profile.aspectRatios.join('/')}。`,
       false,
     )
   }
-  if (videoCount > 0 && !profile.supportsVideoRefs) {
+  if (requestedResolution && profile.resolution && !resolveResolutionParam(profile, requestedResolution)) {
+    throw new VideoGenError(
+      'invalid_params',
+      `模型 ${model} 不支持分辨率 ${requestedResolution},合法值: ${profile.resolution.values.join('/')}。`,
+      false,
+    )
+  }
+  if (imageCount > 0 && !profile.imageRef) {
+    throw new VideoGenError(
+      'invalid_params',
+      `模型 ${model} 的参考图协议暂未接入,请改用支持参考图的模型(如 wan2.6 / kling-v3 / seedance-2)。`,
+      false,
+    )
+  }
+  if (profile.imageRef && imageCount > profile.imageRef.max) {
+    throw new VideoGenError(
+      'invalid_params',
+      `模型 ${model} 最多接受 ${profile.imageRef.max} 张参考图,当前传入 ${imageCount} 张。`,
+      false,
+    )
+  }
+  if (videoCount > 0 && !profile.videoRef) {
     throw new VideoGenError('invalid_params', `模型 ${model} 不支持参考视频输入。`, false)
   }
   if (profile.imageAndVideoRefsExclusive && imageCount > 0 && videoCount > 0) {
@@ -459,6 +511,16 @@ function assertModelInputsSupported(params: {
       false,
     )
   }
+}
+
+/** 无显式指定时的分辨率兜底:优先 720p,其次 768p(海螺档位),否则档案第一个合法值。 */
+function preferredResolution(profile: VideoModelProfile): string {
+  if (!profile.resolution) return ''
+  const values = profile.resolution.values
+  return values.find(v => v.toLowerCase() === '720p')
+    ?? values.find(v => v.toLowerCase() === '768p')
+    ?? values[0]
+    ?? ''
 }
 
 async function runToApisVideo(
@@ -496,7 +558,10 @@ async function runToApisVideo(
   const mode = inferMode({ ...params, mode: params.mode || defaults.mode }, imageInputs.length > 0, videoInputs.length > 0)
   const profile = getVideoModelProfile(model)
   const aspectRatio = params.aspectRatio || defaults.aspectRatio || '16:9'
-  const resolution = params.resolution || defaults.resolution || '720P'
+  // 显式指定的分辨率(用户/provider 默认)必须匹配模型档案,否则报错;
+  // 没指定就按档案兜底,避免"默认 720P"砸到只有 768P 档位的模型(如海螺)。
+  const requestedResolution = params.resolution || defaults.resolution || ''
+  const resolution = requestedResolution || preferredResolution(profile)
   const duration = params.duration || defaults.duration || profile.defaultDuration
   // 上传参考素材前先做全部本地校验,避免"素材传完了才发现参数非法"白耗流量。
   assertModelInputsSupported({
@@ -506,6 +571,8 @@ async function runToApisVideo(
     imageCount: imageInputs.length,
     videoCount: videoInputs.length,
     duration,
+    aspectRatio,
+    requestedResolution,
   })
 
   params.onProgress?.({ phase: 'submitting', percent: 0 })
