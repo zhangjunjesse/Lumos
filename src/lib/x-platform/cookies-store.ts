@@ -65,6 +65,31 @@ export function clearCookies(): void {
   if (existsSync(file)) rmSync(file, { force: true });
 }
 
+/**
+ * 只更新 meta(用户名 / 昵称),保留现有 cookies 和 savedAt 不变。
+ * 用于「设置我的 X 用户名」——不重新登录、不刷新 cookie,因此 scraper
+ * 单例的 cookie 指纹不变、缓存不失效。未登录时抛错。
+ */
+export function updateStoredMeta(meta: { screenName?: string; name?: string }): XStoredCookies {
+  const stored = readCookies();
+  if (!stored) throw new Error('尚未登录 X,无法保存用户名');
+  const nextMeta: { screenName?: string; name?: string } = { ...stored.meta };
+  if (meta.screenName !== undefined) {
+    const s = meta.screenName.trim().replace(/^@/, '');
+    if (s) nextMeta.screenName = s;
+    else delete nextMeta.screenName;
+  }
+  if (meta.name !== undefined) {
+    const n = meta.name.trim();
+    if (n) nextMeta.name = n;
+    else delete nextMeta.name;
+  }
+  const payload: XStoredCookies = { cookies: stored.cookies, savedAt: stored.savedAt };
+  if (nextMeta.screenName || nextMeta.name) payload.meta = nextMeta;
+  writeFileSync(cookiesFile(), JSON.stringify(payload, null, 2), { mode: 0o600 });
+  return payload;
+}
+
 export function hasRequiredCookies(cookies: Record<string, string> | undefined | null): boolean {
   if (!cookies) return false;
   return REQUIRED_NAMES.every((name) => Boolean(cookies[name]));

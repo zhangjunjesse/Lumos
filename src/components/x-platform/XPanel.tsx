@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useXAuth } from './use-x-auth';
 import { XSearchSection } from './XSearchSection';
 import { XCookiePasteForm } from './XCookiePasteForm';
+import { XMentionsSettings } from './XMentionsSettings';
 
 /**
  * X (Twitter) 服务面板。当前只有 read 路径(搜索 / 看用户推文 / 看 thread):
@@ -18,7 +19,7 @@ import { XCookiePasteForm } from './XCookiePasteForm';
  * 用 X 官方 API v2 free tier 或直接到 x.com 网页。
  */
 export function XPanel() {
-  const { status, statusError, busy, actionMessage, login, logout } = useXAuth();
+  const { status, statusError, busy, actionMessage, refresh, login, logout } = useXAuth();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{
@@ -155,6 +156,9 @@ export function XPanel() {
         )}
       </section>
 
+      {loggedIn && (
+        <XMentionsSettings initialScreenName={status.screenName} onSaved={() => void refresh()} />
+      )}
       {loggedIn && <XSearchSection />}
     </div>
   );

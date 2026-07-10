@@ -24,6 +24,7 @@ import {
 } from './cookies-store';
 import { XAuthExpiredError } from './auth-error';
 import { ensureScraper, resetScraperCache } from './scraper';
+import { setXMcpEnabled } from './mcp-toggle';
 import type { XAuthStatus } from './types';
 
 const BRIDGE_CONTEXT_ID = 'embedded:default';
@@ -74,6 +75,8 @@ export async function loginViaBuiltinBrowser(opts: StartLoginOptions = {}): Prom
     const cookies = await waitForLoginCookies(config, timeoutSecs);
     writeCookies(cookies);
     resetScraperCache();
+    // 登录成功 → 启用 x-platform MCP,让对话里能用 x_search / x_my_mentions 等工具。
+    setXMcpEnabled(true);
     // Mirror the cookie-string login path: push the new cookie set to
     // DeepSearch right away. The lazy reconcile-on-next-getAuthStatus path
     // bails when `deepSearchReconciled` is already true (e.g. a previous
@@ -180,6 +183,8 @@ export async function loginViaCookieString(
   }
   writeCookies(cookies, meta);
   resetScraperCache();
+  // 登录成功 → 启用 x-platform MCP,让对话里能用 x_search / x_my_mentions 等工具。
+  setXMcpEnabled(true);
   // 同步给 DeepSearch:saveDeepSearchSite 把原始 cookie 字符串写到
   // deepsearch_sites.cookie_value, 然后 probe 时会 import 到 BrowserManager
   // 再扫 → 标记 connected。
@@ -214,6 +219,19 @@ async function syncToDeepSearch(rawCookieString: string): Promise<void> {
 
 // 进程启动后只做一次 DeepSearch reconcile,避免每次 status 都跑 probe。
 let deepSearchReconciled = false;
+
+// 已登录但 x-platform MCP 还没启用(历史登录 / 登录时还没接这段代码)的存量情况:
+// 进程内首次 getAuthStatus 补一次启用。setXMcpEnabled 幂等,gate 只为省下重复查询。
+let xMcpReconciled = false;
+function ensureXMcpEnabledOnce(): void {
+  if (xMcpReconciled) return;
+  xMcpReconciled = true;
+  try {
+    setXMcpEnabled(true);
+  } catch (err) {
+    console.warn('[x-auth] enable x-platform mcp failed:', err);
+  }
+}
 
 async function reconcileDeepSearchIfNeeded(rawForReconcile: () => string): Promise<void> {
   if (deepSearchReconciled) return;
@@ -265,6 +283,9 @@ export async function getAuthStatus(
     name: stored.meta?.name || '',
   };
 
+  // 已登录 → 确保 x-platform MCP 启用(覆盖历史已登录但 MCP 没开的存量用户)。
+  ensureXMcpEnabledOnce();
+
   // 进程启动后(或之前 paste 时同步代码还没写)首次 status,补一次 DeepSearch
   // sync。本机有 cookies 但 deepsearch_sites.cookie_value 空 → 自动写入并 probe。
   void reconcileDeepSearchIfNeeded(() => Object.entries(stored.cookies)
@@ -288,6 +309,9 @@ export async function getAuthStatus(
 export async function logout(): Promise<void> {
   clearCookies();
   resetScraperCache();
+  // 登出 → 关闭 x-platform MCP,避免未登录状态下工具报错污染 Agent 上下文。
+  setXMcpEnabled(false);
+  xMcpReconciled = false;
   // Reset the once-per-process gate so a subsequent login (especially via
   // the builtin browser path) re-runs reconcile and re-populates DeepSearch
   // with the new account's cookies. Without this, the gate stays true from

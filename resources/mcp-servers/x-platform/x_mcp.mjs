@@ -52,6 +52,19 @@ const TOOLS = [
       required: ['screen'],
     },
   },
+  {
+    name: 'x_my_mentions',
+    description:
+      '查看最近 @ 我的推文(谁在 X 上提到了当前登录用户),按时间倒序返回。' +
+      '需要用户先在 Lumos「服务 → X」面板设置自己的用户名;未设置时会返回提示,请让用户去设置。' +
+      '注意:只覆盖「提及」类的公开可见推文,点赞/转发/关注等其它通知不在范围内。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        count: { type: 'integer', description: '返回数量,1-50', default: 20 },
+      },
+    },
+  },
 ];
 
 async function fetchJson(url, init) {
@@ -83,6 +96,10 @@ async function callTool(name, args) {
       count: String(args.count ?? 20),
     });
     return await fetchJson(`${LUMOS_URL}/api/x/timeline?${params}`);
+  }
+  if (name === 'x_my_mentions') {
+    const params = new URLSearchParams({ count: String(args.count ?? 20) });
+    return await fetchJson(`${LUMOS_URL}/api/x/mentions?${params}`);
   }
   throw new Error(`unknown tool: ${name}`);
 }
