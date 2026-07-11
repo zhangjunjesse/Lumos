@@ -10,6 +10,7 @@
  * 幂等键 = runId:agent:cycleSeq:symbol:side:qty(稳定,重试自动去重;不用 Date.now)。
  */
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { placeOrder } from './mesh-order-gateway'
 import { writeBlackboard, readBlackboard, MARKET_SNAPSHOT_KEY } from './mesh-blackboard'
@@ -21,11 +22,6 @@ export interface MeshTradeToolContext {
   agentId: string
   cycleSeq: number
   trade: TradeContext
-}
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
 }
 
 export function createMeshTradeMcpServer(ctx: MeshTradeToolContext) {

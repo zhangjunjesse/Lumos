@@ -12,11 +12,7 @@ import {
   updateDepartment,
   type TeamDepartment,
 } from '@/lib/db/team-departments';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 function summarizeDept(d: TeamDepartment): Record<string, unknown> {
   return {

@@ -29,6 +29,17 @@ jest.mock('@/lib/platform', () => ({
   getExpandedPath: () => mockGetExpandedPath(),
 }))
 
+// 与 sdk-paths.ts 一致:SDK 0.3.x 的运行时是平台包里的原生二进制,不再是 cli.js。
+function expectedBundledSdkBinaryPath(): string {
+  return path.join(
+    process.cwd(),
+    'node_modules',
+    '@anthropic-ai',
+    `claude-agent-sdk-${process.platform}-${process.arch}`,
+    process.platform === 'win32' ? 'claude.exe' : 'claude',
+  )
+}
+
 describe('buildClaudeSdkRuntimeBootstrap', () => {
   const originalEnv = process.env
 
@@ -56,7 +67,7 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     mockGetProvider.mockReturnValue(undefined)
     existsSyncSpy.mockImplementation((value: fs.PathLike) => {
       const target = String(value)
-      return target === path.join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
+      return target === expectedBundledSdkBinaryPath()
     })
   })
 
@@ -110,9 +121,7 @@ describe('buildClaudeSdkRuntimeBootstrap', () => {
     expect(runtime.env.ANTHROPIC_BASE_URL).toBe('https://example.com/claude')
     expect(runtime.env.CUSTOM_FLAG).toBe('enabled')
     expect(runtime.settingSources).toEqual(['project'])
-    expect(runtime.pathToClaudeCodeExecutable).toBe(
-      path.join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
-    )
+    expect(runtime.pathToClaudeCodeExecutable).toBe(expectedBundledSdkBinaryPath())
   })
 
   test('uses system claude binary but does not silently restore shell auth env when no provider exists', () => {

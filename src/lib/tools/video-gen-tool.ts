@@ -9,11 +9,7 @@ import {
   refundVideoQuota,
   resolveVideoBillingTarget,
 } from './video-gen-billing';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const VIDEO_GEN_TOOL_NAME = 'generate_video';
 

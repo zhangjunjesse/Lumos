@@ -181,11 +181,15 @@ jobs:
         # (npm honors os/cpu fields). The dual-arch DMG needs both arches'
         # .node files in the standalone bundle so each arch's runtime can
         # require the matching package.
+        # claude-agent-sdk 的平台包是 Claude Code 原生二进制运行时,版本必须与主包
+        # 严格一致(afterPack 按 manifest checksum 校验),所以动态锁定主包版本。
         run: |
+          SDK_VERSION=$(node -p "require('./node_modules/@anthropic-ai/claude-agent-sdk/package.json').version")
           npm install --no-save --ignore-scripts --force \
             @node-rs/jieba-darwin-arm64 \
             @img/sharp-darwin-arm64 \
-            @esbuild/darwin-arm64
+            @esbuild/darwin-arm64 \
+            "@anthropic-ai/claude-agent-sdk-darwin-arm64@${SDK_VERSION}"
 
       - name: Download Node.js runtime for both archs
         run: |

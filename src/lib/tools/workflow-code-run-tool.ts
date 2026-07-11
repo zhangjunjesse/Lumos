@@ -7,11 +7,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
 import type { StepResult } from '@/lib/workflow/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_EXECUTION_MS = 60_000;
 const MAX_LOG_LINES = 200;

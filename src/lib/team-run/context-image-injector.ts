@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { VisionMediaType } from '@/lib/claude/vision-media'
 import type { StageExecutionPayloadV1 } from './runtime-contracts'
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'])
@@ -8,18 +9,19 @@ const MAX_SINGLE_BYTES = 5 * 1024 * 1024
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024
 const MAX_COUNT = 10
 
-const EXT_TO_MEDIA: Record<string, string> = {
+// 只映射 Anthropic vision 认的类型;.bmp 不在其中——之前标成 image/bmp 发出去
+// 必然被 API 拒,现在直接跳过不注入。
+const EXT_TO_MEDIA: Record<string, VisionMediaType> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
-  '.bmp': 'image/bmp',
 }
 
 export interface ContextImage {
   filePath: string
-  mediaType: string
+  mediaType: VisionMediaType
   base64: string
 }
 
@@ -121,11 +123,14 @@ export function collectContextImages(payload: StageExecutionPayloadV1): ContextI
       if (!stat.isFile() || stat.size > MAX_SINGLE_BYTES) continue
       if (totalBytes + stat.size > MAX_TOTAL_BYTES) continue
 
-      const data = fs.readFileSync(filePath)
       const ext = path.extname(filePath).toLowerCase()
+      const mediaType = EXT_TO_MEDIA[ext]
+      if (!mediaType) continue
+
+      const data = fs.readFileSync(filePath)
       images.push({
         filePath,
-        mediaType: EXT_TO_MEDIA[ext] || 'image/png',
+        mediaType,
         base64: data.toString('base64'),
       })
       totalBytes += stat.size
@@ -152,7 +157,7 @@ export function buildMultimodalPrompt(
     .join('\n')
   const enrichedText = `${refs}\n\n${textPrompt}`
 
-  type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: VisionMediaType; data: string } }
   type TextBlock = { type: 'text'; text: string }
 
   const blocks: Array<ImageBlock | TextBlock> = [

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import {
@@ -92,11 +93,6 @@ Rules:
 
 interface CreateWeChatAssistantMcpServerOptions {
   readOnly?: boolean;
-}
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
 }
 
 export function createWeChatAssistantMcpServer(options: CreateWeChatAssistantMcpServerOptions = {}) {

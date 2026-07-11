@@ -16,11 +16,7 @@ import {
 } from '@/lib/db/agent-presets';
 import { getDepartment } from '@/lib/db/team-departments';
 import type { AgentPresetDirectoryItem } from '@/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 function summarizeAgent(a: AgentPresetDirectoryItem): Record<string, unknown> {
   return {

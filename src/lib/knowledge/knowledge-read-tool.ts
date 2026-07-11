@@ -1,12 +1,8 @@
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as store from './store';
 import { loadFullItemContent } from './pipeline-support';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
 
 const DEFAULT_MAX_CHARS = 24_000;
 const MAX_CHARS_LIMIT = 60_000;

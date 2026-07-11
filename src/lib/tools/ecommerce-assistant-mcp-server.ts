@@ -22,17 +22,13 @@ import {
 } from '@/lib/ecommerce-assistant/research-storage';
 import { startReport, cancelReport } from '@/lib/ecommerce-assistant/research-runner';
 import type { ImageJobRecord, ResearchReportRecord, ResearchReportStatus } from '@/lib/ecommerce-assistant/types';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export {
   ECOMMERCE_ASSISTANT_MCP_SERVER_NAME,
   ECOMMERCE_ASSISTANT_MCP_SYSTEM_HINT,
 } from './ecommerce-assistant-mcp-hint';
 import { ECOMMERCE_ASSISTANT_MCP_SERVER_NAME } from './ecommerce-assistant-mcp-hint';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
 
 export function createEcommerceAssistantMcpServer() {
   return createSdkMcpServer({

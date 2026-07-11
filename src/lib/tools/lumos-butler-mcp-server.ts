@@ -30,11 +30,7 @@ import {
   type WorkflowAgentExecutionSnapshot,
 } from '@/lib/workflow/subagent';
 import type { ApiProvider, ChatSession, Message, ProviderCapability } from '@/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 interface ButlerDiagnostic {
   severity: 'info' | 'warning' | 'error';

@@ -8,20 +8,18 @@
 // blocks back out so the caller can re-attach them as real multimodal content.
 
 import type { HistoryMessage } from './history-normalizer';
+import { isVisionMediaType, type VisionMediaType } from './vision-media';
 
 // 一次对话可能有几十次 read_image,全部回放会撑爆请求体和 token。只回放最近
 // N 张(newest 优先),并受 base64 字节预算约束;其余由文本里的 [图片 …] 标记代替。
 export const FALLBACK_HISTORY_MAX_IMAGES = 3;
 export const FALLBACK_HISTORY_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
-// Anthropic vision 接受的 media_type;image-reader 只产出这几类。
-const VISION_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-
 // Anthropic 风格 image content block —— image-reader 的 tool_result 在 DB 里就以
 // 这个形态序列化(source.data=base64, source.media_type=mime),提取后可原样注入。
 export interface HistoryImageBlock {
   type: 'image';
-  source: { type: 'base64'; media_type: string; data: string };
+  source: { type: 'base64'; media_type: VisionMediaType; data: string };
 }
 
 // Walk newest → oldest, collect at most maxImages image blocks within a byte
@@ -86,7 +84,7 @@ function toHistoryImageBlock(block: Record<string, unknown>): HistoryImageBlock 
   const source = block.source as Record<string, unknown> | undefined;
   if (!source || typeof source !== 'object') return null;
   const data = typeof source.data === 'string' ? source.data : '';
-  const mediaType = typeof source.media_type === 'string' ? source.media_type : '';
-  if (!data || !VISION_MEDIA_TYPES.has(mediaType)) return null;
+  const mediaType = source.media_type;
+  if (!data || !isVisionMediaType(mediaType)) return null;
   return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
 }

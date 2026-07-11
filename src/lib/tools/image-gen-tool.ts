@@ -9,12 +9,7 @@ import {
   refundRemoteQuota,
   resolveBillingTarget,
 } from './image-gen-billing';
-
-/** Minimal CallToolResult compatible with MCP SDK types used by the Claude Agent SDK. */
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const IMAGE_GEN_TOOL_NAME = 'generate_image';
 

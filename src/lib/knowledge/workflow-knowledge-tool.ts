@@ -11,11 +11,7 @@ import { createReadKnowledgeItemTool } from './knowledge-read-tool';
 import { CHAT_KNOWLEDGE_MCP_SERVER_NAME } from './chat-knowledge-mcp';
 import { resolveTagNames, listTagCatalog } from './tag-resolver';
 import type { WorkflowKnowledgeConfig } from '@/lib/workflow/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_TOP_K = 10;
 

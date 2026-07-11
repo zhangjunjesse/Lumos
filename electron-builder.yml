@@ -118,7 +118,7 @@ extraResources:
   - from: resources/fonts/
     to: fonts/
     filter: ["**/*"]
-afterPack: scripts/after-pack-ensure-models.js
+afterPack: scripts/after-pack-hooks.js
 asarUnpack:
   - "**/*.node"
   - "**/better-sqlite3/**"

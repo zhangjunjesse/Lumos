@@ -5,11 +5,7 @@ import {
   submitLumosBugIssue,
   type LumosIssueSeverity,
 } from '@/lib/lumos-issue-reporter/issue-reporter';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 export const LUMOS_ISSUE_REPORTER_MCP_SERVER_NAME = 'lumos-issue-reporter';
 

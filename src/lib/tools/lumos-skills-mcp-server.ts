@@ -7,6 +7,7 @@
  */
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { importUserSkills, writeUserSkill } from '@/lib/user-skills-import'
 import { syncSkillsToPlugin } from '@/lib/skills-sync'
 
@@ -20,11 +21,6 @@ export const LUMOS_SKILLS_MCP_SYSTEM_HINT = `
 - name 用 kebab-case（如 \`video-subtitle-local\`）；instructions 是 Skill 的正文（做什么、步骤、用到的脚本/命令）。
 - 若 Skill 需要附带脚本（如 transcribe.py），create_skill 建好目录后，把脚本也放进同一个 \`~/.lumos/skills/<name>/\` 目录里。
 `
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-}
 
 export function createLumosSkillsMcpServer() {
   return createSdkMcpServer({

@@ -11,6 +11,7 @@
  * 账户/风控/真盘门全部复用 buildTradeContext(默认工作室)，与团队完全一致。
  */
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { getSetting } from '@/lib/db'
 import { DEFAULT_WORKSHOP_ID } from '@/lib/mesh/mesh-constants'
@@ -31,11 +32,6 @@ export const LUMOS_TRADE_MCP_SYSTEM_HINT = `你有股票交易工具（lumos-tra
 // 聊天首次下单时若默认工作室账户尚未建（用户没进过炒股团队）→ 用模拟盘默认资金建一个，
 // 让聊天下单开箱即用（纯 paper，无真钱）；真盘资金以券商实账为准，与此无关。
 const DEFAULT_PAPER_CASH = 1_000_000
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-}
 
 interface OrderArgs {
   symbol: string

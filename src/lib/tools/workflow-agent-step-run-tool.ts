@@ -13,11 +13,7 @@ import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { executeWorkflowAgentStep } from '@/lib/workflow/subagent';
 import type { AgentStepInput, WorkflowStepRuntimeContext } from '@/lib/workflow/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_EXECUTION_MS = 10 * 60 * 1000; // 10 min, same as default agent step timeout
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 min for test runs

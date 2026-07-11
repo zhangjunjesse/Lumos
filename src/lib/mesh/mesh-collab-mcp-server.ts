@@ -10,6 +10,7 @@
  */
 import { randomUUID } from 'crypto'
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { writeBlackboard, readBlackboard, readAllBlackboard } from './mesh-blackboard'
 import { persistMessage, findTaskFrom } from './mesh-event-bus'
@@ -21,11 +22,6 @@ export interface MeshCollabContext {
   agentId: string
   /** 某 topic 的订阅者(emit 时投递给他们);由 duty cycle 现读团队订阅关系传入。 */
   subscribersOf: (topic: string) => string[]
-}
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
 }
 
 export function createMeshCollabMcpServer(ctx: MeshCollabContext) {

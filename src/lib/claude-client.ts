@@ -47,6 +47,7 @@ import { recordMemoryV2McpToolCallEvent } from '@/lib/memory-v2/capability-event
 import { buildPromptWithHistory } from './claude/history-normalizer';
 import { appendKnowledgeReference } from './chat/knowledge-reference';
 import { extractHistoryImages } from './claude/history-images';
+import { toVisionMediaType, type VisionMediaType } from './claude/vision-media';
 import { recordRuntimeEvent } from './claude/runtime-events';
 
 /**
@@ -1048,7 +1049,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
 
           const contentBlocks: Array<
-            | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+            | { type: 'image'; source: { type: 'base64'; media_type: VisionMediaType; data: string } }
             | { type: 'text'; text: string }
           > = [];
 
@@ -1067,7 +1068,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: img.type || 'image/png',
+                media_type: toVisionMediaType(img.type),
                 data: img.data,
               },
             });
@@ -1202,8 +1203,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                         ? block.content
                         : Array.isArray(block.content)
                           ? block.content
-                              .filter((c: { type: string }) => c.type === 'text')
-                              .map((c: { text: string }) => c.text)
+                              .filter((c): c is { type: 'text'; text: string } =>
+                                c.type === 'text' && typeof (c as { text?: unknown }).text === 'string')
+                              .map((c) => c.text)
                               .join('\n')
                           : String(block.content ?? '');
                       const pendingTool = pendingToolUsesForMemory.get(block.tool_use_id);

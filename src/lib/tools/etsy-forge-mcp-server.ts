@@ -4,6 +4,7 @@
 // 低风险:只生成草稿,不上架/不传 Printful。失败如实返回,不伪造。
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { getEtsyForgeStore, getEtsyForgeUserId } from '@/lib/etsy-forge/store';
 import { makeProductFromImage } from '@/lib/etsy-forge/image-to-product';
@@ -18,10 +19,6 @@ When to use: the user sends an image (e.g. a WeChat photo) or a 淘宝/小红书
 - For a 淘宝/小红书/etc product LINK: first use your browser tools in BACKGROUND mode to open the link and grab the main product image (download it locally), then pass that local path / direct image url here. This tool does not fetch web pages itself; if the image can't be obtained, tell the user honestly — do not fabricate.
 After success, tell the user it's done (1 product image) and to check 我的产品.`;
 
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
 const jsonResult = (data: unknown): CallToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
 const errorResult = (e: unknown): CallToolResult => ({
   content: [{ type: 'text', text: JSON.stringify({ ok: false, error: e instanceof Error ? e.message : String(e) }) }],

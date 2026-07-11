@@ -3,11 +3,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { searchWithMeta } from './searcher';
 import { createReadKnowledgeItemTool } from './knowledge-read-tool';
 import type { KnowledgeOverrides } from '@/types';
-
-interface CallToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_TOP_K = 10;
 
