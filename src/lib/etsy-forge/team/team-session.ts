@@ -5,6 +5,7 @@ import { query, type CanUseTool, type Options } from '@anthropic-ai/claude-agent
 import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime';
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth';
+import { getActiveUserId } from '@/lib/auth/user-service';
 import { createLumosMcpServer, LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
 import type { AgentTeamRow, TeamMember } from '../types';
 
@@ -109,6 +110,13 @@ export async function runTeamSession(input: {
   const producers = members.filter((m) => m.canGenerateImages && m.prompt.trim());
   if (producers.length === 0) throw new Error(`团队「${input.team.name}」没有启用且有出图权限的成员,无法出图`);
 
+  // 两套身份别混:input.userId 是 etsy-forge 业务隔离 id(桌面恒 'local'),而 generate_image
+  // 的配额计费要 Lumos 云账户 id(lumos_users)。曾把 'local' 传给计费层导致整队 5 张全被拒。
+  const billingUserId = getActiveUserId();
+  if (!billingUserId) {
+    throw new Error('未登录 Lumos 云账户,图片生成无法计费——先在应用里登录,再跑出图团队');
+  }
+
   const agents = toAgentDefinitions(members);
 
   const runtime = buildClaudeSdkInvocationContext();
@@ -152,7 +160,7 @@ export async function runTeamSession(input: {
           : {}),
         agents,
         tools: ['Task', 'Read'],
-        mcpServers: { [LUMOS_MCP_SERVER_NAME]: createLumosMcpServer(undefined, input.userId) },
+        mcpServers: { [LUMOS_MCP_SERVER_NAME]: createLumosMcpServer(undefined, billingUserId) },
         permissionMode: 'default',
         canUseTool,
         maxTurns: MAX_TURNS,
