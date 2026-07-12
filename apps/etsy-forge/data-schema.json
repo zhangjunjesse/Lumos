@@ -1843,6 +1843,16 @@
           "default": 5
         },
         {
+          "name": "provider_id",
+          "type": "string",
+          "label": "会话服务商(空=全局默认)"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "label": "会话模型(空=服务商默认)"
+        },
+        {
           "name": "created_at",
           "type": "datetime",
           "label": "创建时间",

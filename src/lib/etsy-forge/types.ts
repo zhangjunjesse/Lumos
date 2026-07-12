@@ -123,6 +123,8 @@ export interface AgentTeamRow extends Record<string, unknown> {
   sop: string; // 队长工作手册:分工/流程/派单顺序/质量标准/失败应对,注入队长提示词
   members: TeamMember[];
   images_per_run?: number; // 每商品目标出图张数(默认 5)
+  provider_id?: string; // 团队会话服务商(队长+成员的对话模型);空=跟随全局默认
+  model?: string; // 团队会话模型;空=该服务商默认
   created_at: string;
   updated_at: string;
 }

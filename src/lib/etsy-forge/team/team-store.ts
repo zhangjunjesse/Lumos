@@ -42,8 +42,18 @@ function sanitizeSop(input: unknown): string {
 }
 
 // 读路径统一规范化:老数据(固定 role 时代)在这里转成新形态,调用方永远拿到 duty/canGenerateImages/sop。
+function sanitizeModelRef(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
 function normalizeTeam(row: AgentTeamRow): AgentTeamRow {
-  return { ...row, members: sanitizeMembers(row.members), sop: sanitizeSop(row.sop) };
+  return {
+    ...row,
+    members: sanitizeMembers(row.members),
+    sop: sanitizeSop(row.sop),
+    provider_id: sanitizeModelRef(row.provider_id),
+    model: sanitizeModelRef(row.model),
+  };
 }
 
 export function listTeams(store: AppDataStore, userId: string): AgentTeamRow[] {
@@ -94,7 +104,7 @@ export function ensureDefaultTeam(store: AppDataStore, userId: string): void {
 export function createTeam(
   store: AppDataStore,
   userId: string,
-  input: { name: string; description?: string; sop?: string; members?: unknown; images_per_run?: number },
+  input: { name: string; description?: string; sop?: string; members?: unknown; images_per_run?: number; provider_id?: string; model?: string },
 ): AgentTeamRow {
   const name = input.name?.trim();
   if (!name) throw new Error('团队名不能为空');
@@ -104,6 +114,8 @@ export function createTeam(
     description: input.description?.trim() || '',
     is_default: false,
     sop: sanitizeSop(input.sop),
+    provider_id: sanitizeModelRef(input.provider_id),
+    model: sanitizeModelRef(input.model),
     members: sanitizeMembers(input.members),
     images_per_run: clampImagesPerRun(input.images_per_run),
     created_at: nowIso(),
@@ -116,7 +128,7 @@ export function updateTeam(
   store: AppDataStore,
   userId: string,
   teamId: string,
-  patch: { name?: string; description?: string; sop?: string; members?: unknown; images_per_run?: number; is_default?: boolean },
+  patch: { name?: string; description?: string; sop?: string; members?: unknown; images_per_run?: number; is_default?: boolean; provider_id?: string; model?: string },
 ): AgentTeamRow {
   const team = getTeam(store, userId, teamId);
   if (!team) throw new Error('团队不存在');
@@ -128,6 +140,8 @@ export function updateTeam(
   }
   if (patch.description !== undefined) next.description = patch.description.trim();
   if (patch.sop !== undefined) next.sop = sanitizeSop(patch.sop);
+  if (patch.provider_id !== undefined) next.provider_id = sanitizeModelRef(patch.provider_id);
+  if (patch.model !== undefined) next.model = sanitizeModelRef(patch.model);
   if (patch.members !== undefined) next.members = sanitizeMembers(patch.members);
   if (patch.images_per_run !== undefined) next.images_per_run = clampImagesPerRun(patch.images_per_run);
   if (patch.is_default === true) {

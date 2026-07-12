@@ -6,6 +6,7 @@ import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime';
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth';
 import { getActiveUserId } from '@/lib/auth/user-service';
+import { getProvider } from '@/lib/db/providers';
 import { createLumosMcpServer, LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
 import type { AgentTeamRow, TeamMember } from '../types';
 
@@ -119,7 +120,16 @@ export async function runTeamSession(input: {
 
   const agents = toAgentDefinitions(members);
 
-  const runtime = buildClaudeSdkInvocationContext();
+  // 团队级会话模型:团队配了服务商/模型就用团队的,否则跟随全局默认。
+  // 配的服务商被删时回退默认并留痕(不断链——团队还能跑,只是换了脑子,日志可查)。
+  const teamProvider = input.team.provider_id ? getProvider(input.team.provider_id) : undefined;
+  if (input.team.provider_id && !teamProvider) {
+    console.warn(`[team-session] 团队「${input.team.name}」指定的服务商已不存在(${input.team.provider_id}),回退全局默认`);
+  }
+  const runtime = buildClaudeSdkInvocationContext({
+    ...(teamProvider ? { provider: teamProvider } : {}),
+    ...(teamProvider && input.team.model?.trim() ? { requestedModel: input.team.model.trim() } : {}),
+  });
   // 本地登录(local_auth)服务商要先把沙箱登录态准备好,否则隔离环境无凭据 → 401(chat/mesh 同做法)。
   if (isClaudeLocalAuthProvider(runtime.activeProvider)) {
     await ensureClaudeLocalAuthReady(runtime.activeProvider);

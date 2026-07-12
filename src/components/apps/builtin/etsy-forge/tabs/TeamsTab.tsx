@@ -6,9 +6,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { etsyForgeApi, type AgentTeam, type TeamMember } from '../api-client';
+import { etsyForgeApi, type AgentTeam, type AiProviderOption, type TeamMember } from '../api-client';
 import { TeamMemberEditor } from './TeamMemberEditor';
 import { MockupTemplatesSection } from './MockupTemplatesSection';
+import { ProviderPickerRow } from './ProviderPickerRow';
 
 const newMember = (): TeamMember => ({
   id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -25,6 +26,12 @@ export function TeamsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [providers, setProviders] = useState<AiProviderOption[]>([]);
+
+  // 会话服务商列表(团队级模型选择用),失败不挡团队管理
+  useEffect(() => {
+    void etsyForgeApi.getSettings().then((s) => setProviders(s.ai_providers ?? [])).catch(() => {});
+  }, []);
 
   const load = useCallback(async (keepId?: string) => {
     setError(null);
@@ -49,7 +56,7 @@ export function TeamsTab() {
   const patchLocal = (patch: Partial<AgentTeam>) =>
     setTeams((rows) => rows.map((t) => (t.id === selectedId ? { ...t, ...patch } : t)));
 
-  const saveTeam = async (patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'sop' | 'members' | 'images_per_run'>>) => {
+  const saveTeam = async (patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'sop' | 'members' | 'images_per_run' | 'provider_id' | 'model'>>) => {
     if (!selected) return;
     setSaving(true);
     setError(null);
@@ -204,6 +211,30 @@ export function TeamsTab() {
                 </Button>
               </div>
             </div>
+
+            <ProviderPickerRow
+              title="团队会话模型"
+              desc={
+                <>
+                  队长和全体成员思考用的模型(出图的图片模型在「设置 → 图片生成」另配)。
+                  <span className="text-foreground">留空=跟随全局默认服务商</span>;建议选直连的,中转在等待长时间出图时容易断流。
+                </>
+              }
+              providers={providers}
+              providerId={selected.provider_id ?? ''}
+              model={selected.model ?? ''}
+              defaultLabel="跟随全局默认"
+              msg={null}
+              onPick={(pid) => {
+                const first = providers.find((p) => p.id === pid)?.models[0]?.value ?? '';
+                patchLocal({ provider_id: pid, model: first });
+                void saveTeam({ provider_id: pid, model: first });
+              }}
+              onModelChange={(v) => {
+                patchLocal({ model: v });
+                void saveTeam({ model: v });
+              }}
+            />
 
             <div className="rounded-lg border bg-card p-5">
               <h2 className="mb-1 text-sm font-medium">团队 SOP</h2>

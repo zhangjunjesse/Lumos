@@ -319,9 +319,9 @@ export const etsyForgeApi = {
 
   // 出图团队(一键出品第⑦步由团队出图):列(首次自动 seed 默认团队) / 新建 / 改(含设默认) / 删
   listTeams: () => jf<{ teams: AgentTeam[] }>(`${BASE}/teams`),
-  createTeam: (t: { name: string; description?: string; sop?: string; members?: TeamMember[]; images_per_run?: number }) =>
+  createTeam: (t: { name: string; description?: string; sop?: string; members?: TeamMember[]; images_per_run?: number; provider_id?: string; model?: string }) =>
     jf<{ ok: boolean; team: AgentTeam }>(`${BASE}/teams`, { method: 'POST', body: JSON.stringify(t) }),
-  updateTeam: (id: string, patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'sop' | 'members' | 'images_per_run' | 'is_default'>>) =>
+  updateTeam: (id: string, patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'sop' | 'members' | 'images_per_run' | 'is_default' | 'provider_id' | 'model'>>) =>
     jf<{ ok: boolean; team: AgentTeam }>(`${BASE}/teams`, { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }),
   deleteTeam: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/teams?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
