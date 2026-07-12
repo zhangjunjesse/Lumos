@@ -1785,6 +1785,66 @@
       ]
     },
     {
+      "name": "etsy_forge_agent_teams",
+      "label": "出图团队",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primary": true,
+          "auto": "uuid"
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "label": "用户",
+          "indexed": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "label": "团队名",
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "label": "描述"
+        },
+        {
+          "name": "is_default",
+          "type": "boolean",
+          "label": "默认团队",
+          "default": false,
+          "indexed": true
+        },
+        {
+          "name": "members",
+          "type": "json",
+          "label": "成员(人设/职能/启用)",
+          "default": []
+        },
+        {
+          "name": "images_per_run",
+          "type": "number",
+          "label": "每商品目标出图数",
+          "default": 5
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "label": "创建时间",
+          "auto": "now"
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "label": "更新时间",
+          "auto": "now"
+        }
+      ]
+    },
+    {
       "name": "etsy_forge_sop_runs",
       "label": "SOP 运行（一键出品）",
       "fields": [
@@ -1817,6 +1877,12 @@
           "type": "json",
           "label": "二创方向矩阵",
           "default": []
+        },
+        {
+          "name": "team_id",
+          "type": "string",
+          "label": "出图团队",
+          "indexed": true
         },
         {
           "name": "status",

@@ -9,9 +9,11 @@ import { SOP_STEPS, SOP_ONE_CLICK, isOptionalStep } from './defs';
 import { COLLECTIONS, type ProductRow, type SopRunRow, type SopRunStatus, type SopStepRow } from '../types';
 import type { RemixDirectionKey } from '../remix-axes';
 
-// 步骤执行上下文:run 级配置(目前只有二创方向矩阵),随链下传给需要的步骤(remix)。
+// 步骤执行上下文:run 级配置,随链下传给需要的步骤(remix=团队出图)。
+// directions 是方向矩阵时代的旧字段,仅为老 run 重试保留;新 run 只带 teamId。
 export interface SopStepCtx {
   directions?: RemixDirectionKey[];
+  teamId?: string;
 }
 
 // 单步执行器签名:成功返回摘要、失败 throw。默认绑定真实 execStep;测试可注入 stub 验证编排契约。
@@ -95,26 +97,27 @@ function finalizeRun(store: AppDataStore, runId: string): void {
   store.update(COLLECTIONS.SOP_RUNS, runId, { status, ended_at: nowIso() });
 }
 
-// 读 run 上存的二创方向 code(任意非空字符串,策略动态);空 → 由 runRemix 用默认策略。
+// 读 run 上存的出图配置:新 run 带 team_id(空=默认团队);老 run 只有 directions(重试时仍走团队,方向作废)。
 function runCtx(run: SopRunRow | null | undefined): SopStepCtx {
   const dirs = (Array.isArray(run?.directions) ? run!.directions : []).filter((d): d is string => typeof d === 'string' && !!d);
-  return { directions: dirs.length ? dirs : undefined };
+  const teamId = typeof run?.team_id === 'string' && run.team_id ? run.team_id : undefined;
+  return { directions: dirs.length ? dirs : undefined, teamId };
 }
 
 // 同步建 run + 预建每商品每步 step rows(pending),让 route 立刻拿到 runId、UI 立刻展示完整网格。
 export function createSopRun(
   store: AppDataStore,
-  input: { userId: string; productIds: string[]; directions?: RemixDirectionKey[] },
+  input: { userId: string; productIds: string[]; teamId?: string },
 ): { runId: string } {
   const productIds = [...new Set(input.productIds)].filter(Boolean);
   if (!productIds.length) throw new Error('没有选中商品');
-  const directions = (input.directions ?? []).filter((d) => typeof d === 'string' && !!d);
 
   const run = store.create(COLLECTIONS.SOP_RUNS, {
     user_id: input.userId,
     sop_key: SOP_ONE_CLICK,
     product_ids: productIds,
-    directions,
+    directions: [],
+    team_id: input.teamId || '',
     status: 'running',
     total: productIds.length,
     started_at: nowIso(),

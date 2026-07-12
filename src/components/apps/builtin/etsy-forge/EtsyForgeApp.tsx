@@ -8,6 +8,7 @@ import { Palette } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { TasksTab } from './tabs/TasksTab';
 import { ProductsTab } from './tabs/ProductsTab';
+import { TeamsTab } from './tabs/TeamsTab';
 import { LibraryTab } from './tabs/LibraryTab';
 import { ShopsTab } from './tabs/ShopsTab';
 import { AssetsTab } from './tabs/AssetsTab';
@@ -20,7 +21,7 @@ import { SopTaskDock } from './SopTaskDock';
 import { LogsTab } from './tabs/LogsTab';
 import { SettingsTab } from './tabs/SettingsTab';
 
-type TabValue = 'tasks' | 'products' | 'library' | 'shops' | 'assets' | 'product' | 'develop' | 'warehouse' | 'logs' | 'settings';
+type TabValue = 'tasks' | 'products' | 'teams' | 'library' | 'shops' | 'assets' | 'product' | 'develop' | 'warehouse' | 'logs' | 'settings';
 
 export function EtsyForgeApp(): React.ReactElement {
   const [tab, setTab] = React.useState<TabValue>('tasks');
@@ -52,6 +53,9 @@ export function EtsyForgeApp(): React.ReactElement {
             </TabsTrigger>
             <TabsTrigger value="products" className="data-[state=active]:bg-background">
               已采集商品
+            </TabsTrigger>
+            <TabsTrigger value="teams" className="data-[state=active]:bg-background">
+              出图团队
             </TabsTrigger>
             <TabsTrigger value="library" className="data-[state=active]:bg-background">
               我关注的商品
@@ -86,6 +90,9 @@ export function EtsyForgeApp(): React.ReactElement {
           </TabsContent>
           <TabsContent value="products" className="m-0 px-9 py-6">
             <ProductsTab key={`p-${refreshKey}`} onCollectedDetails={refresh} />
+          </TabsContent>
+          <TabsContent value="teams" className="m-0 px-9 py-6">
+            <TeamsTab />
           </TabsContent>
           <TabsContent value="library" className="m-0 px-9 py-6">
             <LibraryTab key={`l-${refreshKey}`} />

@@ -6,6 +6,14 @@ import Database from 'better-sqlite3';
 // logEvent 写的是生产库(~/.lumos);测试里 mock 成 no-op,别把「stub 失败」噪声写进真实日志。
 jest.mock('../../log', () => ({ logEvent: jest.fn() }));
 
+// engine → steps → team/run-team → claude-agent-sdk(纯 ESM,jest 解析不了);
+// 本套件用 stub executor 不碰真实步骤,mock 掉 SDK 入口即可(先例:lumos-butler-mcp-server.test)。
+jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: jest.fn(),
+  tool: jest.fn(() => ({})),
+  createSdkMcpServer: jest.fn(() => ({})),
+}));
+
 import { migrateAppTables } from '../../../db/migrations-app';
 import { createAppDataStore, type AppDataStore } from '../../../app/runtime/data-store';
 import { createSopRun, executeSopRun, retryStep, type StepExecutor } from '../engine';
@@ -169,40 +177,40 @@ describe('SOP 编排引擎', () => {
     expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.status).toBe('success');
   });
 
-  it('一键出品选的二创方向(directions)存到 run、执行时透传到 remix 步的 ctx', async () => {
+  it('一键出品选的出图团队(teamId)存到 run、执行时透传到 remix 步的 ctx', async () => {
     const store = setupStore();
     const a = seedProduct(store, '商品A');
-    const { runId } = createSopRun(store, { userId: USER, productIds: [a], directions: ['A', 'C'] });
+    const { runId } = createSopRun(store, { userId: USER, productIds: [a], teamId: 'team-42' });
     // 存到了 run 上
-    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.directions).toEqual(['A', 'C']);
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.team_id).toBe('team-42');
 
-    // 执行时 remix 步应拿到 ctx.directions=['A','C'],其余步 ctx 不影响
-    let remixDirs: string[] | undefined = undefined;
+    // 执行时 remix 步应拿到 ctx.teamId,其余步 ctx 不影响
+    let remixTeam: string | undefined = undefined;
     const capture: StepExecutor = async (_s, _u, _p, key, ctx) => {
-      if (key === 'remix') remixDirs = ctx?.directions;
+      if (key === 'remix') remixTeam = ctx?.teamId;
       return `ok:${key}`;
     };
     await executeSopRun(store, USER, runId, capture);
-    expect(remixDirs).toEqual(['A', 'C']);
+    expect(remixTeam).toBe('team-42');
   });
 
-  it('一键出品不选方向 → run.directions 为空、remix 步 ctx.directions=undefined(由 runRemix 兜底 B)', async () => {
+  it('一键出品不选团队 → run.team_id 为空、remix 步 ctx.teamId=undefined(由 runTeamRemix 用默认团队)', async () => {
     const store = setupStore();
     const a = seedProduct(store, '商品A');
     const { runId } = createSopRun(store, { userId: USER, productIds: [a] });
-    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.directions).toEqual([]);
+    expect(store.get<SopRunRow>(COLLECTIONS.SOP_RUNS, runId)?.team_id).toBe('');
 
     let remixCtxSeen = true as boolean;
-    let remixDirs: string[] | undefined = ['sentinel'];
+    let remixTeam: string | undefined = 'sentinel';
     const capture: StepExecutor = async (_s, _u, _p, key, ctx) => {
       if (key === 'remix') {
         remixCtxSeen = ctx !== undefined;
-        remixDirs = ctx?.directions;
+        remixTeam = ctx?.teamId;
       }
       return `ok:${key}`;
     };
     await executeSopRun(store, USER, runId, capture);
     expect(remixCtxSeen).toBe(true);
-    expect(remixDirs).toBeUndefined();
+    expect(remixTeam).toBeUndefined();
   });
 });

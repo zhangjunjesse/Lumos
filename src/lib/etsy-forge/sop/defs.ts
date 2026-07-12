@@ -19,7 +19,7 @@ export const SOP_STEPS: SopStepDef[] = [
   { key: 'classify', order: 3, label: '图片分类', hint: 'AI 给每张详情图打类型' },
   { key: 'cutout', order: 4, label: '抠印花', hint: '商品/产品图合出 1 个印花' },
   { key: 'assets', order: 5, label: '素材+姿势', hint: '场景/模特/产品(空白T)/姿势' },
-  { key: 'remix', order: 6, label: '二创', hint: '印花×标题/卖点 → 5 个变体' },
+  { key: 'remix', order: 6, label: '团队出图', hint: '出图团队按创作简报自主设计 → N 张原创印花' },
   { key: 'mockup', order: 7, label: '出产品图', hint: '5 个二创印花 × 空白T → 5 个产品图' },
 ];
 

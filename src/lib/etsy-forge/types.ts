@@ -101,6 +101,30 @@ export interface AssetRow extends Record<string, unknown> {
   created_at: string;
 }
 
+// 出图团队:一键出品第⑦步由团队完成(SDK 原生 agents 子代理,队长派单)。
+// 成员=人设提示词+职能;职能决定工具面(设计=generate_image,策划/审核=只看图)。
+export type TeamMemberRole = 'strategist' | 'designer' | 'reviewer';
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  role: TeamMemberRole;
+  prompt: string; // 人设/工作方式,注入 AgentDefinition.prompt
+  enabled: boolean;
+}
+
+export interface AgentTeamRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string;
+  is_default?: boolean; // 一键出品未指定团队时用它
+  members: TeamMember[];
+  images_per_run?: number; // 每商品目标出图张数(默认 5)
+  created_at: string;
+  updated_at: string;
+}
+
 // 提示词库：按分类(category)存提示词。每类可存多条，其中一条 is_default=true 为「当前生效」，
 // 自动任务(抠印花/分析素材/抠姿势)读生效那条；用户没自定义时回退到 prompt-defaults 的内置默认。
 //   cutout=抠印花 / scene=场景图生成 / model=模特图生成 / product=产品图生成 / pose=抠模特姿势
@@ -350,7 +374,8 @@ export interface SopRunRow extends Record<string, unknown> {
   user_id: string;
   sop_key: string; // 'one-click'
   product_ids: string[];
-  directions?: string[]; // 一键出品选的二创方向(策略 code,可多选;空=默认策略)
+  directions?: string[]; // 旧字段:方向矩阵时代的选择(历史 run 展示用,新 run 不再写)
+  team_id?: string; // 一键出品选的出图团队(空=默认团队)
   status: SopRunStatus;
   total: number;
   started_at: string;
@@ -409,6 +434,7 @@ export const COLLECTIONS = {
   REMIX_STRATEGIES: 'etsy_forge_remix_strategies',
   FISSION_RUNS: 'etsy_forge_fission_runs',
   FISSION_DIAGNOSES: 'etsy_forge_fission_diagnoses',
+  AGENT_TEAMS: 'etsy_forge_agent_teams',
   SOP_RUNS: 'etsy_forge_sop_runs',
   SOP_STEPS: 'etsy_forge_sop_steps',
   LOGS: 'etsy_forge_logs',

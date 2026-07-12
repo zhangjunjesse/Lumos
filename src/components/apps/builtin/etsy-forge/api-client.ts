@@ -7,6 +7,8 @@ import type {
   Product,
   ImageType,
   LibProduct,
+  AgentTeam,
+  TeamMember,
   AssetItem,
   PromptItem,
   MockupItem,
@@ -313,9 +315,18 @@ export const etsyForgeApi = {
   retryMockup: (mockupId: string) =>
     jf<{ ok: boolean; started: boolean }>(`${BASE}/mockups/retry`, { method: 'POST', body: JSON.stringify({ mockup_id: mockupId }) }),
 
-  // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试
-  startSop: (productIds: string[], directions?: string[]) =>
-    jf<{ ok: boolean; runId: string }>(`${BASE}/sop`, { method: 'POST', body: JSON.stringify({ product_ids: productIds, directions }) }),
+  // 出图团队(一键出品第⑦步由团队出图):列(首次自动 seed 默认团队) / 新建 / 改(含设默认) / 删
+  listTeams: () => jf<{ teams: AgentTeam[] }>(`${BASE}/teams`),
+  createTeam: (t: { name: string; description?: string; members?: TeamMember[]; images_per_run?: number }) =>
+    jf<{ ok: boolean; team: AgentTeam }>(`${BASE}/teams`, { method: 'POST', body: JSON.stringify(t) }),
+  updateTeam: (id: string, patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'members' | 'images_per_run' | 'is_default'>>) =>
+    jf<{ ok: boolean; team: AgentTeam }>(`${BASE}/teams`, { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }),
+  deleteTeam: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/teams?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试。team_id 空=默认团队。
+  startSop: (productIds: string[], teamId?: string) =>
+    jf<{ ok: boolean; runId: string }>(`${BASE}/sop`, { method: 'POST', body: JSON.stringify({ product_ids: productIds, team_id: teamId }) }),
   listSopRuns: () => jf<{ runs: SopRun[]; stepDefs: SopStepDef[] }>(`${BASE}/sop`),
   getSopRun: (runId: string) =>
     jf<{ run: SopRun; steps: SopStep[]; stepDefs: SopStepDef[] }>(`${BASE}/sop?run_id=${encodeURIComponent(runId)}`),

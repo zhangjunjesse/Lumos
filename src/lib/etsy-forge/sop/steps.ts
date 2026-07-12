@@ -9,7 +9,7 @@ import { classifyImages } from '../classify-image';
 import { runCutout } from '../cutout-collect';
 import { runAnalyzeAssets } from '../asset-analyze';
 import { runPoseExtract } from '../pose-extract';
-import { runRemix } from '../remix';
+import { runTeamRemix } from '../team/run-team';
 import { prepareMerge, mergeOneProduct } from '../product-merge';
 import { getBrowserContextId, BROWSER_STEP_LOCK } from '../store';
 import { getImageConcurrency, mapLimit } from '../concurrency';
@@ -130,10 +130,11 @@ export async function execStep(store: AppDataStore, userId: string, productId: s
     case 'assets':
       return execAssets(store, userId, productId);
     case 'remix': {
-      // 一键出品选的方向矩阵(可多选)随 ctx 下传;空 → runRemix 兜底默认 B。
-      const r = await runRemix(store, { userId, productId, directions: ctx?.directions });
-      if (!r.ok) throw new Error(r.error || `二创全部失败(${r.failed} 个)`);
-      return `二创 ${r.created} 个`;
+      // 一键出品选的出图团队随 ctx 下传;空 → 默认团队。方向矩阵轮转在一键链里退役
+      // (手动单商品二创入口仍走 runRemix,见 /api/apps/builtin/etsy-forge/remix)。
+      const r = await runTeamRemix(store, { userId, productId, teamId: ctx?.teamId });
+      if (!r.ok) throw new Error(r.error || '团队出图失败');
+      return `团队出图 ${r.created} 张`;
     }
     case 'mockup':
       return execMockup(store, userId, productId);

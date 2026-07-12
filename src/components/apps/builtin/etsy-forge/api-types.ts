@@ -126,6 +126,28 @@ export interface RemixStrategy {
   enabled: boolean;
 }
 
+// 出图团队:一键出品第⑦步由团队完成。成员=人设提示词+职能(策划/设计/审核)。
+export type TeamMemberRole = 'strategist' | 'designer' | 'reviewer';
+
+export interface TeamMember {
+  id: string;
+  name: string;
+  role: TeamMemberRole;
+  prompt: string; // 人设/工作方式
+  enabled: boolean;
+}
+
+export interface AgentTeam {
+  id: string;
+  name: string;
+  description?: string;
+  is_default?: boolean; // 一键出品未指定团队时用它
+  members: TeamMember[];
+  images_per_run?: number; // 每商品目标出图张数(默认 5)
+  created_at: string;
+  updated_at: string;
+}
+
 // 裂变·方向库一条方向
 export interface RemixDirection {
   id: string;
