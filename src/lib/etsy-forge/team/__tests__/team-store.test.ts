@@ -91,6 +91,20 @@ describe('team-store', () => {
     expect(t.members[1].duty).toContain('出图');
   });
 
+  it('老默认团队 SOP 为空时自动回填(改过名或写过 SOP 的不碰)', () => {
+    const store = setupStore();
+    listTeams(store, USER); // seed
+    const seeded = listTeams(store, USER)[0];
+    // 模拟 SOP 字段上线前的老行:清空 sop
+    store.update('etsy_forge_agent_teams', seeded.id, { sop: '' });
+    const refilled = listTeams(store, USER)[0]; // ensureDefaultTeam 兜底回填
+    expect(refilled.sop).toContain('流程');
+
+    // 改过名的团队即使 SOP 为空也不回填(用户资产)
+    store.update('etsy_forge_agent_teams', seeded.id, { name: '我的团队', sop: '' });
+    expect(listTeams(store, USER)[0].sop).toBe('');
+  });
+
   it('SOP 随建随改,读路径永远有 sop 字段(老行缺失时归空串)', () => {
     const store = setupStore();
     const t = createTeam(store, USER, { name: '带SOP', sop: '  先讨论再出图 {N} 张  ' });

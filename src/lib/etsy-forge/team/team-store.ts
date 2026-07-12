@@ -70,8 +70,14 @@ export function getEffectiveTeam(store: AppDataStore, userId: string, teamId?: s
 }
 
 export function ensureDefaultTeam(store: AppDataStore, userId: string): void {
-  const existing = store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, { filter: { user_id: userId }, limit: 1 });
-  if (existing.length > 0) return;
+  const existing = store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, { filter: { user_id: userId }, limit: 100 });
+  if (existing.length > 0) {
+    // SOP 字段上线前 seed 的老默认团队没有工作手册(空的队长会走"自行安排"分支,体验差)。
+    // 只回填「还叫默认名且 SOP 为空」的行——改过名或写过 SOP 的都视为用户资产,不碰。
+    const stale = existing.find((t) => t.name === DEFAULT_TEAM_NAME && !sanitizeSop(t.sop));
+    if (stale) store.update(COLLECTIONS.AGENT_TEAMS, stale.id, { sop: DEFAULT_TEAM_SOP, updated_at: nowIso() });
+    return;
+  }
   store.create(COLLECTIONS.AGENT_TEAMS, {
     user_id: userId,
     name: DEFAULT_TEAM_NAME,
