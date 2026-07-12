@@ -28,13 +28,16 @@ function setupStore(): AppDataStore {
 const USER = 'u1';
 
 describe('team-store', () => {
-  it('首次 list 自动 seed 默认团队(含策划/设计/审核),再次 list 不重复 seed', () => {
+  it('首次 list 自动 seed 默认团队(SOP 非空,仅设计师有出图权限),再次 list 不重复 seed', () => {
     const store = setupStore();
     const first = listTeams(store, USER);
     expect(first).toHaveLength(1);
     expect(first[0].name).toBe(DEFAULT_TEAM_NAME);
     expect(first[0].is_default).toBe(true);
-    expect(first[0].members.map((m) => m.role).sort()).toEqual(['designer', 'reviewer', 'strategist']);
+    expect(first[0].sop).toContain('流程'); // 队长工作手册随 seed 落库
+    expect(first[0].members).toHaveLength(3);
+    expect(first[0].members.filter((m) => m.canGenerateImages).map((m) => m.name)).toEqual(['设计师']);
+    expect(first[0].members.every((m) => m.duty.length > 0)).toBe(true);
 
     ensureDefaultTeam(store, USER);
     expect(listTeams(store, USER)).toHaveLength(1);
@@ -43,7 +46,7 @@ describe('team-store', () => {
   it('getEffectiveTeam:指定 id 用指定团队,不指定用默认团队,别人的团队拿不到', () => {
     const store = setupStore();
     listTeams(store, USER); // 先触发默认团队 seed(seed 只在用户零团队时发生)
-    const mine = createTeam(store, USER, { name: '我的团队', members: [{ name: 'A', role: 'designer', prompt: 'p', enabled: true }] });
+    const mine = createTeam(store, USER, { name: '我的团队', members: [{ name: 'A', duty: '出图', prompt: 'p', canGenerateImages: true, enabled: true }] });
     expect(getEffectiveTeam(store, USER, mine.id)?.name).toBe('我的团队');
     expect(getEffectiveTeam(store, USER)?.name).toBe(DEFAULT_TEAM_NAME);
     expect(getEffectiveTeam(store, 'other-user', mine.id)).toBeUndefined();
@@ -58,19 +61,42 @@ describe('team-store', () => {
     expect(teams.find((x) => x.is_default)?.id).toBe(t.id);
   });
 
-  it('成员清洗:非法 role 归 designer、空名补位、enabled 缺省 true;images_per_run 夹在 1-12', () => {
+  it('成员清洗:空名补位、enabled 缺省 true、出图权限缺省 false;images_per_run 夹在 1-12', () => {
     const store = setupStore();
     const t = createTeam(store, USER, {
       name: '清洗',
-      members: [{ role: 'hacker', prompt: 'x' }, { name: ' 设计B ', role: 'designer', prompt: 'y', enabled: false }],
+      members: [{ prompt: 'x' }, { name: ' 设计B ', duty: '出图', prompt: 'y', canGenerateImages: true, enabled: false }],
       images_per_run: 99,
     });
-    expect(t.members[0].role).toBe('designer');
     expect(t.members[0].name).toBe('成员1');
     expect(t.members[0].enabled).toBe(true);
+    expect(t.members[0].canGenerateImages).toBe(false); // 花钱权限缺省关
     expect(t.members[1].name).toBe('设计B');
-    expect(t.members[1].enabled).toBe(false);
+    expect(t.members[1].canGenerateImages).toBe(true);
     expect(t.images_per_run).toBe(12);
+  });
+
+  it('旧数据兼容:固定 role 时代的成员读出来自动转新形态(designer→可出图,role 映射职能描述)', () => {
+    const store = setupStore();
+    const t = createTeam(store, USER, {
+      name: '老团队',
+      members: [
+        { name: '老策划', role: 'strategist', prompt: 'a', enabled: true },
+        { name: '老设计', role: 'designer', prompt: 'b', enabled: true },
+      ],
+    });
+    expect(t.members[0].canGenerateImages).toBe(false);
+    expect(t.members[0].duty).toContain('策划');
+    expect(t.members[1].canGenerateImages).toBe(true);
+    expect(t.members[1].duty).toContain('出图');
+  });
+
+  it('SOP 随建随改,读路径永远有 sop 字段(老行缺失时归空串)', () => {
+    const store = setupStore();
+    const t = createTeam(store, USER, { name: '带SOP', sop: '  先讨论再出图 {N} 张  ' });
+    expect(t.sop).toBe('先讨论再出图 {N} 张');
+    const updated = updateTeam(store, USER, t.id, { sop: '新流程' });
+    expect(updated.sop).toBe('新流程');
   });
 
   it('空团队名创建/改名都拒绝;删除只删自己的', () => {

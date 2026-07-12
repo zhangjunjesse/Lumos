@@ -20,10 +20,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { name?: string; description?: string; members?: unknown; images_per_run?: number };
+    const body = (await req.json()) as { name?: string; description?: string; sop?: string; members?: unknown; images_per_run?: number };
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
-    const team = createTeam(store, userId, { name: body.name ?? '', description: body.description, members: body.members, images_per_run: body.images_per_run });
+    const team = createTeam(store, userId, { name: body.name ?? '', description: body.description, sop: body.sop, members: body.members, images_per_run: body.images_per_run });
     return NextResponse.json({ ok: true, team });
   } catch (err) {
     return NextResponse.json({ error: msg(err) }, { status: 400 });
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const body = (await req.json()) as { id?: string; name?: string; description?: string; members?: unknown; images_per_run?: number; is_default?: boolean };
+    const body = (await req.json()) as { id?: string; name?: string; description?: string; sop?: string; members?: unknown; images_per_run?: number; is_default?: boolean };
     if (!body.id) return NextResponse.json({ error: '缺少团队 id' }, { status: 400 });
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);

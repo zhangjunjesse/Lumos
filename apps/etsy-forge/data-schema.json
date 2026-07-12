@@ -1825,6 +1825,12 @@
           "indexed": true
         },
         {
+          "name": "sop",
+          "type": "text",
+          "label": "团队 SOP(队长工作手册)",
+          "default": ""
+        },
+        {
           "name": "members",
           "type": "json",
           "label": "成员(人设/职能/启用)",

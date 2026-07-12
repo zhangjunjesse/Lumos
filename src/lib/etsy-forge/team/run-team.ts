@@ -103,9 +103,8 @@ export async function runTeamRemix(
   const old = store.query<AssetRow>(COLLECTIONS.ASSETS, { filter: { user_id: input.userId, product_id: input.productId, category: 'remix' }, limit: 200 });
   for (const o of old) if (!o.series_of) store.delete(COLLECTIONS.ASSETS, o.id);
 
-  const hasReviewer = team.members.some((m) => m.enabled && m.role === 'reviewer' && m.prompt.trim());
   for (const d of valid) {
-    const qa = await resolveVerdict(d, hasReviewer, vision, analysis);
+    const qa = await resolveVerdict(d, vision, analysis);
     store.create(COLLECTIONS.ASSETS, {
       user_id: input.userId,
       category: 'remix',
@@ -123,14 +122,13 @@ export async function runTeamRemix(
   return { ok: true, created: valid.length, failed: Math.max(0, targetCount - valid.length) };
 }
 
-// 评级:审核成员给了就用它;没审核成员(或漏评)时走既有 judgeRemix 质量闸门兜底,闸门不缺席。
+// 评级:团队交差里带了评级就用它(SOP 决定谁评/评不评);没带时走既有 judgeRemix 质量闸门兜底,闸门不缺席。
 async function resolveVerdict(
   d: TeamDesignOutput,
-  hasReviewer: boolean,
   vision: ReturnType<typeof resolveVisionEndpoint>,
   analysis: RemixAnalysis,
 ): Promise<{ flag: 'good' | 'weak'; note: string }> {
-  if (hasReviewer && (d.verdict === 'good' || d.verdict === 'weak')) {
+  if (d.verdict === 'good' || d.verdict === 'weak') {
     return { flag: d.verdict, note: d.verdict_note || '' };
   }
   if (!vision.ok) return { flag: 'good', note: '' };

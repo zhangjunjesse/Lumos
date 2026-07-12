@@ -2,38 +2,64 @@
 // 默认团队按需 seed:首次读取时不存在就建,用户可改可删(删了再进会重建初始版)。
 
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
-import { COLLECTIONS, type AgentTeamRow, type TeamMember, type TeamMemberRole } from '../types';
-import { DEFAULT_TEAM_DESCRIPTION, DEFAULT_TEAM_MEMBERS, DEFAULT_TEAM_NAME } from './default-team';
+import { COLLECTIONS, type AgentTeamRow, type TeamMember } from '../types';
+import { DEFAULT_TEAM_DESCRIPTION, DEFAULT_TEAM_MEMBERS, DEFAULT_TEAM_NAME, DEFAULT_TEAM_SOP } from './default-team';
 
 const nowIso = () => new Date().toISOString();
 
-const MEMBER_ROLES: TeamMemberRole[] = ['strategist', 'designer', 'reviewer'];
+// 固定角色时代的旧数据兼容:role → 职能描述 + 出图授权。新数据不再写 role。
+const LEGACY_ROLE_DUTY: Record<string, string> = {
+  strategist: '创意策划:读创作简报,产出创作指令',
+  designer: '出图执行:按指令扩写 prompt 并调 generate_image 出图',
+  reviewer: '质检评级:逐张看图,评 good/weak',
+};
 
 function sanitizeMembers(input: unknown): TeamMember[] {
   if (!Array.isArray(input)) return [];
   return input
     .filter((m): m is Record<string, unknown> => !!m && typeof m === 'object')
-    .map((m, i) => ({
-      id: typeof m.id === 'string' && m.id ? m.id : `member-${i + 1}-${Date.now()}`,
-      name: typeof m.name === 'string' && m.name.trim() ? m.name.trim() : `成员${i + 1}`,
-      role: MEMBER_ROLES.includes(m.role as TeamMemberRole) ? (m.role as TeamMemberRole) : 'designer',
-      prompt: typeof m.prompt === 'string' ? m.prompt : '',
-      enabled: m.enabled !== false,
-    }));
+    .map((m, i) => {
+      const legacyRole = typeof m.role === 'string' ? m.role : '';
+      const duty = typeof m.duty === 'string' && m.duty.trim()
+        ? m.duty.trim()
+        : LEGACY_ROLE_DUTY[legacyRole] || '';
+      const canGenerateImages = typeof m.canGenerateImages === 'boolean'
+        ? m.canGenerateImages
+        : legacyRole === 'designer';
+      return {
+        id: typeof m.id === 'string' && m.id ? m.id : `member-${i + 1}-${Date.now()}`,
+        name: typeof m.name === 'string' && m.name.trim() ? m.name.trim() : `成员${i + 1}`,
+        duty,
+        prompt: typeof m.prompt === 'string' ? m.prompt : '',
+        canGenerateImages,
+        enabled: m.enabled !== false,
+      };
+    });
+}
+
+function sanitizeSop(input: unknown): string {
+  return typeof input === 'string' ? input.trim() : '';
+}
+
+// 读路径统一规范化:老数据(固定 role 时代)在这里转成新形态,调用方永远拿到 duty/canGenerateImages/sop。
+function normalizeTeam(row: AgentTeamRow): AgentTeamRow {
+  return { ...row, members: sanitizeMembers(row.members), sop: sanitizeSop(row.sop) };
 }
 
 export function listTeams(store: AppDataStore, userId: string): AgentTeamRow[] {
   ensureDefaultTeam(store, userId);
-  return store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, {
-    filter: { user_id: userId },
-    orderBy: { field: 'created_at', direction: 'asc' },
-    limit: 100,
-  });
+  return store
+    .query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, {
+      filter: { user_id: userId },
+      orderBy: { field: 'created_at', direction: 'asc' },
+      limit: 100,
+    })
+    .map(normalizeTeam);
 }
 
 export function getTeam(store: AppDataStore, userId: string, teamId: string): AgentTeamRow | undefined {
   const team = store.get<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, teamId);
-  return team && team.user_id === userId ? team : undefined;
+  return team && team.user_id === userId ? normalizeTeam(team) : undefined;
 }
 
 // 一键出品用:指定 id → 该团队;没指定 → 默认团队(is_default,兜底第一个)。
@@ -51,6 +77,7 @@ export function ensureDefaultTeam(store: AppDataStore, userId: string): void {
     name: DEFAULT_TEAM_NAME,
     description: DEFAULT_TEAM_DESCRIPTION,
     is_default: true,
+    sop: DEFAULT_TEAM_SOP,
     members: DEFAULT_TEAM_MEMBERS,
     images_per_run: 5,
     created_at: nowIso(),
@@ -61,7 +88,7 @@ export function ensureDefaultTeam(store: AppDataStore, userId: string): void {
 export function createTeam(
   store: AppDataStore,
   userId: string,
-  input: { name: string; description?: string; members?: unknown; images_per_run?: number },
+  input: { name: string; description?: string; sop?: string; members?: unknown; images_per_run?: number },
 ): AgentTeamRow {
   const name = input.name?.trim();
   if (!name) throw new Error('团队名不能为空');
@@ -70,6 +97,7 @@ export function createTeam(
     name,
     description: input.description?.trim() || '',
     is_default: false,
+    sop: sanitizeSop(input.sop),
     members: sanitizeMembers(input.members),
     images_per_run: clampImagesPerRun(input.images_per_run),
     created_at: nowIso(),
@@ -82,7 +110,7 @@ export function updateTeam(
   store: AppDataStore,
   userId: string,
   teamId: string,
-  patch: { name?: string; description?: string; members?: unknown; images_per_run?: number; is_default?: boolean },
+  patch: { name?: string; description?: string; sop?: string; members?: unknown; images_per_run?: number; is_default?: boolean },
 ): AgentTeamRow {
   const team = getTeam(store, userId, teamId);
   if (!team) throw new Error('团队不存在');
@@ -93,6 +121,7 @@ export function updateTeam(
     next.name = name;
   }
   if (patch.description !== undefined) next.description = patch.description.trim();
+  if (patch.sop !== undefined) next.sop = sanitizeSop(patch.sop);
   if (patch.members !== undefined) next.members = sanitizeMembers(patch.members);
   if (patch.images_per_run !== undefined) next.images_per_run = clampImagesPerRun(patch.images_per_run);
   if (patch.is_default === true) {

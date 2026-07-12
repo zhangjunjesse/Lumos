@@ -126,14 +126,14 @@ export interface RemixStrategy {
   enabled: boolean;
 }
 
-// 出图团队:一键出品第⑦步由团队完成。成员=人设提示词+职能(策划/设计/审核)。
-export type TeamMemberRole = 'strategist' | 'designer' | 'reviewer';
-
+// 出图团队:一键出品第⑦步由团队完成。团队=SOP(队长工作手册)+ 自由定义的成员。
+// 成员无固定工种:duty 给队长派单看,prompt 是成员自己的人设,canGenerateImages 是唯一花钱的出图权限。
 export interface TeamMember {
   id: string;
   name: string;
-  role: TeamMemberRole;
-  prompt: string; // 人设/工作方式
+  duty: string; // 职能描述(给队长看:他擅长什么/负责什么,据此派单)
+  prompt: string; // 人设/工作方式(注入成员自己的角色提示词)
+  canGenerateImages: boolean; // 出图权限:能否调图片生成(唯一花钱的工具)
   enabled: boolean;
 }
 
@@ -142,6 +142,7 @@ export interface AgentTeam {
   name: string;
   description?: string;
   is_default?: boolean; // 一键出品未指定团队时用它
+  sop: string; // 队长工作手册:分工/流程/派单顺序/质量标准/失败应对,{N} 替换成每商品出图张数
   members: TeamMember[];
   images_per_run?: number; // 每商品目标出图张数(默认 5)
   created_at: string;

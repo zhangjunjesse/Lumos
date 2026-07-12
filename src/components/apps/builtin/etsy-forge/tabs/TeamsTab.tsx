@@ -1,8 +1,8 @@
 'use client';
 
 // 出图团队 tab —— 一键出品第⑦步的「团队出图」由这里配置的团队完成。
-// 左列团队列表(选中)+ 右侧详情(名称/描述/每商品张数/成员)。改动整份 members 走 PATCH 存。
-// 职能:设计成员才调图片生成;策划出创作指令;审核负责质检评级。
+// 左列团队列表(选中)+ 右侧详情(名称/描述/团队 SOP/每商品张数/成员)。改动整份 members 走 PATCH 存。
+// 团队 = SOP(队长工作手册:分工/流程/质量标准)+ 自由定义的成员(职能描述给队长派单,可出图是唯一花钱权限)。
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -13,8 +13,9 @@ import { MockupTemplatesSection } from './MockupTemplatesSection';
 const newMember = (): TeamMember => ({
   id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
   name: '新成员',
-  role: 'designer',
+  duty: '',
   prompt: '',
+  canGenerateImages: false,
   enabled: true,
 });
 
@@ -48,7 +49,7 @@ export function TeamsTab() {
   const patchLocal = (patch: Partial<AgentTeam>) =>
     setTeams((rows) => rows.map((t) => (t.id === selectedId ? { ...t, ...patch } : t)));
 
-  const saveTeam = async (patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'members' | 'images_per_run'>>) => {
+  const saveTeam = async (patch: Partial<Pick<AgentTeam, 'name' | 'description' | 'sop' | 'members' | 'images_per_run'>>) => {
     if (!selected) return;
     setSaving(true);
     setError(null);
@@ -205,6 +206,20 @@ export function TeamsTab() {
             </div>
 
             <div className="rounded-lg border bg-card p-5">
+              <h2 className="mb-1 text-sm font-medium">团队 SOP</h2>
+              <p className="mb-3 text-[11px] text-muted-foreground">
+                给队长看的工作手册:分工、流程、质量标准。{'{N}'} 会被替换成每商品出图张数。
+              </p>
+              <textarea
+                value={selected.sop ?? ''}
+                onChange={(e) => patchLocal({ sop: e.target.value })}
+                onBlur={(e) => void saveTeam({ sop: e.target.value })}
+                placeholder="例如:先让策划成员定 {N} 个方向,再交设计成员逐个出图,最后审核成员按质量标准把关不合格的返工……"
+                className="min-h-[200px] w-full resize-y rounded border border-input bg-background px-2.5 py-2 font-mono text-[12px] leading-relaxed focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+
+            <div className="rounded-lg border bg-card p-5">
               <div className="mb-1 flex items-center justify-between">
                 <h2 className="text-sm font-medium">成员</h2>
                 <Button size="sm" variant="outline" onClick={addMember}>
@@ -212,7 +227,7 @@ export function TeamsTab() {
                 </Button>
               </div>
               <p className="mb-3 text-[11px] text-muted-foreground">
-                设计成员才能调图片生成;策划负责创作指令;审核负责质检评级。停用的成员不参与出图。
+                队长按职能描述派活;勾了「可出图」的成员才有图片生成工具(唯一花钱的);人设是成员自己的工作方式。停用的成员不参与出图。
               </p>
               {selected.members.length === 0 ? (
                 <p className="rounded border border-dashed p-6 text-center text-xs text-muted-foreground">

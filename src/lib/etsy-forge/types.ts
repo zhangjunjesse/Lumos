@@ -102,14 +102,15 @@ export interface AssetRow extends Record<string, unknown> {
 }
 
 // 出图团队:一键出品第⑦步由团队完成(SDK 原生 agents 子代理,队长派单)。
-// 成员=人设提示词+职能;职能决定工具面(设计=generate_image,策划/审核=只看图)。
-export type TeamMemberRole = 'strategist' | 'designer' | 'reviewer';
-
+// 团队 = SOP(队长的工作手册,流程/分工/质量标准全在这里,用户自由编辑)+ 成员。
+// 成员没有固定工种:职能描述(duty)给队长做派单依据,人设(prompt)给成员自己;
+// 「可调图片生成」是唯一花钱的权限,必须是显式开关,不靠文本控制。
 export interface TeamMember {
   id: string;
   name: string;
-  role: TeamMemberRole;
+  duty: string; // 职能描述(给队长看:他擅长什么/负责什么)
   prompt: string; // 人设/工作方式,注入 AgentDefinition.prompt
+  canGenerateImages: boolean; // 工具授权:能否调 generate_image
   enabled: boolean;
 }
 
@@ -119,6 +120,7 @@ export interface AgentTeamRow extends Record<string, unknown> {
   name: string;
   description?: string;
   is_default?: boolean; // 一键出品未指定团队时用它
+  sop: string; // 队长工作手册:分工/流程/派单顺序/质量标准/失败应对,注入队长提示词
   members: TeamMember[];
   images_per_run?: number; // 每商品目标出图张数(默认 5)
   created_at: string;
