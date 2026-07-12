@@ -35,8 +35,8 @@ describe('team-store', () => {
     expect(first[0].name).toBe(DEFAULT_TEAM_NAME);
     expect(first[0].is_default).toBe(true);
     expect(first[0].sop).toContain('流程'); // 队长工作手册随 seed 落库
-    expect(first[0].members).toHaveLength(3);
-    expect(first[0].members.filter((m) => m.canGenerateImages).map((m) => m.name)).toEqual(['设计师']);
+    expect(first[0].members).toHaveLength(4);
+    expect(first[0].members.filter((m) => m.canGenerateImages).map((m) => m.name)).toEqual(['出图师']); // 工序制:唯一执行位有出图权限
     expect(first[0].members.every((m) => m.duty.length > 0)).toBe(true);
 
     ensureDefaultTeam(store, USER);
