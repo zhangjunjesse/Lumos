@@ -39,7 +39,7 @@ export function MaterialPickerGrid({ title, materials, mode, selected, onChange,
             return (
               <div key={m.src} className={`group relative size-16 overflow-hidden rounded-lg border ${on ? 'ring-2 ring-foreground' : 'hover:ring-1 hover:ring-foreground'}`} title={m.label}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={m.src} alt={m.label} onClick={() => toggle(m.src)} className="size-full cursor-pointer object-cover" />
+                <img src={m.src} alt={m.label} onClick={() => toggle(m.src)} loading="lazy" decoding="async" className="size-full cursor-pointer object-cover" />
                 {on && <span className="pointer-events-none absolute right-0 top-0 bg-foreground px-1 text-[9px] text-background">✓</span>}
                 <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
                   {onZoom && (

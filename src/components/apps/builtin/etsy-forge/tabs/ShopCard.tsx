@@ -69,7 +69,7 @@ function Deco({ url, label, onZoom }: { url: string; label: string; onZoom: (u: 
       className="shrink-0 overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt={label} className="size-16 object-cover" />
+      <img src={url} alt={label} loading="lazy" decoding="async" className="size-16 object-cover" />
     </button>
   );
 }
@@ -93,7 +93,7 @@ export function ShopCard({
       <div className="flex items-start gap-3">
         {shop.avatar_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={shop.avatar_url} alt={shop.shop_name} className="size-12 shrink-0 rounded-full border object-cover" />
+          <img src={shop.avatar_url} alt={shop.shop_name} loading="lazy" decoding="async" className="size-12 shrink-0 rounded-full border object-cover" />
         ) : (
           <div className="flex size-12 shrink-0 items-center justify-center rounded-full border bg-muted text-muted-foreground">
             <Store className="size-5" />
@@ -146,7 +146,7 @@ export function ShopCard({
           className="mt-3 block w-full overflow-hidden rounded-md border hover:ring-1 hover:ring-foreground"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={shop.banner} alt="店铺横幅" className="w-full object-cover" />
+          <img src={shop.banner} alt="店铺横幅" loading="lazy" decoding="async" className="w-full object-cover" />
         </button>
       )}
 

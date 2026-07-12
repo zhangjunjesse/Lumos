@@ -48,7 +48,7 @@ export function LogRowItem({ log: l }: { log: LogItem }) {
               className="size-14 overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="输入图" className="h-full w-full object-cover" />
+              <img src={url} alt="输入图" loading="lazy" decoding="async" className="h-full w-full object-cover" />
             </button>
           ))}
         </div>

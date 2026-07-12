@@ -164,6 +164,8 @@ function TemplateCard({
         <img
           src={serve(template.base_path)}
           alt={template.name}
+          loading="lazy"
+          decoding="async"
           onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth || 1, h: e.currentTarget.naturalHeight || 1 })}
           className="block h-auto w-full"
         />

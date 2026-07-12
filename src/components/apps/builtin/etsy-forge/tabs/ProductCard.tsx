@@ -34,7 +34,7 @@ export function ProductCard({ product: p, onToggle }: { product: Product; onTogg
         <div className="relative aspect-square bg-muted">
           {p.main_image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={p.main_image_url} alt={p.title} className="h-full w-full object-cover" />
+            <img src={p.main_image_url} alt={p.title} loading="lazy" decoding="async" className="h-full w-full object-cover" />
           ) : (
             <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">无主图</div>
           )}

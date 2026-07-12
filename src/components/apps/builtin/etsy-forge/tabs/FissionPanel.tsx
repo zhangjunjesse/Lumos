@@ -216,7 +216,7 @@ export function FissionPanel({
                             className="block w-full"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={a.url} alt="裂变结果" className="aspect-square w-full object-cover" />
+                            <img src={a.url} alt="裂变结果" loading="lazy" decoding="async" className="aspect-square w-full object-cover" />
                           </button>
                         ) : (
                           <div className="flex aspect-square items-center justify-center bg-destructive/5 p-1 text-center text-[9px] text-destructive">{a.failure_reason || '失败'}</div>

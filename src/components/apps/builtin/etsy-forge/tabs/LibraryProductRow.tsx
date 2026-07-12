@@ -178,7 +178,7 @@ export function LibraryProductRow({
                 }`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={p.title} className="h-full w-full object-cover" />
+                <img src={img.url} alt={p.title} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 {img.is_main && (
                   <span className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 text-[9px] text-white">主</span>
                 )}

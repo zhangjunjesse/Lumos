@@ -72,7 +72,7 @@ export function AssetCard({
         {a.status === 'success' && a.url ? (
           <button type="button" onClick={() => onView(a.id)} title="点击放大" className="block w-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.url} alt={CAT_LABEL[a.category]} className="aspect-square w-full object-cover" />
+            <img src={a.url} alt={CAT_LABEL[a.category]} loading="lazy" decoding="async" className="aspect-square w-full object-cover" />
           </button>
         ) : (
           <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-destructive/5 p-2 text-center text-[10px] text-destructive">
@@ -163,7 +163,7 @@ export function AssetCard({
                 className="size-8 shrink-0 overflow-hidden rounded border"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={u} alt="原图" className="h-full w-full object-cover" />
+                <img src={u} alt="原图" loading="lazy" decoding="async" className="h-full w-full object-cover" />
               </button>
             ))}
           </div>

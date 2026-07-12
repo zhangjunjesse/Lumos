@@ -1,6 +1,7 @@
 // 图库 = 采集到的详情图，按「商品维度」聚合：一个商品一组，附商品信息（价格/销量/收藏/链接）。
 // 商品信息来自 etsy_forge_products，按 product_id join；销量/收藏来自该商品的 ehunt_json。
 
+import { existsSync } from 'fs';
 import { NextRequest, NextResponse } from 'next/server';
 import { getEtsyForgeStore, getStorageUserId } from '@/lib/etsy-forge/store';
 import {
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest) {
       }
       g.images.push({
         id: img.id,
-        url: img.image_url,
+        url: preferLocalUrl(img.local_path, img.image_url),
         path: img.local_path ?? null,
         image_type: img.image_type ?? null,
         is_main: img.is_main,
@@ -140,6 +141,15 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
+}
+
+// 详情图有本地副本(下载到 .lumos-media/)时走本地代理——带 365 天缓存、不再打 Etsy CDN;
+// 没有本地副本或文件已不在时回退远程原图 URL。
+function preferLocalUrl(localPath: string | undefined, remoteUrl: string): string {
+  if (localPath && existsSync(localPath)) {
+    return `/api/media/serve?path=${encodeURIComponent(localPath)}`;
+  }
+  return remoteUrl;
 }
 
 function safeParseEhunt(s: string): EhuntMetricsJson | null {

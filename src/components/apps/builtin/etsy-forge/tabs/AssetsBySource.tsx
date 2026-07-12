@@ -90,7 +90,7 @@ export function AssetsBySource({
                   className="size-12 overflow-hidden rounded border"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={im.url} alt="原图" className="h-full w-full object-cover" />
+                  <img src={im.url} alt="原图" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 </button>
               ))}
             </div>

@@ -72,7 +72,7 @@ export function ProductImagePicker({ open, onClose, onPick }: { open: boolean; o
                       title="用这张图新建 listing"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={m.url as string} alt="" className="aspect-square w-full object-cover" />
+                      <img src={m.url as string} alt="" loading="lazy" decoding="async" className="aspect-square w-full object-cover" />
                     </button>
                   ))}
                 </div>

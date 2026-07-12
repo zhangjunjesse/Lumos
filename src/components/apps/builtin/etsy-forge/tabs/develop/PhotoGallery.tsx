@@ -32,7 +32,7 @@ export function PhotoGallery({ photos, runningCount, onRefine, onEditPrompt, onC
         {photos.map((p, i) => (
           <div key={p.src} className="group relative overflow-hidden rounded-lg border">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.src} alt={p.label || ''} className="aspect-square w-full cursor-zoom-in object-cover" onClick={() => setZoom(i)} />
+            <img src={p.src} alt={p.label || ''} loading="lazy" decoding="async" className="aspect-square w-full cursor-zoom-in object-cover" onClick={() => setZoom(i)} />
             {p.isMain && <span className="pointer-events-none absolute left-1 top-1 rounded bg-amber-500 px-1 text-[10px] text-white">主图</span>}
             <QuickAddChat imageUrl={p.src} refLabel="商品图" className="absolute left-1 bottom-1" />
             <div className="absolute right-1 top-1 flex flex-col gap-1 opacity-0 transition group-hover:opacity-100">

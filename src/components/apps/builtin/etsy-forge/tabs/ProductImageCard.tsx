@@ -33,7 +33,7 @@ export function ProductImageCard({
         <>
           <button type="button" onClick={onOpen} title="点击看溯源" className="block size-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={m.url} alt={m.design_label} className="size-full object-cover" />
+            <img src={m.url} alt={m.design_label} loading="lazy" decoding="async" className="size-full object-cover" />
           </button>
           <QuickAddChat imageUrl={m.url} refLabel="带印花T" className="absolute right-0.5 top-0.5" />
           {/* 当前分角标(没 hover 时显示) */}

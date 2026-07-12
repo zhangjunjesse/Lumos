@@ -133,7 +133,7 @@ export function DevelopTab() {
                     <td className="px-3 py-2">
                       {main ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={main.src} alt="" className="size-10 rounded border object-cover" />
+                        <img src={main.src} alt="" loading="lazy" decoding="async" className="size-10 rounded border object-cover" />
                       ) : (
                         <div className="size-10 rounded border bg-muted" />
                       )}

@@ -70,7 +70,7 @@ export function MaterialPicker({ onClose }: { onClose: () => void }) {
                   {CAT_LABEL[a.category]}
                 </span>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={a.url as string} alt={CAT_LABEL[a.category]} className="aspect-square w-full object-cover" />
+                <img src={a.url as string} alt={CAT_LABEL[a.category]} loading="lazy" decoding="async" className="aspect-square w-full object-cover" />
                 {added.has(a.id) && (
                   <span className="absolute right-1 top-1 z-10 rounded bg-foreground px-1 text-[9px] text-background">
                     ✓ 已加

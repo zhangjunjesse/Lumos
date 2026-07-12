@@ -24,7 +24,7 @@ function Thumb({ url, caption, onSelect, onZoom }: { url: string | null; caption
       {url ? (
         <button type="button" onClick={onSelect} className="block size-28 overflow-hidden rounded border bg-muted hover:opacity-90" title="点选这个源印花">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={url} alt={caption} className="size-full object-cover" />
+          <img src={url} alt={caption} loading="lazy" decoding="async" className="size-full object-cover" />
         </button>
       ) : (
         <div className="flex size-28 items-center justify-center rounded border border-dashed text-center text-[10px] text-muted-foreground">无产品图</div>

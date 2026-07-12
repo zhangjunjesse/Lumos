@@ -116,7 +116,7 @@ export function WarehouseView({ messages }: { messages: Message[] }) {
                   className="block w-full overflow-hidden rounded border hover:ring-1 hover:ring-foreground"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={im.url} alt="生成图" className="aspect-square w-full object-cover" />
+                  <img src={im.url} alt="生成图" loading="lazy" decoding="async" className="aspect-square w-full object-cover" />
                 </button>
                 {fissioning && (
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 rounded bg-violet-500/35">

@@ -67,7 +67,7 @@ export function ProductComposer({
     >
       <button type="button" onClick={() => toggle(r.url)} title={`${r.label} · 点击${selected.has(r.url) ? '取消选择' : '选择'}`} className="block size-full">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={r.url} alt={r.label} className="size-full object-cover" />
+        <img src={r.url} alt={r.label} loading="lazy" decoding="async" className="size-full object-cover" />
       </button>
       {selected.has(r.url) && <span className="pointer-events-none absolute right-0 top-0 bg-foreground px-1 text-[8px] text-background">✓</span>}
       <button
