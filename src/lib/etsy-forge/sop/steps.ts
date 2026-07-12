@@ -9,9 +9,9 @@ import { classifyImages } from '../classify-image';
 import { runCutout } from '../cutout-collect';
 import { runAnalyzeAssets } from '../asset-analyze';
 import { runPoseExtract } from '../pose-extract';
-import path from 'path';
 import { runTeamRemix } from '../team/run-team';
-import { composePrintOnBase, stripBackground } from '@/lib/image/compose';
+import { stripBackground } from '@/lib/image/compose';
+import { composeMockupRecord } from '../mockup-compose';
 import { listEnabledTemplates } from '../mockup-templates';
 import { getBrowserContextId, BROWSER_STEP_LOCK } from '../store';
 import { withLock } from '@/lib/async-lock';
@@ -83,7 +83,6 @@ async function execMockup(store: AppDataStore, userId: string, productId: string
   const templates = listEnabledTemplates(store, userId);
   if (templates.length === 0) throw new Error('没有启用的T恤模板(去「出图团队」页的模板区启用/上传一个)');
 
-  const mediaDir = path.join(process.env.LUMOS_DATA_DIR || path.join(process.env.HOME || '', '.lumos'), '.lumos-media');
   let ok = 0;
   const total = remixes.length * templates.length;
   for (const rm of remixes) {
@@ -107,32 +106,13 @@ async function execMockup(store: AppDataStore, userId: string, productId: string
       continue;
     }
     for (const tpl of templates) {
-      const outPath = path.join(mediaDir, `mockup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
-      try {
-        await composePrintOnBase({ basePath: tpl.base_path, print, printArea: tpl.print_area, outPath });
-        store.create(COLLECTIONS.MOCKUPS, {
-          user_id: userId,
-          design_label: '二创',
-          design_ref: rm.image_path,
-          source_product_id: productId,
-          template_id: tpl.id,
-          image_path: outPath,
-          status: 'success',
-          created_at: new Date().toISOString(),
-        });
-        ok += 1;
-      } catch (err) {
-        store.create(COLLECTIONS.MOCKUPS, {
-          user_id: userId,
-          design_label: '二创',
-          design_ref: rm.image_path,
-          source_product_id: productId,
-          template_id: tpl.id,
-          status: 'failed',
-          failure_reason: err instanceof Error ? err.message : String(err),
-          created_at: new Date().toISOString(),
-        });
-      }
+      const success = await composeMockupRecord(store, userId, {
+        print,
+        template: tpl,
+        designRef: rm.image_path,
+        sourceProductId: productId,
+      });
+      if (success) ok += 1;
     }
   }
   if (ok === 0) throw new Error('产品图全部失败(看日志)');

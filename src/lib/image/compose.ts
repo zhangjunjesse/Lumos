@@ -14,7 +14,9 @@ export interface PrintArea {
 
 const COLOR_TOLERANCE = 22; // 与背景主色的每通道容差(容忍生成图噪点/压缩伪影)
 const MIN_STRIP_RATIO = 0.05; // 抠除面积低于 5%:视为满幅设计,直贴
-const MAX_STRIP_RATIO = 0.7; // 抠除面积高于 70%:大概率误伤主体,直贴
+// 上限只防「主体与底色相近被洪泛穿透」——那种场景抠除≈100%。别设低:「小图案大留白」
+// 是合法印花形态(小 logo 居中背景可占 90%+),设 0.7 会把它们误回退成整张白图贴上衣。
+const MAX_STRIP_RATIO = 0.99;
 
 // 背景抠除:返回处理后 PNG;不适合抠(满幅/误伤)时返回原图 PNG。
 export async function stripBackground(inputPath: string): Promise<Buffer> {

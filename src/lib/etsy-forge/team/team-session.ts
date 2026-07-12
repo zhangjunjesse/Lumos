@@ -195,7 +195,8 @@ export async function runTeamSession(input: {
   return { designs, summary: parsed.summary ?? '', imageCallsUsed: imageCalls };
 }
 
-function collectProducedPaths(hookInput: unknown, sink: Set<string>): void {
+// 导出仅为单测:PostToolUse 的 tool_response 形状(content 数组无包裹)是实测出来的坑,要有回归盯着。
+export function collectProducedPaths(hookInput: unknown, sink: Set<string>): void {
   const h = hookInput as { tool_name?: string; tool_response?: unknown };
   if (h.tool_name !== IMAGE_TOOL) return;
   // PostToolUse 的 tool_response 就是 MCP content 块数组本身(实测 SDK 0.3.207),不带 {content} 包裹。

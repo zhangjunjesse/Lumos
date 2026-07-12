@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     if (!body.base_image_base64) return NextResponse.json({ error: '缺少底图' }, { status: 400 });
     const store = getEtsyForgeStore();
     const userId = getStorageUserId(req);
-    const template = createTemplate(store, userId, {
+    const template = await createTemplate(store, userId, {
       name: body.name ?? '',
       baseImageBase64: body.base_image_base64,
       printArea: body.print_area,

@@ -4,7 +4,7 @@ import path from 'path'
 // SDK 0.3.x 起 npm 主包只剩 sdk.mjs 薄壳,Claude Code 运行时改为平台原生二进制,
 // 随 @anthropic-ai/claude-agent-sdk-<platform>-<arch> 平台包分发(win32 是 claude.exe)。
 // 打包产物必须把当前目标架构的平台包一起带进 standalone/node_modules(见 electron-builder.yml
-// 与 scripts/ensure-agent-sdk-binary.mjs),否则这里找不到会退回系统 claude。
+// 与 scripts/after-pack-ensure-agent-sdk.js),否则这里找不到会退回系统 claude。
 const SDK_PLATFORM_PACKAGE_DIR = `claude-agent-sdk-${process.platform}-${process.arch}`
 const SDK_BINARY_NAME = process.platform === 'win32' ? 'claude.exe' : 'claude'
 const SDK_CLI_RELATIVE_PATH = path.join('node_modules', '@anthropic-ai', SDK_PLATFORM_PACKAGE_DIR, SDK_BINARY_NAME)

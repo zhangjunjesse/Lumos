@@ -3,6 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { COLLECTIONS, type MockupTemplateRow } from './types';
 import type { PrintArea } from '@/lib/image/compose';
@@ -62,15 +63,25 @@ export function listEnabledTemplates(store: AppDataStore, userId: string): Mocku
   return listTemplates(store, userId).filter((t) => t.enabled && !!t.base_path && fs.existsSync(t.base_path));
 }
 
-export function createTemplate(
+const MAX_BASE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+export async function createTemplate(
   store: AppDataStore,
   userId: string,
   input: { name: string; baseImageBase64: string; printArea?: PrintArea },
-): MockupTemplateRow {
+): Promise<MockupTemplateRow> {
   const name = input.name?.trim();
   if (!name) throw new Error('模板名不能为空');
   const buf = Buffer.from(input.baseImageBase64, 'base64');
   if (buf.length < 1024) throw new Error('底图无效(太小)');
+  if (buf.length > MAX_BASE_IMAGE_BYTES) throw new Error('底图超过 20MB 上限');
+  // 服务端真实解码探测:前端 accept 只是提示,直接打 API 可绕过;坏文件在这里报,别拖到出图流程深处。
+  try {
+    const meta = await sharp(buf).metadata();
+    if (!meta.width || !meta.height) throw new Error('no dimensions');
+  } catch {
+    throw new Error('底图不是可解码的图片文件');
+  }
   const dest = path.join(mediaDir(), `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
   fs.writeFileSync(dest, buf);
   const created = store.create(COLLECTIONS.MOCKUP_TEMPLATES, {
