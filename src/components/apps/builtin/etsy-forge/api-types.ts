@@ -148,6 +148,25 @@ export interface AgentTeam {
   updated_at: string;
 }
 
+// T恤模板:一张固定底图 + 印花区框(底图原始像素系)。一键出品第⑧步用 sharp 把印花合成到印花区。
+export interface PrintArea {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface MockupTemplate {
+  id: string;
+  name: string;
+  base_path: string; // 底图本地路径,预览走 /api/media/serve?path=<encodeURIComponent(base_path)>
+  print_area: PrintArea; // 底图原始像素系
+  enabled: boolean;
+  builtin?: boolean; // 内置模板:可停用不可删
+  created_at: string;
+  updated_at: string;
+}
+
 // 裂变·方向库一条方向
 export interface RemixDirection {
   id: string;

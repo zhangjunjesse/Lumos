@@ -9,15 +9,15 @@ import { classifyImages } from '../classify-image';
 import { runCutout } from '../cutout-collect';
 import { runAnalyzeAssets } from '../asset-analyze';
 import { runPoseExtract } from '../pose-extract';
+import path from 'path';
 import { runTeamRemix } from '../team/run-team';
-import { prepareMerge, mergeOneProduct } from '../product-merge';
+import { composePrintOnBase, stripBackground } from '@/lib/image/compose';
+import { listEnabledTemplates } from '../mockup-templates';
 import { getBrowserContextId, BROWSER_STEP_LOCK } from '../store';
-import { getImageConcurrency, mapLimit } from '../concurrency';
 import { withLock } from '@/lib/async-lock';
 import type { SopStepCtx } from './engine';
 import { COLLECTIONS, type AssetRow, type DetailImageRow, type ImageType, type ProductRow, type SopStepKey } from '../types';
 
-const serve = (p: string) => `/api/media/serve?path=${encodeURIComponent(p)}`;
 // 采集详情/店铺串行锁(BROWSER_STEP_LOCK,定义在 ../store):并发跑链时这些步驱动同一个 AdsPower/CDP 连接、
 // 跑完会 browser.close(),并发会互相把连接关掉 → 全失败。这些步全局串行,后续图片步仍并发。
 
@@ -42,11 +42,14 @@ async function execCutout(store: AppDataStore, userId: string, productId: string
   return '抠出 1 个印花';
 }
 
-// ④ 分析素材 + 抠姿势:只用「商品图」类(带模特/场景的图);没有则降级全部。
-// 场景/模特/产品各出 1 张(固定);抠姿势是逐图的,按设置 max_pose 上限取前 N 张,避免图多的商品狂出姿势烧钱。
+// ④ 分析素材 + 抠姿势:产品图已改用固定T恤模板程序合成,这一步不再服务主链,默认停用省 3~6 次
+// 图片调用;「设置」里 assets_step_enabled=true 可重新打开(场景/模特/姿势素材进图库备用)。
 async function execAssets(store: AppDataStore, userId: string, productId: string): Promise<string> {
+  const settings = store.query<{ max_pose?: number; assets_step_enabled?: boolean }>(COLLECTIONS.APP_SETTINGS, { limit: 1 })[0];
+  if (settings?.assets_step_enabled !== true) {
+    return '已停用(产品图改用固定模板,不再需要;设置里可重新开启)';
+  }
   const sceneIds = pickImageIds(store, productId, ['model_scene']); // 分析素材用全部商品图作参考(只出 3 张)
-  const settings = store.query<{ max_pose?: number }>(COLLECTIONS.APP_SETTINGS, { limit: 1 })[0];
   const maxPose = Math.max(1, Math.min(20, Math.floor(settings?.max_pose ?? 3)));
   const poseIds = pickImageIds(store, productId, ['model_scene'], maxPose); // 抠姿势限前 N 张
   const [a, pose] = await Promise.all([
@@ -69,41 +72,71 @@ async function execDetail(store: AppDataStore, userId: string, productId: string
   return `详情图 ${r.totalImages} 张`;
 }
 
-// ⑥ 出产品图:⑤的二创印花(remix) 逐个 inpaint 到 ④的产品(空白T) → mockup。
+// ⑥ 出产品图:⑤的二创印花 × 启用的T恤模板,sharp 程序合成(白底转透明+贴印花区),零 LLM 零 token。
+// 旧的 inpaint 合成(product-merge)只保留给「我的产品」页的手动重合成入口。
 async function execMockup(store: AppDataStore, userId: string, productId: string): Promise<string> {
   const remixes = store.query<AssetRow>(COLLECTIONS.ASSETS, {
     filter: { user_id: userId, product_id: productId, category: 'remix', status: 'success' },
     limit: 50,
   });
   if (remixes.length === 0) throw new Error('没有二创印花(⑤未产出)');
-  const productAsset = store.query<AssetRow>(COLLECTIONS.ASSETS, {
-    filter: { user_id: userId, product_id: productId, category: 'product', status: 'success' },
-    limit: 10,
-  })[0];
-  if (!productAsset?.image_path) throw new Error('没有产品图(空白T)(④未产出),无法合成');
+  const templates = listEnabledTemplates(store, userId);
+  if (templates.length === 0) throw new Error('没有启用的T恤模板(去「出图团队」页的模板区启用/上传一个)');
 
-  const outcomes = await mapLimit(remixes, getImageConcurrency(store), async (rm) => {
-    if (!rm.image_path) return false;
-    const design = { localPath: rm.image_path, url: serve(rm.image_path), label: '二创', sourceProductId: productId };
-    const prep = await prepareMerge(store, userId, design);
-    if ('error' in prep) {
-      store.create(COLLECTIONS.MOCKUPS, {
-        user_id: userId,
-        design_label: '二创',
-        design_ref: rm.image_path,
-        source_product_id: productId,
-        product_asset_id: productAsset.id,
-        status: 'failed',
-        failure_reason: prep.error,
-        created_at: new Date().toISOString(),
-      });
-      return false;
+  const mediaDir = path.join(process.env.LUMOS_DATA_DIR || path.join(process.env.HOME || '', '.lumos'), '.lumos-media');
+  let ok = 0;
+  const total = remixes.length * templates.length;
+  for (const rm of remixes) {
+    if (!rm.image_path) continue;
+    let print: Buffer;
+    try {
+      print = await stripBackground(rm.image_path); // 每张印花只预处理一次(抠外围底色),贴到所有模板
+    } catch (err) {
+      for (const tpl of templates) {
+        store.create(COLLECTIONS.MOCKUPS, {
+          user_id: userId,
+          design_label: '二创',
+          design_ref: rm.image_path,
+          source_product_id: productId,
+          template_id: tpl.id,
+          status: 'failed',
+          failure_reason: `印花预处理失败:${err instanceof Error ? err.message : String(err)}`,
+          created_at: new Date().toISOString(),
+        });
+      }
+      continue;
     }
-    return mergeOneProduct(store, userId, design, prep, productAsset.id);
-  });
-  const ok = outcomes.filter(Boolean).length;
+    for (const tpl of templates) {
+      const outPath = path.join(mediaDir, `mockup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+      try {
+        await composePrintOnBase({ basePath: tpl.base_path, print, printArea: tpl.print_area, outPath });
+        store.create(COLLECTIONS.MOCKUPS, {
+          user_id: userId,
+          design_label: '二创',
+          design_ref: rm.image_path,
+          source_product_id: productId,
+          template_id: tpl.id,
+          image_path: outPath,
+          status: 'success',
+          created_at: new Date().toISOString(),
+        });
+        ok += 1;
+      } catch (err) {
+        store.create(COLLECTIONS.MOCKUPS, {
+          user_id: userId,
+          design_label: '二创',
+          design_ref: rm.image_path,
+          source_product_id: productId,
+          template_id: tpl.id,
+          status: 'failed',
+          failure_reason: err instanceof Error ? err.message : String(err),
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
   if (ok === 0) throw new Error('产品图全部失败(看日志)');
-  return `产品图 ${ok}/${remixes.length}`;
+  return `产品图 ${ok}/${total}(模板合成,零token)`;
 }
 
 export async function execStep(store: AppDataStore, userId: string, productId: string, key: SopStepKey, ctx?: SopStepCtx): Promise<string> {

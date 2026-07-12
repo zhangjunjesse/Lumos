@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { etsyForgeApi, type AgentTeam, type TeamMember } from '../api-client';
 import { TeamMemberEditor } from './TeamMemberEditor';
+import { MockupTemplatesSection } from './MockupTemplatesSection';
 
 const newMember = (): TeamMember => ({
   id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -110,7 +111,8 @@ export function TeamsTab() {
   };
 
   return (
-    <div className="mx-auto flex max-w-6xl gap-5">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex gap-5">
       <aside className="w-64 shrink-0 space-y-2">
         <Button size="sm" className="w-full" onClick={() => void createTeam()}>
           ＋ 新建团队
@@ -232,6 +234,9 @@ export function TeamsTab() {
           </div>
         )}
       </section>
+      </div>
+
+      <MockupTemplatesSection />
     </div>
   );
 }

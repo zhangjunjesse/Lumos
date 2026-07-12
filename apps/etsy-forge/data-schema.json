@@ -916,6 +916,12 @@
           "indexed": true
         },
         {
+          "name": "template_id",
+          "type": "string",
+          "label": "T恤模板",
+          "indexed": true
+        },
+        {
           "name": "product_asset_id",
           "type": "string",
           "label": "产品图素材 id",
@@ -1829,6 +1835,66 @@
           "type": "number",
           "label": "每商品目标出图数",
           "default": 5
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "label": "创建时间",
+          "auto": "now"
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "label": "更新时间",
+          "auto": "now"
+        }
+      ]
+    },
+    {
+      "name": "etsy_forge_mockup_templates",
+      "label": "T恤模板",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "primary": true,
+          "auto": "uuid"
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "label": "用户",
+          "indexed": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "label": "模板名",
+          "required": true
+        },
+        {
+          "name": "base_path",
+          "type": "string",
+          "label": "底图路径",
+          "required": true
+        },
+        {
+          "name": "print_area",
+          "type": "json",
+          "label": "印花区(x/y/w/h)"
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "label": "参与一键出品",
+          "default": true,
+          "indexed": true
+        },
+        {
+          "name": "builtin",
+          "type": "boolean",
+          "label": "内置",
+          "default": false
         },
         {
           "name": "created_at",

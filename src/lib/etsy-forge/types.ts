@@ -162,14 +162,29 @@ export interface CutoutRow extends Record<string, unknown> {
   created_at: string;
 }
 
-// 产品合成结果：印花 inpaint 到某张确定颜色空白 T 上得到的「带印花平铺 T」。
+// T恤模板:一张固定底图 + 印花区声明。一键出品第⑧步用 sharp 把印花程序合成到印花区,零 LLM。
+// 内置模板 seed 自应用资源(拷贝进媒体目录后引用),用户也可上传自己的底图+框选印花区。
+export interface MockupTemplateRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  name: string;
+  base_path: string; // 底图本地路径(内置=seed 时拷贝进媒体目录;上传=落盘路径)
+  print_area: { x: number; y: number; w: number; h: number }; // 底图像素系的印花区
+  enabled: boolean; // 参与一键出品(每张印花 × 每个启用模板 = 一张产品图)
+  builtin?: boolean; // 内置模板标记(UI 区分,可禁用不可删)
+  created_at: string;
+  updated_at: string;
+}
+
+// 产品合成结果：印花合成到 T恤模板(旧数据为 inpaint 到空白T素材)得到的「带印花平铺 T」。
 export interface MockupRow extends Record<string, unknown> {
   id: string;
   user_id: string;
   design_label?: string; // 印花来源描述(印花/二创图)
   design_ref?: string; // 印花来源(本地 path 或 url，记录追溯用)
   source_product_id?: string; // 血缘:这印花最初来自哪个采集的 Etsy 商品(经抠印花/二创追溯)
-  product_asset_id?: string; // 用的哪张产品图(素材库 product 类);内联生成(composer)的为空
+  template_id?: string; // 用的哪个T恤模板(程序合成);旧 inpaint 行为空
+  product_asset_id?: string; // 旧字段:inpaint 时代用的空白T素材;程序合成的为空
   image_path?: string; // 生成的带印花 T 本地路径
   prompt?: string; // 内联生成(composer)的提示词
   ref_images?: string[]; // 内联生成用的参考图(path/url 列表),重试时复用
@@ -435,6 +450,7 @@ export const COLLECTIONS = {
   FISSION_RUNS: 'etsy_forge_fission_runs',
   FISSION_DIAGNOSES: 'etsy_forge_fission_diagnoses',
   AGENT_TEAMS: 'etsy_forge_agent_teams',
+  MOCKUP_TEMPLATES: 'etsy_forge_mockup_templates',
   SOP_RUNS: 'etsy_forge_sop_runs',
   SOP_STEPS: 'etsy_forge_sop_steps',
   LOGS: 'etsy_forge_logs',

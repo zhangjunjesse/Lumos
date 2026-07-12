@@ -9,6 +9,8 @@ import type {
   LibProduct,
   AgentTeam,
   TeamMember,
+  MockupTemplate,
+  PrintArea,
   AssetItem,
   PromptItem,
   MockupItem,
@@ -323,6 +325,15 @@ export const etsyForgeApi = {
     jf<{ ok: boolean; team: AgentTeam }>(`${BASE}/teams`, { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }),
   deleteTeam: (id: string) =>
     jf<{ ok: boolean }>(`${BASE}/teams?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // T恤模板(一键出品第⑧步 sharp 合成的底图+印花区):列(首次 seed 内置白/黑) / 上传新建 / 改名·框选·启停 / 删(内置不可删)
+  listMockupTemplates: () => jf<{ templates: MockupTemplate[] }>(`${BASE}/mockup-templates`),
+  createMockupTemplate: (t: { name: string; base_image_base64: string; print_area?: PrintArea }) =>
+    jf<{ ok: boolean; template: MockupTemplate }>(`${BASE}/mockup-templates`, { method: 'POST', body: JSON.stringify(t) }),
+  updateMockupTemplate: (id: string, patch: { name?: string; print_area?: PrintArea; enabled?: boolean }) =>
+    jf<{ ok: boolean; template: MockupTemplate }>(`${BASE}/mockup-templates`, { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }),
+  deleteMockupTemplate: (id: string) =>
+    jf<{ ok: boolean }>(`${BASE}/mockup-templates?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   // SOP「一键出品」：启动(后台逐商品跑链) / 列运行 / 拿某 run 分步状态 / 单步重试。team_id 空=默认团队。
   startSop: (productIds: string[], teamId?: string) =>
