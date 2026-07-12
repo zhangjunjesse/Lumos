@@ -24,7 +24,7 @@ import { buildMarketValidation } from '../market-validation';
 import { logEvent } from '../log';
 import { COLLECTIONS, type AssetRow, type CutoutRow, type ProductRow } from '../types';
 import { getEffectiveTeam } from './team-store';
-import { runTeamSession, type TeamDesignOutput } from './team-session';
+import { runTeamSession, type TeamDesignOutput, type TeamEvent } from './team-session';
 
 export interface RunTeamRemixResult {
   ok: boolean;
@@ -82,10 +82,17 @@ export async function runTeamRemix(
   const targetCount = Math.max(1, Math.min(12, Math.floor(input.count ?? team.images_per_run ?? 5)));
   const briefing = buildBriefing(product, cutout.cutout_path, analysis, mv.verified, targetCount);
 
+  logEvent('团队出图', 'info', `团队「${team.name}」开工:目标 ${targetCount} 张 · 成员 ${team.members.filter((m) => m.enabled).length} 名 · 模型 ${team.model || '(全局默认)'}`, product.title);
   let designs: TeamDesignOutput[];
   let summary: string;
   try {
-    const session = await runTeamSession({ team, briefing, targetCount, userId: input.userId });
+    const session = await runTeamSession({
+      team,
+      briefing,
+      targetCount,
+      userId: input.userId,
+      onEvent: (ev) => logTeamEvent(ev, product.title),
+    });
     designs = session.designs;
     summary = session.summary;
     logEvent('团队出图', 'info', `团队「${team.name}」交付 ${designs.length}/${targetCount} 张(出图调用 ${session.imageCallsUsed} 次):${summary}`, product.title);
@@ -158,6 +165,31 @@ function buildBriefing(product: ProductRow, cutoutPath: string, analysis: RemixA
     `风险规则(必须遵守):\n${buildRiskRule(analysis)}`,
     analysis.ownership === 'not-owned' ? '\n注意:参考图非自有,禁止高相似复刻,以发散创作为主。' : '',
   ].join('\n');
+}
+
+// 把团队执行事件翻成应用日志——用户在「日志」tab 就能看队长派了谁、谁在出图、卡在哪。
+function logTeamEvent(ev: TeamEvent, product?: string): void {
+  switch (ev.kind) {
+    case 'dispatch':
+      return logEvent('团队·派单', 'info', `队长 → ${ev.to}:${ev.task}`, product);
+    case 'speak':
+      return logEvent(`团队·${ev.member}`, 'info', ev.text, product);
+    case 'image_call':
+      return logEvent('团队·出图', 'info', `${ev.member} 发起第 ${ev.seq} 张:${ev.prompt}`, product);
+    case 'image_ok':
+      return logEvent('团队·出图', 'info', `第 ${ev.seq} 张成功`, product, [serve(ev.path)]);
+    case 'image_fail':
+      return logEvent('团队·出图', 'error', `第 ${ev.seq} 张失败:${ev.error}`, product);
+    case 'quota_denied':
+      return logEvent('团队·出图', 'warn', `出图配额用满(${ev.used}/${ev.cap}),队长应停手交差`, product);
+    case 'done':
+      return logEvent(
+        '团队·结束',
+        ev.subtype === 'success' ? 'info' : 'error',
+        `会话终态 ${ev.subtype} · ${ev.turns} 轮${ev.errors.length ? ` · 错误:${ev.errors.join(' / ')}` : ''}`,
+        product,
+      );
+  }
 }
 
 function fail(error: string): RunTeamRemixResult {

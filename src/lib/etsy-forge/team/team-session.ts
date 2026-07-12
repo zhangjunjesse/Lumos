@@ -9,6 +9,9 @@ import { getActiveUserId } from '@/lib/auth/user-service';
 import { getProvider } from '@/lib/db/providers';
 import { createLumosMcpServer, LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
 import type { AgentTeamRow, TeamMember } from '../types';
+import { collectProducedPaths as collectPaths, TeamStreamParser, type TeamEvent } from './team-stream';
+
+export type { TeamEvent } from './team-stream';
 
 const IMAGE_TOOL = `mcp__${LUMOS_MCP_SERVER_NAME}__generate_image`;
 const TEAM_TIMEOUT_MS = 1_200_000; // 整队一次出图的硬超时(20min):多成员串并混合,给足但不放飞
@@ -27,6 +30,7 @@ export interface TeamSessionResult {
   summary: string;
   imageCallsUsed: number;
 }
+
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -105,7 +109,11 @@ export async function runTeamSession(input: {
   briefing: string;
   targetCount: number;
   userId: string;
+  onEvent?: (ev: TeamEvent) => void;
 }): Promise<TeamSessionResult> {
+  const emit = (ev: TeamEvent) => {
+    try { input.onEvent?.(ev); } catch { /* 日志回调异常绝不影响出图主流程 */ }
+  };
   const members = input.team.members.filter((m) => m.enabled);
   // 硬前置:至少一个成员有出图授权,否则这个团队不可能交差,提前报错比空跑一圈好。
   const producers = members.filter((m) => m.canGenerateImages && m.prompt.trim());
@@ -143,6 +151,7 @@ export async function runTeamSession(input: {
     if (toolName === IMAGE_TOOL) {
       const n = Math.max(1, Math.floor(Number((toolInput as { count?: number }).count ?? 1)));
       if (imageCalls + n > imageCap) {
+        emit({ kind: 'quota_denied', used: imageCalls, cap: imageCap });
         return { behavior: 'deny', message: `出图配额已用完(上限 ${imageCap} 张),用已有产出交差` };
       }
       imageCalls += n;
@@ -187,10 +196,9 @@ export async function runTeamSession(input: {
       },
     });
 
-    for await (const message of stream) {
-      const msg = message as { type?: string; structured_output?: unknown };
-      if (msg.type === 'result' && msg.structured_output) structured = msg.structured_output;
-    }
+    const parser = new TeamStreamParser(IMAGE_TOOL, emit);
+    for await (const message of stream) parser.consume(message);
+    structured = parser.structured;
   } finally {
     clearTimeout(timer);
   }
@@ -211,22 +219,7 @@ export async function runTeamSession(input: {
   return { designs, summary: parsed.summary ?? '', imageCallsUsed: imageCalls };
 }
 
-// 导出仅为单测:PostToolUse 的 tool_response 形状(content 数组无包裹)是实测出来的坑,要有回归盯着。
+// 导出仅为单测:绑定本模块的 IMAGE_TOOL 名,实际解析在 team-stream(有回归盯着形状坑)。
 export function collectProducedPaths(hookInput: unknown, sink: Set<string>): void {
-  const h = hookInput as { tool_name?: string; tool_response?: unknown };
-  if (h.tool_name !== IMAGE_TOOL) return;
-  // PostToolUse 的 tool_response 就是 MCP content 块数组本身(实测 SDK 0.3.207),不带 {content} 包裹。
-  const content = h.tool_response;
-  if (!Array.isArray(content)) return;
-  for (const block of content as Array<{ type?: string; text?: string }>) {
-    if (block?.type !== 'text' || typeof block.text !== 'string') continue;
-    try {
-      const payload = JSON.parse(block.text) as { images?: Array<{ path?: string }> };
-      for (const img of payload.images ?? []) {
-        if (typeof img?.path === 'string' && img.path) sink.add(img.path);
-      }
-    } catch {
-      // 非 JSON 文本(如错误消息)——跳过
-    }
-  }
+  collectPaths(hookInput, sink, IMAGE_TOOL);
 }
