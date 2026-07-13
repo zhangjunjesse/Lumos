@@ -3,7 +3,7 @@
 
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { COLLECTIONS, type AgentTeamRow, type TeamMember } from '../types';
-import { DEFAULT_TEAM_DESCRIPTION, DEFAULT_TEAM_MEMBERS, DEFAULT_TEAM_NAME, DEFAULT_TEAM_SOP } from './default-team';
+import { BUILTIN_TEAMS } from './builtin';
 
 const nowIso = () => new Date().toISOString();
 
@@ -57,7 +57,7 @@ function normalizeTeam(row: AgentTeamRow): AgentTeamRow {
 }
 
 export function listTeams(store: AppDataStore, userId: string): AgentTeamRow[] {
-  ensureDefaultTeam(store, userId);
+  ensureBuiltinTeams(store, userId);
   return store
     .query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, {
       filter: { user_id: userId },
@@ -79,25 +79,38 @@ export function getEffectiveTeam(store: AppDataStore, userId: string, teamId?: s
   return teams.find((t) => t.is_default) ?? teams[0];
 }
 
-export function ensureDefaultTeam(store: AppDataStore, userId: string): void {
-  const existing = store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, { filter: { user_id: userId }, limit: 100 });
-  if (existing.length > 0) {
-    // SOP 字段上线前 seed 的老默认团队没有工作手册(空的队长会走"自行安排"分支,体验差)。
-    // 只回填「还叫默认名且 SOP 为空」的行——改过名或写过 SOP 的都视为用户资产,不碰。
-    const stale = existing.find((t) => t.name === DEFAULT_TEAM_NAME && !sanitizeSop(t.sop));
-    if (stale) store.update(COLLECTIONS.AGENT_TEAMS, stale.id, { sop: DEFAULT_TEAM_SOP, updated_at: nowIso() });
-    return;
-  }
-  store.create(COLLECTIONS.AGENT_TEAMS, {
-    user_id: userId,
-    name: DEFAULT_TEAM_NAME,
-    description: DEFAULT_TEAM_DESCRIPTION,
-    is_default: true,
-    sop: DEFAULT_TEAM_SOP,
-    members: DEFAULT_TEAM_MEMBERS,
-    images_per_run: 5,
-    created_at: nowIso(),
-    updated_at: nowIso(),
+// 补齐内置团队:按名字 create-if-missing——只建用户还没有的同名团队,绝不覆盖用户
+// 已建/已改的(改过名/改过内容都视为用户资产)。新增内置团队时,老用户下次进来自动补上。
+// 首个内置团队(默认款)在用户尚无任何默认团队时补上 is_default。
+export function ensureBuiltinTeams(store: AppDataStore, userId: string): void {
+  const existing = store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, { filter: { user_id: userId }, limit: 200 });
+  const existingNames = new Set(existing.map((t) => t.name));
+  const hasDefault = existing.some((t) => t.is_default);
+  // 批量 seed 会在同一毫秒落库 → created_at 相同则 ORDER BY 顺序不定。给每个内置团队
+  // 递增时间戳,保证列表按 BUILTIN_TEAMS 定义顺序稳定展示(默认款始终排第一)。
+  const baseMs = Date.now();
+
+  BUILTIN_TEAMS.forEach((def, i) => {
+    if (existingNames.has(def.name)) {
+      // 旧默认团队 SOP 字段上线前 seed 的没有工作手册,回填一次(仅空 SOP 的默认款,不碰用户改过的)。
+      if (def.isDefault) {
+        const stale = existing.find((t) => t.name === def.name && !sanitizeSop(t.sop));
+        if (stale) store.update(COLLECTIONS.AGENT_TEAMS, stale.id, { sop: def.sop, updated_at: nowIso() });
+      }
+      return;
+    }
+    const ts = new Date(baseMs + i).toISOString();
+    store.create(COLLECTIONS.AGENT_TEAMS, {
+      user_id: userId,
+      name: def.name,
+      description: def.description,
+      is_default: def.isDefault === true && !hasDefault,
+      sop: def.sop,
+      members: def.members,
+      images_per_run: def.imagesPerRun,
+      created_at: ts,
+      updated_at: ts,
+    });
   });
 }
 

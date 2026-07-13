@@ -11,8 +11,8 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import { migrateAppTables } from '../../../db/migrations-app';
 import { createAppDataStore, type AppDataStore } from '../../../app/runtime/data-store';
-import { createTeam, deleteTeam, ensureDefaultTeam, getEffectiveTeam, listTeams, updateTeam } from '../team-store';
-import { DEFAULT_TEAM_NAME } from '../default-team';
+import { createTeam, deleteTeam, ensureBuiltinTeams, getEffectiveTeam, listTeams, updateTeam } from '../team-store';
+import { BUILTIN_TEAMS, DEFAULT_TEAM_NAME } from '../builtin';
 
 function setupStore(): AppDataStore {
   const db = new Database(':memory:');
@@ -28,19 +28,45 @@ function setupStore(): AppDataStore {
 const USER = 'u1';
 
 describe('team-store', () => {
-  it('首次 list 自动 seed 默认团队(SOP 非空,仅设计师有出图权限),再次 list 不重复 seed', () => {
+  it('首次 list 自动 seed 全部内置团队,首个是默认;再次 list 不重复 seed', () => {
     const store = setupStore();
     const first = listTeams(store, USER);
-    expect(first).toHaveLength(1);
+    expect(first).toHaveLength(BUILTIN_TEAMS.length);
+    // 默认团队排第一、is_default,SOP 非空,唯一出图位是「出图师」
     expect(first[0].name).toBe(DEFAULT_TEAM_NAME);
     expect(first[0].is_default).toBe(true);
-    expect(first[0].sop).toContain('流程'); // 队长工作手册随 seed 落库
-    expect(first[0].members).toHaveLength(4);
-    expect(first[0].members.filter((m) => m.canGenerateImages).map((m) => m.name)).toEqual(['出图师']); // 工序制:唯一执行位有出图权限
-    expect(first[0].members.every((m) => m.duty.length > 0)).toBe(true);
+    expect(first[0].sop).toContain('流程');
+    expect(first[0].members.filter((m) => m.canGenerateImages).map((m) => m.name)).toEqual(['出图师']);
+    // 每个内置团队:名字/SOP/成员齐全,至少一个成员有出图权限,职能描述都不空
+    for (const t of first) {
+      expect(t.sop.length).toBeGreaterThan(0);
+      expect(t.members.length).toBeGreaterThan(0);
+      expect(t.members.some((m) => m.canGenerateImages)).toBe(true);
+      expect(t.members.every((m) => m.duty.length > 0 && m.prompt.length > 0)).toBe(true);
+    }
+    // 只有一个默认团队
+    expect(first.filter((t) => t.is_default)).toHaveLength(1);
 
-    ensureDefaultTeam(store, USER);
-    expect(listTeams(store, USER)).toHaveLength(1);
+    ensureBuiltinTeams(store, USER);
+    expect(listTeams(store, USER)).toHaveLength(BUILTIN_TEAMS.length);
+  });
+
+  it('已有同名团队时不重复 seed(用户改过的不覆盖);新增内置团队会补给老用户', () => {
+    const store = setupStore();
+    listTeams(store, USER); // 先 seed 全部
+    // 用户改了默认团队的 SOP
+    const def = listTeams(store, USER).find((t) => t.name === DEFAULT_TEAM_NAME)!;
+    store.update('etsy_forge_agent_teams', def.id, { sop: '我自己改的 SOP' });
+    // 删掉一个非默认内置团队,模拟"老用户没有这个新团队"
+    const toDelete = listTeams(store, USER).find((t) => t.name === BUILTIN_TEAMS[1].name)!;
+    store.delete('etsy_forge_agent_teams', toDelete.id);
+
+    ensureBuiltinTeams(store, USER);
+    const after = listTeams(store, USER);
+    // 被删的补回来了
+    expect(after.some((t) => t.name === BUILTIN_TEAMS[1].name)).toBe(true);
+    // 用户改过的默认团队 SOP 没被覆盖
+    expect(after.find((t) => t.name === DEFAULT_TEAM_NAME)?.sop).toBe('我自己改的 SOP');
   });
 
   it('getEffectiveTeam:指定 id 用指定团队,不指定用默认团队,别人的团队拿不到', () => {
