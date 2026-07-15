@@ -6,7 +6,7 @@
 // (实测 "Tool permission request failed: Stream closed")。配额与真实路径由服务端
 // 注册表(team-image-guard)统一把守。
 
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime';
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth';
