@@ -116,21 +116,3 @@ export class TeamStreamParser {
   }
 }
 
-// generate_image 的 PostToolUse tool_response 形状(content 数组无包裹,实测 SDK 0.3.207)→ 收集真实产出路径。
-export function collectProducedPaths(hookInput: unknown, sink: Set<string>, imageToolName: string): void {
-  const h = hookInput as { tool_name?: string; tool_response?: unknown };
-  if (h.tool_name !== imageToolName) return;
-  const content = h.tool_response;
-  if (!Array.isArray(content)) return;
-  for (const block of content as ContentBlock[]) {
-    if (block?.type !== 'text' || typeof block.text !== 'string') continue;
-    try {
-      const payload = JSON.parse(block.text) as { images?: Array<{ path?: string }> };
-      for (const img of payload.images ?? []) {
-        if (typeof img?.path === 'string' && img.path) sink.add(img.path);
-      }
-    } catch {
-      // 非 JSON 文本(如错误消息)——跳过
-    }
-  }
-}

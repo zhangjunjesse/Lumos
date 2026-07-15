@@ -60,7 +60,7 @@ const inputSchema = {
   })).optional().describe('Gemini safety threshold overrides. Use sparingly — most defaults are sensible.'),
 };
 
-type ImageGenArgs = {
+export type ImageGenArgs = {
   prompt: string;
   aspect_ratio?: '1:1' | '16:9' | '9:16' | '3:2' | '2:3' | '4:3' | '3:4';
   image_size?: '1K' | '2K' | '4K';
@@ -143,86 +143,94 @@ async function runGeneration(
   });
 }
 
+// 完整的一次出图执行:输入防护 → 计费 → 生成 → 失败退款。抽成独立函数是为了让
+// 团队出图的 HTTP 回调链路(stdio MCP → API route)与聊天的进程内 tool 共用同一实现。
+export async function runImageGen(
+  args: ImageGenArgs,
+  sessionId: string | undefined,
+  userId: string | undefined,
+): Promise<CallToolResult> {
+  // 只拦「prompt 里有、但没放进 reference_image_paths」的路径(那才是真漏传,provider 收不到参考图)。
+  // 已在 reference_image_paths 里的重复路径放行 —— 上游 context-image 注入器会把
+  // "[Context Image N: /abs/path]" 拼进 agent 文本,agent 据此正确填了 reference_image_paths
+  // 却又在 prompt 里带了路径;旧逻辑一刀切拦死,导致图生图 100% 失败(#28)。
+  const unreferenced = findUnreferencedPromptPaths(args.prompt, args.reference_image_paths);
+  if (unreferenced.length > 0) {
+    const existingRefs = args.reference_image_paths ?? [];
+    const merged = [...new Set([...existingRefs, ...unreferenced])];
+    return textResult({
+      success: false,
+      error:
+        `Detected ${unreferenced.length} absolute image path(s) in the prompt text that are NOT in reference_image_paths. `
+        + `Absolute paths belong in reference_image_paths, never only in prompt. `
+        + `Retry this call with reference_image_paths=${JSON.stringify(merged)} `
+        + `and rewrite the prompt so it refers to them positionally (Image 1, Image 2, …) `
+        + `with NO absolute paths in the prompt string.`,
+      error_source: 'image_generation_input_shape',
+      detected_paths: unreferenced,
+      suggested_reference_image_paths: merged,
+      hint: '把 detected_paths 里的路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
+    }, true);
+  }
+
+  const target = resolveBillingTarget();
+  if ('error' in target) return textResult({ success: false, error: target.error }, true);
+  if (!target.model) {
+    return textResult({
+      success: false,
+      error:
+        `图片服务商"${target.provider.name}"没有可用模型 (model_catalog 为空, 且 model_override:image 未设置)。`
+        + `请先在管理端或本地 model_catalog 配置至少一个模型。`,
+    }, true);
+  }
+
+  const imageCount = args.count ?? 1;
+  const idempotencyKey = crypto.randomUUID();
+  let quotaConsumed = false;
+
+  if (userId) {
+    if (!target.remoteProviderId) {
+      return textResult({
+        success: false,
+        error:
+          `图片服务商"${target.provider.name}"不是由 Lumos Cloud 登录下发的云端服务商，`
+          + `无法走中心计费。请在管理端配置并重新登录，或改用自建 provider (需要自付 API 费用)。`,
+      }, true);
+    }
+    const check = await consumeRemoteQuota({
+      userId,
+      providerId: target.remoteProviderId,
+      model: target.model,
+      count: imageCount,
+      idempotencyKey,
+    });
+    if (!check.ok) return textResult({ success: false, error: check.error }, true);
+    quotaConsumed = true;
+  }
+
+  try {
+    return await runGeneration(args, sessionId, target.model);
+  } catch (error) {
+    if (userId && quotaConsumed) {
+      await refundRemoteQuota(userId, idempotencyKey);
+    }
+    const detail = formatGenerationError(error);
+    console.error('[image-gen-tool] generation failed:', error);
+    return textResult({
+      success: false,
+      error: detail,
+      error_source: 'image_generation',
+      hint: '请向用户原样展示上面的 error 字段（包含具体服务商和错误原因），不要改写为"暂时有问题"等模糊说法。',
+    });
+  }
+}
+
 export function createImageGenTool(sessionId?: string, userId?: string) {
   return tool(
     IMAGE_GEN_TOOL_NAME,
     'Generate images using AI. Call this tool when the user asks to '
     + 'generate, draw, create, edit, restyle, or transform images.',
     inputSchema,
-    async (args): Promise<CallToolResult> => {
-      // 只拦「prompt 里有、但没放进 reference_image_paths」的路径(那才是真漏传,provider 收不到参考图)。
-      // 已在 reference_image_paths 里的重复路径放行 —— 上游 context-image 注入器会把
-      // "[Context Image N: /abs/path]" 拼进 agent 文本,agent 据此正确填了 reference_image_paths
-      // 却又在 prompt 里带了路径;旧逻辑一刀切拦死,导致图生图 100% 失败(#28)。
-      const unreferenced = findUnreferencedPromptPaths(args.prompt, args.reference_image_paths);
-      if (unreferenced.length > 0) {
-        const existingRefs = args.reference_image_paths ?? [];
-        const merged = [...new Set([...existingRefs, ...unreferenced])];
-        return textResult({
-          success: false,
-          error:
-            `Detected ${unreferenced.length} absolute image path(s) in the prompt text that are NOT in reference_image_paths. `
-            + `Absolute paths belong in reference_image_paths, never only in prompt. `
-            + `Retry this call with reference_image_paths=${JSON.stringify(merged)} `
-            + `and rewrite the prompt so it refers to them positionally (Image 1, Image 2, …) `
-            + `with NO absolute paths in the prompt string.`,
-          error_source: 'image_generation_input_shape',
-          detected_paths: unreferenced,
-          suggested_reference_image_paths: merged,
-          hint: '把 detected_paths 里的路径合并进 reference_image_paths（见 suggested_reference_image_paths），并把 prompt 里的绝对路径改成"Image 1/Image 2"这类位置引用后重新调用。',
-        }, true);
-      }
-
-      const target = resolveBillingTarget();
-      if ('error' in target) return textResult({ success: false, error: target.error }, true);
-      if (!target.model) {
-        return textResult({
-          success: false,
-          error:
-            `图片服务商"${target.provider.name}"没有可用模型 (model_catalog 为空, 且 model_override:image 未设置)。`
-            + `请先在管理端或本地 model_catalog 配置至少一个模型。`,
-        }, true);
-      }
-
-      const imageCount = args.count ?? 1;
-      const idempotencyKey = crypto.randomUUID();
-      let quotaConsumed = false;
-
-      if (userId) {
-        if (!target.remoteProviderId) {
-          return textResult({
-            success: false,
-            error:
-              `图片服务商"${target.provider.name}"不是由 Lumos Cloud 登录下发的云端服务商，`
-              + `无法走中心计费。请在管理端配置并重新登录，或改用自建 provider (需要自付 API 费用)。`,
-          }, true);
-        }
-        const check = await consumeRemoteQuota({
-          userId,
-          providerId: target.remoteProviderId,
-          model: target.model,
-          count: imageCount,
-          idempotencyKey,
-        });
-        if (!check.ok) return textResult({ success: false, error: check.error }, true);
-        quotaConsumed = true;
-      }
-
-      try {
-        return await runGeneration(args, sessionId, target.model);
-      } catch (error) {
-        if (userId && quotaConsumed) {
-          await refundRemoteQuota(userId, idempotencyKey);
-        }
-        const detail = formatGenerationError(error);
-        console.error('[image-gen-tool] generation failed:', error);
-        return textResult({
-          success: false,
-          error: detail,
-          error_source: 'image_generation',
-          hint: '请向用户原样展示上面的 error 字段（包含具体服务商和错误原因），不要改写为"暂时有问题"等模糊说法。',
-        });
-      }
-    },
+    (args): Promise<CallToolResult> => runImageGen(args, sessionId, userId),
   );
 }

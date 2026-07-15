@@ -1,21 +1,31 @@
 // 出图团队的队长会话:SDK 原生 agents 子代理机制,协作方式全在提示词里,引擎只管
-// 组装(成员→AgentDefinition)、护栏(出图配额 canUseTool + 真实产出路径追踪)和结构化交差。
+// 组装(成员→AgentDefinition)、护栏和结构化交差。
+//
+// 出图工具走独立 stdio MCP 进程 → HTTP 回调(team-image-service),不走进程内 MCP/
+// canUseTool/hook——那三者都骑在 SDK↔CLI 控制协议上,复杂多子代理会话里该往返会断
+// (实测 "Tool permission request failed: Stream closed")。配额与真实路径由服务端
+// 注册表(team-image-guard)统一把守。
 
-import { query, type CanUseTool, type Options } from '@anthropic-ai/claude-agent-sdk';
+import path from 'node:path';
+import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime';
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
 import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth';
 import { getActiveUserId } from '@/lib/auth/user-service';
 import { getProvider } from '@/lib/db/providers';
-import { createLumosMcpServer, LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
+import { LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
+import { resolveRuntimeResourcePath } from '@/lib/runtime-resources';
+import { resolveMcpRuntimeCommand } from '@/lib/mcp-runtime-command';
 import type { AgentTeamRow, TeamMember } from '../types';
-import { collectProducedPaths as collectPaths, TeamStreamParser, type TeamEvent } from './team-stream';
+import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from './team-image-guard';
+import { TeamStreamParser, type TeamEvent } from './team-stream';
 
 export type { TeamEvent } from './team-stream';
 
 const IMAGE_TOOL = `mcp__${LUMOS_MCP_SERVER_NAME}__generate_image`;
-const TEAM_TIMEOUT_MS = 1_200_000; // 整队一次出图的硬超时(20min):多成员串并混合,给足但不放飞
+const TEAM_TIMEOUT_MS = 1_800_000; // 整队一次出图的硬超时(30min);超时不再全损,有真图就部分交差
 const MAX_TURNS = 40;
+const IMAGE_CALL_TIMEOUT_MS = 900_000; // generate_image 单次 50-100s+,批量 count>1 更久
 
 export interface TeamDesignOutput {
   path: string;
@@ -77,6 +87,21 @@ function agentKey(m: TeamMember): string {
   return m.name.replace(/\s+/g, '-');
 }
 
+// 出图 stdio MCP 的进程配置:内置脚本 + 打包 node 运行时(生产环境用户机器没有 node)。
+function buildImageServerConfig(runToken: string): NonNullable<Options['mcpServers']>[string] {
+  const script = resolveRuntimeResourcePath(path.join('mcp-servers', 'etsy-team-image', 'etsy_team_image_mcp.mjs'));
+  if (!script) throw new Error('找不到 etsy-team-image MCP 脚本(runtime resources 未就绪)');
+  const apiBase = process.env.LUMOS_API_BASE
+    || `http://localhost:${process.env.LUMOS_DEV_SERVER_PORT || process.env.PORT || '3000'}`;
+  return {
+    type: 'stdio',
+    command: resolveMcpRuntimeCommand({ command: 'node', runtime: 'node' }),
+    args: [script],
+    env: { LUMOS_API_BASE: apiBase, LUMOS_TEAM_RUN_TOKEN: runToken },
+    timeout: IMAGE_CALL_TIMEOUT_MS,
+  };
+}
+
 // 队长提示词 = 硬护栏(引擎写死) + 团队 SOP(用户的自由领地) + 硬纪律(压轴,防被 SOP 冲掉) + 创作简报。
 // 流程/分工/质量标准全部由 SOP 说了算,引擎不预设任何工种或派单顺序。
 function buildLeaderPrompt(team: AgentTeamRow, members: TeamMember[], briefing: string, targetCount: number): string {
@@ -95,6 +120,8 @@ function buildLeaderPrompt(team: AgentTeamRow, members: TeamMember[], briefing: 
     sop ? `===== 团队 SOP(按此工作) =====\n${sop}` : '(该团队没有写 SOP:你自行安排最合理的分工完成任务。)',
     '',
     '===== 硬纪律(优先级高于 SOP,不可违背) =====',
+    '- 派单必须合批:同类工作一次派单批量完成(如一次派单产出全部设计的提示词),严禁逐张反复派单;每个成员整场至多派单 2 次。',
+    `- 先出图后打磨:前期工序从简从快,拿到可用的出图提示词就立即安排出图;宁可先出满 ${targetCount} 张再评审,不可迟迟不出图。`,
     `- 出图配额有限(约 ${targetCount * 2} 次),配额被拒后立即停手,用已有产出交差。`,
     '- 交差用结构化输出:designs[].path 必须是 generate_image 真实返回的路径,一个字符都不能改;member 写产出成员名。',
     '- 某个成员失败不影响其他任务;哪怕只有一张成功也如实交差,零产出则交空 designs 并在 summary 说明原因,不编造。',
@@ -111,7 +138,12 @@ export async function runTeamSession(input: {
   userId: string;
   onEvent?: (ev: TeamEvent) => void;
 }): Promise<TeamSessionResult> {
+  // 兜底回收所需的执行流事实:每次出图调用是谁发起(seq→成员)、成功产出了哪张(seq→路径)。
+  const callMemberBySeq = new Map<number, string>();
+  const okPathBySeq = new Map<number, string>();
   const emit = (ev: TeamEvent) => {
+    if (ev.kind === 'image_call') callMemberBySeq.set(ev.seq, ev.member);
+    if (ev.kind === 'image_ok') okPathBySeq.set(ev.seq, ev.path);
     try { input.onEvent?.(ev); } catch { /* 日志回调异常绝不影响出图主流程 */ }
   };
   const members = input.team.members.filter((m) => m.enabled);
@@ -142,36 +174,22 @@ export async function runTeamSession(input: {
   if (isClaudeLocalAuthProvider(runtime.activeProvider)) {
     await ensureClaudeLocalAuthReady(runtime.activeProvider);
   }
-  const imageCap = input.targetCount * 2;
-  let imageCalls = 0;
-  const producedPaths = new Set<string>();
 
-  // 出图配额:对 generate_image 计数(含 count 参数),超额拒绝并告知队长收口。
-  const canUseTool: CanUseTool = async (toolName, toolInput) => {
-    if (toolName === IMAGE_TOOL) {
-      const n = Math.max(1, Math.floor(Number((toolInput as { count?: number }).count ?? 1)));
-      if (imageCalls + n > imageCap) {
-        emit({ kind: 'quota_denied', used: imageCalls, cap: imageCap });
-        return { behavior: 'deny', message: `出图配额已用完(上限 ${imageCap} 张),用已有产出交差` };
-      }
-      imageCalls += n;
-    }
-    return { behavior: 'allow', updatedInput: toolInput };
-  };
-
+  const runToken = createTeamImageGuard({
+    billingUserId,
+    cap: input.targetCount * 2,
+    onQuotaDenied: (used, cap) => emit({ kind: 'quota_denied', used, cap }),
+  });
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), TEAM_TIMEOUT_MS);
 
-  let structured: unknown;
   try {
     const stream = query({
       prompt: buildLeaderPrompt(input.team, members, input.briefing, input.targetCount),
       options: {
         abortController,
         cwd: process.env.LUMOS_DATA_DIR || process.cwd(),
-        // generate_image 单次 50-100s+(网络差时更久),SDK 默认 MCP 工具超时会把它掐成
-        // "Stream closed"(实测)。团队场景长工具调用是常态,放宽到 15min(仍受 20min 会话硬超时兜底)。
-        env: { ...runtime.env, MCP_TOOL_TIMEOUT: '900000' },
+        env: runtime.env,
         settingSources: runtime.settingSources,
         ...(runtime.resolvedModel ? { model: runtime.resolvedModel } : {}),
         ...(runtime.pathToClaudeCodeExecutable
@@ -179,47 +197,75 @@ export async function runTeamSession(input: {
           : {}),
         agents,
         tools: ['Task', 'Read'],
-        mcpServers: { [LUMOS_MCP_SERVER_NAME]: createLumosMcpServer(undefined, billingUserId) },
-        permissionMode: 'default',
-        canUseTool,
+        mcpServers: { [LUMOS_MCP_SERVER_NAME]: buildImageServerConfig(runToken) },
+        // 团队会话无人值守,没有权限交互 UI;权限控制流(canUseTool)在复杂会话里会断,
+        // 护栏已全部落在服务端(配额+路径),这里放行。
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
         maxTurns: MAX_TURNS,
         outputFormat: { type: 'json_schema', schema: OUTPUT_SCHEMA },
-        hooks: {
-          // 记录 generate_image 的真实产出路径:最终交差的 path 必须在这个集合里(防幻觉路径)。
-          PostToolUse: [{
-            hooks: [async (hookInput) => {
-              collectProducedPaths(hookInput, producedPaths);
-              return {};
-            }],
-          }],
-        },
       },
     });
 
     const parser = new TeamStreamParser(IMAGE_TOOL, emit);
     for await (const message of stream) parser.consume(message);
-    structured = parser.structured;
+
+    const guard = getTeamImageGuard(runToken);
+    return assembleResult({
+      team: input.team,
+      structured: parser.structured,
+      producedPaths: guard?.producedPaths ?? new Set<string>(),
+      imageCallsUsed: guard?.used ?? 0,
+      timedOut: abortController.signal.aborted,
+      callMemberBySeq,
+      okPathBySeq,
+    });
   } finally {
     clearTimeout(timer);
+    releaseTeamImageGuard(runToken);
   }
+}
 
-  if (!structured) {
-    throw new Error(abortController.signal.aborted ? `团队出图超时(${TEAM_TIMEOUT_MS / 60000}min)` : '团队没有交回结构化产出');
-  }
-
-  const parsed = structured as { designs?: TeamDesignOutput[]; summary?: string };
+// 交差组装:优先用队长的结构化申报(经真实路径校验);队长没交差或申报全数无效时,
+// 从执行流回收真实产出部分交差——超时/轮次耗尽从此不再「有图也算全损」。
+// 导出仅为单测(锁住兜底行为)。
+export function assembleResult(input: {
+  team: AgentTeamRow;
+  structured: unknown;
+  producedPaths: Set<string>;
+  imageCallsUsed: number;
+  timedOut: boolean;
+  callMemberBySeq: Map<number, string>;
+  okPathBySeq: Map<number, string>;
+}): TeamSessionResult {
+  const parsed = (input.structured ?? {}) as { designs?: TeamDesignOutput[]; summary?: string };
   const claimed = (parsed.designs ?? []).filter((d) => d && typeof d.path === 'string');
-  const designs = claimed.filter((d) => producedPaths.has(d.path));
+  let designs = claimed.filter((d) => input.producedPaths.has(d.path));
   if (designs.length < claimed.length) {
     // 队长交回的路径不在 generate_image 真实产出集合里(幻觉路径或复制错) → 丢弃并留痕,别静默。
     console.warn(
-      `[team-session] 团队「${input.team.name}」交回 ${claimed.length} 条,其中 ${claimed.length - designs.length} 条路径不在真实产出集合(共 ${producedPaths.size} 条)中,已丢弃`,
+      `[team-session] 团队「${input.team.name}」交回 ${claimed.length} 条,其中 ${claimed.length - designs.length} 条路径不在真实产出集合(共 ${input.producedPaths.size} 条)中,已丢弃`,
     );
   }
-  return { designs, summary: parsed.summary ?? '', imageCallsUsed: imageCalls };
-}
 
-// 导出仅为单测:绑定本模块的 IMAGE_TOOL 名,实际解析在 team-stream(有回归盯着形状坑)。
-export function collectProducedPaths(hookInput: unknown, sink: Set<string>): void {
-  collectPaths(hookInput, sink, IMAGE_TOOL);
+  let summary = parsed.summary ?? '';
+  if (designs.length === 0 && input.producedPaths.size > 0) {
+    designs = [...input.okPathBySeq.entries()]
+      .filter(([, p]) => input.producedPaths.has(p))
+      .map(([seq, p]) => ({
+        path: p,
+        member: input.callMemberBySeq.get(seq) || '团队',
+        rationale: '(引擎兜底回收:队长未正常申报此图)',
+      }));
+    const covered = new Set(designs.map((d) => d.path));
+    for (const p of input.producedPaths) {
+      if (!covered.has(p)) designs.push({ path: p, member: '团队', rationale: '(引擎兜底回收)' });
+    }
+    summary = summary || (input.timedOut ? '队长会话超时未收尾,引擎已回收真实产出部分交差。' : '队长未正常交差,引擎已回收真实产出部分交差。');
+  }
+
+  if (!input.structured && designs.length === 0) {
+    throw new Error(input.timedOut ? '团队出图超时(30min)且无任何真实产出' : '团队没有交回结构化产出,也没有任何真实出图');
+  }
+  return { designs, summary, imageCallsUsed: input.imageCallsUsed };
 }

@@ -1,9 +1,10 @@
 // 出图团队 CRUD。团队是纯业务数据(名称+成员人设+目标张数),执行引擎见 run-team.ts。
 // 默认团队按需 seed:首次读取时不存在就建,用户可改可删(删了再进会重建初始版)。
 
+import crypto from 'node:crypto';
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 import { COLLECTIONS, type AgentTeamRow, type TeamMember } from '../types';
-import { BUILTIN_TEAMS } from './builtin';
+import { BUILTIN_TEAMS, type BuiltinTeamDef } from './builtin';
 
 const nowIso = () => new Date().toISOString();
 
@@ -79,24 +80,72 @@ export function getEffectiveTeam(store: AppDataStore, userId: string, teamId?: s
   return teams.find((t) => t.is_default) ?? teams[0];
 }
 
-// 补齐内置团队:按名字 create-if-missing——只建用户还没有的同名团队,绝不覆盖用户
-// 已建/已改的(改过名/改过内容都视为用户资产)。新增内置团队时,老用户下次进来自动补上。
+// 内置团队内容指纹:seed 时存进行里;行内容仍等于它=用户没改过。只哈希"内容"字段,
+// 用户改 is_default/provider/model 这类偏好不影响内置定义升级时的安全刷新。
+function builtinContentHash(input: {
+  sop: string;
+  description: string;
+  imagesPerRun: number;
+  members: Array<Pick<TeamMember, 'name' | 'duty' | 'prompt' | 'canGenerateImages' | 'enabled'>>;
+}): string {
+  const normalized = {
+    sop: input.sop.trim(),
+    description: input.description.trim(),
+    imagesPerRun: input.imagesPerRun,
+    members: input.members.map((m) => ({
+      name: m.name, duty: m.duty, prompt: m.prompt,
+      canGenerateImages: m.canGenerateImages, enabled: m.enabled,
+    })),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
+function defHash(def: BuiltinTeamDef): string {
+  return builtinContentHash({ sop: def.sop, description: def.description, imagesPerRun: def.imagesPerRun, members: def.members });
+}
+
+function rowHash(row: AgentTeamRow): string {
+  return builtinContentHash({
+    sop: sanitizeSop(row.sop),
+    description: typeof row.description === 'string' ? row.description : '',
+    imagesPerRun: typeof row.images_per_run === 'number' ? row.images_per_run : 5,
+    members: sanitizeMembers(row.members),
+  });
+}
+
+// 补齐内置团队:按名字 create-if-missing + pristine 刷新。
+// - 用户没有的同名团队 → 补建(新增内置团队时老用户下次进来自动补上)。
+// - 已有且用户从没改过内容(行哈希==seed 指纹;老行无指纹则看 updated_at==created_at) →
+//   内置定义升级时安全刷新到新版。
+// - 用户改过内容(改名/改SOP/改成员) → 视为用户资产,绝不覆盖。
 // 首个内置团队(默认款)在用户尚无任何默认团队时补上 is_default。
 export function ensureBuiltinTeams(store: AppDataStore, userId: string): void {
   const existing = store.query<AgentTeamRow>(COLLECTIONS.AGENT_TEAMS, { filter: { user_id: userId }, limit: 200 });
-  const existingNames = new Set(existing.map((t) => t.name));
   const hasDefault = existing.some((t) => t.is_default);
   // 批量 seed 会在同一毫秒落库 → created_at 相同则 ORDER BY 顺序不定。给每个内置团队
   // 递增时间戳,保证列表按 BUILTIN_TEAMS 定义顺序稳定展示(默认款始终排第一)。
   const baseMs = Date.now();
 
   BUILTIN_TEAMS.forEach((def, i) => {
-    if (existingNames.has(def.name)) {
-      // 旧默认团队 SOP 字段上线前 seed 的没有工作手册,回填一次(仅空 SOP 的默认款,不碰用户改过的)。
-      if (def.isDefault) {
-        const stale = existing.find((t) => t.name === def.name && !sanitizeSop(t.sop));
-        if (stale) store.update(COLLECTIONS.AGENT_TEAMS, stale.id, { sop: def.sop, updated_at: nowIso() });
+    const row = existing.find((t) => t.name === def.name);
+    const targetHash = defHash(def);
+    if (row) {
+      const currentHash = rowHash(row);
+      if (currentHash === targetHash) {
+        // 内容已是最新;老行(seed 时还没有指纹机制)补个指纹,让以后的升级判断走哈希而不是时间戳。
+        if (row.builtin_hash !== targetHash) store.update(COLLECTIONS.AGENT_TEAMS, row.id, { builtin_hash: targetHash });
+        return;
       }
+      const pristine = row.builtin_hash ? row.builtin_hash === currentHash : row.updated_at === row.created_at;
+      if (!pristine) return; // 用户资产,不碰
+      store.update(COLLECTIONS.AGENT_TEAMS, row.id, {
+        description: def.description,
+        sop: def.sop,
+        members: def.members,
+        images_per_run: def.imagesPerRun,
+        builtin_hash: targetHash,
+        updated_at: nowIso(),
+      });
       return;
     }
     const ts = new Date(baseMs + i).toISOString();
@@ -108,6 +157,7 @@ export function ensureBuiltinTeams(store: AppDataStore, userId: string): void {
       sop: def.sop,
       members: def.members,
       images_per_run: def.imagesPerRun,
+      builtin_hash: targetHash,
       created_at: ts,
       updated_at: ts,
     });

@@ -117,18 +117,25 @@ describe('team-store', () => {
     expect(t.members[1].duty).toContain('出图');
   });
 
-  it('老默认团队 SOP 为空时自动回填(改过名或写过 SOP 的不碰)', () => {
+  it('pristine 刷新:没被用户改过的内置团队行,内置定义升级时自动刷新到新版', () => {
     const store = setupStore();
     listTeams(store, USER); // seed
     const seeded = listTeams(store, USER)[0];
-    // 模拟 SOP 字段上线前的老行:清空 sop
-    store.update('etsy_forge_agent_teams', seeded.id, { sop: '' });
-    const refilled = listTeams(store, USER)[0]; // ensureDefaultTeam 兜底回填
-    expect(refilled.sop).toContain('流程');
+    // 模拟"内置定义已升级、行还是老版"的 legacy 行:内容是旧的、没有指纹、从没被用户动过
+    store.update('etsy_forge_agent_teams', seeded.id, { sop: '旧版 SOP', builtin_hash: '' });
+    const refreshed = listTeams(store, USER)[0];
+    expect(refreshed.sop).toContain('流程'); // 刷成当前内置定义
+    expect(refreshed.builtin_hash).toBeTruthy(); // 补上指纹,以后升级判断走哈希
 
-    // 改过名的团队即使 SOP 为空也不回填(用户资产)
-    store.update('etsy_forge_agent_teams', seeded.id, { name: '我的团队', sop: '' });
-    expect(listTeams(store, USER)[0].sop).toBe('');
+    // 用户改过内容的(有指纹但内容对不上)绝不刷新
+    store.update('etsy_forge_agent_teams', seeded.id, { sop: '我精心调过的 SOP' });
+    expect(listTeams(store, USER)[0].sop).toBe('我精心调过的 SOP');
+
+    // 改过名的团队不回填;同名内置团队会重新补建(用户资产和内置款并存)
+    store.update('etsy_forge_agent_teams', seeded.id, { name: '我的团队' });
+    const after = listTeams(store, USER);
+    expect(after.find((t) => t.name === '我的团队')?.sop).toBe('我精心调过的 SOP');
+    expect(after.some((t) => t.name === DEFAULT_TEAM_NAME)).toBe(true);
   });
 
   it('SOP 随建随改,读路径永远有 sop 字段(老行缺失时归空串)', () => {
