@@ -455,16 +455,19 @@ export function ChatView({
     ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
-  // 团队会话:绑定后显示团队徽标并隐藏模型选择器;空会话(还没发消息)可现场选团队。
+  // 团队会话:绑定后显示团队徽标;空会话(还没发消息)可现场选团队。
   const [teamId, setTeamId] = useState('');
   const [teamName, setTeamName] = useState('');
+  // 服务端占用(上一轮还在后台跑,本地无流):亮停止按钮,用户可终止后台执行
+  const [serverBusy, setServerBusy] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/chat/sessions/${sessionId}`, { cache: 'no-store' });
         if (!res.ok) return;
-        const data = await res.json() as { session?: { team_id?: string | null } };
+        const data = await res.json() as { session?: { team_id?: string | null; runtime_status?: string } };
+        if (!cancelled && data.session?.runtime_status === 'running') setServerBusy(true);
         const boundTeamId = data.session?.team_id;
         if (!boundTeamId) { if (!cancelled) { setTeamId(''); setTeamName(''); } return; }
         const teamRes = await fetch(`/api/teams/${boundTeamId}`, { cache: 'no-store' });
@@ -1033,6 +1036,10 @@ export function ChatView({
   }, [sessionId, refreshLatestMessages, refreshAutoContinue]);
 
   const stopStreaming = useCallback(() => {
+    // 服务端中断:断前端 SSE 停不掉后台执行(团队长任务尤甚),必须让 SDK 会话真正终止。
+    // fire-and-forget,不阻塞本地 UI 收尾。
+    void fetch(`/api/chat/sessions/${sessionId}/stop`, { method: 'POST' }).catch(() => {});
+    setServerBusy(false);
     const aborted = abortChatStream(sessionId);
     if (!aborted) {
       const localController = abortControllerRef.current;
@@ -1246,6 +1253,8 @@ export function ChatView({
 
         if (!response.ok) {
           const err = await response.json();
+          // 会话被上一轮占用(如团队长任务还在跑):亮出停止按钮让用户能终止,而不是干瞪眼
+          if (err.code === 'SESSION_BUSY') setServerBusy(true);
           throw new Error(err.error || 'Failed to send message');
         }
 
@@ -1847,7 +1856,7 @@ export function ChatView({
         onCommand={handleCommand}
         onStop={stopStreaming}
         disabled={false}
-        isStreaming={isStreaming}
+        isStreaming={isStreaming || serverBusy}
         sessionId={sessionId}
         modelName={currentModel}
         resolvedModelName={resolvedModelName}
