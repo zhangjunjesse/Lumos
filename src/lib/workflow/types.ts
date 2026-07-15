@@ -11,7 +11,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type WorkflowStepType = 'agent' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
+export type WorkflowStepType = 'agent' | 'team' | 'notification' | 'capability' | 'if-else' | 'for-each' | 'while' | 'wait';
 export const WORKFLOW_AGENT_ROLES = ['worker', 'researcher', 'coder', 'integration'] as const;
 export type WorkflowAgentRole = (typeof WORKFLOW_AGENT_ROLES)[number];
 export type WorkflowAgentExecutionMode = 'auto' | 'claude' | 'synthetic';
@@ -93,6 +93,13 @@ export interface AgentStepInput extends WorkflowStepRuntimeCarrier {
    * 非空 → classifier 只读这个字段 + agent 输出 + 工具调用事实，不再读 prompt。
    */
   expectedOutput?: string;
+}
+
+export interface TeamStepInput extends WorkflowStepRuntimeCarrier {
+  /** 平台团队 id(lumos_teams):这一步交给整个团队执行(队长按 SOP 派单成员) */
+  teamId: string;
+  /** 任务文本(支持 {{ steps.x.output.y }} 插值);要自包含,团队看不到工作流其他上下文 */
+  task: string;
 }
 
 export interface NotificationStepInput extends WorkflowStepRuntimeCarrier {
@@ -211,6 +218,7 @@ export interface WorkflowStepOutputEvent extends WorkflowStepLifecycleEvent {
 
 export interface WorkflowRuntimeBindings {
   agentStep: (input: AgentStepInput) => Promise<StepResult>;
+  teamStep: (input: TeamStepInput) => Promise<StepResult>;
   notificationStep: (input: NotificationStepInput) => Promise<StepResult>;
   capabilityStep: (input: CapabilityStepInput) => Promise<StepResult>;
   waitStep: (input: WaitStepInput) => Promise<StepResult>;

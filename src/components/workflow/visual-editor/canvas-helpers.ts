@@ -20,6 +20,8 @@ export function defaultNodeForType(type: WorkflowNodeType): NewNodeSeed {
   switch (type) {
     case 'agent':
       return { type: 'agent', input: { prompt: '', role: 'worker' } };
+    case 'team':
+      return { type: 'team', input: { teamId: '', task: '' } };
     case 'if-else':
       return {
         type: 'if-else',

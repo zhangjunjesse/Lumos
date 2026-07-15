@@ -3,7 +3,7 @@ import { WORKFLOW_AGENT_ROLES, type WorkflowStepType } from './types';
 
 export interface StepCompilerDefinition {
   type: WorkflowStepType;
-  runtimeBinding: 'agentStep' | 'notificationStep' | 'capabilityStep' | 'waitStep';
+  runtimeBinding: 'agentStep' | 'teamStep' | 'notificationStep' | 'capabilityStep' | 'waitStep';
   inputSchema: z.ZodType<Record<string, unknown>>;
 }
 
@@ -39,6 +39,11 @@ const agentStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   expectedOutput: z.string().optional(),
 }).strict();
 
+const teamStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
+  teamId: z.string().min(1),
+  task: z.string().min(1),
+}).strict();
+
 const notificationStepInputSchema: z.ZodType<Record<string, unknown>> = z.object({
   message: z.string().min(1),
   level: z.enum(['info', 'warning', 'error']).optional(),
@@ -62,6 +67,11 @@ export const STEP_REGISTRY: Partial<Record<WorkflowStepType, StepCompilerDefinit
     type: 'agent',
     runtimeBinding: 'agentStep',
     inputSchema: agentStepInputSchema,
+  },
+  team: {
+    type: 'team',
+    runtimeBinding: 'teamStep',
+    inputSchema: teamStepInputSchema,
   },
   notification: {
     type: 'notification',

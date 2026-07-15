@@ -70,7 +70,7 @@ function walk(startId: string | undefined, stopAt: Set<string>, index: GraphInde
 }
 
 function isLeafType(node: WorkflowNode): boolean {
-  return node.type === 'agent' || node.type === 'notification' || node.type === 'capability'
+  return node.type === 'agent' || node.type === 'team' || node.type === 'notification' || node.type === 'capability'
     || node.type === 'wait' || node.type === 'join' || node.type === 'approval';
 }
 

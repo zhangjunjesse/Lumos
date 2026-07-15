@@ -120,6 +120,7 @@ export function PropertiesPanel({
   );
   const [onError, setOnError] = useState<NodeOnError>(() => normalizeOnError(data.node.onError));
   const [presets, setPresets] = useState<AgentPreset[]>([]);
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
 
   const [prevData, setPrevData] = useState(data);
   if (prevData !== data) {
@@ -134,6 +135,10 @@ export function PropertiesPanel({
     fetch('/api/workflow/agent-presets')
       .then(r => r.json())
       .then((d: { presets?: AgentPreset[] }) => setPresets(d.presets ?? []))
+      .catch(() => {});
+    fetch('/api/teams')
+      .then(r => r.json())
+      .then((d: { teams?: Array<{ id: string; name: string }> }) => setTeams(d.teams ?? []))
       .catch(() => {});
   }, []);
 
@@ -259,6 +264,34 @@ export function PropertiesPanel({
               ...(typeof next.topK === 'number' ? { topK: next.topK } : {}),
             } : undefined)}
           />
+        </>
+      )}
+
+      {data.stepType === 'team' && (
+        <>
+          <div className="space-y-1">
+            <Label className="text-[10px]">团队</Label>
+            <Select
+              value={typeof input.teamId === 'string' && input.teamId ? input.teamId : '__none__'}
+              onValueChange={v => updateInput('teamId', v === '__none__' ? '' : v)}
+            >
+              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="选择团队" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">未选择</SelectItem>
+                {teams.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <p className="text-[9px] text-muted-foreground leading-tight">队长按团队 SOP 派单成员完成这一步</p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px]">任务</Label>
+            <Textarea
+              value={typeof input.task === 'string' ? input.task : ''}
+              onChange={e => updateInput('task', e.target.value)}
+              className="min-h-[70px] text-xs"
+              placeholder={'交给团队的任务,要自包含。支持 {{ steps.x.output.y }} 插值'}
+            />
+          </div>
         </>
       )}
 

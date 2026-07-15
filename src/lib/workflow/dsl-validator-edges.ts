@@ -5,7 +5,7 @@ import { edgeLabel, type IssueEmit } from './dsl-validator-types';
 
 // 线性节点可以是工作流终点 (出度 0); 控制流节点必须有出边。
 const TERMINAL_OK: ReadonlySet<WorkflowNodeType> = new Set([
-  'agent', 'notification', 'capability', 'wait', 'join', 'approval',
+  'agent', 'team', 'notification', 'capability', 'wait', 'join', 'approval',
 ]);
 
 // ── 2. 边的端点必须存在 ────────────────────────────────────────────────────

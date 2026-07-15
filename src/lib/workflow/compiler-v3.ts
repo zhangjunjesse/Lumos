@@ -95,7 +95,7 @@ function wrapModuleV3(name: string, version: string, body: string, nodeCount: nu
     '',
     'export function buildWorkflow(runtime) {',
     '  const {',
-    '    agentStep, notificationStep, capabilityStep, waitStep,',
+    '    agentStep, teamStep, notificationStep, capabilityStep, waitStep,',
     '    approvalStep = async () => ({ success: true, output: { status: "auto-approved" } }),',
     '    onStepStarted, onStepCompleted, onStepSkipped, onStepOutput',
     '  } = runtime;',

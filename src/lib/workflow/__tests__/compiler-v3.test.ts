@@ -114,3 +114,33 @@ describe('compileWorkflowDslV3', () => {
     expect(r.validation.errors.some((e) => e.includes('E_CONTRACT_FIELD_UNDECLARED'))).toBe(true);
   });
 });
+
+describe('team step (v3)', () => {
+  test('team 节点编译:emit teamStep 绑定,任务插值保留', () => {
+    const spec = {
+      version: 'v3', name: 'team-flow',
+      nodes: [
+        { id: 'a', type: 'agent', input: { prompt: '列要点' } },
+        { id: 't', type: 'team', input: { teamId: 'team-1', task: '根据要点写稿:{{ steps.a.output.summary }}' } },
+      ],
+      edges: [{ from: 'a', to: 't', kind: 'next' }],
+    };
+    const r = compileWorkflowDslV3(spec);
+    expect(r.validation.valid).toBe(true);
+    expect(r.code).toContain('teamStep(');
+    expect(r.code).toContain('stepOutputs["t"]');
+    expect(r.manifest.stepTypes).toEqual(['agent', 'team']);
+    expect(validateCompiledWorkflowCode(r.code)).toEqual([]);
+  });
+
+  test('team 节点输入校验:缺 teamId/task 或带未知字段都拒绝', () => {
+    const base = { version: 'v3', name: 'bad-team', edges: [] };
+    const missing = compileWorkflowDslV3({ ...base, nodes: [{ id: 't', type: 'team', input: { task: 'x' } }] });
+    expect(missing.validation.valid).toBe(false);
+    const unknown = compileWorkflowDslV3({
+      ...base,
+      nodes: [{ id: 't', type: 'team', input: { teamId: 'a', task: 'x', extra: 1 } }],
+    });
+    expect(unknown.validation.valid).toBe(false);
+  });
+});

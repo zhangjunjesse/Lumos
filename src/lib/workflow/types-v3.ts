@@ -55,6 +55,12 @@ export interface AgentNode extends NodeBase {
   outputContract?: Record<string, unknown>;
 }
 
+/** 团队节点:这一步交给平台团队(队长按 SOP 派单成员)。out-degree: 1× next. */
+export interface TeamNode extends NodeBase {
+  type: 'team';
+  input: { teamId: string; task: string };
+}
+
 export interface NotificationNode extends NodeBase {
   type: 'notification';
   input: Record<string, unknown>;
@@ -148,6 +154,7 @@ export interface ApprovalNode extends NodeBase {
 
 export type WorkflowNode =
   | AgentNode
+  | TeamNode
   | NotificationNode
   | CapabilityNode
   | WaitNode
@@ -188,6 +195,7 @@ export interface NodeOutDegreeSpec {
 
 export const NODE_OUT_DEGREE: Record<WorkflowNodeType, NodeOutDegreeSpec> = {
   agent:        { next: { mode: 'exact', count: 1 } },
+  team:         { next: { mode: 'exact', count: 1 } },
   notification: { next: { mode: 'exact', count: 1 } },
   capability:   { next: { mode: 'exact', count: 1 } },
   wait:         { next: { mode: 'exact', count: 1 } },

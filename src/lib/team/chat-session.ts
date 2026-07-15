@@ -6,39 +6,26 @@
 import type { ClaudeStreamOptions } from '@/types';
 import { getProvider } from '@/lib/db/providers';
 import { LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
-import { agentKeyOf, toAgentDefinitions, type TeamAgentSpec } from './agent-defs';
+import { toAgentDefinitions } from './agent-defs';
 import { buildTeamImageServerConfig } from './image-server-config';
 import { createTeamImageGuard, releaseTeamImageGuard } from './image-guard';
-import { grantsToTools } from './tool-grants';
-import { getTeam, resolveTeamMembers } from './store';
+import { getTeam } from './store';
+import { buildRosterLines, resolveReadyMembers, TEAM_HARD_RULES, type ReadyMember } from './resolve-members';
 
 // 每回合出图配额:聊天团队没有"目标张数"概念,给一个防失控的硬顶。
 const IMAGES_PER_TURN_CAP = 10;
 
-interface ReadyMember {
-  name: string;
-  duty: string;
-  spec: TeamAgentSpec;
-}
-
 function buildLeaderSystemPrompt(teamName: string, sop: string, members: ReadyMember[]): string {
-  const roster = members
-    .map((m) => `- ${m.spec.key}:${m.duty}`)
-    .join('\n');
   return [
     `你是团队「${teamName}」的队长。用户在和整个团队对话:你负责理解用户诉求、把工作用 Task 工具派给团队成员(subagent_type 用成员名)、汇总产出、以团队名义向用户交差。`,
     '简单的寒暄或澄清问题你可以直接回答;实质工作必须派给成员完成,你自己不做成员职能内的活。',
     '',
     '团队成员(职能是你派单的依据):',
-    roster,
+    buildRosterLines(members),
     '',
     sop.trim() ? `===== 团队 SOP(按此工作) =====\n${sop.trim()}` : '(该团队没有写 SOP:你自行安排最合理的分工完成任务。)',
     '',
-    '===== 硬纪律(优先级高于 SOP,不可违背) =====',
-    '- 你唯一合法的协作方式是真实调用 Task 工具(subagent_type=成员名)。严禁自己扮演成员、严禁代写"成员产出":没有对应 Task 调用却声称某成员产出了什么,属于造假,是最严重的违纪。',
-    '- 派单必须合批:同类工作一次派单批量完成,严禁把一件事拆成多次小派单;每个成员一回合至多派单 2 次。',
-    '- 派单的任务文本必须自包含:成员看不到用户消息和别人的产出,它需要的一切信息(用户原话要点/上游成员产出/约束)都要原文写进任务里。',
-    '- 如实交差:成员失败就说失败,不编造产出;引用成员的结论时忠实转述,不添油加醋。',
+    ...TEAM_HARD_RULES,
     '- 最终向用户交差用清晰的自然语言,说明每部分是哪位成员的产出。',
   ].join('\n');
 }
@@ -65,22 +52,7 @@ export function buildTeamChatTurn(input: {
   const team = getTeam(input.teamId);
   if (!team) throw new Error('该会话绑定的团队已被删除——新建会话或先到「团队」页重建团队');
 
-  const members: ReadyMember[] = resolveTeamMembers(team)
-    .filter((m) => m.ref.enabled && m.preset && m.preset.systemPrompt.trim())
-    .map((m) => {
-      const p = m.preset!;
-      const duty = p.responsibility?.trim() || p.position?.trim() || p.description?.trim() || '团队成员';
-      return {
-        name: p.name,
-        duty,
-        spec: {
-          key: agentKeyOf(p.name),
-          description: `${p.name}:${duty}`,
-          prompt: p.systemPrompt,
-          tools: grantsToTools(p.toolPermissions),
-        },
-      };
-    });
+  const members = resolveReadyMembers(team);
   if (members.length === 0) {
     throw new Error(`团队「${team.name}」没有可用成员(启用且人设完整)——先到「团队」页配好成员`);
   }

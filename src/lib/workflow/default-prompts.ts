@@ -195,7 +195,21 @@ return { success: false, output: null, error: "操作失败原因" };
 
 **使用时机：** 当用户说"固化为代码""不要每次都调 AI""确定性执行"时，为 agent 节点添加 code 配置。通常先以 agent-only 验证流程，再添加 code + strategy: "code-first" 实现固化。
 
-### 2. 条件分支 if-else
+### 2. 团队节点(team)
+{
+  "id": "<kebab-case 唯一ID>",
+  "type": "team",
+  "input": {
+    "teamId": "<必须来自【AVAILABLE TEAMS】列表的团队 id>",
+    "task": "<交给团队的任务。要自包含:团队看不到工作流其他上下文,上游数据用 {{ steps.X.output.yyy }} 插进 task 文本>"
+  }
+}
+- 出边:恰好 1 条 \`kind="next"\`(+ 可选 1 条 \`kind="on-error"\`)
+- 团队 = 队长 + 多名成员按团队 SOP 协作,适合需要多角色配合、有质量把关的任务;简单任务用 agent 节点
+- 输出:\`steps.<ID>.output.text\`(团队最终交付文本)
+- 【AVAILABLE TEAMS】为空时不要使用 team 节点
+
+### 3. 条件分支 if-else
 {
   "id": "<唯一ID>",
   "type": "if-else",
@@ -205,7 +219,7 @@ return { success: false, output: null, error: "操作失败原因" };
 - then/else 两条分支必须最终汇合到同一个后继节点（SESE：merge 点）
 - 要消费分支内节点的输出：把消费者也放进同一分支内，或让分支节点写文件落盘——外部无法读 then/else 内节点的 output
 
-### 3. 遍历循环 for-each
+### 4. 遍历循环 for-each
 {
   "id": "<唯一ID>",
   "type": "for-each",
@@ -222,7 +236,7 @@ return { success: false, output: null, error: "操作失败原因" };
 - **不同的 for-each 节点 itemVar 名必须全局唯一**（V3 校验器按名字判定作用域）
 - ⚠️ 推荐统一使用 \`output.currentItem\`，避免因 itemVar 命名不一致导致引用错误
 
-### 4. 条件循环 while / do-while
+### 5. 条件循环 while / do-while
 {
   "id": "<唯一ID>",
   "type": "while",
@@ -281,14 +295,14 @@ return { success: false, output: null, error: "操作失败原因" };
 }
 \`\`\`
 
-### 5. parallel + join — 并发分支
+### 6. parallel + join — 并发分支
 parallel 节点出 N≥2 条 next 边到各分支起点（可带 branchIndex 排序），
 所有分支最终汇到同一个 join 节点，join 再接后续。
 { "id": "fan", "type": "parallel", "input": { "onBranchFail": "wait-all" } }
 { "id": "sync", "type": "join", "input": {} }
 - onBranchFail: "fail-fast"（首个失败即中止）/ "wait-all"（默认，等所有分支结束）/ "best-effort"（失败分支也继续）
 
-### 6. wait / notification / capability / approval
+### 7. wait / notification / capability / approval
 - wait: \`{ "type": "wait", "input": { "durationMs": 1000 } }\`
 - notification / capability: 输入由 preset 提供
 - approval: 人工审批门（需要 approvers 配置，运行时挂起等待确认）

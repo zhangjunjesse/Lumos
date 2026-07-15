@@ -11,6 +11,7 @@ interface PaletteItem {
 
 const PALETTE_ITEMS: PaletteItem[] = [
   { type: 'agent', label: 'Agent', description: '调用 AI Agent 执行任务', color: 'bg-violet-500' },
+  { type: 'team', label: '团队', description: '交给团队协作完成(队长按 SOP 派单)', color: 'bg-violet-500' },
   { type: 'if-else', label: 'If / Else', description: '根据条件选择分支', color: 'bg-amber-500' },
   { type: 'for-each', label: 'For Each', description: '遍历集合中的每一项', color: 'bg-emerald-500' },
   { type: 'while', label: 'While', description: '条件成立时重复执行', color: 'bg-sky-500' },

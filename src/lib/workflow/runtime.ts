@@ -6,6 +6,7 @@ import { getDebugContext, persistDebugCacheResult } from './debug-cache';
 import type { DebugRuntimeContext } from './debug-types';
 import type {
   AgentStepInput,
+  TeamStepInput,
   ApprovalStepInput,
   CapabilityStepInput,
   NotificationStepInput,
@@ -28,6 +29,15 @@ export const STEP_RUNTIME_REGISTRY = {
     type: 'agent',
     execute: (input: AgentStepInput) => agentStep(input),
   },
+  team: {
+    type: 'team',
+    // 动态加载:teamStep 的依赖链含 Claude SDK 的 ESM 产物,静态 import 会把它拖进
+    // 所有引擎单测(jest 解析 sdk.mjs 直接炸,老坑)。执行时才加载,测试面干净。
+    execute: async (input: TeamStepInput) => {
+      const { teamStep } = await import('./steps/teamStep');
+      return teamStep(input);
+    },
+  },
   notification: {
     type: 'notification',
     execute: (input: NotificationStepInput) => notificationStep(input),
@@ -49,6 +59,7 @@ export const STEP_RUNTIME_REGISTRY = {
 export function createWorkflowRuntimeBindings(): WorkflowRuntimeBindings {
   return {
     agentStep: (input) => STEP_RUNTIME_REGISTRY.agent.execute(input),
+    teamStep: (input) => STEP_RUNTIME_REGISTRY.team.execute(input),
     notificationStep: (input) => STEP_RUNTIME_REGISTRY.notification.execute(input),
     capabilityStep: (input) => STEP_RUNTIME_REGISTRY.capability.execute(input),
     waitStep: (input: WaitStepInput) => STEP_RUNTIME_REGISTRY.wait.execute(input),
@@ -85,6 +96,7 @@ export function createInstrumentedWorkflowRuntimeBindings(
 
   return {
     agentStep: wrapWithDebug(base.agentStep),
+    teamStep: wrapWithDebug(base.teamStep),
     notificationStep: wrapWithDebug(base.notificationStep),
     capabilityStep: wrapWithDebug(base.capabilityStep),
     waitStep: wrapWithDebug(base.waitStep),

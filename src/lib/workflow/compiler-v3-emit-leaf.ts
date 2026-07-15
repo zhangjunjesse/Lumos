@@ -13,7 +13,7 @@ import type { WorkflowStep } from './types';
 
 // ── Leaf emitter ────────────────────────────────────────────────────────────
 //
-// v3 Leaf = agent / notification / capability / wait / approval / join。
+// v3 Leaf = agent / team / notification / capability / wait / approval / join。
 // agent/notification/capability/wait 走 runtime step-registry (复用 v2 绑定)。
 // approval 走 runtime.approvalStep (W2-C 实装挂起语义; 本层只发射调用)。
 // join 由 parallel emitter 汇聚分支, 此处不应单独命中 —— 命中则异常。
@@ -31,6 +31,7 @@ export interface LeafEmitContext {
 export function emitLeaf(node: WorkflowNode, ctx: LeafEmitContext, indent: number): string {
   switch (node.type) {
     case 'agent':
+    case 'team':
     case 'notification':
     case 'capability':
     case 'wait':

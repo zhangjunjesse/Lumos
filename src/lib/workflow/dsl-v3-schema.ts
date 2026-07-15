@@ -165,6 +165,7 @@ const nodeSchema = z.discriminatedUnion('type', [
   nodeBase('agent', z.record(z.string(), z.unknown())).extend({
     outputContract: z.record(z.string(), z.unknown()).optional(),
   }),
+  nodeBase('team', z.object({ teamId: z.string().min(1), task: z.string().min(1) }).strict()),
   nodeBase('notification', z.record(z.string(), z.unknown())),
   nodeBase('capability', z.record(z.string(), z.unknown())),
   nodeBase('wait', waitInputSchema),

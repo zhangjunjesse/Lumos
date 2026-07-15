@@ -3,6 +3,7 @@ import type { WorkflowNode } from '@/lib/workflow/types-v3';
 
 export const TYPE_LABEL: Record<WorkflowNode['type'], string> = {
   agent: 'Agent',
+  team: '团队',
   wait: 'Wait',
   'if-else': 'If / Else',
   'for-each': 'For Each',

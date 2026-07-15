@@ -1,4 +1,5 @@
 import { AgentNode } from './agent-node';
+import { TeamNode } from './team-node';
 import { IfElseNode } from './if-else-node';
 import { ForEachNode } from './for-each-node';
 import { WhileNode } from './while-node';
@@ -11,6 +12,7 @@ import { ApprovalNode } from './approval-node';
 
 export {
   AgentNode,
+  TeamNode,
   IfElseNode,
   ForEachNode,
   WhileNode,
@@ -24,6 +26,7 @@ export {
 
 export const NODE_TYPES = {
   agent: AgentNode,
+  team: TeamNode,
   'if-else': IfElseNode,
   'for-each': ForEachNode,
   while: WhileNode,
