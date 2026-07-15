@@ -12,6 +12,7 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
+import { TeamChatPicker } from '@/components/teams/TeamChatPicker';
 import { usePanel } from '@/hooks/usePanel';
 import { useContentPanelStore } from '@/stores/content-panel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
@@ -455,7 +456,8 @@ export function ChatView({
     ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
-  // 团队会话徽标:会话绑定了团队则显示团队名并隐藏模型选择器(模型由团队设置决定)
+  // 团队会话:绑定后显示团队徽标并隐藏模型选择器;空会话(还没发消息)可现场选团队。
+  const [teamId, setTeamId] = useState('');
   const [teamName, setTeamName] = useState('');
   useEffect(() => {
     let cancelled = false;
@@ -464,14 +466,25 @@ export function ChatView({
         const res = await fetch(`/api/chat/sessions/${sessionId}`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json() as { session?: { team_id?: string | null } };
-        const teamId = data.session?.team_id;
-        if (!teamId) { if (!cancelled) setTeamName(''); return; }
-        const teamRes = await fetch(`/api/teams/${teamId}`, { cache: 'no-store' });
+        const boundTeamId = data.session?.team_id;
+        if (!boundTeamId) { if (!cancelled) { setTeamId(''); setTeamName(''); } return; }
+        const teamRes = await fetch(`/api/teams/${boundTeamId}`, { cache: 'no-store' });
         const teamData = teamRes.ok ? await teamRes.json() as { team?: { name?: string } } : null;
-        if (!cancelled) setTeamName(teamData?.team?.name || '团队');
+        if (!cancelled) { setTeamId(boundTeamId); setTeamName(teamData?.team?.name || '团队'); }
       } catch { /* 徽标缺失不影响聊天 */ }
     })();
     return () => { cancelled = true; };
+  }, [sessionId]);
+
+  const handleTeamChange = useCallback(async (nextTeamId: string, nextTeamName: string) => {
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: nextTeamId }),
+      });
+      if (res.ok) { setTeamId(nextTeamId); setTeamName(nextTeamName); }
+    } catch { /* 绑定失败保持原状 */ }
   }, [sessionId]);
 
   const refreshSessionMetadata = useCallback(async () => {
@@ -1830,6 +1843,9 @@ export function ChatView({
         </div>
       ) : null}
 
+      {messages.length === 0 && !isStreaming && (
+        <TeamChatPicker value={teamId} onChange={handleTeamChange} />
+      )}
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}

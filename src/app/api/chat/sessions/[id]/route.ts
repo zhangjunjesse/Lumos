@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, getMessages, setSessionTeam, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { getTeam } from '@/lib/team/store';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 
@@ -80,6 +81,18 @@ export async function PATCH(
     }
     if (typeof body.system_prompt === 'string') {
       updateSessionSystemPrompt(id, body.system_prompt);
+    }
+    // 团队绑定只允许在空会话上改(发过消息的会话执行历史已成型,中途换队语义混乱)
+    if (typeof body.team_id === 'string') {
+      const { messages } = getMessages(id, { limit: 1 });
+      if (messages.length > 0) {
+        return Response.json({ error: '会话已开始,不能再更换团队——新建会话选团队', code: 'SESSION_STARTED' }, { status: 400 });
+      }
+      const teamId = body.team_id.trim();
+      if (teamId && !getTeam(teamId)) {
+        return Response.json({ error: '团队不存在', code: 'INVALID_TEAM' }, { status: 400 });
+      }
+      setSessionTeam(id, teamId);
     }
     if (body.clear_messages) {
       clearSessionMessages(id);
