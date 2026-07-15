@@ -6,8 +6,8 @@ jest.mock('@/lib/tools/image-gen-tool', () => ({
 }));
 
 import { runImageGen } from '@/lib/tools/image-gen-tool';
-import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from '../team-image-guard';
-import { handleTeamImageCall } from '../team-image-service';
+import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from '../image-guard';
+import { handleTeamImageCall } from '../image-service';
 
 const mockGen = runImageGen as jest.Mock;
 

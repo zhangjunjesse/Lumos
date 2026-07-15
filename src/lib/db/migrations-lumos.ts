@@ -1451,6 +1451,28 @@ export function migrateLumosTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_approval_decisions_approval ON workflow_approval_decisions(approval_id);
   `);
 
+  // ── 平台团队(聊天团队会话):团队=lumos_teams,成员引用现有对话人设(templates,
+  // 其记录已有 responsibility/toolPermissions 字段);会话绑定 team_id。
+  // 设计:docs/chat-team-design.md。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lumos_teams (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sop TEXT NOT NULL DEFAULT '',
+      member_refs TEXT NOT NULL DEFAULT '[]',
+      provider_id TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  const chatSessionCols = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
+  if (!chatSessionCols.some(c => c.name === 'team_id')) {
+    db.exec('ALTER TABLE chat_sessions ADD COLUMN team_id TEXT DEFAULT NULL');
+  }
+
   // Seed built-in data on first run
   seedBuiltinProviders(db);
   seedBuiltinSkills(db);

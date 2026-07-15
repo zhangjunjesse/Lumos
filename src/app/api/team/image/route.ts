@@ -1,8 +1,8 @@
-// 团队出图回调端点:etsy-team-image stdio MCP 进程把 generate_image 调用转发到这里。
+// 团队出图回调端点(平台通用):team-image stdio MCP 进程把 generate_image 调用转发到这里。
 // 只做参数解析;配额/计费/生成/路径记录都在 team-image-service。
 
 import { NextRequest, NextResponse } from 'next/server';
-import { handleTeamImageCall } from '@/lib/etsy-forge/team/team-image-service';
+import { handleTeamImageCall } from '@/lib/team/image-service';
 import type { ImageGenArgs } from '@/lib/tools/image-gen-tool';
 
 export const dynamic = 'force-dynamic';

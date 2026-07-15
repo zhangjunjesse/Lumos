@@ -22,6 +22,7 @@ import os from 'os';
 import { loadToken } from '@/lib/feishu-auth';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
 import { captureExplicitMemoryV2FromUserInput } from '@/lib/memory-v2/runtime';
+import { buildTeamChatTurn } from '@/lib/team/chat-session';
 import type { MemoryV2Entry } from '@/lib/memory-v2/types';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { stripSessionMarkers } from '@/lib/chat/session-kind';
@@ -642,6 +643,45 @@ export async function POST(request: NextRequest) {
     let userMessageId: string | undefined;
     if (!isAutoContinueRequest) {
       userMessageId = addMessage(session_id, 'user', savedContent).id;
+    }
+
+    // ── 团队会话分流(docs/chat-team-design.md):队长+成员协作,装配链与普通聊天
+    // 完全分离(声明式工具面+bypass,不走 canUseTool/hooks/能力注册中心)。
+    // 放在用户消息落库之后、普通聊天装配机器之前——普通聊天路径零改动。
+    if (session.team_id) {
+      const { messages: teamRecent } = getMessages(session_id, { limit: 50 });
+      const teamTurn = buildTeamChatTurn({
+        teamId: session.team_id,
+        sessionId: session_id,
+        sdkSessionId: session.sdk_session_id || undefined,
+        prompt: content,
+        lumosUserId,
+        conversationHistory: teamRecent.slice(0, -1).map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+        onRuntimeStatusChange: (status: string) => {
+          try { setSessionRuntimeStatus(session_id, status); } catch { /* best effort */ }
+        },
+      });
+      const teamStream = streamClaude(teamTurn.streamOptions);
+      const [teamForClient, teamForCollect] = teamStream.tee();
+      collectStreamResponse(teamForCollect, {
+        sessionId: session_id,
+        sourceUserMessageId: userMessageId,
+        onComplete: () => {
+          teamTurn.release();
+          releaseSessionLock(session_id, lockId);
+          setSessionRuntimeStatus(session_id, 'idle');
+        },
+      });
+      return new Response(withSseKeepAlive(teamForClient), {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
     }
 
     if (!isAutoContinueRequest && userMessageId) {

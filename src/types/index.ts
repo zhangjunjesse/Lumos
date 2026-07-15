@@ -40,6 +40,8 @@ export interface ChatSession {
   auto_continue_last_summary: string;
   auto_continue_last_error: string;
   auto_continue_stop_requested: number;
+  /** 团队会话:绑定的平台团队 id(lumos_teams);空=普通聊天。 */
+  team_id?: string | null;
 }
 
 // ==========================================
@@ -628,6 +630,8 @@ export interface CreateSessionRequest {
   mode?: string;
   entry?: 'chat' | 'main-agent';
   folder?: string;
+  /** 团队会话:绑定的平台团队 id(整个会话由该团队执行) */
+  team_id?: string;
 }
 
 export type KnowledgeRetrievalMode = 'reference' | 'enhanced';
@@ -1067,6 +1071,18 @@ export interface ClaudeStreamOptions {
   /** Recent conversation history from DB — used as fallback context when SDK resume is unavailable or fails */
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   onRuntimeStatusChange?: (status: string) => void;
+  /**
+   * 团队会话模式(聊天团队,docs/chat-team-design.md §5):队长=主会话,成员=SDK agents 子代理。
+   * 设置后:声明式工具面 + bypassPermissions,并跳过 canUseTool/hooks——控制协议回调在
+   * 复杂多子代理会话里必断(实测),权限闸门全在各成员的 tools 清单里。
+   */
+  teamSession?: {
+    agents: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['agents']>;
+    /** 队长工具面(通常 ['Task','Read']) */
+    tools: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['tools']>;
+    /** 直接以 SDK 形状挂载的 MCP servers(如 stdio 出图通道) */
+    sdkMcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>;
+  };
 }
 
 export * from './deepsearch';

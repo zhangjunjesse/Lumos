@@ -17,6 +17,7 @@ import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
 import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { stashPendingChatBootstrap } from '@/lib/chat/session-bootstrap';
+import { TeamChatPicker } from '@/components/teams/TeamChatPicker';
 
 interface ToolUseInfo {
   id: string;
@@ -53,6 +54,9 @@ export default function NewChatPage() {
   const [workingDir, setWorkingDir] = useState('');
   const [currentModel, setCurrentModel] = useState<string>('');
   const [currentProviderId, setCurrentProviderId] = useState('');
+  // 团队会话:选中后整个会话由该团队执行(会话级绑定,docs/chat-team-design.md)
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [selectedTeamName, setSelectedTeamName] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
@@ -175,6 +179,9 @@ export default function NewChatPage() {
         if (currentProviderId.trim()) {
           createBody.provider_id = currentProviderId.trim();
         }
+        if (selectedTeamId) {
+          createBody.team_id = selectedTeamId;
+        }
 
         const createRes = await fetch('/api/chat/sessions', {
           method: 'POST',
@@ -233,7 +240,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [currentModel, currentProviderId, isMainAgentEntry, isStreaming, router, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
+    [currentModel, currentProviderId, isMainAgentEntry, isStreaming, router, selectedTeamId, sessionBasePath, sessionEntry, setPendingApprovalSessionId, t, workingDir]
   );
 
   const handleConflictResolve = useCallback(async (action: 'replace' | 'keep_both' | 'cancel') => {
@@ -316,8 +323,15 @@ export default function NewChatPage() {
         onPermissionResponse={handlePermissionResponse}
         permissionResolved={permissionResolved}
       />
+      {!isMainAgentEntry && (
+        <TeamChatPicker
+          value={selectedTeamId}
+          onChange={(id, name) => { setSelectedTeamId(id); setSelectedTeamName(name); }}
+        />
+      )}
       <MessageInput
         onSend={sendFirstMessage}
+        teamName={selectedTeamName || undefined}
         onCommand={handleCommand}
         onStop={stopStreaming}
         disabled={false}

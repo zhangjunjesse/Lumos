@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import type { AgentPresetDirectoryItem } from '@/types';
 
 interface ModelOption { providerId: string; providerName: string; value: string; label: string }
@@ -15,17 +16,24 @@ interface ProviderOption { id: string; name: string }
 
 export interface MemberFormData {
   name: string; position: string; description: string;
+  responsibility: string;
   systemPrompt: string; preferredModel: string; providerId: string;
   departmentId: string;
+  permRead: boolean; permWrite: boolean; permExec: boolean;
 }
 
 function defaultForm(initial?: AgentPresetDirectoryItem | null): MemberFormData {
   return {
     name: initial?.name ?? '', position: initial?.position ?? '',
     description: initial?.description ?? '',
+    responsibility: initial?.responsibility ?? '',
     systemPrompt: initial?.systemPrompt ?? '',
     preferredModel: initial?.preferredModel ?? '', providerId: initial?.providerId ?? '',
     departmentId: initial?.departmentId ?? '',
+    // 团队会话工具权限:读研缺省开,产出/执行必须显式授予(团队会话绕过权限弹窗,这就是闸门)
+    permRead: initial?.toolPermissions?.read ?? true,
+    permWrite: initial?.toolPermissions?.write ?? false,
+    permExec: initial?.toolPermissions?.exec ?? false,
   };
 }
 
@@ -275,6 +283,12 @@ export function MemberEditor({ open, initial, onClose, onSave }: MemberEditorPro
               <Label>一句话介绍</Label>
               <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="例如：专注于 AI 资讯采集与深度分析的研究员" />
             </div>
+
+            <div className="space-y-1.5">
+              <Label>职能</Label>
+              <Input value={form.responsibility} onChange={e => set('responsibility', e.target.value)} placeholder="例如：调研选题并产出信息包,供文案与审核使用" />
+              <p className="text-xs text-muted-foreground">团队协作时,队长根据职能决定派单给谁。</p>
+            </div>
           </TabsContent>
 
           {/* ── Tab 2: AI 能力 ── */}
@@ -329,6 +343,26 @@ export function MemberEditor({ open, initial, onClose, onSave }: MemberEditorPro
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            {/* 团队工具权限:团队会话是无人值守跑的,这三个开关就是安全闸门本身 */}
+            <div className="space-y-2 rounded-lg border border-border/60 p-3">
+              <p className="text-sm font-medium">团队工具权限</p>
+              <p className="text-xs text-muted-foreground">该成员在团队协作中可使用的能力。团队任务自动执行,不逐次询问。</p>
+              <div className="space-y-2 pt-1">
+                <label className="flex items-center justify-between text-sm">
+                  <span>读取与调研<span className="ml-2 text-xs text-muted-foreground">读文件、网络搜索</span></span>
+                  <Switch checked={form.permRead} onCheckedChange={v => set('permRead', v)} />
+                </label>
+                <label className="flex items-center justify-between text-sm">
+                  <span>产出<span className="ml-2 text-xs text-muted-foreground">写文件、生成图片(消耗额度)</span></span>
+                  <Switch checked={form.permWrite} onCheckedChange={v => set('permWrite', v)} />
+                </label>
+                <label className="flex items-center justify-between text-sm">
+                  <span className="text-destructive">执行命令<span className="ml-2 text-xs">可运行任意命令,谨慎授予</span></span>
+                  <Switch checked={form.permExec} onCheckedChange={v => set('permExec', v)} />
+                </label>
               </div>
             </div>
           </TabsContent>

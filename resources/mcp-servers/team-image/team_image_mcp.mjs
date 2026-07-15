@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// etsy 出图团队专用 stdio MCP:把 generate_image 转发到 Lumos 的团队出图回调 API。
+// 团队出图 stdio MCP(平台通用):把 generate_image 转发到 Lumos 的团队出图回调 API。
 //
 // 为什么存在:进程内 SDK MCP server / canUseTool 都走 SDK↔CLI 控制协议,复杂多子代理
 // 会话里该往返会断(Stream closed)。stdio 进程由 CLI 直接管,与控制协议无关。
@@ -65,7 +65,7 @@ const GENERATE_IMAGE_TOOL = {
 };
 
 async function callApi(args) {
-  const response = await fetch(`${API_BASE}/api/etsy-forge/team-image`, {
+  const response = await fetch(`${API_BASE}/api/team/image`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: RUN_TOKEN, args }),

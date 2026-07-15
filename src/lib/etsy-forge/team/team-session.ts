@@ -6,7 +6,6 @@
 // (实测 "Tool permission request failed: Stream closed")。配额与真实路径由服务端
 // 注册表(team-image-guard)统一把守。
 
-import path from 'node:path';
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
 import { buildClaudeSdkInvocationContext } from '@/lib/claude/sdk-runtime';
 import { isClaudeLocalAuthProvider } from '@/lib/claude/provider-env';
@@ -14,10 +13,10 @@ import { ensureClaudeLocalAuthReady } from '@/lib/claude/local-auth';
 import { getActiveUserId } from '@/lib/auth/user-service';
 import { getProvider } from '@/lib/db/providers';
 import { LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
-import { resolveRuntimeResourcePath } from '@/lib/runtime-resources';
-import { resolveMcpRuntimeCommand } from '@/lib/mcp-runtime-command';
+import { toAgentDefinitions, agentKeyOf, type TeamAgentSpec } from '@/lib/team/agent-defs';
+import { buildTeamImageServerConfig } from '@/lib/team/image-server-config';
+import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from '@/lib/team/image-guard';
 import type { AgentTeamRow, TeamMember } from '../types';
-import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from './team-image-guard';
 import { TeamStreamParser, type TeamEvent } from './team-stream';
 
 export type { TeamEvent } from './team-stream';
@@ -25,7 +24,6 @@ export type { TeamEvent } from './team-stream';
 const IMAGE_TOOL = `mcp__${LUMOS_MCP_SERVER_NAME}__generate_image`;
 const TEAM_TIMEOUT_MS = 1_800_000; // 整队一次出图的硬超时(30min);超时不再全损,有真图就部分交差
 const MAX_TURNS = 40;
-const IMAGE_CALL_TIMEOUT_MS = 900_000; // generate_image 单次 50-100s+,批量 count>1 更久
 
 export interface TeamDesignOutput {
   path: string;
@@ -66,40 +64,17 @@ const OUTPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// 成员 → SDK AgentDefinition。工具面由显式授权决定(canGenerateImages 是唯一花钱的权限),
+// 成员 → 通用 TeamAgentSpec:工具面由显式授权决定(canGenerateImages 是唯一花钱的权限),
 // description 用职能描述——这正是队长(主会话)决定派单对象的依据。
-function toAgentDefinitions(members: TeamMember[]): NonNullable<Options['agents']> {
-  const agents: NonNullable<Options['agents']> = {};
-  for (const m of members) {
-    if (!m.enabled || !m.prompt.trim()) continue;
-    agents[agentKey(m)] = {
+function toAgentSpecs(members: TeamMember[]): TeamAgentSpec[] {
+  return members
+    .filter((m) => m.enabled)
+    .map((m) => ({
+      key: agentKeyOf(m.name),
       description: `${m.name}:${m.duty || '团队成员'}`,
       prompt: m.prompt,
       tools: m.canGenerateImages ? [IMAGE_TOOL, 'Read'] : ['Read'],
-      model: 'inherit',
-    };
-  }
-  return agents;
-}
-
-// agents 字典的 key 就是队长派单用的 subagent_type;用成员名(去空格)保持提示词里可读。
-function agentKey(m: TeamMember): string {
-  return m.name.replace(/\s+/g, '-');
-}
-
-// 出图 stdio MCP 的进程配置:内置脚本 + 打包 node 运行时(生产环境用户机器没有 node)。
-function buildImageServerConfig(runToken: string): NonNullable<Options['mcpServers']>[string] {
-  const script = resolveRuntimeResourcePath(path.join('mcp-servers', 'etsy-team-image', 'etsy_team_image_mcp.mjs'));
-  if (!script) throw new Error('找不到 etsy-team-image MCP 脚本(runtime resources 未就绪)');
-  const apiBase = process.env.LUMOS_API_BASE
-    || `http://localhost:${process.env.LUMOS_DEV_SERVER_PORT || process.env.PORT || '3000'}`;
-  return {
-    type: 'stdio',
-    command: resolveMcpRuntimeCommand({ command: 'node', runtime: 'node' }),
-    args: [script],
-    env: { LUMOS_API_BASE: apiBase, LUMOS_TEAM_RUN_TOKEN: runToken },
-    timeout: IMAGE_CALL_TIMEOUT_MS,
-  };
+    }));
 }
 
 // 队长提示词 = 硬护栏(引擎写死) + 团队 SOP(用户的自由领地) + 硬纪律(压轴,防被 SOP 冲掉) + 创作简报。
@@ -107,7 +82,7 @@ function buildImageServerConfig(runToken: string): NonNullable<Options['mcpServe
 function buildLeaderPrompt(team: AgentTeamRow, members: TeamMember[], briefing: string, targetCount: number): string {
   const roster = members
     .filter((m) => m.enabled && m.prompt.trim())
-    .map((m) => `- ${agentKey(m)}${m.canGenerateImages ? '(可出图)' : ''}:${m.duty || '(无职能描述)'}`)
+    .map((m) => `- ${agentKeyOf(m.name)}${m.canGenerateImages ? '(可出图)' : ''}:${m.duty || '(无职能描述)'}`)
     .join('\n');
   const sop = (team.sop || '').replaceAll('{N}', String(targetCount)).trim();
   return [
@@ -158,7 +133,7 @@ export async function runTeamSession(input: {
     throw new Error('未登录 Lumos 云账户,图片生成无法计费——先在应用里登录,再跑出图团队');
   }
 
-  const agents = toAgentDefinitions(members);
+  const agents = toAgentDefinitions(toAgentSpecs(members));
 
   // 团队级会话模型:团队配了服务商/模型就用团队的,否则跟随全局默认。
   // 配的服务商被删时回退默认并留痕(不断链——团队还能跑,只是换了脑子,日志可查)。
@@ -197,7 +172,7 @@ export async function runTeamSession(input: {
           : {}),
         agents,
         tools: ['Task', 'Read'],
-        mcpServers: { [LUMOS_MCP_SERVER_NAME]: buildImageServerConfig(runToken) },
+        mcpServers: { [LUMOS_MCP_SERVER_NAME]: buildTeamImageServerConfig(runToken) },
         // 团队会话无人值守,没有权限交互 UI;权限控制流(canUseTool)在复杂会话里会断,
         // 护栏已全部落在服务端(配额+路径),这里放行。
         permissionMode: 'bypassPermissions',

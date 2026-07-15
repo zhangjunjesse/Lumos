@@ -448,6 +448,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     disallowedTools,
     conversationHistory,
     onRuntimeStatusChange,
+    teamSession,
   } = options;
 
   return new ReadableStream<string>({
@@ -962,6 +963,26 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             }],
           }],
         };
+
+        // 团队会话模式:队长(主会话)+成员(agents 子代理)。压轴覆盖,保证前面的通用装配
+        // 不会把控制协议回调(canUseTool/hooks)带进团队会话——它们在复杂多子代理会话里
+        // 必断(实测 "Tool permission request failed: Stream closed",etsy 团队血泪教训)。
+        // 权限闸门 = 各成员声明式 tools 清单;tool_result 帧由 user 消息路径照常发出。
+        if (teamSession) {
+          queryOptions.agents = teamSession.agents;
+          queryOptions.tools = teamSession.tools;
+          queryOptions.permissionMode = 'bypassPermissions';
+          queryOptions.allowDangerouslySkipPermissions = true;
+          delete queryOptions.canUseTool;
+          delete queryOptions.hooks;
+          // 聊天默认禁用 Task(单 agent 会话不许开子代理);团队会话的派单恰恰靠它——
+          // 不放行队长调不了 Task,会一本正经地"扮演"成员产出(实测),必须剔除。
+          queryOptions.disallowedTools = (queryOptions.disallowedTools || []).filter((t) => t !== 'Task');
+          if (queryOptions.disallowedTools.length === 0) delete queryOptions.disallowedTools;
+          if (teamSession.sdkMcpServers) {
+            queryOptions.mcpServers = { ...(queryOptions.mcpServers || {}), ...teamSession.sdkMcpServers };
+          }
+        }
 
         // Capture real-time stderr output from Claude Code process
         queryOptions.stderr = (data: string) => {

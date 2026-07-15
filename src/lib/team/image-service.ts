@@ -1,9 +1,8 @@
-// 团队出图 HTTP 回调的业务逻辑:token 校验 → 配额 → 复用聊天同一套出图核心 → 记录真实路径。
-// 调用方是 etsy-team-image stdio MCP 进程(见 resources/mcp-servers/etsy-team-image),
-// route 层只做参数解析(src/app/api/etsy-forge/team-image)。
+// 团队出图 HTTP 回调的业务逻辑(平台通用):token 校验 → 配额 → 复用聊天同一套出图核心 → 记录真实路径。
+// 调用方是 team-image stdio MCP 进程(见 resources/mcp-servers/team-image),route 层只做参数解析(/api/team/image)。
 
 import { runImageGen, type ImageGenArgs } from '@/lib/tools/image-gen-tool';
-import { getTeamImageGuard } from './team-image-guard';
+import { getTeamImageGuard } from './image-guard';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 function errorResult(message: string): CallToolResult {
@@ -24,7 +23,7 @@ export async function handleTeamImageCall(token: string, args: ImageGenArgs): Pr
   }
   guard.used += n;
 
-  const result = await runImageGen(args, undefined, guard.billingUserId);
+  const result = await runImageGen(args, undefined, guard.billingUserId || undefined);
 
   // 从成功结果里记下真实落盘路径:最终交差的 path 必须在这个集合里(防幻觉路径)。
   for (const block of result.content ?? []) {

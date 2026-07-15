@@ -1,4 +1,5 @@
-// 团队出图护栏注册表:每次团队运行发一个 run token,配额计数和真实产出路径都记在这里。
+// 团队出图护栏注册表(平台通用):每次团队运行发一个 run token,配额计数和真实产出路径都记在这里。
+// 使用方:etsy-forge 出图团队、聊天团队会话。
 //
 // 为什么在服务端管而不是 SDK 会话里管:canUseTool / PostToolUse hook / 进程内 MCP server
 // 都骑在 SDK↔CLI 控制协议上,复杂多子代理会话里该往返会断(实测 "Tool permission request
@@ -18,7 +19,7 @@ export interface TeamImageGuard {
 
 // 注册表挂 globalThis:Next dev 热重载会产生多份模块实例,团队会话和 API route 必须
 // 看到同一张表(与 image registry 的教训同源——状态单例要抗模块重载)。
-const REGISTRY_KEY = Symbol.for('lumos.etsy-forge.team-image-guards');
+const REGISTRY_KEY = Symbol.for('lumos.team-image-guards');
 type Registry = Map<string, TeamImageGuard>;
 const globalStore = globalThis as { [REGISTRY_KEY]?: Registry };
 const guards: Registry = globalStore[REGISTRY_KEY] ?? new Map();

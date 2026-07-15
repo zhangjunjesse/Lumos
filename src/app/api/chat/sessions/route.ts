@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
-import { getAllSessions, createSession, getSession, updateSessionBrowserContext } from '@/lib/db';
+import { getAllSessions, createSession, getSession, setSessionTeam, updateSessionBrowserContext } from '@/lib/db';
+import { getTeam } from '@/lib/team/store';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
 import { ProviderResolutionError, resolveProviderForCapability } from '@/lib/provider-resolver';
 import type { CreateSessionRequest, SessionsResponse, SessionResponse } from '@/types';
@@ -83,6 +84,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const teamId = body.team_id?.trim() || '';
+    if (teamId && !getTeam(teamId)) {
+      return Response.json({ error: '团队不存在', code: 'INVALID_TEAM' }, { status: 400 });
+    }
+
     const session = createSession(
       body.title,
       body.model,
@@ -93,8 +99,9 @@ export async function POST(request: NextRequest) {
       resolvedProviderId,
       entry === 'main-agent' ? 'main-agent' : 'chat',
     );
-    if (browserContextId) {
-      updateSessionBrowserContext(session.id, browserContextId);
+    if (teamId) setSessionTeam(session.id, teamId);
+    if (browserContextId) updateSessionBrowserContext(session.id, browserContextId);
+    if (teamId || browserContextId) {
       const updated = getSession(session.id);
       const response: SessionResponse = { session: updated || session };
       return Response.json(response, { status: 201 });

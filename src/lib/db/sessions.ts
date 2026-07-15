@@ -119,6 +119,11 @@ export function updateSessionBrowserContext(id: string, browserContextId: string
   db.prepare('UPDATE chat_sessions SET browser_context_id = ? WHERE id = ?').run(normalized, id);
 }
 
+// 团队会话绑定(创建时一次性写入;绑定后整个会话由该团队执行,不支持中途换队)
+export function setSessionTeam(id: string, teamId: string): void {
+  getDb().prepare('UPDATE chat_sessions SET team_id = ? WHERE id = ?').run(teamId, id);
+}
+
 function normalizeKnowledgeTagIds(tagIds: string[] | undefined): string[] {
   if (!Array.isArray(tagIds)) return [];
   return Array.from(new Set(tagIds.map((tagId) => String(tagId).trim()).filter(Boolean)));

@@ -106,6 +106,8 @@ interface MessageInputProps {
   onInputFocus?: () => void;
   fullWidth?: boolean;
   providerModelsEndpoint?: string;
+  /** 团队会话:显示团队徽标并隐藏模型选择器(模型由团队设置决定) */
+  teamName?: string;
 }
 
 interface PopoverItem {
@@ -466,6 +468,7 @@ export function MessageInput({
   onInputFocus,
   fullWidth = false,
   providerModelsEndpoint = '/api/providers/models',
+  teamName,
 }: MessageInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1933,9 +1936,14 @@ export function MessageInput({
                   </PromptInputButton>
                 )}
 
-                {/* Model selector */}
+                {/* Model selector(团队会话显示团队徽标,模型由团队设置决定) */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>
-                  {hasProviders && currentModelOption ? (
+                  {teamName ? (
+                    <div className="flex h-7 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary">
+                      <span className="text-[10px] leading-none">团队</span>
+                      <span className="font-medium">{teamName}</span>
+                    </div>
+                  ) : hasProviders && currentModelOption ? (
                     <>
                       <PromptInputButton
                         onClick={() => setModelMenuOpen((prev) => !prev)}

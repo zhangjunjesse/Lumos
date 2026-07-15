@@ -455,6 +455,24 @@ export function ChatView({
     ) => Promise<void>) | null
   >(null);
   const pendingImageNoticesRef = useRef<string[]>([]);
+  // 团队会话徽标:会话绑定了团队则显示团队名并隐藏模型选择器(模型由团队设置决定)
+  const [teamName, setTeamName] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chat/sessions/${sessionId}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as { session?: { team_id?: string | null } };
+        const teamId = data.session?.team_id;
+        if (!teamId) { if (!cancelled) setTeamName(''); return; }
+        const teamRes = await fetch(`/api/teams/${teamId}`, { cache: 'no-store' });
+        const teamData = teamRes.ok ? await teamRes.json() as { team?: { name?: string } } : null;
+        if (!cancelled) setTeamName(teamData?.team?.name || '团队');
+      } catch { /* 徽标缺失不影响聊天 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   const refreshSessionMetadata = useCallback(async () => {
     try {
@@ -1831,6 +1849,7 @@ export function ChatView({
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
         providerModelsEndpoint={providerModelsEndpoint}
+        teamName={teamName || undefined}
       />
 
       {switchError && (

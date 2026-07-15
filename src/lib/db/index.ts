@@ -30,6 +30,7 @@ export {
   getSession,
   createSession,
   deleteSession,
+  setSessionTeam,
   updateSessionTimestamp,
   updateSessionTitle,
   updateSdkSessionId,

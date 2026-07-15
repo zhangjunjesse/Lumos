@@ -224,10 +224,17 @@ export function Sidebar({ onOpenAssistant }: SidebarProps) {
           />
           <SidebarNavItem
             icon={UserGroup02Icon}
-            label="团队"
+            label="成员"
             href="/workflow/agents"
             expanded={expanded}
             active={isActive("/workflow/agents")}
+          />
+          <SidebarNavItem
+            icon={UserGroup02Icon}
+            label="团队"
+            href="/teams"
+            expanded={expanded}
+            active={isActive("/teams")}
           />
         </nav>
 

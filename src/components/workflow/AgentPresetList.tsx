@@ -223,7 +223,7 @@ export function AgentPresetList() {
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
-    if (!confirm('确认从团队中移除这名成员？')) return;
+    if (!confirm('确认删除这名成员？引用它的团队会自动跳过该成员。')) return;
     await fetch(`/api/workflow/agent-presets/${id}`, { method: 'DELETE' });
     await load();
   }, [load]);
@@ -234,6 +234,8 @@ export function AgentPresetList() {
     const body = {
       name: data.name, systemPrompt: data.systemPrompt,
       ...(data.description ? { description: data.description } : {}),
+      responsibility: data.responsibility,
+      toolPermissions: { read: data.permRead, write: data.permWrite, exec: data.permExec },
       preferredModel: data.preferredModel ? data.preferredModel : null,
       providerId: data.providerId ? data.providerId : null,
       ...(data.position ? { position: data.position } : {}),
@@ -290,8 +292,8 @@ export function AgentPresetList() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">我的团队</h2>
-          <p className="text-sm text-muted-foreground">打造你的 AI 团队，按部门组织成员</p>
+          <h2 className="text-lg font-semibold tracking-tight">成员</h2>
+          <p className="text-sm text-muted-foreground">你的 AI 成员库，按部门组织；在「团队」里将成员组成协作团队</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => { setEditingDept(null); setDeptDialogOpen(true); }}>+ 新建部门</Button>
@@ -307,8 +309,8 @@ export function AgentPresetList() {
         <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/60 bg-muted/10 py-16 text-center">
           <div className="text-5xl">👥</div>
           <div>
-            <p className="text-sm font-medium">团队暂无成员</p>
-            <p className="text-xs text-muted-foreground mt-1">创建部门和 AI 成员，构建你的专属团队</p>
+            <p className="text-sm font-medium">暂无成员</p>
+            <p className="text-xs text-muted-foreground mt-1">创建 AI 成员，再到「团队」里把他们组成协作团队</p>
           </div>
           <Button onClick={openCreate}>招募第一位成员</Button>
         </div>
