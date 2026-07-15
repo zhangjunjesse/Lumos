@@ -106,8 +106,11 @@ interface MessageInputProps {
   onInputFocus?: () => void;
   fullWidth?: boolean;
   providerModelsEndpoint?: string;
-  /** 团队会话:显示团队徽标并隐藏模型选择器(模型由团队设置决定) */
+  /** 团队会话:当前绑定的团队(工具栏与模型选择器同行展示) */
+  teamId?: string;
   teamName?: string;
+  /** 空会话可换队时传入;会话已开始则不传(只显示徽标不可改) */
+  onTeamChange?: (teamId: string, teamName: string) => void;
 }
 
 interface PopoverItem {
@@ -468,7 +471,9 @@ export function MessageInput({
   onInputFocus,
   fullWidth = false,
   providerModelsEndpoint = '/api/providers/models',
+  teamId,
   teamName,
+  onTeamChange,
 }: MessageInputProps) {
   const { t } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -476,6 +481,7 @@ export function MessageInput({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const knowledgeMenuRef = useRef<HTMLDivElement>(null);
+  const teamMenuRef = useRef<HTMLDivElement>(null);
 
   const [popoverMode, setPopoverMode] = useState<PopoverMode>(null);
   const [popoverItems, setPopoverItems] = useState<PopoverItem[]>([]);
@@ -483,6 +489,8 @@ export function MessageInput({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [triggerPos, setTriggerPos] = useState<number | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const [teamOptions, setTeamOptions] = useState<Array<{ id: string; name: string; memberCount: number }>>([]);
   const [inputValue, setInputValue] = useState('');
   const [badge, setBadge] = useState<CommandBadge | null>(null);
   // URL reference chips. The browser-panel "+" button (or any other source
@@ -1509,6 +1517,27 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
+  // Team menu: 可换队时才拉团队列表;外点关闭同模型菜单
+  useEffect(() => {
+    if (!onTeamChange) return;
+    fetch('/api/teams')
+      .then((r) => r.json())
+      .then((d: { teams?: Array<{ id: string; name: string; memberRefs: unknown[] }> }) => {
+        setTeamOptions((d.teams || []).map((t) => ({ id: t.id, name: t.name, memberCount: t.memberRefs.length })));
+      })
+      .catch(() => setTeamOptions([]));
+  }, [onTeamChange]);
+  useEffect(() => {
+    if (!teamMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (teamMenuRef.current && !teamMenuRef.current.contains(e.target as Node)) {
+        setTeamMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [teamMenuOpen]);
+
   useEffect(() => {
     if (!knowledgeMenuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -1936,14 +1965,47 @@ export function MessageInput({
                   </PromptInputButton>
                 )}
 
-                {/* Model selector(团队会话显示团队徽标,模型由团队设置决定) */}
+                {/* 团队选择:与模型选择器同行。可换队(空会话)是下拉;已开始只显徽标 */}
+                {(onTeamChange ? teamOptions.length > 0 : Boolean(teamName)) && (
+                  <div className="relative flex items-center" ref={teamMenuRef}>
+                    <PromptInputButton
+                      onClick={() => { if (onTeamChange) setTeamMenuOpen((prev) => !prev); }}
+                      className={cn(teamId && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15")}
+                      tooltip={onTeamChange ? undefined : '会话已开始,团队不可更换'}
+                    >
+                      <span className="text-xs">{teamName || '团队'}</span>
+                      {onTeamChange && (
+                        <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", teamMenuOpen && "rotate-180")} />
+                      )}
+                    </PromptInputButton>
+                    {teamMenuOpen && (
+                      <div className="absolute bottom-full left-0 mb-1.5 w-56 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-72 overflow-y-auto">
+                        <button
+                          type="button"
+                          className={cn("w-full px-3 py-2 text-left text-xs hover:bg-accent", !teamId && "bg-accent/50 font-medium")}
+                          onClick={() => { onTeamChange?.('', ''); setTeamMenuOpen(false); }}
+                        >
+                          不用团队(普通对话)
+                        </button>
+                        {teamOptions.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={cn("w-full px-3 py-2 text-left text-xs hover:bg-accent", teamId === option.id && "bg-accent/50 font-medium")}
+                            onClick={() => { onTeamChange?.(option.id, option.name); setTeamMenuOpen(false); }}
+                          >
+                            {option.name}
+                            <span className="ml-1 text-muted-foreground">({option.memberCount}人)</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Model selector */}
                 <div className="relative flex items-center gap-1" ref={modelMenuRef}>
-                  {teamName ? (
-                    <div className="flex h-7 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 text-xs text-primary">
-                      <span className="text-[10px] leading-none">团队</span>
-                      <span className="font-medium">{teamName}</span>
-                    </div>
-                  ) : hasProviders && currentModelOption ? (
+                  {hasProviders && currentModelOption ? (
                     <>
                       <PromptInputButton
                         onClick={() => setModelMenuOpen((prev) => !prev)}

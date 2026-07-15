@@ -55,6 +55,9 @@ export function buildTeamChatTurn(input: {
   sdkSessionId?: string;
   prompt: string;
   lumosUserId?: string;
+  /** 用户在输入框选的服务商/模型:优先于团队配置(团队配置只是缺省值) */
+  requestedProviderId?: string;
+  requestedModel?: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   abortController?: AbortController;
   onRuntimeStatusChange?: (status: string) => void;
@@ -85,9 +88,12 @@ export function buildTeamChatTurn(input: {
   // 出图通道恒挂载(工具曝光由成员 tools 清单决定):挂载集合跨回合稳定,resume 不受影响。
   const runToken = createTeamImageGuard({ billingUserId: input.lumosUserId ?? '', cap: IMAGES_PER_TURN_CAP });
 
-  const teamProvider = team.providerId ? getProvider(team.providerId) : undefined;
-  if (team.providerId && !teamProvider) {
-    console.warn(`[team-chat] 团队「${team.name}」指定的服务商已不存在(${team.providerId}),回退全局默认`);
+  // 模型选择:用户输入框所选 > 团队配置缺省 > 全局默认。指定的服务商不存在时回退并留痕。
+  const effectiveProviderId = input.requestedProviderId?.trim() || team.providerId;
+  const effectiveModel = input.requestedModel?.trim() || (effectiveProviderId === team.providerId ? team.model : '');
+  const provider = effectiveProviderId ? getProvider(effectiveProviderId) : undefined;
+  if (effectiveProviderId && !provider) {
+    console.warn(`[team-chat] 团队「${team.name}」会话指定的服务商已不存在(${effectiveProviderId}),回退全局默认`);
   }
 
   return {
@@ -97,8 +103,8 @@ export function buildTeamChatTurn(input: {
       sessionId: input.sessionId,
       sdkSessionId: input.sdkSessionId,
       systemPrompt: buildLeaderSystemPrompt(team.name, team.sop, members),
-      ...(teamProvider ? { provider: teamProvider } : {}),
-      ...(teamProvider && team.model ? { model: team.model } : {}),
+      ...(provider ? { provider } : {}),
+      ...(effectiveModel ? { model: effectiveModel } : {}),
       conversationHistory: input.conversationHistory,
       abortController: input.abortController,
       onRuntimeStatusChange: input.onRuntimeStatusChange,

@@ -656,6 +656,9 @@ export async function POST(request: NextRequest) {
         sdkSessionId: session.sdk_session_id || undefined,
         prompt: content,
         lumosUserId,
+        // 输入框所选模型优先于团队配置(与普通聊天一致的直觉)
+        requestedProviderId: provider_id || session.provider_id || undefined,
+        requestedModel: model || session.requested_model || session.model || undefined,
         conversationHistory: teamRecent.slice(0, -1).map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,

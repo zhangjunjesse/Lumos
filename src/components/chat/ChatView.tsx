@@ -12,7 +12,6 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
-import { TeamChatPicker } from '@/components/teams/TeamChatPicker';
 import { usePanel } from '@/hooks/usePanel';
 import { useContentPanelStore } from '@/stores/content-panel';
 import { consumePendingChatBootstrap } from '@/lib/chat/session-bootstrap';
@@ -1843,9 +1842,6 @@ export function ChatView({
         </div>
       ) : null}
 
-      {messages.length === 0 && !isStreaming && (
-        <TeamChatPicker value={teamId} onChange={handleTeamChange} />
-      )}
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}
@@ -1865,7 +1861,9 @@ export function ChatView({
         onInputFocus={onInputFocus}
         fullWidth={fullWidth}
         providerModelsEndpoint={providerModelsEndpoint}
-        teamName={teamName || undefined}
+        teamId={teamId}
+        teamName={teamName}
+        onTeamChange={messages.length === 0 && !isStreaming ? handleTeamChange : undefined}
       />
 
       {switchError && (

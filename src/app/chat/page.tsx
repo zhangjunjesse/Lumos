@@ -17,7 +17,6 @@ import { MemoryConflictDialog } from '@/components/memory/memory-conflict-dialog
 import { MemoryOnboarding } from '@/components/memory/memory-onboarding';
 import { getSessionEntryBasePath, getSessionEntryFromPath } from '@/lib/chat/session-entry';
 import { stashPendingChatBootstrap } from '@/lib/chat/session-bootstrap';
-import { TeamChatPicker } from '@/components/teams/TeamChatPicker';
 
 interface ToolUseInfo {
   id: string;
@@ -323,15 +322,11 @@ export default function NewChatPage() {
         onPermissionResponse={handlePermissionResponse}
         permissionResolved={permissionResolved}
       />
-      {!isMainAgentEntry && (
-        <TeamChatPicker
-          value={selectedTeamId}
-          onChange={(id, name) => { setSelectedTeamId(id); setSelectedTeamName(name); }}
-        />
-      )}
       <MessageInput
         onSend={sendFirstMessage}
-        teamName={selectedTeamName || undefined}
+        teamId={selectedTeamId}
+        teamName={selectedTeamName}
+        onTeamChange={isMainAgentEntry ? undefined : (id, name) => { setSelectedTeamId(id); setSelectedTeamName(name); }}
         onCommand={handleCommand}
         onStop={stopStreaming}
         disabled={false}
