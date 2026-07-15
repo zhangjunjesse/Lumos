@@ -109,7 +109,7 @@ interface MessageInputProps {
   /** 团队会话:当前绑定的团队(工具栏与模型选择器同行展示) */
   teamId?: string;
   teamName?: string;
-  /** 空会话可换队时传入;会话已开始则不传(只显示徽标不可改) */
+  /** 传入即可换队(随时,每条消息按当下绑定的团队执行);不传只显徽标 */
   onTeamChange?: (teamId: string, teamName: string) => void;
 }
 
@@ -1965,13 +1965,12 @@ export function MessageInput({
                   </PromptInputButton>
                 )}
 
-                {/* 团队选择:与模型选择器同行。可换队(空会话)是下拉;已开始只显徽标 */}
+                {/* 团队选择:与模型选择器同行,随时可换(每条消息按当下绑定的团队执行) */}
                 {(onTeamChange ? teamOptions.length > 0 : Boolean(teamName)) && (
                   <div className="relative flex items-center" ref={teamMenuRef}>
                     <PromptInputButton
                       onClick={() => { if (onTeamChange) setTeamMenuOpen((prev) => !prev); }}
                       className={cn(teamId && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15")}
-                      tooltip={onTeamChange ? undefined : '会话已开始,团队不可更换'}
                     >
                       <span className="text-xs">{teamName || '团队'}</span>
                       {onTeamChange && (

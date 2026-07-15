@@ -1872,7 +1872,7 @@ export function ChatView({
         providerModelsEndpoint={providerModelsEndpoint}
         teamId={teamId}
         teamName={teamName}
-        onTeamChange={messages.length === 0 && !isStreaming ? handleTeamChange : undefined}
+        onTeamChange={handleTeamChange}
       />
 
       {switchError && (
