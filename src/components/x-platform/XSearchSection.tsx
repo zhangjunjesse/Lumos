@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Mail,
   MessageSquareText,
   Search,
   UserRound,
@@ -15,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { XAuthExpiredHint } from './XAuthExpiredHint';
+import { XDMSection } from './XDMSection';
 
 interface Hit {
   id: string;
@@ -45,7 +47,7 @@ interface ThreadResult {
   meta: SearchMeta;
 }
 
-type XSubTab = 'search' | 'user' | 'thread';
+type XSubTab = 'search' | 'user' | 'thread' | 'dm';
 
 const COLLECT_COUNT_OPTIONS = [20, 50, 100, 200, 500, 1000];
 const REPLY_COUNT_OPTIONS = [20, 50, 100, 200, 500];
@@ -101,6 +103,10 @@ export function XSearchSection() {
             <MessageSquareText className="h-3.5 w-3.5" />
             推文详情
           </TabsTrigger>
+          <TabsTrigger value="dm">
+            <Mail className="h-3.5 w-3.5" />
+            私信
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="search" forceMount className="space-y-3 data-[state=inactive]:hidden">
@@ -132,6 +138,10 @@ export function XSearchSection() {
             onOpenUser={openUserTweets}
             onTweetIdOrUrlChange={setTweetIdOrUrl}
           />
+        </TabsContent>
+
+        <TabsContent value="dm" className="space-y-3">
+          <XDMSection />
         </TabsContent>
       </Tabs>
     </section>
