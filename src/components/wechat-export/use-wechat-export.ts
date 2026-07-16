@@ -16,7 +16,7 @@ const POLL_MS = 4000;
 export function useWeChatExport() {
   const [status, setStatus] = useState<WeChatExportStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract' | 'resign' | 'path'>(null);
+  const [busy, setBusy] = useState<null | 'consent' | 'enable' | 'disable' | 'uninstall' | 'extract' | 'resign' | 'path' | 'reset-key'>(null);
   const [busyMessage, setBusyMessage] = useState<string>('');
   const [extractProgress, setExtractProgress] = useState<ExtractProgressEvent | null>(null);
   const [extractKeys, setExtractKeys] = useState<number>(0);
@@ -99,6 +99,23 @@ export function useWeChatExport() {
         kind: 'error',
         text: err instanceof Error ? err.message : '操作失败',
       });
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
+  // #40:切换微信账号/升级后清旧密钥,回到"未取密钥"状态重新绑定当前账号。
+  const resetKey = useCallback(async () => {
+    setBusy('reset-key');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/reset-key', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || 'reset_failed');
+      setActionMessage({ kind: 'ok', text: '已清除旧密钥。请退出微信读取保护后,重新获取当前账号的密钥。' });
+      await refresh();
+    } catch (err) {
+      setActionMessage({ kind: 'error', text: err instanceof Error ? err.message : '重置失败' });
     } finally {
       setBusy(null);
     }
@@ -250,6 +267,7 @@ export function useWeChatExport() {
     refresh,
     acceptConsent,
     toggle,
+    resetKey,
     resignWeChat,
     startExtract,
     cancelExtract,

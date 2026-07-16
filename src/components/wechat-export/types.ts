@@ -33,6 +33,15 @@ export interface WeChatExportStatus {
     msgDir?: string;
     messageDbDir?: string;
   };
+  /** #40:切换微信账号/升级导致旧密钥失效的检测。仅 Windows 且已取过密钥时有值。 */
+  windowsAccountBinding?: {
+    storedWxid: string | null;
+    storedDirExists: boolean;
+    activeWxid: string | null;
+    detectedWxids: string[];
+    mismatch: boolean;
+    reason: 'account-switched' | 'stored-dir-missing' | null;
+  };
   status?: {
     phase:
       | 'needs-consent'

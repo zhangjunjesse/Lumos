@@ -10,6 +10,7 @@ import {
   getConsent,
 } from '@/lib/wechat-export/disclaimer';
 import { getSetupStatus, getWeChatExportPlatform, readWindowsAccounts, readWindowsPathConfig } from '@/lib/wechat-export/setup-state';
+import { getWindowsAccountBinding } from '@/lib/wechat-export/account-binding';
 import { getLastMirrorSyncAt } from '@/lib/wechat-assistant/mirror-store';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
@@ -37,11 +38,15 @@ export async function GET() {
   const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
   const pathHint = platform === 'win32' ? readWindowsAccounts()[0] : undefined;
   const dataDirHint = platform === 'win32' && 'wxDir' in env.dataDir ? env.dataDir : undefined;
+  // #40:切换微信账号/微信升级后旧密钥失效——结构级检测(纯文件系统,轮询可低成本调)。
+  // 微信升级(wxid 不变但密钥变)的功能级信号是 session.db 密钥不匹配,由 UI 结合报错文案一起判。
+  const accountBinding = platform === 'win32' && pathHint ? getWindowsAccountBinding() : undefined;
   return NextResponse.json({
     supported: true,
     platform,
     env,
     windowsPathConfig: platform === 'win32' ? readWindowsPathConfig() : undefined,
+    windowsAccountBinding: accountBinding,
     windowsPathHint: pathHint ? {
       path: pathHint.wx_dir,
       wxid: pathHint.wxid,

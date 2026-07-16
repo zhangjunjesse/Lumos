@@ -259,6 +259,56 @@ export function findWindowsAccount(root: string): WindowsAccountDiscovery | null
   return null;
 }
 
+/** 某账号的"最近活跃时间":消息库文件里最新的 mtime。当前登录账号会持续写库,mtime 最新。 */
+function newestDbMtimeMs(messageDbDir: string): number {
+  let newest = 0;
+  try {
+    for (const file of fs.readdirSync(messageDbDir)) {
+      if (!WINDOWS_MESSAGE_DB_RE.test(file)) continue;
+      const m = fs.statSync(path.join(messageDbDir, file)).mtimeMs;
+      if (m > newest) newest = m;
+    }
+  } catch { /* ignore */ }
+  return newest;
+}
+
+/**
+ * 跨所有候选数据根,按消息库 mtime 挑"当前登录(正在写库)的账号"。
+ * #40:取密钥必须对准当前活跃账号——否则切账号后旧目录还在,会一直锁定旧账号,
+ * 从进程内存扫到的新密钥解不开旧库,报"密钥不匹配"。
+ */
+export function detectActiveWindowsAccountFull(
+  roots: string[] = getWindowsWeChatRootCandidates(),
+): (WindowsAccountDiscovery & { lastActiveMs: number }) | null {
+  let best: (WindowsAccountDiscovery & { lastActiveMs: number }) | null = null;
+  for (const root of roots) {
+    for (const acc of listWindowsAccounts(root)) {
+      if (acc.lastActiveMs > 0 && (!best || acc.lastActiveMs > best.lastActiveMs)) best = acc;
+    }
+  }
+  return best;
+}
+
+/** 列出某数据根下所有合法微信账号目录(含最近活跃时间),用于识别"当前登录账号"与"切了哪个账号"。 */
+export function listWindowsAccounts(root: string): Array<WindowsAccountDiscovery & { lastActiveMs: number }> {
+  const out: Array<WindowsAccountDiscovery & { lastActiveMs: number }> = [];
+  const push = (wxid: string, wxDir: string, layout: Pick<WindowsAccountDiscovery, 'msgDir' | 'messageDbDir'>) => {
+    out.push({ wxid, wxDir, ...layout, lastActiveMs: newestDbMtimeMs(layout.messageDbDir) });
+  };
+  const selfLayout = inspectWindowsAccountDir(root);
+  if (selfLayout) push(path.basename(root), root, selfLayout);
+  try {
+    for (const name of fs.readdirSync(root)) {
+      if (['All Users', 'Applet', 'WMPF'].includes(name)) continue;
+      const wxDir = path.join(root, name);
+      try { if (!fs.statSync(wxDir).isDirectory()) continue; } catch { continue; }
+      const layout = inspectWindowsAccountDir(wxDir);
+      if (layout) push(name, wxDir, layout);
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
 export function resolveWindowsWeChatDataRootSelection(inputPath: string): WindowsAccountDiscovery & { root: string } | null {
   const selected = path.resolve(inputPath.trim());
   if (!selected) return null;
@@ -609,6 +659,26 @@ export function probeWindowsWeChatDataDir(): ProbeResult & {
   msgDir?: string;
   messageDbDir?: string;
 } {
+  // #40:最高优先——跨所有候选根(含已存账号的父目录)按 mtime 挑当前活跃账号。
+  // 切账号后旧账号目录仍在,若还先信"已保存账号"就会锁死旧账号→取密钥永远对错库。
+  const storedParents = readWindowsAccounts()
+    .map((a) => (typeof a.wx_dir === 'string' && a.wx_dir.trim() ? path.dirname(a.wx_dir.trim()) : null))
+    .filter((v): v is string => Boolean(v));
+  const activeRoots = Array.from(new Set([...getWindowsWeChatRootCandidates(), ...storedParents]));
+  const active = detectActiveWindowsAccountFull(activeRoots);
+  if (active) {
+    return {
+      ok: true,
+      detail: `已检测到当前登录账号 ${active.wxid}`,
+      wxid: active.wxid,
+      root: path.dirname(active.wxDir),
+      wxDir: active.wxDir,
+      msgDir: active.msgDir,
+      messageDbDir: active.messageDbDir,
+    };
+  }
+
+  // 活跃检测拿不到(库无 mtime/权限受限)时,退回已保存账号。
   for (const account of readWindowsAccounts()) {
     const wxDir = typeof account.wx_dir === 'string' ? account.wx_dir.trim() : '';
     const wxid = typeof account.wxid === 'string' ? account.wxid.trim() : '';

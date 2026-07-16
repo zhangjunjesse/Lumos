@@ -195,6 +195,21 @@ export function readKeyFile(): string | null {
   }
 }
 
+/**
+ * 只清微信密钥/账号绑定(windows_accounts.json + macOS key 文件),保留同意记录与
+ * 手动路径配置。用于"切换微信账号/微信升级后旧密钥失效"的重新绑定(#40):清掉旧密钥
+ * 让用户回到"未取密钥"状态,重新取密钥时会绑定当前活跃账号。
+ */
+export function clearRecoveredKeys(): void {
+  for (const f of [KEY_FILE, KEYS_JSON_FILE, WINDOWS_ACCOUNTS_FILE]) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      fs.writeFileSync(f, Buffer.alloc(fs.statSync(f).size, 0)); // 先抹零再删,残留不泄密钥
+      fs.unlinkSync(f);
+    } catch { /* best effort */ }
+  }
+}
+
 /** Wipe key files + ~/.lumos/wechat-export entirely. Used by "fully uninstall". */
 export function wipeFeatureData(): void {
   if (!fs.existsSync(FEATURE_DIR)) return;
