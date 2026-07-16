@@ -32,6 +32,10 @@ import {
   createLumosSkillsMcpServer,
   LUMOS_SKILLS_MCP_SYSTEM_HINT,
 } from '@/lib/tools/lumos-skills-mcp-server';
+import {
+  createLumosTeamMcpServer,
+  LUMOS_TEAM_MCP_SYSTEM_HINT,
+} from '@/lib/tools/lumos-team-mcp-server';
 import type { ConnectorContext, ConnectorDefinition } from '../types';
 
 const notBrowser = (ctx: ConnectorContext) => !ctx.browserAutomationIntent;
@@ -154,6 +158,22 @@ const skillsConnector: ConnectorDefinition = {
   buildHint: () => LUMOS_SKILLS_MCP_SYSTEM_HINT,
 };
 
+/** 团队管家(读+写团队/成员)——普通聊天与主 agent 会话可用,专属应用会话不掺和。
+ *  写库低风险(团队/成员可删可改),先草稿后落库靠 skill/buildHint 纪律,权限默认只读。 */
+const teamManagerConnector: ConnectorDefinition = {
+  id: 'lumos-team',
+  label: '团队管家',
+  appliesTo: (ctx) =>
+    !ctx.browserAutomationIntent
+    && !ctx.isDedicatedWeChatAssistantSession
+    && !ctx.isWorkflowChatSession
+    && !ctx.isEcommerceAssistantChatSession,
+  resolve: () => ({ inProcess: () => createLumosTeamMcpServer() }),
+  buildHint: () => LUMOS_TEAM_MCP_SYSTEM_HINT,
+  askModeReadAllowance: () =>
+    'read-only Lumos team tools (list_members / list_teams) when the user asks about existing AI members or teams; creating members/teams requires leaving Ask mode',
+};
+
 export const inProcessConnectors: ConnectorDefinition[] = [
   lumosImageConnector,
   knowledgeConnector,
@@ -164,4 +184,5 @@ export const inProcessConnectors: ConnectorDefinition[] = [
   etsyForgeConnector,
   tradeConnector,
   skillsConnector,
+  teamManagerConnector,
 ];

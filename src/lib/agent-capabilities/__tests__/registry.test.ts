@@ -53,6 +53,10 @@ jest.mock('@/lib/tools/lumos-skills-mcp-server', () => ({
   createLumosSkillsMcpServer: () => ({ name: 'lumos-skills' }),
   LUMOS_SKILLS_MCP_SYSTEM_HINT: 'SKILLS_HINT_TEXT',
 }));
+jest.mock('@/lib/tools/lumos-team-mcp-server', () => ({
+  createLumosTeamMcpServer: () => ({ name: 'lumos-team' }),
+  LUMOS_TEAM_MCP_SYSTEM_HINT: 'TEAM_HINT_TEXT',
+}));
 
 import {
   buildCapabilityPlan,
