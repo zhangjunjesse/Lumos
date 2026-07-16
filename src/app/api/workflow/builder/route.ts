@@ -7,6 +7,7 @@ import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
 import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 import { listAgentPresets, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
+import { listTeams } from '@/lib/team/store';
 import {
   buildRepairTurn,
   hasInsufficientAgentsSignal,
@@ -107,7 +108,17 @@ parallel 节点出 N≥2 条 next 边到各分支起点（可带 branchIndex 排
 { "id": "fan", "type": "parallel", "input": { "onBranchFail": "wait-all" } }
 { "id": "sync", "type": "join", "input": {} }
 
-### 6. wait / notification / capability / approval
+### 6. team — 团队协作步骤（必须从下方【AVAILABLE TEAMS】列表中选择）
+{ "id": "<ID>", "type": "team", "input": {
+  "teamId": "<来自 AVAILABLE TEAMS 列表的团队 id>",
+  "task": "<交给团队的任务。要自包含：团队看不到工作流其他上下文，上游数据用 {{ steps.X.output.yyy }} 插进 task 文本>"
+}}
+出边：恰好 1 条 next（+ 可选 on-error）。
+- 团队 = 队长 + 多名成员按团队 SOP 协作（调研/写作/审核等多工序），比单 agent 节点适合需要多角色配合、有质量把关的复杂任务；简单任务用 agent 节点即可
+- 输出：steps.<ID>.output.text（团队最终交付文本）、dispatches（派单次数）
+- AVAILABLE TEAMS 为空时不要使用 team 节点
+
+### 7. wait / notification / capability / approval
 wait: { "type": "wait", "input": { "durationMs": 1000 } }
 notification / capability: 输入由 preset 提供
 approval: 人工审批门（需要 approvers 配置）
@@ -164,6 +175,15 @@ function buildAgentListBlock(agents: AgentPresetDirectoryItem[]): string {
     `- id: "${a.id}"  name: "${a.name}"  description: "${a.description || ''}"`,
   );
   return `\n## AVAILABLE AGENTS\n${lines.join('\n')}`;
+}
+
+function buildTeamListBlock(): string {
+  const teams = listTeams();
+  if (teams.length === 0) return '\n## AVAILABLE TEAMS\n(none — do not use team nodes)';
+  const lines = teams.map(t =>
+    `- id: "${t.id}"  name: "${t.name}"  description: "${t.description || ''}"  members: ${t.memberRefs.length}`,
+  );
+  return `\n## AVAILABLE TEAMS\n${lines.join('\n')}`;
 }
 
 function validateAgentPresets(dsl: unknown, validIds: Set<string>): string[] {
@@ -227,7 +247,7 @@ export async function POST(request: NextRequest) {
     const validIds = new Set(agents.map(a => a.id));
     const configuredPrompt = getSetting('workflow_builder_system_prompt') || '';
     const basePrompt = configuredPrompt || DSL_BASE_PROMPT;
-    const systemPrompt = basePrompt + '\n\n' + WORKFLOW_STABILITY_RULES + buildAgentListBlock(agents);
+    const systemPrompt = basePrompt + '\n\n' + WORKFLOW_STABILITY_RULES + buildAgentListBlock(agents) + buildTeamListBlock();
     const originalRequest = `Generate a Workflow DSL for the following task:\n\n${input.description}${input.workingDirectory ? `\n\nWorking directory: ${input.workingDirectory}` : ''}`;
 
     const raw = await generateTextFromProvider({
