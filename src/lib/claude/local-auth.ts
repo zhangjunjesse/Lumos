@@ -117,6 +117,28 @@ function resolveNodeCommand(): string {
   return process.execPath;
 }
 
+/**
+ * SDK 0.3.x 起 findBundledClaudeSdkCliPath() 返回的是平台原生二进制(claude / claude.exe),
+ * 必须直接执行。绝不能再用 `node <binary>` —— node 会把二进制头(Mach-O / ELF / MZ)当 JS
+ * 解析,直接 `SyntaxError: Invalid or unexpected token`(用户 Windows 登录时截图的正是此错)。
+ * 仅当路径是 .js / .mjs / .cjs 入口(历史 SDK 薄壳)时,才退回用 Node 启动。
+ */
+export function isNativeCliBinary(cliPath: string): boolean {
+  return !/\.[mc]?js$/i.test(cliPath);
+}
+
+/** 把 CLI 参数解析成真正可 spawn 的命令 —— 原生二进制直跑,JS 入口才套 node。 */
+export function resolveCliInvocation(
+  cliPath: string,
+  cliArgs: string[],
+): { command: string; args: string[] } {
+  if (isNativeCliBinary(cliPath)) {
+    return { command: cliPath, args: cliArgs };
+  }
+
+  return { command: resolveNodeCommand(), args: [cliPath, ...cliArgs] };
+}
+
 function buildLocalAuthRuntimeEnv(): Record<string, string> {
   const env = { ...process.env as Record<string, string> };
 
@@ -145,9 +167,8 @@ function buildLocalAuthRuntimeEnv(): Record<string, string> {
   return sanitizeEnv(env);
 }
 
-function buildProbeArgs(cliPath: string): string[] {
+function buildProbeArgs(): string[] {
   return [
-    cliPath,
     '-p',
     'ping',
     '--verbose',
@@ -163,8 +184,8 @@ function buildProbeArgs(cliPath: string): string[] {
   ];
 }
 
-function buildLoginArgs(cliPath: string): string[] {
-  return [cliPath, '/login'];
+function buildLoginArgs(): string[] {
+  return ['/login'];
 }
 
 function extractAssistantText(message?: ClaudeProbeAssistantMessage['message']): string {
@@ -269,7 +290,7 @@ async function spawnClaudeProbeProcess(timeoutMs: number): Promise<ClaudeLocalAu
     };
   }
 
-  const nodePath = resolveNodeCommand();
+  const { command: probeCommand, args: probeArgs } = resolveCliInvocation(cliPath, buildProbeArgs());
   const env = buildLocalAuthRuntimeEnv() as NodeJS.ProcessEnv;
   const hasSandboxOauthAccount = readSandboxOauthAccountHint(configDir);
 
@@ -304,7 +325,7 @@ async function spawnClaudeProbeProcess(timeoutMs: number): Promise<ClaudeLocalAu
     timer.unref?.();
 
     try {
-      const spawnedChild = spawn(nodePath, buildProbeArgs(cliPath), {
+      const spawnedChild = spawn(probeCommand, probeArgs, {
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
@@ -470,26 +491,29 @@ function quoteForShell(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildLoginCommand(nodePath: string, cliPath: string, configDir: string): string {
-  const loginArgs = buildLoginArgs(cliPath).map(quoteForShell).join(' ');
+function buildLoginCommand(cliPath: string, configDir: string): string {
+  const { command, args } = resolveCliInvocation(cliPath, buildLoginArgs());
+  const invocation = [command, ...args].map(quoteForShell).join(' ');
   if (process.platform === 'win32') {
-    return `set "CLAUDE_CONFIG_DIR=${configDir}" && set "ELECTRON_RUN_AS_NODE=1" && ${quoteForShell(nodePath)} ${loginArgs}`;
+    return `set "CLAUDE_CONFIG_DIR=${configDir}" && set "ELECTRON_RUN_AS_NODE=1" && ${invocation}`;
   }
 
-  return `CLAUDE_CONFIG_DIR=${quoteForShell(configDir)} ELECTRON_RUN_AS_NODE=1 ${quoteForShell(nodePath)} ${loginArgs}`;
+  return `CLAUDE_CONFIG_DIR=${quoteForShell(configDir)} ELECTRON_RUN_AS_NODE=1 ${invocation}`;
 }
 
 /**
  * Windows 登录用临时 bat。每步独立 set + 引号包路径,整体由 bat 执行——
- * 避免内联 `set "X=Y" && ... && node /login` 经 cmd /c start ... cmd /k 多层传递时
- * 被嵌套引号 / && 拆坏(实测会把整条命令当文字喂给 claude,/login 根本没跑)。
+ * 避免内联 `set "X=Y" && ... && "claude.exe" /login` 经 cmd /c start ... cmd /k 多层
+ * 传递时被嵌套引号 / && 拆坏(实测会把整条命令当文字喂给 claude,/login 根本没跑)。
  */
-function buildWindowsLoginBat(nodePath: string, cliPath: string, configDir: string): string {
+function buildWindowsLoginBat(cliPath: string, configDir: string): string {
+  const { command, args } = resolveCliInvocation(cliPath, buildLoginArgs());
+  const invocation = [command, ...args].map((part) => `"${part}"`).join(' ');
   return [
     '@echo off',
     `set "CLAUDE_CONFIG_DIR=${configDir}"`,
     'set "ELECTRON_RUN_AS_NODE=1"',
-    `"${nodePath}" "${cliPath}" /login`,
+    invocation,
     '',
   ].join('\r\n');
 }
@@ -585,9 +609,8 @@ export function startClaudeLocalAuthSetup(): { command: string; configDir: strin
     throw new Error('未找到 Lumos 内置 Claude Runtime，无法启动登录流程');
   }
 
-  const nodePath = resolveNodeCommand();
   const configDir = getClaudeConfigDir();
-  const command = buildLoginCommand(nodePath, cliPath, configDir);
+  const command = buildLoginCommand(cliPath, configDir);
 
   if (process.platform === 'darwin') {
     const script = `tell application "Terminal"
@@ -605,7 +628,7 @@ end tell`;
   if (process.platform === 'win32') {
     // 写进临时 bat 整体执行,start 只负责开新窗口跑这个 bat —— 避开内联命令的嵌套引号/&& 转义被拆坏。
     const batPath = path.join(os.tmpdir(), 'lumos-claude-login.bat');
-    fs.writeFileSync(batPath, buildWindowsLoginBat(nodePath, cliPath, configDir), 'utf-8');
+    fs.writeFileSync(batPath, buildWindowsLoginBat(cliPath, configDir), 'utf-8');
     const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/k', batPath], {
       detached: true,
       stdio: 'ignore',
