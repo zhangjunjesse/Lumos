@@ -819,9 +819,16 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key, should_sto
                 added += try_key_for_records(key, records)
         return added
 
-    for base, size in regions:
+    scan_started = time.time()
+    for region_index, (base, size) in enumerate(regions, 1):
         if should_stop and should_stop():
+            log(f"[+] SQLCipher 扫描早退于 region {region_index}/{len(regions)}(当前账号核心库已集齐)")
             break
+        if region_index % 25 == 0:
+            log(
+                f"[+] SQLCipher 扫描进度 regions={region_index}/{len(regions)} "
+                f"found={found} elapsed={int(time.time() - scan_started)}s"
+            )
         tail = b""
         offset = 0
         while offset < size:
@@ -871,7 +878,8 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key, should_sto
     log(
         "[+] SQLCipher memory scan "
         f"found={found} unique_strings={len(seen_strings)} "
-        f"unique_pairs={len(seen_pairs)} raw_candidates={len(seen_raw_keys)}"
+        f"unique_pairs={len(seen_pairs)} raw_candidates={len(seen_raw_keys)} "
+        f"elapsed={int(time.time() - scan_started)}s"
     )
     return found
 
@@ -968,6 +976,7 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
 
     regions = iter_writable_private_regions(handle)
     log(f"[+] scanning v4 raw heap regions={len(regions)}")
+    scan_started = time.time()
     found = candidates = scanned = failures = 0
     chunk_size = 4 * 1024 * 1024
     for region_index, (base, size, protect) in enumerate(regions, 1):
@@ -992,13 +1001,20 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
                         found += marked
                         log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
                         if account_salt_groups and any(g.issubset(recovered_salts) for g in account_salt_groups):
+                            log(
+                                f"[+] v4 raw heap 早退:某账号核心库已集齐 "
+                                f"regions_scanned={region_index}/{len(regions)} elapsed={int(time.time() - scan_started)}s"
+                            )
                             return found
             scanned += len(data)
             tail = block[-31:]
             offset += to_read
         if region_index % 25 == 0:
             log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
-    log(f"[+] v4 raw heap scan found={found} candidates={candidates} scanned_mb={scanned // 1048576} read_failures={failures}")
+    log(
+        f"[+] v4 raw heap scan found={found} candidates={candidates} "
+        f"scanned_mb={scanned // 1048576} read_failures={failures} elapsed={int(time.time() - scan_started)}s"
+    )
     return found
 
 
@@ -1047,6 +1063,12 @@ def merge_accounts(existing: list[dict], recovered: list[dict]) -> list[dict]:
 
 
 def extract(pid: int, accounts_out: str, key_out: str) -> int:
+    active_wxid = os.environ.get("LUMOS_WECHAT_EXPORT_WINDOWS_ACTIVE_WXID", "").strip()
+    log(
+        "[ENV] Lumos 传入: "
+        f"active_wxid_hint={active_wxid or '-'} | "
+        f"data_roots={os.environ.get('LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS', '') or '-'}"
+    )
     pids = candidate_wechat_pids(pid)
     if not pids:
         raise RuntimeError("未找到运行中的 WeChat.exe / Weixin.exe")
@@ -1055,6 +1077,11 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     accounts = find_accounts()
     if not accounts:
         raise RuntimeError("未找到 Windows 微信数据目录")
+    log(
+        f"[+] find_accounts 发现 {len(accounts)} 个账号: "
+        + ", ".join(a.get("wxid", "?") for a in accounts)
+        + (f" | 预期当前登录账号={active_wxid}" if active_wxid else "")
+    )
 
     for account in accounts:
         db_records = []
@@ -1067,7 +1094,8 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                     "mode": account.get("mode") or "v3",
                 })
         account["_db_records"] = db_records
-        log(f"[+] account wxid={account['wxid']} dbs={len(db_records)} mode={account.get('mode')}")
+        active_mark = " (当前登录/预期目标)" if account.get("wxid") == active_wxid else ""
+        log(f"[+] account wxid={account['wxid']}{active_mark} dbs={len(db_records)} mode={account.get('mode')}")
         for record in db_records:
             log(
                 "[DB] "
@@ -1098,11 +1126,30 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         }
         return core or {rec["salt"] for rec in recs}
 
-    account_salt_groups = [g for g in (_account_core_salts(a) for a in accounts) if g]
-    target_salts = set().union(*account_salt_groups) if account_salt_groups else set()
+    account_salt_groups: list[tuple[str, set]] = []
+    for account in accounts:
+        group = _account_core_salts(account)
+        if group:
+            account_salt_groups.append((account["wxid"], group))
+    target_salts = set().union(*[g for _w, g in account_salt_groups]) if account_salt_groups else set()
+    for wxid, group in account_salt_groups:
+        mark = " (当前登录/预期目标)" if wxid == active_wxid else ""
+        log(f"[TARGET] account={wxid}{mark} 需集齐核心库 key 数={len(group)}")
+    log(
+        f"[TARGET] 完成判据=任一账号这组核心库 key 全部到手即收工"
+        f"(共 {len(account_salt_groups)} 组);登出账号的 key 不在内存、永远凑不齐,不阻塞完成"
+    )
+
+    completion_logged = {"done": False}
 
     def scan_complete() -> bool:
-        return any(group.issubset(recovered_salts) for group in account_salt_groups)
+        for wxid, group in account_salt_groups:
+            if group.issubset(recovered_salts):
+                if not completion_logged["done"]:
+                    completion_logged["done"] = True
+                    log(f"[COMPLETE] account={wxid} 核心库已全部集齐({len(group)} 把),收工写盘、停止扫描")
+                return True
+        return False
     ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
     scan_summaries: list[dict] = []
     total_pointer_keys_seen = 0
@@ -1220,6 +1267,15 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
             summary["pointer_keys"] = len(seen_keys)
             total_pointer_keys_seen += len(seen_keys)
             CloseHandle(handle)
+            progress = " ".join(
+                f"{wxid}={len(group & recovered_salts)}/{len(group)}"
+                for wxid, group in account_salt_groups
+            )
+            log(
+                f"[PROGRESS] pid={scan_pid} 阶段结束 "
+                f"v4_heap={summary['v4_heap_found']} pointer={summary['pointer_keys']} hex={summary['hex_found']} "
+                f"| 各账号已集齐核心库: {progress or '-'}"
+            )
 
     recovered = sorted(recovered_by_wxid.values(), key=lambda item: int(item.get("extracted_at") or 0), reverse=True)
     if not recovered:

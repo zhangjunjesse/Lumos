@@ -184,6 +184,8 @@ export async function extractKeys(
     try {
       const probe = probeWindowsWeChatDataDir();
       if (probe.ok && probe.root) dataRoots.push(probe.root);
+      // 把检测到的当前活跃账号 wxid 也告诉 Python,便于日志标注"预期目标账号"、诊断切账号问题。
+      if (probe.ok && probe.wxid) env.LUMOS_WECHAT_EXPORT_WINDOWS_ACTIVE_WXID = probe.wxid;
     } catch { /* probe 失败不影响取密钥 */ }
     for (const root of getWindowsWeChatRootCandidates()) dataRoots.push(root);
     const uniqueRoots = [...new Set(dataRoots.filter(Boolean))];
