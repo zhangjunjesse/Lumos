@@ -764,8 +764,13 @@ def _raw_key_candidates_around(block: bytes, center: int, radius: int = 96) -> l
     return candidates
 
 
-def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
-    """Scan readable process memory for cached SQLCipher key material."""
+def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key, should_stop=None) -> int:
+    """Scan readable process memory for cached SQLCipher key material.
+
+    should_stop(): 可选回调,返回 True 时提前收工。这是全内存里最重的一条扫描
+    (遍历所有可读区域),必须能在"当前登录账号核心库已集齐"时早退——否则多账号
+    (切换过账号)时会为了永远凑不齐的旧账号 salt 扫穿整个堆,拖成"转一上午"(#40)。
+    """
     salt_to_records: dict[str, list[dict]] = {}
     for account in accounts:
         for rec in account.get("_db_records") or []:
@@ -815,9 +820,13 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key) -> int:
         return added
 
     for base, size in regions:
+        if should_stop and should_stop():
+            break
         tail = b""
         offset = 0
         while offset < size:
+            if should_stop and should_stop():
+                break
             to_read = min(chunk_size, size - offset)
             data = read_mem(handle, base + offset, to_read)
             if not data:
@@ -939,9 +948,15 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
     grouped = v4_records_by_account(accounts)
     if not grouped:
         return 0
-    # 目标 = 各账号的核心 v4 库 salt(contact/session/message_*);逐库验到、集齐才提前收工。
-    # 别再"找到第一把 key 就 return"——一个账号可能对不同库用不同 key,早退会漏掉 message/session 的 key。
-    target_salts = {rec["salt"] for _account, records in grouped for rec in records if rec.get("salt")}
+    # 目标 = 各账号的核心 v4 库 salt(contact/session/message_*),【按账号分组】;逐库验到、
+    # 任一账号这组集齐即提前收工。两条铁律:①别"找到第一把 key 就 return"(一个账号不同库
+    # 可能用不同 key,早退会漏 message/session);②别要求"所有账号全集齐"——多账号(切换过账号)
+    # 时旧账号 key 不在内存、salt 永远凑不齐,会扫遍整个堆 never 早退、拖成"转一上午"(#40)。
+    account_salt_groups = [
+        {rec["salt"] for rec in records if rec.get("salt")}
+        for _account, records in grouped
+    ]
+    account_salt_groups = [g for g in account_salt_groups if g]
     recovered_salts: set[str] = set()
 
     def tracking_mark(account: dict, record: dict, key_hex: str) -> bool:
@@ -976,7 +991,7 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
                     if marked:
                         found += marked
                         log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
-                        if target_salts and target_salts.issubset(recovered_salts):
+                        if account_salt_groups and any(g.issubset(recovered_salts) for g in account_salt_groups):
                             return found
             scanned += len(data)
             tail = block[-31:]
@@ -1070,17 +1085,24 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
     # 全量扫描卡死、never 写盘,连已找到的聊天库 key 也一起丢(现象:找到 7 把却卡一夜、仍 0/3)。
     # 核心库 key 找齐即视为成功、收工写盘;非核心库能顺带找到就找,找不到不阻塞完成。
     # (Windows 微信 4.1.8 实测验证:改后取钥 1-2 分钟完成,message/session 全部解开。)
-    v4_salts = {
-        rec["salt"]
-        for account in accounts
-        for rec in account.get("_db_records") or []
-        if rec.get("mode") == "v4" and is_core_v4_db(rec.get("path") or "")
-    }
-    target_salts = v4_salts or {
-        rec["salt"]
-        for account in accounts
-        for rec in account.get("_db_records") or []
-    }
+    # 每个账号的核心库 salt 各成一组;完成判据 = 任一账号这组 salt 全部到手即收工。
+    # 多账号(尤其切换过账号)时,已登出账号的 key 不在当前进程内存里、其 salt 永远凑不齐;
+    # 若沿用"所有账号所有核心 salt"的老判据会永远没集齐 → 全量 hex 扫描空耗、never 提前收工、
+    # 拖到扫完整个堆才写盘(现象:找到当前账号的 key 却转一上午、UI 显示 0/N)。按账号判定
+    # 即可在当前登录账号的核心库集齐时立即收工,自然跳过登出账号那些永远凑不齐的 salt。
+    def _account_core_salts(account: dict) -> set:
+        recs = account.get("_db_records") or []
+        core = {
+            rec["salt"] for rec in recs
+            if rec.get("mode") == "v4" and is_core_v4_db(rec.get("path") or "")
+        }
+        return core or {rec["salt"] for rec in recs}
+
+    account_salt_groups = [g for g in (_account_core_salts(a) for a in accounts) if g]
+    target_salts = set().union(*account_salt_groups) if account_salt_groups else set()
+
+    def scan_complete() -> bool:
+        return any(group.issubset(recovered_salts) for group in account_salt_groups)
     ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
     scan_summaries: list[dict] = []
     total_pointer_keys_seen = 0
@@ -1122,7 +1144,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         return True
 
     for index, scan_pid in enumerate(pids, start=1):
-        if target_salts and target_salts.issubset(recovered_salts):
+        if account_salt_groups and scan_complete():
             break
 
         modules = get_key_scan_modules(scan_pid)
@@ -1156,13 +1178,13 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
         summary["opened"] = True
         seen_keys: set[bytes] = set()
         try:
-            if target_salts and not target_salts.issubset(recovered_salts):
+            if target_salts and not scan_complete():
                 def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
                     return mark_key(account, record, key_hex, scan_pid, module_path)
 
                 summary["v4_heap_found"] = scan_v4_raw_heap_keys(handle, accounts, mark_scanned_key)
 
-            if modules and target_salts and not target_salts.issubset(recovered_salts):
+            if modules and target_salts and not scan_complete():
                 for ptr_size in ptr_sizes:
                     log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
                     for base, size, module_path_candidate, module_name in modules:
@@ -1179,18 +1201,18 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                                         continue
                                     if verify_db_key(key, record["path"], record["mode"]):
                                         mark_key(account, record, key_hex, scan_pid, module_path_candidate)
-                            if target_salts and target_salts.issubset(recovered_salts):
+                            if scan_complete():
                                 break
-                        if target_salts and target_salts.issubset(recovered_salts):
+                        if scan_complete():
                             break
-                    if target_salts and target_salts.issubset(recovered_salts):
+                    if scan_complete():
                         break
 
-            if target_salts and not target_salts.issubset(recovered_salts):
+            if target_salts and not scan_complete():
                 def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
                     return mark_key(account, record, key_hex, scan_pid, module_path)
 
-                summary["hex_found"] = scan_hex_key_strings(handle, accounts, mark_scanned_key)
+                summary["hex_found"] = scan_hex_key_strings(handle, accounts, mark_scanned_key, scan_complete)
         except Exception as err:  # noqa: BLE001
             summary["error"] = str(err)
             log(f"[!] scan pid={scan_pid} failed: {err}")
