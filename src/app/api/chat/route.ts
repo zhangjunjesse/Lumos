@@ -22,7 +22,7 @@ import os from 'os';
 import { loadToken } from '@/lib/feishu-auth';
 import { fetchFeishuDocumentContext, parseFeishuReferenceMarkdown } from '@/lib/feishu/doc-content';
 import { captureExplicitMemoryV2FromUserInput } from '@/lib/memory-v2/runtime';
-import { buildTeamChatTurn } from '@/lib/team/chat-session';
+import { buildTeamChatConfig } from '@/lib/team/chat-session';
 import type { MemoryV2Entry } from '@/lib/memory-v2/types';
 import { isMainAgentSession } from '@/lib/chat/session-entry';
 import { stripSessionMarkers } from '@/lib/chat/session-kind';
@@ -645,47 +645,17 @@ export async function POST(request: NextRequest) {
       userMessageId = addMessage(session_id, 'user', savedContent).id;
     }
 
-    // ── 团队会话分流(docs/chat-team-design.md):队长+成员协作,装配链与普通聊天
-    // 完全分离(声明式工具面+bypass,不走 canUseTool/hooks/能力注册中心)。
-    // 放在用户消息落库之后、普通聊天装配机器之前——普通聊天路径零改动。
-    if (session.team_id) {
-      const { messages: teamRecent } = getMessages(session_id, { limit: 50 });
-      const teamTurn = buildTeamChatTurn({
-        teamId: session.team_id,
-        sessionId: session_id,
-        sdkSessionId: session.sdk_session_id || undefined,
-        prompt: content,
-        lumosUserId,
-        // 输入框所选模型优先于团队配置(与普通聊天一致的直觉)
-        requestedProviderId: provider_id || session.provider_id || undefined,
-        requestedModel: model || session.requested_model || session.model || undefined,
-        conversationHistory: teamRecent.slice(0, -1).map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        })),
-        onRuntimeStatusChange: (status: string) => {
-          try { setSessionRuntimeStatus(session_id, status); } catch { /* best effort */ }
-        },
-      });
-      const teamStream = streamClaude(teamTurn.streamOptions);
-      const [teamForClient, teamForCollect] = teamStream.tee();
-      collectStreamResponse(teamForCollect, {
-        sessionId: session_id,
-        sourceUserMessageId: userMessageId,
-        onComplete: () => {
-          teamTurn.release();
-          releaseSessionLock(session_id, lockId);
-          setSessionRuntimeStatus(session_id, 'idle');
-        },
-      });
-      return new Response(withSseKeepAlive(teamForClient), {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
+    // ── 团队会话(docs/chat-team-design.md):走普通聊天同一条装配链(MCP/skill/能力全继承),
+    // 只在下面 streamClaude 处叠加 teamSession(队长提示词+成员 agents+出图 server)。
+    // 早期版本做成独立旁路,导致团队丢了全部 MCP/skill——已改为合流。
+    const teamChatConfig = session.team_id
+      ? buildTeamChatConfig({
+          teamId: session.team_id,
+          lumosUserId,
+          requestedProviderId: provider_id || session.provider_id || undefined,
+          requestedModel: model || session.requested_model || session.model || undefined,
+        })
+      : null;
 
     if (!isAutoContinueRequest && userMessageId) {
       try {
@@ -986,8 +956,9 @@ export async function POST(request: NextRequest) {
       rawPrompt: isAutoContinueRequest ? undefined : content,
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
-      model: effectiveModel,
-      systemPrompt: finalSystemPrompt,
+      // 团队会话:队长/成员用团队级模型;系统提示词换成队长提示词(成员的工具全靠继承)。
+      model: teamChatConfig?.model || effectiveModel,
+      systemPrompt: teamChatConfig ? teamChatConfig.leaderSystemPrompt : finalSystemPrompt,
       workingDirectory: resolvedSessionWorkingDirectory,
       mcpServers: loadedMcpServers,
       inProcessMcpServers: Object.keys(inProcessMcpServers).length > 0 ? inProcessMcpServers : undefined,
@@ -998,13 +969,14 @@ export async function POST(request: NextRequest) {
       toolTimeoutSeconds: toolTimeout || 900,
       // 浏览器意图不再强制新会话、不再砍内置工具、不再硬塞禁用名单——保留全套工具，
       // 仅靠 BROWSER_PREFERENCE_HINT 引导。根因见上方常量注释（issue #30）。
-      provider: resolvedProvider,
+      provider: teamChatConfig?.provider ?? resolvedProvider,
       knowledgeOptions: {
         enabled: knowledgeEnabledForRequest,
         tagIds: selectedKnowledgeTagIds,
         overrides: sanitizedKnowledgeOverrides,
       },
       conversationHistory: historyMsgs,
+      ...(teamChatConfig ? { teamSession: teamChatConfig.teamSession } : {}),
       onRuntimeStatusChange: (status: string) => {
         try { setSessionRuntimeStatus(session_id, status); } catch { /* best effort */ }
       },
@@ -1022,6 +994,7 @@ export async function POST(request: NextRequest) {
       sessionId: session_id,
       sourceUserMessageId: userMessageId,
       onComplete: () => {
+        teamChatConfig?.release();
         unregisterSessionAutoContinueAbort(session_id, abortController);
         releaseSessionLock(session_id, lockId);
         setSessionRuntimeStatus(session_id, 'idle');

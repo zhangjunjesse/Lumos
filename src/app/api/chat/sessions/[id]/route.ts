@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, setSessionTeam, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, setSessionTeam, updateSdkSessionId, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
 import { getTeam } from '@/lib/team/store';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
@@ -82,12 +82,16 @@ export async function PATCH(
     if (typeof body.system_prompt === 'string') {
       updateSessionSystemPrompt(id, body.system_prompt);
     }
-    // 团队绑定随时可改(用户拍板):每条消息按发送时刻绑定的团队执行;换队后
-    // 下一轮因装配签名变化自动起新 SDK 会话并带上历史,语义=新团队接手继续。
+    // 团队绑定随时可改(用户拍板):每条消息按发送时刻绑定的团队执行。
+    // 换队(团队↔普通、A↔B)时清掉 SDK 会话 id——两种模式的装配(agents/bypass vs
+    // canUseTool)不兼容,续用旧 SDK 会话会报错;清掉让下一轮起新会话、带 DB 历史续上。
     if (typeof body.team_id === 'string') {
       const teamId = body.team_id.trim();
       if (teamId && !getTeam(teamId)) {
         return Response.json({ error: '团队不存在', code: 'INVALID_TEAM' }, { status: 400 });
+      }
+      if ((session.team_id || '') !== teamId) {
+        updateSdkSessionId(id, '');
       }
       setSessionTeam(id, teamId);
     }

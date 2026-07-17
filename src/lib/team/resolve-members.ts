@@ -2,7 +2,7 @@
 // 聊天团队会话与工作流团队步骤共用,保证两处对成员的理解完全一致。
 
 import { agentKeyOf, type TeamAgentSpec } from './agent-defs';
-import { grantsToTools } from './tool-grants';
+import { grantsToDisallowedTools } from './tool-grants';
 import { resolveTeamMembers, type PlatformTeam } from './store';
 
 export interface ReadyMember {
@@ -24,7 +24,8 @@ export function resolveReadyMembers(team: PlatformTeam): ReadyMember[] {
           key: agentKeyOf(p.name),
           description: `${p.name}:${duty}`,
           prompt: p.systemPrompt,
-          tools: grantsToTools(p.toolPermissions),
+          // 聊天团队:成员继承会话全部工具(office/浏览器/知识库/skill…),只按档位挡危险项。
+          disallowedTools: grantsToDisallowedTools(p.toolPermissions),
         },
       };
     });

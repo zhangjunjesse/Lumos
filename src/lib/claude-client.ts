@@ -970,7 +970,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // 权限闸门 = 各成员声明式 tools 清单;tool_result 帧由 user 消息路径照常发出。
         if (teamSession) {
           queryOptions.agents = teamSession.agents;
-          queryOptions.tools = teamSession.tools;
+          // 不覆盖 queryOptions.tools:保留会话全部内置工具,让队长和成员都能用
+          // (成员 agents 省略 tools = 继承全部;各自 disallowedTools 按档位挡危险项)。
           queryOptions.permissionMode = 'bypassPermissions';
           queryOptions.allowDangerouslySkipPermissions = true;
           delete queryOptions.canUseTool;
@@ -979,6 +980,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           // 不放行队长调不了 Task,会一本正经地"扮演"成员产出(实测),必须剔除。
           queryOptions.disallowedTools = (queryOptions.disallowedTools || []).filter((t) => t !== 'Task');
           if (queryOptions.disallowedTools.length === 0) delete queryOptions.disallowedTools;
+          // 出图 stdio server 叠加到会话已加载的 MCP(office/浏览器/知识库…)之上。
           if (teamSession.sdkMcpServers) {
             queryOptions.mcpServers = { ...(queryOptions.mcpServers || {}), ...teamSession.sdkMcpServers };
           }

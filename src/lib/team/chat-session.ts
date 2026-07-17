@@ -1,9 +1,9 @@
-// 聊天团队会话的一回合装配:团队+成员 → streamClaude 的 teamSession 参数。
-// 队长=主会话(SDK 原生 agents 派单),协作方式全在 SOP 里;引擎只管组装和护栏。
-// 执行/流式/落库/resume 全部复用 streamClaude(与普通聊天同一条被验证的通道)。
-// 设计:docs/chat-team-design.md §5-6。
+// 聊天团队会话:把团队+成员装配成 streamClaude 的 teamSession 参数 + 队长系统提示词。
+// 关键:团队会话走普通聊天的同一条装配链(MCP/skill/能力全继承),这里只产出团队特有的
+// 叠加件——队长提示词、成员 agents、出图 stdio server、团队级模型覆盖。设计:docs/chat-team-design.md §5-6。
 
-import type { ClaudeStreamOptions } from '@/types';
+import type { ApiProvider } from '@/types';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { getProvider } from '@/lib/db/providers';
 import { LUMOS_MCP_SERVER_NAME } from '@/lib/tools/lumos-mcp-server';
 import { toAgentDefinitions } from './agent-defs';
@@ -19,6 +19,7 @@ function buildLeaderSystemPrompt(teamName: string, sop: string, members: ReadyMe
   return [
     `你是团队「${teamName}」的队长。用户在和整个团队对话:你负责理解用户诉求、把工作用 Task 工具派给团队成员(subagent_type 用成员名)、汇总产出、以团队名义向用户交差。`,
     '简单的寒暄或澄清问题你可以直接回答;实质工作必须派给成员完成,你自己不做成员职能内的活。',
+    '团队成员和你一样能用本会话的全部工具(读文件/网络搜索/浏览器/知识库/office 文档/出图等);派单时把要用哪些工具、目标、约束写清楚。',
     '',
     '团队成员(职能是你派单的依据):',
     buildRosterLines(members),
@@ -30,25 +31,28 @@ function buildLeaderSystemPrompt(teamName: string, sop: string, members: ReadyMe
   ].join('\n');
 }
 
-export interface TeamChatTurn {
-  streamOptions: ClaudeStreamOptions;
-  /** 回合结束(流收完)后调用:释放出图配额注册表。 */
+export interface TeamChatConfig {
+  /** 队长系统提示词(替换普通人设;能力发现提示由 route 另行拼接)。 */
+  leaderSystemPrompt: string;
+  /** streamClaude 的 teamSession 参数:成员 agents + 出图 stdio server。 */
+  teamSession: {
+    agents: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['agents']>;
+    sdkMcpServers: Record<string, McpServerConfig>;
+  };
+  /** 团队级模型覆盖(用户输入框所选优先,团队配置为缺省)。 */
+  provider?: ApiProvider;
+  model?: string;
+  /** 回合结束后调用:释放出图配额注册表。 */
   release: () => void;
 }
 
-export function buildTeamChatTurn(input: {
+export function buildTeamChatConfig(input: {
   teamId: string;
-  sessionId: string;
-  sdkSessionId?: string;
-  prompt: string;
   lumosUserId?: string;
   /** 用户在输入框选的服务商/模型:优先于团队配置(团队配置只是缺省值) */
   requestedProviderId?: string;
   requestedModel?: string;
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  abortController?: AbortController;
-  onRuntimeStatusChange?: (status: string) => void;
-}): TeamChatTurn {
+}): TeamChatConfig {
   const team = getTeam(input.teamId);
   if (!team) throw new Error('该会话绑定的团队已被删除——新建会话或先到「团队」页重建团队');
 
@@ -57,7 +61,6 @@ export function buildTeamChatTurn(input: {
     throw new Error(`团队「${team.name}」没有可用成员(启用且人设完整)——先到「团队」页配好成员`);
   }
 
-  // 出图通道恒挂载(工具曝光由成员 tools 清单决定):挂载集合跨回合稳定,resume 不受影响。
   const runToken = createTeamImageGuard({ billingUserId: input.lumosUserId ?? '', cap: IMAGES_PER_TURN_CAP });
 
   // 模型选择:用户输入框所选 > 团队配置缺省 > 全局默认。指定的服务商不存在时回退并留痕。
@@ -69,23 +72,13 @@ export function buildTeamChatTurn(input: {
   }
 
   return {
-    streamOptions: {
-      prompt: input.prompt,
-      rawPrompt: input.prompt,
-      sessionId: input.sessionId,
-      sdkSessionId: input.sdkSessionId,
-      systemPrompt: buildLeaderSystemPrompt(team.name, team.sop, members),
-      ...(provider ? { provider } : {}),
-      ...(effectiveModel ? { model: effectiveModel } : {}),
-      conversationHistory: input.conversationHistory,
-      abortController: input.abortController,
-      onRuntimeStatusChange: input.onRuntimeStatusChange,
-      teamSession: {
-        agents: toAgentDefinitions(members.map((m) => m.spec)),
-        tools: ['Task', 'Read'],
-        sdkMcpServers: { [LUMOS_MCP_SERVER_NAME]: buildTeamImageServerConfig(runToken) },
-      },
+    leaderSystemPrompt: buildLeaderSystemPrompt(team.name, team.sop, members),
+    teamSession: {
+      agents: toAgentDefinitions(members.map((m) => m.spec)),
+      sdkMcpServers: { [LUMOS_MCP_SERVER_NAME]: buildTeamImageServerConfig(runToken) },
     },
+    ...(provider ? { provider } : {}),
+    ...(effectiveModel ? { model: effectiveModel } : {}),
     release: () => releaseTeamImageGuard(runToken),
   };
 }

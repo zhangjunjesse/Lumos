@@ -1078,9 +1078,7 @@ export interface ClaudeStreamOptions {
    */
   teamSession?: {
     agents: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['agents']>;
-    /** 队长工具面(通常 ['Task','Read']) */
-    tools: NonNullable<import('@anthropic-ai/claude-agent-sdk').Options['tools']>;
-    /** 直接以 SDK 形状挂载的 MCP servers(如 stdio 出图通道) */
+    /** 团队特有的 SDK-形状 MCP servers(如 stdio 出图通道),叠加到会话已有 MCP 之上 */
     sdkMcpServers?: Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>;
   };
 }

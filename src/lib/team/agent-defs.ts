@@ -11,19 +11,23 @@ export interface TeamAgentSpec {
   description: string;
   /** 成员人设提示词 */
   prompt: string;
-  /** 声明式工具清单 */
-  tools: string[];
+  /** 允许清单(仅这些工具)。etsy 出图团队用——把成员限死在出图/读。 */
+  tools?: string[];
+  /** 禁用清单(继承会话全部工具之上做减法)。聊天团队用——成员默认能用全部 MCP/skill,只挡危险项。 */
+  disallowedTools?: string[];
 }
 
 export function toAgentDefinitions(specs: TeamAgentSpec[]): NonNullable<Options['agents']> {
   const agents: NonNullable<Options['agents']> = {};
   for (const s of specs) {
     if (!s.prompt.trim()) continue;
+    // tools 省略 = 继承父级全部工具(SDK 语义);给 tools 则限死为允许清单。
     agents[s.key] = {
       description: s.description,
       prompt: s.prompt,
-      tools: s.tools,
       model: 'inherit',
+      ...(s.tools ? { tools: s.tools } : {}),
+      ...(s.disallowedTools && s.disallowedTools.length > 0 ? { disallowedTools: s.disallowedTools } : {}),
     };
   }
   return agents;
