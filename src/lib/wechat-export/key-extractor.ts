@@ -21,7 +21,7 @@ import {
   WINDOWS_ACCOUNTS_FILE,
   type WeChatExportPlatform,
 } from './setup-state';
-import { getWindowsWeChatProcessNames } from './env-check';
+import { getWindowsWeChatProcessNames, getWindowsWeChatRootCandidates, probeWindowsWeChatDataDir } from './env-check';
 
 const SCRIPT_REL_BY_PLATFORM: Record<WeChatExportPlatform, string> = {
   darwin: 'mcp-servers/wechat-export/macos/extract_key.py',
@@ -174,9 +174,21 @@ export async function extractKeys(
         log: '',
       };
     }
+    // #40:把"当前活跃账号"和所有候选数据根都告诉 Python(不再只传手动配置)。
+    // 之前 probe 挑对了当前账号,extract 却没用上——Python 自己猜,切账号后拿旧账号库
+    // 验新密钥验不过就卡死不写盘。给全候选(当前活跃账号排最前),让 Python 用密钥逐个匹配、
+    // 写它真正能解开的那个账号。
     const windowsConfig = readWindowsPathConfig();
-    if (windowsConfig.wechatDataRoot) {
-      env.LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS = windowsConfig.wechatDataRoot;
+    const dataRoots: string[] = [];
+    if (windowsConfig.wechatDataRoot) dataRoots.push(windowsConfig.wechatDataRoot);
+    try {
+      const probe = probeWindowsWeChatDataDir();
+      if (probe.ok && probe.root) dataRoots.push(probe.root);
+    } catch { /* probe 失败不影响取密钥 */ }
+    for (const root of getWindowsWeChatRootCandidates()) dataRoots.push(root);
+    const uniqueRoots = [...new Set(dataRoots.filter(Boolean))];
+    if (uniqueRoots.length > 0) {
+      env.LUMOS_WECHAT_EXPORT_WINDOWS_DATA_ROOTS = uniqueRoots.join(';');
     }
     env.LUMOS_WECHAT_EXPORT_WINDOWS_PROCESS_NAMES = getWindowsWeChatProcessNames().join(';');
     args.push('--accounts-out', WINDOWS_ACCOUNTS_FILE, '--key-out', KEY_FILE);
@@ -192,9 +204,22 @@ export async function extractKeys(
     let settled = false;
     let aborted = false;
 
+    // 硬超时:取密钥正常 5-15 分钟。超过 30 分钟必是卡死(如切账号后拿错账号库反复验证
+    // 密钥不写盘)。之前无超时 → 会转一整天;这里到点终止并给明确指引,别让用户干等。
+    const EXTRACT_TIMEOUT_MS = 30 * 60 * 1000;
+    let timedOut = false;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      liveLog.append(`[TIMEOUT] 取密钥超过 ${EXTRACT_TIMEOUT_MS / 60000} 分钟仍未完成,终止。\n`);
+      try { child.kill(); } catch { /* ignore */ }
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, 2000).unref?.();
+    }, EXTRACT_TIMEOUT_MS);
+    timeoutTimer.unref?.();
+
     const finish = (result: KeyExtractionResult) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeoutTimer);
       if (options.signal) options.signal.removeEventListener('abort', abortChild);
       resolve(result);
     };
@@ -295,6 +320,13 @@ export async function extractKeys(
         stderrBuf = '';
       }
       const logPath = liveLog.path;
+      if (timedOut) {
+        const message = '取密钥超时(30 分钟未完成),已终止。常见原因:切换了微信账号,取到的密钥在对旧账号的库反复验证不通过。'
+          + '请确认当前微信登录的是要读取的账号后重试;若仍不行,把 setup.log 发给我们排查。';
+        onProgress?.({ phase: 'error', message });
+        finish({ success: false, keysFound: 0, error: message, log, logPath });
+        return;
+      }
       if (aborted) {
         finish({
           success: false,
