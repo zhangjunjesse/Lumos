@@ -1,4 +1,4 @@
-import { buildSearchUrl, classifySignals, parseExtractSignals } from '../amazon-page';
+import { buildSearchUrl, classifySignals, ensureDeliveryZip, parseExtractSignals } from '../amazon-page';
 
 describe('buildSearchUrl', () => {
   it('拼站点搜索 URL 并编码关键词', () => {
@@ -59,5 +59,49 @@ describe('classifySignals — 错误三分类', () => {
 
   it('提取脚本没返回数据 → parse_failed', () => {
     expect(classifySignals(null).status).toBe('parse_failed');
+  });
+});
+
+describe('ensureDeliveryZip — 处理「Choose your location」模态', () => {
+  const noSleep = async () => {};
+
+  // snapshot 第一次返回 before,之后返回 after;记录每次 evaluate 的脚本
+  function makeApi(beforeContent: string, afterContent: string) {
+    const scripts: string[] = [];
+    let snaps = 0;
+    const api = {
+      waitFor: async () => {},
+      snapshot: async () => ({ title: 't', content: (snaps++ === 0 ? beforeContent : afterContent) }),
+      evaluate: async (script: string) => {
+        scripts.push(script);
+        return 'ok';
+      },
+    };
+    return { api, scripts };
+  }
+
+  it('填邮编 + 点 Apply + 点 Done 关弹窗,并按快照确认结果', async () => {
+    const { api, scripts } = makeApi('Delivering to Los Angeles 90009', 'Deliver to New York 10001');
+    const ok = await ensureDeliveryZip(api, '10001', noSleep);
+    expect(ok).toBe(true);
+    const joined = scripts.join('\n');
+    expect(joined).toContain('#GLUXZipUpdateInput'); // 填框
+    expect(joined).toContain('10001'); // 填的值
+    expect(joined).toContain('#GLUXZipUpdate'); // 点 Apply
+    expect(joined).toContain('glowDoneButton'); // 点 Done(关弹窗)——旧实现缺的正是这两步
+  });
+
+  it('邮编已是目标值 → 直接返回,不动弹窗', async () => {
+    const { api, scripts } = makeApi('Deliver to New York 10001', 'Deliver to New York 10001');
+    const ok = await ensureDeliveryZip(api, '10001', noSleep);
+    expect(ok).toBe(true);
+    expect(scripts).toHaveLength(0);
+  });
+
+  it('设不上邮编 → 返回 false,但仍点 Done 兜底关弹窗', async () => {
+    const { api, scripts } = makeApi('Delivering to Los Angeles 90009', 'Delivering to Los Angeles 90009');
+    const ok = await ensureDeliveryZip(api, '10001', noSleep);
+    expect(ok).toBe(false);
+    expect(scripts.join('\n')).toContain('glowDoneButton');
   });
 });

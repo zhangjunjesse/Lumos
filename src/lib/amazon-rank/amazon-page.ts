@@ -81,15 +81,62 @@ export function classifySignals(
 interface ZipBrowser {
   waitFor(texts: string | string[], options?: { timeout?: number }): Promise<void>;
   snapshot(): Promise<{ title: string; content: string; url?: string }>;
-  click(target: string | { text: string }): Promise<void>;
   evaluate<T = unknown>(script: string): Promise<T>;
-  press(key: string): Promise<void>;
+}
+
+// 打开定位入口。部分会话会自动弹「Choose your location」模态——已开就别再点,
+// 否则再点定位入口反而会把模态切换关闭。
+const OPEN_LOCATION_SCRIPT = `(() => {
+  if (document.querySelector('#GLUXZipUpdateInput')) return 'already-open';
+  const link = document.querySelector('#nav-global-location-popover-link')
+    || document.querySelector('#glow-ingress-block');
+  if (!link) return 'no-link';
+  link.click();
+  return 'clicked';
+})()`;
+
+// #GLUXZipUpdate = Apply 按钮。GLUX 的 submit 按钮接受页内(非可信)click——
+// 已在真实 amazon.com 验证:填框 → 点 Apply → 点 Done,ingress 从默认 90009 变为设定邮编。
+const CLICK_APPLY_SCRIPT = `(() => {
+  const btn = document.querySelector('#GLUXZipUpdate .a-button-input')
+    || document.querySelector('#GLUXZipUpdate input')
+    || document.querySelector('#GLUXZipUpdate');
+  if (!btn) return 'no-apply';
+  btn.click();
+  return 'applied';
+})()`;
+
+// glowDoneButton = Done 关闭按钮。必须点掉,否则模态遮罩残留会挡住后续每个关键词的搜索。
+const CLICK_DONE_SCRIPT = `(() => {
+  const done = document.querySelector('[name="glowDoneButton"] .a-button-input')
+    || document.querySelector('[name="glowDoneButton"]')
+    || document.querySelector('#GLUXConfirmClose .a-button-input')
+    || document.querySelector('#GLUXConfirmClose');
+  if (!done) return 'no-done';
+  done.click();
+  return 'done';
+})()`;
+
+function buildFillZipScript(zip: string): string {
+  return `(() => {
+    const input = document.querySelector('#GLUXZipUpdateInput');
+    if (!input) return 'no-input';
+    input.focus();
+    input.value = ${JSON.stringify(zip)};
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'filled';
+  })()`;
 }
 
 /**
  * 把配送地址锁定到指定邮编（排名随配送地变化，固定邮编结果才可比）。
- * 流程移植自已验证脚本：点 Deliver → 聚焦 GLUX 输入框 → 逐键输入 → Enter。
- * 失败不阻断运行，返回 false 由调用方如实记录。
+ *
+ * 亚马逊给未登录 / 机房 IP 会话弹的是「Choose your location」模态，交互是：
+ * 填 #GLUXZipUpdateInput → 点 Apply(#GLUXZipUpdate) → 点 Done(glowDoneButton) 关闭。
+ * 旧实现照旧版小浮层写（填完按 Enter、从不关弹窗），对不上这个模态：邮编设不上、
+ * 且残留的模态遮罩会挡住后续每个关键词的搜索（表现为全部 parse_failed）。
+ * 失败不阻断运行；但无论成否都要点 Done 关弹窗。全程走页内脚本，已在真实站点验证。
  */
 export async function ensureDeliveryZip(
   api: ZipBrowser,
@@ -105,29 +152,22 @@ export async function ensureDeliveryZip(
   const before = await api.snapshot();
   if (before.content.includes(zip)) return true;
 
-  try {
-    await api.click({ text: 'Deliver' });
-  } catch {
-    return false;
-  }
+  await api.evaluate(OPEN_LOCATION_SCRIPT).catch(() => undefined);
   try {
     await api.waitFor(['zip code', 'ZIP'], { timeout: 15_000 });
   } catch {
     await sleep(4_000);
   }
 
-  await api.evaluate("document.querySelector('#GLUXZipUpdateInput')?.focus()");
-  await sleep(300);
-  for (const ch of zip.split('')) {
-    await api.press(ch);
-    await sleep(100);
-  }
-  await api.press('Enter');
-  try {
-    await api.waitFor(zip, { timeout: 30_000 });
-  } catch {
-    await sleep(8_000);
-  }
+  // 填邮编 → 点 Apply → 等 AJAX 生效（实测 ~2.5s，ingress 到点 Done/刷新后才更新）。
+  await api.evaluate(buildFillZipScript(zip)).catch(() => undefined);
+  await sleep(400);
+  await api.evaluate(CLICK_APPLY_SCRIPT).catch(() => undefined);
+  await sleep(2_500);
+
+  // 关弹窗（无论邮编设成没设成都要关，否则遮罩挡住后续搜索）。
+  await api.evaluate(CLICK_DONE_SCRIPT).catch(() => undefined);
+  await sleep(1_200);
 
   try {
     const after = await api.snapshot();
