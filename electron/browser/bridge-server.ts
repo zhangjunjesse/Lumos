@@ -16,6 +16,8 @@ import { normalizeChromeLikeRequestHeaders } from './user-agent';
 interface BridgeContext {
   browserManager: BrowserManager | null;
   browserProviderRegistry?: BrowserProviderRegistry | null;
+  /** 内置浏览器子系统初始化失败的可读原因(未就绪时经 /health 透传给应用状态条)。 */
+  getBrowserSubsystemError?: () => string | null;
 }
 
 interface PageRuntimeState {
@@ -744,11 +746,14 @@ export class BrowserBridgeServer {
     const browserOwnerId = resolveRequestBrowserOwnerId(req, requestUrl);
 
     if (pathname === '/health') {
+      const ready = this.isReady(browserContextId);
+      const subsystemError = ready ? null : this.context.getBrowserSubsystemError?.() ?? null;
       sendJson(res, 200, {
         ok: true,
         service: 'browser-bridge',
-        ready: this.isReady(browserContextId),
+        ready,
         browserContextId,
+        ...(subsystemError ? { error: subsystemError } : {}),
       });
       return;
     }

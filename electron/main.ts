@@ -31,10 +31,19 @@ let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;
 let browserManager: BrowserManager | null = null;
 let browserProviderRegistry: BrowserProviderRegistry | null = null;
+// 内置浏览器子系统初始化失败时的可读原因(如 Chromium 分区被占/损坏)。
+// 现在 new BrowserManager() 一旦抛错、browserManager 停在 null,桥接会一直报
+// "内置浏览器未就绪";把真实原因记在这,经桥接 /health 透传到应用状态条,不再静默。
+let browserManagerInitError: string | null = null;
 const browserBridgeContext: {
   browserManager: BrowserManager | null;
   browserProviderRegistry: BrowserProviderRegistry | null;
-} = { browserManager: null, browserProviderRegistry: null };
+  getBrowserSubsystemError: () => string | null;
+} = {
+  browserManager: null,
+  browserProviderRegistry: null,
+  getBrowserSubsystemError: () => browserManagerInitError,
+};
 let browserBridgeServer: BrowserBridgeServer | null = null;
 let browserBridgeUrl = '';
 let browserBridgeToken = '';
@@ -160,13 +169,75 @@ function initializeBridgeRuntime(): void {
 
 function ensureBrowserProviderRegistry(): BrowserProviderRegistry {
   if (!browserProviderRegistry) {
-    browserProviderRegistry = createBrowserProviderRegistry(() => browserManager, {
+    browserProviderRegistry = createBrowserProviderRegistry(() => ensureBrowserManager(), {
       ...process.env,
       ...userShellEnv,
     });
     browserBridgeContext.browserProviderRegistry = browserProviderRegistry;
   }
   return browserProviderRegistry;
+}
+
+function formatBrowserInitError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return `内置浏览器初始化失败：${raw}`;
+}
+
+/** 把内置浏览器初始化失败落盘,便于事后定位(主进程 console 在 Windows 生产版不落盘)。 */
+function logBrowserSubsystemFailure(error: unknown): void {
+  const detail = error instanceof Error ? error.stack || error.message : String(error);
+  console.error('[browser-manager] init failed:', detail);
+  try {
+    const dir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'browser-subsystem.log');
+    fs.appendFileSync(
+      file,
+      `[${new Date().toISOString()}] ${process.platform} ${os.release()} — BrowserManager 初始化失败\n${detail}\n\n`,
+    );
+  } catch (writeError) {
+    console.warn('[browser-manager] failed to write failure log:', writeError);
+  }
+}
+
+/**
+ * 惰性创建 / 自愈内置 BrowserManager,收口成唯一创建点。
+ * 内置浏览器子系统若在开机时初始化失败(如 Chromium `persist:lumos-browser` 分区被
+ * 上一个没退干净的进程占用/损坏),旧代码里 browserManager 会静默停在 null,桥接从此
+ * 一直报"内置浏览器未就绪"。这里:①失败落盘留证据 + 记可读原因透传状态条;②下次有
+ * 请求(含 15s 一次的就绪轮询、真实自动化调用)进来时重试重建,让一次性初始化失败自愈。
+ */
+function ensureBrowserManager(): BrowserManager | null {
+  if (browserManager) {
+    return browserManager;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return null;
+  }
+  try {
+    browserManager = new BrowserManager(mainWindow, {
+      maxTabs: 10,
+      maxActiveViews: 3,
+      sessionPartition: 'persist:lumos-browser',
+    });
+    browserBridgeContext.browserManager = browserManager;
+    browserManagerInitError = null;
+    ensureBrowserProviderRegistry();
+    // Register browser IPC and (re)bind event forwarding to current manager.
+    setupBrowserIPC(() => browserManager);
+    return browserManager;
+  } catch (error) {
+    // 就绪轮询每 15s 会重试重建,持续失败时只在"原因变化"时落盘,避免刷爆日志。
+    const reason = formatBrowserInitError(error);
+    const isNewFailure = reason !== browserManagerInitError;
+    browserManager = null;
+    browserBridgeContext.browserManager = null;
+    browserManagerInitError = reason;
+    if (isNewFailure) {
+      logBrowserSubsystemFailure(error);
+    }
+    return null;
+  }
 }
 
 async function startBridgeRuntime(port: number): Promise<void> {
@@ -736,17 +807,8 @@ function createWindow(port: number) {
     mainWindow = null;
   });
 
-  // 初始化 BrowserManager
-  browserManager = new BrowserManager(mainWindow, {
-    maxTabs: 10,
-    maxActiveViews: 3,
-    sessionPartition: 'persist:lumos-browser',
-  });
-  browserBridgeContext.browserManager = browserManager;
-  ensureBrowserProviderRegistry();
-
-  // Register browser IPC and (re)bind event forwarding to current manager.
-  setupBrowserIPC(() => browserManager);
+  // 初始化 BrowserManager(收口到 ensureBrowserManager:失败落盘 + 后续可自愈重建)。
+  ensureBrowserManager();
 }
 
 function openAuthWindow(targetUrl: string) {
