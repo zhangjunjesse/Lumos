@@ -4,6 +4,8 @@ import os from 'node:os';
 import { AdsPowerProvider, type AdsPowerProviderOptions } from './adspower-provider';
 import { EmbeddedBrowserProvider } from './embedded-provider';
 import { ExternalCdpProvider, type ExternalCdpProviderConfig } from './external-cdp-provider';
+import { LocalChromeProvider } from './local-chrome-provider';
+import type { LocalChromeProfileMode } from './local-chrome-launcher';
 import {
   DEFAULT_BROWSER_CONTEXT_ID,
   type BrowserAutomationSession,
@@ -51,6 +53,50 @@ function getRuntimeBrowserProviderConfigPath(env: BrowserProviderEnv): string {
   return path.join(getConfiguredDataDir(env), 'runtime', 'browser-providers.json');
 }
 
+interface LocalChromeRuntimeConfig {
+  enabled: boolean;
+  profileMode: LocalChromeProfileMode;
+  headless: boolean;
+  chromePath?: string;
+}
+
+function getLocalChromeConfigPath(env: BrowserProviderEnv): string {
+  return path.join(getConfiguredDataDir(env), 'runtime', 'local-chrome.json');
+}
+
+// 本地 Chrome 选项走独立轻量 runtime 文件(不进 DB):默认启用(实际可见性由「是否装了
+// Chrome」决定)、默认用系统默认 profile、默认可见窗口。用户在设置里改后经此文件生效。
+function readLocalChromeConfig(env: BrowserProviderEnv): LocalChromeRuntimeConfig {
+  const defaults: LocalChromeRuntimeConfig = { enabled: true, profileMode: 'default', headless: false };
+  try {
+    const filePath = getLocalChromeConfigPath(env);
+    if (!fs.existsSync(filePath)) {
+      return defaults;
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<LocalChromeRuntimeConfig>;
+    return {
+      enabled: parsed.enabled !== false,
+      profileMode: parsed.profileMode === 'dedicated' ? 'dedicated' : 'default',
+      headless: parsed.headless === true,
+      chromePath: typeof parsed.chromePath === 'string' && parsed.chromePath.trim()
+        ? parsed.chromePath.trim()
+        : undefined,
+    };
+  } catch (error) {
+    console.warn('[browser-provider] failed to read local-chrome config:', error);
+    return defaults;
+  }
+}
+
+function fileSignature(filePath: string): string {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return 'missing';
+  }
+}
+
 function readRuntimeBrowserProviderConfigs(env: BrowserProviderEnv): RuntimeBrowserProviderConfig[] {
   try {
     const filePath = getRuntimeBrowserProviderConfigPath(env);
@@ -81,6 +127,7 @@ function getRuntimeConfigSignature(env: BrowserProviderEnv): string {
   }
   return JSON.stringify({
     fileSig,
+    localChromeSig: fileSignature(getLocalChromeConfigPath(env)),
     external: readExternalCdpEndpointFromEnv(env) || '',
     adsPowerProfileId: readAdsPowerProfileIdFromEnv(env) || '',
     adsPowerApiBaseUrl: env.LUMOS_ADSPOWER_API_BASE_URL || '',
@@ -223,6 +270,18 @@ export class BrowserProviderRegistry {
 
     if (configured.adsPower.length > 0) {
       this.register(new AdsPowerProvider(configured.adsPower));
+    }
+
+    const localChrome = readLocalChromeConfig(this.env);
+    if (localChrome.enabled) {
+      this.register(
+        new LocalChromeProvider({
+          dataDir: getConfiguredDataDir(this.env),
+          profileMode: localChrome.profileMode,
+          headless: localChrome.headless,
+          chromePath: localChrome.chromePath,
+        }),
+      );
     }
     this.runtimeSignature = signature;
   }

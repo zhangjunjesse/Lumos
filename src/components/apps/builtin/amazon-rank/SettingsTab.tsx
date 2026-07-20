@@ -21,6 +21,7 @@ import type { SettingsDto } from './types';
 export function SettingsTab({ active }: { active: boolean }): React.ReactElement {
   const [form, setForm] = React.useState<SettingsDto | null>(null);
   const [configs, setConfigs] = React.useState<BrowserProviderConfigView[]>([]);
+  const [localChromeCtx, setLocalChromeCtx] = React.useState<{ id: string; display_name: string } | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<{ ok: boolean; text: string } | null>(null);
 
@@ -36,6 +37,7 @@ export function SettingsTab({ active }: { active: boolean }): React.ReactElement
         ]);
         setForm(settings.settings);
         setConfigs(providers?.configs ?? []);
+        setLocalChromeCtx(providers?.local_chrome_context ?? null);
       } catch (err) {
         setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
       }
@@ -53,7 +55,7 @@ export function SettingsTab({ active }: { active: boolean }): React.ReactElement
 
   const patch = (p: Partial<SettingsDto>) => setForm({ ...form, ...p });
 
-  const contextOptions = buildContextOptions(configs, form.browserContextId);
+  const contextOptions = buildContextOptions(configs, form.browserContextId, localChromeCtx);
 
   const save = async () => {
     setSaving(true);
@@ -159,9 +161,13 @@ export function SettingsTab({ active }: { active: boolean }): React.ReactElement
 function buildContextOptions(
   configs: BrowserProviderConfigView[],
   current: string,
+  localChrome?: { id: string; display_name: string } | null,
 ): Array<{ value: string; label: string }> {
   const options = new Map<string, string>();
   options.set(EMBEDDED_BROWSER_CONTEXT_ID, '内置浏览器（默认）');
+  if (localChrome) {
+    options.set(localChrome.id, localChrome.display_name);
+  }
   for (const config of configs) {
     if (!config.enabled || !config.context_id) continue;
     options.set(config.context_id, browserConfigLabel(config));

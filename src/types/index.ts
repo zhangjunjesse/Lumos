@@ -478,6 +478,12 @@ export interface BrowserProvidersResponse {
     provider_type: 'embedded';
   };
   configs: BrowserProviderConfigView[];
+  /** 本地 Chrome 上下文——仅在已启用且系统检测到 Chrome 时非空,供浏览器选择器展示。 */
+  local_chrome_context?: {
+    id: string;
+    display_name: string;
+    provider_type: 'local-chrome';
+  } | null;
 }
 
 export interface CreateBrowserProviderConfigRequest {

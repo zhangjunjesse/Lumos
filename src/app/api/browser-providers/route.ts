@@ -3,6 +3,7 @@ import {
   createBrowserProviderConfig,
   listBrowserProviderConfigs,
 } from '@/lib/db';
+import { getLocalChromeContext } from '@/lib/browser-provider/local-chrome';
 import type {
   BrowserProviderConfigResponse,
   BrowserProvidersResponse,
@@ -18,6 +19,7 @@ export async function GET() {
         provider_type: 'embedded',
       },
       configs: listBrowserProviderConfigs(),
+      local_chrome_context: getLocalChromeContext(),
     };
     return NextResponse.json(payload);
   } catch (error) {
