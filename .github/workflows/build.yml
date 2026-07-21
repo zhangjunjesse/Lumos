@@ -121,10 +121,29 @@ jobs:
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
 
+      - name: Exclude workspace from Windows Defender
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Defender 实时扫描会短暂锁住刚写出的文件,导致 electron-builder 复制 standalone 资源时
+          # EBUSY(如 apps/etsy-forge 的 mockup PNG)。打包前把整个工作区排除掉。
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+
       - name: Package for Windows
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --config electron-builder.yml --publish always
+        run: |
+          # EBUSY 是 Windows 文件锁的瞬时竞态(signtool 并行签名 + Defender 扫描抢句柄);
+          # 失败就等一下重试整包(最多 3 次)。EBUSY 发生在 build/copy 阶段、publish 之前,重试安全。
+          for ($i = 1; $i -le 3; $i++) {
+            npx electron-builder --win --config electron-builder.yml --publish always
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "electron-builder 第 $i 次失败(exit $LASTEXITCODE),等待 20s 后重试..."
+            Start-Sleep -Seconds 20
+          }
+          Write-Error "electron-builder 连续 3 次打包失败"
+          exit 1
 
       - name: Verify packaged esbuild runtime (Windows)
         run: node scripts/verify-packaged-esbuild.mjs --platform=win32 --arch=x64 release/win-unpacked
