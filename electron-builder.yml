@@ -12,6 +12,9 @@ publish:
   - provider: generic
     url: https://lumos.miki.zj.cn/api/updates
     channel: latest
+    # 镜像走单段 Range 差量下载(路由只需支持单段 range,不必实现 multipart/byteranges);
+    # 一次更新只拉变化的块(几十 MB)而非整包 697MB。
+    useMultipleRangeRequest: false
   - provider: github
     owner: zhangjunjesse
     repo: Lumos

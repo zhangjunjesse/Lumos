@@ -77,6 +77,10 @@ function startBackgroundDownload(reason: 'auto' | 'manual'): Promise<unknown> {
  * Resolve system proxy for GitHub and inject into electron-updater
  * so that VPN / proxy tools are respected during update downloads.
  */
+// 更新主源是国内镜像(必须直连);只有 GitHub 兜底源才需要走系统代理(国内翻墙)。
+// host 与 electron-builder.yml 的 publish generic url 对应。
+const UPDATE_MIRROR_HOST = 'lumos.miki.zj.cn';
+
 async function configureProxy() {
   try {
     const proxy = await session.defaultSession.resolveProxy('https://github.com');
@@ -85,13 +89,27 @@ async function configureProxy() {
       const match = proxy.match(/^(?:PROXY|HTTPS)\s+(.+)/i);
       if (match) {
         process.env.HTTPS_PROXY = `http://${match[1]}`;
-        console.log('[updater] Using system proxy:', process.env.HTTPS_PROXY);
       }
       const socksMatch = proxy.match(/^SOCKS5?\s+(.+)/i);
       if (socksMatch) {
         process.env.HTTPS_PROXY = `socks5://${socksMatch[1]}`;
-        console.log('[updater] Using system SOCKS proxy:', process.env.HTTPS_PROXY);
       }
+    }
+
+    // 只要环境里有 HTTPS_PROXY(本函数刚设的、或 VPN/shell 早已导出的),就给镜像加
+    // NO_PROXY 直连——否则那部分用户的镜像下载仍会被绕去代理(Chromium 解析返回 DIRECT
+    // 但进程里已有 HTTPS_PROXY 的场景)。
+    if (process.env.HTTPS_PROXY) {
+      // 关键:把国内镜像加进 NO_PROXY,让它直连——否则镜像下载也被绕去国外代理节点,
+      // 国内→国外→绕回广州,把域名镜像的速度优势全毁掉(用户"更新慢"的元凶之一)。
+      const existing = (process.env.NO_PROXY || process.env.no_proxy || '').trim();
+      const parts = existing ? existing.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      if (!parts.includes(UPDATE_MIRROR_HOST)) {
+        parts.push(UPDATE_MIRROR_HOST);
+      }
+      process.env.NO_PROXY = parts.join(',');
+      process.env.no_proxy = process.env.NO_PROXY;
+      console.log('[updater] proxy for GitHub, direct for mirror:', process.env.HTTPS_PROXY, '| NO_PROXY:', process.env.NO_PROXY);
     }
   } catch (err) {
     console.warn('[updater] Failed to resolve proxy:', err);
