@@ -67,7 +67,9 @@ function getLocalChromeConfigPath(env: BrowserProviderEnv): string {
 // 本地 Chrome 选项走独立轻量 runtime 文件(不进 DB):默认启用(实际可见性由「是否装了
 // Chrome」决定)、默认用系统默认 profile、默认可见窗口。用户在设置里改后经此文件生效。
 function readLocalChromeConfig(env: BrowserProviderEnv): LocalChromeRuntimeConfig {
-  const defaults: LocalChromeRuntimeConfig = { enabled: true, profileMode: 'default', headless: false };
+  // 默认用 Lumos 专用 profile:默认 Chrome profile 受单例限制、Chrome 开着就接管不了(#43),
+  // 专用 profile 稳定、登录态持久,是推荐路径。只有用户显式选 'default' 才用默认 profile。
+  const defaults: LocalChromeRuntimeConfig = { enabled: true, profileMode: 'dedicated', headless: false };
   try {
     const filePath = getLocalChromeConfigPath(env);
     if (!fs.existsSync(filePath)) {
@@ -76,7 +78,7 @@ function readLocalChromeConfig(env: BrowserProviderEnv): LocalChromeRuntimeConfi
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<LocalChromeRuntimeConfig>;
     return {
       enabled: parsed.enabled !== false,
-      profileMode: parsed.profileMode === 'dedicated' ? 'dedicated' : 'default',
+      profileMode: parsed.profileMode === 'default' ? 'default' : 'dedicated',
       headless: parsed.headless === true,
       chromePath: typeof parsed.chromePath === 'string' && parsed.chromePath.trim()
         ? parsed.chromePath.trim()

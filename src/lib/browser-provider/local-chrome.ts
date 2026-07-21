@@ -19,7 +19,9 @@ export interface LocalChromeSettings {
 // 与 labels.ts 单一来源,避免上下文 id 漂移。
 export const LOCAL_CHROME_CONTEXT_ID = LOCAL_CHROME_BROWSER_CONTEXT_ID;
 
-const DEFAULT_SETTINGS: LocalChromeSettings = { enabled: true, profileMode: 'default', headless: false };
+// 默认用 Lumos 专用 profile:默认 Chrome profile 受单例限制、Chrome 开着就接管不了(#43),
+// 专用 profile 稳定、登录态持久。只有用户显式选 'default' 才用默认 profile。
+const DEFAULT_SETTINGS: LocalChromeSettings = { enabled: true, profileMode: 'dedicated', headless: false };
 
 function getDataDir(): string {
   return process.env.LUMOS_DATA_DIR || process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.lumos');
@@ -76,7 +78,7 @@ export function readLocalChromeSettings(): LocalChromeSettings {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<LocalChromeSettings>;
     return {
       enabled: parsed.enabled !== false,
-      profileMode: parsed.profileMode === 'dedicated' ? 'dedicated' : 'default',
+      profileMode: parsed.profileMode === 'default' ? 'default' : 'dedicated',
       headless: parsed.headless === true,
       chromePath: typeof parsed.chromePath === 'string' && parsed.chromePath.trim()
         ? parsed.chromePath.trim()
@@ -92,7 +94,7 @@ export function writeLocalChromeSettings(next: LocalChromeSettings): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const payload: LocalChromeSettings = {
     enabled: next.enabled !== false,
-    profileMode: next.profileMode === 'dedicated' ? 'dedicated' : 'default',
+    profileMode: next.profileMode === 'default' ? 'default' : 'dedicated',
     headless: next.headless === true,
     ...(next.chromePath && next.chromePath.trim() ? { chromePath: next.chromePath.trim() } : {}),
   };

@@ -29,8 +29,8 @@ describe('local-chrome 设置读写', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('无配置文件时返回默认值(启用/默认 profile/可见)', () => {
-    expect(readLocalChromeSettings()).toEqual({ enabled: true, profileMode: 'default', headless: false });
+  it('无配置文件时返回默认值(启用/专用 profile/可见)', () => {
+    expect(readLocalChromeSettings()).toEqual({ enabled: true, profileMode: 'dedicated', headless: false });
   });
 
   it('写入后能读回(round-trip)', () => {
@@ -38,8 +38,10 @@ describe('local-chrome 设置读写', () => {
     expect(readLocalChromeSettings()).toEqual({ enabled: false, profileMode: 'dedicated', headless: true });
   });
 
-  it('非法 profileMode 归一化为 default', () => {
+  it('非法 profileMode 归一化为 dedicated(新默认);显式 default 仍保留', () => {
     writeLocalChromeSettings({ enabled: true, profileMode: 'weird' as 'default', headless: false });
+    expect(readLocalChromeSettings().profileMode).toBe('dedicated');
+    writeLocalChromeSettings({ enabled: true, profileMode: 'default', headless: false });
     expect(readLocalChromeSettings().profileMode).toBe('default');
   });
 

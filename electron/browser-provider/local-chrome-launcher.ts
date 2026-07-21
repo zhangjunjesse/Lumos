@@ -143,27 +143,44 @@ export async function launchLocalChrome(opts: LocalChromeLaunchOptions): Promise
   ];
   const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
   child.unref();
+  // 默认 profile 被正在运行的 Chrome 占用时,我们 spawn 的进程会把命令转给已有实例后秒退、
+  // 且不写调试端口。据此快速判失败,不必干等满 30s(#43)。
+  let childExited = false;
+  child.on('exit', () => {
+    childExited = true;
+  });
 
-  // Chrome 首次建 profile + Windows 杀软扫描可能较慢;给到 30s(bridge 侧调用超时 60s)。
+  // 正常启动:Chrome 首次建 profile + Windows 杀软扫描可能较慢,给到 30s(bridge 侧超时 60s)。
   for (let waited = 0; waited < 30_000; waited += 300) {
     await sleep(300);
     const port = readDevToolsPort(userDataDir);
     if (port && (await isEndpointAlive(port))) {
       return { endpoint: `http://127.0.0.1:${port}`, userDataDir };
     }
+    if (childExited) {
+      // 进程已退却没拿到端口 = 被已有实例接管,再等只是白等 → 立刻失败。
+      break;
+    }
   }
 
-  // 超时:杀掉本次 spawn 的子进程,避免遗留看不见的后台 Chrome。
-  // 若 Chrome 已在运行(默认 profile 已开),我们的 child 早已退出,这里是 no-op,不会误杀用户的 Chrome。
   try {
     child.kill();
   } catch {
     /* ignore */
   }
 
+  if (opts.profileMode === 'default' && childExited) {
+    throw new Error(
+      '检测到 Chrome 已在运行你的默认配置,Lumos 无法接管它的调试端口。'
+      + '请彻底退出 Chrome(含后台进程 / 托盘图标,并在 Chrome「设置 → 系统」关闭'
+      + '「关闭 Google Chrome 后继续运行后台应用」)后重试,'
+      + '或在「设置 → 浏览器 → 本地 Chrome」改用「Lumos 专用 profile」(推荐,无需关闭 Chrome)。'
+      + ` [profile: ${userDataDir}]`,
+    );
+  }
   throw new Error(
-    opts.profileMode === 'default'
-      ? '无法接管本地 Chrome 的调试端口——通常是 Chrome 已经开着你的默认配置。请先完全退出 Chrome 再试，或在设置里改用「Lumos 专用 profile」。'
-      : '本地 Chrome 启动失败：调试端口未就绪。请检查 Chrome 是否可正常启动。',
+    '本地 Chrome 启动失败:调试端口未就绪,请确认 Chrome 可正常启动。'
+    + (opts.profileMode === 'default' ? '(默认 profile 需先彻底退出 Chrome,或改用 Lumos 专用 profile)' : '')
+    + ` [profile: ${userDataDir}]`,
   );
 }

@@ -73,14 +73,16 @@ export function LocalChromeRow(): React.ReactElement | null {
                 <div className="min-w-0">
                   <p className="text-xs font-medium">配置文件</p>
                   <p className="text-[11px] text-muted-foreground">
-                    {settings.profileMode === "default" ? "默认 profile：跑之前需先退出 Chrome" : "专用 profile：独立、登录一次记住"}
+                    {settings.profileMode === "default"
+                      ? "默认 profile：跑之前需彻底退出 Chrome（含后台），否则接管失败"
+                      : "专用 profile：独立稳定，在里面登录一次即长期保留"}
                   </p>
                 </div>
                 <Select value={settings.profileMode} onValueChange={(v) => persist({ profileMode: v as "default" | "dedicated" })}>
-                  <SelectTrigger className="h-8 w-[180px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-8 w-[200px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">默认 profile（带你的登录态）</SelectItem>
-                    <SelectItem value="dedicated">Lumos 专用 profile</SelectItem>
+                    <SelectItem value="dedicated">Lumos 专用 profile（推荐）</SelectItem>
+                    <SelectItem value="default">默认 profile（需先关 Chrome）</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
