@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { formatAdsPowerProfileNotes, getAdsPowerProfileGroup, getAdsPowerProfileSerialNumber } from "@/lib/browser-provider/adspower-metadata";
 import { MainAgentBrowserSelect } from "./MainAgentBrowserSelect";
+import { LocalChromeRow } from "./LocalChromeRow";
 import { Check, Edit2, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import type {
   BrowserProfileSummary,
@@ -161,6 +162,7 @@ function countSyncPlan(plan: BrowserProviderProfileSyncPlanItem[]) {
 
 export function BrowserProviderSection() {
   const [configs, setConfigs] = useState<BrowserProviderConfigView[]>([]);
+  const [localChromeContext, setLocalChromeContext] = useState<BrowserProvidersResponse["local_chrome_context"]>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -218,6 +220,7 @@ export function BrowserProviderSection() {
       }
       const payload = await response.json() as BrowserProvidersResponse;
       setConfigs(payload.configs || []);
+      setLocalChromeContext(payload.local_chrome_context ?? null);
       void loadRuntimeStatuses();
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载浏览器接入失败");
@@ -669,7 +672,9 @@ export function BrowserProviderSection() {
               </div>
             </div>
 
-            <MainAgentBrowserSelect configs={configs} />
+            <LocalChromeRow />
+
+            <MainAgentBrowserSelect configs={configs} localChrome={localChromeContext} />
 
             {error && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">

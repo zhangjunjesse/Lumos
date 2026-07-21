@@ -89,11 +89,15 @@ function readDevToolsPort(userDataDir: string): number | null {
 }
 
 async function isEndpointAlive(port: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { method: 'GET' });
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, { method: 'GET', signal: controller.signal });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -140,12 +144,21 @@ export async function launchLocalChrome(opts: LocalChromeLaunchOptions): Promise
   const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
   child.unref();
 
-  for (let waited = 0; waited < 20_000; waited += 300) {
+  // Chrome 首次建 profile + Windows 杀软扫描可能较慢;给到 30s(bridge 侧调用超时 60s)。
+  for (let waited = 0; waited < 30_000; waited += 300) {
     await sleep(300);
     const port = readDevToolsPort(userDataDir);
     if (port && (await isEndpointAlive(port))) {
       return { endpoint: `http://127.0.0.1:${port}`, userDataDir };
     }
+  }
+
+  // 超时:杀掉本次 spawn 的子进程,避免遗留看不见的后台 Chrome。
+  // 若 Chrome 已在运行(默认 profile 已开),我们的 child 早已退出,这里是 no-op,不会误杀用户的 Chrome。
+  try {
+    child.kill();
+  } catch {
+    /* ignore */
   }
 
   throw new Error(

@@ -10,18 +10,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { BrowserProviderConfigView } from "@/types";
+import type { BrowserProviderConfigView, BrowserProvidersResponse } from "@/types";
 
 const EMBEDDED = "embedded:default";
 
 interface Props {
   configs: BrowserProviderConfigView[];
+  localChrome?: BrowserProvidersResponse["local_chrome_context"];
 }
 
 // 主 Agent 默认浏览器选择器。
 // 主 Agent 每天自动新建会话、自动运行（睡眠轮转 / 定时 / IM 触发），没人手动选浏览器，
 // 这里配的就是它新会话默认接管的浏览器；选「内置」= 清空设置走默认。
-export function MainAgentBrowserSelect({ configs }: Props) {
+export function MainAgentBrowserSelect({ configs, localChrome }: Props) {
   const [value, setValue] = useState<string>(EMBEDDED);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -89,11 +90,19 @@ export function MainAgentBrowserSelect({ configs }: Props) {
             <SelectContent>
               <SelectGroup>
                 <SelectItem value={EMBEDDED}>内置浏览器</SelectItem>
+                {localChrome && (
+                  <SelectItem value={localChrome.id}>{localChrome.display_name}</SelectItem>
+                )}
                 {options.map((config) => (
                   <SelectItem key={config.context_id} value={config.context_id}>
                     {config.display_name}（{config.context_id}）
                   </SelectItem>
                 ))}
+                {value !== EMBEDDED
+                  && value !== localChrome?.id
+                  && !options.some((config) => config.context_id === value) && (
+                  <SelectItem value={value} disabled>已失效的浏览器（{value}）</SelectItem>
+                )}
               </SelectGroup>
             </SelectContent>
           </Select>

@@ -109,12 +109,19 @@ function browserConfigDescription(config: BrowserProviderConfigView): string {
   return config.cdp_endpoint || '未填写 CDP 地址';
 }
 
-function buildBrowserOptions(configs: BrowserProviderConfigView[], selectedId: string): BrowserContextOption[] {
+function buildBrowserOptions(
+  configs: BrowserProviderConfigView[],
+  selectedId: string,
+  localChrome?: BrowserProvidersResponse['local_chrome_context'],
+): BrowserContextOption[] {
   const options: BrowserContextOption[] = [{
     id: 'embedded:default',
     label: '内置浏览器',
     description: 'Lumos 内置浏览器登录态',
   }];
+  if (localChrome) {
+    options.push({ id: localChrome.id, label: localChrome.display_name, description: '用你电脑上的 Chrome' });
+  }
   for (const config of configs) {
     options.push({
       id: config.context_id,
@@ -143,6 +150,7 @@ export function ScheduleEditor({
   const [showDsl, setShowDsl] = useState(false);
   const [workflows, setWorkflows] = useState<WorkflowOption[]>([]);
   const [browserConfigs, setBrowserConfigs] = useState<BrowserProviderConfigView[]>([]);
+  const [browserLocalChrome, setBrowserLocalChrome] = useState<BrowserProvidersResponse["local_chrome_context"]>(null);
 
   // Load available workflows
   useEffect(() => {
@@ -162,6 +170,7 @@ export function ScheduleEditor({
       .then(r => r.ok ? r.json() : null)
       .then((data: BrowserProvidersResponse | null) => {
         setBrowserConfigs(data?.configs ?? []);
+        setBrowserLocalChrome(data?.local_chrome_context ?? null);
       })
       .catch(() => {
         setBrowserConfigs([]);
@@ -269,7 +278,7 @@ export function ScheduleEditor({
   })();
 
   const dslParams: WorkflowParamDef[] = (parsedDsl as { params?: WorkflowParamDef[] } | null)?.params ?? [];
-  const browserOptions = buildBrowserOptions(browserConfigs, form.browserContextId);
+  const browserOptions = buildBrowserOptions(browserConfigs, form.browserContextId, browserLocalChrome);
   const selectedBrowser = browserOptions.find(option => option.id === form.browserContextId) || browserOptions[0];
 
   return (

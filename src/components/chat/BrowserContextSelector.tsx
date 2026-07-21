@@ -52,6 +52,7 @@ export function BrowserContextSelector({
   onChange,
 }: BrowserContextSelectorProps) {
   const [configs, setConfigs] = useState<BrowserProviderConfigView[]>([]);
+  const [localChrome, setLocalChrome] = useState<BrowserProvidersResponse["local_chrome_context"]>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -65,6 +66,7 @@ export function BrowserContextSelector({
       }
       const payload = await response.json() as BrowserProvidersResponse;
       setConfigs(payload.configs || []);
+      setLocalChrome(payload.local_chrome_context ?? null);
     } finally {
       setLoading(false);
     }
@@ -80,6 +82,13 @@ export function BrowserContextSelector({
       label: "内置浏览器",
       description: "Lumos 内置浏览器登录态",
     }];
+    if (localChrome) {
+      base.push({
+        id: localChrome.id,
+        label: localChrome.display_name,
+        description: "用你电脑上的 Chrome，反爬更稳",
+      });
+    }
     for (const config of configs) {
       base.push(toConfigOption(config));
     }
@@ -92,7 +101,7 @@ export function BrowserContextSelector({
       });
     }
     return base;
-  }, [configs, value]);
+  }, [configs, value, localChrome]);
 
   const selected = options.find((option) => option.id === value) || options[0];
 

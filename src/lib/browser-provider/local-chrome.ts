@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+import { LOCAL_CHROME_BROWSER_CONTEXT_ID } from './labels';
+
 // Next.js 侧的本地 Chrome 配置与探测。Electron 端(local-chrome-launcher.ts）负责真正启动;
 // 这里只做「是否装了 Chrome / 用户选项读写」,供 API 和浏览器选择器判断该不该展示该选项。
 
@@ -14,7 +16,8 @@ export interface LocalChromeSettings {
   chromePath?: string;
 }
 
-export const LOCAL_CHROME_CONTEXT_ID = 'local-chrome:default';
+// 与 labels.ts 单一来源,避免上下文 id 漂移。
+export const LOCAL_CHROME_CONTEXT_ID = LOCAL_CHROME_BROWSER_CONTEXT_ID;
 
 const DEFAULT_SETTINGS: LocalChromeSettings = { enabled: true, profileMode: 'default', headless: false };
 

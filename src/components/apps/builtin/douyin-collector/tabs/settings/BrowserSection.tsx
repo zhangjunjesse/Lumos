@@ -37,6 +37,7 @@ function describeConfig(config: BrowserProviderConfigView): string {
 function buildOptions(
   configs: BrowserProviderConfigView[],
   selectedId: string,
+  localChrome?: BrowserProvidersResponse['local_chrome_context'],
 ): BrowserOption[] {
   const options: BrowserOption[] = [{
     id: EMBEDDED_BROWSER_CONTEXT_ID,
@@ -44,6 +45,14 @@ function buildOptions(
     description: '后台抓取，不弹外部窗口；无真实登录态，抖音风控概率高',
     disabled: false,
   }];
+  if (localChrome) {
+    options.push({
+      id: localChrome.id,
+      label: localChrome.display_name,
+      description: '用你电脑上的 Chrome，真实登录态，抖音风控概率低',
+      disabled: false,
+    });
+  }
   for (const config of configs) {
     options.push({
       id: config.context_id,
@@ -71,6 +80,7 @@ export function BrowserSection({
   save: SaveFn;
 }): React.ReactElement {
   const [configs, setConfigs] = React.useState<BrowserProviderConfigView[]>([]);
+  const [localChrome, setLocalChrome] = React.useState<BrowserProvidersResponse['local_chrome_context']>(null);
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [saveErr, setSaveErr] = React.useState<string | null>(null);
@@ -82,6 +92,7 @@ export function BrowserSection({
       if (res.ok) {
         const payload = (await res.json()) as BrowserProvidersResponse;
         setConfigs(payload.configs ?? []);
+        setLocalChrome(payload.local_chrome_context ?? null);
       }
     } finally {
       setLoading(false);
@@ -94,8 +105,8 @@ export function BrowserSection({
 
   const selectedId = settings.browserContextId || EMBEDDED_BROWSER_CONTEXT_ID;
   const options = React.useMemo(
-    () => buildOptions(configs, selectedId),
-    [configs, selectedId],
+    () => buildOptions(configs, selectedId, localChrome),
+    [configs, selectedId, localChrome],
   );
   const selected = options.find((o) => o.id === selectedId) ?? options[0];
 

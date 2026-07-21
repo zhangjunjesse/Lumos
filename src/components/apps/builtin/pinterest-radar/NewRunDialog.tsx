@@ -41,6 +41,7 @@ export function NewRunDialog({
   const [cascadeTo, setCascadeTo] = React.useState<CascadeTarget>('metrics');
   const [browserContextId, setBrowserContextId] = React.useState('');
   const [browserOptions, setBrowserOptions] = React.useState<BrowserProviderConfigView[] | null>(null);
+  const [localChrome, setLocalChrome] = React.useState<BrowserProvidersResponse['local_chrome_context']>(null);
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
@@ -52,6 +53,7 @@ export function NewRunDialog({
         // Pinterest 抓取 trends.pinterest.com 公开页,理论上 embedded 也能跑;
         // 但实际有 cookie/区域识别,推荐用配好的 AdsPower profile。两类都列出。
         setBrowserOptions(data?.configs ?? []);
+        setLocalChrome(data?.local_chrome_context ?? null);
       })
       .catch(() => setBrowserOptions([]));
   }, []);
@@ -152,6 +154,7 @@ export function NewRunDialog({
               className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
             >
               <option value="">默认(env ADSPOWER_PROFILE_ID)</option>
+              {localChrome && <option value={localChrome.id}>{localChrome.display_name}</option>}
               {(browserOptions ?? []).map((c) => (
                 <option key={c.context_id} value={c.context_id}>
                   {c.display_name || `${c.provider_type} · ${c.profile_id || c.id}`}

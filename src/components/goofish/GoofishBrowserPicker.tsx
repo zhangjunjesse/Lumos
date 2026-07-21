@@ -43,6 +43,13 @@ export function GoofishBrowserPicker({
         const json = (await res.json()) as BrowserProvidersResponse;
         if (!alive) return;
         const next: Option[] = [defaultOption()];
+        if (json.local_chrome_context) {
+          next.push({
+            id: json.local_chrome_context.id,
+            label: json.local_chrome_context.display_name,
+            description: '用你电脑上的 Chrome',
+          });
+        }
         for (const c of json.configs ?? []) {
           next.push(toOption(c));
         }

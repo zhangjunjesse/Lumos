@@ -23,7 +23,6 @@ import { LumosCloudSection } from "./LumosCloudSection";
 import { UsageStatsSection } from "./UsageStatsSection";
 import { KnowledgeSection } from "./KnowledgeSection";
 import { BrowserProviderSection } from "./BrowserProviderSection";
-import { LocalChromeSettingsCard } from "./LocalChromeSettingsCard";
 import { AgentCreationLLMSection } from "./AgentCreationLLMSection";
 import { WorkflowBuilderLLMSection } from "./WorkflowBuilderLLMSection";
 import { CodifyAgentSection } from "./CodifyAgentSection";
@@ -147,12 +146,7 @@ export function SettingsLayout() {
               allowMedia={customFlags.media}
             />
           )}
-          {activeSection === "browsers" && (
-            <div className="space-y-6">
-              <LocalChromeSettingsCard />
-              <BrowserProviderSection />
-            </div>
-          )}
+          {activeSection === "browsers" && <BrowserProviderSection />}
           {activeSection === "im" && <ImSection />}
           {activeSection === "workflow-agents" && (
             <div className="flex flex-col gap-10">

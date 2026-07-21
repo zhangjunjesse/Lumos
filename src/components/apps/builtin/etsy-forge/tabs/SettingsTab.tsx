@@ -65,6 +65,9 @@ export function SettingsTab() {
       if (res.ok) {
         const json = (await res.json()) as BrowserProvidersResponse;
         const opts = [{ id: DEFAULT_BROWSER, label: '内置浏览器（无 EHunt）' }];
+        if (json.local_chrome_context) {
+          opts.push({ id: json.local_chrome_context.id, label: json.local_chrome_context.display_name });
+        }
         for (const c of json.configs ?? []) opts.push(toOption(c));
         setBrowserOptions(opts);
       }

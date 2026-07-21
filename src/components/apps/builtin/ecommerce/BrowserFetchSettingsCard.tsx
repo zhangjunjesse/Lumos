@@ -30,12 +30,19 @@ function describeConfig(config: BrowserProviderConfigView): string {
   return config.cdp_endpoint || '未填写 CDP 地址';
 }
 
-function buildOptions(configs: BrowserProviderConfigView[], selectedId: string): BrowserOption[] {
+function buildOptions(
+  configs: BrowserProviderConfigView[],
+  selectedId: string,
+  localChrome?: BrowserProvidersResponse['local_chrome_context'],
+): BrowserOption[] {
   const options: BrowserOption[] = [{
     id: 'embedded:default',
     label: '内置浏览器',
     description: '后台抓取，不会弹出 AdsPower 外部窗口；适合本机 TUN / VPN 已经生效的场景',
   }];
+  if (localChrome) {
+    options.push({ id: localChrome.id, label: localChrome.display_name, description: '用你电脑上的 Chrome，反爬更稳' });
+  }
   for (const config of configs) {
     options.push({
       id: config.context_id,
@@ -64,6 +71,7 @@ export function BrowserFetchSettingsCard(): React.ReactElement {
   const [testing, setTesting] = React.useState(false);
   const [status, setStatus] = React.useState<BrowserFetchStatus | null>(null);
   const [configs, setConfigs] = React.useState<BrowserProviderConfigView[]>([]);
+  const [localChrome, setLocalChrome] = React.useState<BrowserProvidersResponse['local_chrome_context']>(null);
   const [form, setForm] = React.useState({
     enabled: true,
     browserContextId: 'embedded:default',
@@ -84,6 +92,7 @@ export function BrowserFetchSettingsCard(): React.ReactElement {
       if (providersRes.ok) {
         const payload = (await providersRes.json()) as BrowserProvidersResponse;
         setConfigs(payload.configs ?? []);
+        setLocalChrome(payload.local_chrome_context ?? null);
       }
       if (settingsRes.ok) {
         const json = (await settingsRes.json()) as BrowserFetchStatus;
@@ -158,8 +167,8 @@ export function BrowserFetchSettingsCard(): React.ReactElement {
   };
 
   const options = React.useMemo(
-    () => buildOptions(configs, form.browserContextId),
-    [configs, form.browserContextId],
+    () => buildOptions(configs, form.browserContextId, localChrome),
+    [configs, form.browserContextId, localChrome],
   );
   const selected = options.find((option) => option.id === form.browserContextId) ?? options[0];
   const selectedDisabled = Boolean(selected?.disabled);
