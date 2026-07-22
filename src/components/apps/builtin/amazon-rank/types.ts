@@ -24,6 +24,7 @@ export interface RunDto {
   asins: string[];
   matches_total: number;
   failure_reason?: string;
+  repair_note?: string;
   started_at: string;
   ended_at?: string;
 }

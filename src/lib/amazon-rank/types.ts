@@ -48,6 +48,8 @@ export interface RankRunRow extends Record<string, unknown> {
   asins: string[];
   matches_total: number;
   failure_reason?: string;
+  /** AI 模式修复轨道的结果说明（草稿已生成/候选未通过），给用户看 */
+  repair_note?: string;
   output_dir: string;
   started_at: string;
   ended_at?: string;

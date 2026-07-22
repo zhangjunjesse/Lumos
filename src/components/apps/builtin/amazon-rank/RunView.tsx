@@ -149,6 +149,12 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
         </p>
       ) : null}
 
+      {run.repair_note ? (
+        <Alert>
+          <AlertDescription>{run.repair_note}</AlertDescription>
+        </Alert>
+      ) : null}
+
       {run.failure_reason ? (
         <Alert variant="destructive">
           <AlertDescription>{run.failure_reason}</AlertDescription>

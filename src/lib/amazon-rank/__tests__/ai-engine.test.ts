@@ -151,6 +151,46 @@ describe('AI 操作引擎', () => {
     expect(draft!.rules.resultSelector).toBe('[data-test="result-v2"]');
     expect(draft!.validated_keywords).toEqual(['yoga mat', 'bottle']);
     expect(draft!.note).toContain('选择器改版');
+    expect(run.repair_note).toContain('修复草稿');
+    expect(run.repair_note).toContain('2 个关键词');
+  });
+
+  it('单关键词快测也能出草稿，并把修复说明写进运行记录', async () => {
+    const store = makeStore();
+    const kw1 = ['B0AAAAAAA1'];
+    const runId = seedAiRun(store, ['yoga mat'], ['B0AAAAAAA1']);
+    const { generate, calls } = makeGenerate([{ organicAsins: kw1, captcha: false, noResults: false }]);
+    const session = makeAiSession({
+      candidateScript: buildExtractSignalsScript(PROPOSED_RULES),
+      activeResults: [[]],
+      candidateResults: [kw1],
+    });
+
+    await executeRankRun(store, runId, new AbortController().signal, deps(session, generate));
+
+    expect(calls.propose).toBe(1);
+    const draft = getDraftRules(store);
+    expect(draft).not.toBeNull();
+    expect(draft!.validated_keywords).toEqual(['yoga mat']);
+    expect(getRun(store, runId)!.repair_note).toContain('1 个关键词');
+  });
+
+  it('候选未通过页面验证：不落草稿，但把原因写进运行记录', async () => {
+    const store = makeStore();
+    const kw1 = ['B0AAAAAAA1'];
+    const runId = seedAiRun(store, ['yoga mat'], ['B0AAAAAAA1']);
+    const { generate } = makeGenerate([{ organicAsins: kw1, captcha: false, noResults: false }]);
+    const session = makeAiSession({
+      candidateScript: buildExtractSignalsScript(PROPOSED_RULES),
+      activeResults: [[]],
+      candidateResults: [['B0ZZZZZZZ9']], // 候选跑出来和 AI 结果不一致 → 验证失败
+    });
+
+    await executeRankRun(store, runId, new AbortController().signal, deps(session, generate));
+
+    expect(getDraftRules(store)).toBeNull();
+    const note = getRun(store, runId)!.repair_note as string;
+    expect(note).toContain('未能通过页面验证');
   });
 
   it('现役规则健康时不提案、不落草稿', async () => {

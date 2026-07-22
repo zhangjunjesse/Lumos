@@ -38,8 +38,11 @@ export interface KeywordOutcome {
 
 export interface QueryEngine {
   queryOne(row: RankResultRow, targetAsins: string[]): Promise<KeywordOutcome>;
-  /** 运行收尾（正常/中止都会调）：AI 引擎在此保存规则草稿 */
-  finalize(): void;
+  /**
+   * 运行收尾（正常/中止都会调）：AI 引擎在此保存规则草稿。
+   * 返回给用户看的修复轨道说明（写进 run 记录展示），无事发生返回 null。
+   */
+  finalize(): string | null;
 }
 
 export interface EngineContext {
@@ -117,7 +120,9 @@ export function createCodeEngine(ctx: EngineContext, active: ActiveRulesInfo): Q
         return { status: 'failed', errorMessage: error instanceof Error ? error.message : String(error) };
       }
     },
-    finalize() {},
+    finalize() {
+      return null;
+    },
   };
 }
 
@@ -137,6 +142,7 @@ export function createAiEngine(
   const activeScript = buildExtractSignalsScript(active.rules);
   let candidate: RuleCandidate | null = null;
   let proposalsUsed = 0;
+  let activeRuleFailures = 0;
 
   async function runRulesScript(script: string): Promise<string[]> {
     const raw = await ctx.session.api.evaluate<string>(script);
@@ -148,6 +154,7 @@ export function createAiEngine(
     try {
       const activeAsins = await runRulesScript(activeScript);
       if (arraysEqual(activeAsins, expected)) return; // 现役规则在本页健康，无需修复
+      activeRuleFailures++;
       if (candidate) {
         if (arraysEqual(await runRulesScript(candidate.script), expected)) {
           candidate.validatedKeywords.push(keyword);
@@ -202,11 +209,24 @@ export function createAiEngine(
       }
     },
     finalize() {
-      if (!candidate || candidate.validatedKeywords.length < MIN_RULE_AGREEMENT) return;
-      saveDraftRules(ctx.store, candidate.rules, {
-        note: candidate.rationale,
-        validatedKeywords: candidate.validatedKeywords,
-      });
+      if (candidate && candidate.validatedKeywords.length >= MIN_RULE_AGREEMENT) {
+        const saved = saveDraftRules(ctx.store, candidate.rules, {
+          note: candidate.rationale,
+          validatedKeywords: candidate.validatedKeywords,
+        });
+        return (
+          `代码解析规则在本次运行中失效，AI 已生成修复草稿 v${saved.version}` +
+          `（在 ${candidate.validatedKeywords.length} 个关键词的真实页面上验证一致）。` +
+          '到「设置 → 页面解析规则」确认采用后，代码引擎即可恢复。'
+        );
+      }
+      if (activeRuleFailures > 0) {
+        return (
+          `代码解析规则在 ${activeRuleFailures} 个关键词页面上失效，` +
+          'AI 的修复候选未能通过页面验证，本次未生成草稿；可多跑几个关键词再试。'
+        );
+      }
+      return null;
     },
   };
 }

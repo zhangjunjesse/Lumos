@@ -149,7 +149,8 @@ export async function executeRankRun(
     return recordHistory(store, runId);
   } finally {
     try {
-      engine.finalize();
+      const repairNote = engine.finalize();
+      if (repairNote) updateRun(store, runId, { repair_note: repairNote });
     } catch {
       /* 规则草稿落库失败不影响运行终态 */
     }

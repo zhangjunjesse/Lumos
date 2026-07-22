@@ -22,8 +22,12 @@ export const STALE_RUN_CUTOFF_MS = 15 * 60_000;
 /** 连续多个关键词执行层失败即中止整个运行（多半是浏览器断了） */
 export const CONSECUTIVE_FAILURE_LIMIT = 3;
 
-/** AI 模式候选规则至少要在多少个关键词的真实页面上与 AI 结果一致才落草稿 */
-export const MIN_RULE_AGREEMENT = 2;
+/**
+ * AI 模式候选规则至少在多少个关键词的真实页面上与 AI 结果一致才落草稿。
+ * 设 1：草稿永不自动生效（采用前有人工确认闸），UI 会展示验证数量供用户判断；
+ * 单关键词快测是最常见用法，门槛设 2 会让修复"跑了个寂寞"。
+ */
+export const MIN_RULE_AGREEMENT = 1;
 /** 单次运行最多让 AI 提几版候选规则（防失控烧 token） */
 export const MAX_RULE_PROPOSALS_PER_RUN = 2;
 
