@@ -6,5 +6,43 @@ if [ "$SKIP_GIT_HOOKS" = "1" ]; then
   exit 0
 fi
 
+# 发版提速白名单：以下两类 push 跳过全量 ci:verify（typecheck + build）：
+#   1. 纯 tag push —— tag 指向的提交在其分支 push 时已验证过，重复 build 结论不变
+#   2. 仅版本号变更 —— 改动文件只有 package.json/package-lock.json，且 package.json
+#      的变更行仅限 "version" 字段（发版 bump 提交）
+# 其余一切 push（含新分支）照旧全量验证，卡口不放松。CI 侧仍会完整构建兜底。
+zero=0000000000000000000000000000000000000000
+need_verify=0
+saw_ref=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "$local_ref" ] && continue
+  saw_ref=1
+  case "$remote_ref" in
+    refs/tags/*) continue ;;
+  esac
+  # 删除远端分支：无需验证
+  [ "$local_sha" = "$zero" ] && continue
+  # 新分支没有远端基线：全量验证
+  if [ "$remote_sha" = "$zero" ]; then
+    need_verify=1
+    continue
+  fi
+  changed=$(git diff --name-only "$remote_sha".."$local_sha" 2>/dev/null || echo "__diff_failed__")
+  [ -z "$changed" ] && continue
+  non_version=$(printf '%s\n' "$changed" | grep -v -E '^(package\.json|package-lock\.json)$' || true)
+  if [ -n "$non_version" ]; then
+    need_verify=1
+    continue
+  fi
+  if git diff "$remote_sha".."$local_sha" -- package.json | grep -E '^[+-][^+-]' | grep -v '"version"' >/dev/null; then
+    need_verify=1
+  fi
+done
+
+if [ "$saw_ref" = "1" ] && [ "$need_verify" = "0" ]; then
+  echo "[hooks] Tag-only / version-bump-only push — skipping full verification (CI still builds)"
+  exit 0
+fi
+
 echo "[hooks] Running repository verification before push"
 npm run ci:verify
