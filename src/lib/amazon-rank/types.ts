@@ -3,6 +3,14 @@ export type RankRunStatus = 'running' | 'success' | 'partial' | 'failed' | 'canc
 export type RankRunSource = 'manual' | 'monitor';
 
 /**
+ * 查询引擎：
+ * - code 确定性代码（当前生效的提取规则），快、免费
+ * - ai   大模型读页（页面摘要 → 自然位），慢、费 token，但页面改版也能看懂，
+ *        且会顺手验证/修复代码规则
+ */
+export type RankExecutionMode = 'code' | 'ai';
+
+/**
  * 单个关键词的查询结果状态。错误必须三分类呈现，不许混成一个「失败」：
  * - no_results   亚马逊真的没有搜索结果（页面明确提示）
  * - blocked      疑似触发风控（验证码 / Robot Check），整个运行会随之中止
@@ -29,6 +37,8 @@ export interface RankRunRow extends Record<string, unknown> {
   id: string;
   source: RankRunSource;
   status: RankRunStatus;
+  /** 本次运行用的引擎（旧数据无此字段 = code） */
+  engine?: RankExecutionMode;
   site: string;
   zip_code: string;
   /** 邮编是否确认设置成功（失败不阻断运行，但要如实展示） */
@@ -69,6 +79,9 @@ export interface RankSettings {
   delayMinMs: number;
   delayMaxMs: number;
   maxKeywords: number;
+  executionMode: RankExecutionMode;
+  /** AI 操作模式的读页提示词（用户可编辑；输出契约由代码固定追加） */
+  aiOperatorPrompt: string;
   aiSystemPrompt: string;
   riskNote: string;
 }

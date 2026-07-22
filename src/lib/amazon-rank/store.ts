@@ -7,6 +7,7 @@ import {
 } from './constants';
 import type {
   KeywordStatus,
+  RankExecutionMode,
   RankMatch,
   RankResultRow,
   RankRunRow,
@@ -23,6 +24,7 @@ export function createRun(
   input: {
     id?: string;
     source: RankRunSource;
+    engine: RankExecutionMode;
     site: string;
     zipCode: string;
     keywords: string[];
@@ -34,6 +36,7 @@ export function createRun(
   const run = store.create<RankRunRow>(RUNS_COLLECTION, {
     ...(input.id ? { id: input.id } : {}),
     source: input.source,
+    engine: input.engine,
     status: 'running',
     site: input.site,
     zip_code: input.zipCode,

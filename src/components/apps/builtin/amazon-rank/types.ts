@@ -9,9 +9,12 @@ export type KeywordStatus =
   | 'failed'
   | 'cancelled';
 
+export type ExecutionMode = 'code' | 'ai';
+
 export interface RunDto {
   id: string;
   source: 'manual' | 'monitor';
+  engine?: ExecutionMode;
   status: RunStatus;
   site: string;
   zip_code: string;
@@ -46,8 +49,23 @@ export interface SettingsDto {
   delayMinMs: number;
   delayMaxMs: number;
   maxKeywords: number;
+  executionMode: ExecutionMode;
+  aiOperatorPrompt: string;
   aiSystemPrompt: string;
   riskNote: string;
+}
+
+export interface RulesDto {
+  active: { version: number; source: 'builtin' | 'ai'; rules: Record<string, unknown> };
+  draft: {
+    id: string;
+    version: number;
+    note: string;
+    validatedKeywords: string[];
+    createdAt: string;
+    rules: Record<string, unknown>;
+  } | null;
+  openTickets: number;
 }
 
 export interface WatchlistDto {

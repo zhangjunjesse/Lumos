@@ -22,6 +22,7 @@ export function QueryTab({ status, onStatusChange }: Props): React.ReactElement 
   const [viewRunId, setViewRunId] = React.useState<string | null>(null);
   const [starting, setStarting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const repairHint = useRepairHint();
 
   const keywords = useParsedInput('keywords');
   const asins = useParsedInput('asins');
@@ -64,6 +65,11 @@ export function QueryTab({ status, onStatusChange }: Props): React.ReactElement 
 
   return (
     <div className="max-w-3xl space-y-6">
+      {repairHint ? (
+        <Alert>
+          <AlertDescription>{repairHint}</AlertDescription>
+        </Alert>
+      ) : null}
       <InputField
         label="关键词"
         hint="一行一个，最多 200 个；也可上传 Excel（放第一列）"
@@ -98,6 +104,31 @@ export function QueryTab({ status, onStatusChange }: Props): React.ReactElement 
       </div>
     </div>
   );
+}
+
+/** 有未决修复工单/待确认草稿时，在查询页给一句指引（静默失败，不打扰主流程） */
+function useRepairHint(): string | null {
+  const [hint, setHint] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    void (async () => {
+      try {
+        const [rules, settings] = await Promise.all([api.rules(), api.settings()]);
+        if (rules.draft) {
+          setHint('AI 已生成页面解析规则的修复草稿，去「设置」里确认采用后，代码引擎即可恢复。');
+        } else if (rules.openTickets > 0 && settings.settings.executionMode === 'code') {
+          setHint(
+            `最近有 ${rules.openTickets} 个关键词页面解析失败。在「设置」里切换为 AI 操作再查一次，` +
+            'AI 会顺带生成代码规则的修复草稿。',
+          );
+        }
+      } catch {
+        /* 提示是锦上添花，拿不到就不显示 */
+      }
+    })();
+  }, []);
+
+  return hint;
 }
 
 interface ParsedInputState {

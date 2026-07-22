@@ -11,6 +11,8 @@ import type { RankSettings, RankWatchlist } from './types';
 
 interface SettingsRow extends Record<string, unknown> {
   id?: string;
+  execution_mode?: string;
+  ai_operator_prompt?: string;
   ai_system_prompt?: string;
   risk_note?: string;
   site?: string;
@@ -59,6 +61,11 @@ export function rowToSettings(row: SettingsRow | undefined): RankSettings {
     delayMinMs: delayMin,
     delayMaxMs: clampInt(row.delay_max_ms, delayMin, 120_000, Math.max(delayMin, d.delayMaxMs)),
     maxKeywords: clampInt(row.max_keywords, 1, HARD_MAX_KEYWORDS, d.maxKeywords),
+    executionMode: row.execution_mode === 'ai' ? 'ai' : 'code',
+    aiOperatorPrompt:
+      typeof row.ai_operator_prompt === 'string' && row.ai_operator_prompt.trim()
+        ? row.ai_operator_prompt
+        : d.aiOperatorPrompt,
     aiSystemPrompt:
       typeof row.ai_system_prompt === 'string' && row.ai_system_prompt.trim()
         ? row.ai_system_prompt
@@ -83,6 +90,8 @@ export function setRankSettings(store: AppDataStore, patch: Partial<RankSettings
     delay_min_ms: next.delayMinMs,
     delay_max_ms: next.delayMaxMs,
     max_keywords: next.maxKeywords,
+    execution_mode: next.executionMode,
+    ai_operator_prompt: next.aiOperatorPrompt,
     ai_system_prompt: next.aiSystemPrompt,
     risk_note: next.riskNote,
   });
@@ -94,6 +103,8 @@ export function setRankSettings(store: AppDataStore, patch: Partial<RankSettings
     delay_min_ms: normalized.delayMinMs,
     delay_max_ms: normalized.delayMaxMs,
     max_keywords: normalized.maxKeywords,
+    execution_mode: normalized.executionMode,
+    ai_operator_prompt: normalized.aiOperatorPrompt,
     ai_system_prompt: normalized.aiSystemPrompt,
     risk_note: normalized.riskNote,
   });

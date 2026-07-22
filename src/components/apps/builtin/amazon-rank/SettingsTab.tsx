@@ -16,6 +16,7 @@ import { browserConfigLabel, browserContextFallbackLabel, EMBEDDED_BROWSER_CONTE
 import type { BrowserProviderConfigView, BrowserProvidersResponse } from '@/types';
 
 import { api } from './api';
+import { RulesCard } from './RulesCard';
 import type { SettingsDto } from './types';
 
 export function SettingsTab({ active }: { active: boolean }): React.ReactElement {
@@ -134,6 +135,35 @@ export function SettingsTab({ active }: { active: boolean }): React.ReactElement
           <p className="text-xs text-muted-foreground">调高更容易触发亚马逊风控。</p>
         </div>
       </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label>执行方式</Label>
+          <Select
+            value={form.executionMode}
+            onValueChange={(v) => patch({ executionMode: v === 'ai' ? 'ai' : 'code' })}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="code">代码引擎（快、免费）</SelectItem>
+              <SelectItem value="ai">AI 操作（费 token，页面改版也能查，并自动修复代码规则）</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            AI 操作用「设置 → 服务商」的默认模型；两种方式遇验证码都会立即中止。
+          </p>
+        </div>
+      </div>
+
+      {form.executionMode === 'ai' ? (
+        <div className="space-y-1.5">
+          <Label>AI 操作提示词</Label>
+          <Textarea rows={4} value={form.aiOperatorPrompt} onChange={(e) => patch({ aiOperatorPrompt: e.target.value })} />
+          <p className="text-xs text-muted-foreground">指导 AI 如何识别自然位；输出格式由应用固定，改这里不会破坏解析。</p>
+        </div>
+      ) : null}
+
+      <RulesCard />
 
       <div className="space-y-1.5">
         <Label>查询说明</Label>

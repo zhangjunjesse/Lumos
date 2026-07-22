@@ -48,6 +48,7 @@ export function startRankRun(input: StartRankRunInput): StartRankRunResult {
   const run = createRun(input.store, {
     id: runId,
     source: input.source,
+    engine: settings.executionMode,
     site: settings.site,
     zipCode: settings.zipCode,
     keywords,

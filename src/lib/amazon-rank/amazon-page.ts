@@ -1,42 +1,19 @@
-import { TOP_N } from './constants';
+import { BUILTIN_RULES, buildExtractSignalsScript } from './extraction-rules';
 import type { KeywordStatus, PageExtractSignals } from './types';
 
 /**
  * 亚马逊搜索页的 DOM 提取与状态分类。
- * 提取规则移植自已验证可跑的工作流脚本：自然位 = s-search-result 节点里
- * 排除 Sponsored / AdHolder / 横幅广告列后的前 TOP_N 个 data-asin。
+ * 提取规则数据化在 extraction-rules.ts：出厂基线 = s-search-result 节点里
+ * 排除 Sponsored / AdHolder / 横幅广告列后的前 TOP_N 个 data-asin；
+ * AI 操作模式可生成新版本规则，代码引擎按「当前生效版本」构建脚本。
  */
 
 export function buildSearchUrl(site: string, keyword: string): string {
   return `https://${site}/s?k=${encodeURIComponent(keyword)}`;
 }
 
-/** 页面里执行的提取脚本：一次拿回分类所需的全部信号（JSON 字符串） */
-export const EXTRACT_SIGNALS_SCRIPT = `(() => {
-  const items = document.querySelectorAll('[data-component-type="s-search-result"]');
-  const organic = [];
-  for (let i = 0; i < items.length && organic.length < ${TOP_N}; i++) {
-    const el = items[i];
-    const asin = (el.getAttribute('data-asin') || '').trim();
-    const html = el.innerHTML;
-    const isAd = html.includes('Sponsored')
-      || html.includes('AdHolder')
-      || el.classList.contains('sg-col-20-of-24')
-      || !!el.querySelector('.puis-sponsored-label-text');
-    if (asin && !isAd) organic.push(asin);
-  }
-  const bodyText = ((document.body && document.body.innerText) || '').slice(0, 4000);
-  const captcha = !!document.querySelector('#captchacharacters')
-    || /robot check/i.test(document.title)
-    || /enter the characters you see below/i.test(bodyText);
-  const noResults = /did not match any products|no results for/i.test(bodyText);
-  return JSON.stringify({
-    organicAsins: organic,
-    resultNodeCount: items.length,
-    captcha: captcha,
-    noResults: noResults,
-  });
-})()`;
+/** 出厂基线规则生成的提取脚本（仅测试/兜底用；运行时按当前生效规则构建） */
+export const EXTRACT_SIGNALS_SCRIPT = buildExtractSignalsScript(BUILTIN_RULES);
 
 export const OUTER_HTML_SCRIPT = '(() => document.documentElement.outerHTML)()';
 

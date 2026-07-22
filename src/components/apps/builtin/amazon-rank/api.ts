@@ -2,6 +2,7 @@ import type {
   AutomationDto,
   ParsedDto,
   ResultDto,
+  RulesDto,
   RunDto,
   SettingsDto,
   StatusDto,
@@ -77,6 +78,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings }),
     }).then((r) => json<{ settings: SettingsDto; watchlist: WatchlistDto }>(r)),
+
+  rules: () => fetch(`${BASE}/rules`, { cache: 'no-store' }).then((r) => json<RulesDto>(r)),
+
+  rulesAction: (action: 'adopt' | 'dismiss' | 'rollback', id?: string) =>
+    fetch(`${BASE}/rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, id }),
+    }).then((r) => json<RulesDto & { resolvedTickets?: number }>(r)),
 
   setDailyMonitor: (keywords: string[], asins: string[]) =>
     fetch(`${BASE}/monitor`, {

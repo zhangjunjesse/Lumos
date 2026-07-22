@@ -80,6 +80,7 @@ function signals(input: { organic?: string[]; nodes?: number; captcha?: boolean;
 function seedRun(store: AppDataStore, keywords: string[], asins: string[]): string {
   return createRun(store, {
     source: 'manual',
+    engine: 'code',
     site: 'www.amazon.com',
     zipCode: '10001',
     keywords,

@@ -195,8 +195,8 @@ export function RunView({ runId, onBack, backLabel = '返回' }: Props): React.R
       </div>
 
       <p className="text-xs text-muted-foreground">
-        运行状态：{RUN_STATUS_TEXT[run.status]} · 站点 {run.site} · 邮编 {run.zip_code} ·
-        开始于 {formatTime(run.started_at)}
+        运行状态：{RUN_STATUS_TEXT[run.status]} · 引擎 {run.engine === 'ai' ? 'AI 操作' : '代码'} ·
+        站点 {run.site} · 邮编 {run.zip_code} · 开始于 {formatTime(run.started_at)}
         {run.ended_at ? ` · 结束于 ${formatTime(run.ended_at)}` : ''}
       </p>
     </div>

@@ -2,16 +2,12 @@ import fs from 'node:fs';
 
 import type { AppDataStore } from '@/lib/app/runtime/data-store';
 
-import {
-  buildSearchUrl,
-  classifySignals,
-  ensureDeliveryZip,
-  parseExtractSignals,
-  EXTRACT_SIGNALS_SCRIPT,
-  OUTER_HTML_SCRIPT,
-} from './amazon-page';
+import { ensureDeliveryZip } from './amazon-page';
+import { createProviderGenerate, type StructuredGenerate } from './ai-operator';
 import { openRankBrowserSession, type RankBrowserSession } from './browser-session';
 import { CONSECUTIVE_FAILURE_LIMIT } from './constants';
+import { createAiEngine, createCodeEngine, type EngineContext, type QueryEngine } from './engines';
+import { getActiveRules } from './extraction-rules';
 import { snapshotFilePath } from './paths';
 import { getRankSettings } from './settings';
 import {
@@ -24,13 +20,15 @@ import {
   updateResult,
   updateRun,
 } from './store';
-import type { RankMatch, RankResultRow, RankRunRow, RankSettings } from './types';
+import type { RankRunRow, RankSettings } from './types';
 
 export interface ExecuteRankRunDeps {
   openSession?: typeof openRankBrowserSession;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   saveSnapshot?: (runId: string, seq: number, keyword: string, html: string) => string | undefined;
+  /** 测试注入 AI 生成函数；缺省按 Lumos 默认 provider 构建 */
+  generate?: StructuredGenerate;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -52,9 +50,9 @@ function defaultSaveSnapshot(
 }
 
 /**
- * 执行一次排名运行：设邮编 → 逐词搜索 → 提取自然位 → 匹配 ASIN → 落库。
+ * 执行一次排名运行：设邮编 → 逐词查询（代码/AI 引擎按设置选） → 匹配 ASIN → 落库。
  * 所有进度实时写进 amazon_rank_runs / amazon_rank_results，UI 轮询即可。
- * 遇验证码立即中止（不硬闯风控）；连续执行层失败达到阈值也中止。
+ * 遇验证码立即中止（两种引擎都不硬闯风控）；连续执行层失败达到阈值也中止。
  */
 export async function executeRankRun(
   store: AppDataStore,
@@ -64,7 +62,6 @@ export async function executeRankRun(
 ): Promise<RankRunRow | null> {
   const sleep = deps.sleep ?? defaultSleep;
   const random = deps.random ?? Math.random;
-  const saveSnapshot = deps.saveSnapshot ?? defaultSaveSnapshot;
   const openSession = deps.openSession ?? openRankBrowserSession;
 
   const run = getRun(store, runId);
@@ -79,6 +76,26 @@ export async function executeRankRun(
   }
 
   const session = opened;
+  const ctx: EngineContext = {
+    session,
+    settings,
+    store,
+    runId,
+    saveSnapshot: deps.saveSnapshot ?? defaultSaveSnapshot,
+    sleep,
+    signal,
+  };
+  let engine: QueryEngine;
+  try {
+    engine = buildEngine(ctx, deps);
+  } catch (error) {
+    await session.close();
+    const message = error instanceof Error ? error.message : String(error);
+    cancelRemainingResults(store, runId, '运行未开始');
+    finishRun(store, runId, 'failed', `AI 操作模式不可用：${message}`);
+    return recordHistory(store, runId);
+  }
+
   try {
     const zipConfirmed = await trySetZip(session, settings, sleep);
     updateRun(store, runId, { zip_confirmed: zipConfirmed });
@@ -97,7 +114,7 @@ export async function executeRankRun(
       }
 
       updateResult(store, row.id, { status: 'running', started_at: new Date().toISOString() });
-      const outcome = await queryOneKeyword(session, settings, row, targetAsins, saveSnapshot, sleep, runId);
+      const outcome = await engine.queryOne(row, targetAsins);
       markResultDone(store, row.id, outcome);
 
       done++;
@@ -131,92 +148,34 @@ export async function executeRankRun(
     );
     return recordHistory(store, runId);
   } finally {
+    try {
+      engine.finalize();
+    } catch {
+      /* 规则草稿落库失败不影响运行终态 */
+    }
     await session.close();
   }
-
-  async function trySetZip(
-    s: RankBrowserSession,
-    st: RankSettings,
-    sleepFn: (ms: number) => Promise<void>,
-  ): Promise<boolean> {
-    try {
-      return await ensureDeliveryZip(s.api, st.zipCode, sleepFn);
-    } catch {
-      return false;
-    }
-  }
 }
 
-async function queryOneKeyword(
+function buildEngine(ctx: EngineContext, deps: ExecuteRankRunDeps): QueryEngine {
+  const active = getActiveRules(ctx.store);
+  if (ctx.settings.executionMode === 'ai') {
+    const generate = deps.generate ?? createProviderGenerate(ctx.runId);
+    return createAiEngine(ctx, active, generate);
+  }
+  return createCodeEngine(ctx, active);
+}
+
+async function trySetZip(
   session: RankBrowserSession,
   settings: RankSettings,
-  row: RankResultRow,
-  targetAsins: string[],
-  saveSnapshot: NonNullable<ExecuteRankRunDeps['saveSnapshot']>,
   sleep: (ms: number) => Promise<void>,
-  runId: string,
-): Promise<{
-  status: 'ok' | 'no_results' | 'blocked' | 'parse_failed' | 'failed';
-  topAsins?: string[];
-  matches?: RankMatch[];
-  organicCount?: number;
-  snapshotPath?: string;
-  errorMessage?: string;
-}> {
+): Promise<boolean> {
   try {
-    await session.api.navigate(buildSearchUrl(settings.site, row.keyword));
-    try {
-      await session.api.waitFor(['results', 'No results', 'did not match'], { timeout: 30_000 });
-    } catch {
-      await sleep(5_000);
-    }
-    await sleep(3_000);
-
-    let snapshotPath: string | undefined;
-    try {
-      const html = await session.api.evaluate<string>(OUTER_HTML_SCRIPT);
-      snapshotPath = saveSnapshot(runId, row.seq, row.keyword, typeof html === 'string' ? html : '');
-    } catch {
-      snapshotPath = undefined;
-    }
-
-    const raw = await session.api.evaluate<string>(EXTRACT_SIGNALS_SCRIPT);
-    const signals = parseExtractSignals(raw);
-    const classified = classifySignals(signals);
-
-    if (classified.status !== 'ok') {
-      return {
-        status: classified.status,
-        topAsins: signals?.organicAsins ?? [],
-        organicCount: signals?.organicAsins.length ?? 0,
-        snapshotPath,
-        errorMessage: classified.message,
-      };
-    }
-
-    const topAsins = (signals?.organicAsins ?? []).map((a) => a.toUpperCase());
-    return {
-      status: 'ok',
-      topAsins,
-      matches: matchAsins(topAsins, targetAsins),
-      organicCount: topAsins.length,
-      snapshotPath,
-    };
-  } catch (error) {
-    return {
-      status: 'failed',
-      errorMessage: error instanceof Error ? error.message : String(error),
-    };
+    return await ensureDeliveryZip(session.api, settings.zipCode, sleep);
+  } catch {
+    return false;
   }
-}
-
-function matchAsins(topAsins: string[], targetAsins: string[]): RankMatch[] {
-  const matches: RankMatch[] = [];
-  for (const asin of targetAsins) {
-    const index = topAsins.indexOf(asin);
-    if (index !== -1) matches.push({ asin, rank: index + 1 });
-  }
-  return matches;
 }
 
 function recordHistory(store: AppDataStore, runId: string): RankRunRow | null {
