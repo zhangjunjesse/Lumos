@@ -23,6 +23,14 @@ function verifyTarget(inputPath) {
     ];
     const bashPath = candidates.find((candidate) => fs.existsSync(candidate));
     if (bashPath) {
+      // 下载脚本删安装残包是 best-effort(Windows Defender 可能锁文件);
+      // 这里兜底:60MB 残包绝不允许进发布产物。
+      const leftoverArchive = path.join(resourcesDir, 'git-bash', 'win32', 'x64', 'PortableGit.7z.exe');
+      if (fs.existsSync(leftoverArchive)) {
+        throw new Error(
+          `[verify-packaged-git-bash] Leftover installer archive packaged: ${leftoverArchive} — download 脚本残包未清理`,
+        );
+      }
       console.log(`[verify-packaged-git-bash] OK: ${bashPath}`);
       return;
     }

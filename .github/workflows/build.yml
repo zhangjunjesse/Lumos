@@ -100,11 +100,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-
 
+      - name: Exclude workspace from Windows Defender
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Defender 实时扫描会短暂锁住刚写出的文件,历史上先后打挂过两个步骤:
+          #   1. 下载 git-bash 后清理 PortableGit.7z.exe → EBUSY unlink(v0.39.9)
+          #   2. electron-builder 复制 standalone 资源 → EBUSY copyfile(v0.39.8 及更早)
+          # 排除必须在任何大规模文件写入(npm ci / 资产下载 / build)之前生效,
+          # 并顺带关掉实时监控(runner 是一次性环境,无安全代价)。
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Set-MpPreference -DisableRealtimeMonitoring $true
+
       - name: Install dependencies
         run: npm ci
 
       - name: Download runtime assets and build Next.js
-        run: node scripts/download-node.mjs && node scripts/download-python-runtime.mjs && node scripts/download-git-bash.mjs && node scripts/download-ffmpeg.mjs && npm run build
+        shell: pwsh
+        run: |
+          # 资产下载脚本幂等(已存在即跳过);EBUSY 之类瞬时锁失败等一下重试整组(最多 3 次)。
+          for ($i = 1; $i -le 3; $i++) {
+            node scripts/download-node.mjs
+            if ($LASTEXITCODE -eq 0) { node scripts/download-python-runtime.mjs }
+            if ($LASTEXITCODE -eq 0) { node scripts/download-git-bash.mjs }
+            if ($LASTEXITCODE -eq 0) { node scripts/download-ffmpeg.mjs }
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "运行时资产下载第 $i 次失败(exit $LASTEXITCODE),等待 15s 后重试..."
+            Start-Sleep -Seconds 15
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Error "运行时资产下载连续 3 次失败"; exit 1 }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Rebuild better-sqlite3 for Electron
         run: npx electron-rebuild -f -o better-sqlite3
@@ -120,14 +146,6 @@ jobs:
 
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
-
-      - name: Exclude workspace from Windows Defender
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          # Defender 实时扫描会短暂锁住刚写出的文件,导致 electron-builder 复制 standalone 资源时
-          # EBUSY(如 apps/etsy-forge 的 mockup PNG)。打包前把整个工作区排除掉。
-          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
 
       - name: Package for Windows
         shell: pwsh

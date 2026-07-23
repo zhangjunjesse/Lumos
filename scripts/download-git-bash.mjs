@@ -64,7 +64,12 @@ for (const arch of architectures) {
     path.join(gitBashDir, 'usr', 'bin', 'bash.exe'),
   ];
 
+  const downloadPath = path.join(gitBashDir, 'PortableGit.7z.exe');
+
   if (bashCandidates.some((candidatePath) => fs.existsSync(candidatePath))) {
+    // 上次运行若在"删安装包"时被 Defender 锁住(EBUSY),会留下 60MB 残包;
+    // 跳过前补删,否则会被打进发布产物。
+    removeArchiveBestEffort(downloadPath, arch);
     console.log(`✓ git-bash for win32-${arch} already exists`);
     continue;
   }
@@ -83,8 +88,6 @@ for (const arch of architectures) {
   const archSuffix = arch === 'x64' ? '64' : '32'; // arm64 uses 32-bit for now
   const downloadUrl = `https://github.com/git-for-windows/git/releases/download/v${GIT_VERSION}.windows.${GIT_BUILD}/PortableGit-${GIT_VERSION}-${archSuffix}-bit.7z.exe`;
 
-  const downloadPath = path.join(gitBashDir, 'PortableGit.7z.exe');
-
   try {
     // Download the portable Git
     console.log(`  Downloading from: ${downloadUrl}`);
@@ -101,9 +104,10 @@ for (const arch of architectures) {
 
     fs.mkdirSync(path.join(gitBashDir, 'tmp'), { recursive: true });
 
-    // Clean up
+    // Clean up。Windows CI 上 Defender 可能短暂锁住刚写出的自解压 exe(EBUSY),
+    // 删不掉不该让整个下载失败——解压已成功,残包由下次运行的跳过分支补删。
     console.log(`  Cleaning up...`);
-    fs.unlinkSync(downloadPath);
+    removeArchiveBestEffort(downloadPath, arch);
 
     console.log(`✓ git-bash for win32-${arch} downloaded to ${gitBashDir} (${path.relative(gitBashDir, extractedBashPath)})`);
   } catch (error) {
@@ -117,3 +121,19 @@ for (const arch of architectures) {
 }
 
 console.log('✓ All git-bash downloads complete');
+
+function removeArchiveBestEffort(archivePath, arch) {
+  if (!fs.existsSync(archivePath)) return;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      fs.unlinkSync(archivePath);
+      return;
+    } catch (error) {
+      if (attempt === 3) {
+        console.warn(`  ⚠ 无法删除 win32-${arch} 的 PortableGit.7z.exe(${error.message}),留待下次运行清理`);
+        return;
+      }
+      execFileSync(process.execPath, ['-e', 'setTimeout(()=>{}, 3000)'], { stdio: 'ignore' });
+    }
+  }
+}
