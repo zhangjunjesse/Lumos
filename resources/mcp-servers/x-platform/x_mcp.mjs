@@ -2,7 +2,8 @@
 /**
  * X (Twitter) MCP server — read-only。
  *
- * 暴露 2 个读工具(search / read_user_tweets)。底层走 Lumos /api/x/*,
+ * 暴露只读工具(search / read_user_tweets / my_mentions / dm_inbox / dm_conversation)。
+ * 底层走 Lumos /api/x/*,
  * 后者用 @the-convocation/twitter-scraper(2026-04 维护)绕过 X 反爬
  * (transaction-id / cookie 域 全在它内部处理)。
  *
@@ -15,7 +16,7 @@
 import { createInterface } from 'node:readline';
 import process from 'node:process';
 
-const SERVER_INFO = { name: 'x-platform', version: '0.2.0' };
+const SERVER_INFO = { name: 'x-platform', version: '0.3.0' };
 const PROTOCOL_VERSION = '2024-11-05';
 const LUMOS_URL = process.env.LUMOS_INTERNAL_URL || 'http://localhost:3000';
 
@@ -50,6 +51,27 @@ const TOOLS = [
         count: { type: 'integer', description: '返回数量,1-50', default: 20 },
       },
       required: ['screen'],
+    },
+  },
+  {
+    name: 'x_dm_inbox',
+    description:
+      '读取当前登录用户的 X 私信收件箱(会话列表,按最近活动降序),含对方昵称/用户名、最后一条消息摘要和 conversationId。' +
+      '只读,不能发私信。需要用户已在 Lumos「服务 → X」登录。用 x_dm_conversation 读某个会话的完整聊天记录。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'x_dm_conversation',
+    description:
+      '读取单个 X 私信会话的聊天记录(时间升序,老→新)。conversationId 从 x_dm_inbox 拿。' +
+      '返回 status=HAS_MORE 时,把返回的 minEntryId 作为 maxId 再调一次可向更早翻页。只读,不能发私信。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        conversationId: { type: 'string', description: '会话 ID(x_dm_inbox 返回的 conversationId)' },
+        maxId: { type: 'string', description: '翻页游标:传上次返回的 minEntryId,取更早的消息' },
+      },
+      required: ['conversationId'],
     },
   },
   {
@@ -100,6 +122,19 @@ async function callTool(name, args) {
   if (name === 'x_my_mentions') {
     const params = new URLSearchParams({ count: String(args.count ?? 20) });
     return await fetchJson(`${LUMOS_URL}/api/x/mentions?${params}`);
+  }
+  if (name === 'x_dm_inbox') {
+    return await fetchJson(`${LUMOS_URL}/api/x/dm/inbox`);
+  }
+  if (name === 'x_dm_conversation') {
+    const conversationId = String(args.conversationId || '').trim();
+    if (!conversationId) throw new Error('conversationId 不能为空');
+    const params = new URLSearchParams();
+    if (args.maxId) params.set('maxId', String(args.maxId));
+    const qs = params.toString();
+    return await fetchJson(
+      `${LUMOS_URL}/api/x/dm/conversation/${encodeURIComponent(conversationId)}${qs ? `?${qs}` : ''}`,
+    );
   }
   throw new Error(`unknown tool: ${name}`);
 }

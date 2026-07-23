@@ -1,6 +1,7 @@
 // X 私信读取(只读):收件箱对话列表 + 单会话消息记录。
 // 复用 ensureScraper() 单例(带 cookie)和 getAuthStatus().userId(区分"对方"与"我")。
-// 隐私:私信正文只在响应里返回给本地 UI,不落库、不外发、不进日志明文。
+// 隐私:私信正文只在响应里返回给本地 UI 和本机 AI 会话(x_dm_* MCP 工具,用户显式放开),
+// 不落库、不外发、不进日志明文。
 
 import type { DmInbox, DmConversationTimeline } from '@the-convocation/twitter-scraper';
 import { ensureScraper } from './scraper';
