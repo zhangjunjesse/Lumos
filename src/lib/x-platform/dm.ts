@@ -6,6 +6,7 @@
 import type { DmInbox, DmConversationTimeline } from '@the-convocation/twitter-scraper';
 import { ensureScraper } from './scraper';
 import { getAuthStatus } from './auth';
+import { readXChatConversation, readXChatInbox } from './xchat-browser';
 
 export interface DmPeer {
   userId: string;
@@ -35,6 +36,10 @@ export interface DmMessageView {
 export interface DmInboxView {
   conversations: DmConversationSummary[];
   myUserId: string;
+  /** 数据来源:legacy=老 /1.1/dm API;xchat-browser=浏览器读 XChat 新版加密私信 */
+  source: 'legacy' | 'xchat-browser';
+  /** 读取受限时给 AI/用户的明确说明(锁屏、未登录、需人工等) */
+  notice?: string;
 }
 
 export interface DmConversationView {
@@ -42,6 +47,8 @@ export interface DmConversationView {
   status: 'AT_END' | 'HAS_MORE';
   minEntryId: string;             // 往更早翻页的游标(传给 maxId)
   peer: DmPeer | null;
+  source: 'legacy' | 'xchat-browser';
+  notice?: string;
 }
 
 type UserMap = DmInbox['users'];
@@ -94,7 +101,47 @@ export async function getDmInboxView(): Promise<DmInboxView> {
   });
 
   conversations.sort((a, b) => Number(b.lastTime) - Number(a.lastTime));
-  return { conversations, myUserId };
+  if (conversations.length > 0) {
+    return { conversations, myUserId, source: 'legacy' };
+  }
+  // 老 API 空 —— 多半是账号已迁移到 XChat(端到端加密,/i/chat)。走浏览器兜底。
+  return await inboxFromXChat(myUserId);
+}
+
+async function inboxFromXChat(myUserId: string): Promise<DmInboxView> {
+  const res = await readXChatInbox();
+  if (!res.ok || !res.data) {
+    return {
+      conversations: [],
+      myUserId,
+      source: 'legacy',
+      notice: `私信收件箱为空:老接口无数据,浏览器读取 XChat 也未成功(${res.error ?? '未知原因'})。`,
+    };
+  }
+  if (res.data.status !== 'ok') {
+    return { conversations: [], myUserId, source: 'xchat-browser', notice: xchatStatusNotice(res.data.status) };
+  }
+  const conversations: DmConversationSummary[] = res.data.items.map((it) => ({
+    conversationId: it.conversationId,
+    peer: it.name ? { userId: '', name: it.name, screenName: '', avatar: '' } : null,
+    participantCount: 2,
+    lastText: it.preview,
+    lastTime: '0',
+    lastFromMe: false,
+    trusted: true,
+  }));
+  return {
+    conversations,
+    myUserId,
+    source: 'xchat-browser',
+    notice: '来自 XChat(X 新版加密私信),经浏览器读取;时间/已读等元数据有限。',
+  };
+}
+
+function xchatStatusNotice(status: 'locked' | 'needs_login' | 'empty'): string {
+  if (status === 'locked') return 'XChat 已被密码锁定:请先在 X 浏览器里输入 XChat 4 位密码解锁,再重试。';
+  if (status === 'needs_login') return 'X 未登录或登录态失效:请到 Lumos「服务 → X」重新登录后重试。';
+  return 'XChat 页面未读到会话(可能未渲染完成或确实没有会话)。';
 }
 
 /** 单会话消息(时间升序);maxId 往更早翻页。 */
@@ -120,10 +167,39 @@ export async function getDmConversationView(
 
   const conv = timeline.conversations?.[conversationId];
   const peerId = conv?.participants?.find((p) => p.user_id !== myUserId)?.user_id || '';
+  const peer = peerId ? toPeer(timeline.users, peerId) : null;
+
+  if (messages.length > 0) {
+    return { messages, status: timeline.status, minEntryId: timeline.min_entry_id || '', peer, source: 'legacy' };
+  }
+  // 老 API 有会话元数据却零消息 —— XChat 迁移的典型特征。走浏览器兜底读正文。
+  return await conversationFromXChat(conversationId, peer);
+}
+
+async function conversationFromXChat(
+  conversationId: string,
+  peer: DmPeer | null,
+): Promise<DmConversationView> {
+  const res = await readXChatConversation(conversationId);
+  if (!res.ok || !res.data) {
+    return {
+      messages: [], status: 'AT_END', minEntryId: '', peer, source: 'legacy',
+      notice: `此会话老接口零消息,浏览器读取 XChat 也未成功(${res.error ?? '未知原因'})。`,
+    };
+  }
+  if (res.data.status !== 'ok') {
+    return { messages: [], status: 'AT_END', minEntryId: '', peer, source: 'xchat-browser', notice: xchatStatusNotice(res.data.status) };
+  }
+  const source = res.data.messages.length > 0 ? res.data.messages : res.data.rawLines.map((text) => ({ text, outgoing: null }));
+  const messages: DmMessageView[] = source.map((m, i) => ({
+    id: `xchat-${i}`,
+    text: m.text,
+    time: '0',
+    fromMe: m.outgoing === true,
+    senderId: m.outgoing === true ? 'me' : '',
+  }));
   return {
-    messages,
-    status: timeline.status,
-    minEntryId: timeline.min_entry_id || '',
-    peer: peerId ? toPeer(timeline.users, peerId) : null,
+    messages, status: 'AT_END', minEntryId: '', peer, source: 'xchat-browser',
+    notice: '来自 XChat(X 新版加密私信),经浏览器读取;发送方/时间判定可能不准。',
   };
 }

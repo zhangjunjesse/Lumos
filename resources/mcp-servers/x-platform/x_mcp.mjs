@@ -57,14 +57,17 @@ const TOOLS = [
     name: 'x_dm_inbox',
     description:
       '读取当前登录用户的 X 私信收件箱(会话列表,按最近活动降序),含对方昵称/用户名、最后一条消息摘要和 conversationId。' +
-      '只读,不能发私信。需要用户已在 Lumos「服务 → X」登录。用 x_dm_conversation 读某个会话的完整聊天记录。',
+      '只读,不能发私信。需要用户已在 Lumos「服务 → X」登录。用 x_dm_conversation 读某个会话的完整聊天记录。' +
+      '兼容 X 新版加密私信 XChat(账号迁移后经浏览器读取);返回里的 notice 字段会说明数据来源或读取受限原因(如 XChat 被密码锁定),' +
+      '请把 notice 如实转述给用户,不要在拿到 notice 时谎称"没有私信"。',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'x_dm_conversation',
     description:
       '读取单个 X 私信会话的聊天记录(时间升序,老→新)。conversationId 从 x_dm_inbox 拿。' +
-      '返回 status=HAS_MORE 时,把返回的 minEntryId 作为 maxId 再调一次可向更早翻页。只读,不能发私信。',
+      '返回 status=HAS_MORE 时,把返回的 minEntryId 作为 maxId 再调一次可向更早翻页。只读,不能发私信。' +
+      '兼容 XChat 新版加密私信;source=xchat-browser 表示经浏览器读取,notice 字段会说明来源或受限原因,请如实转述。',
     inputSchema: {
       type: 'object',
       properties: {
