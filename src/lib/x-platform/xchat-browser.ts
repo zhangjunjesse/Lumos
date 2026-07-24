@@ -4,6 +4,10 @@
 //
 // 全程 background:true,绝不抢用户当前可见 tab(遵守项目浏览器运行时规则)。
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import {
   postToBrowserBridge,
   resolveBrowserBridgeRuntimeConfig,
@@ -16,6 +20,7 @@ import {
   parseXChatConversation,
   parseXChatInbox,
   type XChatConversationExtract,
+  type XChatDiag,
   type XChatInboxExtract,
 } from './xchat-extract';
 
@@ -95,6 +100,28 @@ export interface XChatBrowserResult<T> {
   ok: boolean;
   data?: T;
   error?: string;
+  /** 现场诊断落盘路径(解析不理想时);发我这个文件即可精确收敛选择器 */
+  debugFile?: string;
+}
+
+/**
+ * XChat 的 DOM 选择器无公开契约、真机未验证。解析没读到干净结构化消息时,把真实
+ * DOM(testids 清单 + 消息区 outerHTML)落到本地盘,用户发来即可离线定选择器 ——
+ * 一次抓现场胜过反复发版盲试。内容含私信正文,只写本机磁盘、不外发。
+ */
+function writeDiagBundle(kind: string, diag: XChatDiag | undefined, rawLines: string[]): string | undefined {
+  if (!diag) return undefined;
+  try {
+    const dir = path.join(process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos'), 'x-platform', 'xchat-debug');
+    fs.mkdirSync(dir, { recursive: true });
+    // 固定文件名:每次覆盖,避免私信正文在磁盘堆积;用户随时取最新一次。
+    const file = path.join(dir, `xchat-${kind}-latest.html`);
+    const header = `<!-- testids: ${diag.testids.join(', ')} -->\n<!-- rawLines:\n${rawLines.join('\n')}\n-->\n`;
+    fs.writeFileSync(file, header + diag.regionHtml, 'utf-8');
+    return file;
+  } catch {
+    return undefined;
+  }
 }
 
 async function withSession<T>(
@@ -114,14 +141,22 @@ async function withSession<T>(
   }
 }
 
-export function readXChatInbox(signal?: AbortSignal): Promise<XChatBrowserResult<XChatInboxExtract>> {
-  return withSession((s) => s.read(XCHAT_INBOX_URL, XCHAT_INBOX_SCRIPT, parseXChatInbox), signal);
+export async function readXChatInbox(signal?: AbortSignal): Promise<XChatBrowserResult<XChatInboxExtract>> {
+  const res = await withSession((s) => s.read(XCHAT_INBOX_URL, XCHAT_INBOX_SCRIPT, parseXChatInbox), signal);
+  if (res.ok && res.data && res.data.items.length === 0) {
+    res.debugFile = writeDiagBundle('inbox', res.data.diag, res.data.rawLines);
+  }
+  return res;
 }
 
-export function readXChatConversation(
+export async function readXChatConversation(
   conversationId: string,
   signal?: AbortSignal,
 ): Promise<XChatBrowserResult<XChatConversationExtract>> {
   const url = `${XCHAT_INBOX_URL}/${encodeURIComponent(conversationId)}`;
-  return withSession((s) => s.read(url, XCHAT_CONVERSATION_SCRIPT, parseXChatConversation), signal);
+  const res = await withSession((s) => s.read(url, XCHAT_CONVERSATION_SCRIPT, parseXChatConversation), signal);
+  if (res.ok && res.data && res.data.messages.length === 0) {
+    res.debugFile = writeDiagBundle('conversation', res.data.diag, res.data.rawLines);
+  }
+  return res;
 }

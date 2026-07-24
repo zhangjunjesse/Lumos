@@ -119,7 +119,11 @@ async function inboxFromXChat(myUserId: string): Promise<DmInboxView> {
     };
   }
   if (res.data.status !== 'ok') {
-    return { conversations: [], myUserId, source: 'xchat-browser', notice: xchatStatusNotice(res.data.status) };
+    const base = xchatStatusNotice(res.data.status);
+    return {
+      conversations: [], myUserId, source: 'xchat-browser',
+      notice: res.debugFile ? `${base} 现场 DOM 已存到 ${res.debugFile}。` : base,
+    };
   }
   const conversations: DmConversationSummary[] = res.data.items.map((it) => ({
     conversationId: it.conversationId,
@@ -190,7 +194,8 @@ async function conversationFromXChat(
   if (res.data.status !== 'ok') {
     return { messages: [], status: 'AT_END', minEntryId: '', peer, source: 'xchat-browser', notice: xchatStatusNotice(res.data.status) };
   }
-  const source = res.data.messages.length > 0 ? res.data.messages : res.data.rawLines.map((text) => ({ text, outgoing: null }));
+  const structured = res.data.messages.length > 0;
+  const source = structured ? res.data.messages : res.data.rawLines.map((text) => ({ text, outgoing: null }));
   const messages: DmMessageView[] = source.map((m, i) => ({
     id: `xchat-${i}`,
     text: m.text,
@@ -198,8 +203,8 @@ async function conversationFromXChat(
     fromMe: m.outgoing === true,
     senderId: m.outgoing === true ? 'me' : '',
   }));
-  return {
-    messages, status: 'AT_END', minEntryId: '', peer, source: 'xchat-browser',
-    notice: '来自 XChat(X 新版加密私信),经浏览器读取;发送方/时间判定可能不准。',
-  };
+  const notice = structured
+    ? '来自 XChat(X 新版加密私信),经浏览器读取;发送方/时间判定可能不准。'
+    : `来自 XChat,精确结构未识别、已回退整段文本(可能含界面噪音)。${res.debugFile ? `现场 DOM 已存到 ${res.debugFile},把该文件发给开发者可精确修正解析。` : ''}`;
+  return { messages, status: 'AT_END', minEntryId: '', peer, source: 'xchat-browser', notice };
 }

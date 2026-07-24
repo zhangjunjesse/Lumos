@@ -14,6 +14,20 @@ export interface XChatMessage {
   outgoing: boolean | null;
 }
 
+/** 现场诊断:真实 DOM 结构,供离线收敛选择器 */
+export interface XChatDiag {
+  testids: string[];
+  regionHtml: string;
+}
+
+function parseDiag(value: unknown): XChatDiag | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const testids = Array.isArray(v.testids) ? v.testids.filter((t): t is string => typeof t === 'string') : [];
+  const regionHtml = typeof v.regionHtml === 'string' ? v.regionHtml : '';
+  return { testids, regionHtml };
+}
+
 export interface XChatConversationExtract {
   status: 'ok' | 'locked' | 'needs_login' | 'empty';
   messages: XChatMessage[];
@@ -21,6 +35,7 @@ export interface XChatConversationExtract {
   rawLines: string[];
   title: string;
   url: string;
+  diag?: XChatDiag;
 }
 
 export interface XChatInboxItem {
@@ -33,6 +48,7 @@ export interface XChatInboxExtract {
   status: 'ok' | 'locked' | 'needs_login' | 'empty';
   items: XChatInboxItem[];
   rawLines: string[];
+  diag?: XChatDiag;
 }
 
 // 页内脚本:读单个 XChat 会话。返回 JSON 字符串(与下方 parse 对应)。
@@ -73,9 +89,14 @@ export const XCHAT_CONVERSATION_SCRIPT = `(() => {
   const rawLines = ((region && region.innerText) || '')
     .split('\\n').map((s) => s.trim()).filter(Boolean).slice(0, 200);
 
+  // 诊断:抓真实 DOM 结构,供离线收敛选择器(解析不理想时落盘)。
+  const testids = Array.from(new Set(q('[data-testid]').map((el) => el.getAttribute('data-testid')).filter(Boolean))).slice(0, 120);
+  const regionHtml = ((region && region.outerHTML) || '').slice(0, 40000);
+
   return JSON.stringify({
     locked, needsLogin, messages, rawLines,
     title: document.title, url: location.href,
+    diag: { testids, regionHtml },
   });
 })()`;
 
@@ -116,7 +137,10 @@ export const XCHAT_INBOX_SCRIPT = `(() => {
   const rawLines = ((region && region.innerText) || '')
     .split('\\n').map((s) => s.trim()).filter(Boolean).slice(0, 200);
 
-  return JSON.stringify({ locked, needsLogin, items, rawLines });
+  const testids = Array.from(new Set(q('[data-testid]').map((el) => el.getAttribute('data-testid')).filter(Boolean))).slice(0, 120);
+  const regionHtml = ((region && region.outerHTML) || '').slice(0, 40000);
+
+  return JSON.stringify({ locked, needsLogin, items, rawLines, diag: { testids, regionHtml } });
 })()`;
 
 function classify(raw: { locked?: boolean; needsLogin?: boolean }, hasContent: boolean):
@@ -151,6 +175,7 @@ export function parseXChatConversation(rawJson: unknown): XChatConversationExtra
     rawLines,
     title: typeof parsed.title === 'string' ? parsed.title : '',
     url: typeof parsed.url === 'string' ? parsed.url : '',
+    diag: parseDiag(parsed.diag),
   };
 }
 
@@ -178,5 +203,6 @@ export function parseXChatInbox(rawJson: unknown): XChatInboxExtract | null {
     status: classify(parsed, items.length > 0),
     items,
     rawLines,
+    diag: parseDiag(parsed.diag),
   };
 }
