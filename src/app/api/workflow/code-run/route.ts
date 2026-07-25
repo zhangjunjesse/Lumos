@@ -5,8 +5,8 @@ import path from 'path';
 import { mkdirSync } from 'fs';
 import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
+import { normalizeScriptResult, runInlineScript } from '@/lib/workflow/code-sandbox';
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
-import type { StepResult } from '@/lib/workflow/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -85,14 +85,11 @@ export async function POST(request: NextRequest) {
     const startMs = Date.now();
 
     try {
-      const fn = new Function('ctx', 'fetch', 'console', `return (async () => { ${input.script} })()`) as
-        (ctx: CodeHandlerContext, fetch: typeof globalThis.fetch, console: typeof captureConsole) => Promise<StepResult>;
-      const result = await fn(ctx, globalThis.fetch, captureConsole);
+      // 与生产 code 节点共用同一份注入清单(含 fs/path);曾各自 new Function 导致漂移(#46)
+      const result = await runInlineScript(input.script, ctx, captureConsole);
       const durationMs = Date.now() - startMs;
 
-      const normalized: StepResult = (result && typeof result === 'object' && typeof result.success === 'boolean')
-        ? result
-        : { success: true, output: { summary: String(result ?? '') } };
+      const normalized = normalizeScriptResult(result);
 
       return NextResponse.json({
         success: normalized.success,

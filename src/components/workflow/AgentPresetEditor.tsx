@@ -31,9 +31,10 @@ function defaultForm(initial?: AgentPresetDirectoryItem | null): MemberFormData 
     preferredModel: initial?.preferredModel ?? '', providerId: initial?.providerId ?? '',
     departmentId: initial?.departmentId ?? '',
     // 团队会话工具权限:读研缺省开,产出/执行必须显式授予(团队会话绕过权限弹窗,这就是闸门)
+    // 缺省全开,与 DEFAULT_TOOL_PERMISSIONS 一致(#46:默认关 exec 让团队干到最后一步才失败)
     permRead: initial?.toolPermissions?.read ?? true,
-    permWrite: initial?.toolPermissions?.write ?? false,
-    permExec: initial?.toolPermissions?.exec ?? false,
+    permWrite: initial?.toolPermissions?.write ?? true,
+    permExec: initial?.toolPermissions?.exec ?? true,
   };
 }
 

@@ -9,6 +9,7 @@ import type {
   CodeHandlerContext,
 } from './code-handler-types';
 import { getCodeHandler } from './code-handler-registry';
+import { normalizeScriptResult, runInlineScript } from './code-sandbox';
 import { createBrowserBridgeApi, type BrowserBridgeDebugLogger } from './code-browser-bridge';
 
 type DebugLogLevel = 'info' | 'warn' | 'error';
@@ -561,15 +562,9 @@ async function executeInlineScript(
   ctx: CodeHandlerContext,
   debugLogger: CodeExecutionDebugLogger,
 ): Promise<StepResult> {
-  const nodeFs = await import('fs');
-  const nodePath = await import('path');
-  const fn = new Function('ctx', 'fetch', 'console', 'fs', 'path', `return (async () => { ${script} })()`) as
-    (ctx: CodeHandlerContext, fetch: typeof globalThis.fetch, console: Console, fs: typeof import('fs'), path: typeof import('path')) => Promise<StepResult>;
-  const result = await fn(ctx, globalThis.fetch, createInlineScriptConsole(debugLogger), nodeFs, nodePath);
-  if (!result || typeof result !== 'object' || typeof result.success !== 'boolean') {
-    return { success: true, output: { summary: String(result ?? '') } };
-  }
-  return result;
+  // 注入清单在 code-sandbox 里统一维护,调试路径共用同一份(#46)
+  const result = await runInlineScript(script, ctx, createInlineScriptConsole(debugLogger));
+  return normalizeScriptResult(result);
 }
 
 function attachDebugLogPath(result: StepResult, debugLogPath: string | null): StepResult {

@@ -183,6 +183,7 @@ Agent 节点可以在 \`input.code\` 里添加固定代码，让节点优先执�
 - \`fetch\` — HTTP 请求
 - \`console\` — 日志（自动捕获到调试日志）
 - \`fs\` / \`path\` — Node 标准模块,写文件时务必拼 \`ctx.outputDir\`：\`path.join(ctx.outputDir, '子目录', '文件名')\`
+- **没有 \`require\`,也没有 \`child_process\`** — code 节点跑不了本地命令/python。需要执行命令时,不要在 code 里想办法,改用 agent 步骤(agent 默认就有 Bash 工具);团队节点的成员则需在「成员」设置里打开「执行命令」权限
 
 **引用上游节点输出：** 和普通 agent 节点一样，在 \`input.context\` 中用 \`"steps.<id>.output.xxx"\` 引用，脚本中通过 \`ctx.upstreamOutputs\` 访问。
 

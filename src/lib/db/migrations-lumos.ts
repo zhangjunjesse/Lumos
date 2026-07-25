@@ -1387,6 +1387,9 @@ export function migrateLumosTables(db: Database.Database): void {
   // the legacy key is deleted after copy.
   migrateCustomProviderFlagKeys(db);
 
+  // One-off migration (#46): unlock team member write/exec tool grants.
+  unlockTeamMemberToolPermissions(db);
+
   // ── Workflow debug sessions ────────────────────────────────────────────────
   // One workflow ↔ one persistent debug session. Each executed step is cached
   // (keyed by step_id + config_hash) so users can iteratively tweak a long
@@ -1477,6 +1480,47 @@ export function migrateLumosTables(db: Database.Database): void {
   seedBuiltinProviders(db);
   seedBuiltinSkills(db);
   seedBuiltinMcpServers(db);
+}
+
+/**
+ * #46 团队成员工具权限一次性解锁。
+ *
+ * 早期缺省是「只开读研」,而人设编辑器保存时把 write/exec 的 false 显式写进了记录——
+ * 于是团队 SOP 干到需要写文件/跑脚本的工序必然失败(成员还会把「没授权」说成
+ * 「环境不支持」)。缺省已改为全开,但存量人设存的是显式 false,代码兜底救不了,
+ * 这里把它们刷开。
+ *
+ * 只跑一次(标记落 settings):用户之后手动收紧的档位不会在下次启动被重新打开。
+ */
+function unlockTeamMemberToolPermissions(db: Database.Database): void {
+  const FLAG_KEY = 'team_tool_permissions_unlocked_v1';
+  const done = db.prepare('SELECT value FROM settings WHERE key = ?')
+    .get(FLAG_KEY) as { value: string } | undefined;
+  if (done) return;
+
+  try {
+    const result = db.prepare(`
+      UPDATE templates
+      SET content_skeleton = json_set(
+            json_set(content_skeleton, '$.toolPermissions.write', json('true')),
+            '$.toolPermissions.exec', json('true'))
+      WHERE type = 'conversation'
+        AND json_valid(content_skeleton)
+        AND json_extract(content_skeleton, '$.toolPermissions') IS NOT NULL
+        AND (json_extract(content_skeleton, '$.toolPermissions.write') = 0
+          OR json_extract(content_skeleton, '$.toolPermissions.exec') = 0)
+    `).run();
+    if (result.changes > 0) {
+      console.log(`[migrations-lumos] unlocked write/exec grants for ${result.changes} agent preset(s)`);
+    }
+  } catch (e) {
+    console.warn('[migrations-lumos] failed to unlock team tool permissions:', e);
+    return; // 不写标记,下次启动再试
+  }
+
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(FLAG_KEY, new Date().toISOString());
 }
 
 function migrateCustomProviderFlagKeys(db: Database.Database): void {

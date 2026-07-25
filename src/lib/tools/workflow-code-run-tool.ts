@@ -5,8 +5,12 @@ import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
+import {
+  CODE_SANDBOX_CAPABILITY_HINT,
+  normalizeScriptResult,
+  runInlineScript,
+} from '@/lib/workflow/code-sandbox';
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
-import type { StepResult } from '@/lib/workflow/types';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const MAX_EXECUTION_MS = 60_000;
@@ -34,7 +38,8 @@ export function createWorkflowCodeRunTool() {
     'run_workflow_code',
     'Execute a JavaScript code snippet in the workflow code runtime. '
     + 'Use this to test, debug, or verify workflow step code. '
-    + 'The script runs with the same ctx.browser, fetch, and console as production. '
+    + CODE_SANDBOX_CAPABILITY_HINT
+    + ' 注意 ctx.outputDir 在调试时指向临时目录(非步骤产出目录),ctx.workingDirectory 为空。'
     + 'Returns execution result, console output, and duration.',
     inputSchema,
     async (args): Promise<CallToolResult> => {
@@ -84,14 +89,11 @@ export function createWorkflowCodeRunTool() {
       const startMs = Date.now();
 
       try {
-        const fn = new Function('ctx', 'fetch', 'console', `return (async () => { ${args.script} })()`) as
-          (ctx: CodeHandlerContext, fetch: typeof globalThis.fetch, console: typeof captureConsole) => Promise<StepResult>;
-        const result = await fn(ctx, globalThis.fetch, captureConsole);
+        // 与生产 code 节点共用同一份注入清单(含 fs/path);曾各自 new Function 导致漂移(#46)
+        const result = await runInlineScript(args.script, ctx, captureConsole);
         const durationMs = Date.now() - startMs;
 
-        const normalized: StepResult = (result && typeof result === 'object' && typeof result.success === 'boolean')
-          ? result
-          : { success: true, output: { summary: String(result ?? '') } };
+        const normalized = normalizeScriptResult(result);
 
         return {
           content: [{
