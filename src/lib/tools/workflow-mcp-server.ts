@@ -12,6 +12,7 @@ import {
   createCreateWorkflowDepartmentTool,
   createUpdateWorkflowDepartmentTool,
 } from './workflow-departments-tool';
+import { createListWorkflowTeamsTool } from './workflow-teams-tool';
 
 export const WORKFLOW_MCP_SERVER_NAME = 'lumos-workflow';
 
@@ -28,6 +29,7 @@ export function createWorkflowMcpServer() {
       createListWorkflowDepartmentsTool(),
       createCreateWorkflowDepartmentTool(),
       createUpdateWorkflowDepartmentTool(),
+      createListWorkflowTeamsTool(),
     ],
   });
 }

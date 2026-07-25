@@ -4,6 +4,7 @@ import { getDefaultProvider, getProvider } from '@/lib/db';
 import { getSetting } from '@/lib/db/sessions';
 import { generateTextFromProvider, type ChatMessage } from '@/lib/text-generator';
 import { listAgentPresets } from '@/lib/db/agent-presets';
+import { buildTeamListBlock } from '@/lib/team/prompt-block';
 import { WORKFLOW_REFINE_PROMPT, WORKFLOW_STABILITY_RULES } from '@/lib/workflow/default-prompts';
 import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
 import {
@@ -65,7 +66,12 @@ export async function POST(request: NextRequest) {
     }
 
     const customPrompt = getSetting('workflow_builder_system_prompt') || '';
-    const systemPrompt = (customPrompt || WORKFLOW_REFINE_PROMPT) + '\n\n' + WORKFLOW_STABILITY_RULES + buildAgentList();
+    // 团队名单必须一起拼:提示词里「AVAILABLE TEAMS 为空时不要使用 team 节点」是硬规则,
+    // 漏拼会让 AI 以为没有团队,把 team 节点整个关掉(用户症状:改工作流时看不到团队)。
+    const systemPrompt = (customPrompt || WORKFLOW_REFINE_PROMPT)
+      + '\n\n' + WORKFLOW_STABILITY_RULES
+      + buildAgentList()
+      + buildTeamListBlock();
 
     // Build multi-turn messages
     const messages: ChatMessage[] = [];

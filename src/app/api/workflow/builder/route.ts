@@ -7,7 +7,7 @@ import { generateWorkflowFromDsl } from '@/lib/workflow/compiler';
 import { formatIssuesForLlm } from '@/lib/workflow/validation-llm';
 import type { AnyWorkflowDSL } from '@/lib/workflow/types';
 import { listAgentPresets, type AgentPresetDirectoryItem } from '@/lib/db/agent-presets';
-import { listTeams } from '@/lib/team/store';
+import { buildTeamListBlock } from '@/lib/team/prompt-block';
 import {
   buildRepairTurn,
   hasInsufficientAgentsSignal,
@@ -164,7 +164,8 @@ approval: 人工审批门（需要 approvers 配置）
 - 控制流节点（if-else / for-each / while / parallel）**必须有出边**，不能做尾节点
 - agent 节点只能用【可用 Agent】里的 preset id
 - 优先线性结构，只有用户明确描述分支/循环时才使用控制流
-- Agent 不足时返回: { "insufficient_agents": true, "suggestion": "<说明>" }
+- **返回 insufficient_agents 之前**：先看【AVAILABLE TEAMS】。用户要的是多角色配合/有质量把关的活（调研+写稿+审核这类），或明确说了“交给团队”，就用 team 节点，不要因为没有匹配的单个 Agent 就放弃
+- 单个 Agent 和团队都凑不出来时才返回: { "insufficient_agents": true, "suggestion": "<说明>" }
 - 只输出合法 JSON，不要 markdown 标记或解释文字`;
 
 function buildAgentListBlock(agents: AgentPresetDirectoryItem[]): string {
@@ -175,15 +176,6 @@ function buildAgentListBlock(agents: AgentPresetDirectoryItem[]): string {
     `- id: "${a.id}"  name: "${a.name}"  description: "${a.description || ''}"`,
   );
   return `\n## AVAILABLE AGENTS\n${lines.join('\n')}`;
-}
-
-function buildTeamListBlock(): string {
-  const teams = listTeams();
-  if (teams.length === 0) return '\n## AVAILABLE TEAMS\n(none — do not use team nodes)';
-  const lines = teams.map(t =>
-    `- id: "${t.id}"  name: "${t.name}"  description: "${t.description || ''}"  members: ${t.memberRefs.length}`,
-  );
-  return `\n## AVAILABLE TEAMS\n${lines.join('\n')}`;
 }
 
 function validateAgentPresets(dsl: unknown, validIds: Set<string>): string[] {
