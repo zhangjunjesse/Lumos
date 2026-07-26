@@ -105,8 +105,15 @@ jobs:
           # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
           # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
+          # 两级退化,顺序有讲究:
+          # 1) 同依赖版本、最近一次 —— 命中率最高、最贴近当前代码
+          # 2) 任何一次 nextjs 缓存 —— 因为**发版流程自己会改 package-lock.json**
+          #    (版本号 bump 写进 lock),第一级前缀每次发版都会变,只留第一级等于没有缓存。
+          #    第二级过去之所以抓到 0MB 垃圾,是配额爆了在驱逐;配额清理 + 去掉 npm 缓存后
+          #    它能稳定拿到最近一次的完整 webpack 缓存。
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
 
       - name: Exclude workspace from Windows Defender
         shell: pwsh
@@ -223,8 +230,15 @@ jobs:
           # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
           # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
+          # 两级退化,顺序有讲究:
+          # 1) 同依赖版本、最近一次 —— 命中率最高、最贴近当前代码
+          # 2) 任何一次 nextjs 缓存 —— 因为**发版流程自己会改 package-lock.json**
+          #    (版本号 bump 写进 lock),第一级前缀每次发版都会变,只留第一级等于没有缓存。
+          #    第二级过去之所以抓到 0MB 垃圾,是配额爆了在驱逐;配额清理 + 去掉 npm 缓存后
+          #    它能稳定拿到最近一次的完整 webpack 缓存。
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
 
       - name: Install dependencies
         run: npm ci
