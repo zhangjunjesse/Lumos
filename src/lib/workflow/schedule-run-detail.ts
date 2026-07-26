@@ -1,4 +1,3 @@
-import os from 'os';
 import path from 'path';
 import {
   getRunHistory,
@@ -15,6 +14,7 @@ import { collectStepInputSnapshots, type StepInputSnapshotFile } from '@/lib/wor
 import { collectRunOutputFiles, type RunOutputFile } from '@/lib/workflow/run-output-collector';
 import { collectRunLiveTraces, type StepTraceEvent } from '@/lib/workflow/step-trace-stream';
 import type { WorkflowDSLV3 } from '@/lib/workflow/types';
+import { getWorkflowAgentRootDir } from './run-workspace-paths';
 
 export interface ScheduleRunDetailMessage {
   id: string;
@@ -48,13 +48,6 @@ export interface ScheduleRunDetailPayload {
   stepInputSnapshots: Record<string, StepInputSnapshotFile>;
   /** Per-step live trace events (assistant text / tool_use / tool_result), streamed to disk as they arrive. */
   stepLiveTraces: Record<string, StepTraceEvent[]>;
-}
-
-function getWorkflowAgentRootDir(): string {
-  const baseDir = process.env.LUMOS_DATA_DIR
-    || process.env.CLAUDE_GUI_DATA_DIR
-    || path.join(os.homedir(), '.lumos');
-  return path.join(baseDir, 'workflow-agent-runs');
 }
 
 function buildStepAgentNameMap(messages: Array<{ role: string; content: string }>): Map<string, string> {

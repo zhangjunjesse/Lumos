@@ -10,6 +10,8 @@ import { getActiveUserId } from '@/lib/auth/user-service';
 import { getTeam } from '@/lib/team/store';
 import { addMessage } from '@/lib/db/sessions';
 import { formatTeamStepOutputMarkdown } from '../team-step-output';
+import { resolveStageWorkspace } from '../run-workspace-paths';
+import { appendStepTraceFromSdkEvent } from '../step-trace-stream';
 import type { StepResult, TeamStepInput } from '../types';
 
 /** 与 agent 步骤同一条守卫:`workflow:` 前缀是伪会话 id,写不进 messages 表。 */
@@ -29,6 +31,18 @@ function resolveTimeoutMs(input: TeamStepInput): number | undefined {
   return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : undefined;
 }
 
+/**
+ * 实时 trace 的落盘目录。详情页运行中读的是 <run>/stages/<stepId>/ 下的 jsonl,
+ * 目录名直接当 stepId —— 路径算法必须和 agent 完全一致,所以走 run-workspace-paths 真源。
+ * 没有 workflowRunId 时(独立调用/测试)返回 null,只是没有实时流,不影响执行。
+ */
+function resolveTraceWorkspace(input: TeamStepInput): string | null {
+  const runId = input.__runtime?.workflowRunId;
+  const stepId = input.__runtime?.stepId;
+  if (!runId || !stepId) return null;
+  return resolveStageWorkspace(runId, stepId, 'team-step');
+}
+
 export async function teamStep(input: TeamStepInput): Promise<StepResult> {
   if (!input.teamId?.trim()) return { success: false, output: null, error: 'Team step teamId is required' };
   if (!input.task?.trim()) return { success: false, output: null, error: 'Team step task is required' };
@@ -38,6 +52,7 @@ export async function teamStep(input: TeamStepInput): Promise<StepResult> {
   const persistSessionId = resolvePersistSessionId(input);
   const teamName = getTeam(teamId)?.name || '团队';
   const timeoutMs = resolveTimeoutMs(input);
+  const traceWorkspace = resolveTraceWorkspace(input);
   const startedAt = Date.now();
 
   try {
@@ -46,6 +61,10 @@ export async function teamStep(input: TeamStepInput): Promise<StepResult> {
       task: input.task,
       lumosUserId: getActiveUserId() || undefined,
       ...(timeoutMs ? { timeoutMs } : {}),
+      // 实时落盘:详情页运行中的「实时输出」靠它,否则那张卡永远停在「等待运行日志写入」
+      ...(traceWorkspace
+        ? { onSdkMessage: (m: unknown) => appendStepTraceFromSdkEvent(traceWorkspace, m) }
+        : {}),
     });
 
     persistStepOutput(persistSessionId, {

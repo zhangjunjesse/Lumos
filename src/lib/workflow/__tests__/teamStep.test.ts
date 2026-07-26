@@ -1,5 +1,7 @@
 // teamStep 落库回归:过去从不写 session 消息,团队节点在详情页因此是黑箱。
 
+import path from 'path';
+
 const addMessageCalls: Array<{ sessionId: string; role: string; content: string }> = [];
 jest.mock('@/lib/db/sessions', () => ({
   addMessage: (sessionId: string, role: string, content: string) => {
@@ -9,6 +11,13 @@ jest.mock('@/lib/db/sessions', () => ({
 
 const runTeamTaskMock = jest.fn();
 jest.mock('@/lib/team/run', () => ({ runTeamTask: (...a: unknown[]) => runTeamTaskMock(...a) }));
+
+const traceAppends: Array<{ workspace: string; message: unknown }> = [];
+jest.mock('../step-trace-stream', () => ({
+  appendStepTraceFromSdkEvent: (workspace: string, message: unknown) => {
+    traceAppends.push({ workspace, message });
+  },
+}));
 jest.mock('@/lib/team/store', () => ({ getTeam: () => ({ id: 't-1', name: '内容小组' }) }));
 jest.mock('@/lib/auth/user-service', () => ({ getActiveUserId: () => 'u-1' }));
 
@@ -24,6 +33,7 @@ const runtime = { workflowRunId: 'r-1', stepId: 'print-team', stepType: 'team' a
 
 beforeEach(() => {
   addMessageCalls.length = 0;
+  traceAppends.length = 0;
   runTeamTaskMock.mockReset();
   runTeamTaskMock.mockResolvedValue({
     text: '台账已归档',
@@ -59,6 +69,29 @@ describe('teamStep 超时配置', () => {
       await teamStep({ teamId: 't-1', task: '归档', __runtime: { ...runtime, timeoutMs: bad } });
       expect(runTeamTaskMock.mock.calls[0][0]).not.toHaveProperty('timeoutMs');
     }
+  });
+
+  it('每条 SDK 消息实时落盘到 stages/<stepId>,详情页运行中才看得到进度', async () => {
+    runTeamTaskMock.mockImplementation(async (args: { onSdkMessage?: (m: unknown) => void }) => {
+      args.onSdkMessage?.({ type: 'assistant', message: { content: [{ type: 'text', text: '开工' }] } });
+      args.onSdkMessage?.({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Task' }] } });
+      return {
+        text: 'ok', dispatches: 1, dispatchedTo: ['写手'], subtype: 'success',
+        trace: { leader: [], members: [] }, timedOut: false, timeoutMs: 1_800_000, turnsExhausted: false,
+      };
+    });
+
+    await teamStep({ teamId: 't-1', task: '归档', __runtime: runtime });
+
+    expect(traceAppends).toHaveLength(2);
+    // 目录必须落在 stages/<stepId> 下 —— 详情页按目录名当 stepId 去找
+    expect(traceAppends[0].workspace).toContain(path.join('stages', 'print-team'));
+  });
+
+  it('没有 workflowRunId 时不落盘,但不影响执行(独立调用/测试场景)', async () => {
+    await teamStep({ teamId: 't-1', task: '归档', __runtime: { ...runtime, workflowRunId: '' } });
+    expect(traceAppends).toHaveLength(0);
+    expect(runTeamTaskMock.mock.calls[0][0]).not.toHaveProperty('onSdkMessage');
   });
 
   it('超时但有产出时:步骤算成功,执行记录里明确提示产出可能不全', async () => {

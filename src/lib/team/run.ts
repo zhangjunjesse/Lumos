@@ -83,6 +83,12 @@ export async function runTeamTask(input: {
   lumosUserId?: string;
   timeoutMs?: number;
   onEvent?: (ev: TeamTaskEvent) => void;
+  /**
+   * 原始 SDK 消息流回调,来一条给一条。工作流 team 步骤用它把 trace 实时落盘,
+   * 详情页运行中才有东西可看 —— 否则那张卡永远停在「等待运行日志写入」。
+   * 与 onEvent 分开:onEvent 是语义事件(派单/完成),这个是原始流。
+   */
+  onSdkMessage?: (message: unknown) => void;
 }): Promise<TeamTaskResult> {
   const team = getTeam(input.teamId);
   if (!team) throw new Error('团队不存在或已被删除');
@@ -152,6 +158,8 @@ export async function runTeamTask(input: {
         message?: { content?: Array<{ type?: string; text?: string; name?: string; input?: { subagent_type?: string } }> };
       };
       traceCollector.onMessage(message);
+      // 实时落盘要即时,不能等任务结束(团队任务动辄几十分钟)
+      try { input.onSdkMessage?.(message); } catch { /* 落盘失败不影响执行 */ }
       if (msg.type === 'assistant' && !msg.parent_tool_use_id && Array.isArray(msg.message?.content)) {
         for (const block of msg.message.content) {
           if (block.type === 'text' && block.text) accumulated += block.text;

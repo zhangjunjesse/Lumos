@@ -36,6 +36,7 @@ import { getAgentPreset, type AgentPresetDirectoryItem } from '@/lib/db/agent-pr
 import { generateObjectWithClaudeSdk } from '@/lib/claude/structured-output';
 import { resolveProviderModelForRequest } from '@/lib/model-metadata';
 import { z } from 'zod';
+import { getWorkflowAgentRootDir, sanitizePathSegment } from './run-workspace-paths';
 
 type RuntimeCapability = AgentExecutionBindingV1['allowedTools'][number];
 
@@ -301,15 +302,6 @@ function buildWorkflowAgentDependencies(context: AgentStepInput['context']): Sta
   }));
 }
 
-function sanitizePathSegment(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-  return normalized || fallback;
-}
-
 async function writeStepSummaryToSharedDir(
   runId: string,
   stepId: string,
@@ -347,13 +339,6 @@ function extractStepResultSummary(result: StepResult): string {
     }
   }
   return result.error?.trim() || '';
-}
-
-function getWorkflowAgentRootDir(): string {
-  const baseDir = process.env.LUMOS_DATA_DIR
-    || process.env.CLAUDE_GUI_DATA_DIR
-    || path.join(os.homedir(), '.lumos');
-  return path.join(baseDir, 'workflow-agent-runs');
 }
 
 function resolveWorkflowAgentRole(role: string | undefined): WorkflowAgentRole {

@@ -11,6 +11,7 @@ import type {
 import { getCodeHandler } from './code-handler-registry';
 import { normalizeScriptResult, runInlineScript } from './code-sandbox';
 import { createBrowserBridgeApi, type BrowserBridgeDebugLogger } from './code-browser-bridge';
+import { getWorkflowAgentRootDir, sanitizePathSegment } from './run-workspace-paths';
 
 type DebugLogLevel = 'info' | 'warn' | 'error';
 type DebugLogSource = 'code' | 'browser' | 'console';
@@ -29,22 +30,6 @@ interface FileStateSnapshot {
   name: string;
   sizeBytes: number;
   mtimeMs: number;
-}
-
-function sanitizePathSegment(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-  return normalized || fallback;
-}
-
-function getWorkflowAgentRootDir(): string {
-  const baseDir = process.env.LUMOS_DATA_DIR
-    || process.env.CLAUDE_GUI_DATA_DIR
-    || path.join(os.homedir(), '.lumos');
-  return path.join(baseDir, 'workflow-agent-runs');
 }
 
 function resolveArtifactOutputDir(runtimeContext: WorkflowStepRuntimeContext): string {

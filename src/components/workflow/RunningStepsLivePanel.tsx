@@ -48,7 +48,9 @@ export function RunningStepsLivePanel({
           ? '当前是等待步骤，正在等待下一次重试或后续步骤触发...'
           : stepNode?.type === 'agent'
             ? 'agent 会话正在启动，等待第一条输出...'
-            : `${stepLabel} 正在执行，等待运行日志写入...`;
+            : stepNode?.type === 'team'
+              ? '团队会话正在启动，等待队长第一次派单...'
+              : `${stepLabel} 正在执行，等待运行日志写入...`;
         return (
           <div key={stepId} className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
             <div className="flex items-center gap-2 mb-2">

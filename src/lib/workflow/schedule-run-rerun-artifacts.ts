@@ -1,6 +1,6 @@
 import { cp, mkdir, stat } from 'fs/promises';
-import os from 'os';
 import path from 'path';
+import { getWorkflowAgentRootDir, sanitizePathSegment } from './run-workspace-paths';
 
 export interface CopyReusedStepOutputArtifactsResult {
   copiedStepIds: string[];
@@ -43,22 +43,6 @@ export async function copyReusedStepOutputArtifacts(input: {
 
 function getWorkflowRunWorkspaceDir(workflowRunId: string): string {
   return path.join(getWorkflowAgentRootDir(), sanitizePathSegment(workflowRunId, 'workflow-run'));
-}
-
-function getWorkflowAgentRootDir(): string {
-  const baseDir = process.env.LUMOS_DATA_DIR
-    || process.env.CLAUDE_GUI_DATA_DIR
-    || path.join(os.homedir(), '.lumos');
-  return path.join(baseDir, 'workflow-agent-runs');
-}
-
-function sanitizePathSegment(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-  return normalized || fallback;
 }
 
 async function dirExists(targetPath: string): Promise<boolean> {
