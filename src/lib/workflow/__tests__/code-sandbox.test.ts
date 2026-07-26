@@ -15,13 +15,16 @@ const ctx = { params: { n: 7 }, upstreamOutputs: {} } as unknown as CodeHandlerC
 const noopConsole = { log() {}, warn() {}, error() {}, info() {}, debug() {} };
 
 describe('CODE_SANDBOX_GLOBALS', () => {
-  it('注入清单锁定为 ctx/fetch/console/fs/path', () => {
-    expect([...CODE_SANDBOX_GLOBALS]).toEqual(['ctx', 'fetch', 'console', 'fs', 'path']);
+  it('注入清单锁定(顺序即传参顺序)', () => {
+    expect([...CODE_SANDBOX_GLOBALS]).toEqual([
+      'ctx', 'fetch', 'console', 'fs', 'path', 'os', 'child_process',
+    ]);
   });
 
-  it('能力说明点明没有 child_process,并指向 agent 的 Bash', () => {
+  it('能力说明给出跑命令的写法,并点明没有 require', () => {
     expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('child_process');
-    expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('Bash');
+    expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('execFileSync');
+    expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('require');
   });
 });
 
@@ -52,13 +55,35 @@ describe('runInlineScript', () => {
     expect(out).toBe('done');
   });
 
-  it('确认没有 child_process / require —— 别让文档再骗人', async () => {
+  it('child_process 可用,并且真能跑出本地命令的输出(#47 的核心诉求)', async () => {
     const out = await runInlineScript(
-      'return { hasRequire: typeof require !== "undefined", hasCp: typeof child_process !== "undefined" };',
+      'return child_process.execFileSync(process.execPath, ["-e", "process.stdout.write(\'ran-ok\')"], { encoding: "utf8" });',
       ctx,
       noopConsole,
-    ) as { hasRequire: boolean; hasCp: boolean };
-    expect(out.hasCp).toBe(false);
+    );
+    expect(out).toBe('ran-ok');
+  });
+
+  it('os 可用', async () => {
+    const out = await runInlineScript('return typeof os.tmpdir();', ctx, noopConsole);
+    expect(out).toBe('string');
+  });
+
+  it('require 仍然没有(webpack 所致)——文档必须照实说,别让 AI 写 require', async () => {
+    const out = await runInlineScript(
+      'return typeof require === "undefined";',
+      ctx,
+      noopConsole,
+    );
+    expect(out).toBe(true);
+  });
+
+  it('命令执行失败时异常向外抛,不静默变成成功', async () => {
+    await expect(runInlineScript(
+      'return child_process.execFileSync(process.execPath, ["-e", "process.exit(3)"], { encoding: "utf8" });',
+      ctx,
+      noopConsole,
+    )).rejects.toThrow();
   });
 
   it('脚本抛错向外传播,不被吞掉', async () => {

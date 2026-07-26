@@ -215,15 +215,21 @@ Agent 可归属到部门,方便 UI 分组。你可以自己管理部门:
 - ctx.browser — 浏览器操作 API（连接 Electron 内置浏览器，共享登录态和 cookie）
 - fetch — 全局 fetch
 - console — 日志输出（log/warn/error 会被捕获并返回在结果的 logs 数组中）
-- fs / path — Node 标准模块（与生产 code 节点完全一致）
+- fs / path / os — Node 标准模块（与生产 code 节点完全一致）
+- child_process — **可以执行本地命令 / python 脚本**，例：
+  \`child_process.execFileSync('python', [scriptPath, '--arg', v], { encoding: 'utf8' })\`
 - ctx.outputDir — 产出目录。**调试时指向临时目录**，不是真实步骤产出目录；生产才是 stage 产出目录
 - ctx.saveArtifact(source, name?) — 写产出，name 只能是相对路径
 - ctx.workingDirectory — **调试时为空**，只有生产有
 
-**跑不了的东西（别浪费轮次试）**：没有 \`require\`，没有 \`child_process\`。code 节点执行不了本地命令/python。
-用户要"跑 python 脚本""执行命令"时，正确答案是改用 **agent 步骤**（agent 默认带 Bash 工具），
-或者用 run_workflow_agent_step 工具验证；team 节点的成员还需要在「成员」设置里打开「执行命令」权限。
-**不要**回答"环境不支持"就停——要指明上面这条正确路径。
+**没有 \`require\`** —— 上面这些模块已是全局变量，直接用；写 \`require('child_process')\` 会报
+"require is not defined"（这是 webpack 打包导致的，不是能力缺失）。
+
+用户要"跑 python 脚本""执行本地命令"时，有两条路，都能用：
+1. **code 节点**用 \`child_process\`（确定性、不烧 token，脚本固定时首选）
+2. **agent 步骤**用 Bash 工具（需要模型临场判断时用）；team 节点的成员同样有 Bash，
+   前提是该成员的「执行命令」权限没被手动关掉
+**不要**回答"环境不支持 / 沙箱没有这个能力"——那是旧版行为，现在两条路都通。
 
 ### ctx.browser 完整 API
 

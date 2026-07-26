@@ -1,6 +1,7 @@
 // 一次性团队任务执行(平台通用,工作流团队步骤用):队长按 SOP 派单成员完成任务,
 // 返回最终交差文本 + 执行事件。与聊天团队会话同一套成员解析/工具授权/出图护栏,
-// 差别只在:无会话状态(不 resume)、任务一次给全、交差即结束。
+// 差别:无会话状态(不 resume)、任务一次给全、交差即结束;MCP 面只有出图(聊天团队
+// 继承会话已起好的 office/浏览器/知识库等),内置工具(Read/Write/Edit/Bash)则一致全开。
 // 装配纪律同 docs/chat-team-design.md §5.2(bypass+声明式工具面,不走控制协议回调)。
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -101,7 +102,11 @@ export async function runTeamTask(input: {
           ? { pathToClaudeCodeExecutable: runtime.pathToClaudeCodeExecutable }
           : {}),
         agents: toAgentDefinitions(members.map((m) => m.spec)),
-        tools: ['Task', 'Read'],
+        // 不设顶层 tools 白名单:那是 SDK 的全局工具集,会连成员一起锁死。
+        // 曾写成 ['Task','Read'],于是成员连 Bash/Write 都没有,SOP 里"跑 python 写台账"
+        // 这类步骤必然失败(#46/#47),而成员的 disallowedTools 档位在白名单面前形同虚设。
+        // 与聊天团队对齐:工具面全开,队长靠 TEAM_HARD_RULES 约束不自己动手,
+        // 成员按各自权限档位用 disallowedTools 收紧。
         mcpServers: { [LUMOS_MCP_SERVER_NAME]: buildTeamImageServerConfig(runToken) },
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,

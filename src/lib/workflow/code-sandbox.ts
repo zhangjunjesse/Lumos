@@ -9,16 +9,19 @@ import type { StepResult } from './types';
 import type { CodeHandlerContext } from './code-handler-types';
 
 /** 沙箱注入的全局名单(顺序即 runInlineScript 传参顺序)。 */
-export const CODE_SANDBOX_GLOBALS = ['ctx', 'fetch', 'console', 'fs', 'path'] as const;
+export const CODE_SANDBOX_GLOBALS = [
+  'ctx', 'fetch', 'console', 'fs', 'path', 'os', 'child_process',
+] as const;
 
 /**
  * 给 LLM 看的能力说明。提示词/工具描述引用这个常量,不要各自手写清单,
  * 否则文档又会和实现漂开。
  */
 export const CODE_SANDBOX_CAPABILITY_HINT =
-  '脚本可用全局:ctx、fetch、console、fs、path(生产与调试完全一致)。'
-  + '没有 require,也没有 child_process —— code 节点跑不了本地命令/python;'
-  + '需要执行命令请改用 agent 步骤的 Bash 工具。';
+  '脚本可用全局:ctx、fetch、console、fs、path、os、child_process(生产与调试完全一致)。'
+  + '执行本地命令/python 用 child_process,例:'
+  + 'child_process.execFileSync("python", [script, "--arg", v], { encoding: "utf8" })。'
+  + '注意没有 require —— 上面这些模块已是全局,直接用,不要写 require("child_process")。';
 
 /** 执行内联脚本(async function body)。返回脚本原始返回值,不做归一化。 */
 export async function runInlineScript(
@@ -26,13 +29,19 @@ export async function runInlineScript(
   ctx: CodeHandlerContext,
   scriptConsole: unknown,
 ): Promise<unknown> {
-  const nodeFs = await import('fs');
-  const nodePath = await import('path');
+  const [nodeFs, nodePath, nodeOs, nodeChildProcess] = await Promise.all([
+    import('fs'),
+    import('path'),
+    import('os'),
+    import('child_process'),
+  ]);
   const fn = new Function(
     ...[...CODE_SANDBOX_GLOBALS],
     `return (async () => { ${script} })()`,
   ) as (...args: unknown[]) => Promise<unknown>;
-  return await fn(ctx, globalThis.fetch, scriptConsole, nodeFs, nodePath);
+  return await fn(
+    ctx, globalThis.fetch, scriptConsole, nodeFs, nodePath, nodeOs, nodeChildProcess,
+  );
 }
 
 /** 脚本返回值归一化成 StepResult:没按约定返回就把返回值当 summary。 */

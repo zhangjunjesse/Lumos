@@ -182,8 +182,9 @@ Agent 节点可以在 \`input.code\` 里添加固定代码，让节点优先执�
 - \`ctx.browser\` — 浏览器操作 API（navigate/snapshot/click/fill/type/press/waitFor/evaluate/screenshot/pages/newPage/selectPage/closePage）
 - \`fetch\` — HTTP 请求
 - \`console\` — 日志（自动捕获到调试日志）
-- \`fs\` / \`path\` — Node 标准模块,写文件时务必拼 \`ctx.outputDir\`：\`path.join(ctx.outputDir, '子目录', '文件名')\`
-- **没有 \`require\`,也没有 \`child_process\`** — code 节点跑不了本地命令/python。需要执行命令时,不要在 code 里想办法,改用 agent 步骤(agent 默认就有 Bash 工具);团队节点的成员则需在「成员」设置里打开「执行命令」权限
+- \`fs\` / \`path\` / \`os\` — Node 标准模块,写文件时务必拼 \`ctx.outputDir\`：\`path.join(ctx.outputDir, '子目录', '文件名')\`
+- \`child_process\` — 执行本地命令/python 脚本。例:\`const out = child_process.execFileSync('python', [script, '--arg', v], { encoding: 'utf8' })\`。长任务用 \`spawnSync\` 并设 \`timeout\`;命令失败会抛异常,要 try/catch 并把 stderr 写进 error
+- **没有 \`require\`** — 上面这些模块已经是全局变量,直接用;写 \`require('child_process')\` 会报 "require is not defined"
 
 **引用上游节点输出：** 和普通 agent 节点一样，在 \`input.context\` 中用 \`"steps.<id>.output.xxx"\` 引用，脚本中通过 \`ctx.upstreamOutputs\` 访问。
 
