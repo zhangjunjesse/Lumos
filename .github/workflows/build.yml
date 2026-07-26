@@ -59,16 +59,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-          cache: npm
+          # 故意不加 cache: npm —— 缓存配额是零和的。GitHub 单仓库上限 10GB,npm 缓存
+          # 三平台各 600-750MB(合计约 4.7GB),换来的只是 npm ci 快 1 分钟;而被它挤爆的
+          # webpack 缓存本可以省 10 分钟以上。实测配额曾到 10.52GB,Next 缓存被驱逐成 0MB,
+          # 于是每次发版 webpack 都从零编译 13 分钟。别再加回来。
 
-      - name: Restore Next.js build cache
-        uses: actions/cache@v4
-        with:
-          path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json', 'package.json', 'next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-
-
+      # 这个 job 只做类型检查,不构建 Next —— 因此不需要 webpack 缓存。
+      # 曾经跑 ci:verify(typecheck + build),但那次 build 是纯重复:standalone 产物是
+      # 平台相关的(里面带当前平台的 .node / .dylib,实测 22 个),没法给 mac/win 复用,
+      # 两个打包 job 各自会再 build 一次。重复的代价是 8 分钟 CI 时间 + 一份 webpack 缓存
+      # 配额(约 1.2GB),而 build 挂了那两个 job 本来也必挂,兜不住任何额外风险。
       - name: Install dependencies
         run: npm ci
 
@@ -77,8 +77,8 @@ jobs:
           rm -rf node_modules/better-sqlite3/build
           npm_config_build_from_source=true npm rebuild better-sqlite3
 
-      - name: Verify source
-        run: npm run ci:verify
+      - name: Typecheck
+        run: npm run typecheck
 
   build-windows:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows' }}
@@ -90,15 +90,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-          cache: npm
+          # 故意不加 cache: npm —— 缓存配额是零和的。GitHub 单仓库上限 10GB,npm 缓存
+          # 三平台各 600-750MB(合计约 4.7GB),换来的只是 npm ci 快 1 分钟;而被它挤爆的
+          # webpack 缓存本可以省 10 分钟以上。实测配额曾到 10.52GB,Next 缓存被驱逐成 0MB,
+          # 于是每次发版 webpack 都从零编译 13 分钟。别再加回来。
 
       - name: Restore Next.js build cache
         uses: actions/cache@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json', 'package.json', 'next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
+          # key 含源码哈希,所以每次发版必然是新 key —— 精确命中本来就不可能,
+          # 真正干活的是 restore-keys 的退化匹配。它必须带 lock 哈希前缀:
+          # 只写 "<os>-nextjs-" 太宽,GitHub 会按前缀取「最近创建的」,配额爆掉正在驱逐时
+          # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
+          # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
 
       - name: Exclude workspace from Windows Defender
         shell: pwsh
@@ -200,15 +208,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-          cache: npm
+          # 故意不加 cache: npm —— 缓存配额是零和的。GitHub 单仓库上限 10GB,npm 缓存
+          # 三平台各 600-750MB(合计约 4.7GB),换来的只是 npm ci 快 1 分钟;而被它挤爆的
+          # webpack 缓存本可以省 10 分钟以上。实测配额曾到 10.52GB,Next 缓存被驱逐成 0MB,
+          # 于是每次发版 webpack 都从零编译 13 分钟。别再加回来。
 
       - name: Restore Next.js build cache
         uses: actions/cache@v4
         with:
           path: .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json', 'package.json', 'next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
+          # key 含源码哈希,所以每次发版必然是新 key —— 精确命中本来就不可能,
+          # 真正干活的是 restore-keys 的退化匹配。它必须带 lock 哈希前缀:
+          # 只写 "<os>-nextjs-" 太宽,GitHub 会按前缀取「最近创建的」,配额爆掉正在驱逐时
+          # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
+          # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
 
       - name: Install dependencies
         run: npm ci
