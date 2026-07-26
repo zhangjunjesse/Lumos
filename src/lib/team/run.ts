@@ -14,6 +14,7 @@ import { toAgentDefinitions } from './agent-defs';
 import { buildTeamImageServerConfig } from './image-server-config';
 import { createTeamImageGuard, releaseTeamImageGuard } from './image-guard';
 import { getTeam } from './store';
+import { createTeamTraceCollector, type TeamTaskTrace } from './task-trace';
 import { buildRosterLines, resolveReadyMembers, TEAM_HARD_RULES, type ReadyMember } from './resolve-members';
 
 const TASK_TIMEOUT_MS = 1_800_000; // 30min:多成员串并混合给足;超时不吞产出,拿已有文本交差
@@ -32,6 +33,8 @@ export interface TeamTaskResult {
   dispatches: number;
   dispatchedTo: string[];
   subtype: string;
+  /** 执行痕迹(队长派单 + 成员明细):给工作流详情页渲染「执行过程」。 */
+  trace: TeamTaskTrace;
 }
 
 function buildTaskLeaderPrompt(teamName: string, sop: string, members: ReadyMember[], task: string): string {
@@ -88,6 +91,8 @@ export async function runTeamTask(input: {
   let dispatches = 0;
   const dispatchedTo = new Set<string>();
   let subtype = 'unknown';
+  // 收全部消息(含成员的):过去只认队长消息,导致详情页里中间工序是黑箱
+  const traceCollector = createTeamTraceCollector();
 
   try {
     const stream = query({
@@ -120,6 +125,7 @@ export async function runTeamTask(input: {
         parent_tool_use_id?: string | null;
         message?: { content?: Array<{ type?: string; text?: string; name?: string; input?: { subagent_type?: string } }> };
       };
+      traceCollector.onMessage(message);
       if (msg.type === 'assistant' && !msg.parent_tool_use_id && Array.isArray(msg.message?.content)) {
         for (const block of msg.message.content) {
           if (block.type === 'text' && block.text) accumulated += block.text;
@@ -147,5 +153,11 @@ export async function runTeamTask(input: {
   if (!text) {
     throw new Error(abortController.signal.aborted ? '团队任务超时且无任何产出' : `团队任务无产出(终态 ${subtype})`);
   }
-  return { text, dispatches, dispatchedTo: [...dispatchedTo], subtype };
+  return {
+    text,
+    dispatches,
+    dispatchedTo: [...dispatchedTo],
+    subtype,
+    trace: traceCollector.build(),
+  };
 }

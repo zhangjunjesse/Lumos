@@ -181,6 +181,15 @@ export async function shutdownWorker() {
   }
 }
 
+/** team 步骤输出带 dispatches 时,在摘要前加一行派单脉络;其他步骤返回空串。 */
+function buildDispatchPrefix(record: Record<string, unknown>): string {
+  const dispatches = record.dispatches;
+  if (typeof dispatches !== 'number') return '';
+  const to = Array.isArray(record.dispatched_to) ? record.dispatched_to.filter(x => typeof x === 'string') : [];
+  const roster = to.length > 0 ? ` → ${to.join('、')}` : '';
+  return `[派单 ${dispatches} 次${roster}]\n\n`;
+}
+
 function summarizeWorkflowStepOutput(output: unknown): string {
   if (typeof output === 'string') {
     return output.trim();
@@ -195,7 +204,10 @@ function summarizeWorkflowStepOutput(output: unknown): string {
   for (const key of ['summary', 'message', 'text', 'content', 'result']) {
     const candidate = record[key];
     if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
+      // team 步骤:摘要里带上派单脉络。否则详情页只看到交付文本,
+      // 「这一步到底有没有真派单」这个关键信息在 UI 上完全消失。
+      const dispatchPrefix = buildDispatchPrefix(record);
+      return `${dispatchPrefix}${candidate.trim()}`;
     }
   }
   try {
