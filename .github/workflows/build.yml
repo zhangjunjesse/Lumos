@@ -299,11 +299,39 @@ jobs:
       - name: Build Electron main process
         run: node scripts/build-electron.mjs
 
+      # dmgbuild 打 DMG 要挂载/卸载磁盘映像,Spotlight 的 mds 一索引就占住设备,
+      # hdiutil detach 报 "couldn't eject diskN - Resource busy",整个 job 挂掉。
+      # runner 是一次性的,关掉索引没有副作用。失败不阻塞(部分镜像不给 mdutil 权限)。
+      - name: Disable Spotlight indexing (avoid hdiutil "Resource busy")
+        continue-on-error: true
+        run: sudo mdutil -a -i off || true
+
       - name: Package for macOS (arm64 + x64 in one electron-builder run)
         # Single invocation produces both DMGs and one combined latest-mac.yml.
+        # 重试一次:这一步的两类失败都是环境抖动而非代码问题 —— hdiutil 设备占用、
+        # 以及往 uploads.github.com 传 600MB DMG 时的 DNS/连接中断(v0.39.11 就栽在后者)。
+        # electron-builder 对已存在的产物会覆盖上传,重跑安全。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --arm64 --x64 --config electron-builder.yml --publish always
+        run: |
+          for attempt in 1 2; do
+            echo "::group::electron-builder attempt $attempt"
+            if npx electron-builder --mac --arm64 --x64 --config electron-builder.yml --publish always; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt $attempt failed"
+            if [ "$attempt" = "2" ]; then
+              echo "::error::electron-builder failed twice on macOS"
+              exit 1
+            fi
+            # 卸掉可能残留的挂载点,否则第二次会撞同一个占用
+            hdiutil info | awk '/\/dev\/disk/ {print $1}' | while read -r dev; do
+              hdiutil detach "$dev" -force || true
+            done
+            sleep 30
+          done
 
       - name: Verify packaged embedding model
         run: |
