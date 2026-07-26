@@ -19,6 +19,16 @@ function resolvePersistSessionId(input: TeamStepInput): string | null {
   return sessionId;
 }
 
+/**
+ * 节点上配置的超时(编译器已写进 __runtime,与 agent 步骤同一个来源)。
+ * 必须传给 runTeamTask —— 曾经漏传,于是团队任务一律用 30 分钟硬编码缺省,
+ * 用户在节点上把超时调到 100 分钟也毫无效果,只会反复看到「超时」。
+ */
+function resolveTimeoutMs(input: TeamStepInput): number | undefined {
+  const ms = input.__runtime?.timeoutMs;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
 export async function teamStep(input: TeamStepInput): Promise<StepResult> {
   if (!input.teamId?.trim()) return { success: false, output: null, error: 'Team step teamId is required' };
   if (!input.task?.trim()) return { success: false, output: null, error: 'Team step task is required' };
@@ -27,6 +37,7 @@ export async function teamStep(input: TeamStepInput): Promise<StepResult> {
   const stepId = input.__runtime?.stepId || 'team';
   const persistSessionId = resolvePersistSessionId(input);
   const teamName = getTeam(teamId)?.name || '团队';
+  const timeoutMs = resolveTimeoutMs(input);
   const startedAt = Date.now();
 
   try {
@@ -34,6 +45,7 @@ export async function teamStep(input: TeamStepInput): Promise<StepResult> {
       teamId,
       task: input.task,
       lumosUserId: getActiveUserId() || undefined,
+      ...(timeoutMs ? { timeoutMs } : {}),
     });
 
     persistStepOutput(persistSessionId, {
@@ -45,6 +57,9 @@ export async function teamStep(input: TeamStepInput): Promise<StepResult> {
       trace: result.trace,
       outcome: 'done',
       durationMs: Date.now() - startedAt,
+      // 超时/轮次耗尽但有产出:步骤算成功,但必须让详情页看得见「这是被掐断的,产出可能不全」
+      ...(result.timedOut ? { timedOutAfterMs: result.timeoutMs } : {}),
+      ...(result.turnsExhausted ? { turnsExhausted: true } : {}),
     });
 
     return {

@@ -34,6 +34,44 @@ beforeEach(() => {
       leader: [{ type: 'assistant', raw: { message: { content: [{ type: 'tool_use', name: 'Task', input: { subagent_type: '写手' } }] } } }],
       members: [{ toolUseId: 'tu-1', member: '写手', events: [{ type: 'assistant', raw: { message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'python x.py' } }] } } }] }],
     },
+    timedOut: false,
+    timeoutMs: 1_800_000,
+  });
+});
+
+describe('teamStep 超时配置', () => {
+  it('把节点上配置的超时传给团队运行时(曾漏传,导致 100 分钟设置被 30 分钟缺省覆盖)', async () => {
+    await teamStep({
+      teamId: 't-1', task: '归档',
+      __runtime: { ...runtime, timeoutMs: 6_000_000 }, // 100 分钟
+    });
+    expect(runTeamTaskMock).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 6_000_000 }));
+  });
+
+  it('节点没配超时时不传,让运行时用自己的缺省', async () => {
+    await teamStep({ teamId: 't-1', task: '归档', __runtime: { ...runtime, timeoutMs: undefined } });
+    expect(runTeamTaskMock.mock.calls[0][0]).not.toHaveProperty('timeoutMs');
+  });
+
+  it('非法超时值(0 / 负数 / NaN)不传下去', async () => {
+    for (const bad of [0, -1, Number.NaN]) {
+      runTeamTaskMock.mockClear();
+      await teamStep({ teamId: 't-1', task: '归档', __runtime: { ...runtime, timeoutMs: bad } });
+      expect(runTeamTaskMock.mock.calls[0][0]).not.toHaveProperty('timeoutMs');
+    }
+  });
+
+  it('超时但有产出时:步骤算成功,执行记录里明确提示产出可能不全', async () => {
+    runTeamTaskMock.mockResolvedValue({
+      text: '只写了一半', dispatches: 1, dispatchedTo: ['写手'], subtype: 'timeout',
+      trace: { leader: [], members: [] }, timedOut: true, timeoutMs: 6_000_000,
+    });
+    const r = await teamStep({ teamId: 't-1', task: '归档', __runtime: runtime });
+    expect(r.success).toBe(true);
+    const md = persistedMarkdown();
+    expect(md).toContain('达到超时上限');
+    expect(md).toContain('100m0s');
+    expect(md).toContain('产出可能不完整');
   });
 });
 

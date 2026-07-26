@@ -17,8 +17,10 @@ import { getTeam } from './store';
 import { createTeamTraceCollector, type TeamTaskTrace } from './task-trace';
 import { buildRosterLines, resolveReadyMembers, TEAM_HARD_RULES, type ReadyMember } from './resolve-members';
 
-const TASK_TIMEOUT_MS = 1_800_000; // 30min:多成员串并混合给足;超时不吞产出,拿已有文本交差
-const MAX_TURNS = 40;
+const TASK_TIMEOUT_MS = 1_800_000; // 30min:调用方没传超时时的兜底(工作流 team 步骤会传节点配置)
+const TURNS_PER_MINUTE = 3;
+const MIN_TURNS = 40;
+const MAX_TURNS_CAP = 400;
 const IMAGES_PER_TASK_CAP = 10;
 
 export interface TeamTaskEvent {
@@ -35,6 +37,27 @@ export interface TeamTaskResult {
   subtype: string;
   /** 执行痕迹(队长派单 + 成员明细):给工作流详情页渲染「执行过程」。 */
   trace: TeamTaskTrace;
+  /** 是否被超时掐断。超时但有产出时也要如实上报,否则用户看到「成功但产出不全」无从判断。 */
+  timedOut: boolean;
+  /** 本次实际生效的超时上限(毫秒),用于错误信息与执行记录。 */
+  timeoutMs: number;
+  /** 轮次耗尽被 SDK 停止(同样会导致产出不全,必须上报而不是静默兜底)。 */
+  turnsExhausted: boolean;
+}
+
+function formatMinutes(ms: number): string {
+  const min = ms / 60_000;
+  return Number.isInteger(min) ? `${min} 分钟` : `${min.toFixed(1)} 分钟`;
+}
+
+/**
+ * 轮次上限随超时缩放。真正的成本闸门是超时(硬时间墙),轮次只防短时间内的失控循环。
+ * 曾硬编码 40,与「节点上可配 100 分钟超时」明显不匹配:超时放开后轮次先撞墙,
+ * SDK 停在半路,而这里用已有文本兜底返回 —— 步骤显示成功、产出不全,用户无从判断。
+ */
+function resolveMaxTurns(timeoutMs: number): number {
+  const byTime = Math.round((timeoutMs / 60_000) * TURNS_PER_MINUTE);
+  return Math.min(MAX_TURNS_CAP, Math.max(MIN_TURNS, byTime));
 }
 
 function buildTaskLeaderPrompt(teamName: string, sop: string, members: ReadyMember[], task: string): string {
@@ -84,7 +107,10 @@ export async function runTeamTask(input: {
 
   const runToken = createTeamImageGuard({ billingUserId: input.lumosUserId ?? '', cap: IMAGES_PER_TASK_CAP });
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), input.timeoutMs ?? TASK_TIMEOUT_MS);
+  // 调用方(工作流 team 步骤)必须把节点上配置的超时传进来;缺省值只是兜底
+  const effectiveTimeoutMs = input.timeoutMs ?? TASK_TIMEOUT_MS;
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abortController.abort(); }, effectiveTimeoutMs);
 
   let finalText = '';
   let accumulated = '';
@@ -115,7 +141,7 @@ export async function runTeamTask(input: {
         mcpServers: { [LUMOS_MCP_SERVER_NAME]: buildTeamImageServerConfig(runToken) },
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
-        maxTurns: MAX_TURNS,
+        maxTurns: resolveMaxTurns(effectiveTimeoutMs),
       },
     });
 
@@ -151,13 +177,25 @@ export async function runTeamTask(input: {
   // 交付文本:result 消息优先;超时/轮次耗尽时用队长已产出的文本兜底,不全损。
   const text = finalText || accumulated.trim();
   if (!text) {
-    throw new Error(abortController.signal.aborted ? '团队任务超时且无任何产出' : `团队任务无产出(终态 ${subtype})`);
+    // 错误信息必须自带诊断:超时上限多少、派了几次单、去哪改。
+    // 只说「超时」会让人反复调节点上的超时设置却毫无效果(那个值曾经根本没被读)。
+    const roster = dispatchedTo.size > 0 ? `,派给了 ${[...dispatchedTo].join('、')}` : '';
+    const progress = `已派单 ${dispatches} 次${roster}`;
+    throw new Error(
+      timedOut
+        ? `团队任务超时(上限 ${formatMinutes(effectiveTimeoutMs)})且无任何产出。${progress}。`
+          + '若确实需要更长时间,在工作流编辑器里选中该团队节点,改右侧的「超时」。'
+        : `团队任务无产出(终态 ${subtype})。${progress}。`,
+    );
   }
   return {
     text,
     dispatches,
     dispatchedTo: [...dispatchedTo],
-    subtype,
+    subtype: timedOut ? 'timeout' : subtype,
     trace: traceCollector.build(),
+    timedOut,
+    timeoutMs: effectiveTimeoutMs,
+    turnsExhausted: subtype.includes('max_turns'),
   };
 }

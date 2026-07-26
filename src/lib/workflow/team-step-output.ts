@@ -27,6 +27,10 @@ export interface TeamStepOutputInput {
   outcome: 'done' | 'failed';
   error?: string;
   durationMs?: number;
+  /** 被超时掐断但仍有产出时,记下当时的上限——产出可能不全,用户得知道。 */
+  timedOutAfterMs?: number;
+  /** 轮次耗尽被停止(同样产出不全),不能静默。 */
+  turnsExhausted?: boolean;
 }
 
 export function formatTeamStepOutputMarkdown(input: TeamStepOutputInput): string {
@@ -37,6 +41,22 @@ export function formatTeamStepOutputMarkdown(input: TeamStepOutputInput): string
 
   if (input.outcome === 'failed') {
     parts.push(`> ${input.error || '团队任务执行失败'}`);
+    parts.push('');
+  }
+
+  // 超时但有产出:步骤是「成功」,但产出可能被掐断在半路,必须显式提示
+  if (input.timedOutAfterMs != null) {
+    parts.push(
+      `> ⏱ 达到超时上限 ${formatDurationMs(input.timedOutAfterMs)} 被中断,产出可能不完整。`
+      + '需要更长时间就选中该节点、改右侧的「超时」。',
+    );
+    parts.push('');
+  }
+
+  if (input.turnsExhausted) {
+    parts.push(
+      '> ⏱ 对话轮次用尽被停止,产出可能不完整。轮次上限随节点「超时」缩放——把超时调大即可放宽。',
+    );
     parts.push('');
   }
 
