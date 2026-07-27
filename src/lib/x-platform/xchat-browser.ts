@@ -13,6 +13,7 @@ import {
   resolveBrowserBridgeRuntimeConfig,
 } from '@/lib/browser-runtime/bridge-client';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
+import { injectXCookiesIntoBrowser } from './xchat-cookie-inject';
 
 import {
   XCHAT_CONVERSATION_SCRIPT,
@@ -41,6 +42,14 @@ async function openXChatSession(signal?: AbortSignal): Promise<XChatSession | { 
   const config = resolveBrowserBridgeRuntimeConfig({ browserContextId: XCHAT_CONTEXT_ID, lockOwnerId });
   if (!config) {
     return { error: '浏览器未连接:请确认 Lumos 桌面端已启动(Browser Bridge 未就绪)' };
+  }
+
+  // 关键一步:先把本地 cookie 灌进浏览器上下文,再开页。
+  // 「粘贴 Cookie」登录只写 Node 侧的 cookies.json,浏览器上下文一无所知 ——
+  // 不注入的话这里打开的永远是登录墙(#48),而用户重新登录多少次都改变不了。
+  const inject = await injectXCookiesIntoBrowser(config, signal);
+  if (inject.noLocalCookies) {
+    return { error: '尚未登录 X:请到「服务 → X」粘贴 Cookie 或登录后重试(本地没有任何登录 cookie)。' };
   }
 
   let pageId: string;
