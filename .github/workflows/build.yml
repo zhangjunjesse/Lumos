@@ -99,11 +99,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .next/cache
-          # key 含源码哈希,所以每次发版必然是新 key —— 精确命中本来就不可能,
-          # 真正干活的是 restore-keys 的退化匹配。它必须带 lock 哈希前缀:
-          # 只写 "<os>-nextjs-" 太宽,GitHub 会按前缀取「最近创建的」,配额爆掉正在驱逐时
-          # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
-          # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
+          # ⚠️ 现实:这个缓存在发版构建里**基本命中不了**,别再花时间调 key 了。
+          #
+          # GitHub Actions 缓存按 ref 隔离:只有创建它的 ref 及其子级能读,
+          # 默认分支(main)的缓存对所有 ref 可见,**tag 之间互相不可见**。
+          # 而发版构建由 tag 触发,每次都是全新 tag —— v0.39.14 存的缓存
+          # v0.39.15 根本看不见。实测 API 确认(caches?per_page=100 的 ref 字段):
+          #   macOS-nextjs-…  ref=refs/tags/v0.39.15
+          #   macOS-nextjs-…  ref=refs/tags/v0.39.14   ← 读不到
+          # 日志侧对应 "Cache not found for input keys: …, macOS-nextjs-"(三级全落空)。
+          #
+          # 曾两次以为是 key 写错:先加 lock 哈希前缀、再加一级宽泛兜底,都无效 ——
+          # 因为问题从来不在匹配,在作用域。要真拿到缓存只有两条路,都不划算:
+          #   a) 在 main 上也跑一遍 macOS 构建来喂缓存(macOS runner 计费 10x,不值)
+          #   b) 用 artifact 在同一个 run 内把 .next/cache 从 ubuntu 传给 mac/win
+          #      (webpack 缓存本身平台无关,可行,但要加一个串行前置 job)
+          # 保留这段配置只为兜住「同一 tag 重跑」的场景,别指望跨发版。
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
           # 两级退化,顺序有讲究:
           # 1) 同依赖版本、最近一次 —— 命中率最高、最贴近当前代码
@@ -224,11 +235,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .next/cache
-          # key 含源码哈希,所以每次发版必然是新 key —— 精确命中本来就不可能,
-          # 真正干活的是 restore-keys 的退化匹配。它必须带 lock 哈希前缀:
-          # 只写 "<os>-nextjs-" 太宽,GitHub 会按前缀取「最近创建的」,配额爆掉正在驱逐时
-          # 就会抓到残缺条目(实测抓到过 0MB 的),webpack 拿不到有效缓存,从零编译 13 分钟。
-          # 带上 lock 前缀后,退化匹配拿到的是「同依赖版本、最近一次」的完整 webpack 缓存。
+          # ⚠️ 现实:这个缓存在发版构建里**基本命中不了**,别再花时间调 key 了。
+          #
+          # GitHub Actions 缓存按 ref 隔离:只有创建它的 ref 及其子级能读,
+          # 默认分支(main)的缓存对所有 ref 可见,**tag 之间互相不可见**。
+          # 而发版构建由 tag 触发,每次都是全新 tag —— v0.39.14 存的缓存
+          # v0.39.15 根本看不见。实测 API 确认(caches?per_page=100 的 ref 字段):
+          #   macOS-nextjs-…  ref=refs/tags/v0.39.15
+          #   macOS-nextjs-…  ref=refs/tags/v0.39.14   ← 读不到
+          # 日志侧对应 "Cache not found for input keys: …, macOS-nextjs-"(三级全落空)。
+          #
+          # 曾两次以为是 key 写错:先加 lock 哈希前缀、再加一级宽泛兜底,都无效 ——
+          # 因为问题从来不在匹配,在作用域。要真拿到缓存只有两条路,都不划算:
+          #   a) 在 main 上也跑一遍 macOS 构建来喂缓存(macOS runner 计费 10x,不值)
+          #   b) 用 artifact 在同一个 run 内把 .next/cache 从 ubuntu 传给 mac/win
+          #      (webpack 缓存本身平台无关,可行,但要加一个串行前置 job)
+          # 保留这段配置只为兜住「同一 tag 重跑」的场景,别指望跨发版。
           key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('next.config.ts', 'tsconfig.json', 'postcss.config.mjs', 'src/**/*.ts', 'src/**/*.tsx') }}
           # 两级退化,顺序有讲究:
           # 1) 同依赖版本、最近一次 —— 命中率最高、最贴近当前代码
