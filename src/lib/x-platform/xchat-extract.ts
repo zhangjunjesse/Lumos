@@ -58,7 +58,7 @@ export const XCHAT_CONVERSATION_SCRIPT = `(() => {
   const bodyText = ((document.body && document.body.innerText) || '');
   const lower = bodyText.toLowerCase();
   const locked = /enter your passcode|unlock chat|passcode|输入密码|解锁/i.test(bodyText);
-  const needsLogin = /log in to x|sign in to x|登录到 x|登录后查看/i.test(bodyText)
+  const needsLogin = /log in to x|sign in to x|登录\\s*到?\\s*x|登录后查看|看看正在发生什么|使用手机继续|电子邮箱或用户名|继续即表示你同意/i.test(bodyText)
     || /\\/login|\\/i\\/flow\\/login/.test(location.pathname);
 
   const rowSelectors = [
@@ -105,7 +105,7 @@ export const XCHAT_INBOX_SCRIPT = `(() => {
   const q = (sel) => { try { return Array.from(document.querySelectorAll(sel)); } catch { return []; } };
   const bodyText = ((document.body && document.body.innerText) || '');
   const locked = /enter your passcode|unlock chat|passcode|输入密码|解锁/i.test(bodyText);
-  const needsLogin = /log in to x|sign in to x|登录到 x/i.test(bodyText)
+  const needsLogin = /log in to x|sign in to x|登录\\s*到?\\s*x|登录后查看|看看正在发生什么|使用手机继续|电子邮箱或用户名|继续即表示你同意/i.test(bodyText)
     || /\\/login|\\/i\\/flow\\/login/.test(location.pathname);
 
   const cellSelectors = [
@@ -143,9 +143,57 @@ export const XCHAT_INBOX_SCRIPT = `(() => {
   return JSON.stringify({ locked, needsLogin, items, rawLines, diag: { testids, regionHtml } });
 })()`;
 
-function classify(raw: { locked?: boolean; needsLogin?: boolean }, hasContent: boolean):
-  'ok' | 'locked' | 'needs_login' | 'empty' {
+/**
+ * 登录墙特征。取自真实抓取的现场 DOM(#48/#49:后台页停在 JetFuel 登录页,
+ * 而解析器把这些按钮文案当成了私信内容返回)。
+ *
+ * 页内脚本里那两条正则为什么没拦住:
+ *  - 写的是 /登录到 X/,而 X 中文登录墙的标题是「登录 X」——差一个字
+ *  - pathname 兜底 /\/login/ 也没用:X 在 /i/chat/<id> 上**内联**渲染登录墙,路径不变
+ * 所以判定必须在这一层再做一次:纯函数、可测试、有真实 fixture 兜着。
+ */
+const LOGIN_WALL_PATTERNS: RegExp[] = [
+  /看看正在发生什么/,
+  /使用手机继续/,
+  /使用\s*Google\s*继续/,
+  /使用\s*Apple\s*继续/,
+  /通过\s*Google\s*继续操作/,
+  /电子邮箱或用户名/,
+  /继续即表示你同意/,
+  /log in to x|sign in to x/i,
+  /登录\s*到?\s*X\b/,
+  /create account|注册账号/i,
+];
+
+/** JetFuel 登录容器的 testid —— 单独出现即可定性(强特征)。 */
+const LOGIN_WALL_TESTIDS = ['google_sign_in_container', 'apple_sign_in_container', 'LoginForm'];
+
+/**
+ * 从渲染文本判断是不是登录墙。
+ * 用「命中 ≥2 条特征」而不是命中一条就判——避免误杀真私信(有人聊天时确实可能提到
+ * 「使用 Google 继续」)。testid 是强特征,单独命中即可。
+ */
+export function looksLikeLoginWall(lines: string[], testids: string[] = []): boolean {
+  if (testids.some((id) => LOGIN_WALL_TESTIDS.includes(id))) return true;
+  const text = lines.join('\n');
+  if (!text.trim()) return false;
+  let hits = 0;
+  for (const re of LOGIN_WALL_PATTERNS) {
+    if (re.test(text)) hits += 1;
+    if (hits >= 2) return true;
+  }
+  return false;
+}
+
+function classify(
+  raw: { locked?: boolean; needsLogin?: boolean },
+  hasContent: boolean,
+  rawLines: string[],
+  testids: string[],
+): 'ok' | 'locked' | 'needs_login' | 'empty' {
   if (raw.needsLogin) return 'needs_login';
+  // 页内正则漏判时的第二道闸:宁可报「要登录」,也不能把界面文案当私信吐出去
+  if (looksLikeLoginWall(rawLines, testids)) return 'needs_login';
   if (raw.locked) return 'locked';
   return hasContent ? 'ok' : 'empty';
 }
@@ -169,13 +217,14 @@ export function parseXChatConversation(rawJson: unknown): XChatConversationExtra
   const rawLines = Array.isArray(parsed.rawLines)
     ? (parsed.rawLines as unknown[]).filter((l): l is string => typeof l === 'string')
     : [];
+  const diag = parseDiag(parsed.diag);
   return {
-    status: classify(parsed, messages.length > 0 || rawLines.length > 0),
+    status: classify(parsed, messages.length > 0 || rawLines.length > 0, rawLines, diag?.testids ?? []),
     messages,
     rawLines,
     title: typeof parsed.title === 'string' ? parsed.title : '',
     url: typeof parsed.url === 'string' ? parsed.url : '',
-    diag: parseDiag(parsed.diag),
+    diag,
   };
 }
 
@@ -199,10 +248,14 @@ export function parseXChatInbox(rawJson: unknown): XChatInboxExtract | null {
   const rawLines = Array.isArray(parsed.rawLines)
     ? (parsed.rawLines as unknown[]).filter((l): l is string => typeof l === 'string')
     : [];
+  const diag = parseDiag(parsed.diag);
   return {
-    status: classify(parsed, items.length > 0),
+    // 与 conversation 用同一个 classify:同一张登录页在两处必须给出同一个结论。
+    // 过去 inbox 只看 items、conversation 还看 rawLines,于是同一故障分叉成
+    // 「inbox 空数组」和「conversation 吐登录页噪音」两种症状(#48)。
+    status: classify(parsed, items.length > 0, rawLines, diag?.testids ?? []),
     items,
     rawLines,
-    diag: parseDiag(parsed.diag),
+    diag,
   };
 }

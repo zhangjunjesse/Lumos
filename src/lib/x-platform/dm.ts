@@ -68,7 +68,15 @@ function toPeer(users: UserMap, userId: string): DmPeer | null {
 export async function getDmInboxView(): Promise<DmInboxView> {
   const myUserId = (await getAuthStatus()).userId;
   const scraper = await ensureScraper();
-  const inbox = await scraper.getDmInbox();
+  // 已迁移到 XChat 的账号调老 DM API 常见 403/404。过去没有 try/catch,异常直接 500,
+  // 整条 XChat 兜底链路根本走不到 —— 表现就是「inbox 永远为空」(#48)。
+  let inbox: Awaited<ReturnType<typeof scraper.getDmInbox>>;
+  try {
+    inbox = await scraper.getDmInbox();
+  } catch (e) {
+    console.warn('[x-dm] 老 DM API 取收件箱失败,转 XChat 浏览器兜底:', e instanceof Error ? e.message : e);
+    return await inboxFromXChat(myUserId);
+  }
 
   // entries 是所有会话混在一起的消息;按会话取最新一条做预览。
   const latestByConv = new Map<string, { text: string; time: string; senderId: string }>();
@@ -144,7 +152,12 @@ async function inboxFromXChat(myUserId: string): Promise<DmInboxView> {
 
 function xchatStatusNotice(status: 'locked' | 'needs_login' | 'empty'): string {
   if (status === 'locked') return 'XChat 已被密码锁定:请先在 X 浏览器里输入 XChat 4 位密码解锁,再重试。';
-  if (status === 'needs_login') return 'X 未登录或登录态失效:请到 Lumos「服务 → X」重新登录后重试。';
+  // 用户常会说「我明明登录了」——他看的是自己那个页面,而读私信用的是后台自动化上下文,
+  // 两者登录态可以不一致(#48:屏幕上看得见会话,后台页却停在登录墙)。文案要点破这一点。
+  if (status === 'needs_login') {
+    return '读私信用的后台浏览器上下文未登录(你自己开着的页面可能是登录的,两者不共享)。'
+      + '请到 Lumos「服务 → X」重新登录后重试;已识别为登录页,不会把界面文案当成私信返回。';
+  }
   return 'XChat 页面未读到会话(可能未渲染完成或确实没有会话)。';
 }
 
@@ -155,7 +168,14 @@ export async function getDmConversationView(
 ): Promise<DmConversationView> {
   const myUserId = (await getAuthStatus()).userId;
   const scraper = await ensureScraper();
-  const timeline: DmConversationTimeline = await scraper.getDmConversation(conversationId, cursor);
+  // 同 inbox:迁移账号调老 API 常见 403/404,过去异常直接 500 吃掉 XChat 兜底(#48)
+  let timeline: DmConversationTimeline;
+  try {
+    timeline = await scraper.getDmConversation(conversationId, cursor);
+  } catch (e) {
+    console.warn('[x-dm] 老 DM API 取会话失败,转 XChat 浏览器兜底:', e instanceof Error ? e.message : e);
+    return await conversationFromXChat(conversationId, null);
+  }
 
   const messages: DmMessageView[] = (timeline.entries ?? [])
     .map((entry) => entry.message)
