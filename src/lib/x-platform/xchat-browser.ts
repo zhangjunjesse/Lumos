@@ -37,6 +37,35 @@ interface XChatSession {
   close(): Promise<void>;
 }
 
+/** 判断两个 URL 是否指向同一个 XChat 目标(忽略 query/hash 与结尾斜杠)。 */
+function sameXChatTarget(a: string, b: string): boolean {
+  const norm = (u: string) => {
+    try {
+      const parsed = new URL(u);
+      return `${parsed.host}${parsed.pathname}`.replace(/\/+$/, '').toLowerCase();
+    } catch {
+      return u.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    }
+  };
+  return norm(a) === norm(b);
+}
+
+/** 找已经打开的 XChat 页(用户自己那个,大概率已解锁)。找不到返回 null。 */
+async function findOpenXChatPage(
+  api: ReturnType<typeof createBrowserBridgeApi>,
+): Promise<string | null> {
+  try {
+    const pages = await api.pages();
+    // 会话页优先于列表页:它更可能已经解锁并渲染出消息
+    const chat = pages.find((p) => /\/i\/chat\/[^/?#]+/.test(p.url || ''));
+    if (chat?.id) return chat.id;
+    const inbox = pages.find((p) => /\/i\/chat\b/.test(p.url || ''));
+    return inbox?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function openXChatSession(signal?: AbortSignal): Promise<XChatSession | { error: string }> {
   const lockOwnerId = 'x-platform:xchat';
   const config = resolveBrowserBridgeRuntimeConfig({ browserContextId: XCHAT_CONTEXT_ID, lockOwnerId });
@@ -52,26 +81,39 @@ async function openXChatSession(signal?: AbortSignal): Promise<XChatSession | { 
     return { error: '尚未登录 X:请到「服务 → X」粘贴 Cookie 或登录后重试(本地没有任何登录 cookie)。' };
   }
 
-  let pageId: string;
-  try {
-    const created = await postToBrowserBridge<{ ok?: boolean; error?: string; message?: string; pageId?: string }>(
-      config,
-      '/v1/pages/new',
-      { url: XCHAT_INBOX_URL, background: true },
-      { signal, timeoutMs: 60_000 },
-    );
-    if (!created.pageId) return { error: '浏览器开页失败:bridge 没有返回页面 ID' };
-    pageId = created.pageId;
-  } catch (error) {
-    return { error: `浏览器开页失败:${error instanceof Error ? error.message : String(error)}` };
-  }
-
   const api = createBrowserBridgeApi({
     signal,
     background: true,
     browserContextId: XCHAT_CONTEXT_ID,
     lockOwnerId,
   });
+
+  // 优先复用**已经打开的 XChat 页**。
+  // XChat 是端到端加密:4 位 passcode 是用来「恢复解密密钥」的,而那份密钥拿不到就
+  // 解不开历史消息(现场 DOM 原话:"Your passcode is required to recover your
+  // encryption keys so we can decrypt your previous messages")。用户在自己那个页面
+  // 早就解锁过,**新开的后台页拿不到那份密钥**,所以只会停在 Enter Passcode 上(#51/#52)。
+  // 复用已解锁的页就绕开了整件事,而且 selectPage 在 background 模式下只连 CDP、
+  // 不切换用户可见 tab(bridge 侧注释:don't switch visible tab),不打扰界面。
+  const reused = await findOpenXChatPage(api);
+  let pageId = reused;
+  const openedByUs = !reused;
+
+  if (!pageId) {
+    try {
+      const created = await postToBrowserBridge<{ ok?: boolean; error?: string; message?: string; pageId?: string }>(
+        config,
+        '/v1/pages/new',
+        { url: XCHAT_INBOX_URL, background: true },
+        { signal, timeoutMs: 60_000 },
+      );
+      if (!created.pageId) return { error: '浏览器开页失败:bridge 没有返回页面 ID' };
+      pageId = created.pageId;
+    } catch (error) {
+      return { error: `浏览器开页失败:${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   try {
     await api.selectPage(pageId);
   } catch (error) {
@@ -80,7 +122,11 @@ async function openXChatSession(signal?: AbortSignal): Promise<XChatSession | { 
 
   return {
     async read(url, script, parse) {
-      await api.navigate(url);
+      // 复用来的页已经停在目标会话上时不要再 navigate:重新导航会丢掉它的解锁态,
+      // 白白把一个能读的页面变回 Enter Passcode。
+      const current = await api.currentPage().catch(() => null);
+      const alreadyThere = Boolean(current?.url && sameXChatTarget(current.url, url));
+      if (!alreadyThere) await api.navigate(url);
       try {
         await api.waitFor(['Message', '消息', 'Send', '发送'], { timeout: 20_000 });
       } catch {
@@ -91,10 +137,14 @@ async function openXChatSession(signal?: AbortSignal): Promise<XChatSession | { 
       return parse(raw);
     },
     async close() {
-      try {
-        await api.closePage(pageId);
-      } catch {
-        /* 关页失败不影响结果 */
+      // 只关我们自己开的页。复用来的是**用户自己打开的 tab**,关掉等于把人家页面收了,
+      // 而且下次又得重新解锁 —— 那正是复用要避免的。
+      if (openedByUs) {
+        try {
+          await api.closePage(pageId);
+        } catch {
+          /* 关页失败不影响结果 */
+        }
       }
       try {
         await api.release();

@@ -169,6 +169,30 @@ const LOGIN_WALL_PATTERNS: RegExp[] = [
 const LOGIN_WALL_TESTIDS = ['google_sign_in_container', 'apple_sign_in_container', 'LoginForm'];
 
 /**
+ * XChat 端到端加密的解锁页特征。来自真实现场(#51 解压出的 DOM):
+ *   testids: pin-title, pin-code-input-container, pin-forgot-pin
+ *   文案:Enter Passcode / Your passcode is required to recover your encryption keys…
+ * 注意这时**已经登录**(侧边栏 testid 都在),只是解不开密文 —— 必须与 needs_login 区分,
+ * 否则会把「去登录」这种没用的指引给到一个已经登录的用户身上。
+ */
+const PASSCODE_TESTIDS = ['pin-code-input-container', 'pin-title', 'pin-forgot-pin'];
+const PASSCODE_PATTERNS: RegExp[] = [
+  /enter passcode/i,
+  /passcode is required/i,
+  /recover your encryption keys/i,
+  /forgot passcode/i,
+  /输入密码|解锁/,
+];
+
+/** 是不是 XChat 的 passcode 解锁页(已登录但未解密)。 */
+export function looksLikePasscodeGate(lines: string[], testids: string[] = []): boolean {
+  if (testids.some((id) => PASSCODE_TESTIDS.includes(id))) return true;
+  const text = lines.join('\n');
+  if (!text.trim()) return false;
+  return PASSCODE_PATTERNS.some((re) => re.test(text));
+}
+
+/**
  * 从渲染文本判断是不是登录墙。
  * 用「命中 ≥2 条特征」而不是命中一条就判——避免误杀真私信(有人聊天时确实可能提到
  * 「使用 Google 继续」)。testid 是强特征,单独命中即可。
@@ -191,6 +215,8 @@ function classify(
   rawLines: string[],
   testids: string[],
 ): 'ok' | 'locked' | 'needs_login' | 'empty' {
+  // passcode 页排在最前:那时**已经登录**了,报「去登录」只会让人白折腾(#52)
+  if (looksLikePasscodeGate(rawLines, testids)) return 'locked';
   if (raw.needsLogin) return 'needs_login';
   // 页内正则漏判时的第二道闸:宁可报「要登录」,也不能把界面文案当私信吐出去
   if (looksLikeLoginWall(rawLines, testids)) return 'needs_login';

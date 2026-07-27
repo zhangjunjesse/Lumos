@@ -54,7 +54,11 @@ describe('getDmInboxView — 老 API 空时走 XChat 浏览器兜底', () => {
     mockInbox.mockResolvedValue({ ok: true, data: { status: 'locked', items: [], rawLines: [] } });
     const view = await getDmInboxView();
     expect(view.conversations).toHaveLength(0);
-    expect(view.notice).toContain('密码锁定');
+    // 断言的是「说清去哪解锁」,不是某句固定文案。#52:旧文案只说「被密码锁定」,
+    // 用户前台页根本没有密码框,不知道该去哪输 —— 提示必须可操作。
+    expect(view.notice).toMatch(/解锁/);
+    expect(view.notice).toContain('x.com/i/chat');
+    expect(view.notice).toContain('保持该页面开着');
   });
 });
 

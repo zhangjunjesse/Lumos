@@ -151,7 +151,14 @@ async function inboxFromXChat(myUserId: string): Promise<DmInboxView> {
 }
 
 function xchatStatusNotice(status: 'locked' | 'needs_login' | 'empty'): string {
-  if (status === 'locked') return 'XChat 已被密码锁定:请先在 X 浏览器里输入 XChat 4 位密码解锁,再重试。';
+  // 「去哪输密码」曾经完全没说清(#52):XChat 的 4 位 passcode 是用来恢复解密密钥的,
+  // 后台新开的页拿不到你在自己页面里解锁后的那份密钥,只会停在 Enter Passcode。
+  // 现在优先复用你已打开的 XChat 页;这条提示是那条路也走不通时的可操作指引。
+  if (status === 'locked') {
+    return 'XChat 需要解锁才能解密消息(端到端加密):请在 Lumos 内置浏览器里打开 '
+      + 'x.com/i/chat,输入你的 XChat 4 位密码解锁,**保持该页面开着**,然后重试 —— '
+      + '读取会直接复用那个已解锁的页面。';
+  }
   // 用户常会说「我明明登录了」——他看的是自己那个页面,而读私信用的是后台自动化上下文,
   // 两者登录态可以不一致(#48:屏幕上看得见会话,后台页却停在登录墙)。文案要点破这一点。
   if (status === 'needs_login') {
