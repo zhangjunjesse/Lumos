@@ -65,10 +65,15 @@ jest.mock('@/lib/workflow/subagent', () => ({
   listActiveWorkflowAgentExecutionSnapshots: jest.fn(),
 }));
 
+jest.mock('@/lib/workflow/schedule-run-detail', () => ({
+  getScheduleRunDetail: jest.fn(),
+}));
+
 import {
   buildLumosStatus,
   createLumosButlerMcpServer,
   getWorkflowRun,
+  getWorkflowRunDetail,
   listActiveWorkflowAgents,
   listWorkflowTasks,
   getLumosSessionSummary,
@@ -92,6 +97,7 @@ import { getRunHistory, getScheduledWorkflow, listScheduledWorkflows } from '@/l
 import { listRunSteps } from '@/lib/db/schedule-run-steps';
 import { getEnabledProviders, getDefaultProviderId, isProviderConfigured, listActiveAdapters, listPlugins } from '@/lib/im';
 import { listActiveWorkflowAgentExecutionSnapshots } from '@/lib/workflow/subagent';
+import { getScheduleRunDetail } from '@/lib/workflow/schedule-run-detail';
 import type { ApiProvider, ChatSession, Message } from '@/types';
 
 function mockFn<T extends (...args: never[]) => unknown>(fn: T) {
@@ -201,6 +207,7 @@ describe('lumos-butler MCP server', () => {
     mockFn(isProviderConfigured).mockReturnValue(false);
     mockFn(listActiveAdapters).mockReturnValue([]);
     mockFn(listActiveWorkflowAgentExecutionSnapshots).mockReturnValue([]);
+    mockFn(getScheduleRunDetail).mockResolvedValue(null);
     mockEmptyDb();
   });
 
@@ -532,6 +539,120 @@ describe('lumos-butler MCP server', () => {
       status: 'error',
       error: '截图失败',
     }));
+  });
+
+  test('returns bounded workflow diagnostics with traces, inputs, artifacts, and redaction', async () => {
+    mockFn(getScheduleRunDetail).mockResolvedValue({
+      run: {
+        id: 'run-1',
+        scheduleId: 'task-1',
+        sessionId: 'session-1',
+        browserContextId: 'embedded:default',
+        status: 'error',
+        error: 'token=super-secret 失败',
+        startedAt: '2026-05-04T01:00:00.000Z',
+        completedAt: '2026-05-04T01:02:00.000Z',
+        workflowDslSnapshot: null,
+      },
+      steps: [{
+        id: 'step-row-1',
+        runId: 'run-1',
+        stepId: 'archive-ledger',
+        presetName: 'coder',
+        status: 'error',
+        error: 'append failed',
+        outputSummary: 'xlsx save failed',
+        durationMs: 1200,
+        startedAt: '2026-05-04T01:01:00.000Z',
+        completedAt: '2026-05-04T01:02:00.000Z',
+      }],
+      messages: [{
+        id: 'message-1',
+        role: 'assistant',
+        content: JSON.stringify([{ type: 'text', text: 'stdout token=super-secret' }]),
+        created_at: '2026-05-04T01:02:00.000Z',
+      }],
+      outputFiles: [{
+        name: 'error.log',
+        stepId: 'archive-ledger',
+        agentName: 'coder',
+        content: 'stderr api_key=super-secret',
+        sizeBytes: 31,
+        filePath: '/tmp/run-1/error.log',
+        mimeType: 'text/plain',
+        createdAt: '2026-05-04T01:02:00.000Z',
+      }],
+      workflowDsl: null,
+      workflowDslSource: 'none',
+      stepOverlays: {
+        'archive-ledger': {
+          status: 'error',
+          durationMs: 1200,
+          outputFileCount: 1,
+          outputSummary: 'xlsx save failed',
+          error: 'append failed',
+        },
+      },
+      presetNames: {},
+      stepInputSnapshots: {
+        'archive-ledger': {
+          capturedAt: '2026-05-04T01:01:00.000Z',
+          workflowRunId: 'workflow-1',
+          stepId: 'archive-ledger',
+          timeoutMs: 10000,
+          executionMode: 'claude-sdk',
+          requestedModel: 'model-a',
+          resolvedInput: { api_key: 'super-secret', rows: 3 },
+          runtime: { taskId: 'task-1' },
+        },
+      },
+      stepLiveTraces: {
+        'archive-ledger': [{
+          t: '2026-05-04T01:01:30.000Z',
+          role: 'assistant',
+          kind: 'tool_use',
+          name: 'Bash',
+          inputPreview: '{"token":"super-secret"}',
+        }],
+      },
+    } as never);
+    mockFn(getScheduledWorkflow).mockReturnValue({
+      id: 'task-1',
+      name: '台账归档',
+      workflowDsl: { version: 'v3', name: '台账归档', nodes: [], edges: [] },
+      workflowId: null,
+      runMode: 'once',
+      intervalMinutes: 0,
+      scheduleTime: null,
+      scheduleDayOfWeek: null,
+      workingDirectory: '',
+      browserContextId: 'embedded:default',
+      enabled: false,
+      notifyOnComplete: true,
+      runParams: {},
+      lastRunAt: null,
+      nextRunAt: null,
+      runCount: 1,
+      lastRunStatus: 'error',
+      lastError: 'append failed',
+      createdAt: '2026-05-04T01:00:00.000Z',
+      updatedAt: '2026-05-04T01:02:00.000Z',
+    });
+
+    const result = await getWorkflowRunDetail('run-1') as {
+      found: boolean;
+      run: { error: string };
+      steps: Array<{ input_snapshot: { resolvedInput: { api_key: string } }; live_trace: Array<{ inputPreview: string }> }>;
+      messages: Array<{ text: string }>;
+      artifacts: Array<{ content_preview: string }>;
+    };
+
+    expect(result.found).toBe(true);
+    expect(result.run.error).not.toContain('super-secret');
+    expect(result.steps[0].input_snapshot.resolvedInput.api_key).toBe('[REDACTED]');
+    expect(result.steps[0].live_trace[0].inputPreview).not.toContain('super-secret');
+    expect(result.messages[0].text).not.toContain('super-secret');
+    expect(result.artifacts[0].content_preview).not.toContain('super-secret');
   });
 
   test('lists active workflow agents from runtime snapshots', () => {
