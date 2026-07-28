@@ -21,9 +21,13 @@ describe('CODE_SANDBOX_GLOBALS', () => {
     ]);
   });
 
-  it('能力说明给出跑命令的写法,并点明没有 require', () => {
-    expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('child_process');
+  // 这条以前锁的是「hint 里要有 execFileSync」—— 而提示词教出来的正是 #54 那个 bug:
+  // default-prompts 里甚至写着「长任务用 spawnSync」,长任务恰恰必然超过 30 秒租约。
+  // 现在反过来锁:必须推 ctx.exec,且必须明说别用同步那几个。
+  it('能力说明推 ctx.exec、劝阻同步 API,并点明没有 require', () => {
+    expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('ctx.exec');
     expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('execFileSync');
+    expect(CODE_SANDBOX_CAPABILITY_HINT).toMatch(/不要用[^。]*execFileSync/);
     expect(CODE_SANDBOX_CAPABILITY_HINT).toContain('require');
   });
 });
@@ -90,6 +94,53 @@ describe('runInlineScript', () => {
     await expect(runInlineScript('throw new Error("boom");', ctx, noopConsole))
       .rejects.toThrow('boom');
   });
+});
+
+// #54:脚本曾和 openworkflow 的续租心跳跑在同一条事件循环上。脚本一用
+// execFileSync 冻住主线程,心跳(setInterval)停跳 → 30s 租约过期 → worker_id
+// 被改写 → completeStepAttempt 的 worker_id 校验更新 0 行 → 步骤永远 running
+// → 调度器无限重放。实测单个 run 重放 515 次,每次都真跑一遍 python + ImageMagick。
+// 这里锁死隔离性:脚本再怎么同步阻塞,主线程的定时器都必须照常跑。
+describe('事件循环隔离(#54)', () => {
+  const blockingScript = (ms: number) => `
+    child_process.execFileSync(
+      process.execPath,
+      ['-e', 'const t = Date.now(); while (Date.now() - t < ${ms}) {}'],
+    );
+    return 'blocked-${ms}';
+  `;
+
+  it('脚本里的同步阻塞不冻结主线程心跳', async () => {
+    let beats = 0;
+    const timer = setInterval(() => { beats += 1; }, 50);
+
+    try {
+      const out = await runInlineScript(blockingScript(600), ctx, noopConsole);
+      expect(out).toBe('blocked-600');
+    } finally {
+      clearInterval(timer);
+    }
+
+    // 600ms 阻塞 / 50ms 心跳 ≈ 12 拍。留足余量,只要没被冻死就行。
+    expect(beats).toBeGreaterThan(3);
+  }, 20_000);
+
+  it('并发脚本各自阻塞,互不拖累主线程', async () => {
+    let beats = 0;
+    const timer = setInterval(() => { beats += 1; }, 50);
+
+    try {
+      const outs = await Promise.all([
+        runInlineScript(blockingScript(400), ctx, noopConsole),
+        runInlineScript(blockingScript(400), ctx, noopConsole),
+      ]);
+      expect(outs).toEqual(['blocked-400', 'blocked-400']);
+    } finally {
+      clearInterval(timer);
+    }
+
+    expect(beats).toBeGreaterThan(3);
+  }, 20_000);
 });
 
 describe('normalizeScriptResult', () => {

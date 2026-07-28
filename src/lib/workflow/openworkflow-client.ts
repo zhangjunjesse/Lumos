@@ -1,14 +1,14 @@
 import { BackendSqlite } from "@openworkflow/backend-sqlite";
 import { OpenWorkflow } from "openworkflow";
 import path from "path";
-import os from "os";
 import { mkdirSync } from "fs";
+import { getLumosDataDir } from "./run-workspace-paths";
 
 let workflowInstance: OpenWorkflow | null = null;
 let workflowBackend: BackendSqlite | null = null;
 
 export function getWorkflowDataDir(): string {
-  return process.env.LUMOS_DATA_DIR || path.join(os.homedir(), '.lumos');
+  return getLumosDataDir();
 }
 
 export async function getWorkflowEngine(): Promise<OpenWorkflow> {

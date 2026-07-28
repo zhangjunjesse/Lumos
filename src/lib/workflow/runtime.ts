@@ -3,6 +3,7 @@ import { capabilityStep } from './steps/capabilityStep';
 import { notificationStep } from './steps/notificationStep';
 import { approvalStep } from './steps/approvalStep';
 import { getDebugContext, persistDebugCacheResult } from './debug-cache';
+import { assertNoReplayStorm } from './step-replay-guard';
 import type { DebugRuntimeContext } from './debug-types';
 import type {
   AgentStepInput,
@@ -95,16 +96,30 @@ export function createInstrumentedWorkflowRuntimeBindings(
   };
 
   return {
-    agentStep: wrapWithDebug(base.agentStep),
-    teamStep: wrapWithDebug(base.teamStep),
-    notificationStep: wrapWithDebug(base.notificationStep),
-    capabilityStep: wrapWithDebug(base.capabilityStep),
-    waitStep: wrapWithDebug(base.waitStep),
+    agentStep: guarded(base.agentStep),
+    teamStep: guarded(base.teamStep),
+    notificationStep: guarded(base.notificationStep),
+    capabilityStep: guarded(base.capabilityStep),
+    waitStep: guarded(base.waitStep),
+    // approval 是在等人,不是在重放,不设闸。
     approvalStep: base.approvalStep,
     onStepStarted: options.onStepStarted,
     onStepCompleted: options.onStepCompleted,
     onStepSkipped: options.onStepSkipped,
     onStepOutput: containerOutputHook,
+  };
+}
+
+/**
+ * 闸门 + 调试包装。闸门在最外层:重放风暴要在碰到任何副作用之前就拦下(#54)。
+ */
+function guarded<I extends WorkflowStepRuntimeCarrier>(
+  fn: (input: I) => Promise<StepResult>,
+): (input: I) => Promise<StepResult> {
+  const wrapped = wrapWithDebug(fn);
+  return async (input: I): Promise<StepResult> => {
+    assertNoReplayStorm(input?.__runtime);
+    return wrapped(input);
   };
 }
 

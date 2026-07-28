@@ -10,6 +10,7 @@ import type {
 } from './code-handler-types';
 import { getCodeHandler } from './code-handler-registry';
 import { normalizeScriptResult, runInlineScript } from './code-sandbox';
+import { runExternalCommand } from './code-exec';
 import { createBrowserBridgeApi, type BrowserBridgeDebugLogger } from './code-browser-bridge';
 import { getWorkflowAgentRootDir, sanitizePathSegment } from './run-workspace-paths';
 
@@ -495,6 +496,12 @@ function buildHandlerContext(
     }),
     outputDir,
     saveArtifact: (source, name) => saveArtifactToOutput(outputDir, source, name),
+    exec: (command, args, options) => runExternalCommand(
+      command,
+      args,
+      { cwd: runtimeContext.workingDirectory, ...options },
+      signal,
+    ),
   };
 }
 

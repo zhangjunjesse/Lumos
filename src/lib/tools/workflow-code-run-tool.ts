@@ -5,6 +5,7 @@ import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
+import { runExternalCommand } from '@/lib/workflow/code-exec';
 import {
   CODE_SANDBOX_CAPABILITY_HINT,
   normalizeScriptResult,
@@ -71,6 +72,13 @@ export function createWorkflowCodeRunTool() {
         runtimeContext: { workflowRunId: '__debug__', stepId: '__debug__', stepType: 'agent' },
         signal: abortController.signal,
         browser: createBrowserBridgeApi(),
+        // 与生产 code 节点、编辑器「运行」保持同一份 ctx 形状(#46 的老坑)。
+        exec: (command, execArgs, options) => runExternalCommand(
+          command,
+          execArgs,
+          options,
+          abortController.signal,
+        ),
         outputDir: debugOutputDir,
         saveArtifact: async (source, name) => {
           const relName = name ?? (typeof source === 'string' ? path.basename(source) : undefined);

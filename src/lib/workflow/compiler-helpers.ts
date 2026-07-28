@@ -284,6 +284,8 @@ export function emitRuntimeHelpers(): string[] {
     '      return result;',
     '    } catch (err) {',
     "      if (err && typeof err === 'object') err.stepName = err.stepName || stepId;",
+    '      // 重放风暴熔断是终态判定,不能再被 step 级重试吃一轮(#54)。',
+    '      if (err && err.nonRetryable) throw err;',
     '      if (attempt < maxAttempts) { lastError = err; continue; }',
     '      throw err;',
     '    }',

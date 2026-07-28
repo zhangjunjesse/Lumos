@@ -6,6 +6,7 @@ import { mkdirSync } from 'fs';
 import { copyFile, mkdir, writeFile } from 'fs/promises';
 import { createBrowserBridgeApi } from '@/lib/workflow/code-browser-bridge';
 import { normalizeScriptResult, runInlineScript } from '@/lib/workflow/code-sandbox';
+import { runExternalCommand } from '@/lib/workflow/code-exec';
 import type { CodeHandlerContext } from '@/lib/workflow/code-handler-types';
 
 export const runtime = 'nodejs';
@@ -64,6 +65,14 @@ export async function POST(request: NextRequest) {
       },
       signal: abortController.signal,
       browser: createBrowserBridgeApi(),
+      // 生产、本路由、run_workflow_code 三条路径的 ctx 必须一致 —— 差一个字段,
+      // AI 照提示词写的脚本就会「生产能跑、一调试就报 undefined」(#46 的老坑)。
+      exec: (command, execArgs, options) => runExternalCommand(
+        command,
+        execArgs,
+        options,
+        abortController.signal,
+      ),
       outputDir: debugOutputDir,
       saveArtifact: async (source, name) => {
         const relName = name ?? (typeof source === 'string' ? path.basename(source) : undefined);

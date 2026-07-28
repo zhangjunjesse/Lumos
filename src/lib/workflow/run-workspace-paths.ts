@@ -13,11 +13,21 @@
 import os from 'os';
 import path from 'path';
 
-export function getWorkflowAgentRootDir(): string {
-  const baseDir = process.env.LUMOS_DATA_DIR
+/**
+ * Lumos 数据根目录。
+ *
+ * 放在这里是因为本模块只依赖 os/path —— openworkflow-client 里那份同样的算法
+ * 拖着 ESM-only 的 @openworkflow/backend-sqlite,谁 import 谁的单测就炸,
+ * 纯路径计算不该背这个依赖(#54 的 step-replay-guard 踩到过)。
+ */
+export function getLumosDataDir(): string {
+  return process.env.LUMOS_DATA_DIR
     || process.env.CLAUDE_GUI_DATA_DIR
     || path.join(os.homedir(), '.lumos');
-  return path.join(baseDir, 'workflow-agent-runs');
+}
+
+export function getWorkflowAgentRootDir(): string {
+  return path.join(getLumosDataDir(), 'workflow-agent-runs');
 }
 
 export function sanitizePathSegment(value: string, fallback: string): string {

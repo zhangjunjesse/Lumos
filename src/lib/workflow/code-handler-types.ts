@@ -1,4 +1,5 @@
 import type { StepResult, WorkflowStepRuntimeContext } from './types';
+import type { CodeExecOptions, CodeExecResult } from './code-exec';
 
 /**
  * 浏览器 Bridge 操作接口
@@ -76,6 +77,19 @@ export interface CodeHandlerContext {
    * - name 可带子目录,如 `main/img_01.jpg`,子目录会自动创建。
    */
   saveArtifact(source: Buffer | string, name?: string): Promise<string>;
+  /**
+   * 执行外部命令(python / ffmpeg / ImageMagick 等),异步。
+   * 例:`const { stdout } = await ctx.exec('python', [script, '--arg', v])`
+   *
+   * 优先用它而不是 `child_process.execFileSync` —— 取消工作流时它能真的把命令进程
+   * 杀掉,同步版本做不到,进程会变孤儿继续跑(#54)。
+   * 命令非 0 退出时抛错,错误对象上带 stdout / stderr。
+   */
+  exec(
+    command: string,
+    args?: readonly string[],
+    options?: CodeExecOptions,
+  ): Promise<CodeExecResult>;
 }
 
 /**

@@ -183,7 +183,8 @@ Agent 节点可以在 \`input.code\` 里添加固定代码，让节点优先执�
 - \`fetch\` — HTTP 请求
 - \`console\` — 日志（自动捕获到调试日志）
 - \`fs\` / \`path\` / \`os\` — Node 标准模块,写文件时务必拼 \`ctx.outputDir\`：\`path.join(ctx.outputDir, '子目录', '文件名')\`
-- \`child_process\` — 执行本地命令/python 脚本。例:\`const out = child_process.execFileSync('python', [script, '--arg', v], { encoding: 'utf8' })\`。长任务用 \`spawnSync\` 并设 \`timeout\`;命令失败会抛异常,要 try/catch 并把 stderr 写进 error
+- \`ctx.exec(command, args?, options?)\` — **执行本地命令/python 脚本的唯一正确方式**,异步。例:\`const { stdout } = await ctx.exec('python', [script, '--arg', v])\`。options 支持 \`cwd\` / \`env\` / \`timeoutMs\`;命令非 0 退出会抛异常(错误里带 \`stderr\`),要 try/catch 并把原因写进 error
+- \`child_process\` — Node 标准模块,仅在 \`ctx.exec\` 满足不了时才用,且**只用异步 API**(\`spawn\` / \`execFile\`)。**不要用 \`execFileSync\` / \`spawnSync\` / \`execSync\`**:取消工作流时杀不掉它们,命令进程会变成孤儿继续跑
 - **没有 \`require\`** — 上面这些模块已经是全局变量,直接用;写 \`require('child_process')\` 会报 "require is not defined"
 
 **引用上游节点输出：** 和普通 agent 节点一样，在 \`input.context\` 中用 \`"steps.<id>.output.xxx"\` 引用，脚本中通过 \`ctx.upstreamOutputs\` 访问。
