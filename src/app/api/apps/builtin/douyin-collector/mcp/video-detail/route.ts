@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { parseDouyinInput } from '@/lib/douyin-collector/parse-input';
+import { getAwemeId, parseDouyinInput } from '@/lib/douyin-collector/parse-input';
+import { describeUnsupportedInput } from '@/lib/douyin-collector/input-diagnosis';
 import { fetchVideoMetadata, resolveShortLink } from '@/lib/douyin-collector/scraper';
 
 export const runtime = 'nodejs';
@@ -32,13 +33,18 @@ export async function POST(req: NextRequest) {
       parsed = parseDouyinInput(resolved);
     }
 
-    let awemeId: string | null = null;
-    if (parsed.kind === 'aweme_id') awemeId = parsed.awemeId;
-    else if (parsed.kind === 'video-url') awemeId = parsed.awemeId;
+    const awemeId = getAwemeId(parsed);
 
     if (!awemeId) {
+      const diagnosis = describeUnsupportedInput(parsed);
       return NextResponse.json(
-        { ok: false, error: '需要抖音视频链接或 aweme_id。', parsed },
+        {
+          ok: false,
+          error: diagnosis.message,
+          reason: diagnosis.reason,
+          type: diagnosis.type,
+          parsed,
+        },
         { status: 400 },
       );
     }

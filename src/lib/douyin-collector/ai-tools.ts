@@ -6,7 +6,13 @@ import {
 } from './constants';
 import { summarizeVideo } from './ai-summary';
 import { createJob, findActiveDuplicateJob, runJob, type CreateJobInput } from './jobs';
-import { parseDouyinInput } from './parse-input';
+import {
+  buildAwemeRef,
+  getAwemeId,
+  parseDouyinInput,
+  type DouyinContentKind,
+} from './parse-input';
+import { describeUnsupportedInput } from './input-diagnosis';
 import { cleanKeywordQuery, parseVideoTags } from './parsers';
 import { publishVideoToKnowledge } from './publish';
 import { fetchVideoMetadata, resolveShortLink } from './scraper';
@@ -22,6 +28,13 @@ import type { TranscribePrefer } from './settings';
 import type { CreatorCadence, CreatorRecord, KeywordRecord, KeywordTimeWindow } from './types';
 
 type AiOutcome<T> = ({ ok: true } & T) | { ok: false; error: string; phase?: string };
+
+/** 一条已经定位到的抖音作品。contentKind 为 null 表示还没判出是视频还是图文。 */
+export interface ResolvedDouyinContent {
+  awemeId: string;
+  contentKind: DouyinContentKind | null;
+  targetRef: string;
+}
 
 function createOrReuseJob(input: CreateJobInput): { job: CollectJobRow; deduped: boolean } {
   const duplicate = findActiveDuplicateJob(input);
@@ -398,25 +411,47 @@ export function ensureKeywordForAi(
   return { ok: true, keyword: created as KeywordRecord & { id: string } };
 }
 
-export async function resolveAwemeInput(input: string): Promise<AiOutcome<{ awemeId: string; targetRef: string }>> {
+/**
+ * 统一入口:把任意抖音输入解析成一条作品(#55)。
+ *
+ * 三步走 —— 归一化(parseDouyinInput)→ 展短链 → 判内容类型,每步失败都给出
+ * 结构化原因,而不是一律回「需要抖音视频链接」。图文、直播、主页链接现在都能
+ * 被认出来并说清为什么走不下去。
+ */
+export async function resolveAwemeInput(
+  input: string,
+): Promise<AiOutcome<ResolvedDouyinContent>> {
   const raw = input.trim();
-  if (!raw) return { ok: false, phase: 'video-input', error: '视频链接或 aweme_id 不能为空。' };
+  if (!raw) {
+    return { ok: false, phase: 'input', error: '抖音链接或 aweme_id 不能为空。' };
+  }
+
   let parsed = parseDouyinInput(raw);
   if (parsed.kind === 'short-url') {
     const resolved = await resolveShortLink(parsed.shortToken);
     if (!resolved) {
-      return { ok: false, phase: 'video-input', error: `短链解析失败：v.douyin.com/${parsed.shortToken}` };
+      return {
+        ok: false,
+        phase: 'resolve',
+        error: `短链解析失败：v.douyin.com/${parsed.shortToken}`,
+      };
     }
     parsed = parseDouyinInput(resolved);
   }
-  const awemeId =
-    parsed.kind === 'aweme_id' || parsed.kind === 'video-url'
-      ? parsed.awemeId
-      : null;
+
+  const awemeId = getAwemeId(parsed);
   if (!awemeId) {
-    return { ok: false, phase: 'video-input', error: '需要抖音视频链接、短链或纯 aweme_id。' };
+    const diagnosis = describeUnsupportedInput(parsed);
+    return { ok: false, phase: 'classify', error: diagnosis.message };
   }
-  return { ok: true, awemeId, targetRef: `https://www.douyin.com/video/${awemeId}` };
+
+  const contentKind = parsed.kind === 'aweme' ? parsed.contentKind : null;
+  return {
+    ok: true,
+    awemeId,
+    contentKind,
+    targetRef: buildAwemeRef(awemeId, contentKind),
+  };
 }
 
 function getVideoById(id: string): VideoRow | null {

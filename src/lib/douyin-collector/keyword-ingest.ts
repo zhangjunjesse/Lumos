@@ -2,7 +2,8 @@ import {
   COLLECTION_KEYWORDS,
   COLLECTION_VIDEOS,
 } from './constants';
-import { parseDouyinInput } from './parse-input';
+import { getAwemeId, parseDouyinInput } from './parse-input';
+import { describeUnsupportedInput } from './input-diagnosis';
 import { parseVideoTags } from './parsers';
 import { fetchVideoMetadata, resolveShortLink, type ScrapedVideoMetadata } from './scraper';
 import { getDouyinCollectorStore } from './storage';
@@ -76,11 +77,9 @@ export async function ingestKeywordVideos(
       }
       parsed = parseDouyinInput(resolved);
     }
-    let awemeId: string | null = null;
-    if (parsed.kind === 'aweme_id') awemeId = parsed.awemeId;
-    else if (parsed.kind === 'video-url') awemeId = parsed.awemeId;
+    const awemeId = getAwemeId(parsed);
     if (!awemeId) {
-      failures.push(`无法解析 aweme_id：${raw}`);
+      failures.push(`${raw}：${describeUnsupportedInput(parsed).message}`);
       continue;
     }
 

@@ -4,6 +4,7 @@ import { listJobs } from '@/lib/douyin-collector/storage';
 import { createJob, findActiveDuplicateJob, runJob } from '@/lib/douyin-collector/jobs';
 import { JOB_KINDS } from '@/lib/douyin-collector/constants';
 import { parseDouyinInput } from '@/lib/douyin-collector/parse-input';
+import { describeUnsupportedInput } from '@/lib/douyin-collector/input-diagnosis';
 import type { CreatorCollectMode, JobKind } from '@/lib/douyin-collector/types';
 
 export const runtime = 'nodejs';
@@ -38,9 +39,11 @@ export async function POST(req: NextRequest) {
     }
     if (kind === 'link') {
       const parsed = parseDouyinInput(targetRef);
-      if (parsed.kind !== 'video-url' && parsed.kind !== 'aweme_id' && parsed.kind !== 'short-url') {
+      // 短链放行:它的内容类型要展开才知道,真不支持时后面的采集阶段会报准确原因。
+      if (parsed.kind !== 'aweme' && parsed.kind !== 'short-url') {
+        const diagnosis = describeUnsupportedInput(parsed);
         return NextResponse.json(
-          { error: '需要抖音视频链接或 aweme id。' },
+          { error: diagnosis.message, reason: diagnosis.reason, type: diagnosis.type },
           { status: 400 },
         );
       }

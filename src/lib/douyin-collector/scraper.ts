@@ -126,8 +126,16 @@ export function isRiskControlSkeleton(
   return title === '' || GENERIC_SLOGAN_TITLE_RE.test(title);
 }
 
-export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome> {
-  let html: string;
+/**
+ * 抓一条作品的 share 页 HTML。
+ *
+ * 视频和图文共用同一个 share 页 —— 抓取这步完全一样,差别只在之后怎么解析
+ * (视频看 video.play_addr,图文看 images)。抽出来给图文解析器共用,免得再抄
+ * 一份 UA 和错误处理(#55)。
+ */
+export async function fetchAwemeSharePage(
+  awemeId: string,
+): Promise<{ ok: true; html: string } | { ok: false; phase: 'http'; reason: string }> {
   try {
     const res = await fetch(SHARE_URL(awemeId), {
       headers: {
@@ -146,7 +154,7 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
         reason: `抖音 share 页返回 HTTP ${res.status}；可能命中风控或视频已删除。`,
       };
     }
-    html = await res.text();
+    return { ok: true, html: await res.text() };
   } catch (err) {
     return {
       ok: false,
@@ -154,6 +162,12 @@ export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome
       reason: `抓取 share 页失败：${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+export async function fetchVideoMetadata(awemeId: string): Promise<ScrapeOutcome> {
+  const page = await fetchAwemeSharePage(awemeId);
+  if (!page.ok) return page;
+  const html = page.html;
 
   const renderData = extractRenderData(html);
   const renderMetadata = renderData ? extractVideoFromRenderData(renderData, awemeId) : null;
@@ -329,7 +343,7 @@ function findMatchingBrace(s: string, startIdx: number): number {
   return -1;
 }
 
-interface MaybeAweme {
+export interface MaybeAweme {
   aweme_id?: string;
   aweme_id_str?: string;
   awemeId?: string;
@@ -364,6 +378,21 @@ interface MaybeAweme {
   caption_infos?: CaptionInfo[];
   caption?: { caption_infos?: CaptionInfo[] };
   cover?: { url_list?: string[] };
+  // 图文(note)才有的字段(#55)。视频和图文是同一个 aweme 结构,靠顶层 images
+  // 区分 —— 注意 aweme_type 和 play_addr 都不能用来判类型,实测图文的 aweme_type
+  // 是 2(不是网传的 68)且同样带 play_addr。判据见 note-scraper.ts。
+  aweme_type?: number;
+  awemeType?: number;
+  media_type?: number;
+  mediaType?: number;
+  images?: unknown;
+  image_list?: unknown;
+  imageList?: unknown;
+  /** 音频型图文的口播音轨。 */
+  music?: {
+    play_url?: { url_list?: string[]; urlList?: string[] };
+    playUrl?: { url_list?: string[]; urlList?: string[] };
+  };
 }
 
 interface CaptionInfo {
@@ -554,19 +583,19 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&gt;/gi, '>');
 }
 
-function pickText(...values: unknown[]): string | null {
+export function pickText(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
 }
 
-function pickStringList(values: unknown): string[] {
+export function pickStringList(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return values.filter((v): v is string => typeof v === 'string' && v.length > 0);
 }
 
-function uniqueStrings(values: string[]): string[] {
+export function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
 }
 
@@ -605,7 +634,7 @@ function collectSubtitleUrls(aweme: MaybeAweme): string[] {
   return out;
 }
 
-function findAwemeNode(value: unknown, awemeId: string): MaybeAweme | null {
+export function findAwemeNode(value: unknown, awemeId: string): MaybeAweme | null {
   // Walk the parsed JSON tree for an object whose `aweme_id` (or `awemeId`)
   // matches. Limited depth to avoid runaway in pathological payloads.
   const seen = new WeakSet<object>();
@@ -624,7 +653,7 @@ function findAwemeNode(value: unknown, awemeId: string): MaybeAweme | null {
   return null;
 }
 
-function pickString(values: unknown): string | null {
+export function pickString(values: unknown): string | null {
   if (!Array.isArray(values)) return null;
   for (const v of values) {
     if (typeof v === 'string' && v) return v;

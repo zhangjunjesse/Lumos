@@ -8,10 +8,12 @@ import {
 import { COLLECTION_JOBS, COLLECTION_VIDEOS, DOUYIN_COLLECTOR_APP_ID } from './constants';
 import { isRunCancelled, clearRunCancellation } from '@/lib/app/runtime/run-control';
 import type { CollectJobRecord, CreatorCollectMode, JobKind, JobStatus } from './types';
-import { parseDouyinInput } from './parse-input';
+import { getAwemeId, parseDouyinInput } from './parse-input';
+import { describeUnsupportedInput } from './input-diagnosis';
+import { fetchAwemeContentKind } from './note-scraper';
+import { ingestNote } from './note-ingest';
 import {
   fetchCreatorVideos,
-  fetchVideoMetadata,
   resolveShortLink,
   type ScrapedVideoMetadata,
 } from './scraper';
@@ -341,15 +343,24 @@ async function runLinkJob(
     parsed = parseDouyinInput(resolved);
   }
 
-  let awemeId: string | null = null;
-  if (parsed.kind === 'aweme_id') awemeId = parsed.awemeId;
-  else if (parsed.kind === 'video-url') awemeId = parsed.awemeId;
+  const awemeId = getAwemeId(parsed);
 
   if (!awemeId) {
-    const reason = '无法从输入解析出 aweme_id；请确认是抖音视频链接或纯 aweme_id。';
+    const reason = describeUnsupportedInput(parsed).message;
     const updated = markJobStatus(jobId, { status: 'failed', failureReason: reason });
     recordRun(job, 'failed', reason);
     return updated;
+  }
+
+  // 内容类型:链接里带了就直接用;裸 aweme_id 看不出来(图文和视频共用同一套
+  // ID 体系),只能抓一次详情探一下。探不出来时按视频走 —— 视频那条链有完整的
+  // 风控重试,失败了也能给出准确原因(#55)。
+  const contentKind = parsed.kind === 'aweme' && parsed.contentKind
+    ? parsed.contentKind
+    : await fetchAwemeContentKind(awemeId);
+
+  if (contentKind === 'note') {
+    return runNoteLinkJob(jobId, job, awemeId);
   }
 
   // 用 resilient 链而非裸 fetchVideoMetadata: anonymous fetch + pacer →
@@ -374,6 +385,34 @@ async function runLinkJob(
   recordRun(job, 'success', summary);
   if (shouldProcessVideoForJob(created, job)) {
     await runAutoPipelineForJob(jobId, [id], {
+      force: job.auto_process !== false,
+      publishToKnowledge: job.publish_to_knowledge,
+    });
+  }
+  return updated;
+}
+
+/** 图文单条采集。和视频走同一套 job 状态机,只是抓取与取字的实现不同(#55)。 */
+async function runNoteLinkJob(
+  jobId: string,
+  job: CollectJobRow,
+  awemeId: string,
+): Promise<CollectJobRow | null> {
+  const outcome = await ingestNote(awemeId);
+  if (!outcome.ok || !outcome.videoId) {
+    const reason = outcome.reason ?? '图文采集失败。';
+    const updated = markJobStatus(jobId, { status: 'failed', failureReason: reason });
+    recordRun(job, 'failed', reason);
+    return updated;
+  }
+
+  const updated = markJobStatus(jobId, { status: 'success', discoveredCount: 1 });
+  recordRun(job, 'success', outcome.summary ?? '已采集 1 条图文');
+
+  if (shouldProcessVideoForJob(outcome.created ?? false, job)) {
+    // 和视频走同一条自动处理链。文字在 ingestNote 里已经存进 transcripts 了,
+    // transcribeVideoFromNative 的幂等闸会直接返回它,不会去抓根本不存在的字幕。
+    await runAutoPipelineForJob(jobId, [outcome.videoId], {
       force: job.auto_process !== false,
       publishToKnowledge: job.publish_to_knowledge,
     });

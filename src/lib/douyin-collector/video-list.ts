@@ -1,5 +1,5 @@
 /**
- * 紧凑的「已采集视频清单」查询，给 MCP 工具 douyin_list_videos 用。
+ * 紧凑的「已采集视频清单」查询，给 MCP 工具 douyin_list_content 用。
  *
  * 为什么不复用 /videos 路由：那条是给库 UI 的重负载（逐条富集知识库发布
  * 状态、kb_items 关联等），AI 侧只需要一个可核对的精简列表。这里直接读

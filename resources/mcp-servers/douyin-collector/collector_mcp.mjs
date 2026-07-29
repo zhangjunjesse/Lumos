@@ -56,13 +56,13 @@ const TOOLS = [
     },
   },
   {
-    name: 'douyin_collect_video',
+    name: 'douyin_collect',
     description:
-      '【采集单条抖音视频并默认处理】传视频链接、短链或 aweme_id。默认会采集视频、抓字幕、生成摘要并入库到默认知识库；如果只想采集元数据，把 auto_process 设为 false。严禁在工具失败、字幕为空或只拿到标题/封面/作者时，根据标题模拟字幕、摘要或视频观点；必须如实返回失败阶段和原因。',
+      '【采集单条抖音作品并默认处理】视频和图文都用这一个工具，不用先判断类型 —— 传链接、短链、完整分享文案或 aweme_id 都行，工具自己解析短链并识别内容类型。视频走字幕/ASR，图文读正文和图片上的文字，之后都会生成摘要并入库到默认知识库；只想要元数据就把 auto_process 设为 false。不支持的类型（直播等）会返回明确的 type/reason，不要改用别的工具重试。严禁在工具失败、文本为空或只拿到标题/封面/作者时，根据标题模拟字幕、摘要或内容观点；必须如实返回失败阶段和原因。',
     inputSchema: {
       type: 'object',
       properties: {
-        input: { type: 'string', description: '抖音视频链接 / 短链 / aweme_id' },
+        input: { type: 'string', description: '抖音视频/图文链接、短链、完整分享文案或 aweme_id' },
         auto_process: { type: 'boolean', default: true },
         publish_to_knowledge: { type: 'boolean', default: true },
       },
@@ -119,21 +119,21 @@ const TOOLS = [
     },
   },
   {
-    name: 'douyin_get_video_detail',
+    name: 'douyin_get_detail',
     description:
-      '【拉取单条视频元数据】传 aweme_id 或抖音视频链接（www.douyin.com/video/... 或 v.douyin.com 短链）。返回标题、博主、时长、封面、原生字幕 URL（如果有）。',
+      '【拉取单条作品元数据】传 aweme_id 或抖音链接（/video/、/note/ 或 v.douyin.com 短链）。返回内容类型、标题、博主、封面，视频另有时长和原生字幕 URL、图文另有图片列表。只想确认这条链接是什么类型时也用它。',
     inputSchema: {
       type: 'object',
       properties: {
-        input: { type: 'string', description: 'aweme_id 或视频链接' },
+        input: { type: 'string', description: 'aweme_id 或抖音作品链接（视频 / 图文均可）' },
       },
       required: ['input'],
     },
   },
   {
-    name: 'douyin_process_video',
+    name: 'douyin_process',
     description:
-      '【处理已采集视频】传 video_id、aweme_id 或视频链接。默认抓字幕、生成摘要并入库到默认知识库；可关闭 transcribe/summarize/publish_to_knowledge。只有工具结果明确返回字幕/总结/入库成功时才能声称成功；不得用标题、描述或常识补写不存在的字幕内容。',
+      '【处理已采集作品】传 video_id、aweme_id 或作品链接，视频图文通用。默认取文本（视频抓字幕、图文读图）、生成摘要并入库到默认知识库；可关闭 transcribe/summarize/publish_to_knowledge。只有工具结果明确返回文本/总结/入库成功时才能声称成功；不得用标题、描述或常识补写不存在的内容。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -153,9 +153,9 @@ const TOOLS = [
     },
   },
   {
-    name: 'douyin_summarize_video',
+    name: 'douyin_summarize',
     description:
-      '【总结单条抖音视频】传 video_id、aweme_id 或视频链接。会先确保有字幕/转写，再生成内容摘要；默认不入库，若要同时写入默认知识库请设置 publish_to_knowledge=true。若字幕/转写不可用或为空，必须报告失败，不得根据标题/作者/封面猜测视频内容。',
+      '【总结单条抖音作品】传 video_id、aweme_id 或作品链接，视频图文通用。会先确保有文本（视频的字幕/转写、图文的正文与图上文字），再生成内容摘要；默认不入库，若要同时写入默认知识库请设置 publish_to_knowledge=true。若文本不可用或为空，必须报告失败，不得根据标题/作者/封面猜测内容。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -173,9 +173,9 @@ const TOOLS = [
     },
   },
   {
-    name: 'douyin_get_subtitle',
+    name: 'douyin_get_transcript',
     description:
-      '【抓字幕】优先级：抖音原生字幕 → 抖音 ASR → Lumos speech-to-text MCP 兜底。30 分钟长视频会自动分段（默认每段 10 分钟，最多 4 路并发）。失败返回结构化原因，不冒充成功；不得根据标题、描述、评论或作者补写伪字幕。',
+      '【取作品文本】视频走字幕：抖音原生字幕 → 抖音 ASR → Lumos speech-to-text MCP 兜底，30 分钟长视频自动分段（默认每段 10 分钟，最多 4 路并发）；图文走正文 + 图片文字（本地 OCR，识别质量不达标时自动改用视觉模型）。失败返回结构化原因，不冒充成功；不得根据标题、描述、评论或作者补写伪文本。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -241,7 +241,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'douyin_list_videos',
+    name: 'douyin_list_content',
     description:
       '【列出已采集的视频清单】返回采集器里已入库的视频精简列表（标题、作者、视频链接、字幕状态 transcript_status、入库状态 library_status、时长、标签、摘要、更新时间），用于向用户核对"到底采到了哪些视频"。支持 query 模糊检索（标题/作者/摘要/标签）、library_status / transcript_status 精确过滤、limit/offset 分页。返回含 total（过滤后总数）便于判断是否还有更多。这是只读核对工具，不触发任何采集。',
     inputSchema: {
@@ -281,7 +281,7 @@ async function callTool(name, args) {
       publish_to_knowledge: args.publish_to_knowledge !== false,
     });
   }
-  if (name === 'douyin_collect_video') {
+  if (name === 'douyin_collect') {
     return await postJson(`${BASE}/mcp/collect`, {
       kind: 'link',
       input: String(args.input ?? ''),
@@ -310,7 +310,7 @@ async function callTool(name, args) {
       publish_to_knowledge: args.publish_to_knowledge !== false,
     });
   }
-  if (name === 'douyin_summarize_video') {
+  if (name === 'douyin_summarize') {
     return await postJson(`${BASE}/mcp/process-video`, {
       video_id: args.video_id == null ? undefined : String(args.video_id),
       aweme_id: args.aweme_id == null ? undefined : String(args.aweme_id),
@@ -322,12 +322,12 @@ async function callTool(name, args) {
       prefer: String(args.prefer ?? 'allow-asr'),
     });
   }
-  if (name === 'douyin_get_video_detail') {
+  if (name === 'douyin_get_detail') {
     return await postJson(`${BASE}/mcp/video-detail`, {
       input: String(args.input ?? ''),
     });
   }
-  if (name === 'douyin_process_video') {
+  if (name === 'douyin_process') {
     return await postJson(`${BASE}/mcp/process-video`, {
       video_id: args.video_id == null ? undefined : String(args.video_id),
       aweme_id: args.aweme_id == null ? undefined : String(args.aweme_id),
@@ -339,7 +339,7 @@ async function callTool(name, args) {
       prefer: String(args.prefer ?? 'allow-asr'),
     });
   }
-  if (name === 'douyin_get_subtitle') {
+  if (name === 'douyin_get_transcript') {
     return await postJson(`${BASE}/mcp/subtitle`, {
       aweme_id: String(args.aweme_id ?? ''),
       prefer: String(args.prefer ?? 'allow-asr'),
@@ -370,7 +370,7 @@ async function callTool(name, args) {
       ? await getJson(`${BASE}/jobs/${encodeURIComponent(jobId)}`)
       : await getJson(`${BASE}/jobs`);
   }
-  if (name === 'douyin_list_videos') {
+  if (name === 'douyin_list_content') {
     return await postJson(`${BASE}/mcp/list-videos`, {
       query: args.query == null ? undefined : String(args.query),
       library_status: args.library_status == null ? undefined : String(args.library_status),

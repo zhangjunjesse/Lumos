@@ -265,7 +265,7 @@ describe('ConversationEngine capability injection', () => {
       sdk_cwd: '/tmp/lumos-main',
     });
     mockStreamClaude.mockReturnValue(streamText(
-      '我先采集这个视频。 [Used tool: mcp__douyin-collector__douyin_collect_video] [Tool result: {"ok":true,"tags":["眼镜"]}] 采集完成。',
+      '我先采集这个视频。 [Used tool: mcp__douyin-collector__douyin_collect] [Tool result: {"ok":true,"tags":["眼镜"]}] 采集完成。',
     ));
 
     const response = await new ConversationEngine().sendMessage(

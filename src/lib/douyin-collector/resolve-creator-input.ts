@@ -1,4 +1,4 @@
-import { parseDouyinInput } from './parse-input';
+import { parseDouyinInput, type DouyinContentKind } from './parse-input';
 import { resolveShortLink } from './scraper';
 
 export type ResolveCreatorOutcome =
@@ -33,11 +33,12 @@ export async function resolveCreatorInput(raw: string): Promise<ResolveCreatorOu
   if (parsed.kind === 'sec_uid' || parsed.kind === 'profile-url') {
     return { ok: true, secUid: parsed.secUid };
   }
-  if (parsed.kind === 'video-url' || parsed.kind === 'aweme_id') {
+  if (parsed.kind === 'aweme') {
     return {
       ok: false,
       code: 'video-link',
-      message: '看起来是视频链接，请改到「采集任务」按链接采集，或填博主主页链接。',
+      message: `看起来是${describeAwemeKind(parsed.contentKind)}链接，`
+        + '请改到「采集任务」按链接采集，或填博主主页链接。',
     };
   }
   if (parsed.kind === 'short-url') {
@@ -53,11 +54,12 @@ export async function resolveCreatorInput(raw: string): Promise<ResolveCreatorOu
     if (reparsed.kind === 'sec_uid' || reparsed.kind === 'profile-url') {
       return { ok: true, secUid: reparsed.secUid };
     }
-    if (reparsed.kind === 'video-url' || reparsed.kind === 'aweme_id') {
+    if (reparsed.kind === 'aweme') {
       return {
         ok: false,
         code: 'short-link-video',
-        message: '短链指向视频而不是博主主页。请到「采集任务」按链接采集。',
+        message: `短链指向${describeAwemeKind(reparsed.contentKind)}而不是博主主页。`
+          + '请到「采集任务」按链接采集。',
       };
     }
     return {
@@ -73,4 +75,11 @@ export async function resolveCreatorInput(raw: string): Promise<ResolveCreatorOu
     message:
       '识别不出博主主页或 sec_uid。请到抖音 App 点博主头像 → 分享 → 复制链接，得到 v.douyin.com/... 或 www.douyin.com/user/... 后粘贴。纯昵称无法直接订阅。',
   };
+}
+
+/** 提示语里怎么称呼这条作品。类型没判出来时说"作品",别硬猜成"视频"(#55)。 */
+function describeAwemeKind(contentKind: DouyinContentKind | null): string {
+  if (contentKind === 'note') return '图文';
+  if (contentKind === 'video') return '视频';
+  return '作品';
 }

@@ -7,7 +7,7 @@ describe('stripLeakedToolTraceText', () => {
   it('removes leaked tool-use and tool-result markers from visible text', () => {
     const raw = [
       '我先采集这个视频。',
-      '[Used tool: mcp__douyin-collector__douyin_collect_video]',
+      '[Used tool: mcp__douyin-collector__douyin_collect]',
       '[Tool result: {"ok":true,"tags":["跨境电商","眼镜"],"video":{"title":"Hayden"}}]',
       '采集完成，下面是摘要。',
     ].join(' ');

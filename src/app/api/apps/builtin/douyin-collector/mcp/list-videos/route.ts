@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * 列出已采集视频（精简投影），供 MCP 工具 douyin_list_videos 调用。
+ * 列出已采集视频（精简投影），供 MCP 工具 douyin_list_content 调用。
  * 只解析参数 + 调 lib，业务在 video-list.ts。
  */
 export async function POST(req: NextRequest) {
