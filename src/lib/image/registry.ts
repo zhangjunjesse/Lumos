@@ -73,10 +73,12 @@ async function registerBuiltins(): Promise<void> {
   const { createVolcengineProvider } = await import('./providers/volcengine')
   const { createDashScopeProvider } = await import('./providers/dashscope')
   const { createOpenAIImageProvider } = await import('./providers/openai-image')
+  const { createMidjourneyProvider } = await import('./providers/midjourney')
 
   registerImageProvider('gemini-image', createGeminiProvider)
   registerImageProvider('toapis-image', createToApisProvider)
   registerImageProvider('volcengine', createVolcengineProvider)
   registerImageProvider('dashscope', createDashScopeProvider)
   registerImageProvider('openai-image', createOpenAIImageProvider)
+  registerImageProvider('midjourney', createMidjourneyProvider)
 }

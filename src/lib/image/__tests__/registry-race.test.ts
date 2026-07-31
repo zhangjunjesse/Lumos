@@ -27,9 +27,9 @@ describe('image provider registry 并发初始化', () => {
     await first;
   });
 
-  it('10 个并发初始化后,五个内置服务商全部注册', async () => {
+  it('10 个并发初始化后,内置服务商全部注册', async () => {
     await Promise.all(Array.from({ length: 10 }, () => ensureProvidersRegistered()));
-    for (const t of ['gemini-image', 'toapis-image', 'volcengine', 'dashscope', 'openai-image']) {
+    for (const t of ['gemini-image', 'toapis-image', 'volcengine', 'dashscope', 'openai-image', 'midjourney']) {
       expect(isProviderRegistered(t)).toBe(true);
     }
   });

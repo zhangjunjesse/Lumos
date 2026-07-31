@@ -139,7 +139,8 @@ async function runGeneration(
     })),
     elapsed_ms: result.elapsedMs,
     generated_image_count: result.images.length,
-    billing_mode: 'per_image',
+    // 按任务计价的服务商(如 Midjourney)一次调用固定出一批候选,收一份钱
+    billing_mode: result.billingUnit === 'task' ? 'per_task' : 'per_image',
   });
 }
 

@@ -60,6 +60,13 @@ export interface ImageGenResult {
   model: string
   elapsedMs: number
   usage?: { inputTokens?: number; outputTokens?: number }
+  /**
+   * 异步任务型服务商的任务句柄，由上层落进 media_generations.metadata。
+   * 出图之后还能对结果继续操作的服务商需要它（如 Midjourney 的放大 /
+   * 局部重绘 / 抠图，都要凭 taskId + customId 定位）。不支持后续操作的
+   * 服务商不设置此字段。
+   */
+  providerTaskRef?: Record<string, unknown>
 }
 
 /* ── Error ──────────────────────────────────────────────── */
@@ -98,6 +105,11 @@ export type ProviderOptionsSchema = Record<string, ProviderParameterDef>
 export interface ImageProvider {
   readonly type: string
   readonly capabilities: ImageCapability[]
+  /**
+   * 计费单位。'image'（默认）按张计价；'task' 按任务计价 —— 一次调用出几张
+   * 都是一个价。仅用于如实告知调用方，实际扣费以云端 billing_unit 为准。
+   */
+  readonly billingUnit?: 'image' | 'task'
   generate(request: ImageGenRequest): Promise<ImageGenResult>
   optionsSchema?(): ProviderOptionsSchema
 }

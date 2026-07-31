@@ -1,0 +1,11 @@
+{
+  "name": "midjourney",
+  "description": "Midjourney follow-up operations: pick one image from a 4-grid, then inpaint a region (swap a product while keeping the same model), upscale 2x, remove background, or generate variations. Also reverse-engineers prompts from any image.",
+  "command": "node",
+  "runtime": "node",
+  "runMode": "on_demand",
+  "args": [
+    "[RUNTIME_PATH]/mcp-servers/midjourney/midjourney_mcp.mjs"
+  ],
+  "env": {}
+}

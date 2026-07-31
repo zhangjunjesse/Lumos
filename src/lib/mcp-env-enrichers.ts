@@ -217,8 +217,22 @@ function enrichQmtEnv(env: Record<string, string>): Record<string, string> {
 // Registry
 // ---------------------------------------------------------------------------
 
+/**
+ * Midjourney 后续操作 MCP：只需要知道当前会话，好把新产出的图归到这次对话下。
+ * API Key / base_url 不从这里注入——服务端按当前图片服务商解析，避免密钥进
+ * 子进程环境变量。
+ */
+function enrichMidjourneyEnv(
+  env: Record<string, string>,
+  context: McpEnrichContext,
+): Record<string, string> {
+  if (!context.sessionId) return env;
+  return { ...env, LUMOS_SESSION_ID: context.sessionId };
+}
+
 export const ENRICHER_MAP: Record<string, McpEnvEnricher> = {
   'feishu': enrichFeishuEnv,
+  'midjourney': enrichMidjourneyEnv,
   'bilibili': enrichBilibiliEnv,
   'browser': enrichBrowserBridgeEnv,
   'chrome-devtools': enrichBrowserBridgeEnv,

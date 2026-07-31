@@ -46,6 +46,8 @@ export interface GenerateImagesResult {
   model: string
   providerType: string
   providerName: string
+  /** 该服务商的计价单位，用于如实回报给调用方（默认按张） */
+  billingUnit: 'image' | 'task'
 }
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -256,6 +258,9 @@ async function executeGenerate(
   // 7. Save reference images for gallery display
   const metadata: Record<string, unknown> = {
     imageCount: savedImages.length,
+    // 全部落盘路径（DB 的 local_path 列只存得下第一张）。后续操作要靠任意一张
+    // 图片路径反查回本次生成，以及它在四宫格里的序号。
+    imagePaths: savedImages.map(img => img.localPath),
     elapsedMs: elapsed,
     model: result.model,
     appliedAspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
@@ -265,6 +270,8 @@ async function executeGenerate(
     const refSaved = saveRefImagesForGallery(images)
     if (refSaved.length > 0) metadata.referenceImages = refSaved
   }
+  // 异步任务型服务商的句柄（如 MJ 的 taskId + 按钮），后续放大 / 局部重绘 / 抠图靠它定位
+  if (result.providerTaskRef) metadata.providerTaskRef = result.providerTaskRef
 
   // 8. DB record
   const mediaId = createMediaRecord({
@@ -287,6 +294,7 @@ async function executeGenerate(
     model: result.model,
     providerType: provider.provider_type,
     providerName: provider.name,
+    billingUnit: imageProvider.billingUnit ?? 'image',
   }
 }
 

@@ -325,6 +325,27 @@ const IMAGE_GEN_PRESETS: ProviderPreset[] = [
       { value: 'dall-e-3', label: 'DALL·E 3' },
     ],
   },
+  {
+    id: 'midjourney-proxy',
+    name: 'Midjourney（midjourney-proxy）',
+    description: 'Midjourney 代理网关：一次出 4 张候选，支持垫图、局部重绘（保住模特只换局部）、抠图、2 倍放大和图生视频。',
+    provider_type: 'midjourney',
+    api_protocol: 'openai-compatible',
+    capabilities: ['image-gen'],
+    provider_origin: 'preset',
+    auth_mode: 'api_key',
+    base_url: 'https://api.huiyan-ai.cn',
+    notes: 'base_url 填网关根地址（不要追加 /mj）。计费按任务计：一次出 4 张与出 1 张同价，'
+      + '垫本地图会额外产生一次上传任务。模式（fast/relax/turbo）由 Key 所在分组决定，选错模型只影响计价名。'
+      + '放大 / 局部重绘 / 抠图需要在「插件 → MCP」里手动启用 midjourney 插件（默认关闭，避免用别家服务商时污染 AI 工具列表）。',
+    tags: ['图片', '补充能力', '异步任务'],
+    supported_modules: ['image'],
+    default_models: [
+      { value: 'mj-fast', label: 'Midjourney Fast' },
+      { value: 'mj-relax', label: 'Midjourney Relax' },
+      { value: 'mj-turbo', label: 'Midjourney Turbo' },
+    ],
+  },
 ];
 
 /* ── 视频生成 预设 ────────────────────────────────────── */

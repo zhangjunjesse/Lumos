@@ -61,6 +61,18 @@ export function getImageProviderUiConfig(
         hint: '当前服务商走 Google 官方 Gemini 图片接口，适合通用对话式改图。',
         advancedOptions,
       }
+    case 'midjourney':
+      return {
+        supportedAspectRatios: DEFAULT_ASPECT_RATIOS,
+        supportedResolutions: DEFAULT_RESOLUTIONS,
+        // MJ 一次固定出 2×2 四宫格候选，数量设置对它不生效
+        maxCount: 4,
+        maxReferenceImages: 5,
+        hint:
+          'Midjourney 一次固定出 4 张候选（数量设置不生效），出图后可在对话里让 AI 放大、'
+          + '局部重绘、抠图或转视频。注意：用本地图垫图时需要先上传，每张未缓存的图会额外消耗一次任务额度。',
+        advancedOptions,
+      }
     default:
       return {
         supportedAspectRatios: DEFAULT_ASPECT_RATIOS,
