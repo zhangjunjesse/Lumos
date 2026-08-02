@@ -171,7 +171,8 @@ const teamManagerConnector: ConnectorDefinition = {
   resolve: () => ({ inProcess: () => createLumosTeamMcpServer() }),
   buildHint: () => LUMOS_TEAM_MCP_SYSTEM_HINT,
   askModeReadAllowance: () =>
-    'read-only Lumos team tools (list_members / list_teams) when the user asks about existing AI members or teams; creating members/teams requires leaving Ask mode',
+    'read-only Lumos team tools (list_members / list_teams / list_departments) when the user asks about existing AI members, teams or departments; '
+    + 'creating or modifying members/teams/departments requires leaving Ask mode',
 };
 
 export const inProcessConnectors: ConnectorDefinition[] = [

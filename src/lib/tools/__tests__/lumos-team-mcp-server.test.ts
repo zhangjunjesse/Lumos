@@ -1,22 +1,46 @@
-// 团队管家工具层回归:权限默认只读、成员引用校验、加减成员。store 全 mock,只测工具逻辑。
+// 团队管家工具层回归:权限默认只读、成员引用校验、加减成员、部门归属(#56)。store 全 mock,只测工具逻辑。
 
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   tool: (name: string, _desc: string, _schema: unknown, handler: unknown) => ({ name, handler }),
   createSdkMcpServer: (cfg: { name: string; tools: unknown[] }) => ({ name: cfg.name, tools: cfg.tools }),
 }));
 
+interface MemberRow {
+  id: string;
+  name: string;
+  departmentId?: string | null;
+  toolPermissions?: { read: boolean; write: boolean; exec: boolean };
+}
 const store = {
-  members: new Map<string, { id: string; name: string }>(),
+  members: new Map<string, MemberRow>(),
+  departments: new Map<string, { id: string; name: string; description: string }>(),
 };
 jest.mock('@/lib/db/agent-presets', () => ({
-  createAgentPreset: jest.fn((input: { name: string; toolPermissions: unknown }) => {
+  createAgentPreset: jest.fn((input: { name: string; toolPermissions: unknown; departmentId?: string }) => {
     const id = `m-${store.members.size + 1}`;
-    store.members.set(id, { id, name: input.name });
+    store.members.set(id, { id, name: input.name, departmentId: input.departmentId ?? null });
     (store as { lastCreate?: unknown }).lastCreate = input;
     return { id, name: input.name };
   }),
   getAgentPreset: jest.fn((id: string) => store.members.get(id) ?? null),
   listAgentPresets: jest.fn(() => [...store.members.values()]),
+  updateAgentPreset: jest.fn((id: string, patch: Partial<MemberRow> & { departmentId?: string | null }) => {
+    const existing = store.members.get(id);
+    if (!existing) return null;
+    const merged = { ...existing, ...patch };
+    store.members.set(id, merged);
+    return merged;
+  }),
+}));
+jest.mock('@/lib/db/team-departments', () => ({
+  listDepartments: jest.fn(() => [...store.departments.values()]),
+  getDepartment: jest.fn((id: string) => store.departments.get(id) ?? null),
+  createDepartment: jest.fn((input: { name: string; description?: string }) => {
+    const id = `d-${store.departments.size + 1}`;
+    const dept = { id, name: input.name, description: input.description ?? '' };
+    store.departments.set(id, dept);
+    return dept;
+  }),
 }));
 jest.mock('@/lib/team/store', () => ({
   createTeam: jest.fn((input: { name: string; memberRefs: unknown[] }) => ({ id: 't-1', name: input.name, memberRefs: input.memberRefs })),
@@ -26,7 +50,8 @@ jest.mock('@/lib/team/store', () => ({
 }));
 
 import { createLumosTeamMcpServer } from '../lumos-team-mcp-server';
-import { createAgentPreset, getAgentPreset } from '@/lib/db/agent-presets';
+import { createAgentPreset, getAgentPreset, updateAgentPreset } from '@/lib/db/agent-presets';
+import { createDepartment } from '@/lib/db/team-departments';
 import { updateTeam } from '@/lib/team/store';
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
@@ -36,12 +61,23 @@ function toolMap() {
 }
 const parse = (r: { content: Array<{ text: string }> }) => JSON.parse(r.content[0].text);
 
-beforeEach(() => { store.members.clear(); jest.clearAllMocks(); });
+beforeEach(() => {
+  store.members.clear();
+  store.departments.clear();
+  jest.clearAllMocks();
+  // clearAllMocks 只清调用记录、不还原实现:上面 create_team 用例里的 mockReturnValue
+  // 会一直生效到后续用例,让 getAgentPreset 返回没有权限字段的假成员。这里显式还原。
+  (getAgentPreset as jest.Mock).mockImplementation((id: string) => store.members.get(id) ?? null);
+});
 
 describe('lumos-team tools', () => {
-  it('五个工具都在', () => {
+  it('工具清单:成员/团队/部门三类齐全', () => {
     expect([...toolMap().keys()].sort()).toEqual(
-      ['create_member', 'create_team', 'list_members', 'list_teams', 'update_team'].sort(),
+      [
+        'create_department', 'create_member', 'create_team',
+        'list_departments', 'list_members', 'list_teams',
+        'update_member', 'update_team',
+      ].sort(),
     );
   });
 
@@ -75,5 +111,86 @@ describe('lumos-team tools', () => {
     expect(parse(r).success).toBe(true);
     const refs = (updateTeam as jest.Mock).mock.calls[0][1].memberRefs as Array<{ presetId: string }>;
     expect(refs.map((x) => x.presetId)).toEqual(['m-2']);
+  });
+
+  /* ── 部门归属(#56) ───────────────────────────────────── */
+
+  it('create_department:同名不重复建,直接复用', async () => {
+    const first = await toolMap().get('create_department')!({ name: '内容部' });
+    expect(parse(first).success).toBe(true);
+    const again = await toolMap().get('create_department')!({ name: '内容部' });
+    expect(parse(again).department.id).toBe(parse(first).department.id);
+    expect(parse(again).note).toContain('已直接复用');
+    expect((createDepartment as jest.Mock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('create_member:部门不存在要拒,不能静默建成无部门成员', async () => {
+    const r = await toolMap().get('create_member')!({ name: 'a', responsibility: 'b', system_prompt: 'c', department_id: 'ghost' });
+    expect(r.isError).toBe(true);
+    expect(parse(r).error).toContain('部门不存在');
+    expect(createAgentPreset).not.toHaveBeenCalled();
+  });
+
+  it('update_member:把已有成员移进部门——不需要新建重复成员', async () => {
+    await toolMap().get('create_department')!({ name: '内容部' });
+    await toolMap().get('create_member')!({ name: '调研员', responsibility: 'r', system_prompt: 's' });
+
+    const r = await toolMap().get('update_member')!({ member_id: 'm-1', department_id: 'd-1' });
+    expect(parse(r).success).toBe(true);
+    expect(parse(r).member.department_id).toBe('d-1');
+    expect((updateAgentPreset as jest.Mock).mock.calls[0][1].departmentId).toBe('d-1');
+    // 全程只建过一名成员,没有为了换部门而复制
+    expect((createAgentPreset as jest.Mock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('update_member:department_id 传 null 表示移出部门', async () => {
+    store.members.set('m-1', { id: 'm-1', name: 'a', departmentId: 'd-1' });
+    const r = await toolMap().get('update_member')!({ member_id: 'm-1', department_id: null });
+    expect(parse(r).success).toBe(true);
+    expect((updateAgentPreset as jest.Mock).mock.calls[0][1].departmentId).toBeNull();
+  });
+
+  it('update_member:不传 department_id 就不动部门', async () => {
+    store.members.set('m-1', { id: 'm-1', name: 'a', departmentId: 'd-1' });
+    await toolMap().get('update_member')!({ member_id: 'm-1', name: '新名' });
+    expect((updateAgentPreset as jest.Mock).mock.calls[0][1]).not.toHaveProperty('departmentId');
+  });
+
+  it('update_member:部门不存在要拒', async () => {
+    store.members.set('m-1', { id: 'm-1', name: 'a' });
+    const r = await toolMap().get('update_member')!({ member_id: 'm-1', department_id: 'ghost' });
+    expect(r.isError).toBe(true);
+    expect(parse(r).error).toContain('部门不存在');
+    expect(updateAgentPreset).not.toHaveBeenCalled();
+  });
+
+  it('update_member:成员不存在要拒', async () => {
+    const r = await toolMap().get('update_member')!({ member_id: 'ghost' });
+    expect(r.isError).toBe(true);
+    expect(parse(r).error).toContain('成员不存在');
+  });
+
+  it('update_member:权限按项合并——只传 write 不该把原有的 exec 关掉', async () => {
+    store.members.set('m-1', { id: 'm-1', name: 'a', toolPermissions: { read: true, write: false, exec: true } });
+    await toolMap().get('update_member')!({ member_id: 'm-1', permissions: { write: true } });
+    expect((updateAgentPreset as jest.Mock).mock.calls[0][1].toolPermissions).toEqual({ read: true, write: true, exec: true });
+  });
+
+  it('update_member:不传 permissions 就完全不动权限', async () => {
+    store.members.set('m-1', { id: 'm-1', name: 'a', toolPermissions: { read: true, write: true, exec: false } });
+    await toolMap().get('update_member')!({ member_id: 'm-1', name: '新名' });
+    expect((updateAgentPreset as jest.Mock).mock.calls[0][1]).not.toHaveProperty('toolPermissions');
+  });
+
+  it('list_members:带出部门名,部门被删时不崩', async () => {
+    store.departments.set('d-1', { id: 'd-1', name: '内容部', description: '' });
+    store.members.set('m-1', { id: 'm-1', name: 'a', departmentId: 'd-1' });
+    store.members.set('m-2', { id: 'm-2', name: 'b', departmentId: 'gone' });
+    store.members.set('m-3', { id: 'm-3', name: 'c' });
+
+    const members = parse(await toolMap().get('list_members')!({})).members;
+    expect(members[0].department).toEqual({ id: 'd-1', name: '内容部' });
+    expect(members[1].department.name).toBe('(部门已删除)');
+    expect(members[2].department).toBeNull();
   });
 });
