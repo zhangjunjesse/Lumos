@@ -79,6 +79,22 @@ describe('MidjourneyClient', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  test('鉴权头两种都发 —— 中转网关认 Authorization，自建 proxy 认 mj-api-secret', async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ code: 1, description: 'ok', result: 't7' }))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    await client.submitImagine({ prompt: 'x' })
+    const postHeaders = fetchMock.mock.calls[0][1].headers as Record<string, string>
+    expect(postHeaders.Authorization).toBe('Bearer k')
+    expect(postHeaders['mj-api-secret']).toBe('k')
+
+    fetchMock.mockResolvedValue(jsonResponse({ id: 't7', status: 'SUCCESS' }))
+    await client.fetchTask('t7')
+    const getHeaders = fetchMock.mock.calls[1][1].headers as Record<string, string>
+    expect(getHeaders.Authorization).toBe('Bearer k')
+    expect(getHeaders['mj-api-secret']).toBe('k')
+  })
+
   test('imagine 把垫图 URL 和 --ar 拼进 prompt —— MJ 的参数是写在提示词里的', async () => {
     const fetchMock = jest.fn().mockResolvedValue(
       jsonResponse({ code: 1, description: 'ok', result: 't9' }),

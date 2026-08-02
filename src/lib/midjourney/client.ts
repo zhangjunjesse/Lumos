@@ -92,14 +92,27 @@ export class MidjourneyClient {
     this.baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
   }
 
+  /**
+   * 两种后端认两种头,同时带上即可通吃：
+   * - 中转网关(new-api 那类)读 `Authorization: Bearer`
+   * - 自建 midjourney-proxy 读 `mj-api-secret`
+   * 都是发往同一个 baseUrl,不存在把密钥泄露给第三方的问题；各自忽略不认识的那个头。
+   */
+  private authHeaders(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.apiKey}`,
+      'mj-api-secret': this.apiKey,
+      Accept: '*/*',
+    }
+  }
+
   private async post(path: string, body: unknown, signal?: AbortSignal): Promise<MjSubmitResponse> {
     checkAbort(signal)
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        ...this.authHeaders(),
         'Content-Type': 'application/json',
-        Accept: '*/*',
       },
       body: JSON.stringify(body),
       signal,
@@ -198,7 +211,7 @@ export class MidjourneyClient {
   async fetchTask(taskId: string, signal?: AbortSignal): Promise<MjTask> {
     checkAbort(signal)
     const response = await fetch(`${this.baseUrl}/mj/task/${taskId}/fetch`, {
-      headers: { Authorization: `Bearer ${this.apiKey}`, Accept: '*/*' },
+      headers: this.authHeaders(),
       signal,
     })
     const text = await response.text()
