@@ -21,7 +21,8 @@ const TASK_TIMEOUT_MS = 1_800_000; // 30min:调用方没传超时时的兜底(�
 const TURNS_PER_MINUTE = 3;
 const MIN_TURNS = 40;
 const MAX_TURNS_CAP = 400;
-const IMAGES_PER_TASK_CAP = 10;
+// 只用来兜住 agent 死循环刷图,不是产品意义上的配额;正常任务不该撞到。
+const IMAGES_PER_TASK_CAP = 999;
 
 export interface TeamTaskEvent {
   kind: 'dispatch' | 'done';

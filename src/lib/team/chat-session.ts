@@ -12,8 +12,8 @@ import { createTeamImageGuard, releaseTeamImageGuard } from './image-guard';
 import { getTeam } from './store';
 import { buildRosterLines, resolveReadyMembers, TEAM_HARD_RULES, type ReadyMember } from './resolve-members';
 
-// 每回合出图配额:聊天团队没有"目标张数"概念,给一个防失控的硬顶。
-const IMAGES_PER_TURN_CAP = 10;
+// 只用来兜住 agent 死循环刷图,不是产品意义上的配额;正常回合不该撞到。
+const IMAGES_PER_TURN_CAP = 999;
 
 function buildLeaderSystemPrompt(teamName: string, sop: string, members: ReadyMember[]): string {
   return [
