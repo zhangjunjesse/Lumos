@@ -27,6 +27,8 @@ const DEFAULT_BASE_URL = 'https://api.huiyan-ai.cn'
 const POLL_INTERVAL_MS = 3000
 /** relax 模式排队可能很久；实测 fast 下 describe 29s、imagine 72s、inpaint 90s */
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
+/** 轮询连续失败多少次才放弃(约 15 秒)。单次网络抖动不该杀掉整次生成。 */
+const MAX_CONSECUTIVE_POLL_FAILURES = 5
 const BLEND_MIN_IMAGES = 2
 const BLEND_MAX_IMAGES = 5
 
@@ -225,14 +227,42 @@ export class MidjourneyClient {
     }
   }
 
-  /** 轮询到终态。submit 返回成功不算数,只有这里返回 SUCCESS 才算真成功。 */
+  /**
+   * 轮询到终态。submit 返回成功不算数,只有这里返回 SUCCESS 才算真成功。
+   *
+   * 轮询必须扛得住网络抖动:一次生成要轮询上百次,其中一次在网络层失败
+   * (undici 抛裸 "fetch failed")不代表任务死了——任务在服务端照常跑。
+   * 实测某次生成因单次轮询网络错误直接报失败,agent 随即重试又白开一个
+   * 收费任务。所以瞬时错误只累计不上抛,连续多次才放弃;鉴权错、任务终态
+   * 失败、主动取消这类确定性错误仍然立刻抛。
+   */
   async waitForTask(taskId: string, options: MjWaitOptions = {}): Promise<MjTask> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const deadline = Date.now() + timeoutMs
+    let consecutiveFailures = 0
+    let lastFailure = ''
 
     while (Date.now() < deadline) {
       checkAbort(options.signal)
-      const task = await this.fetchTask(taskId, options.signal)
+      let task: MjTask
+      try {
+        task = await this.fetchTask(taskId, options.signal)
+        consecutiveFailures = 0
+      } catch (error) {
+        // 确定性错误(401 无效 key、请求已取消等)重试也不会变好,立刻抛
+        if (error instanceof ImageGenError && !error.retryable) throw error
+        consecutiveFailures += 1
+        lastFailure = error instanceof Error ? error.message : String(error)
+        if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+          throw new ImageGenError(
+            'provider_unavailable',
+            `Midjourney 任务 ${taskId} 轮询连续 ${consecutiveFailures} 次失败: ${lastFailure}`,
+            true,
+          )
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+        continue
+      }
       options.onProgress?.(task)
 
       if (task.status === 'SUCCESS') return task

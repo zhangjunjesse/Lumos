@@ -131,6 +131,49 @@ describe('MidjourneyClient', () => {
     await expect(client.fetchTask('t8')).rejects.not.toThrow(SyntaxError)
   })
 
+  test('轮询扛得住网络抖动：单次 fetch failed 不杀整次生成，恢复后照常拿结果', async () => {
+    jest.useFakeTimers()
+    try {
+      const fetchMock = jest.fn()
+        .mockRejectedValueOnce(new TypeError('fetch failed'))   // 网络层抖一下
+        .mockRejectedValueOnce(new TypeError('fetch failed'))   // 再抖一下
+        .mockResolvedValue(jsonResponse({ id: 't7', status: 'SUCCESS', progress: '100%', imageUrl: 'https://x/o.png', buttons: [] }))
+      global.fetch = fetchMock as unknown as typeof fetch
+
+      const pending = client.waitForTask('t7')
+      await jest.advanceTimersByTimeAsync(20000)
+      const task = await pending
+      expect(task.status).toBe('SUCCESS')
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('轮询连续失败达到上限才放弃，且错误里说清是轮询挂了而不是任务挂了', async () => {
+    jest.useFakeTimers()
+    try {
+      global.fetch = jest.fn().mockRejectedValue(new TypeError('fetch failed')) as unknown as typeof fetch
+
+      const pending = client.waitForTask('t7')
+      pending.catch(() => {}) // 防未处理 rejection 告警
+      await jest.advanceTimersByTimeAsync(60000)
+      await expect(pending).rejects.toMatchObject({ code: 'provider_unavailable', retryable: true })
+      await expect(pending).rejects.toThrow(/轮询连续/)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('轮询遇到确定性错误(401)立刻放弃，不做无意义重试', async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response('{"error":{"message":"无效的令牌"}}', { status: 401 }),
+    ) as unknown as typeof fetch
+
+    await expect(client.waitForTask('t7')).rejects.toMatchObject({ code: 'invalid_params' })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
   test('SUCCESS 时返回完整任务对象（含按钮表，后续操作要靠它）', async () => {
     global.fetch = jest.fn().mockResolvedValue(
       jsonResponse({
