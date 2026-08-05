@@ -111,6 +111,24 @@ describe('MidjourneyClient', () => {
     expect(body.prompt).toBe('https://cdn.test/a.png a woman wearing it --ar 2:3')
   })
 
+  test('uploadImages 走 upload-discord-images，成功返回 URL 数组', async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      jsonResponse({ code: 1, description: 'ok', result: ['https://cdn.test/a.jpg', 'https://cdn.test/b.jpg'] }),
+    )
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const urls = await client.uploadImages(['data:image/png;base64,AAA', 'data:image/png;base64,BBB'])
+    expect(urls).toEqual(['https://cdn.test/a.jpg', 'https://cdn.test/b.jpg'])
+    expect(fetchMock.mock.calls[0][0]).toContain('/mj/submit/upload-discord-images')
+  })
+
+  test('uploadImages 上传失败(code≠1)要抛错，不能把错误描述当地址用', async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({ code: 4, description: 'base64 参数错误', result: null }),
+    ) as unknown as typeof fetch
+    await expect(client.uploadImages(['bad'])).rejects.toThrow(/参考图上传失败/)
+  })
+
   test('内容审核失败要归到 content_policy，不能当成可重试的未知错误', async () => {
     global.fetch = jest.fn().mockResolvedValue(
       jsonResponse({ id: 't3', status: 'FAILURE', failReason: 'Request blocked by content policy' }),

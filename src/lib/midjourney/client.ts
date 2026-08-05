@@ -177,10 +177,36 @@ export class MidjourneyClient {
   }
 
   /**
-   * 图生文。副作用同样有用：返回的 imageUrl 是这张图在供应商存储上的
-   * 公网地址（免鉴权、无过期参数），可直接当 imagine 的垫图 URL 使用——
-   * 官方的 upload-discord-images 在该服务商未开通，这是唯一可用的上传通道。
+   * 上传参考图，返回公网 URL（同步返回，不产生绘图任务）。
+   *
+   * 这是 midjourney-proxy 的正规上传接口。此前用 describe 顶替是因为某些中转网关
+   * 没开这个接口，但那条路有两个坑：describe 是一次收费的绘图任务，且部分部署里
+   * 它走的 Discord 斜杠命令是旧版本、会被 Discord 直接 BadRequest 拒掉。
+   * 自建 proxy 这个接口可用，优先走它。
    */
+  async uploadImages(base64Array: string[], signal?: AbortSignal): Promise<string[]> {
+    const response = await fetch(`${this.baseUrl}/mj/submit/upload-discord-images`, {
+      method: 'POST',
+      headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base64Array }),
+      signal,
+    })
+    const text = await response.text()
+    if (!response.ok) throw mapHttpError(response.status, text.slice(0, 300))
+
+    let payload: { code?: number; description?: string; result?: unknown }
+    try {
+      payload = JSON.parse(text) as typeof payload
+    } catch {
+      throw mapHttpError(response.status, text.slice(0, 300))
+    }
+    if (payload.code !== 1 || !Array.isArray(payload.result)) {
+      throw new ImageGenError('invalid_params', `Midjourney 参考图上传失败: ${payload.description || text.slice(0, 120)}`, false)
+    }
+    return payload.result.filter((u): u is string => typeof u === 'string')
+  }
+
+  /** 图生文：反推提示词。返回的 imageUrl 也是公网地址，但不再用它做垫图上传（见 uploadImages）。 */
   async submitDescribe(base64: string, signal?: AbortSignal): Promise<string> {
     const payload = await this.post('/mj/submit/describe', { botType: 'MID_JOURNEY', base64 }, signal)
     return payload.result

@@ -143,7 +143,7 @@ describeLive('Midjourney 真机链路', () => {
     expect(diff).toBeLessThan(3)
   })
 
-  test('垫图：本地图先经 describe 换成公网 URL，且同一张图第二次命中缓存不重复上传', async () => {
+  test('垫图：本地图经 upload-discord-images 换成公网 URL，第二次命中缓存不重复上传', async () => {
     const { MidjourneyClient } = await import('../client')
     const { resolveReferenceUrls, clearReferenceUrlCache } = await import('../reference')
     clearReferenceUrlCache()
@@ -155,16 +155,31 @@ describeLive('Midjourney 真机链路', () => {
     const first = await resolveReferenceUrls(client, [image])
     expect(first).toHaveLength(1)
     expect(first[0]).toMatch(/^https?:\/\//)
+    // MJ 的链接校验拒绝非标准端口，上传地址不能带 :8443 之类
+    expect(first[0]).not.toMatch(/:\d+\//)
 
-    // 第二次必须走缓存 —— 每次上传都是一次收费任务
     const started = Date.now()
     const second = await resolveReferenceUrls(client, [image])
     expect(second[0]).toBe(first[0])
     expect(Date.now() - started).toBeLessThan(1000)
 
-    // 拿到的 URL 必须是公网免鉴权可读的，否则 MJ 读不到垫图
     const probe = await fetch(first[0])
     expect(probe.status).toBe(200)
     expect(probe.headers.get('content-type')).toMatch(/^image\//)
+  })
+
+  test('图生图端到端：本地参考图上传 → imagine 垫图 → 出四宫格', async () => {
+    const { createMidjourneyProvider } = await import('../../image/providers/midjourney')
+    const provider = createMidjourneyProvider({ apiKey: KEY!, baseUrl: BASE_URL })
+
+    const result = await provider.generate({
+      prompt: 'turn this pendant into a cute flat cartoon sticker, white background',
+      aspectRatio: '1:1',
+      images: [{ type: 'path', filePath: path.join(process.cwd(), 'public/etsy-images/985183548.jpg') }],
+    })
+
+    expect(result.images).toHaveLength(4)
+    expect((result.providerTaskRef as { taskId?: string })?.taskId).toBeTruthy()
+    console.log(`[live] 图生图成功，taskId=${(result.providerTaskRef as { taskId?: string }).taskId}`)
   })
 })

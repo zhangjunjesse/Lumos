@@ -1,12 +1,12 @@
 /**
  * 垫图上传 — 把本地图片变成 MJ 能读到的公网 URL。
  *
- * MJ 的 imagine 只认 URL，不吃 base64。官方的 upload-discord-images 接口
- * 在该服务商未开通渠道，唯一可用的通道是 describe：它把图存到供应商存储上，
- * 返回的 imageUrl 是免鉴权、无过期参数的裸地址（实测字节与原图完全一致）。
+ * MJ 的 imagine 只认 URL，不吃 base64，所以本地参考图要先上传换成地址。
+ * 走 proxy 的正规上传接口 upload-discord-images：同步返回、不产生绘图任务、不花钱。
  *
- * 代价是 describe 本身算一次收费任务。所以这里按图片内容哈希缓存 URL——
- * 电商场景反复拿同一张商品图垫图是常态，不缓存就是反复付钱。
+ * 历史包袱：早期对接的中转网关没开这个接口，曾用 describe 顶替上传，但 describe
+ * 是一次收费绘图任务、且部分部署里走的是被 Discord 拒的旧版斜杠命令（BadRequest）。
+ * 已弃用那条路。按内容哈希缓存 URL——同一张商品图反复垫图不必反复上传。
  */
 
 import crypto from 'crypto'
@@ -15,7 +15,7 @@ import type { ImageInput } from '@/lib/image/types'
 import { ImageGenError } from '@/lib/image/types'
 import type { MidjourneyClient } from './client'
 
-/** 进程内缓存：内容哈希 → 公网 URL。供应商存储上的地址不带过期参数。 */
+/** 进程内缓存：内容哈希 → 公网 URL。上传返回的地址稳定，可长期复用。 */
 const urlCache = new Map<string, string>()
 
 function readImageBytes(image: ImageInput): { bytes: Buffer; mimeType: string } {
@@ -28,33 +28,16 @@ function readImageBytes(image: ImageInput): { bytes: Buffer; mimeType: string } 
   throw new ImageGenError('invalid_params', `不支持的参考图类型: ${(image as { type: string }).type}`, false)
 }
 
-async function uploadOne(
-  client: MidjourneyClient,
-  image: ImageInput,
-  signal?: AbortSignal,
-): Promise<string> {
+/** data URI 形式的内容 + 缓存 key。 */
+function toDataUri(image: ImageInput): { dataUri: string; hash: string } {
   const { bytes, mimeType } = readImageBytes(image)
   const hash = crypto.createHash('sha256').update(bytes).digest('hex')
-
-  const cached = urlCache.get(hash)
-  if (cached) return cached
-
-  const taskId = await client.submitDescribe(
-    `data:${mimeType};base64,${bytes.toString('base64')}`,
-    signal,
-  )
-  const task = await client.waitForTask(taskId, { signal })
-  if (!task.imageUrl) {
-    throw new ImageGenError('provider_unavailable', 'Midjourney 垫图上传未返回图片地址', false)
-  }
-
-  urlCache.set(hash, task.imageUrl)
-  return task.imageUrl
+  return { dataUri: `data:${mimeType};base64,${bytes.toString('base64')}`, hash }
 }
 
 /**
- * 把参考图统一成公网 URL。已经是 http(s) 的直接用，不花钱；
- * 本地图每张需要一次 describe 任务（有缓存则免）。
+ * 把参考图统一成公网 URL。已经是 http(s) 的直接用；本地图批量上传一次拿回全部地址。
+ * 命中缓存的图不重复上传。
  */
 export async function resolveReferenceUrls(
   client: MidjourneyClient,
@@ -63,15 +46,43 @@ export async function resolveReferenceUrls(
 ): Promise<string[]> {
   if (!images?.length) return []
 
-  const urls: string[] = []
-  for (const image of images) {
+  // 先按位置占位，本地图收集起来一次性批量上传，减少往返
+  const results: (string | null)[] = new Array(images.length).fill(null)
+  const toUpload: Array<{ index: number; hash: string; dataUri: string }> = []
+
+  images.forEach((image, index) => {
     if (image.type === 'url' && /^https?:\/\//i.test(image.url)) {
-      urls.push(image.url)
-      continue
+      results[index] = image.url
+      return
     }
-    urls.push(await uploadOne(client, image, signal))
+    const { dataUri, hash } = toDataUri(image)
+    const cached = urlCache.get(hash)
+    if (cached) {
+      results[index] = cached
+    } else {
+      toUpload.push({ index, hash, dataUri })
+    }
+  })
+
+  if (toUpload.length > 0) {
+    const uploaded = await client.uploadImages(toUpload.map((u) => u.dataUri), signal)
+    if (uploaded.length !== toUpload.length) {
+      throw new ImageGenError(
+        'provider_unavailable',
+        `Midjourney 参考图上传数量不符：传了 ${toUpload.length} 张，返回 ${uploaded.length} 个地址`,
+        false,
+      )
+    }
+    toUpload.forEach((u, i) => {
+      urlCache.set(u.hash, uploaded[i])
+      results[u.index] = uploaded[i]
+    })
   }
-  return urls
+
+  return results.map((url, index) => {
+    if (!url) throw new ImageGenError('provider_unavailable', `第 ${index + 1} 张参考图未能取得地址`, false)
+    return url
+  })
 }
 
 /** 仅供测试重置缓存。 */
