@@ -33,6 +33,13 @@ export type RuntimeEventName =
   | 'model_first_response_timeout'
   | 'session_started_fresh'
   | 'session_resumed'
+  // MCP 连接态(#57):SDK init 消息里带每个 server 的 connected/failed/pending…
+  // 此前完全没记,于是"工具时有时无"只能靠猜——注册表看着好好的,日志里却
+  // 没有任何一条能证明进程到底连上没有。两个事件分开:
+  //   mcp_servers_connected —— 每次 init 的全量快照(谁连上了/谁没有)
+  //   mcp_server_unavailable —— 单独拎出非 connected 的,便于 grep 定位
+  | 'mcp_servers_connected'
+  | 'mcp_server_unavailable'
   // IM inbound dispatcher events — capture cases where the agent returned
   // no visible text so the chat looks "silent" to the user. We log the
   // length of the visible vs raw content + a small preview so we can tell

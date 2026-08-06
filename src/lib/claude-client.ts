@@ -49,6 +49,7 @@ import { appendKnowledgeReference } from './chat/knowledge-reference';
 import { extractHistoryImages } from './claude/history-images';
 import { toVisionMediaType, type VisionMediaType } from './claude/vision-media';
 import { recordRuntimeEvent } from './claude/runtime-events';
+import { buildMcpToolErrorDiagnostic } from './claude/mcp-tool-diagnostics';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -499,6 +500,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       let visibleContentEmitted = false;
       let resultHadError = false;
       let modelFirstResponseTimedOut = false;
+      // 本轮 init 给出的 MCP 连接态快照;工具报"No such tool available"时据此判真因(#57)
+      let lastMcpStatuses: Array<{ name: string; status: string }> | undefined;
       let modelFirstResponseTimer: ReturnType<typeof setTimeout> | undefined;
       const pendingToolUsesForMemory = new Map<string, PendingToolUseForMemory>();
 
@@ -1246,11 +1249,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                         });
                         pendingToolUsesForMemory.delete(block.tool_use_id);
                       }
+                      // "No such tool available" 会把排查引向注册表,而真因常在连接层。
+                      // 用本轮 init 的真实连接态补一句诊断(#57);对不上就原样不动。
+                      let outboundContent = resultContent;
+                      if (block.is_error) {
+                        const diagnostic = buildMcpToolErrorDiagnostic(resultContent, lastMcpStatuses);
+                        if (diagnostic) outboundContent = resultContent + diagnostic;
+                      }
                       controller.enqueue(formatSSE({
                         type: 'tool_result',
                         data: JSON.stringify({
                           tool_use_id: block.tool_use_id,
-                          content: resultContent,
+                          content: outboundContent,
                           is_error: block.is_error || false,
                         }),
                       }));
@@ -1278,6 +1288,37 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                 const sysMsg = message as SDKSystemMessage;
                 if ('subtype' in sysMsg) {
                   if (sysMsg.subtype === 'init') {
+                    // MCP 连接态落盘(#57)。SDK 在 init 里给出每个 server 的真实连接结果,
+                    // 这是唯一可靠的来源——进程由 SDK 内部 spawn,我们看不到 spawn/exit。
+                    // 不记的话,"工具时有时无"永远只能靠猜:注册表 health_status=ok、
+                    // 工具声明也在清单里,但底层可能压根没连上。
+                    try {
+                      const mcpStatuses = (sysMsg as { mcp_servers?: Array<{ name: string; status: string }> }).mcp_servers;
+                      if (Array.isArray(mcpStatuses) && mcpStatuses.length > 0) {
+                        // 存快照:工具报"不存在"时用它判断真因(#57)
+                        lastMcpStatuses = mcpStatuses;
+                        const notConnected = mcpStatuses.filter((s) => s.status !== 'connected');
+                        recordRuntimeEvent({
+                          sessionId,
+                          sdkSessionId: sysMsg.session_id,
+                          event: 'mcp_servers_connected',
+                          detail: {
+                            total: mcpStatuses.length,
+                            connected: mcpStatuses.length - notConnected.length,
+                            servers: mcpStatuses.map((s) => `${s.name}:${s.status}`),
+                          },
+                        });
+                        for (const s of notConnected) {
+                          recordRuntimeEvent({
+                            sessionId,
+                            sdkSessionId: sysMsg.session_id,
+                            event: 'mcp_server_unavailable',
+                            detail: { server: s.name, status: s.status },
+                          });
+                        }
+                      }
+                    } catch { /* 记录失败不影响会话 */ }
+
                     controller.enqueue(formatSSE({
                       type: 'status',
                       data: JSON.stringify({
