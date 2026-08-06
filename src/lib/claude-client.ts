@@ -50,6 +50,7 @@ import { extractHistoryImages } from './claude/history-images';
 import { toVisionMediaType, type VisionMediaType } from './claude/vision-media';
 import { recordRuntimeEvent } from './claude/runtime-events';
 import { buildMcpToolErrorDiagnostic } from './claude/mcp-tool-diagnostics';
+import { createTrackedSpawn, killProcessTree } from './claude/process-tree-kill';
 
 /**
  * Find the system `node` binary. Required in packaged Electron apps where
@@ -288,6 +289,13 @@ const STABLE_CLAUDE_CODE_ENV: Record<string, string> = {
   // 强制 standard 模式：Claude 与 GPT 一样直接发 tool_use，工具正常执行。
   ENABLE_TOOL_SEARCH: 'false',
 };
+/**
+ * 单次 MCP 工具调用的兜底墙钟(#59)。取 30 分钟:够长,正经的长任务(大批量
+ * 下载/转码)不会被误杀;够短,挂死的工具不至于让工作流步骤一直干等到自己超时。
+ * 用户在某个 MCP 配置里显式写了 timeout 时,那个优先(per-server 覆盖 env)。
+ */
+const DEFAULT_MCP_TOOL_TIMEOUT_MS = 30 * 60 * 1000;
+
 const MODEL_FIRST_RESPONSE_TIMEOUT_MS = 180_000;
 const MODEL_FIRST_RESPONSE_TIMEOUT_ERROR = 'LUMOS_MODEL_FIRST_RESPONSE_TIMEOUT';
 
@@ -452,6 +460,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     teamSession,
   } = options;
 
+  // 接管 spawn 拿到的 CLI 进程。放在 stream 外层:start 里赋值、cancel 里回收整棵
+  // 进程树 —— 否则取消后 MCP server / 工具子进程会变孤儿继续跑(#59)。
+  let spawnedCliProcess: import('child_process').ChildProcess | undefined;
+
   return new ReadableStream<string>({
     async start(controller) {
       const perfStart = Date.now();
@@ -543,6 +555,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
       try {
         const sdkEnv: Record<string, string> = {
+          // MCP 工具调用的兜底墙钟(#59)。此前没有上限:某个 MCP 工具内部挂死
+          // (实测 pinterest_sync 的 subprocess 无 timeout)会让整个步骤干等到
+          // 步骤超时被判 cancelled,而且把步骤超时从 10 分钟调到 30 分钟也没用
+          // —— 因为卡住的是工具本身,不是时间不够。SDK 支持这个环境变量作为
+          // 每次工具调用的硬上限(进度通知不延长),超时后工具返回错误、agent
+          // 还能继续走,不会整步骤陪葬。用户在 MCP 配置里显式给了 timeout 的,
+          // 以那个为准(per-server 覆盖 env)。
+          MCP_TOOL_TIMEOUT: String(DEFAULT_MCP_TOOL_TIMEOUT_MS),
           ...runtimeContext.env,
           ...STABLE_CLAUDE_CODE_ENV,
         };
@@ -575,6 +595,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const queryOptions: Options = {
           cwd: workingDirectory || os.homedir(),
           abortController,
+          // 接管 CLI 进程创建:只为拿到 pid + 在 POSIX 下建独立进程组,
+          // 取消时才能连同 MCP server / 工具子进程一起回收(#59)。行为与默认一致。
+          spawnClaudeCodeProcess: createTrackedSpawn((child) => { spawnedCliProcess = child; }),
           includePartialMessages: true,
           permissionMode: skipPermissions
             ? 'bypassPermissions'
@@ -1586,12 +1609,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         if (systemNode) {
           process.execPath = originalExecPath;
         }
+        // 兜底回收:正常收尾时 CLI 已自行退出,killProcessTree 会静默无操作;
+        // 异常路径下它负责清掉可能残留的子孙进程(#59)。
+        killProcessTree(spawnedCliProcess?.pid);
         unregisterConversation(sessionId);
       }
     },
 
     cancel() {
       abortController?.abort();
+      // abort 只让 SDK 对 CLI 做 child.kill(),不碰它派生的 MCP server / 工具子进程,
+      // 于是步骤已判 cancelled、gallery-dl 之类却还在写文件(#59)。这里补杀整棵树。
+      killProcessTree(spawnedCliProcess?.pid);
     },
   });
 }
