@@ -413,6 +413,7 @@ export function ChatView({
   const [statusText, setStatusText] = useState<string | undefined>(() => cachedStreamingState?.statusText || undefined);
   const [currentModel, setCurrentModel] = useState(modelName || '');
   const [currentProviderId, setCurrentProviderId] = useState(providerId || '');
+  const [currentImageProviderId, setCurrentImageProviderId] = useState('');
   const [currentKnowledgeOptions, setCurrentKnowledgeOptions] = useState<ChatKnowledgeOptions>(
     () => getInitialKnowledgeOptions(initialKnowledgeOptions, initialKnowledgeEnabled),
   );
@@ -637,6 +638,21 @@ export function ChatView({
       }
     }
   }, [currentModel, currentProviderId, isStreaming, onRequestedModelChange, sessionId]);
+
+  // 会话级图片服务商:选中即存会话(裸聊天分流);空串=清除、跟随全局默认。
+  const handleImageProviderChange = useCallback(async (nextImageProviderId: string) => {
+    setCurrentImageProviderId(nextImageProviderId);
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_provider_id: nextImageProviderId }),
+      });
+    } catch {
+      // 保存失败不阻塞对话;下次出图回落全局默认,不致命
+    }
+  }, [sessionId]);
 
   const handleKnowledgeOptionsChange = useCallback((options: ChatKnowledgeOptions) => {
     setCurrentKnowledgeOptions(options);
@@ -912,6 +928,20 @@ export function ChatView({
   useEffect(() => {
     setCurrentProviderId(providerId || '');
   }, [providerId]);
+
+  // 回填会话级图片服务商(裸聊天分流的选择器当前值)。自包含 fetch,不扩散 prop 链。
+  useEffect(() => {
+    if (!sessionId) { setCurrentImageProviderId(''); return; }
+    let cancelled = false;
+    fetch(`/api/chat/sessions/${sessionId}`)
+      .then((r) => r.json())
+      .then((d: { session?: { image_provider_id?: string }; image_provider_id?: string }) => {
+        if (cancelled) return;
+        setCurrentImageProviderId(d.session?.image_provider_id || d.image_provider_id || '');
+      })
+      .catch(() => { if (!cancelled) setCurrentImageProviderId(''); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
 
   useEffect(() => {
     setCurrentKnowledgeOptions(getInitialKnowledgeOptions(initialKnowledgeOptions, initialKnowledgeEnabled));
@@ -1863,6 +1893,8 @@ export function ChatView({
         onModelChange={setCurrentModel}
         providerId={currentProviderId}
         onProviderModelChange={handleProviderModelChange}
+        imageProviderId={currentImageProviderId}
+        onImageProviderChange={handleImageProviderChange}
         workingDirectory={effectiveWorkingDirectory}
         initialKnowledgeEnabled={initialKnowledgeEnabled}
         initialKnowledgeOptions={currentKnowledgeOptions}

@@ -99,6 +99,9 @@ interface MessageInputProps {
   onModelChange?: (model: string) => void;
   providerId?: string;
   onProviderModelChange?: (providerId: string, model: string) => void;
+  /** 会话级图片服务商(裸聊天分流);空=跟随全局默认。选了团队时该选择器灰态。 */
+  imageProviderId?: string;
+  onImageProviderChange?: (imageProviderId: string) => void;
   workingDirectory?: string;
   initialKnowledgeEnabled?: boolean;
   initialKnowledgeOptions?: ChatKnowledgeOptions;
@@ -464,6 +467,8 @@ export function MessageInput({
   onModelChange,
   providerId,
   onProviderModelChange,
+  imageProviderId,
+  onImageProviderChange,
   workingDirectory,
   initialKnowledgeEnabled = false,
   initialKnowledgeOptions,
@@ -482,6 +487,9 @@ export function MessageInput({
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const knowledgeMenuRef = useRef<HTMLDivElement>(null);
   const teamMenuRef = useRef<HTMLDivElement>(null);
+  const imageProviderMenuRef = useRef<HTMLDivElement>(null);
+  const [imageProviderMenuOpen, setImageProviderMenuOpen] = useState(false);
+  const [imageProviderOptions, setImageProviderOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   const [popoverMode, setPopoverMode] = useState<PopoverMode>(null);
   const [popoverItems, setPopoverItems] = useState<PopoverItem[]>([]);
@@ -1527,6 +1535,16 @@ export function MessageInput({
       })
       .catch(() => setTeamOptions([]));
   }, [onTeamChange]);
+  // 图片服务商列表:可换图片服务商时才拉(从全部服务商筛 image-gen)
+  useEffect(() => {
+    if (!onImageProviderChange) return;
+    fetch('/api/providers')
+      .then((r) => r.json())
+      .then((d: { providers?: Array<{ id: string; name: string; capabilities?: string }> }) => {
+        setImageProviderOptions((d.providers || []).filter(p => (p.capabilities || '').includes('image-gen')).map(p => ({ id: p.id, name: p.name })));
+      })
+      .catch(() => setImageProviderOptions([]));
+  }, [onImageProviderChange]);
   useEffect(() => {
     if (!teamMenuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -1537,6 +1555,17 @@ export function MessageInput({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [teamMenuOpen]);
+
+  useEffect(() => {
+    if (!imageProviderMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (imageProviderMenuRef.current && !imageProviderMenuRef.current.contains(e.target as Node)) {
+        setImageProviderMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [imageProviderMenuOpen]);
 
   useEffect(() => {
     if (!knowledgeMenuOpen) return;
@@ -1995,6 +2024,48 @@ export function MessageInput({
                           >
                             {option.name}
                             <span className="ml-1 text-muted-foreground">({option.memberCount}人)</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 会话级图片服务商:裸聊天可选,存会话;选了团队则灰态(出图由团队成员各自设置决定) */}
+                {onImageProviderChange && imageProviderOptions.length > 0 && (
+                  <div className="relative flex items-center" ref={imageProviderMenuRef}>
+                    <PromptInputButton
+                      disabled={Boolean(teamId)}
+                      title={teamId ? '出图服务商由团队成员各自的设置决定' : '本对话出图用哪个图片服务商'}
+                      onClick={() => { if (!teamId) setImageProviderMenuOpen((prev) => !prev); }}
+                      className={cn(!teamId && imageProviderId && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15")}
+                    >
+                      <span className="text-xs">
+                        {teamId
+                          ? '出图:随团队'
+                          : (imageProviderOptions.find((p) => p.id === imageProviderId)?.name || '出图:默认')}
+                      </span>
+                      {!teamId && (
+                        <HugeiconsIcon icon={ArrowDown01} className={cn("h-2.5 w-2.5 transition-transform duration-200", imageProviderMenuOpen && "rotate-180")} />
+                      )}
+                    </PromptInputButton>
+                    {imageProviderMenuOpen && !teamId && (
+                      <div className="absolute bottom-full left-0 mb-1.5 w-56 rounded-lg border bg-popover shadow-lg overflow-hidden z-50 max-h-72 overflow-y-auto">
+                        <button
+                          type="button"
+                          className={cn("w-full px-3 py-2 text-left text-xs hover:bg-accent", !imageProviderId && "bg-accent/50 font-medium")}
+                          onClick={() => { onImageProviderChange?.(''); setImageProviderMenuOpen(false); }}
+                        >
+                          跟随全局默认
+                        </button>
+                        {imageProviderOptions.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={cn("w-full px-3 py-2 text-left text-xs hover:bg-accent", imageProviderId === option.id && "bg-accent/50 font-medium")}
+                            onClick={() => { onImageProviderChange?.(option.id); setImageProviderMenuOpen(false); }}
+                          >
+                            {option.name}
                           </button>
                         ))}
                       </div>

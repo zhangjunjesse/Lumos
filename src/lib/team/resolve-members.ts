@@ -4,6 +4,7 @@
 import { agentKeyOf, type TeamAgentSpec } from './agent-defs';
 import { buildToolGrantNotice, grantsToDisallowedTools } from './tool-grants';
 import { resolveTeamMembers, type PlatformTeam } from './store';
+import { getProvider } from '@/lib/db/providers';
 
 export interface ReadyMember {
   name: string;
@@ -17,6 +18,11 @@ export function resolveReadyMembers(team: PlatformTeam): ReadyMember[] {
     .map((m) => {
       const p = m.preset!;
       const duty = p.responsibility?.trim() || p.position?.trim() || p.description?.trim() || '团队成员';
+      // 成员绑了图片服务商 → 拿显示名注入提示词,让它出图时自报(逃生舱接住);
+      // 服务商已被删则忽略,自然降级到团队默认/全局默认。
+      const imageProviderName = p.imageProviderId
+        ? getProvider(p.imageProviderId)?.name
+        : undefined;
       return {
         name: p.name,
         duty,
@@ -28,6 +34,7 @@ export function resolveReadyMembers(team: PlatformTeam): ReadyMember[] {
           prompt: p.systemPrompt + buildToolGrantNotice(p.toolPermissions),
           // 聊天团队:成员继承会话全部工具(office/浏览器/知识库/skill…),只按档位挡危险项。
           disallowedTools: grantsToDisallowedTools(p.toolPermissions),
+          ...(imageProviderName ? { imageProviderName } : {}),
         },
       };
     });
