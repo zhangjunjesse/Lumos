@@ -9,6 +9,23 @@
 import { getAllProviders } from '@/lib/db/providers'
 import { providerSupportsCapability } from '@/lib/provider-config'
 
+/**
+ * 校验绑定的图片服务商 id 仍然可用(存在且支持 image-gen)。
+ * 不可用返回 undefined(回退全局默认)并留痕 —— 会话/团队里存的绑定是历史值,
+ * 服务商事后被删除/改能力时,出图应该降级而不是从此张张报「指定服务商已删除」。
+ * 与团队聊天模型的既有语义一致(team.providerId 失效时 warn + 回退)。
+ */
+export function sanitizeImageProviderId(id: string | undefined | null, sourceLabel: string): string | undefined {
+  const normalized = id?.trim()
+  if (!normalized) return undefined
+  const provider = getAllProviders().find((p) => p.id === normalized)
+  if (!provider || !providerSupportsCapability(provider, 'image-gen')) {
+    console.warn(`[image-provider] ${sourceLabel}绑定的图片服务商已不可用(${normalized}),回退全局默认`)
+    return undefined
+  }
+  return normalized
+}
+
 export function resolveImageProviderIdByHint(hint: string | undefined): string | undefined {
   const needle = hint?.trim().toLowerCase()
   if (!needle) return undefined

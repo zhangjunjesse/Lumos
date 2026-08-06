@@ -10,6 +10,7 @@
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
 import { getSession } from '@/lib/db/sessions';
 import { resolveImageProviderId } from '@/lib/image/image-provider-resolver';
+import { sanitizeImageProviderId } from '@/lib/image/image-provider-hint';
 import {
   createLumosButlerMcpServer,
   LUMOS_BUTLER_MCP_SYSTEM_HINT,
@@ -60,13 +61,14 @@ const lumosImageConnector: ConnectorDefinition = {
   buildHint: () => MEDIA_GEN_IN_PROCESS_HINT,
 };
 
-/** 聊天场景(无成员身份)的图片服务商:只看会话级选择,空则回退全局默认。 */
+/** 聊天场景(无成员身份)的图片服务商:只看会话级选择,空/已失效则回退全局默认。 */
 function resolveChatImageProviderId(sessionId?: string): string | undefined {
   if (!sessionId) return undefined;
   const session = getSession(sessionId);
   return resolveImageProviderId({
     hasTeam: false,
-    sessionImageProviderId: session?.image_provider_id,
+    // 会话里存的是历史绑定,服务商可能已被删——失效时回退而不是硬报错
+    sessionImageProviderId: sanitizeImageProviderId(session?.image_provider_id, '会话'),
   });
 }
 

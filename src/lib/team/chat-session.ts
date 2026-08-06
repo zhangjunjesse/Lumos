@@ -1,5 +1,6 @@
 // 聊天团队会话:把团队+成员装配成 streamClaude 的 teamSession 参数 + 队长系统提示词。
 import { resolveImageProviderId } from '@/lib/image/image-provider-resolver';
+import { sanitizeImageProviderId } from '@/lib/image/image-provider-hint';
 // 关键:团队会话走普通聊天的同一条装配链(MCP/skill/能力全继承),这里只产出团队特有的
 // 叠加件——队长提示词、成员 agents、出图 stdio server、团队级模型覆盖。设计:docs/chat-team-design.md §5-6。
 
@@ -65,7 +66,7 @@ export function buildTeamChatConfig(input: {
   // 团队级图片服务商:团队默认 → 全局默认(就近原则)。成员级细分见 T3.2 第二批。
   const teamImageProviderId = resolveImageProviderId({
     hasTeam: true,
-    teamDefaultImageProviderId: team.defaultImageProviderId,
+    teamDefaultImageProviderId: sanitizeImageProviderId(team.defaultImageProviderId, '团队默认'),
   });
   const runToken = createTeamImageGuard({
     billingUserId: input.lumosUserId ?? '',

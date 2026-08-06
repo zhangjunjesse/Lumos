@@ -12,7 +12,7 @@ jest.mock('@/lib/provider-config', () => ({
   providerSupportsCapability: (p: { capabilities: string }, cap: string) => p.capabilities.includes(cap),
 }))
 
-import { resolveImageProviderIdByHint } from '../image-provider-hint'
+import { resolveImageProviderIdByHint, sanitizeImageProviderId } from '../image-provider-hint'
 
 describe('resolveImageProviderIdByHint (T5.1 逃生舱)', () => {
   it('按 provider_type 精确匹配(大小写不敏感)', () => {
@@ -35,5 +35,22 @@ describe('resolveImageProviderIdByHint (T5.1 逃生舱)', () => {
     expect(resolveImageProviderIdByHint('')).toBeUndefined()
     expect(resolveImageProviderIdByHint('  ')).toBeUndefined()
     expect(resolveImageProviderIdByHint(undefined)).toBeUndefined()
+  })
+})
+
+describe('sanitizeImageProviderId (绑定失效回退,不硬报错)', () => {
+  it('绑定的服务商仍可用 → 原样返回', () => {
+    expect(sanitizeImageProviderId('p-mj', '会话')).toBe('p-mj')
+  })
+  it('绑定的服务商已被删除 → undefined(回退全局默认)', () => {
+    expect(sanitizeImageProviderId('p-deleted', '会话')).toBeUndefined()
+  })
+  it('绑定的服务商不支持 image-gen(能力被改) → undefined', () => {
+    expect(sanitizeImageProviderId('p-chat', '团队默认')).toBeUndefined()
+  })
+  it('空/空白 → undefined,不告警', () => {
+    expect(sanitizeImageProviderId('', '会话')).toBeUndefined()
+    expect(sanitizeImageProviderId(undefined, '会话')).toBeUndefined()
+    expect(sanitizeImageProviderId(null, '会话')).toBeUndefined()
   })
 })
