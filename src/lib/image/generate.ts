@@ -54,6 +54,11 @@ export interface GenerateImagesResult {
   providerName: string
   /** 该服务商的计价单位，用于如实回报给调用方（默认按张） */
   billingUnit: 'image' | 'task'
+  /**
+   * 参考图上传后的公网 URL(仅异步任务型服务商会返回,如 MJ)。回传给调用方,
+   * 便于自行在 prompt 里拼本层没覆盖的引用参数,不必重复上传同一张图。
+   */
+  referenceUrls?: string[]
 }
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -304,6 +309,9 @@ async function executeGenerate(
     providerType: provider.provider_type,
     providerName: provider.name,
     billingUnit: imageProvider.billingUnit ?? 'image',
+    ...(Array.isArray((result.providerTaskRef as { referenceUrls?: unknown } | undefined)?.referenceUrls)
+      ? { referenceUrls: (result.providerTaskRef as { referenceUrls: string[] }).referenceUrls }
+      : {}),
   }
 }
 

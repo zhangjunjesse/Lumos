@@ -129,6 +129,96 @@ describe('MidjourneyClient', () => {
     await expect(client.uploadImages(['bad'])).rejects.toThrow(/参考图上传失败/)
   })
 
+  describe('参考图引用方式 (#58)', () => {
+    async function submitAndGetPrompt(params: Parameters<typeof client.submitImagine>[0]) {
+      const fetchMock = jest.fn().mockResolvedValue(jsonResponse({ code: 1, description: 'ok', result: 't' }))
+      global.fetch = fetchMock as unknown as typeof fetch
+      await client.submitImagine(params)
+      return JSON.parse(fetchMock.mock.calls[0][1].body as string).prompt as string
+    }
+
+    test('默认(经典垫图):URL 前置,权重用 --iw', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceWeight: 2,
+      })
+      expect(p).toBe('https://x/a.png a zebra --iw 2')
+    })
+
+    test('oref:URL 走 --oref,权重用 --ow(不再前置)', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceMode: 'oref', referenceWeight: 400,
+      })
+      expect(p).toBe('a zebra --oref https://x/a.png --ow 400 --v 7')
+      expect(p).not.toMatch(/^https:/) // 关键:不能再前置成 image prompt
+    })
+
+    test('sref:URL 走 --sref,权重用 --sw', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceMode: 'sref', referenceWeight: 150,
+      })
+      expect(p).toBe('a zebra --sref https://x/a.png --sw 150')
+    })
+
+    test('不传权重则不加权重参数(用 MJ 自己的默认)', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceMode: 'oref',
+      })
+      expect(p).toBe('a zebra --oref https://x/a.png --v 7')
+    })
+
+    test('oref/sref 只取第一张(MJ 各只接受一个 URL)', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png', 'https://x/b.png'], referenceMode: 'oref',
+      })
+      expect(p).toBe('a zebra --oref https://x/a.png --v 7')
+    })
+
+    test('回归:没有参考图时三种模式都不加任何引用参数', async () => {
+      for (const mode of ['image-prompt', 'oref', 'sref'] as const) {
+        const p = await submitAndGetPrompt({ prompt: 'a zebra --sref 1234567890 --sw 150', referenceMode: mode, referenceWeight: 9 })
+        // 用户自己在 prompt 里写的数字风格码原样保留,不被本层干扰
+        expect(p).toBe('a zebra --sref 1234567890 --sw 150')
+      }
+    })
+
+    test('oref 未写版本 → 自动补 --v 7(否则走账号默认 v8 必被拒)', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceMode: 'oref', referenceWeight: 400,
+      })
+      expect(p).toBe('a zebra --oref https://x/a.png --ow 400 --v 7')
+    })
+
+    test('oref 已写 --v 7 → 不重复补', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra --v 7', referenceUrls: ['https://x/a.png'], referenceMode: 'oref',
+      })
+      expect(p).toBe('a zebra --v 7 --oref https://x/a.png')
+    })
+
+    test('oref + v8 → 提交前拦下,不浪费收费任务', async () => {
+      const fetchMock = jest.fn()
+      global.fetch = fetchMock as unknown as typeof fetch
+      await expect(client.submitImagine({
+        prompt: 'a zebra --v 8.2', referenceUrls: ['https://x/a.png'], referenceMode: 'oref',
+      })).rejects.toThrow(/不支持 Midjourney v8\.2/)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    test('非 oref 模式不受版本约束(v8.2 下经典垫图/sref 照常)', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra --v 8.2', referenceUrls: ['https://x/a.png'], referenceMode: 'sref', referenceWeight: 150,
+      })
+      expect(p).toBe('a zebra --v 8.2 --sref https://x/a.png --sw 150')
+    })
+
+    test('回归:比例参数仍在末尾', async () => {
+      const p = await submitAndGetPrompt({
+        prompt: 'a zebra', referenceUrls: ['https://x/a.png'], referenceMode: 'oref', referenceWeight: 400, aspectRatio: '2:3',
+      })
+      expect(p).toBe('a zebra --oref https://x/a.png --ow 400 --v 7 --ar 2:3')
+    })
+  })
+
   test('内容审核失败要归到 content_policy，不能当成可重试的未知错误', async () => {
     global.fetch = jest.fn().mockResolvedValue(
       jsonResponse({ id: 't3', status: 'FAILURE', failReason: 'Request blocked by content policy' }),

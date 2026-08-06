@@ -10,6 +10,7 @@
  */
 
 import { MidjourneyClient } from '@/lib/midjourney/client'
+import type { MjReferenceMode } from '@/lib/midjourney/types'
 import { splitGrid } from '@/lib/midjourney/grid'
 import { resolveReferenceUrls } from '@/lib/midjourney/reference'
 import type {
@@ -43,10 +44,21 @@ export function createMidjourneyProvider(config: ImageProviderConfig): ImageProv
       // 本地图要先上传换成公网 URL（MJ 不吃 base64）；每张未命中缓存的都算一次任务
       const referenceUrls = await resolveReferenceUrls(client, request.images, request.abortSignal)
 
+      // 参考图引用方式(#58):经典垫图 / Omni Reference(--oref) / Style Reference(--sref)。
+      // 由调用方经 providerOptions 指定;缺省保持历史行为(经典垫图)。
+      const opts = request.providerOptions || {}
+      const rawMode = typeof opts.reference_mode === 'string' ? opts.reference_mode : ''
+      const referenceMode: MjReferenceMode =
+        rawMode === 'oref' || rawMode === 'sref' ? rawMode : 'image-prompt'
+      const rawWeight = Number(opts.reference_weight)
+      const referenceWeight = Number.isFinite(rawWeight) ? rawWeight : undefined
+
       const taskId = await client.submitImagine(
         {
           prompt: request.prompt,
           referenceUrls,
+          referenceMode,
+          ...(referenceWeight !== undefined ? { referenceWeight } : {}),
           aspectRatio: request.aspectRatio,
         },
         request.abortSignal,
@@ -81,6 +93,9 @@ export function createMidjourneyProvider(config: ImageProviderConfig): ImageProv
           buttons: task.buttons,
           finalPrompt: task.properties?.finalPrompt || '',
           expiresAt: task.finishTime + 24 * 60 * 60 * 1000,
+          // 参考图上传后的公网地址(#58):回传给调用方,便于自行在 prompt 里拼
+          // --oref/--sref 等本层没覆盖的用法,不必再传一次本地图重复上传。
+          ...(referenceUrls.length > 0 ? { referenceUrls } : {}),
         },
       }
     },

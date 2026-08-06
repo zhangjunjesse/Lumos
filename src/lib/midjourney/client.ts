@@ -143,9 +143,44 @@ export class MidjourneyClient {
 
   /** 文生图 / 图生图。垫图必须是公网 URL，MJ 不认 base64。 */
   async submitImagine(params: MjImagineParams, signal?: AbortSignal): Promise<string> {
+    const urls = params.referenceUrls || []
+    const mode = params.referenceMode || 'image-prompt'
+    const weight = params.referenceWeight
+
+    // 三种参考图通道的拼法不同(#58):经典垫图 URL 前置;oref/sref 是带 URL 值的参数,
+    // 只取第一张(MJ 的 --oref/--sref 各只接受一个 URL),多传的忽略。
+    const prefixUrls = mode === 'image-prompt' ? urls : []
+    const refFlag = mode === 'image-prompt' || urls.length === 0
+      ? ''
+      : `--${mode} ${urls[0]}`
+    const weightFlag = weight === undefined || urls.length === 0
+      ? ''
+      : `--${({ 'image-prompt': 'iw', oref: 'ow', sref: 'sw' } as const)[mode]} ${weight}`
+
+    // --oref 只在 v7 可用,v8+ 直接被 MJ 拒(实测:"--oref is not compatible with --version 8.2")。
+    // 没写版本就补 --v 7(否则走账号默认版本必失败);写了 v8+ 则当场拦下,别浪费一次收费任务。
+    const promptText = params.prompt.trim()
+    const versionMatch = /--v(?:ersion)?\s+(\d+(?:\.\d+)?)/i.exec(promptText)
+    let orefVersionFlag = ''
+    if (mode === 'oref' && urls.length > 0) {
+      if (!versionMatch) {
+        orefVersionFlag = '--v 7'
+      } else if (Number(versionMatch[1]) >= 8) {
+        throw new ImageGenError(
+          'invalid_params',
+          `Omni Reference(--oref)不支持 Midjourney v${versionMatch[1]}，只能用于 v7。`
+          + '请把提示词里的版本改成 --v 7，或改用 reference_mode="image-prompt"(经典垫图)/"sref"(风格参考)。',
+          false,
+        )
+      }
+    }
+
     const segments = [
-      ...(params.referenceUrls || []),
-      params.prompt.trim(),
+      ...prefixUrls,
+      promptText,
+      refFlag,
+      weightFlag,
+      orefVersionFlag,
       params.aspectRatio ? `--ar ${params.aspectRatio}` : '',
     ].filter(Boolean)
 

@@ -69,11 +69,28 @@ export interface MjSubmitResponse {
   properties?: Record<string, unknown>
 }
 
+/**
+ * 参考图的引用方式。MJ V7 起把"垫图"拆成了三种语义不同的通道(#58):
+ * - image-prompt:经典垫图,URL 前置到 prompt 开头,权重用 --iw。构图/内容整体参考。
+ * - oref:Omni Reference(V7 起官方推荐,取代 --cref),`--oref <url> --ow N`。
+ *        保主体/人物一致性,权重与画面自由度分离——同一美学下出变体靠它。
+ * - sref:Style Reference 的图片形式,`--sref <url> --sw N`。只抄风格不抄内容。
+ * 注意 --sref 也接受纯数字风格码(不需要 URL),那条路不经过这里。
+ */
+export type MjReferenceMode = 'image-prompt' | 'oref' | 'sref'
+
 export interface MjImagineParams {
   prompt: string
   botType?: MjBotType
-  /** 垫图公网 URL，会拼到 prompt 最前面。MJ 不认 base64。 */
+  /** 垫图公网 URL。MJ 不认 base64,必须先上传换成 URL。 */
   referenceUrls?: string[]
+  /** 参考图怎么用;缺省 image-prompt(经典垫图,历史行为) */
+  referenceMode?: MjReferenceMode
+  /**
+   * 参考图权重。按模式映射到不同参数:image-prompt→--iw(0-3)、oref→--ow(0-1000)、
+   * sref→--sw(0-1000)。不传则不加权重参数,由 MJ 用它自己的默认值。
+   */
+  referenceWeight?: number
   /** 形如 2:3，转成 --ar 2:3 追加到 prompt 末尾 */
   aspectRatio?: string
   state?: string

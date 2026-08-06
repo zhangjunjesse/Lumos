@@ -59,6 +59,21 @@ const inputSchema = {
       'BLOCK_ONLY_HIGH', 'BLOCK_NONE', 'OFF',
     ]),
   })).optional().describe('Gemini safety threshold overrides. Use sparingly — most defaults are sensible.'),
+  reference_mode: z.enum(['image-prompt', 'oref', 'sref']).optional()
+    .describe(
+      'How reference images are used (Midjourney only; ignored by other providers). '
+      + '"image-prompt" (default) = classic image prompt, URLs prefixed to the prompt, weight via reference_weight (0-3, maps to --iw); '
+      + '"oref" = Omni Reference — keeps the SAME subject/character across generations, weight 0-1000 (--ow). '
+      + 'IMPORTANT: --oref only works on Midjourney v7; it is REJECTED on v8+ ("--oref is not compatible with --version 8.2"). '
+      + 'When using oref you MUST also put "--v 7" in the prompt (and drop any --v 8.x). '
+      + '"sref" = Style Reference by image — copies STYLE only, not content, weight 0-1000 (--sw). '
+      + 'Note: a numeric style code (e.g. "--sref 1234567890") needs no reference image and can go directly in the prompt.',
+    ),
+  reference_weight: z.number().optional()
+    .describe(
+      'Strength of the reference image. Range depends on reference_mode: image-prompt 0-3 (--iw), '
+      + 'oref 0-1000 (--ow), sref 0-1000 (--sw). Omit to let Midjourney use its default.',
+    ),
   image_provider: z.string().optional()
     .describe(
       'ONLY set this when the user EXPLICITLY names an image provider for this specific image '
@@ -81,6 +96,10 @@ export type ImageGenArgs = {
   thinking_mode?: boolean;
   negative_prompt?: string;
   safety_settings?: Array<{ category: string; threshold: string }>;
+  /** 参考图引用方式(MJ):经典垫图 / Omni Reference / Style Reference */
+  reference_mode?: 'image-prompt' | 'oref' | 'sref';
+  /** 参考图权重,范围随 reference_mode 变(--iw/--ow/--sw) */
+  reference_weight?: number;
   /** AI 逃生舱:用户明说的服务商名字/类型,解析成 id 后覆盖就近解析结果 */
   image_provider?: string;
 };
@@ -116,6 +135,9 @@ function buildProviderOptions(args: ImageGenArgs): Record<string, unknown> | und
   if (args.thinking_mode === false) opts.thinking_mode = false;
   if (args.negative_prompt) opts.negative_prompt = args.negative_prompt;
   if (args.safety_settings) opts.safety_settings = args.safety_settings;
+  // MJ 参考图引用方式(#58);其它服务商忽略这两个键
+  if (args.reference_mode) opts.reference_mode = args.reference_mode;
+  if (args.reference_weight !== undefined) opts.reference_weight = args.reference_weight;
   return Object.keys(opts).length > 0 ? opts : undefined;
 }
 
@@ -154,6 +176,9 @@ async function runGeneration(
     generated_image_count: result.images.length,
     // 按任务计价的服务商(如 Midjourney)一次调用固定出一批候选,收一份钱
     billing_mode: result.billingUnit === 'task' ? 'per_task' : 'per_image',
+    // 参考图上传后的公网地址(#58):可直接在后续 prompt 里拼 --oref/--sref 等用法,
+    // 无需重复上传同一张图。仅 MJ 这类需要先上传的服务商会有。
+    ...(result.referenceUrls?.length ? { reference_urls: result.referenceUrls } : {}),
   });
 }
 
