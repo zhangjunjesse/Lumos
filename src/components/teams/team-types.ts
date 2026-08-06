@@ -26,6 +26,8 @@ export interface TeamView {
   memberRefs: TeamMemberRefView[];
   providerId: string;
   model: string;
+  /** 团队默认图片服务商;空=全局默认 */
+  defaultImageProviderId: string;
   isDefault: boolean;
   updatedAt: string;
   members: ResolvedMemberView[];

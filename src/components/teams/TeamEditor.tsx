@@ -26,15 +26,18 @@ export function TeamEditor({ team, onChanged, onDeleted }: {
   const [sop, setSop] = useState(team.sop);
   const [providerId, setProviderId] = useState(team.providerId);
   const [model, setModel] = useState(team.model);
+  const [imageProviderId, setImageProviderId] = useState(team.defaultImageProviderId);
   const [refs, setRefs] = useState(team.memberRefs);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [imageProviders, setImageProviders] = useState<ProviderOption[]>([]);
 
   useEffect(() => {
     setName(team.name); setDescription(team.description); setSop(team.sop);
     setProviderId(team.providerId); setModel(team.model); setRefs(team.memberRefs);
+    setImageProviderId(team.defaultImageProviderId);
   }, [team]);
 
   useEffect(() => {
@@ -45,6 +48,10 @@ export function TeamEditor({ team, onChanged, onDeleted }: {
         for (const m of g.models || []) ms.push({ providerId: g.provider_id, providerName: g.provider_name, value: m.value, label: m.label });
       }
       setModels(ms); setProviders(ps);
+    }).catch(() => {});
+    // 图片服务商:全部服务商里筛 image-gen(团队默认图片服务商用)
+    fetch('/api/providers').then((r) => r.json()).then((data: { providers?: Array<{ id: string; name: string; capabilities?: string }> }) => {
+      setImageProviders((data.providers || []).filter(p => (p.capabilities || '').includes('image-gen')).map(p => ({ id: p.id, name: p.name })));
     }).catch(() => {});
   }, []);
 
@@ -65,7 +72,7 @@ export function TeamEditor({ team, onChanged, onDeleted }: {
     }
   };
 
-  const saveBasics = () => patch({ name, description, sop, providerId, model });
+  const saveBasics = () => patch({ name, description, sop, providerId, model, defaultImageProviderId: imageProviderId });
   const saveRefs = (next: typeof refs) => { setRefs(next); void patch({ memberRefs: next }); };
 
   const memberOf = (presetId: string) => team.members.find((m) => m.ref.presetId === presetId)?.preset ?? null;
@@ -122,6 +129,20 @@ export function TeamEditor({ team, onChanged, onDeleted }: {
           </Select>
         </div>
       </div>
+
+      {imageProviders.length > 0 && (
+        <div>
+          <Label>团队默认图片服务商</Label>
+          <Select value={imageProviderId || '__default__'} onValueChange={(v) => setImageProviderId(v === '__default__' ? '' : v)}>
+            <SelectTrigger><SelectValue placeholder="全局默认" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__default__">跟随全局默认</SelectItem>
+              {imageProviders.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">成员没单独绑图片服务商时,用这个兜底;都没配则用全局默认。</p>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={saveBasics} disabled={saving || !name.trim()}>{saving ? '保存中…' : '保存'}</Button>

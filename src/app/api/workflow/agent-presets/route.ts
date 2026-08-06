@@ -18,6 +18,7 @@ const createAgentPresetSchema = z.object({
   outputContract: z.string().trim().max(500).optional(),
   preferredModel: z.string().trim().optional(),
   providerId: z.string().trim().optional(),
+  imageProviderId: z.string().trim().optional(),
   mcpServers: z.array(z.string()).optional(),
   toolPermissions: toolPermissionsSchema.optional(),
   position: z.string().trim().max(100).optional(),

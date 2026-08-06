@@ -18,6 +18,8 @@ export interface MemberFormData {
   name: string; position: string; description: string;
   responsibility: string;
   systemPrompt: string; preferredModel: string; providerId: string;
+  /** 成员出图用的图片服务商;空=跟随全局默认 */
+  imageProviderId: string;
   departmentId: string;
   permRead: boolean; permWrite: boolean; permExec: boolean;
 }
@@ -29,6 +31,7 @@ function defaultForm(initial?: AgentPresetDirectoryItem | null): MemberFormData 
     responsibility: initial?.responsibility ?? '',
     systemPrompt: initial?.systemPrompt ?? '',
     preferredModel: initial?.preferredModel ?? '', providerId: initial?.providerId ?? '',
+    imageProviderId: initial?.imageProviderId ?? '',
     departmentId: initial?.departmentId ?? '',
     // 团队会话工具权限:读研缺省开,产出/执行必须显式授予(团队会话绕过权限弹窗,这就是闸门)
     // 缺省全开,与 DEFAULT_TOOL_PERMISSIONS 一致(#46:默认关 exec 让团队干到最后一步才失败)
@@ -84,6 +87,7 @@ export function MemberEditor({ open, initial, onClose, onSave }: MemberEditorPro
   const [aiErr, setAiErr] = useState('');
   const [models, setModels] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderOption[]>([]);
+  const [imageProviders, setImageProviders] = useState<ProviderOption[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const savedIdRef = useRef(initial?.id ?? '');
@@ -121,6 +125,17 @@ export function MemberEditor({ open, initial, onClose, onSave }: MemberEditorPro
         for (const m of g.models || []) ms.push({ providerId: g.provider_id, providerName: g.provider_name, value: m.value, label: m.label });
       }
       setModels(ms); setProviders(ps);
+    }).catch(() => {});
+  }, [open]);
+
+  // 图片服务商列表:从全部服务商里筛出支持 image-gen 的(成员出图分流用)
+  useEffect(() => {
+    if (!open) return;
+    fetch('/api/providers').then(r => r.json()).then((data: { providers?: Array<{ id: string; name: string; capabilities?: string }> }) => {
+      const imgs = (data.providers || [])
+        .filter(p => (p.capabilities || '').includes('image-gen'))
+        .map(p => ({ id: p.id, name: p.name }));
+      setImageProviders(imgs);
     }).catch(() => {});
   }, [open]);
 
@@ -346,6 +361,20 @@ export function MemberEditor({ open, initial, onClose, onSave }: MemberEditorPro
                 </Select>
               </div>
             </div>
+
+            {imageProviders.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>图片服务商</Label>
+                <Select value={form.imageProviderId || '__default__'} onValueChange={v => set('imageProviderId', v === '__default__' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="使用默认" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__default__">使用默认(全局图片服务商)</SelectItem>
+                    {imageProviders.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">该成员出图时用的服务商。留空跟随全局默认;团队里不同成员可各绑不同服务商(如印花用 Midjourney、场景图用豆包)。</p>
+              </div>
+            )}
 
             {/* 团队工具权限:团队会话是无人值守跑的,这三个开关就是安全闸门本身 */}
             <div className="space-y-2 rounded-lg border border-border/60 p-3">

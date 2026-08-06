@@ -238,6 +238,8 @@ export function AgentPresetList() {
       toolPermissions: { read: data.permRead, write: data.permWrite, exec: data.permExec },
       preferredModel: data.preferredModel ? data.preferredModel : null,
       providerId: data.providerId ? data.providerId : null,
+      // 空值显式传 null 才能"改回默认"落库(同 providerId 规则)
+      imageProviderId: data.imageProviderId ? data.imageProviderId : null,
       ...(data.position ? { position: data.position } : {}),
       departmentId: data.departmentId || null,
     };
