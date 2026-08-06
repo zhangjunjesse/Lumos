@@ -57,15 +57,18 @@ function resolveModelForProvider(provider: ApiProvider): string {
   return firstModel;
 }
 
-export function resolveBillingTarget(): BillingTarget | { error: string } {
+export function resolveBillingTarget(providerId?: string): BillingTarget | { error: string } {
   let provider: ApiProvider | undefined;
   try {
     provider = resolveProviderForCapability({
       moduleKey: 'image', capability: 'image-gen', allowDefault: false,
+      // 必须跟 generateImages 用同一个解析入参,否则"扣费的服务商"和"出图的服务商"会错位
+      preferredProviderId: providerId,
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    return { error: `图片生成服务商解析失败 (settings.provider_override:image): ${detail}` };
+    const src = providerId ? `指定服务商 ${providerId}` : 'settings.provider_override:image';
+    return { error: `图片生成服务商解析失败 (${src}): ${detail}` };
   }
   if (!provider) {
     return {

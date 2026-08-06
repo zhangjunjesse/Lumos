@@ -19,6 +19,8 @@ export interface PlatformTeam {
   memberRefs: TeamMemberRef[];
   providerId: string;
   model: string;
+  /** 团队默认图片服务商:成员没绑图片服务商时的兜底;空=全局默认 */
+  defaultImageProviderId: string;
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
@@ -38,6 +40,7 @@ interface TeamRow {
   member_refs: string;
   provider_id: string;
   model: string;
+  default_image_provider_id: string;
   is_default: number;
   created_at: string;
   updated_at: string;
@@ -63,6 +66,7 @@ function rowToTeam(row: TeamRow): PlatformTeam {
     memberRefs: refs,
     providerId: row.provider_id,
     model: row.model,
+    defaultImageProviderId: row.default_image_provider_id ?? '',
     isDefault: row.is_default === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -88,6 +92,7 @@ export interface TeamInput {
   memberRefs?: unknown;
   providerId?: string;
   model?: string;
+  defaultImageProviderId?: string;
   isDefault?: boolean;
 }
 
@@ -99,8 +104,8 @@ export function createTeam(input: TeamInput): PlatformTeam {
   const ts = nowIso();
   if (input.isDefault) clearDefaultFlag(db);
   db.prepare(`
-    INSERT INTO lumos_teams (id, name, description, sop, member_refs, provider_id, model, is_default, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO lumos_teams (id, name, description, sop, member_refs, provider_id, model, default_image_provider_id, is_default, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, name,
     input.description?.trim() ?? '',
@@ -108,6 +113,7 @@ export function createTeam(input: TeamInput): PlatformTeam {
     JSON.stringify(sanitizeRefs(input.memberRefs)),
     input.providerId?.trim() ?? '',
     input.model?.trim() ?? '',
+    input.defaultImageProviderId?.trim() ?? '',
     input.isDefault ? 1 : 0,
     ts, ts,
   );
@@ -123,7 +129,7 @@ export function updateTeam(id: string, patch: TeamInput): PlatformTeam {
   const db = getDb();
   if (patch.isDefault === true) clearDefaultFlag(db, id);
   db.prepare(`
-    UPDATE lumos_teams SET name = ?, description = ?, sop = ?, member_refs = ?, provider_id = ?, model = ?, is_default = ?, updated_at = ?
+    UPDATE lumos_teams SET name = ?, description = ?, sop = ?, member_refs = ?, provider_id = ?, model = ?, default_image_provider_id = ?, is_default = ?, updated_at = ?
     WHERE id = ?
   `).run(
     patch.name?.trim() ?? existing.name,
@@ -132,6 +138,7 @@ export function updateTeam(id: string, patch: TeamInput): PlatformTeam {
     JSON.stringify(patch.memberRefs !== undefined ? sanitizeRefs(patch.memberRefs) : existing.memberRefs),
     patch.providerId !== undefined ? patch.providerId.trim() : existing.providerId,
     patch.model !== undefined ? patch.model.trim() : existing.model,
+    patch.defaultImageProviderId !== undefined ? patch.defaultImageProviderId.trim() : existing.defaultImageProviderId,
     (patch.isDefault !== undefined ? patch.isDefault : existing.isDefault) ? 1 : 0,
     nowIso(), id,
   );

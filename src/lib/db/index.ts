@@ -38,6 +38,7 @@ export {
   updateSessionResolvedModel,
   updateSessionProvider,
   updateSessionProviderId,
+  updateSessionImageProviderId,
   updateSessionBrowserContext,
   updateSessionKnowledgeOptions,
   updateSessionSystemPrompt,

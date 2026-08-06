@@ -35,6 +35,12 @@ export interface GenerateImagesParams {
   referenceImagePaths?: string[]
   sessionId?: string
   providerOptions?: Record<string, unknown>
+  /**
+   * 指定本次出图用哪个图片服务商(服务商 id)。用于"按调用者分流"——成员/会话/团队
+   * 各自绑不同服务商。留空则走全局默认(provider_override:image),旧行为不变。
+   * 由上层 resolveImageProviderId 按就近原则解析后传入,这里只负责透传。
+   */
+  providerId?: string
   abortSignal?: AbortSignal
   onProgress?: ImageGenRequest['onProgress']
 }
@@ -175,10 +181,13 @@ export async function generateImages(params: GenerateImagesParams): Promise<Gene
   try {
     provider = resolveProviderForCapability({
       moduleKey: 'image', capability: 'image-gen', allowDefault: false,
+      // 指定了就用它(校验支持 image-gen);没指定走全局 provider_override:image
+      preferredProviderId: params.providerId,
     })
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    throw new Error(`图片生成服务商解析失败 (settings.provider_override:image): ${detail}`)
+    const src = params.providerId ? `指定服务商 ${params.providerId}` : 'settings.provider_override:image'
+    throw new Error(`图片生成服务商解析失败 (${src}): ${detail}`)
   }
   if (!provider) {
     throw new Error(

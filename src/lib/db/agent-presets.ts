@@ -32,6 +32,8 @@ export interface CreateAgentPresetInput {
   outputContract?: string;
   preferredModel?: string;
   providerId?: string;
+  /** 成员出图用的图片服务商;空=跟随全局默认 */
+  imageProviderId?: string;
   mcpServers?: string[];
   toolPermissions?: AgentPresetToolPermissions;
   position?: string;
@@ -73,6 +75,7 @@ function rowToDirectoryItem(row: TemplateRow, templateCount = 0): AgentPresetDir
     ...(record.outputContract ? { outputContract: record.outputContract } : {}),
     ...(record.preferredModel ? { preferredModel: record.preferredModel } : {}),
     ...(record.providerId ? { providerId: record.providerId } : {}),
+    ...(record.imageProviderId ? { imageProviderId: record.imageProviderId } : {}),
     ...(record.mcpServers ? { mcpServers: record.mcpServers } : {}),
     ...(record.toolPermissions ? { toolPermissions: record.toolPermissions } : {}),
     ...(record.position ? { position: record.position } : {}),
@@ -98,6 +101,7 @@ function buildRecord(input: CreateAgentPresetInput): AgentPresetRecord {
   if (input.outputContract) record.outputContract = input.outputContract.trim();
   if (input.preferredModel) record.preferredModel = input.preferredModel.trim();
   if (input.providerId) record.providerId = input.providerId.trim();
+  if (input.imageProviderId) record.imageProviderId = input.imageProviderId.trim();
   if (input.mcpServers && input.mcpServers.length > 0) record.mcpServers = input.mcpServers;
   if (input.toolPermissions) record.toolPermissions = input.toolPermissions;
   if (input.position?.trim()) record.position = input.position.trim();
@@ -178,6 +182,7 @@ export function updateAgentPreset(
     outputContract: input.outputContract !== undefined ? input.outputContract : existing.outputContract,
     preferredModel: input.preferredModel !== undefined ? input.preferredModel : existing.preferredModel,
     providerId: input.providerId !== undefined ? input.providerId : existing.providerId,
+    imageProviderId: input.imageProviderId !== undefined ? input.imageProviderId : existing.imageProviderId,
     mcpServers: input.mcpServers !== undefined ? input.mcpServers : existing.mcpServers,
     toolPermissions: input.toolPermissions !== undefined ? input.toolPermissions : existing.toolPermissions,
     position: input.position !== undefined ? input.position : existing.position,

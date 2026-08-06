@@ -21,6 +21,8 @@ export interface ChatSession {
   needs_approval?: boolean;
   provider_name: string;
   provider_id: string;
+  /** 会话级图片服务商;空=跟随全局默认 provider_override:image */
+  image_provider_id?: string;
   browser_context_id: string;
   knowledge_enabled: number;
   knowledge_tag_ids: string;
@@ -108,6 +110,8 @@ export interface AgentPresetRecord {
   outputContract?: string;
   preferredModel?: string;
   providerId?: string;
+  /** 成员出图用的图片服务商;空=跟随全局默认 */
+  imageProviderId?: string;
   mcpServers?: string[];
   toolPermissions?: AgentPresetToolPermissions;
   // 员工身份信息
@@ -145,6 +149,8 @@ export interface AgentPresetDirectoryItem {
   outputContract?: string;
   preferredModel?: string;
   providerId?: string;
+  /** 成员出图用的图片服务商;空=跟随全局默认 */
+  imageProviderId?: string;
   mcpServers?: string[];
   toolPermissions?: AgentPresetToolPermissions;
   templateCount: number;
@@ -218,6 +224,7 @@ export function parseAgentPresetRecord(value: unknown): AgentPresetRecord | null
     ...(isNonEmptyString(value.outputContract) ? { outputContract: value.outputContract.trim() } : {}),
     ...(isNonEmptyString(value.preferredModel) ? { preferredModel: value.preferredModel.trim() } : {}),
     ...(isNonEmptyString(value.providerId) ? { providerId: value.providerId.trim() } : {}),
+    ...(isNonEmptyString(value.imageProviderId) ? { imageProviderId: value.imageProviderId.trim() } : {}),
     ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
     ...(toolPermissions ? { toolPermissions } : {}),
     ...(isNonEmptyString(value.position) ? { position: value.position.trim() } : {}),

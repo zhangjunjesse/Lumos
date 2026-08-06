@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, setSessionTeam, updateSdkSessionId, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, setSessionTeam, updateSdkSessionId, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, updateSessionImageProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, updateSessionSystemPrompt, clearSessionMessages } from '@/lib/db';
 import { getTeam } from '@/lib/team/store';
 import { cleanupSessionFeishuChat, syncSessionTitleToFeishu } from '@/lib/bridge/sync-helper';
 import { validateBrowserContextId } from '@/lib/browser-provider/context-validation';
@@ -52,6 +52,10 @@ export async function PATCH(
     }
     if (body.provider_id) {
       updateSessionProviderId(id, body.provider_id);
+    }
+    // 会话级图片服务商;允许传空串清除(回退全局默认),故用 !== undefined
+    if (typeof body.image_provider_id === 'string') {
+      updateSessionImageProviderId(id, body.image_provider_id);
     }
     if (typeof body.browser_context_id === 'string') {
       let browserContextId: string;

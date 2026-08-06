@@ -113,6 +113,12 @@ export function updateSessionProviderId(id: string, providerId: string): void {
   db.prepare('UPDATE chat_sessions SET provider_id = ? WHERE id = ?').run(providerId, id);
 }
 
+/** 会话级图片服务商(按调用者分流);传空串=清除、跟随全局默认。 */
+export function updateSessionImageProviderId(id: string, imageProviderId: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET image_provider_id = ? WHERE id = ?').run(imageProviderId.trim(), id);
+}
+
 export function updateSessionBrowserContext(id: string, browserContextId: string): void {
   const db = getDb();
   const normalized = browserContextId.trim() || 'embedded:default';

@@ -23,7 +23,8 @@ export async function handleTeamImageCall(token: string, args: ImageGenArgs): Pr
   }
   guard.used += n;
 
-  const result = await runImageGen(args, undefined, guard.billingUserId || undefined);
+  // 团队级图片服务商(guard 里带的);成员级细分见 T3.2 第二批
+  const result = await runImageGen(args, undefined, guard.billingUserId || undefined, guard.imageProviderId);
 
   // 从成功结果里记下真实落盘路径:最终交差的 path 必须在这个集合里(防幻觉路径)。
   for (const block of result.content ?? []) {

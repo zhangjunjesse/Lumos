@@ -1,4 +1,5 @@
 // 一次性团队任务执行(平台通用,工作流团队步骤用):队长按 SOP 派单成员完成任务,
+import { resolveImageProviderId } from '@/lib/image/image-provider-resolver';
 // 返回最终交差文本 + 执行事件。与聊天团队会话同一套成员解析/工具授权/出图护栏,
 // 差别:无会话状态(不 resume)、任务一次给全、交差即结束;MCP 面只有出图(聊天团队
 // 继承会话已起好的 office/浏览器/知识库等),内置工具(Read/Write/Edit/Bash)则一致全开。
@@ -112,7 +113,16 @@ export async function runTeamTask(input: {
     await ensureClaudeLocalAuthReady(runtime.activeProvider);
   }
 
-  const runToken = createTeamImageGuard({ billingUserId: input.lumosUserId ?? '', cap: IMAGES_PER_TASK_CAP });
+  // 团队级图片服务商:团队默认 → 全局默认(就近原则)。成员级细分见 T3.2 第二批。
+  const teamImageProviderId = resolveImageProviderId({
+    hasTeam: true,
+    teamDefaultImageProviderId: team.defaultImageProviderId,
+  });
+  const runToken = createTeamImageGuard({
+    billingUserId: input.lumosUserId ?? '',
+    cap: IMAGES_PER_TASK_CAP,
+    imageProviderId: teamImageProviderId,
+  });
   const abortController = new AbortController();
   // 调用方(工作流 team 步骤)必须把节点上配置的超时传进来;缺省值只是兜底
   const effectiveTimeoutMs = input.timeoutMs ?? TASK_TIMEOUT_MS;

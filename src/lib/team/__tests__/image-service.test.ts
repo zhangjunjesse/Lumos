@@ -51,8 +51,16 @@ describe('team-image-service', () => {
 
     const guard = getTeamImageGuard(token);
     expect([...(guard?.producedPaths ?? [])].sort()).toEqual(['/a.png', '/b.png']);
-    // 计费 userId 用的是 guard 里的云账户 id
-    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1');
+    // 计费 userId 用 guard 里的云账户 id;没配团队图片服务商时第 4 参为 undefined(走全局默认)
+    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1', undefined);
+    releaseTeamImageGuard(token);
+  });
+
+  it('团队级图片服务商:guard 带 imageProviderId → 透传给 runImageGen 第 4 参(T3.2)', async () => {
+    const token = createTeamImageGuard({ billingUserId: 'u1', cap: 10, imageProviderId: 'p-mj' });
+    mockGen.mockResolvedValue(okResult(['/a.png']));
+    await handleTeamImageCall(token, { prompt: 'x' });
+    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1', 'p-mj');
     releaseTeamImageGuard(token);
   });
 

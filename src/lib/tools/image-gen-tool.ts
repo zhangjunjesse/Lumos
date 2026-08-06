@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
+import { resolveImageProviderIdByHint } from '@/lib/image/image-provider-hint';
 import { coerceStringArray, coerceJsonArray } from './image-gen-arg-coerce';
 import { findUnreferencedPromptPaths } from './image-gen-path-guard';
 import {
@@ -58,6 +59,14 @@ const inputSchema = {
       'BLOCK_ONLY_HIGH', 'BLOCK_NONE', 'OFF',
     ]),
   })).optional().describe('Gemini safety threshold overrides. Use sparingly — most defaults are sensible.'),
+  image_provider: z.string().optional()
+    .describe(
+      'ONLY set this when the user EXPLICITLY names an image provider for this specific image '
+      + '(e.g. "画这张用 Midjourney" / "用豆包出场景图"). Value is the provider name or type '
+      + '(e.g. "Midjourney", "midjourney", "豆包"). Do NOT guess or auto-pick — if the user did not '
+      + 'name a provider, omit this and the system uses the configured default. Wrong/unknown names '
+      + 'are ignored (fall back to default), not errors.',
+    ),
 };
 
 export type ImageGenArgs = {
@@ -72,6 +81,8 @@ export type ImageGenArgs = {
   thinking_mode?: boolean;
   negative_prompt?: string;
   safety_settings?: Array<{ category: string; threshold: string }>;
+  /** AI 逃生舱:用户明说的服务商名字/类型,解析成 id 后覆盖就近解析结果 */
+  image_provider?: string;
 };
 
 function formatGenerationError(error: unknown): string {
@@ -114,6 +125,7 @@ async function runGeneration(
   args: ImageGenArgs,
   sessionId: string | undefined,
   model: string,
+  providerId: string | undefined,
 ): Promise<CallToolResult> {
   const result = await generateImages({
     prompt: args.prompt,
@@ -121,6 +133,7 @@ async function runGeneration(
     aspectRatio: args.aspect_ratio || '1:1',
     imageSize: args.image_size || '1K',
     n: args.count,
+    providerId,
     referenceImagePaths: args.reference_image_paths,
     providerOptions: buildProviderOptions(args),
     sessionId,
@@ -150,6 +163,9 @@ export async function runImageGen(
   args: ImageGenArgs,
   sessionId: string | undefined,
   userId: string | undefined,
+  // 本次出图指定的图片服务商 id(按调用者分流,由上层就近解析后传入);
+  // undefined 时走全局默认 provider_override:image,行为不变。
+  imageProviderId?: string,
 ): Promise<CallToolResult> {
   // 只拦「prompt 里有、但没放进 reference_image_paths」的路径(那才是真漏传,provider 收不到参考图)。
   // 已在 reference_image_paths 里的重复路径放行 —— 上游 context-image 注入器会把
@@ -174,7 +190,11 @@ export async function runImageGen(
     }, true);
   }
 
-  const target = resolveBillingTarget();
+  // AI 逃生舱:用户明说服务商时覆盖就近解析结果(explicit > 会话/成员/团队 > 全局默认)。
+  // 名字解析不到就忽略、回落原值 —— 逃生舱不该因写错名字而中断出图。
+  const effectiveProviderId = resolveImageProviderIdByHint(args.image_provider) ?? imageProviderId;
+
+  const target = resolveBillingTarget(effectiveProviderId);
   if ('error' in target) return textResult({ success: false, error: target.error }, true);
   if (!target.model) {
     return textResult({
@@ -210,7 +230,7 @@ export async function runImageGen(
   }
 
   try {
-    return await runGeneration(args, sessionId, target.model);
+    return await runGeneration(args, sessionId, target.model, effectiveProviderId);
   } catch (error) {
     if (userId && quotaConsumed) {
       await refundRemoteQuota(userId, idempotencyKey);
@@ -226,12 +246,12 @@ export async function runImageGen(
   }
 }
 
-export function createImageGenTool(sessionId?: string, userId?: string) {
+export function createImageGenTool(sessionId?: string, userId?: string, imageProviderId?: string) {
   return tool(
     IMAGE_GEN_TOOL_NAME,
     'Generate images using AI. Call this tool when the user asks to '
     + 'generate, draw, create, edit, restyle, or transform images.',
     inputSchema,
-    (args): Promise<CallToolResult> => runImageGen(args, sessionId, userId),
+    (args): Promise<CallToolResult> => runImageGen(args, sessionId, userId, imageProviderId),
   );
 }

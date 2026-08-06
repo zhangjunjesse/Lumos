@@ -15,6 +15,12 @@ export interface TeamImageGuard {
   producedPaths: Set<string>;
   onQuotaDenied?: (used: number, cap: number) => void;
   createdAt: number;
+  /**
+   * 团队级图片服务商(按调用者分流):整队出图统一走它,空=全局默认。
+   * 只做到团队级——出图 HTTP 回调只有 runToken、拿不到"当前是哪个成员",
+   * 成员级细分(同队不同成员各自不同)需要另做,见 T3.2 第二批。
+   */
+  imageProviderId?: string;
 }
 
 // 注册表挂 globalThis:Next dev 热重载会产生多份模块实例,团队会话和 API route 必须
@@ -33,6 +39,7 @@ export function createTeamImageGuard(input: {
   billingUserId: string;
   cap: number;
   onQuotaDenied?: (used: number, cap: number) => void;
+  imageProviderId?: string;
 }): string {
   const now = Date.now();
   for (const [token, guard] of guards) {
@@ -46,6 +53,7 @@ export function createTeamImageGuard(input: {
     producedPaths: new Set(),
     onQuotaDenied: input.onQuotaDenied,
     createdAt: now,
+    ...(input.imageProviderId ? { imageProviderId: input.imageProviderId } : {}),
   });
   return token;
 }

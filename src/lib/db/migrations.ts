@@ -64,6 +64,8 @@ export function migrateCoreTables(db: Database.Database): void {
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
+  // 会话级图片服务商(按调用者分流);空=跟随全局默认 provider_override:image。
+  safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN image_provider_id TEXT NOT NULL DEFAULT ''");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN browser_context_id TEXT NOT NULL DEFAULT 'embedded:default'");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN knowledge_enabled INTEGER NOT NULL DEFAULT 0");
   safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN knowledge_tag_ids TEXT NOT NULL DEFAULT '[]'");

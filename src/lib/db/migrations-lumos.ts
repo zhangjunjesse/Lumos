@@ -1466,6 +1466,7 @@ export function migrateLumosTables(db: Database.Database): void {
       member_refs TEXT NOT NULL DEFAULT '[]',
       provider_id TEXT NOT NULL DEFAULT '',
       model TEXT NOT NULL DEFAULT '',
+      default_image_provider_id TEXT NOT NULL DEFAULT '',
       is_default INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1474,6 +1475,11 @@ export function migrateLumosTables(db: Database.Database): void {
   const chatSessionCols = db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
   if (!chatSessionCols.some(c => c.name === 'team_id')) {
     db.exec('ALTER TABLE chat_sessions ADD COLUMN team_id TEXT DEFAULT NULL');
+  }
+  // 存量库补列:团队默认图片服务商(成员没绑时的兜底)
+  const teamCols = db.prepare("PRAGMA table_info(lumos_teams)").all() as { name: string }[];
+  if (!teamCols.some(c => c.name === 'default_image_provider_id')) {
+    db.exec("ALTER TABLE lumos_teams ADD COLUMN default_image_provider_id TEXT NOT NULL DEFAULT ''");
   }
 
   // Seed built-in data on first run

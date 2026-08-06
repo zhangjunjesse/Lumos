@@ -8,6 +8,8 @@
  * 故 lumos.appliesTo 仍读 permissionMode，与旧行为逐字一致。
  */
 import { createLumosMcpServer } from '@/lib/tools/lumos-mcp-server';
+import { getSession } from '@/lib/db/sessions';
+import { resolveImageProviderId } from '@/lib/image/image-provider-resolver';
 import {
   createLumosButlerMcpServer,
   LUMOS_BUTLER_MCP_SYSTEM_HINT,
@@ -51,10 +53,22 @@ const lumosImageConnector: ConnectorDefinition = {
   label: '图像生成',
   appliesTo: (ctx) => !ctx.browserAutomationIntent,
   resolve: (ctx) => ({
-    inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId),
+    // 主 agent/裸聊天走"会话级 → 全局默认"就近解析;团队成员出图走另一条链
+    // (stage-worker → team-image-service),不经过这里。
+    inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId, resolveChatImageProviderId(ctx.sessionId)),
   }),
   buildHint: () => MEDIA_GEN_IN_PROCESS_HINT,
 };
+
+/** 聊天场景(无成员身份)的图片服务商:只看会话级选择,空则回退全局默认。 */
+function resolveChatImageProviderId(sessionId?: string): string | undefined {
+  if (!sessionId) return undefined;
+  const session = getSession(sessionId);
+  return resolveImageProviderId({
+    hasTeam: false,
+    sessionImageProviderId: session?.image_provider_id,
+  });
+}
 
 /** 知识库（读类）——条件为结构事实，与 permissionMode 无关。 */
 const knowledgeConnector: ConnectorDefinition = {
