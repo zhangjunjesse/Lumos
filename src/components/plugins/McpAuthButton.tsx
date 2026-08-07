@@ -94,30 +94,39 @@ export function McpAuthButton({ serverId, status, onChanged }: McpAuthButtonProp
   }
 
   const authorized = status.state === "authorized";
+  // "没有令牌"只说明本地没存过,不代表这台服务器要求授权 —— 它可能用固定
+  // 请求头、URL 带 token,或压根不需要鉴权。给这种情况打"未授权"是冤枉它,
+  // 所以只在确实授权过(已授权/已过期)时才显示状态标签。
+  const showBadge = authorized || status.state === "expired";
 
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        {authorized ? (
-          <Badge variant="secondary" className="text-xs shrink-0 text-green-700 dark:text-green-300">
-            已授权
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="text-xs shrink-0">
-            {status.state === "expired" ? "授权已过期" : "未授权"}
+        {showBadge && (
+          <Badge
+            variant={authorized ? "secondary" : "outline"}
+            className={`text-xs shrink-0 ${authorized ? "text-green-700 dark:text-green-300" : ""}`}
+          >
+            {authorized ? "已授权" : "授权已过期"}
           </Badge>
         )}
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-7 text-xs"
+          className="h-7 text-xs text-muted-foreground"
           disabled={busy}
           onClick={authorized ? handleRevoke : handleAuthorize}
         >
-          {authorized ? "取消授权" : waiting ? "等待浏览器授权…" : "授权"}
+          {authorized
+            ? "取消授权"
+            : waiting
+              ? "等待浏览器授权…"
+              : status.state === "expired"
+                ? "重新授权"
+                : "需要登录?点此授权"}
         </Button>
       </div>
-      {error && <span className="text-xs text-destructive max-w-64 text-right">{error}</span>}
+      {error && <span className="text-xs text-destructive max-w-72 text-right">{error}</span>}
     </div>
   );
 }

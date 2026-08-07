@@ -47,6 +47,10 @@ export async function beginAuthorization(serverId: string): Promise<{ authorizat
   if (!server.url) throw new Error('只有远程 MCP(HTTP / SSE)才需要 OAuth 授权。');
 
   const probe = await probeAuthRequirement(server.url);
+  // 服务器明说不用授权时直接讲清楚,别把用户拖进一轮注册再报"找不到元数据"。
+  if (probe.requirement === 'not-required') {
+    throw new Error('这台服务器没有要求 OAuth 授权,直接用即可。连不上的话多半是别的原因(地址、网络或它自己的鉴权方式)。');
+  }
   const discovered = await discoverOAuthConfig(server.url, probe.resourceMetadataUrl);
 
   const redirectUri = resolveRedirectUri();

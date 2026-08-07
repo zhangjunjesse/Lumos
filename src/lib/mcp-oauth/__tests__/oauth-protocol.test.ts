@@ -2,7 +2,7 @@
 // 这一组只测协议层:发现、PKCE、授权地址拼装 —— 不碰数据库、不碰网络。
 
 import { createHash } from 'crypto';
-import { parseResourceMetadataUrl } from '../discovery';
+import { parseResourceMetadataUrl, probeAuthRequirement } from '../discovery';
 import { createPkcePair, createState } from '../pkce';
 import { buildAuthorizationUrl } from '../client';
 import type { DiscoveredOAuthConfig } from '../types';
@@ -24,6 +24,41 @@ describe('parseResourceMetadataUrl', () => {
   it('没有这个头、或头里没有该参数时返回 undefined(退回按约定地址猜)', () => {
     expect(parseResourceMetadataUrl(null)).toBeUndefined();
     expect(parseResourceMetadataUrl('Bearer realm="x"')).toBeUndefined();
+  });
+});
+
+describe('probeAuthRequirement', () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  function mockFetch(impl: () => Promise<Response> | never) {
+    global.fetch = jest.fn(impl) as unknown as typeof fetch;
+  }
+
+  it('401 → 需要授权,并带出资源元数据地址', async () => {
+    mockFetch(async () =>
+      new Response('{}', {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer resource_metadata="https://a.cn/.well-known/r"' },
+      }),
+    );
+    const r = await probeAuthRequirement('https://a.cn/mcp');
+    expect(r.requirement).toBe('required');
+    expect(r.resourceMetadataUrl).toBe('https://a.cn/.well-known/r');
+  });
+
+  it('200 → 明确不需要授权', async () => {
+    mockFetch(async () => new Response('{}', { status: 200 }));
+    expect((await probeAuthRequirement('https://a.cn/mcp')).requirement).toBe('not-required');
+  });
+
+  it('网络不通 → unknown,不能谎报"不需要授权"', async () => {
+    mockFetch(() => {
+      throw new Error('fetch failed');
+    });
+    expect((await probeAuthRequirement('https://a.cn/mcp')).requirement).toBe('unknown');
   });
 });
 

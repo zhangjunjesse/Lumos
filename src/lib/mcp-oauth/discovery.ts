@@ -62,10 +62,15 @@ function wellKnownCandidates(base: string, suffix: string): string[] {
   return [...new Set(candidates)];
 }
 
-/** 探一次 MCP 地址:返回 401 时携带的资源元数据地址。非 401 说明不需要授权。 */
+/**
+ * 探一次 MCP 地址,判断它要不要授权。
+ *
+ * 三态而不是布尔:网络不通时"探不出来"和"确定不需要"是两回事 —— 前者不该
+ * 让用户看到"这台服务器不需要授权"这种笃定的错误结论。
+ */
 export async function probeAuthRequirement(
   mcpUrl: string,
-): Promise<{ needsAuth: boolean; resourceMetadataUrl?: string }> {
+): Promise<{ requirement: 'required' | 'not-required' | 'unknown'; resourceMetadataUrl?: string }> {
   try {
     const res = await fetch(mcpUrl, {
       method: 'POST',
@@ -86,14 +91,15 @@ export async function probeAuthRequirement(
       }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (res.status !== 401 && res.status !== 403) return { needsAuth: false };
+    if (res.status !== 401 && res.status !== 403) return { requirement: 'not-required' };
     return {
-      needsAuth: true,
+      requirement: 'required',
       resourceMetadataUrl: parseResourceMetadataUrl(res.headers.get('www-authenticate')),
     };
   } catch {
-    // 网络不通 / 超时:当作"不确定",交给上层按需报错,别误判成不需要授权
-    return { needsAuth: false };
+    // 网络不通 / 超时:探不出来。不能当成"不需要授权",否则用户会收到一句
+    // 笃定但错误的结论,反而不去排查真正的网络问题。
+    return { requirement: 'unknown' };
   }
 }
 
