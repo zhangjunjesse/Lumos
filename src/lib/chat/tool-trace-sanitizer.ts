@@ -62,11 +62,30 @@ function cleanupAfterStrip(text: string): string {
     .trim();
 }
 
+/**
+ * `call <命令>` 这条规则要防的是模型把工具调用打成 shell 风格的正文
+ * (`call echo "hello"`)。但命令表里 type/set/copy/move/where/del 全是常用
+ * 英文词,于是「call type A 的处理方式如下」这种正常中英混排句子也会命中。
+ *
+ * 误报的代价远高于漏报:命中后整条回复会被替换成"工具没有执行"的报错,
+ * 用户看不到 AI 真正说了什么,只会以为系统坏了;而漏报不过是让一段可疑
+ * 文本照常显示。所以这里按整行判:**含中文的行按自然语言放行**。真正的
+ * 伪调用是命令格式,不会夹中文叙述。
+ */
+const CJK_RE = /[㐀-鿿豈-﫿]/;
+
+function hasLeakedCallCommand(text: string): boolean {
+  CALL_COMMAND_RE.lastIndex = 0;
+  for (const match of text.matchAll(CALL_COMMAND_RE)) {
+    if (!CJK_RE.test(match[0])) return true;
+  }
+  return false;
+}
+
 export function hasLeakedToolInvocationText(text: string): boolean {
   if (!text) return false;
-  CALL_COMMAND_RE.lastIndex = 0;
   FUNCTION_CALL_RE.lastIndex = 0;
-  return CALL_COMMAND_RE.test(text) || FUNCTION_CALL_RE.test(text);
+  return hasLeakedCallCommand(text) || FUNCTION_CALL_RE.test(text);
 }
 
 function stripLeakedToolInvocationText(text: string): string {
@@ -74,7 +93,8 @@ function stripLeakedToolInvocationText(text: string): string {
   FUNCTION_CALL_RE.lastIndex = 0;
   return text
     .replace(FUNCTION_CALL_RE, ' ')
-    .replace(CALL_COMMAND_RE, '\n');
+    // 与 hasLeakedCallCommand 同一判据:含中文的行是叙述,原样保留
+    .replace(CALL_COMMAND_RE, (line) => (CJK_RE.test(line) ? line : '\n'));
 }
 
 /**

@@ -1295,7 +1295,11 @@ export function ChatView({
           onText: (acc) => {
             markActive();
             const isFirstVisibleContent = accumulated.length === 0;
-            leakedToolInvocationSeen = leakedToolInvocationSeen || hasLeakedToolInvocationText(acc);
+            // 只看当前累积文本,不再把中间态的判定累积下来:acc 是全量累积的,
+            // 收尾时那一次判定已覆盖全部内容。而流式半截文本(如刚吐出 "call
+            // type",后面的 " A 的处理方式" 还没到)会瞬时命中规则,一旦累积就
+            // 永久锁死,整条正常回复被替换成"工具没有执行"的报错。
+            leakedToolInvocationSeen = hasLeakedToolInvocationText(acc);
             const visibleAcc = stripLeakedToolTraceText(acc);
             accumulated = acc;
             accumulatedRef.current = acc;
