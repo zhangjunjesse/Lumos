@@ -10,6 +10,7 @@ import {
 } from './runtime-result-normalizer'
 import { buildStageRuntimeToolPolicy, getStageExecutionCwd } from './runtime-tool-policy'
 import { resolveEnabledMcpServers, toSdkMcpConfig } from '@/lib/mcp-resolver'
+import { ensureFreshMcpOAuthTokens } from '@/lib/mcp-oauth/token-manager'
 import { buildDbServerHints, type ConnectorContext } from '@/lib/agent-capabilities'
 import { createKnowledgeMcpServer } from '@/lib/knowledge/workflow-knowledge-tool'
 import {
@@ -535,6 +536,8 @@ export class StageWorker {
     let structuredOutput: unknown
 
     // Load MCP servers so workflow agents can use DeepSearch, Feishu, etc.
+    // 远程 MCP 的 OAuth 令牌先续期,再解析配置(解析同步,读到的必须已是新令牌)。
+    await ensureFreshMcpOAuthTokens()
     const lumosMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: getStageExecutionCwd(payload),
       sessionId: payload.sessionId,

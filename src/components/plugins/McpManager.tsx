@@ -345,6 +345,7 @@ export function McpManager({ refreshKey = 0 }: McpManagerProps) {
               onDelete={handleDelete}
               onToggle={handleToggle}
               onTest={testMcpServer}
+              onAuthChanged={fetchServers}
             />
           )}
         </TabsContent>

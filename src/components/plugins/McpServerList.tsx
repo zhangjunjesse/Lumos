@@ -10,6 +10,7 @@ import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { MCPServer } from '@/types';
 import type { McpTestState } from '@/components/plugins/McpManager';
+import { McpAuthButton } from '@/components/plugins/McpAuthButton';
 
 interface McpServerListProps {
   servers: Record<string, MCPServer & { scope?: string; is_enabled?: boolean }>;
@@ -18,6 +19,8 @@ interface McpServerListProps {
   onDelete: (name: string) => void;
   onToggle: (name: string, scope: string, enabled: boolean) => void;
   onTest: (name: string, server: MCPServer) => void;
+  /** 授权状态变化后重新拉列表(授权/撤销都会触发)。 */
+  onAuthChanged: () => void;
 }
 
 function getServerTypeInfo(server: MCPServer) {
@@ -98,7 +101,7 @@ function formatCheckedAt(value: string | undefined) {
   return date.toLocaleString();
 }
 
-export function McpServerList({ servers, testResults = {}, onEdit, onDelete, onToggle, onTest }: McpServerListProps) {
+export function McpServerList({ servers, testResults = {}, onEdit, onDelete, onToggle, onTest, onAuthChanged }: McpServerListProps) {
   const { t } = useTranslation();
   const entries = Object.entries(servers);
 
@@ -213,6 +216,15 @@ export function McpServerList({ servers, testResults = {}, onEdit, onDelete, onT
             )}
           </div>
         </CardHeader>
+        {server.id && server.authStatus && server.authStatus.state !== 'not-required' && (
+          <CardContent className="pt-0 pb-2 flex justify-end">
+            <McpAuthButton
+              serverId={server.id}
+              status={server.authStatus}
+              onChanged={onAuthChanged}
+            />
+          </CardContent>
+        )}
         {testResult && testResult.status !== 'checking' && (
           <CardContent className="pt-0 pb-2">
             <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

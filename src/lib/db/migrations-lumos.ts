@@ -710,6 +710,25 @@ export function migrateLumosTables(db: Database.Database): void {
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_mcp_servers_scope ON mcp_servers(scope)");
 
+  // 远程 MCP 的 OAuth 令牌(需要登录授权的服务器,如信鸽 xgrag 知识库)。
+  // 一台服务器一条;服务器删掉令牌就该失效,故 CASCADE + deleteMcpServer 显式清理兜底。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mcp_oauth_tokens (
+      server_id TEXT PRIMARY KEY REFERENCES mcp_servers(id) ON DELETE CASCADE,
+      issuer TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      token_endpoint TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      client_secret TEXT NOT NULL DEFAULT '',
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL DEFAULT '',
+      expires_at INTEGER,
+      scope TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   // Create settings table for storing app-level configuration
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (

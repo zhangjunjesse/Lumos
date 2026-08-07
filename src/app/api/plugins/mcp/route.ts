@@ -4,6 +4,8 @@ import type {
   ErrorResponse,
   SuccessResponse,
 } from '@/types';
+import type { McpAuthStatus } from '@/lib/mcp-oauth/types';
+import { getMcpAuthStatus } from '@/lib/mcp-oauth/token-manager';
 
 import {
   getAllMcpServers,
@@ -31,6 +33,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
 
     // Convert to the format expected by the UI
     const mcpServers: Record<string, {
+      id: string;
       command: string;
       args: string[];
       env: Record<string, string>;
@@ -42,6 +45,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
       runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
       url?: string;
       headers?: Record<string, string>;
+      authStatus?: McpAuthStatus;
       health?: {
         status: 'unknown' | 'ok' | 'failed' | 'skipped';
         checkedAt?: string;
@@ -53,6 +57,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
     }> = {};
     for (const server of servers) {
       const entry: {
+        id: string;
         command: string;
         args: string[];
         env: Record<string, string>;
@@ -64,6 +69,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
         runtime?: 'auto' | 'node' | 'python' | 'bun' | 'custom';
         url?: string;
         headers?: Record<string, string>;
+        authStatus?: McpAuthStatus;
         health?: {
           status: 'unknown' | 'ok' | 'failed' | 'skipped';
           checkedAt?: string;
@@ -73,6 +79,7 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
           transport?: 'stdio' | 'sse' | 'http';
         };
       } = {
+        id: server.id,
         command: server.command,
         args: parseMcpStringArray(server.args),
         env: parseMcpStringMap(server.env),
@@ -87,6 +94,8 @@ export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorRespo
       if (server.url) entry.url = server.url;
       const headers = parseMcpStringMap(server.headers);
       if (Object.keys(headers).length > 0) entry.headers = headers;
+      // 远程 MCP 才有授权一说;只读本地令牌,不发网络探测(列表要快)
+      if (server.url) entry.authStatus = getMcpAuthStatus(server.id, true);
       const healthStatus = server.health_status || 'unknown';
       if (healthStatus !== 'unknown' || server.health_checked_at) {
         entry.health = {

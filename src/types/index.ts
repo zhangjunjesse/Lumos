@@ -860,6 +860,14 @@ export interface MCPServerConfig {
   description?: string;
   scope?: 'builtin' | 'user';
   is_enabled?: boolean;
+  /** DB 主键。列表接口带回来,供 OAuth 授权等按服务器操作使用。 */
+  id?: string;
+  /** 远程 MCP 的 OAuth 授权状态;stdio 服务器没有这个字段。 */
+  authStatus?:
+    | { state: 'not-required' }
+    | { state: 'authorized'; expiresAt?: number; scope?: string }
+    | { state: 'expired' }
+    | { state: 'needs-auth' };
   health?: {
     status: 'unknown' | 'ok' | 'failed' | 'skipped';
     checkedAt?: string;

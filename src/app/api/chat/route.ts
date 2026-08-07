@@ -10,6 +10,7 @@ import {
 } from '@/lib/agent-capabilities';
 import { addMessage, getMessages, getSession, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionResolvedModel, updateSessionProvider, updateSessionProviderId, updateSessionBrowserContext, updateSessionKnowledgeOptions, getSetting, acquireSessionLock, releaseSessionLock, setSessionRuntimeStatus, listBrowserProviderConfigs, scheduleSessionAutoContinue, stopSessionAutoContinue } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
+import { ensureFreshMcpOAuthTokens } from '@/lib/mcp-oauth/token-manager';
 import type { SendMessageRequest, MessageContentBlock, FileAttachment, ClaudeStreamOptions, KnowledgeOverrides } from '@/types';
 import {
   isImageFile,
@@ -847,6 +848,8 @@ export async function POST(request: NextRequest) {
       selectedBrowserLabel,
     };
     const capabilityPlan = buildCapabilityPlan(connectorContext);
+    // 远程 MCP 的 OAuth 令牌先续期,再解析配置——解析是同步的,拿到的必须已是新令牌。
+    await ensureFreshMcpOAuthTokens();
     // 浏览器意图不再过滤掉非浏览器 MCP——保留全套，由模型按需选用（浏览器工具仍在其中）。
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedSessionWorkingDirectory,

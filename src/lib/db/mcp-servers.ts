@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { MCPServerConfig } from '@/types';
 import { getDb } from './connection';
+import { getMcpOAuthToken } from './mcp-oauth';
 import { recordMemoryV2CapabilityEvent } from '@/lib/memory-v2/capability-events';
 
 // ==========================================
@@ -133,9 +134,36 @@ export function mcpServerRecordToConfig(record: McpServerRecord): MCPServerConfi
   if (record.url) config.url = record.url;
 
   const headers = parseMcpStringMap(record.headers);
-  if (Object.keys(headers).length > 0) config.headers = headers;
+  const authorized = applyOAuthHeader(record, headers);
+  if (Object.keys(authorized).length > 0) config.headers = authorized;
 
   return config;
+}
+
+/**
+ * 给已授权的远程 MCP 注入 Bearer。
+ *
+ * 放在这里是因为它是所有运行路径(chat / workflow / bridge)的必经之地 ——
+ * 换句话说,不存在"某条路径忘了带令牌"的可能。
+ *
+ * 用户手填的 Authorization 优先:那是明确的人工意图,不该被自动令牌盖掉。
+ * 令牌的新鲜度由 ensureFreshMcpOAuthTokens() 在会话启动前保证,这里只读。
+ */
+function applyOAuthHeader(
+  record: McpServerRecord,
+  headers: Record<string, string>,
+): Record<string, string> {
+  if (!record.url) return headers;
+  const hasManualAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  if (hasManualAuth) return headers;
+  try {
+    const token = getMcpOAuthToken(record.id);
+    if (!token) return headers;
+    return { ...headers, Authorization: `Bearer ${token.accessToken}` };
+  } catch {
+    // 表缺失等异常不该让整个 MCP 加载失败
+    return headers;
+  }
 }
 
 function shouldResetHealth(data: UpdateMcpServerData): boolean {
@@ -345,6 +373,10 @@ export function deleteMcpServer(id: string): boolean {
   const db = getDb();
   const existing = getMcpServer(id);
   const result = db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  if (result.changes > 0) {
+    // 令牌不该比服务器活得久。CASCADE 依赖 PRAGMA foreign_keys=ON,这里显式删一次兜底。
+    db.prepare('DELETE FROM mcp_oauth_tokens WHERE server_id = ?').run(id);
+  }
   if (result.changes > 0 && existing) {
     recordMemoryV2CapabilityEvent({
       capabilityType: 'mcp',

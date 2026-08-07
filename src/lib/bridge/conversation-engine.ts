@@ -11,6 +11,7 @@ import {
   updateSessionResolvedModel,
 } from '@/lib/db';
 import { resolveEnabledMcpServers } from '@/lib/mcp-resolver';
+import { ensureFreshMcpOAuthTokens } from '@/lib/mcp-oauth/token-manager';
 import { streamClaude } from '@/lib/claude-client';
 import { resolveProviderForCapability } from '@/lib/provider-resolver';
 import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env';
@@ -216,6 +217,8 @@ export class ConversationEngine {
       selectedKnowledgeTagIds: [],
     };
     const capabilityPlan = buildCapabilityPlan(connectorContext);
+    // 远程 MCP 的 OAuth 令牌先续期,再解析配置(解析同步,读到的必须已是新令牌)。
+    await ensureFreshMcpOAuthTokens();
     const loadedMcpServers = resolveEnabledMcpServers({
       sessionWorkingDirectory: resolvedWorkingDirectory,
       sessionId,
