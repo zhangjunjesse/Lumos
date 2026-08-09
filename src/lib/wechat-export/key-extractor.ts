@@ -11,7 +11,7 @@ import path from 'path';
 import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
 import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
-import { bindAccountFromExtraction } from './active-account';
+import { bindAccountFromExtraction, readBoundAccount } from './active-account';
 import {
   ensureFeatureDir,
   getWeChatExportPlatform,
@@ -182,11 +182,15 @@ export async function extractKeys(
     const windowsConfig = readWindowsPathConfig();
     const dataRoots: string[] = [];
     if (windowsConfig.wechatDataRoot) dataRoots.push(windowsConfig.wechatDataRoot);
+    // 用户绑定过账号就以它为准,不用 mtime 猜的那个。猜错的代价很实在:Python 会
+    // 照着错账号的库反复验证密钥、永远验不过,一路卡到 30 分钟硬超时被杀。
+    const bound = readBoundAccount()?.wxid;
+    if (bound) env.LUMOS_WECHAT_EXPORT_WINDOWS_ACTIVE_WXID = bound;
     try {
       const probe = probeWindowsWeChatDataDir();
       if (probe.ok && probe.root) dataRoots.push(probe.root);
-      // 把检测到的当前活跃账号 wxid 也告诉 Python,便于日志标注"预期目标账号"、诊断切账号问题。
-      if (probe.ok && probe.wxid) env.LUMOS_WECHAT_EXPORT_WINDOWS_ACTIVE_WXID = probe.wxid;
+      // 没有绑定时才退回猜测,并且只用于日志标注"预期目标账号"。
+      if (!bound && probe.ok && probe.wxid) env.LUMOS_WECHAT_EXPORT_WINDOWS_ACTIVE_WXID = probe.wxid;
     } catch { /* probe 失败不影响取密钥 */ }
     for (const root of getWindowsWeChatRootCandidates()) dataRoots.push(root);
     const uniqueRoots = [...new Set(dataRoots.filter(Boolean))];

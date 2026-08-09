@@ -53,35 +53,74 @@ describe('account-binding (#40)', () => {
     expect(detectedWxids.sort()).toEqual(['new_bbb', 'old_aaa']);
   });
 
-  it('切换账号:存的是旧账号、当前活跃是新账号 → mismatch(account-switched)', () => {
-    const oldDir = makeAccount('old_aaa', 1000);
-    makeAccount('new_bbb', 9000);
-    const b = getWindowsAccountBinding({ stored: { wxid: 'old_aaa', wx_dir: oldDir }, roots: [root] });
-    expect(b.mismatch).toBe(true);
-    expect(b.reason).toBe('account-switched');
-    expect(b.storedWxid).toBe('old_aaa');
-    expect(b.activeWxid).toBe('new_bbb');
-  });
-
   it('旧账号目录已不存在且检测不到活跃账号 → mismatch(stored-dir-missing)', () => {
     // 空数据根,没有任何活跃账号;存的旧账号目录也已删除
-    const b = getWindowsAccountBinding({ stored: { wxid: 'gone_xxx', wx_dir: path.join(root, 'gone_xxx') }, roots: [root] });
+    const b = getWindowsAccountBinding({
+      stored: { wxid: 'gone_xxx', wx_dir: path.join(root, 'gone_xxx') },
+      roots: [root],
+      boundWxid: 'gone_xxx',
+    });
     expect(b.mismatch).toBe(true);
     expect(b.reason).toBe('stored-dir-missing');
     expect(b.activeWxid).toBeNull();
   });
 
-  it('切到新账号且旧目录也没了 → 归为 account-switched(更准的说法)', () => {
-    makeAccount('new_bbb', 9000);
-    const b = getWindowsAccountBinding({ stored: { wxid: 'gone_xxx', wx_dir: path.join(root, 'gone_xxx') }, roots: [root] });
-    expect(b.mismatch).toBe(true);
-    expect(b.reason).toBe('account-switched');
-    expect(b.activeWxid).toBe('new_bbb');
-  });
-
   it('账号未变(存的=当前活跃) → 不 mismatch', () => {
     const dir = makeAccount('same_aaa', 5000);
-    const b = getWindowsAccountBinding({ stored: { wxid: 'same_aaa', wx_dir: dir }, roots: [root] });
+    const b = getWindowsAccountBinding({
+      stored: { wxid: 'same_aaa', wx_dir: dir },
+      roots: [root],
+      boundWxid: 'same_aaa',
+    });
+    expect(b.mismatch).toBe(false);
+    expect(b.reason).toBeNull();
+  });
+});
+
+// 语义修正:mtime 猜测**不能**推翻用户的显式绑定。
+//
+// 上一版拿"猜的账号 ≠ 存的账号"直接判 mismatch(account-switched),后果是实打实的:
+// 用户刚手动配好账号,界面还在报警说检测到的是另一个号;取密钥也照着猜错的账号
+// 反复验证密钥、永远验不过,一路卡到 30 分钟硬超时被杀。mtime 本身就常指错人 ——
+// 新号刚登录还没写消息、旧号文件被杀毒/索引碰一下,都会翻盘。
+describe('猜测不能推翻显式绑定', () => {
+  it('★ 猜的是旧号、用户绑的是新号 → 不报 mismatch(此前的误报源头)', () => {
+    const newDir = makeAccount('new_bbb', 1000);   // 新号刚登录,mtime 反而更旧
+    makeAccount('old_aaa', 9000);                  // 旧号文件被碰过,mtime 最新 → 猜错
+    const b = getWindowsAccountBinding({
+      stored: { wxid: 'new_bbb', wx_dir: newDir },
+      roots: [root],
+      boundWxid: 'new_bbb',
+    });
+    expect(b.activeWxid).toBe('old_aaa');   // 猜测确实指错了
+    expect(b.mismatch).toBe(false);         // 但不据此报错
+    expect(b.reason).toBeNull();
+    expect(b.guessDiffers).toBe(true);      // 差异如实记录,仅供参考
+  });
+
+  it('绑定账号目录还在,即使猜不出活跃账号也不报错', () => {
+    const dir = makeAccount('bound_aaa', 5000);
+    const b = getWindowsAccountBinding({
+      stored: { wxid: 'bound_aaa', wx_dir: dir },
+      roots: [path.join(root, 'empty')],   // 空根 → 猜不出
+      boundWxid: 'bound_aaa',
+    });
+    expect(b.activeWxid).toBeNull();
+    expect(b.mismatch).toBe(false);
+  });
+
+  it('storedWxid 认绑定的那个,不是记录里排第一的', () => {
+    const dir = makeAccount('bound_bbb', 5000);
+    const b = getWindowsAccountBinding({
+      stored: { wxid: 'bound_bbb', wx_dir: dir },
+      roots: [root],
+      boundWxid: 'bound_bbb',
+    });
+    expect(b.storedWxid).toBe('bound_bbb');
+  });
+
+  it('全新用户(没绑定、没密钥记录)不报警 —— 那是正常起点', () => {
+    const b = getWindowsAccountBinding({ stored: undefined, roots: [root], boundWxid: null });
     expect(b.mismatch).toBe(false);
     expect(b.reason).toBeNull();
   });

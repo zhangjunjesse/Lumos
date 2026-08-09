@@ -39,8 +39,11 @@ export interface WeChatExportStatus {
     storedDirExists: boolean;
     activeWxid: string | null;
     detectedWxids: string[];
+    /** 只在有硬证据时为 true —— "猜的账号≠绑定的账号"不算证据,那个猜测常错。 */
     mismatch: boolean;
-    reason: 'account-switched' | 'stored-dir-missing' | null;
+    reason: 'stored-dir-missing' | 'no-binding' | null;
+    /** 猜测与绑定不一致,仅供参考,不代表出错。 */
+    guessDiffers?: boolean;
   };
   /** Lumos 当前认定的微信账号。由「取密钥成功」或「手动选目录」产生,不靠猜。 */
   boundAccount?: { wxid: string; boundAt: number } | null;

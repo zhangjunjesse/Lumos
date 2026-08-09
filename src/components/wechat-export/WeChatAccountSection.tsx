@@ -26,8 +26,9 @@ export function WeChatAccountSection({ panel }: { panel: Panel }) {
   const bound = status.boundAccount;
   const binding = status.windowsAccountBinding;
   const mirrorCount = status.mirrorAccounts?.length ?? 0;
-  const switched = Boolean(binding?.mismatch)
-    || Boolean(bound && binding?.activeWxid && binding.activeWxid !== bound.wxid);
+  // 只认硬证据(目录没了 / 有密钥却没绑定)。以前把"猜的账号≠绑定的账号"也算进来,
+  // 结果用户刚手动配好账号,界面还在报警说检测到的是另一个号 —— 那个"检测"本身就常错。
+  const needsRebind = Boolean(binding?.mismatch);
 
   return (
     <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
@@ -37,9 +38,11 @@ export function WeChatAccountSection({ panel }: { panel: Panel }) {
           <p className="mt-1 font-mono text-xs text-muted-foreground">
             {bound?.wxid ?? '尚未绑定 —— 取一次密钥,或在下面手动指定聊天数据目录'}
           </p>
-          {binding?.activeWxid && binding.activeWxid !== bound?.wxid ? (
+          {/* 没绑定时才把猜测拿出来当建议;已经绑定了就闭嘴 —— 用户说了算,
+              一个不可靠的猜测没资格在旁边质疑他刚做的设置。 */}
+          {!bound && binding?.activeWxid ? (
             <p className="mt-1 text-xs text-muted-foreground">
-              检测到当前登录的可能是 <span className="font-mono">{binding.activeWxid}</span>
+              可能是 <span className="font-mono">{binding.activeWxid}</span>(未确认,取密钥或手动指定后才算数)
             </p>
           ) : null}
         </div>
@@ -54,12 +57,13 @@ export function WeChatAccountSection({ panel }: { panel: Panel }) {
         </Button>
       </div>
 
-      {switched ? (
+      {needsRebind ? (
         <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
           <p className="text-xs leading-relaxed text-foreground/80">
-            微信账号可能变了。旧账号的密钥解不开新账号的数据,聊天记录也会对不上 ——
-            点下面的「清空并重新绑定」重来一次即可。
+            {binding?.reason === 'stored-dir-missing'
+              ? '绑定的账号数据目录已经不在了(换机 / 删号 / 微信换了目录)。点下面的「清空并重新绑定」重来一次。'
+              : '已经取到密钥但还没确认属于哪个账号。展开下面手动指定一次聊天数据目录即可。'}
           </p>
         </div>
       ) : null}

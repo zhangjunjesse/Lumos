@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm';
 import {
   AlertCircle,
   ArrowDownToLine,
-  AlertTriangle,
   ArrowUpRight,
   ChevronDown,
   CircleAlert,
@@ -665,48 +664,6 @@ function RepairIncompleteMessagesSection({ panel }: { panel: ReturnType<typeof u
   );
 }
 
-/**
- * #40:切换微信账号 / 微信升级导致旧密钥失效时的警告与"重新绑定"入口。
- * 两个触发源:①结构级——存的账号≠当前活跃账号(切账号);②功能级——启用/取钥报"密钥不匹配"
- * (微信升级后 wxid 不变但密钥变,结构检测发现不了,靠报错文案兜住)。
- */
-function AccountRebindBanner({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
-  const binding = panel.status?.windowsAccountBinding;
-  const errText = panel.actionMessage?.kind === 'error' ? panel.actionMessage.text : '';
-  const keyMismatchError = /密钥不匹配|session\.db\s*不可读/.test(errText);
-  if (!binding?.mismatch && !keyMismatchError) return null;
-
-  const stored = binding?.storedWxid;
-  const active = binding?.activeWxid;
-  const explain = binding?.reason === 'account-switched' && stored && active
-    ? <>检测到你切换了微信账号(旧 <span className="font-mono">{stored}</span> → 当前 <span className="font-mono">{active}</span>)。旧账号的密钥无法解密当前账号的数据。</>
-    : binding?.reason === 'stored-dir-missing' && stored
-      ? <>原绑定的微信账号 <span className="font-mono">{stored}</span> 的数据目录已不存在(换机 / 删除 / 微信升级换了目录)。</>
-      : <>已保存的旧密钥无法解密当前微信数据(常见于切换账号或升级微信)。</>;
-
-  return (
-    <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-3">
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="text-sm font-medium">微信账号已变化,旧密钥失效</div>
-          <p className="text-xs leading-relaxed text-foreground/80">
-            {explain} 需要清除旧密钥并重新获取当前登录账号的密钥。
-          </p>
-          <Button
-            size="sm"
-            disabled={panel.busy === 'reset-key'}
-            onClick={() => void panel.resetKey()}
-          >
-            {panel.busy === 'reset-key' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-            清除旧密钥,重新绑定当前账号
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const env = panel.status?.env;
   const status = panel.status?.status;
@@ -715,7 +672,6 @@ function ReadyView({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <AccountRebindBanner panel={panel} />
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
