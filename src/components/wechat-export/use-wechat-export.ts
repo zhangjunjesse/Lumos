@@ -257,6 +257,32 @@ export function useWeChatExport() {
   }, [refresh]);
 
   /**
+   * 直接绑定某个微信号。用户从检测到的账号里点一个即可 —— 不必知道微信把数据
+   * 放在哪、该选哪一层目录。这是自动检测猜错时最省事的纠正手段。
+   */
+  const bindAccount = useCallback(async (wxid: string) => {
+    setBusy('path');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/bind-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wxid }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || 'bind_failed');
+      setActionMessage({ kind: 'ok', text: data?.message || `已绑定 ${wxid}。` });
+      await refresh();
+      return true;
+    } catch (err) {
+      setActionMessage({ kind: 'error', text: err instanceof Error ? err.message : '绑定失败' });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
+  /**
    * 清空微信配置,回到未绑定状态。allAccounts=true 时连历史账号的聊天镜像一并删。
    * 这是不设前置条件的兜底出口 —— 任何时候都能点,不依赖 Lumos 是否"检测到"异常。
    */
@@ -304,6 +330,7 @@ export function useWeChatExport() {
     toggle,
     resetKey,
     resetAll,
+    bindAccount,
     resignWeChat,
     startExtract,
     cancelExtract,

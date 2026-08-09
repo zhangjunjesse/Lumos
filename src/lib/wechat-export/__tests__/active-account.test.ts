@@ -11,6 +11,7 @@ jest.mock('@/lib/db', () => ({ dataDir: TMP_ROOT }));
 
 import {
   activeAccountFile,
+  backfillBoundAccount,
   bindAccountFromExtraction,
   clearBoundAccount,
   getActiveAccountKey,
@@ -133,5 +134,49 @@ describe('取密钥后确定绑定哪个账号', () => {
       { wxid: 'wxid_good', key: KEY, extracted_at: 1 },
     ]);
     expect(getActiveAccountKey()).toBe('wxid_good');
+  });
+});
+
+// 老用户升级补绑定:0.39.28 引入绑定,但 writeBoundAccount 只在"用户新做一次选择"
+// 时触发。于是早就配好目录、也取过密钥的老用户升级后卡在"尚未绑定" —— 界面还在
+// 旁边显示一个猜出来的账号,用户自然会说"我明明配过了"。(真机截图证实了这一点)
+describe('从既有配置补绑定', () => {
+  it('手动指定过的数据目录解析出的 wxid 直接成为绑定', () => {
+    expect(backfillBoundAccount({ dataRootWxid: 'wxid_from_dir' })?.wxid).toBe('wxid_from_dir');
+    expect(getActiveAccountKey()).toBe('wxid_from_dir');
+  });
+
+  it('没有数据目录时,退回唯一那个有密钥的账号', () => {
+    expect(backfillBoundAccount({ keyedWxids: ['wxid_only'] })?.wxid).toBe('wxid_only');
+  });
+
+  it('数据目录优先于密钥记录 —— 前者是用户亲手选的', () => {
+    const r = backfillBoundAccount({ dataRootWxid: 'wxid_dir', keyedWxids: ['wxid_key'] });
+    expect(r?.wxid).toBe('wxid_dir');
+  });
+
+  it('多个账号都有密钥 → 不猜,交给用户点选', () => {
+    expect(backfillBoundAccount({ keyedWxids: ['wxid_a', 'wxid_b'] })).toBeNull();
+    expect(readBoundAccount()).toBeNull();
+  });
+
+  it('同一账号重复出现算一个,仍然可以补', () => {
+    expect(backfillBoundAccount({ keyedWxids: ['wxid_a', 'wxid_a'] })?.wxid).toBe('wxid_a');
+  });
+
+  it('已经绑定过就不动 —— 补绑定不能覆盖用户的选择', () => {
+    writeBoundAccount('wxid_chosen');
+    expect(backfillBoundAccount({ dataRootWxid: 'wxid_other' })).toBeNull();
+    expect(getActiveAccountKey()).toBe('wxid_chosen');
+  });
+
+  it('什么都没有就不动(真的没配过,该走正常引导)', () => {
+    expect(backfillBoundAccount({})).toBeNull();
+    expect(backfillBoundAccount({ dataRootWxid: null, keyedWxids: [] })).toBeNull();
+  });
+
+  it('非法 wxid 不会被补进来', () => {
+    expect(backfillBoundAccount({ dataRootWxid: '../evil' })).toBeNull();
+    expect(backfillBoundAccount({ keyedWxids: ['../evil'] })).toBeNull();
   });
 });

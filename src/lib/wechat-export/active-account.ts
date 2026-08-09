@@ -74,6 +74,35 @@ export function getActiveAccountKey(): string {
 }
 
 /**
+ * 从既有配置补一次绑定(无感迁移)。
+ *
+ * 绑定是 0.39.28 才引入的,而 writeBoundAccount 只在「用户新做一次选择」时触发。
+ * 于是老用户升级上来会卡在一个荒唐的状态:明明早就配好了数据目录、也取过密钥,
+ * 界面却说"尚未绑定",还在旁边显示一个猜出来的账号 —— 用户当然会说"我明明配过了"。
+ *
+ * 这里把既有事实转成绑定,优先级从强到弱:
+ *   ① 手动指定的数据目录解析出的 wxid —— 用户亲手选的,最强
+ *   ② 取密钥时写下的账号记录 —— 也是事实,只是没记成绑定
+ * 都没有就不动(真的没配过,该走正常引导)。
+ *
+ * @returns 补上的绑定;本来就有绑定或无从推断时返回 null
+ */
+export function backfillBoundAccount(input: {
+  dataRootWxid?: string | null;
+  keyedWxids?: string[];
+}): BoundAccount | null {
+  if (readBoundAccount()) return null;
+
+  const fromDataRoot = sanitizeWxid(input.dataRootWxid);
+  if (fromDataRoot) return writeBoundAccount(fromDataRoot);
+
+  // 多个账号有密钥时不猜 —— 那是真有歧义,让用户自己点一下
+  const keyed = (input.keyedWxids ?? []).map(sanitizeWxid).filter((v): v is string => Boolean(v));
+  const unique = [...new Set(keyed)];
+  return unique.length === 1 ? writeBoundAccount(unique[0]) : null;
+}
+
+/**
  * 绑定账号。取密钥成功、或用户手动选定数据目录时调用。
  * @returns 实际写入的绑定;wxid 非法时返回 null(不写)
  */

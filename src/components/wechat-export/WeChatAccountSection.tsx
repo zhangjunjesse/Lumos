@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertTriangle, ChevronDown, ChevronRight, FolderOpen, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, FolderOpen, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import type { useWeChatExport } from './use-wechat-export';
 
 type Panel = ReturnType<typeof useWeChatExport>;
@@ -70,10 +70,55 @@ export function WeChatAccountSection({ panel }: { panel: Panel }) {
 
       {expanded ? (
         <div className="mt-3 space-y-3 border-t border-border/50 pt-3">
+          <AccountPicker panel={panel} bound={bound?.wxid ?? null} />
           <ManualPathFields panel={panel} />
           <ResetControls panel={panel} mirrorCount={mirrorCount} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 从本机检测到的账号里直接点选。
+ *
+ * 自动检测(按消息库 mtime 猜)经常指错人,而此前唯一的纠正手段是"手动指定聊天
+ * 数据目录" —— 那要求用户知道微信把数据放哪、该选哪一层,门槛高得离谱。可 Lumos
+ * 本来就扫到了所有账号目录,列出来点一下就完事。
+ */
+function AccountPicker({ panel, bound }: { panel: Panel; bound: string | null }) {
+  const detected = panel.status?.windowsAccountBinding?.detectedWxids ?? [];
+  const guessed = panel.status?.windowsAccountBinding?.activeWxid;
+  const running = panel.busy === 'path';
+  if (panel.status?.platform !== 'win32' || detected.length === 0) return null;
+
+  return (
+    <div className="rounded-md border border-border/50 bg-background/40 p-3">
+      <h4 className="text-sm font-medium">本机检测到的微信号</h4>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        选中你现在要用的那个。选完 Lumos 就认它,取密钥和读聊天记录都对准它,不再自己猜。
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {detected.map((wxid) => {
+          const isBound = wxid === bound;
+          return (
+            <Button
+              key={wxid}
+              size="sm"
+              variant={isBound ? 'default' : 'outline'}
+              className="h-8 font-mono text-xs"
+              disabled={running || isBound}
+              onClick={() => void panel.bindAccount(wxid)}
+            >
+              {isBound ? <Check className="mr-1.5 h-3.5 w-3.5" /> : null}
+              {wxid}
+              {!isBound && wxid === guessed ? (
+                <span className="ml-1.5 font-sans text-[10px] opacity-70">(自动猜的)</span>
+              ) : null}
+            </Button>
+          );
+        })}
+      </div>
     </div>
   );
 }

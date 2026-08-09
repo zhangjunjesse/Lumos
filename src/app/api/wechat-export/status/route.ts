@@ -13,7 +13,7 @@ import { getSetupStatus, getWeChatExportPlatform, readWindowsAccounts, readWindo
 import { getWindowsAccountBinding } from '@/lib/wechat-export/account-binding';
 import { getLastMirrorSyncAt } from '@/lib/wechat-assistant/mirror-store';
 import { listMirrorAccounts } from '@/lib/wechat-assistant/mirror-db';
-import { readBoundAccount } from '@/lib/wechat-export/active-account';
+import { backfillBoundAccount, readBoundAccount } from '@/lib/wechat-export/active-account';
 import { getMcpServerByNameAndScope } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -38,6 +38,15 @@ export async function GET() {
   const env = runEnvProbes(platform);
   const status = getSetupStatus(env.allOk, env.signed, platform);
   const mcp = getMcpServerByNameAndScope('wechat-export', 'builtin');
+  // 老用户升级补一次绑定:早就配好数据目录/取过密钥的,不该还显示"尚未绑定"。
+  if (platform === 'win32') {
+    backfillBoundAccount({
+      dataRootWxid: 'wxDir' in env.dataDir ? env.dataDir.wxid : null,
+      keyedWxids: readWindowsAccounts()
+        .filter((a) => a.key || (a.keys && Object.keys(a.keys).length > 0))
+        .map((a) => a.wxid || ''),
+    });
+  }
   const bound = readBoundAccount();
   // 挑「当前绑定账号」那条记录,而不是无脑取第一条。
   // 旧写法 readWindowsAccounts()[0] 是这次故障的直接原因:顺序取决于写入先后,
