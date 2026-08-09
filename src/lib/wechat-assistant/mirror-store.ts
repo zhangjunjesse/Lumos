@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 
-import { getMirrorDb, MIRROR_DB_PATH } from './mirror-db';
+import { getMirrorDb, mirrorDbPathFor } from './mirror-db';
+import { getActiveAccountKey } from '@/lib/wechat-export/active-account';
 import { SYNC_STATE_KEYS } from './mirror-schema';
 import { businessDayBounds } from './topic-time';
 import type { SnapshotMessage, SnapshotSession } from './overview-compute';
@@ -282,7 +283,8 @@ export function getSyncState(): MirrorSyncState {
  * never force-creates the sidecar DB just to report freshness.
  */
 export function getLastMirrorSyncAt(): number | null {
-  if (!fs.existsSync(MIRROR_DB_PATH)) return null;
+  // 按当前绑定账号取:换号后立刻回到"没同步过",不会拿上个账号的时间冒充。
+  if (!fs.existsSync(mirrorDbPathFor(getActiveAccountKey()))) return null;
   const finished = getSyncState().lastFinishedAt;
   return finished > 0 ? finished : null;
 }

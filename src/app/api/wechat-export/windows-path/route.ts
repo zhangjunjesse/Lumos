@@ -8,6 +8,7 @@ import {
   writeWindowsPathConfig,
 } from '@/lib/wechat-export/setup-state';
 import { resolveWindowsWeChatDataRootSelection } from '@/lib/wechat-export/env-check';
+import { writeBoundAccount } from '@/lib/wechat-export/active-account';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,9 @@ export async function POST(request: Request) {
     }, { status: 400 });
   }
   const config = writeWindowsPathConfig({ wechatDataRoot: rawPath });
+  // 用户手动指定了目录 = 明确告诉 Lumos "我现在用的是这个号"。这是最强的意图信号,
+  // 直接落成绑定;镜像数据随之切到该账号的库,不会和上一个号混。
+  writeBoundAccount(resolved.wxid);
   return NextResponse.json({
     ok: true,
     kind,

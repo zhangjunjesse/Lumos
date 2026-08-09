@@ -33,7 +33,7 @@ export interface WeChatExportStatus {
     msgDir?: string;
     messageDbDir?: string;
   };
-  /** #40:切换微信账号/升级导致旧密钥失效的检测。仅 Windows 且已取过密钥时有值。 */
+  /** #40:切换微信账号/升级导致旧密钥失效的检测。仅 Windows。 */
   windowsAccountBinding?: {
     storedWxid: string | null;
     storedDirExists: boolean;
@@ -42,6 +42,10 @@ export interface WeChatExportStatus {
     mismatch: boolean;
     reason: 'account-switched' | 'stored-dir-missing' | null;
   };
+  /** Lumos 当前认定的微信账号。由「取密钥成功」或「手动选目录」产生,不靠猜。 */
+  boundAccount?: { wxid: string; boundAt: number } | null;
+  /** 本机存过聊天镜像的账号(每账号一个库文件)。 */
+  mirrorAccounts?: string[];
   status?: {
     phase:
       | 'needs-consent'

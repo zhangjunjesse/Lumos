@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server';
 import { getWeChatExportPlatform, clearRecoveredKeys, clearWindowsPathConfig, readWindowsAccounts } from '@/lib/wechat-export/setup-state';
 import { shouldClearStaleDataRoot } from '@/lib/wechat-export/account-binding';
+import { clearBoundAccount } from '@/lib/wechat-export/active-account';
 import { getMcpServerByNameAndScope, updateMcpServer } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -25,6 +26,9 @@ export async function POST() {
   if (mcp) updateMcpServer(mcp.id, { is_enabled: false });
 
   clearRecoveredKeys();
+  // 密钥没了,绑定也必须跟着解除 —— 否则镜像库还认着旧账号,重新取密钥前
+  // 界面依旧显示上一个号的数据(正是用户反馈的"点了没反应")。
+  clearBoundAccount();
   // 手动数据根若正指向旧账号目录,清掉它,让 env 重新检测挑到当前活跃账号。
   if (platform === 'win32' && shouldClearStaleDataRoot(storedWxDir)) {
     clearWindowsPathConfig('dataDir');

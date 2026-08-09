@@ -1,8 +1,11 @@
 /**
  * Schema for the WeChat sync mirror — a sidecar SQLite at
- * `~/.lumos/wechat-mirror.db`. Holds a plaintext copy of WeChat sessions
- * + messages so the overview tab can answer in milliseconds instead of
- * spawning sqlcipher per request.
+ * `~/.lumos/wechat-mirror/{wxid}.db`(每个微信账号一个库,见 mirror-db.ts)。
+ * Holds a plaintext copy of WeChat sessions + messages so the overview tab
+ * can answer in milliseconds instead of spawning sqlcipher per request.
+ *
+ * 注意:表里的 wxid 指的是**聊天对象**(联系人/群),不是登录账号 —— 登录账号
+ * 的隔离靠分库,不靠这一列。曾经用单一全局库,换微信号后两个号的数据混在一起。
  *
  * The mirror is *cache-like*: it can be wiped at any time, and the next
  * sync rebuilds it from the encrypted source. We therefore stay schemaless

@@ -256,6 +256,41 @@ export function useWeChatExport() {
     }
   }, [refresh]);
 
+  /**
+   * 清空微信配置,回到未绑定状态。allAccounts=true 时连历史账号的聊天镜像一并删。
+   * 这是不设前置条件的兜底出口 —— 任何时候都能点,不依赖 Lumos 是否"检测到"异常。
+   */
+  const resetAll = useCallback(async (allAccounts = false) => {
+    setBusy('reset-key');
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/wechat-export/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'all', allAccounts }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || 'reset_failed');
+      const cleared = Array.isArray(data?.clearedMirrors) ? data.clearedMirrors.length : 0;
+      setActionMessage({
+        kind: 'ok',
+        text: cleared > 0
+          ? `已清空微信配置和 ${cleared} 个账号的本地聊天数据,请重新取密钥。`
+          : '已清空微信配置,请重新取密钥。',
+      });
+      await refresh();
+      return true;
+    } catch (err) {
+      setActionMessage({
+        kind: 'error',
+        text: err instanceof Error ? err.message : '清空失败',
+      });
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [refresh]);
+
   return {
     status,
     statusError,
@@ -268,6 +303,7 @@ export function useWeChatExport() {
     acceptConsent,
     toggle,
     resetKey,
+    resetAll,
     resignWeChat,
     startExtract,
     cancelExtract,

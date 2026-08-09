@@ -11,6 +11,7 @@ import path from 'path';
 import { getVenvPythonPath, isVenvReady } from '@/lib/python-venv';
 import { resolvePythonBinary } from '@/lib/python-runtime';
 import { resolveRuntimeResourceRootFor } from '@/lib/runtime-resources';
+import { bindAccountFromExtraction } from './active-account';
 import {
   ensureFeatureDir,
   getWeChatExportPlatform,
@@ -357,7 +358,7 @@ export async function extractKeys(
       let keysFound = 0;
       try {
         if (platform === 'win32' && fs.existsSync(WINDOWS_ACCOUNTS_FILE)) {
-          const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ key?: string; keys?: Record<string, string> }>;
+          const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{ key?: string; keys?: Record<string, string>; wxid?: string }>;
           const keys = new Set<string>();
           for (const account of accounts) {
             if (/^[0-9a-fA-F]{64}$/.test(account.key || '')) keys.add(account.key || '');
@@ -368,6 +369,9 @@ export async function extractKeys(
             }
           }
           keysFound = keys.size;
+          // 取密钥成功 = 这个账号成了"当前账号"。绑定由动作产生,不再靠 mtime 猜
+          // (猜法在刚换号时必然猜错,见 active-account.ts)。
+          if (keysFound > 0) bindAccountFromExtraction(accounts);
         } else if (fs.existsSync(KEYS_JSON_FILE)) {
           const map = JSON.parse(fs.readFileSync(KEYS_JSON_FILE, 'utf8')) as Record<string, string>;
           keysFound = Object.keys(map).length;

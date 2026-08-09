@@ -11,7 +11,6 @@ import {
   ChevronDown,
   CircleAlert,
   Copy,
-  FolderOpen,
   Loader2,
   MessageCircle,
   RefreshCw,
@@ -20,9 +19,9 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { useWeChatExport } from './use-wechat-export';
 import { WeChatBrowser } from './WeChatBrowser';
+import { WeChatAccountSection } from './WeChatAccountSection';
 import type { WeChatMessageDbDiagnostics } from './types';
 
 const WECHAT_APP_STORE_URL = 'macappstore://apps.apple.com/cn/app/wechat/id836500024';
@@ -196,149 +195,6 @@ function ConsentSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }
 // Phase 2: env probes
 // ─────────────────────────────────────────────────────────────────────────
 
-function WindowsManualPathControls({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
-  const config = panel.status?.windowsPathConfig;
-  const hint = panel.status?.windowsPathHint;
-  const wechatExePath = config?.wechatExePath || '';
-  const dataRootPath = config?.wechatDataRoot || '';
-  return (
-    <WindowsManualPathFields
-      key={`${wechatExePath}\n${dataRootPath}`}
-      panel={panel}
-      initialWechatExePath={wechatExePath}
-      initialDataRootPath={dataRootPath}
-      hint={hint}
-    />
-  );
-}
-
-function WindowsManualPathFields({
-  panel,
-  initialWechatExePath,
-  initialDataRootPath,
-  hint,
-}: {
-  panel: ReturnType<typeof useWeChatExport>;
-  initialWechatExePath: string;
-  initialDataRootPath: string;
-  hint?: { path?: string; wxid?: string; wxDir?: string; msgDir?: string; messageDbDir?: string };
-}) {
-  const [wechatExePath, setWechatExePath] = useState(initialWechatExePath);
-  const [dataRootPath, setDataRootPath] = useState(initialDataRootPath);
-  const running = panel.busy === 'path';
-
-  const chooseWechatExe = async () => {
-    const api = window.electronAPI?.dialog;
-    if (!api?.openFile) {
-      void panel.saveWindowsPath('wechatExe', wechatExePath);
-      return;
-    }
-    const result = await api.openFile({
-      title: '选择 WeChat.exe 或 Weixin.exe',
-      filters: [{ name: 'Windows 程序', extensions: ['exe'] }],
-      multi: false,
-    });
-    const selected = result.canceled ? '' : result.filePaths[0] || '';
-    if (selected) {
-      setWechatExePath(selected);
-      void panel.saveWindowsPath('wechatExe', selected);
-    }
-  };
-
-  const chooseDataDir = async () => {
-    const api = window.electronAPI?.dialog;
-    if (!api?.openFolder) {
-      void panel.saveWindowsPath('dataDir', dataRootPath);
-      return;
-    }
-    const result = await api.openFolder({
-      title: '选择微信设置里的保存目录或账号数据目录',
-    });
-    const selected = result.canceled ? '' : result.filePaths[0] || '';
-    if (selected) {
-      setDataRootPath(selected);
-      void panel.saveWindowsPath('dataDir', selected);
-    }
-  };
-
-  return (
-    <div className="mt-4 rounded-md border border-border/50 bg-muted/20 p-3">
-      <div className="flex items-start gap-2">
-        <FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-medium">自动检测失败时，手动指定路径</h4>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Lumos 会先从正在运行的微信、注册表和常见安装目录自动发现。仍失败时，手动选择微信程序和聊天数据目录。
-          </p>
-          <div className="mt-2 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
-            <p>程序路径：右键微信图标，打开文件所在位置，选择 WeChat.exe 或 Weixin.exe。</p>
-            <p>聊天数据：在微信设置 / 文件管理里查看保存位置；也可以选择 WeChat Files、xwechat_files、账号目录、MSG、db_storage 或它下面的子目录。</p>
-          </div>
-          {hint?.wxid ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              当前已识别到账号 <span className="font-mono">{hint.wxid}</span>
-              {hint.messageDbDir ? `，消息库目录是 ${hint.messageDbDir}` : ''}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-3 space-y-3">
-        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-          <Input
-            value={wechatExePath}
-            onChange={(event) => setWechatExePath(event.target.value)}
-            placeholder="WeChat.exe / Weixin.exe 路径，例如 C:\\Program Files\\Tencent\\WeChat\\WeChat.exe"
-            className="h-8 text-xs"
-          />
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled={running} onClick={chooseWechatExe}>
-            选择程序
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8"
-            disabled={running || !wechatExePath.trim()}
-            onClick={() => void panel.saveWindowsPath('wechatExe', wechatExePath)}
-          >
-            {running ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            保存
-          </Button>
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-          <Input
-            value={dataRootPath}
-            onChange={(event) => setDataRootPath(event.target.value)}
-            placeholder="聊天数据目录，例如 D:\\WeChat Files、D:\\xwechat_files、账号目录、MSG 或 db_storage"
-            className="h-8 text-xs"
-          />
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled={running} onClick={chooseDataDir}>
-            选择目录
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8"
-            disabled={running || !dataRootPath.trim()}
-            onClick={() => void panel.saveWindowsPath('dataDir', dataRootPath)}
-          >
-            {running ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            保存
-          </Button>
-        </div>
-
-        {hint?.path ? (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            如果你不确定选哪一层，优先选微信设置里显示的“保存目录”；当前识别到的是 {hint.path}
-            {hint.msgDir ? `，消息目录 ${hint.msgDir}` : ''}
-          </p>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function EnvSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
   const env = panel.status?.env;
   if (!env) return null;
@@ -434,9 +290,6 @@ function EnvSection({ panel }: { panel: ReturnType<typeof useWeChatExport> }) {
         <p className="mt-4 text-xs text-muted-foreground">修复上面亮起黄点的项后,会自动进入下一步。</p>
       ) : null}
 
-      {isWindows && (!env.wechat.ok || !env.dataDir.ok) ? (
-        <WindowsManualPathControls panel={panel} />
-      ) : null}
     </Card>
   );
 }
@@ -1077,6 +930,11 @@ export function WeChatExportPanel() {
           <AlertDescription>{actionMessage.text}</AlertDescription>
         </Alert>
       ) : null}
+
+      {/* 账号区块常驻(仅在还没同意声明时不显示 —— 那时连功能都还没开)。
+          它是换号/认错账号时的唯一确定出口:不依赖 Lumos 是否"检测到"异常,
+          用户永远点得到。此前所有自救入口都是条件显示,换号时恰好全部消失。 */}
+      {phase !== 'needs-consent' && <WeChatAccountSection panel={panel} />}
 
       {phase === 'needs-consent' && <ConsentSection panel={panel} />}
       {phase === 'needs-env' && <EnvSection panel={panel} />}
