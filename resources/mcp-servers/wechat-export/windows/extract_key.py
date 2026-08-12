@@ -921,11 +921,36 @@ def is_core_v4_db(path: str) -> bool:
     return name in {"contact.db", "session.db"} or name.startswith("message_")
 
 
-def v4_records_by_account(accounts: list[dict]) -> list[tuple[dict, list[dict]]]:
+def v4_records_by_account(
+    accounts: list[dict],
+    only_wxid: str = "",
+) -> list[tuple[dict, list[dict]]]:
+    """按账号分组待验证的 v4 库。
+
+    only_wxid 非空时**只留这一个账号**。这是取密钥性能的头号杠杆:每个候选 key 都要
+    对每个账号的核心库各做一次 PBKDF2(SQLCipher 25.6 万次迭代,故意设计得很慢),
+    而已登出账号的 key 根本不在当前进程内存里 —— 验它们必然失败,纯属白烧 CPU。
+
+    真机日志(2026-08-12)里这笔账很吓人:发现 7 个账号(其中 3 个因数据根路径重叠
+    而重复),单个内存区就产出 55 万个候选 → 55 万 × 7 账号 × 若干核心库的 PBKDF2,
+    30 分钟只扫完 436 个区里的 175 个,一把密钥都没拿到。
+    用户要的其实就一句话:「我只管我要登录的那个微信账号」。
+    """
     grouped: list[tuple[dict, list[dict]]] = []
+    seen_wxid: set[str] = set()
     for account in accounts:
         if account.get("mode") != "v4":
             continue
+        wxid = str(account.get("wxid") or "")
+        if only_wxid and wxid != only_wxid:
+            continue
+        # 同一 wxid 去重:find_accounts 按真实路径去重,可同一账号会经由多个重叠的
+        # 数据根被发现(D:\xwechat_files 和 D:\xwechat_files\<wxid> 都在候选里),
+        # 于是同一账号的 salt 被验两遍 —— 白白翻倍。
+        if wxid and wxid in seen_wxid:
+            continue
+        if wxid:
+            seen_wxid.add(wxid)
         records = [rec for rec in account.get("_db_records") or [] if rec.get("mode") == "v4"]
         core = [rec for rec in records if is_core_v4_db(rec.get("path") or "")]
         if core:
@@ -952,10 +977,18 @@ def verify_and_mark_v4_key(key: bytes, grouped: list[tuple[dict, list[dict]]], m
     return added
 
 
-def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
-    grouped = v4_records_by_account(accounts)
+def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key, only_wxid: str = "") -> int:
+    grouped = v4_records_by_account(accounts, only_wxid)
+    if not grouped:
+        # 指定的账号没有 v4 库(比如 wxid 填错)时退回全量,总比什么都不扫强。
+        grouped = v4_records_by_account(accounts)
     if not grouped:
         return 0
+    salt_count = sum(len(recs) for _a, recs in grouped)
+    log(
+        f"[+] v4 验证范围: 账号数={len(grouped)} 待验库数={salt_count}"
+        + (f" (已锁定当前登录账号 {only_wxid})" if only_wxid else " (未指定当前账号,全量验证)")
+    )
     # 目标 = 各账号的核心 v4 库 salt(contact/session/message_*),【按账号分组】;逐库验到、
     # 任一账号这组集齐即提前收工。两条铁律:①别"找到第一把 key 就 return"(一个账号不同库
     # 可能用不同 key,早退会漏 message/session);②别要求"所有账号全集齐"——多账号(切换过账号)
@@ -975,13 +1008,25 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
         return ok
 
     regions = iter_writable_private_regions(handle)
-    log(f"[+] scanning v4 raw heap regions={len(regions)}")
+    # 小区优先。SQLCipher 的 key 挂在普通堆分配上,所在的区通常只有几十 KB 到几 MB;
+    # 而几十 MB 的大区基本都是图片/视频/压缩缓存 —— 它们里面全是高熵字节,正是候选
+    # 爆炸的来源。先扫小区能在几秒内覆盖绝大多数真正可能藏 key 的地方。
+    # (真机日志:前 150 个区总共才 5 MB、2515 个候选;扫到第 175 个区时单区 18 MB、
+    #  候选暴涨到 55 万,然后就再也没走完过。)
+    regions = sorted(regions, key=lambda r: r[1])
+    log(f"[+] scanning v4 raw heap regions={len(regions)} (小区优先)")
     scan_started = time.time()
     found = candidates = scanned = failures = 0
     chunk_size = 4 * 1024 * 1024
+    # 单区候选上限:一个区能凑出这么多"像 key 的 32 字节",它就不是堆而是媒体缓存。
+    # 真 key 在内存里是稀疏的,几百个候选足够覆盖。超限就跳过该区,别让一块图片缓存
+    # 吃掉整个 30 分钟预算。
+    region_candidate_cap = 20000
     for region_index, (base, size, protect) in enumerate(regions, 1):
         offset = 0
         tail = b""
+        region_candidates = 0
+        skipped_region = False
         while offset < size:
             to_read = min(chunk_size, size - offset)
             data = read_mem(handle, base + offset, to_read)
@@ -995,6 +1040,10 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
             for pos in range(0, max(0, len(block) - KEY_SIZE + 1), 8):
                 key = block[pos:pos + KEY_SIZE]
                 if high_entropy_key_candidate(key):
+                    region_candidates += 1
+                    if region_candidates > region_candidate_cap:
+                        skipped_region = True
+                        break
                     candidates += 1
                     marked = verify_and_mark_v4_key(key, grouped, tracking_mark)
                     if marked:
@@ -1009,6 +1058,13 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key) -> int:
             scanned += len(data)
             tail = block[-31:]
             offset += to_read
+            if skipped_region:
+                break
+        if skipped_region:
+            log(
+                f"[SKIP] region {region_index}/{len(regions)} "
+                f"({size // 1048576}MB) 候选超过 {region_candidate_cap},判定为媒体/压缩缓存,跳过"
+            )
         if region_index % 25 == 0:
             log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
     log(
@@ -1262,7 +1318,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                 def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
                     return mark_key(account, record, key_hex, scan_pid, module_path)
 
-                summary["v4_heap_found"] = scan_v4_raw_heap_keys(handle, accounts, mark_scanned_key)
+                summary["v4_heap_found"] = scan_v4_raw_heap_keys(handle, accounts, mark_scanned_key, active_wxid)
 
             if modules and target_salts and not scan_complete():
                 for ptr_size in ptr_sizes:
