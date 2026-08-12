@@ -397,13 +397,48 @@ def iter_readable_regions(handle: int) -> list[tuple[int, int]]:
     return regions
 
 
+# 库首页缓存 + 预解析。
+#
+# 这是取密钥慢的**真正瓶颈**。_page1 原先每次调用都 open()+read() 一次文件,而它被
+# 每个候选 key × 每个库地调用 —— 真机日志里是 55 万候选 × 7 账号 ≈ 385 万次文件 IO。
+# 实测纯计算(pbkdf2 迭代 2 + 一次 HMAC-SHA512)只要 ~24 微秒,385 万次也才 91 秒;
+# 可 385 万次 open+read 在 Windows(NTFS + 杀毒实时扫描,库还在 D 盘)要十几分钟起步,
+# 于是 30 分钟连一半内存区都扫不完。
+#
+# 首页在扫描期间不会变(salt 和 HMAC 是建库时写死的),读一次即可。顺带把每次都要重算
+# 的 mac_salt / hmac_data / stored_hmac 也预解析出来,把每候选的工作量压到最小。
+_PAGE1_CACHE: dict[str, bytes | None] = {}
+_V4_PAGE1_PARTS: dict[str, tuple[bytes, bytes, bytes] | None] = {}
+
+
 def _page1(db_path: str) -> bytes | None:
+    if db_path in _PAGE1_CACHE:
+        return _PAGE1_CACHE[db_path]
     try:
         with open(db_path, "rb") as fh:
             data = fh.read(PAGE_SIZE)
     except OSError:
-        return None
-    return data if len(data) >= PAGE_SIZE else None
+        data = None
+    result = data if data and len(data) >= PAGE_SIZE else None
+    _PAGE1_CACHE[db_path] = result
+    return result
+
+
+def _v4_page1_parts(db_path: str) -> tuple[bytes, bytes, bytes] | None:
+    """(mac_salt, hmac_data, stored_hmac);首页读不到或结构不对时 None。"""
+    if db_path in _V4_PAGE1_PARTS:
+        return _V4_PAGE1_PARTS[db_path]
+    parts = None
+    data = _page1(db_path)
+    if data:
+        salt = data[:SALT_SIZE]
+        first = data[SALT_SIZE:PAGE_SIZE]
+        hmac_data = first[:PAGE_SIZE - V4_RESERVED]
+        stored_hmac = first[PAGE_SIZE - V4_RESERVED:PAGE_SIZE - SALT_SIZE]
+        if len(hmac_data) >= 16 and len(stored_hmac) == 64:
+            parts = (bytes(b ^ 0x3A for b in salt), hmac_data, stored_hmac)
+    _V4_PAGE1_PARTS[db_path] = parts
+    return parts
 
 
 def _verify_key_v3(key: bytes, db_path: str) -> bool:
@@ -420,20 +455,19 @@ def _verify_key_v3(key: bytes, db_path: str) -> bool:
     return hmac.compare_digest(digest.digest(), first[-32:-12])
 
 
+_PAGE_ONE_SUFFIX = struct.pack("<I", 1)
+
+
 def _verify_key_v4(key: bytes, db_path: str) -> bool:
-    data = _page1(db_path)
-    if len(key) != KEY_SIZE or not data:
+    if len(key) != KEY_SIZE:
         return False
-    salt = data[:SALT_SIZE]
-    first = data[SALT_SIZE:PAGE_SIZE]
-    mac_salt = bytes((b ^ 0x3A) for b in salt)
+    parts = _v4_page1_parts(db_path)
+    if not parts:
+        return False
+    mac_salt, hmac_data, stored_hmac = parts
     mac_key = hashlib.pbkdf2_hmac("sha512", key, mac_salt, 2, KEY_SIZE)
-    hmac_data = first[:PAGE_SIZE - V4_RESERVED]
-    stored_hmac = first[PAGE_SIZE - V4_RESERVED:PAGE_SIZE - SALT_SIZE]
-    if len(hmac_data) < 16 or len(stored_hmac) != 64:
-        return False
     digest = hmac.new(mac_key, hmac_data, hashlib.sha512)
-    digest.update(struct.pack("<I", 1))
+    digest.update(_PAGE_ONE_SUFFIX)
     return hmac.compare_digest(digest.digest(), stored_hmac)
 
 
