@@ -98,6 +98,33 @@ function extractPythonError(log: string): string | null {
   return null;
 }
 
+/**
+ * 数一下盘上现有多少把密钥。用于「扫描被超时终止,但脚本已经增量落盘」这种情况 ——
+ * 部分成功远好过一无所有,不该报成纯失败让用户从头再扫一次。
+ */
+function countRecoveredKeys(platform: WeChatExportPlatform): number {
+  const isHex = (v: unknown) => typeof v === 'string' && /^[0-9a-fA-F]{64}$/.test(v);
+  try {
+    if (platform === 'win32') {
+      if (!fs.existsSync(WINDOWS_ACCOUNTS_FILE)) return 0;
+      const accounts = JSON.parse(fs.readFileSync(WINDOWS_ACCOUNTS_FILE, 'utf8')) as Array<{
+        key?: string; keys?: Record<string, string>;
+      }>;
+      const keys = new Set<string>();
+      for (const a of accounts) {
+        if (isHex(a.key)) keys.add(a.key!);
+        for (const v of Object.values(a.keys || {})) if (isHex(v)) keys.add(v);
+      }
+      return keys.size;
+    }
+    if (!fs.existsSync(KEYS_JSON_FILE)) return 0;
+    const map = JSON.parse(fs.readFileSync(KEYS_JSON_FILE, 'utf8')) as Record<string, string>;
+    return Object.values(map).filter(isHex).length;
+  } catch {
+    return 0;
+  }
+}
+
 function beginExtractionLog(): { path?: string; append: (text: string) => void } {
   try {
     ensureFeatureDir();
@@ -328,8 +355,18 @@ export async function extractKeys(
       }
       const logPath = liveLog.path;
       if (timedOut) {
-        const message = '取密钥超时(30 分钟未完成),已终止。常见原因:切换了微信账号,取到的密钥在对旧账号的库反复验证不通过。'
-          + '请确认当前微信登录的是要读取的账号后重试;若仍不行,把 setup.log 发给我们排查。';
+        // 脚本现在边找边落盘,所以超时被杀不等于颗粒无收 —— 先看盘上到底存下了什么,
+        // 别把"已经拿到几把密钥"的情况一律报成失败(以前正是这样,扫半小时全丢)。
+        const salvaged = countRecoveredKeys(platform);
+        if (salvaged > 0) {
+          const message = `扫描超过 30 分钟被终止,但已保住 ${salvaged} 把密钥并写入本地。`
+            + '可以先试试能不能读到聊天记录;如果部分聊天打不开,再点一次「开始」会接着补齐,不用从头来。';
+          onProgress?.({ phase: 'done', message, keysFound: salvaged });
+          finish({ success: true, keysFound: salvaged, keysJsonPath: KEYS_JSON_FILE, keyTxtPath: KEY_FILE, log, logPath });
+          return;
+        }
+        const message = '取密钥超时(30 分钟未完成),已终止,且没有取到任何密钥。'
+          + '请确认微信正停留在主界面、且登录的就是要读取的账号;若仍不行,把 setup.log 发给我们排查。';
         onProgress?.({ phase: 'error', message });
         finish({ success: false, keysFound: 0, error: message, log, logPath });
         return;

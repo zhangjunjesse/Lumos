@@ -1142,6 +1142,33 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
 
     completion_logged = {"done": False}
 
+    def persist(items: list[dict]) -> None:
+        """把已恢复的账号写盘(与既有内容合并)。失败不抛 —— 落盘只是加分项,
+        不能因为一次写失败就中断还在进行的扫描。"""
+        if not items:
+            return
+        try:
+            os.makedirs(os.path.dirname(accounts_out), exist_ok=True)
+            merged = merge_accounts(load_existing_accounts(accounts_out), items)
+            tmp = f"{accounts_out}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(merged, fh, ensure_ascii=False, indent=2)
+            # 原子替换:半截 JSON 会让下次启动读不出既有 key,反而更糟
+            os.replace(tmp, accounts_out)
+            first_key = next((i.get("key") for i in items if i.get("key")), "")
+            if first_key:
+                with open(key_out, "w", encoding="utf-8") as fh:
+                    fh.write(first_key)
+        except Exception as err:  # noqa: BLE001
+            log(f"[WARN] 增量写盘失败(不影响继续扫描): {err}")
+
+    def flush_recovered() -> None:
+        persist(sorted(
+            recovered_by_wxid.values(),
+            key=lambda item: int(item.get("extracted_at") or 0),
+            reverse=True,
+        ))
+
     def scan_complete() -> bool:
         for wxid, group in account_salt_groups:
             if group.issubset(recovered_salts):
@@ -1188,6 +1215,12 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
             log(f"[FOUND] wxid={wxid} pid={source_pid} db={label} salt={salt[:8]}… key=<redacted>")
         else:
             log(f"[FOUND] wxid={wxid} pid={source_pid} db={label} salt={salt[:8]}… key=<redacted> (extra db)")
+        # 找到就立刻落盘。以前只在全部扫完后写一次,于是外层 30 分钟硬超时 SIGKILL
+        # 一到,进程直接死在半路 —— 扫了半小时、明明已经找到好几把 key,却一把都没
+        # 留下,下次还得从头再来。这正是用户说的"失败率太高了"。
+        # 增量写盘让每一把 key 立刻变成既成事实:即便被杀,已找到的也还在,
+        # 下次运行 load_existing_accounts + merge_accounts 会自动接上。
+        flush_recovered()
         return True
 
     for index, scan_pid in enumerate(pids, start=1):
@@ -1340,12 +1373,8 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                 f"salt={record['salt'][:8]}…"
             )
 
-    os.makedirs(os.path.dirname(accounts_out), exist_ok=True)
-    merged = merge_accounts(load_existing_accounts(accounts_out), recovered)
-    with open(accounts_out, "w", encoding="utf-8") as fh:
-        json.dump(merged, fh, ensure_ascii=False, indent=2)
-    with open(key_out, "w", encoding="utf-8") as fh:
-        fh.write(recovered[0]["key"])
+    # 收尾再写一次(扫描中已增量写过,这里保证最终状态完整)。
+    persist(recovered)
     log(f"[+] wrote {accounts_out}")
     return len(recovered)
 
