@@ -918,11 +918,23 @@ def scan_hex_key_strings(handle: int, accounts: list[dict], mark_key, should_sto
     return found
 
 
-def iter_writable_private_regions(handle: int) -> list[tuple[int, int, int]]:
+def iter_writable_private_regions(handle: int, broad: bool = False) -> list[tuple[int, int, int]]:
+    """列出待扫描内存区。
+
+    默认(broad=False):私有 + 可写 + 已提交 —— SQLCipher/WCDB 的 key 传统上就挂在
+    这类普通堆上,范围小、扫得快。
+
+    broad=True:放宽成**所有已提交可读区**(去掉"私有"和"可写"两条要求,保留非 guard /
+    非 noaccess)。微信 4.1 起 found=0,而私有可写区实扫才 7MB —— 强烈怀疑 key 被挪到了
+    内存映射区(MEM_MAPPED)或写后转只读的防篡改区,这两类都被默认过滤挡在外面。
+    验证已经很便宜(首页缓存),所以兜底全扫一遍来回答"key 到底在不在进程内存里"。
+    """
     regions: list[tuple[int, int, int]] = []
     mbi = MEMORY_BASIC_INFORMATION()
     address = 0
     max_address = 0x7FFFFFFFFFFF if sys.maxsize > 2**32 else 0x7FFFFFFF
+    # 可读即可(broad 模式):RW / R / WriteCopy / 可执行读 全算上
+    READABLE_ANY = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80
     while address < max_address:
         result = VirtualQueryEx(handle, ctypes.c_void_p(address), ctypes.byref(mbi), ctypes.sizeof(mbi))
         if not result:
@@ -931,15 +943,22 @@ def iter_writable_private_regions(handle: int) -> list[tuple[int, int, int]]:
         base = int(mbi.BaseAddress or 0)
         size = int(mbi.RegionSize or 0)
         protect = int(mbi.Protect)
-        if (
+        common = (
             size > 0
             and mbi.State == MEM_COMMIT
-            and int(mbi.Type) == MEM_PRIVATE
             and (protect & PAGE_GUARD) == 0
             and (protect & PAGE_NOACCESS) == 0
-            and (protect & WRITABLE_PROTECT)
             and size < 500 * 1024 * 1024
-        ):
+        )
+        if broad:
+            ok = common and bool(protect & READABLE_ANY)
+        else:
+            ok = (
+                common
+                and int(mbi.Type) == MEM_PRIVATE
+                and bool(protect & WRITABLE_PROTECT)
+            )
+        if ok:
             regions.append((base, size, protect))
         next_address = base + size
         address = next_address if next_address > address else address + 0x1000
@@ -1041,80 +1060,78 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key, only_wxid
             recovered_salts.add(salt)
         return ok
 
-    regions = iter_writable_private_regions(handle)
-    # 小区优先。SQLCipher 的 key 挂在普通堆分配上,所在的区通常只有几十 KB 到几 MB;
-    # 而几十 MB 的大区基本都是图片/视频/压缩缓存 —— 它们里面全是高熵字节,正是候选
-    # 爆炸的来源。先扫小区能在几秒内覆盖绝大多数真正可能藏 key 的地方。
-    # (真机日志:前 150 个区总共才 5 MB、2515 个候选;扫到第 175 个区时单区 18 MB、
-    #  候选暴涨到 55 万,然后就再也没走完过。)
-    regions = sorted(regions, key=lambda r: r[1])
-    log(f"[+] scanning v4 raw heap regions={len(regions)} (小区优先)")
-    scan_started = time.time()
-    found = candidates = scanned = failures = 0
-    chunk_size = 4 * 1024 * 1024
-    # 候选预算。
-    #
-    # 上一版按"单区超 2 万就跳过"做,理由是"候选多的区必是媒体缓存"—— 这个假设被真机
-    # 日志推翻了:被跳掉的 20 个区全是 1~9MB,正是普通堆的尺寸,key 完全可能就在里面
-    # (那次跑完全部 449 区仍 found=0)。而且预算根本没花完:89 万候选连读带验只用了
-    # 100 秒(每次验证 ~22 微秒,与 benchmark 吻合)。
-    #
-    # 所以改成全局预算:单区放宽到 20 万(挡住真正病态的区),总量 400 万封顶 —— 按实测
-    # 速率约 7~8 分钟,稳稳落在 30 分钟内,同时不再因为"区有点大"就把 key 漏掉。
     region_candidate_cap = 200000
     total_candidate_budget = 4000000
-    for region_index, (base, size, protect) in enumerate(regions, 1):
-        offset = 0
-        tail = b""
-        region_candidates = 0
-        skipped_region = False
-        while offset < size:
-            to_read = min(chunk_size, size - offset)
-            data = read_mem(handle, base + offset, to_read)
-            if not data:
-                failures += 1
+
+    def run_pass(regions: list[tuple[int, int, int]], label: str) -> int:
+        # 小区优先:SQLCipher 的 key 挂在普通堆上,所在区通常几十 KB~几 MB;大区多是媒体缓存。
+        regions = sorted(regions, key=lambda r: r[1])
+        log(f"[+] scanning v4 raw heap regions={len(regions)} ({label})")
+        pass_started = time.time()
+        found = candidates = scanned = failures = 0
+        chunk_size = 4 * 1024 * 1024
+        for region_index, (base, size, protect) in enumerate(regions, 1):
+            offset = 0
+            tail = b""
+            region_candidates = 0
+            skipped_region = False
+            while offset < size:
+                to_read = min(chunk_size, size - offset)
+                data = read_mem(handle, base + offset, to_read)
+                if not data:
+                    failures += 1
+                    offset += to_read
+                    tail = b""
+                    continue
+                block = tail + data
+                block_base = base + offset - len(tail)
+                for pos in range(0, max(0, len(block) - KEY_SIZE + 1), 8):
+                    key = block[pos:pos + KEY_SIZE]
+                    if high_entropy_key_candidate(key):
+                        region_candidates += 1
+                        if region_candidates > region_candidate_cap or candidates >= total_candidate_budget:
+                            skipped_region = True
+                            break
+                        candidates += 1
+                        marked = verify_and_mark_v4_key(key, grouped, tracking_mark)
+                        if marked:
+                            found += marked
+                            log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
+                            if account_salt_groups and any(g.issubset(recovered_salts) for g in account_salt_groups):
+                                log(
+                                    f"[+] v4 raw heap 早退:某账号核心库已集齐 "
+                                    f"regions_scanned={region_index}/{len(regions)} elapsed={int(time.time() - pass_started)}s"
+                                )
+                                return found
+                scanned += len(data)
+                tail = block[-31:]
                 offset += to_read
-                tail = b""
-                continue
-            block = tail + data
-            block_base = base + offset - len(tail)
-            for pos in range(0, max(0, len(block) - KEY_SIZE + 1), 8):
-                key = block[pos:pos + KEY_SIZE]
-                if high_entropy_key_candidate(key):
-                    region_candidates += 1
-                    if region_candidates > region_candidate_cap or candidates >= total_candidate_budget:
-                        skipped_region = True
-                        break
-                    candidates += 1
-                    marked = verify_and_mark_v4_key(key, grouped, tracking_mark)
-                    if marked:
-                        found += marked
-                        log(f"[FOUND] v4 raw heap key pid_region=0x{base:x} offset=0x{block_base + pos:x} key=<redacted>")
-                        if account_salt_groups and any(g.issubset(recovered_salts) for g in account_salt_groups):
-                            log(
-                                f"[+] v4 raw heap 早退:某账号核心库已集齐 "
-                                f"regions_scanned={region_index}/{len(regions)} elapsed={int(time.time() - scan_started)}s"
-                            )
-                            return found
-            scanned += len(data)
-            tail = block[-31:]
-            offset += to_read
+                if skipped_region:
+                    break
             if skipped_region:
-                break
-        if skipped_region:
-            reason = ("总候选预算用尽" if candidates >= total_candidate_budget
-                      else f"单区候选超过 {region_candidate_cap}")
-            log(f"[SKIP] region {region_index}/{len(regions)} ({size // 1048576}MB) {reason},跳过")
-            if candidates >= total_candidate_budget:
-                log(f"[!] 已达总候选预算 {total_candidate_budget},停止堆扫描")
-                break
-        if region_index % 25 == 0:
-            log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
-    log(
-        f"[+] v4 raw heap scan found={found} candidates={candidates} "
-        f"scanned_mb={scanned // 1048576} read_failures={failures} elapsed={int(time.time() - scan_started)}s"
-    )
-    return found
+                reason = ("总候选预算用尽" if candidates >= total_candidate_budget
+                          else f"单区候选超过 {region_candidate_cap}")
+                log(f"[SKIP] region {region_index}/{len(regions)} ({size // 1048576}MB) {reason},跳过")
+                if candidates >= total_candidate_budget:
+                    log(f"[!] 已达总候选预算 {total_candidate_budget},停止本轮扫描")
+                    break
+            if region_index % 25 == 0:
+                log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
+        log(
+            f"[+] v4 raw heap scan ({label}) found={found} candidates={candidates} "
+            f"scanned_mb={scanned // 1048576} read_failures={failures} elapsed={int(time.time() - pass_started)}s"
+        )
+        return found
+
+    # 第一轮:私有可写堆(传统 key 存放处,范围小、最快)。
+    found = run_pass(iter_writable_private_regions(handle, broad=False), "私有可写堆")
+    if found or (account_salt_groups and any(g.issubset(recovered_salts) for g in account_salt_groups)):
+        return found
+
+    # 兜底:私有可写区一无所获。微信 4.1 起 key 可能被挪到内存映射区或写后转只读区,
+    # 都被第一轮的过滤挡在外面。放宽到所有可读区再扫一遍,回答"key 到底在不在进程内存里"。
+    log("[!] 私有可写堆未找到 key,放宽到全部可读内存区兜底扫描(诊断 4.1.x key 是否改了存放位置)")
+    return run_pass(iter_writable_private_regions(handle, broad=True), "全可读区兜底")
 
 
 def load_existing_accounts(accounts_out: str) -> list[dict]:
