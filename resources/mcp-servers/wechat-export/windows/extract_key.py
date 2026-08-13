@@ -1052,10 +1052,17 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key, only_wxid
     scan_started = time.time()
     found = candidates = scanned = failures = 0
     chunk_size = 4 * 1024 * 1024
-    # 单区候选上限:一个区能凑出这么多"像 key 的 32 字节",它就不是堆而是媒体缓存。
-    # 真 key 在内存里是稀疏的,几百个候选足够覆盖。超限就跳过该区,别让一块图片缓存
-    # 吃掉整个 30 分钟预算。
-    region_candidate_cap = 20000
+    # 候选预算。
+    #
+    # 上一版按"单区超 2 万就跳过"做,理由是"候选多的区必是媒体缓存"—— 这个假设被真机
+    # 日志推翻了:被跳掉的 20 个区全是 1~9MB,正是普通堆的尺寸,key 完全可能就在里面
+    # (那次跑完全部 449 区仍 found=0)。而且预算根本没花完:89 万候选连读带验只用了
+    # 100 秒(每次验证 ~22 微秒,与 benchmark 吻合)。
+    #
+    # 所以改成全局预算:单区放宽到 20 万(挡住真正病态的区),总量 400 万封顶 —— 按实测
+    # 速率约 7~8 分钟,稳稳落在 30 分钟内,同时不再因为"区有点大"就把 key 漏掉。
+    region_candidate_cap = 200000
+    total_candidate_budget = 4000000
     for region_index, (base, size, protect) in enumerate(regions, 1):
         offset = 0
         tail = b""
@@ -1075,7 +1082,7 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key, only_wxid
                 key = block[pos:pos + KEY_SIZE]
                 if high_entropy_key_candidate(key):
                     region_candidates += 1
-                    if region_candidates > region_candidate_cap:
+                    if region_candidates > region_candidate_cap or candidates >= total_candidate_budget:
                         skipped_region = True
                         break
                     candidates += 1
@@ -1095,10 +1102,12 @@ def scan_v4_raw_heap_keys(handle: int, accounts: list[dict], mark_key, only_wxid
             if skipped_region:
                 break
         if skipped_region:
-            log(
-                f"[SKIP] region {region_index}/{len(regions)} "
-                f"({size // 1048576}MB) 候选超过 {region_candidate_cap},判定为媒体/压缩缓存,跳过"
-            )
+            reason = ("总候选预算用尽" if candidates >= total_candidate_budget
+                      else f"单区候选超过 {region_candidate_cap}")
+            log(f"[SKIP] region {region_index}/{len(regions)} ({size // 1048576}MB) {reason},跳过")
+            if candidates >= total_candidate_budget:
+                log(f"[!] 已达总候选预算 {total_candidate_budget},停止堆扫描")
+                break
         if region_index % 25 == 0:
             log(f"[+] v4 heap progress regions={region_index}/{len(regions)} scanned_mb={scanned // 1048576} candidates={candidates} found={found}")
     log(
@@ -1267,6 +1276,13 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                     log(f"[COMPLETE] account={wxid} 核心库已全部集齐({len(group)} 把),收工写盘、停止扫描")
                 return True
         return False
+    # 参与完成判据的库是否全是 v4。是的话,3.x 的指针锚点/hex 字符串扫描没有意义。
+    legacy_scan_useless = bool(account_salt_groups) and all(
+        rec.get("mode") == "v4"
+        for account in accounts
+        for rec in (account.get("_db_records") or [])
+    )
+
     ptr_sizes = [8, 4] if sys.maxsize > 2**32 else [4, 8]
     scan_summaries: list[dict] = []
     total_pointer_keys_seen = 0
@@ -1354,7 +1370,15 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
 
                 summary["v4_heap_found"] = scan_v4_raw_heap_keys(handle, accounts, mark_scanned_key, active_wxid)
 
-            if modules and target_salts and not scan_complete():
+            # 目标全是 v4 库时,下面两条 3.x 老路(指针锚点扫描、x'..' hex 字符串扫描)
+            # 恒定找不到东西 —— 4.x 的 key 是裸 32 字节存在堆里,既没有 iphone/android
+            # 锚点旁的指针,也没有 hex 字面量。但它们很贵:真机日志里 v4 堆扫描 100 秒
+            # 就跑完了 449 个区,剩下 28 分钟全耗在这两条上(Weixin.dll 176MB 扫两遍 +
+            # 2024 个区找字符串),最后被 30 分钟硬超时砍掉。
+            if legacy_scan_useless:
+                log("[+] 目标账号均为 v4 库,跳过 3.x 指针/hex 字符串扫描(在 4.x 上恒无结果)")
+
+            if not legacy_scan_useless and modules and target_salts and not scan_complete():
                 for ptr_size in ptr_sizes:
                     log(f"[+] scanning candidate pointers ptr_size={ptr_size}")
                     for base, size, module_path_candidate, module_name in modules:
@@ -1378,7 +1402,7 @@ def extract(pid: int, accounts_out: str, key_out: str) -> int:
                     if scan_complete():
                         break
 
-            if target_salts and not scan_complete():
+            if not legacy_scan_useless and target_salts and not scan_complete():
                 def mark_scanned_key(account: dict, record: dict, key_hex: str) -> bool:
                     return mark_key(account, record, key_hex, scan_pid, module_path)
 
