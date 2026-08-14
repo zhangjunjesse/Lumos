@@ -14,6 +14,7 @@ import { getProviderEffectiveDefaultModel } from '@/lib/claude/provider-env'
 import type { ApiProvider } from '@/types'
 import { ensureProvidersRegistered, resolveImageProvider } from './registry'
 import { saveBase64Images, copyToSessionDirectory, createMediaRecord } from './persist'
+import { ImageGenError } from './types'
 import type { ImageGenRequest, ImageInput, ImageSize } from './types'
 import type { SavedImage } from './persist'
 import {
@@ -177,6 +178,42 @@ function computeDedupeKey(params: GenerateImagesParams, providerId: string): str
 
 /* ── Main entry ──────────────────────────────────────────── */
 
+const NETWORK_ERROR_CODES = new Set([
+  'ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN',
+  'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'CERT_HAS_EXPIRED',
+  'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+])
+
+/**
+ * 网络层失败(undici 的 `TypeError: fetch failed`)对用户是零信息的(#65:
+ * 报告者只拿到裸 "fetch failed",完全无法判断是网络、配置还是额度问题)。
+ * 识别 cause 链上的网络错误码,翻译成「连不上谁 + 为什么 + 该查什么」;
+ * 非网络类错误原样抛回,不吞其他语义。
+ */
+export function explainNetworkError(err: unknown, provider: Pick<ApiProvider, 'name' | 'base_url'>): unknown {
+  let netCode: string | undefined
+  const details: string[] = []
+  let cur: unknown = err
+  for (let depth = 0; cur instanceof Error && depth < 5; depth++) {
+    const code = (cur as { code?: string }).code
+    if (code && (NETWORK_ERROR_CODES.has(code) || code.startsWith('UND_ERR'))) netCode = code
+    if (cur.message && cur.message !== 'fetch failed') details.push(cur.message)
+    cur = (cur as { cause?: unknown }).cause
+  }
+  const looksLikeFetchFailure = err instanceof Error && err.message === 'fetch failed'
+  if (!netCode && !looksLikeFetchFailure) return err
+
+  let host = provider.base_url || '(未配置 base_url)'
+  try { host = new URL(provider.base_url).host } catch { /* base_url 不是合法 URL,原样展示 */ }
+  const detail = [netCode, details.join(' <- ')].filter(Boolean).join(' ') || 'fetch failed'
+  return new ImageGenError(
+    'provider_unavailable',
+    `连不上服务商"${provider.name}"的上游 ${host}: ${detail}。`
+    + '这是本机到该地址的网络问题(DNS/防火墙/代理不可达),不是提示词或额度问题;'
+    + '请检查网络能否访问该地址,或切换其他图片服务商。',
+  )
+}
+
 export async function generateImages(params: GenerateImagesParams): Promise<GenerateImagesResult> {
   await ensureProvidersRegistered()
 
@@ -245,18 +282,23 @@ async function executeGenerate(
     provider.provider_type,
     { apiKey, baseUrl },
   )
-  const result = await imageProvider.generate({
-    prompt: params.prompt,
-    model,
-    images: images.length > 0 ? images : undefined,
-    n: params.n ?? providerDefaults.count,
-    size: (params.imageSize || providerDefaults.resolution || '1K') as ImageSize,
-    aspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
-    seed: params.seed,
-    providerOptions: mergeImageProviderOptions(providerDefaults.providerOptions, params.providerOptions),
-    abortSignal: params.abortSignal,
-    onProgress: params.onProgress,
-  })
+  let result
+  try {
+    result = await imageProvider.generate({
+      prompt: params.prompt,
+      model,
+      images: images.length > 0 ? images : undefined,
+      n: params.n ?? providerDefaults.count,
+      size: (params.imageSize || providerDefaults.resolution || '1K') as ImageSize,
+      aspectRatio: params.aspectRatio || providerDefaults.aspectRatio || '1:1',
+      seed: params.seed,
+      providerOptions: mergeImageProviderOptions(providerDefaults.providerOptions, params.providerOptions),
+      abortSignal: params.abortSignal,
+      onProgress: params.onProgress,
+    })
+  } catch (err) {
+    throw explainNetworkError(err, provider)
+  }
 
   const elapsed = result.elapsedMs
   console.log(`[image/generate] ${provider.provider_type} ${result.model} completed in ${elapsed}ms`)

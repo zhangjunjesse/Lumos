@@ -2,11 +2,31 @@
 // 调用方是 team-image stdio MCP 进程(见 resources/mcp-servers/team-image),route 层只做参数解析(/api/team/image)。
 
 import { runImageGen, type ImageGenArgs } from '@/lib/tools/image-gen-tool';
-import { getTeamImageGuard } from './image-guard';
+import { resolveImageProviderId } from '@/lib/image/image-provider-resolver';
+import { sanitizeImageProviderId } from '@/lib/image/image-provider-hint';
+import { getTeamImageGuard, type TeamImageGuard } from './image-guard';
+import { getTeam } from './store';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 function errorResult(message: string): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }) }], isError: true };
+}
+
+/**
+ * 出图时现解析团队默认服务商:轮次开始后用户在界面改了团队服务商也立即生效。
+ * 团队记录已删(极端)或旧 guard 没带 teamId 时,退回创建时快照的 imageProviderId。
+ */
+function resolveGuardImageProviderId(guard: TeamImageGuard): string | undefined {
+  if (guard.teamId) {
+    const team = getTeam(guard.teamId);
+    if (team) {
+      return resolveImageProviderId({
+        hasTeam: true,
+        teamDefaultImageProviderId: sanitizeImageProviderId(team.defaultImageProviderId, '团队默认'),
+      });
+    }
+  }
+  return guard.imageProviderId;
 }
 
 export async function handleTeamImageCall(token: string, args: ImageGenArgs): Promise<CallToolResult> {
@@ -23,8 +43,14 @@ export async function handleTeamImageCall(token: string, args: ImageGenArgs): Pr
   }
   guard.used += n;
 
-  // 团队级图片服务商(guard 里带的);成员级细分见 T3.2 第二批
-  const result = await runImageGen(args, undefined, guard.billingUserId || undefined, guard.imageProviderId);
+  // 团队级图片服务商;成员级细分见 T3.2 第二批。传 thunk:每次出图按 teamId
+  // 现解析团队默认,用户轮次中途在界面切换团队服务商即时生效(#65)。
+  const result = await runImageGen(
+    args,
+    undefined,
+    guard.billingUserId || undefined,
+    () => resolveGuardImageProviderId(guard),
+  );
 
   // 从成功结果里记下真实落盘路径:最终交差的 path 必须在这个集合里(防幻觉路径)。
   for (const block of result.content ?? []) {

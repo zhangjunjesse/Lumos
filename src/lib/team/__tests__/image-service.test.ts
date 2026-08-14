@@ -4,12 +4,25 @@
 jest.mock('@/lib/tools/image-gen-tool', () => ({
   runImageGen: jest.fn(),
 }));
+// teamId 现解析路径的依赖:store 查团队、hint 校验绑定(避免真实 DB)
+jest.mock('../store', () => ({ getTeam: jest.fn() }));
+jest.mock('@/lib/image/image-provider-hint', () => ({
+  sanitizeImageProviderId: (id: string | undefined | null) => (id?.trim() || undefined),
+}));
 
 import { runImageGen } from '@/lib/tools/image-gen-tool';
+import { getTeam } from '../store';
 import { createTeamImageGuard, getTeamImageGuard, releaseTeamImageGuard } from '../image-guard';
 import { handleTeamImageCall } from '../image-service';
 
 const mockGen = runImageGen as jest.Mock;
+const mockGetTeam = getTeam as jest.Mock;
+
+/** runImageGen 第 4 参现在是绑定 thunk(#65):取出并求值,断言其解析结果 */
+function lastBoundProviderId(): string | undefined {
+  const binding = mockGen.mock.calls[mockGen.mock.calls.length - 1][3];
+  return typeof binding === 'function' ? binding() : binding;
+}
 
 function okResult(paths: string[]) {
   return { content: [{ type: 'text', text: JSON.stringify({ success: true, images: paths.map((p) => ({ path: p })) }) }] };
@@ -51,16 +64,35 @@ describe('team-image-service', () => {
 
     const guard = getTeamImageGuard(token);
     expect([...(guard?.producedPaths ?? [])].sort()).toEqual(['/a.png', '/b.png']);
-    // 计费 userId 用 guard 里的云账户 id;没配团队图片服务商时第 4 参为 undefined(走全局默认)
-    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1', undefined);
+    // 计费 userId 用 guard 里的云账户 id;没配团队图片服务商时绑定解析为 undefined(走全局默认)
+    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1', expect.any(Function));
+    expect(lastBoundProviderId()).toBeUndefined();
     releaseTeamImageGuard(token);
   });
 
-  it('团队级图片服务商:guard 带 imageProviderId → 透传给 runImageGen 第 4 参(T3.2)', async () => {
+  it('团队级图片服务商:guard 带 imageProviderId(无 teamId 的旧快照)→ 绑定解析为该值(T3.2)', async () => {
     const token = createTeamImageGuard({ billingUserId: 'u1', cap: 10, imageProviderId: 'p-mj' });
     mockGen.mockResolvedValue(okResult(['/a.png']));
     await handleTeamImageCall(token, { prompt: 'x' });
-    expect(mockGen).toHaveBeenCalledWith(expect.anything(), undefined, 'u1', 'p-mj');
+    expect(lastBoundProviderId()).toBe('p-mj');
+    releaseTeamImageGuard(token);
+  });
+
+  it('guard 带 teamId → 每次出图现解析团队默认,轮次中途切换即时生效(#65)', async () => {
+    const token = createTeamImageGuard({ billingUserId: 'u1', cap: 10, imageProviderId: 'p-snapshot', teamId: 't1' });
+    mockGen.mockResolvedValue(okResult(['/a.png']));
+
+    mockGetTeam.mockReturnValue({ id: 't1', defaultImageProviderId: 'p-old' });
+    await handleTeamImageCall(token, { prompt: 'x' });
+    expect(lastBoundProviderId()).toBe('p-old');
+
+    mockGetTeam.mockReturnValue({ id: 't1', defaultImageProviderId: 'p-new' }); // 用户在界面切换了团队服务商
+    await handleTeamImageCall(token, { prompt: 'y' });
+    expect(lastBoundProviderId()).toBe('p-new');
+
+    mockGetTeam.mockReturnValue(undefined); // 团队记录被删的极端情况:退回创建时快照
+    await handleTeamImageCall(token, { prompt: 'z' });
+    expect(lastBoundProviderId()).toBe('p-snapshot');
     releaseTeamImageGuard(token);
   });
 

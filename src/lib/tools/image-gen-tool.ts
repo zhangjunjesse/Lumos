@@ -148,6 +148,7 @@ async function runGeneration(
   sessionId: string | undefined,
   model: string,
   providerId: string | undefined,
+  providerSource: 'explicit' | 'caller_binding' | 'global_default',
 ): Promise<CallToolResult> {
   const result = await generateImages({
     prompt: args.prompt,
@@ -169,6 +170,9 @@ async function runGeneration(
     // 回执诚实(#64):显式指定过服务商时,同时报告"要的"和"实际用的",
     // 两者不一致(如绑定失效降级)必须可见,不允许冒充。
     ...(args.image_provider ? { requested_provider: args.image_provider } : {}),
+    // 服务商来自哪一级:explicit(本次调用指定)/ caller_binding(会话/团队/成员绑定)
+    // / global_default(设置里的全局默认)。用户抱怨"切换不生效"时按这个解释路由。
+    provider_source: providerSource,
     created_at: new Date().toISOString(), // 真实生成时间(灵感库按它分组/排序,别用消息时间)
     images: result.images.map(img => ({
       path: img.localPath,
@@ -185,15 +189,22 @@ async function runGeneration(
   });
 }
 
+/**
+ * 调用方就近链解析出的服务商绑定。传函数则**每次出图时现解析**(#65:
+ * 传静态 id 会被闭包捕获,用户中途在界面切换服务商后,同一会话/团队轮次里
+ * 的后续出图仍用旧值,切换"看起来不生效");函数形态让切换即时生效。
+ */
+export type ImageProviderBinding = string | (() => string | undefined) | undefined;
+
 // 完整的一次出图执行:输入防护 → 计费 → 生成 → 失败退款。抽成独立函数是为了让
 // 团队出图的 HTTP 回调链路(stdio MCP → API route)与聊天的进程内 tool 共用同一实现。
 export async function runImageGen(
   args: ImageGenArgs,
   sessionId: string | undefined,
   userId: string | undefined,
-  // 本次出图指定的图片服务商 id(按调用者分流,由上层就近解析后传入);
-  // undefined 时走全局默认 provider_override:image,行为不变。
-  imageProviderId?: string,
+  // 本次出图的服务商绑定(按调用者分流,由上层就近解析);
+  // 空时走全局默认 provider_override:image,行为不变。
+  imageProviderBinding?: ImageProviderBinding,
 ): Promise<CallToolResult> {
   // 只拦「prompt 里有、但没放进 reference_image_paths」的路径(那才是真漏传,provider 收不到参考图)。
   // 已在 reference_image_paths 里的重复路径放行 —— 上游 context-image 注入器会把
@@ -234,7 +245,13 @@ export async function runImageGen(
       hint: '从 available_providers 里选一个 name 重新调用,或去掉 image_provider 参数用默认服务商。',
     }, true);
   }
-  const effectiveProviderId = explicit.kind === 'ok' ? explicit.providerId : imageProviderId;
+  // 绑定在调用时现解析(函数形态),用户中途切换服务商即时生效
+  const boundProviderId = typeof imageProviderBinding === 'function' ? imageProviderBinding() : imageProviderBinding;
+  const effectiveProviderId = explicit.kind === 'ok' ? explicit.providerId : boundProviderId;
+  // 回执标注服务商来源,让 AI 能向用户解释"为什么用的是它"(#65:
+  // 团队会话里全局默认被团队绑定盖住,用户切了全局设置以为没生效)
+  const providerSource: 'explicit' | 'caller_binding' | 'global_default' =
+    explicit.kind === 'ok' ? 'explicit' : boundProviderId ? 'caller_binding' : 'global_default';
 
   const target = resolveBillingTarget(effectiveProviderId);
   if ('error' in target) return textResult({ success: false, error: target.error }, true);
@@ -272,7 +289,7 @@ export async function runImageGen(
   }
 
   try {
-    return await runGeneration(args, sessionId, target.model, effectiveProviderId);
+    return await runGeneration(args, sessionId, target.model, effectiveProviderId, providerSource);
   } catch (error) {
     if (userId && quotaConsumed) {
       await refundRemoteQuota(userId, idempotencyKey);
@@ -288,12 +305,14 @@ export async function runImageGen(
   }
 }
 
-export function createImageGenTool(sessionId?: string, userId?: string, imageProviderId?: string) {
+export function createImageGenTool(sessionId?: string, userId?: string, imageProviderBinding?: ImageProviderBinding) {
   return tool(
     IMAGE_GEN_TOOL_NAME,
     'Generate images using AI. Call this tool when the user asks to '
-    + 'generate, draw, create, edit, restyle, or transform images.',
+    + 'generate, draw, create, edit, restyle, or transform images. '
+    + 'Provider precedence: explicit image_provider param > session/team/member binding > global default. '
+    + 'The result reports provider_source so you can explain which level was used.',
     inputSchema,
-    (args): Promise<CallToolResult> => runImageGen(args, sessionId, userId, imageProviderId),
+    (args): Promise<CallToolResult> => runImageGen(args, sessionId, userId, imageProviderBinding),
   );
 }

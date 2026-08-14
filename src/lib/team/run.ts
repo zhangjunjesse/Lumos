@@ -123,6 +123,7 @@ export async function runTeamTask(input: {
     billingUserId: input.lumosUserId ?? '',
     cap: IMAGES_PER_TASK_CAP,
     imageProviderId: teamImageProviderId,
+    teamId: team.id,
   });
   const abortController = new AbortController();
   // 调用方(工作流 team 步骤)必须把节点上配置的超时传进来;缺省值只是兜底

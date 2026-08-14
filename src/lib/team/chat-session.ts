@@ -72,6 +72,7 @@ export function buildTeamChatConfig(input: {
     billingUserId: input.lumosUserId ?? '',
     cap: IMAGES_PER_TURN_CAP,
     imageProviderId: teamImageProviderId,
+    teamId: team.id,
   });
 
   // 模型选择:用户输入框所选 > 团队配置缺省 > 全局默认。指定的服务商不存在时回退并留痕。

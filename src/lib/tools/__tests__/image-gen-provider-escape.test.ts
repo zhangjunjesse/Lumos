@@ -64,7 +64,7 @@ describe('generate_image 显式指定服务商 (#64)', () => {
     expect(resolveBillingMock).not.toHaveBeenCalled();
   });
 
-  it('匹配到 → 用它出图,回执带 requested_provider + 实际 provider', async () => {
+  it('匹配到 → 用它出图,回执带 requested_provider + 实际 provider + source=explicit', async () => {
     resolveExplicitMock.mockReturnValue({ kind: 'ok', providerId: 'p-mj', providerName: 'MidjourneyJ' });
 
     const payload = parsePayload(await runImageGen({ prompt: 'a cat', image_provider: 'MidjourneyJ' }, undefined, undefined));
@@ -72,16 +72,41 @@ describe('generate_image 显式指定服务商 (#64)', () => {
     expect(payload.success).toBe(true);
     expect(payload.provider).toBe('MidjourneyJ');
     expect(payload.requested_provider).toBe('MidjourneyJ');
+    expect(payload.provider_source).toBe('explicit');
     expect(resolveBillingMock).toHaveBeenCalledWith('p-mj');
   });
 
-  it('未指定 → 走就近链(providerId 由上层传入),回执不带 requested_provider', async () => {
+  it('未指定 → 走就近链绑定,回执 source=caller_binding 且不带 requested_provider', async () => {
     resolveExplicitMock.mockReturnValue({ kind: 'none' });
 
     const payload = parsePayload(await runImageGen({ prompt: 'a cat' }, undefined, undefined, 'p-session'));
 
     expect(payload.success).toBe(true);
     expect(payload.requested_provider).toBeUndefined();
+    expect(payload.provider_source).toBe('caller_binding');
     expect(resolveBillingMock).toHaveBeenCalledWith('p-session');
+  });
+
+  it('绑定是函数时每次调用现解析 → 中途切换服务商即时生效 (#65)', async () => {
+    resolveExplicitMock.mockReturnValue({ kind: 'none' });
+    let current = 'p-before';
+    const binding = () => current;
+
+    await runImageGen({ prompt: 'a cat' }, undefined, undefined, binding);
+    expect(resolveBillingMock).toHaveBeenLastCalledWith('p-before');
+
+    current = 'p-after'; // 模拟用户在界面切换了服务商
+    await runImageGen({ prompt: 'a cat' }, undefined, undefined, binding);
+    expect(resolveBillingMock).toHaveBeenLastCalledWith('p-after');
+  });
+
+  it('无任何绑定 → 回执 source=global_default', async () => {
+    resolveExplicitMock.mockReturnValue({ kind: 'none' });
+
+    const payload = parsePayload(await runImageGen({ prompt: 'a cat' }, undefined, undefined));
+
+    expect(payload.success).toBe(true);
+    expect(payload.provider_source).toBe('global_default');
+    expect(resolveBillingMock).toHaveBeenCalledWith(undefined);
   });
 });

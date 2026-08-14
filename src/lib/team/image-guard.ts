@@ -19,8 +19,12 @@ export interface TeamImageGuard {
    * 团队级图片服务商(按调用者分流):整队出图统一走它,空=全局默认。
    * 只做到团队级——出图 HTTP 回调只有 runToken、拿不到"当前是哪个成员",
    * 成员级细分(同队不同成员各自不同)需要另做,见 T3.2 第二批。
+   * 有 teamId 时此值仅作团队记录已删的兜底:回调按 teamId 现解析团队默认,
+   * 用户轮次中途在界面改团队服务商即时生效(#65)。
    */
   imageProviderId?: string;
+  /** 来源团队 id:出图回调据此现解析团队默认服务商(见 imageProviderId 注释) */
+  teamId?: string;
 }
 
 // 注册表挂 globalThis:Next dev 热重载会产生多份模块实例,团队会话和 API route 必须
@@ -40,6 +44,7 @@ export function createTeamImageGuard(input: {
   cap: number;
   onQuotaDenied?: (used: number, cap: number) => void;
   imageProviderId?: string;
+  teamId?: string;
 }): string {
   const now = Date.now();
   for (const [token, guard] of guards) {
@@ -54,6 +59,7 @@ export function createTeamImageGuard(input: {
     onQuotaDenied: input.onQuotaDenied,
     createdAt: now,
     ...(input.imageProviderId ? { imageProviderId: input.imageProviderId } : {}),
+    ...(input.teamId ? { teamId: input.teamId } : {}),
   });
   return token;
 }

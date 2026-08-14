@@ -56,7 +56,8 @@ const lumosImageConnector: ConnectorDefinition = {
   resolve: (ctx) => ({
     // 主 agent/裸聊天走"会话级 → 全局默认"就近解析;团队成员出图走另一条链
     // (stage-worker → team-image-service),不经过这里。
-    inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId, resolveChatImageProviderId(ctx.sessionId)),
+    // 传 thunk 而非解析结果:每次出图时现解析,用户会话中途切换服务商即时生效(#65)。
+    inProcess: () => createLumosMcpServer(ctx.sessionId, ctx.userId, () => resolveChatImageProviderId(ctx.sessionId)),
   }),
   buildHint: () => MEDIA_GEN_IN_PROCESS_HINT,
 };
