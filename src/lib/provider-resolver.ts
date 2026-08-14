@@ -100,11 +100,12 @@ function resolveProviderById(
 
 /**
  * Pro-edition lockdown: when admin has disabled customization for a category,
- * the user's preferred/default provider choices are ignored for that
- * capability. Chat has no admin-managed override, so it is force-routed to
- * the system Lumos Cloud provider. Media (image-gen) is admin-managed via
- * `provider_override:image`, so it falls through to the override chain with
- * the user's preferred id stripped.
+ * only the user's **custom-origin** provider choices are blocked for that
+ * capability — admin-managed (provider_origin='system') providers stay
+ * selectable, otherwise "锁定"会把用户在多个托管服务商之间的显式选择也剥掉
+ * (#64:pro 登录态下显式指定云端下发的 MidjourneyJ 被静默换成默认服务商)。
+ * Chat additionally force-routes to the Lumos Cloud provider when nothing
+ * usable is preferred; media falls through to the admin override chain.
  */
 function isCustomProviderLocked(capability: ProviderCapability): boolean {
   if (!isPro()) return false;
@@ -121,19 +122,24 @@ export function resolveProviderForCapability(options: {
 }): ApiProvider | undefined {
   const locked = isCustomProviderLocked(options.capability);
 
-  if (locked && options.capability === 'agent-chat') {
-    // 锁定模式的语义应为"不能自建",而非"只能用云端默认"。
-    // 用户在 UI 选的只要是 admin 托管的 (provider_origin='system') 就尊重,
-    // 让 admin 开放的多个托管 provider 之间可以自由切换;
-    // 只有自建的 (custom origin) 才在锁定模式下被拦回 admin 标的默认。
+  // 锁定模式的语义是"不能自建",而非"无视用户选择"。admin 托管的
+  // (provider_origin='system') 服务商在锁定下照样尊重,让托管服务商之间
+  // 可以自由切换/显式指定;只有自建的 (custom origin) 才被拦回默认链。
+  // 此前只有 agent-chat 分支这么做,image-gen 掉进"preferred 一律剥掉"
+  // 的分支 —— pro 登录态下显式指定云端下发的 MidjourneyJ 被静默换成
+  // 默认服务商,这是 #64 的第二处病灶(第一处在能力映射)。
+  if (locked) {
     const preferredId = options.preferredProviderId?.trim() || '';
     if (preferredId) {
       const preferred = getProvider(preferredId);
       if (preferred && preferred.provider_origin === 'system'
-          && providerSupportsCapability(preferred, 'agent-chat')) {
+          && providerSupportsCapability(preferred, options.capability)) {
         return preferred;
       }
     }
+  }
+
+  if (locked && options.capability === 'agent-chat') {
     const cloud = getLumosCloudSystemProvider();
     if (!cloud) {
       throw new ProviderResolutionError(

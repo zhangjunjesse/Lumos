@@ -126,7 +126,29 @@ describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
     ).toThrow(ProviderResolutionError);
   });
 
-  test('media locked + image-gen → strips preferredProviderId, falls through to provider_override:image', () => {
+  test('media locked + system-origin preferred → honors the pick (#64:锁定≠无视托管服务商选择)', () => {
+    // pro 登录态下,云端下发的 MidjourneyJ(system origin)被显式指定时必须被尊重。
+    // 旧行为把 preferred 一律剥掉 → 静默换成 provider_override:image 的默认服务商。
+    mIsPro.mockReturnValue(true);
+    setFlags({ chat: true, media: false });
+    mGetSetting.mockImplementation(key => (key === 'provider_override:image' ? customProvider.id : ''));
+    mGetProvider.mockImplementation(id => {
+      if (id === systemProviderA.id) return systemProviderA;
+      if (id === customProvider.id) return customProvider;
+      return undefined;
+    });
+    mSupports.mockReturnValue(true);
+
+    const result = resolveProviderForCapability({
+      moduleKey: 'image',
+      capability: 'image-gen',
+      preferredProviderId: systemProviderA.id,
+    });
+
+    expect(result).toBe(systemProviderA);
+  });
+
+  test('media locked + custom/未知 preferred → 拦回 provider_override:image(只锁自建)', () => {
     mIsPro.mockReturnValue(true);
     setFlags({ chat: true, media: false });
     // Admin-managed override points at the custom provider.
@@ -137,14 +159,13 @@ describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
     const result = resolveProviderForCapability({
       moduleKey: 'image',
       capability: 'image-gen',
-      preferredProviderId: 'some-user-pick', // must be ignored
+      preferredProviderId: 'some-user-pick', // 非 system origin,锁定下不被采用
     });
 
     expect(result).toBe(customProvider);
-    expect(mGetProvider).not.toHaveBeenCalledWith('some-user-pick');
   });
 
-  test('media locked + video-gen → strips preferredProviderId, falls through to provider_override:video', () => {
+  test('media locked + video-gen 非托管 preferred → 拦回 provider_override:video(只锁自建)', () => {
     mIsPro.mockReturnValue(true);
     setFlags({ chat: true, media: false });
     mGetSetting.mockImplementation(key => (key === 'provider_override:video' ? customProvider.id : ''));
@@ -158,7 +179,6 @@ describe('resolveProviderForCapability — pro-gate (per-capability)', () => {
     });
 
     expect(result).toBe(customProvider);
-    expect(mGetProvider).not.toHaveBeenCalledWith('some-user-pick');
   });
 
   test('chat unlocked → honors preferredProviderId', () => {
