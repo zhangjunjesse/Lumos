@@ -4,6 +4,7 @@ import type {
   ProviderCapability,
   ProviderOrigin,
 } from '@/types';
+import { getProviderKind } from './provider-kinds';
 
 const VALID_API_PROTOCOLS = new Set<ProviderApiProtocol>([
   'anthropic-messages',
@@ -36,40 +37,18 @@ export function normalizeProviderType(providerType?: string | null): string {
 }
 
 export function getDefaultApiProtocolForProviderType(providerType?: string | null): ProviderApiProtocol {
-  switch (normalizeProviderType(providerType)) {
-    case 'openrouter':
-    case 'gemini-image':
-    case 'toapis-image':
-    case 'volcengine':
-    case 'dashscope':
-    case 'toapis-video':
-      return 'openai-compatible';
-    default:
-      return 'anthropic-messages';
-  }
+  return getProviderKind(normalizeProviderType(providerType))?.apiProtocol ?? 'anthropic-messages';
 }
 
 export function getDefaultCapabilitiesForProviderType(providerType?: string | null): ProviderCapability[] {
-  switch (normalizeProviderType(providerType)) {
-    case 'gemini-image':
-    case 'toapis-image':
-    case 'volcengine':
-    case 'dashscope':
-      return ['image-gen'];
-    case 'toapis-video':
-      return ['video-gen'];
-    case 'volcengine-asr-v2':
-      return ['speech'];
-    default:
-      return ['text-gen'];
-  }
+  const kind = getProviderKind(normalizeProviderType(providerType));
+  return kind ? [...kind.capabilities] : ['text-gen'];
 }
 
 export function getDefaultProviderOrigin(isBuiltin?: boolean | number | null): ProviderOrigin {
   return isBuiltin ? 'system' : 'custom';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function getDefaultAuthMode(_providerType?: string | null): ProviderAuthMode {
   return 'api_key';
 }

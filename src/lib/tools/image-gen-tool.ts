@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { generateImages } from '@/lib/image';
-import { resolveImageProviderIdByHint } from '@/lib/image/image-provider-hint';
+import { resolveExplicitImageProvider } from '@/lib/image/image-provider-hint';
 import { coerceStringArray, coerceJsonArray } from './image-gen-arg-coerce';
 import { findUnreferencedPromptPaths } from './image-gen-path-guard';
 import {
@@ -166,6 +166,9 @@ async function runGeneration(
     media_generation_id: result.mediaGenerationId,
     model: result.model,
     provider: result.providerName,
+    // 回执诚实(#64):显式指定过服务商时,同时报告"要的"和"实际用的",
+    // 两者不一致(如绑定失效降级)必须可见,不允许冒充。
+    ...(args.image_provider ? { requested_provider: args.image_provider } : {}),
     created_at: new Date().toISOString(), // 真实生成时间(灵感库按它分组/排序,别用消息时间)
     images: result.images.map(img => ({
       path: img.localPath,
@@ -216,8 +219,22 @@ export async function runImageGen(
   }
 
   // AI 逃生舱:用户明说服务商时覆盖就近解析结果(explicit > 会话/成员/团队 > 全局默认)。
-  // 名字解析不到就忽略、回落原值 —— 逃生舱不该因写错名字而中断出图。
-  const effectiveProviderId = resolveImageProviderIdByHint(args.image_provider) ?? imageProviderId;
+  // 显式指定却匹配不到 → 硬报错并列出可用清单(issue #64):静默换成默认服务商会让
+  // 用户拿着别家的图以为是指定家画的,还照常扣费,比中断出图危害大得多。
+  const explicit = resolveExplicitImageProvider(args.image_provider);
+  if (explicit.kind === 'not_found') {
+    return textResult({
+      success: false,
+      error:
+        `没有找到叫"${explicit.requested}"的图片服务商,本次未出图。`
+        + (explicit.didYouMean ? `你是不是想用"${explicit.didYouMean}"?` : ''),
+      error_source: 'image_provider_not_found',
+      requested_provider: explicit.requested,
+      available_providers: explicit.available,
+      hint: '从 available_providers 里选一个 name 重新调用,或去掉 image_provider 参数用默认服务商。',
+    }, true);
+  }
+  const effectiveProviderId = explicit.kind === 'ok' ? explicit.providerId : imageProviderId;
 
   const target = resolveBillingTarget(effectiveProviderId);
   if ('error' in target) return textResult({ success: false, error: target.error }, true);

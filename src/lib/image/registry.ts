@@ -5,6 +5,7 @@
  * Providers register via registerImageProvider(); consumers resolve via resolveImageProvider().
  */
 
+import type { ImageProviderKindId } from '@/lib/provider-kinds'
 import type { ImageProvider, ImageProviderConfig, ImageProviderFactory } from './types'
 import { ImageGenError } from './types'
 
@@ -67,18 +68,23 @@ export async function ensureProvidersRegistered(): Promise<void> {
   await state.initPromise
 }
 
-async function registerBuiltins(): Promise<void> {
-  const { createGeminiProvider } = await import('./providers/gemini')
-  const { createToApisProvider } = await import('./providers/toapis')
-  const { createVolcengineProvider } = await import('./providers/volcengine')
-  const { createDashScopeProvider } = await import('./providers/dashscope')
-  const { createOpenAIImageProvider } = await import('./providers/openai-image')
-  const { createMidjourneyProvider } = await import('./providers/midjourney')
+/**
+ * 内置适配器加载器,键必须覆盖 provider-kinds 里全部 image-gen 类型 ——
+ * `Record<ImageProviderKindId, …>` 焊死:kinds 加了图片类型而这里没配适配器,编译报错;
+ * 反之这里出现 kinds 不认识的键,同样编译报错。运行时不再有第二张手写清单可漂移。
+ */
+const BUILTIN_IMAGE_ADAPTERS: Record<ImageProviderKindId, () => Promise<ImageProviderFactory>> = {
+  'gemini-image': async () => (await import('./providers/gemini')).createGeminiProvider,
+  'toapis-image': async () => (await import('./providers/toapis')).createToApisProvider,
+  'volcengine': async () => (await import('./providers/volcengine')).createVolcengineProvider,
+  'dashscope': async () => (await import('./providers/dashscope')).createDashScopeProvider,
+  'openai-image': async () => (await import('./providers/openai-image')).createOpenAIImageProvider,
+  'midjourney': async () => (await import('./providers/midjourney')).createMidjourneyProvider,
+}
 
-  registerImageProvider('gemini-image', createGeminiProvider)
-  registerImageProvider('toapis-image', createToApisProvider)
-  registerImageProvider('volcengine', createVolcengineProvider)
-  registerImageProvider('dashscope', createDashScopeProvider)
-  registerImageProvider('openai-image', createOpenAIImageProvider)
-  registerImageProvider('midjourney', createMidjourneyProvider)
+async function registerBuiltins(): Promise<void> {
+  await Promise.all(
+    (Object.entries(BUILTIN_IMAGE_ADAPTERS) as Array<[ImageProviderKindId, () => Promise<ImageProviderFactory>]>)
+      .map(async ([type, load]) => registerImageProvider(type, await load())),
+  )
 }

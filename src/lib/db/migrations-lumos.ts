@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 import { resolveProviderPersistenceFields } from '../provider-config';
+import { PROVIDER_KINDS } from '../provider-kinds';
 import { seedBuiltinProviders, seedBuiltinSkills, seedBuiltinMcpServers } from './seed-builtin';
 
 export function migrateLumosTables(db: Database.Database): void {
@@ -1406,6 +1407,9 @@ export function migrateLumosTables(db: Database.Database): void {
   // the legacy key is deleted after copy.
   migrateCustomProviderFlagKeys(db);
 
+  // 修复历史能力误标(issue #64),必须在上面 ADD COLUMN capabilities 之后跑。
+  backfillMediaProviderCapabilities(db);
+
   // One-off migration (#46): unlock team member write/exec tool grants.
   unlockTeamMemberToolPermissions(db);
 
@@ -1546,6 +1550,27 @@ function unlockTeamMemberToolPermissions(db: Database.Database): void {
   db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(FLAG_KEY, new Date().toISOString());
+}
+
+/**
+ * 修复历史能力误标(issue #64):能力默认映射曾漏掉 midjourney / openai-image /
+ * volcengine-asr-v1 等媒体类型,这些类型的手建服务商落库时被盖成 '["text-gen"]',
+ * 导致按名字指定出图服务商时匹配不到、静默落回默认服务商。
+ * 只重写「媒体类型 + 能力仍是当年错误产物」的行;显式配过其他能力的行不动。
+ * 幂等:修完后 WHERE 不再命中,无需迁移标记。
+ */
+export function backfillMediaProviderCapabilities(db: Database.Database): void {
+  const stmt = db.prepare(
+    "UPDATE api_providers SET capabilities = ? WHERE provider_type = ? AND capabilities IN ('', '[]', '[\"text-gen\"]')",
+  );
+  let fixed = 0;
+  for (const [providerType, kind] of Object.entries(PROVIDER_KINDS)) {
+    if ((kind.capabilities as readonly string[]).includes('text-gen')) continue;
+    fixed += stmt.run(JSON.stringify(kind.capabilities), providerType).changes;
+  }
+  if (fixed > 0) {
+    console.log(`[migrations-lumos] backfilled capabilities for ${fixed} media provider(s)`);
+  }
 }
 
 function migrateCustomProviderFlagKeys(db: Database.Database): void {
